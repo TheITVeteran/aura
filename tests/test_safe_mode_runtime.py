@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -12,7 +11,25 @@ from core.resilience.dream_cycle import DreamCycle
 from core.safe_mode import apply_orchestrator_patches
 
 
-class _DummyStreaming(ContextStreamingMixin):
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.result
+
+
+class CallRecorder:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+
+
+class _StreamingHarness(ContextStreamingMixin):
     def __init__(self, history: list[dict[str, str]], runtime_config: dict[str, object] | None = None):
         self.conversation_history = history
         self.cognitive_engine = object()
@@ -59,13 +76,14 @@ def test_apply_orchestrator_patches_is_configuration_only():
 @pytest.mark.asyncio
 async def test_context_streaming_prune_reverts_suspicious_pruner_output(monkeypatch):
     history = [{"role": "user", "content": f"m{i}"} for i in range(60)]
-    stream = _DummyStreaming(history, runtime_config={"context_pruning": True, "max_conversation_history": 50})
+    stream = _StreamingHarness(history, runtime_config={"context_pruning": True, "max_conversation_history": 50})
 
-    prune_history = AsyncMock(return_value=[{"role": "user", "content": "tiny"}])
+    prune_history = AsyncCallRecorder(result=[{"role": "user", "content": "tiny"}])
     monkeypatch.setattr("core.memory.context_pruner.context_pruner.prune_history", prune_history)
 
     await stream._prune_history_async()
 
+    assert len(prune_history.calls) == 1
     assert len(stream.conversation_history) == 50
     assert stream.conversation_history[0]["content"] == "m10"
 
@@ -73,7 +91,7 @@ async def test_context_streaming_prune_reverts_suspicious_pruner_output(monkeypa
 @pytest.mark.asyncio
 async def test_context_streaming_prune_uses_bounded_tail_when_disabled(monkeypatch):
     history = [{"role": "user", "content": f"m{i}"} for i in range(80)]
-    stream = _DummyStreaming(history, runtime_config={"context_pruning": False, "max_conversation_history": 30})
+    stream = _StreamingHarness(history, runtime_config={"context_pruning": False, "max_conversation_history": 30})
 
     unexpected_prune_calls = []
 
@@ -97,10 +115,10 @@ async def test_dream_cycle_skips_when_runtime_mode_disables_feature(tmp_path: Pa
 
     orchestrator = SimpleNamespace(
         _runtime_mode_config={"dream_cycle": False},
-        enqueue_message=MagicMock(),
+        enqueue_message=CallRecorder(),
     )
     dream_cycle = DreamCycle(orchestrator, dlq_path)
 
     await dream_cycle.process_dreams()
 
-    orchestrator.enqueue_message.assert_not_called()
+    assert orchestrator.enqueue_message.calls == []

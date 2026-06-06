@@ -1,26 +1,26 @@
 {
-  "timestamp": "2026-04-14T19:06:49.526912+00:00",
+  "timestamp": "2026-06-06T09:10:10.539526+00:00",
   "total": 39,
   "passed": 39,
   "failed": 0,
-  "elapsed_seconds": 30.37,
+  "elapsed_seconds": 45.4,
   "tests": {
     "2.1 Cortisol \u2192 negative valence": {
       "status": "PASS",
       "baseline_valence": 0.17,
-      "stressed_valence": "-0.0838",
-      "delta": "-0.2538"
+      "stressed_valence": -0.0428,
+      "delta": -0.2128
     },
     "2.2 Cortisol \u2192 high stress": {
       "status": "PASS",
       "baseline_stress": 0.02,
-      "stressed_stress": "0.3959"
+      "stressed_stress": 0.3327
     },
     "2.3 Opposite chemicals \u2192 opposite moods": {
       "status": "PASS",
-      "calm_valence": "0.2916",
-      "stressed_valence": "-0.1143",
-      "gap": "0.4059"
+      "calm_valence": 0.291,
+      "stressed_valence": -0.066,
+      "gap": 0.3571
     },
     "4.1 Phi=0 \u2192 no boost, Phi=0.8 \u2192 boost": {
       "status": "PASS",
@@ -30,18 +30,18 @@
     "8.1 Sustained DA \u2192 receptor downregulation": {
       "status": "PASS",
       "initial_sensitivity": 1.0,
-      "final_sensitivity": 0.9517,
-      "delta": -0.0483
+      "final_sensitivity": 0.9015,
+      "delta": -0.0985
     },
     "8.2 Same DA level \u2192 decreasing effective level": {
       "status": "PASS",
       "effective_tick1": 0.9,
-      "effective_tick50": 0.8437
+      "effective_tick50": 0.8059
     },
     "8.3 DA withdrawal \u2192 sensitivity recovery": {
       "status": "PASS",
-      "tolerant": 0.9517,
-      "recovered": 0.9818
+      "tolerant": 0.9015,
+      "recovered": 0.9626
     },
     "15.1 Surprise modulates learning rate": {
       "status": "PASS",
@@ -51,19 +51,19 @@
     },
     "28: I(cortisol, valence)": {
       "status": "PASS",
-      "mutual_information": 0.3823
+      "mutual_information": 0.2954
     },
     "28: I(dopamine, motivation)": {
       "status": "PASS",
-      "mutual_information": 0.6563
+      "mutual_information": 2.1211
     },
     "28: I(NE, arousal)": {
       "status": "PASS",
-      "mutual_information": 0.7985
+      "mutual_information": 1.3376
     },
     "28: I(oxytocin, sociality)": {
       "status": "PASS",
-      "mutual_information": 2.2316
+      "mutual_information": 1.9628
     },
     "28: I(surprise, learning_rate)": {
       "status": "PASS",
@@ -71,7 +71,7 @@
     },
     "6.1 Idle drift after 100 ticks": {
       "status": "PASS",
-      "L2_drift": 5.1858
+      "L2_drift": 5.2032
     },
     "7.1 Perturbation divergence persists": {
       "status": "PASS",
@@ -79,16 +79,16 @@
     },
     "5.4 Phi from real ODE transitions (tightly-coupled subnet)": {
       "status": "PASS",
-      "phi_s": 0.09165,
+      "phi_s": 0.16144,
       "is_complex": true,
       "n_partitions": 33,
       "tpm_samples": 299,
-      "unique_states": 29,
-      "compute_ms": 4949.03
+      "unique_states": 22,
+      "compute_ms": 7253.52
     },
     "18.1 Free energy monotonically increases with prediction error": {
       "status": "PASS",
-      "FE(pe=0.0)": "0.2628 [rest]",
+      "FE(pe=0.0)": "0.2630 [rest]",
       "FE(pe=0.2)": "0.2668 [rest]",
       "FE(pe=0.5)": "0.2768 [rest]",
       "FE(pe=0.8)": "0.2937 [rest]",
@@ -124,33 +124,33 @@
     },
     "1000 ODE ticks take measurable time": {
       "status": "PASS",
-      "elapsed_ms": 50.23
+      "elapsed_ms": 79.11
     },
     "50 STDP recordings on 64 neurons": {
       "status": "PASS",
-      "elapsed_ms": 25.39
+      "elapsed_ms": 1.59
     },
     "State swap transfers behavioral bias": {
       "status": "PASS",
-      "A_pre": 0.4116,
-      "B_pre": -0.1007,
-      "A_post": -0.1007,
-      "B_post": 0.4116
+      "A_pre": 0.3739,
+      "B_pre": -0.0182,
+      "A_post": -0.0182,
+      "B_post": 0.3739
     },
     "Threat \u2192 lower temperature than reward": {
       "status": "PASS",
-      "threat_temp": 0.685,
-      "reward_temp": 0.5
+      "threat_temp": 0.85,
+      "reward_temp": 0.672
     },
     "Threat \u2192 fewer tokens than reward": {
       "status": "PASS",
-      "threat_tokens": 518,
+      "threat_tokens": 502,
       "reward_tokens": 768
     },
     "Threat narrative \u2260 reward narrative": {
       "status": "PASS",
-      "threat_narrative": "Somatically stable.",
-      "reward_narrative": "Somatically calm and settled."
+      "threat_narrative": "Somatically tense and overloaded.",
+      "reward_narrative": "Somatically comfortable and engaged."
     },
     "Homeostasis context blocks differ (degraded vs healthy)": {
       "status": "PASS",
@@ -164,24 +164,24 @@
     },
     "Novel triple chemical combo produces coherent mood": {
       "status": "PASS",
-      "combo_valence": "0.277",
-      "combo_stress": "0.0245"
+      "combo_valence": 0.268,
+      "combo_stress": 0.0194
     },
     "Extreme intensity (0.99) stays bounded": {
       "status": "PASS",
-      "extreme_stress": "0.41",
-      "extreme_valence": "-0.0879"
+      "extreme_stress": 0.3415,
+      "extreme_valence": -0.0438
     },
     "Adversarial flooding: 100 contradictory events": {
       "status": "PASS",
-      "valence": "0.2582",
-      "stress": "0.0952",
+      "valence": 0.2457,
+      "stress": 0.1097,
       "any_nan": false
     },
     "State corruption recovery (50% neurons \u2192 [-10,10])": {
       "status": "PASS",
       "min_after": -1.0,
-      "max_after": 0.9373
+      "max_after": 0.9375
     },
     "Self-monitoring: stable\u2192low error, chaotic\u2192high error": {
       "status": "PASS",
@@ -194,20 +194,20 @@
     },
     "Phi across 5 seeds (mean \u00b1 std)": {
       "status": "PASS",
-      "mean": 0.25289,
-      "std": 0.02799,
+      "mean": 0.25542,
+      "std": 0.02653,
       "n_computed": 5,
       "values": [
-        0.25207,
-        0.21245,
-        0.23679,
-        0.26786,
-        0.29527
+        0.30232,
+        0.23989,
+        0.23216,
+        0.23547,
+        0.26724
       ]
     },
     "Non-circular: cortisol\u2192attention_span (indirect path)": {
       "status": "PASS",
-      "correlation": 0.6329,
+      "correlation": -0.5177,
       "note": "cortisol is NOT in the attention_span formula"
     },
     "FE action diversity over 30 sustained high-PE calls": {

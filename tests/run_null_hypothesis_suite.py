@@ -16,8 +16,8 @@ import sys
 import time
 from collections import OrderedDict
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List
-from unittest.mock import MagicMock
 
 import numpy as np
 
@@ -593,12 +593,12 @@ print()
 print("## Self-Monitoring (Tier 5)")
 print()
 
-sp_stable = SelfPredictionLoop(MagicMock())
+sp_stable = SelfPredictionLoop(SimpleNamespace())
 for _ in range(30):
     asyncio.run(sp_stable.tick(0.5, "curiosity", "drive_curiosity"))
 err_stable = sp_stable.get_surprise_signal()
 
-sp_chaotic = SelfPredictionLoop(MagicMock())
+sp_chaotic = SelfPredictionLoop(SimpleNamespace())
 rng_sm = np.random.default_rng(42)
 for _ in range(30):
     asyncio.run(sp_chaotic.tick(
@@ -612,7 +612,7 @@ result("Self-monitoring: stable→low error, chaotic→high error",
        stable_error=round(err_stable, 4),
        chaotic_error=round(err_chaotic, 4))
 
-sp_dim = SelfPredictionLoop(MagicMock())
+sp_dim = SelfPredictionLoop(SimpleNamespace())
 for i in range(50):
     asyncio.run(sp_dim.tick(0.5, "curiosity", f"random_src_{i % 15}"))
 worst = sp_dim.get_most_unpredictable_dimension()

@@ -5,7 +5,6 @@ import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
@@ -27,6 +26,24 @@ from core.memory.vector_memory_engine import VectorMemoryEngine
 from core.sovereignty.integrity_guard import IntegrityGuard
 from core.state.aura_state import AuraState
 from core.self_model import SelfModel
+
+
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.result
+
+
+class CallRecorder:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
 
 
 def _reset_constitutional_singletons() -> None:
@@ -143,23 +160,25 @@ async def test_proving_suite_self_model_persists_identity_and_introspection(monk
 
 @pytest.mark.asyncio
 async def test_memory_manager_store_respects_constitutional_gate(service_container, monkeypatch):
-    episodic = SimpleNamespace(add=AsyncMock())
-    vector = SimpleNamespace(index=AsyncMock())
+    episodic_add = AsyncCallRecorder()
+    vector_index = AsyncCallRecorder()
+    episodic = SimpleNamespace(add=episodic_add)
+    vector = SimpleNamespace(index=vector_index)
     ServiceContainer.register_instance("episodic_memory", episodic, required=False)
     ServiceContainer.register_instance("vector_memory", vector, required=False)
 
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_memory_write=AsyncMock(return_value=(False, "blocked_by_test"))
+            approve_memory_write=AsyncCallRecorder(result=(False, "blocked_by_test"))
         ),
     )
 
     manager = MemoryManager()
     await manager.store("blocked memory write", importance=0.9, tags=["constitutional"])
 
-    episodic.add.assert_not_awaited()
-    vector.index.assert_not_awaited()
+    assert episodic_add.calls == []
+    assert vector_index.calls == []
 
 
 @pytest.mark.asyncio
@@ -236,7 +255,7 @@ async def test_sqlite_memory_respects_constitutional_gate(monkeypatch, tmp_path)
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_memory_write=AsyncMock(return_value=(False, "blocked_by_test"))
+            approve_memory_write=AsyncCallRecorder(result=(False, "blocked_by_test"))
         ),
     )
 
@@ -258,18 +277,19 @@ async def test_vector_memory_store_respects_constitutional_gate(monkeypatch, tmp
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_memory_write=AsyncMock(return_value=(False, "blocked_by_test"))
+            approve_memory_write=AsyncCallRecorder(result=(False, "blocked_by_test"))
         ),
     )
 
     engine = VectorMemoryEngine(db_path=str(tmp_path / "vector_store"))
     engine.embedder = SimpleNamespace(embed=lambda _text: np.zeros(384))
-    engine.vault.store = MagicMock()
+    vault_store = CallRecorder()
+    engine.vault.store = vault_store
 
     result = await engine.store("blocked vector memory", importance=0.8, tags=["test"])
 
     assert result == ""
-    engine.vault.store.assert_not_called()
+    assert vault_store.calls == []
 
 
 def test_proving_suite_constitutional_snapshot_synthesizes_health_and_epistemics(service_container):
@@ -301,8 +321,8 @@ async def test_distillation_pipe_records_teacher_provenance(service_container, t
     ServiceContainer.register_instance(
         "cognitive_engine",
         SimpleNamespace(
-            think=AsyncMock(
-                return_value=SimpleNamespace(
+            think=AsyncCallRecorder(
+                result=SimpleNamespace(
                     content="Memory integrity is protected by atomic writes and checksums.",
                     metadata={"model": "gemini-2.5-pro"},
                 )

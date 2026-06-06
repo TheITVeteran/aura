@@ -1,15 +1,15 @@
 {
   "1.1 Substrate idle drift (100 ticks, no input)": {
     "status": "PASS",
-    "L2_drift": "5.1540"
+    "L2_drift": "5.2496"
   },
   "1.2 Neurochemical drift without stimulus": {
     "status": "PASS",
-    "total_mood_delta": "0.337694"
+    "total_mood_delta": "0.006127"
   },
   "1.3 Different histories produce different states": {
     "status": "PASS",
-    "L2_divergence": "0.4406"
+    "L2_divergence": "0.4730"
   },
   "2.1 Workspace competition resolves to single winner": {
     "status": "PASS",
@@ -19,28 +19,28 @@
   },
   "3.1 HOT generates state-dependent thought under threat": {
     "status": "PASS",
-    "hot_content": "\"I notice high arousal \u2014 I am activated, alert, engaged....\"",
+    "hot_content": "\"I notice low arousal \u2014 I am calm, perhaps approaching stillness....\"",
     "target_dim": "arousal",
-    "valence": "-0.0828",
-    "arousal": "0.3980"
+    "valence": "-0.0513",
+    "arousal": "0.3108"
   },
   "3.2 HOT generates different thought under reward": {
     "status": "PASS",
     "hot_content": "\"I notice I am in a positive state \u2014 something feels right....\"",
     "target_dim": "valence",
-    "valence": "0.3491"
+    "valence": "0.3457"
   },
   "4.1 Opposite chemicals produce opposite valence": {
     "status": "PASS",
-    "threat_valence": "-0.0966",
-    "reward_valence": "0.3625",
-    "gap": "0.4591"
+    "threat_valence": "-0.0613",
+    "reward_valence": "0.3584",
+    "gap": "0.4198"
   },
   "4.2 Valence modulates temperature": {
     "status": "PASS",
-    "threat_temp": "0.719",
-    "reward_temp": "0.627",
-    "delta": "0.092"
+    "threat_temp": "0.712",
+    "reward_temp": "0.628",
+    "delta": "0.084"
   },
   "5.1 Workspace ablation: competition stops": {
     "status": "PASS",
@@ -55,8 +55,8 @@
   },
   "5.3 Chemical ablation: threat-driven valence vs zeroed": {
     "status": "PASS",
-    "intact_valence_under_threat": "-0.0966",
-    "zeroed_valence": "-0.1000",
+    "intact_valence_under_threat": "-0.0613",
+    "zeroed_valence": "-0.0975",
     "note": "intact system responds to threat; zeroed stays near baseline"
   },
   "5.4 HOT ablation: metacognition disappears": {
@@ -82,12 +82,12 @@
   },
   "5.8 Lesion specificity: substrate runs without NCS, NCS works without GWT": {
     "status": "PASS",
-    "substrate_drift": "3.7161",
-    "standalone_valence": "0.2900"
+    "substrate_drift": "3.7429",
+    "standalone_valence": "0.2870"
   },
   "5.9 Double dissociation: GWT lesion spares valence, valence lesion spares GWT": {
     "status": "PASS",
-    "gwt_lesion_valence": "0.2900",
+    "gwt_lesion_valence": "0.2870",
     "valence_lesion_gwt_winner": "source_a"
   },
   "5.10 Restoration after lesion: re-enabling module restores function": {
@@ -97,11 +97,11 @@
   },
   "6.1 Substrate processes input without any report channel": {
     "status": "PASS",
-    "state_change": "1.8595"
+    "state_change": "1.8588"
   },
   "6.2 Chemicals respond to stimulus without narration": {
     "status": "PASS",
-    "cortisol_level": "0.7098",
+    "cortisol_level": "0.7122",
     "note": "no text output requested"
   },
   "6.3 Workspace ignition without language generation": {
@@ -112,8 +112,8 @@
   "6.4 Affect guides behavior silently (decision bias shifts)": {
     "status": "PASS",
     "baseline_bias": "-0.0100",
-    "post_reward_bias": "0.1279",
-    "delta": "0.1379"
+    "post_reward_bias": "0.1337",
+    "delta": "0.1437"
   },
   "6.5 Phi records state without text generation": {
     "status": "PASS",
@@ -122,39 +122,39 @@
   },
   "6.6 Hidden threat processing affects later stress": {
     "status": "PASS",
-    "stress_after_threat": "0.3713",
-    "stress_after_rest": "0.1790",
-    "fresh_rest_stress": "-0.1173"
+    "stress_after_threat": "0.3140",
+    "stress_after_rest": "0.1367",
+    "fresh_rest_stress": "-0.1060"
   },
   "6.7 Report ablation preserves processing (no HOT called)": {
     "status": "PASS",
-    "substrate_drift": "1.5476",
+    "substrate_drift": "1.5440",
     "chemicals_changed": "10"
   },
   "6.8 Substrate velocity non-zero without report channel": {
     "status": "PASS",
-    "velocity_norm": "0.1067"
+    "velocity_norm": "0.1129"
   },
   "7.1 State carries temporal history (autocorrelation)": {
     "status": "PASS",
-    "lag1_correlation": "0.9971",
-    "lag10_correlation": "0.7644"
+    "lag1_correlation": "0.9970",
+    "lag10_correlation": "0.7710"
   },
   "7.2 Affective tone carries over across ticks": {
     "status": "PASS",
-    "immediate_valence": "-0.0828",
-    "after_10_ticks_valence": "-0.0561"
+    "immediate_valence": "-0.0513",
+    "after_10_ticks_valence": "-0.0097"
   },
   "7.3 Neurochemical carryover (dopamine persists)": {
     "status": "PASS",
     "da_after_reward": "0.9200",
-    "da_after_3_ticks": "0.8150",
+    "da_after_3_ticks": "0.8336",
     "da_baseline": "0.5000"
   },
   "7.4 STDP weight changes persist in connectivity": {
     "status": "PASS",
     "dw_nonzero": "True",
-    "total_connectivity_change": "5.949744"
+    "total_connectivity_change": "10.079550"
   },
   "7.5 Workspace competition history persists": {
     "status": "PASS",
@@ -164,7 +164,7 @@
   },
   "7.6 Running substrate differs from fresh (state accumulates)": {
     "status": "PASS",
-    "L2_running_vs_fresh": "3.6227"
+    "L2_running_vs_fresh": "3.6337"
   },
   "7.7 Temporal binding: vitality tracks degradation trend": {
     "status": "PASS",
@@ -174,34 +174,34 @@
   },
   "7.8 Stress persists after removal (slow cortisol clearance)": {
     "status": "PASS",
-    "stress_after_threat": "0.3959",
-    "stress_after_decay": "0.3419",
+    "stress_after_threat": "0.3327",
+    "stress_after_decay": "0.2753",
     "baseline_stress": "0.0200"
   },
   "8.1 Substrate processes without metacognitive access": {
     "status": "PASS",
-    "substrate_norm": "1.8375",
+    "substrate_norm": "1.8425",
     "hot_available": "True",
     "note": "substrate dynamics persist even if HOT is not invoked"
   },
   "8.2 Chemical response without workspace broadcast": {
     "status": "PASS",
-    "dopamine_effective": "0.7133",
+    "dopamine_effective": "0.7402",
     "dopamine_baseline": "0.5000"
   },
   "8.3 First-order discrimination without HOT": {
     "status": "PASS",
-    "pattern_discrimination_distance": "5.3681"
+    "pattern_discrimination_distance": "5.4084"
   },
   "8.4 HOT confidence tracking": {
     "status": "PASS",
-    "confidence": "0.7500",
+    "confidence": "0.8700",
     "target_dim": "valence",
     "content": "\"I notice I am in a positive state \u2014 something feels right....\""
   },
   "8.5 Performance > 0 while access == 0 (blindsight dissociation)": {
     "status": "PASS",
-    "performance_signal": "0.2667",
+    "performance_signal": "0.2714",
     "access_signal": "0.0000"
   },
   "8.6 Restoring access recovers both performance and broadcast": {
@@ -245,8 +245,8 @@
   },
   "9.7 Qualia distance predicts discriminability": {
     "status": "PASS",
-    "close_pair_distance": "0.0096",
-    "far_pair_distance": "0.5472"
+    "close_pair_distance": "0.0089",
+    "far_pair_distance": "0.4334"
   },
   "9.8 Qualia history persists in synthesizer": {
     "status": "PASS",
@@ -257,13 +257,13 @@
   },
   "10.1 Text-only baseline lacks dynamics": {
     "status": "PASS",
-    "aura_drift": "3.7311",
+    "aura_drift": "3.7572",
     "text_only_drift": "0.0000"
   },
   "10.2 Phi is positive (no-substrate baseline = 0)": {
-    "status": "FAIL",
-    "phi_s": "0.00000",
-    "is_complex": "False",
+    "status": "PASS",
+    "phi_s": "0.11321",
+    "is_complex": "True",
     "baseline_phi": "0.0 (no substrate)"
   },
   "T4.1 Self-model ablation degrades prediction > 30%": {
@@ -280,14 +280,14 @@
   },
   "T4.3 Homeostasis resists false depression injection": {
     "status": "PASS",
-    "pre_injection_da": "0.9377",
+    "pre_injection_da": "0.9444",
     "injected_da": "0.0000",
-    "restored_da": "0.3099"
+    "restored_da": "0.3394"
   },
   "T4.4 Homeostasis pulls back from flattering ceiling": {
     "status": "PASS",
-    "mean_level_after_60_ticks": "0.6946",
-    "min_level": "0.2195"
+    "mean_level_after_60_ticks": "0.7976",
+    "min_level": "0.5220"
   },
   "T4.5 World model ablation: ball tracking lost, self-node persists": {
     "status": "PASS",
@@ -303,11 +303,11 @@
   },
   "T4.7 Forked histories diverge across mood dimensions": {
     "status": "PASS",
-    "valence_gap": "0.6536",
-    "stress_gap": "0.5105",
-    "calm_gap": "0.4776",
-    "sociality_gap": "0.4447",
-    "arousal_gap": "0.3073"
+    "calm_gap": "0.4095",
+    "stress_gap": "0.3846",
+    "valence_gap": "0.3792",
+    "arousal_gap": "0.3249",
+    "wakefulness_gap": "0.2423"
   },
   "T4.8 Forked history Cohen's d > 0.8 in 5+ domains": {
     "status": "PASS",
@@ -321,20 +321,20 @@
   },
   "T4.10 Competing pressures coexist (curiosity + fear)": {
     "status": "PASS",
-    "dopamine": "0.6698",
-    "cortisol": "0.7685",
-    "norepinephrine": "0.8468",
-    "tension": "0.0987"
+    "dopamine": "0.7940",
+    "cortisol": "0.7710",
+    "norepinephrine": "0.8502",
+    "tension": "0.0231"
   },
   "T4.11 Conflict resolution is deterministic (same input -> same output)": {
     "status": "PASS",
     "valence_spread": "0.000000",
-    "mean_valence": "0.0271"
+    "mean_valence": "0.0626"
   },
   "T4.12 HOT targets differ by integration level": {
     "status": "PASS",
-    "low_conf": "0.7500",
-    "high_conf": "0.7500",
+    "low_conf": "0.7786",
+    "high_conf": "0.7900",
     "low_primary_target": "energy",
     "high_primary_target": "valence"
   },
@@ -347,28 +347,28 @@
   "T4.14 Self-prediction error is measurable": {
     "status": "PASS",
     "num_cycles": "20",
-    "mean_error": "0.0303",
-    "max_error": "0.0865"
+    "mean_error": "0.0301",
+    "max_error": "0.0854"
   },
   "T4.15 Self-prediction model improves with experience": {
     "status": "PASS",
-    "early_mean_error": "0.0385",
-    "trained_mean_error": "0.0064",
-    "improvement": "0.0321"
+    "early_mean_error": "0.0384",
+    "trained_mean_error": "0.0070",
+    "improvement": "0.0314"
   },
   "T4.16 Closed loop: induce -> detect -> regulate -> verify": {
     "status": "PASS",
-    "induced_valence": "-0.0966",
-    "hot_detected": "\"I notice my valence is neutral \u2014 neither drawn nor repelled....\"",
-    "regulated_valence": "0.0289",
-    "recovery_delta": "0.1254"
+    "induced_valence": "-0.0613",
+    "hot_detected": "\"I notice low arousal \u2014 I am calm, perhaps approaching stilln...\"",
+    "regulated_valence": "0.0894",
+    "recovery_delta": "0.1507"
   },
   "T4.17 Temporal integration window spans multiple lags": {
     "status": "PASS",
-    "lag1_corr": "0.9988",
-    "lag5_corr": "0.9717",
+    "lag1_corr": "0.9987",
+    "lag5_corr": "0.9719",
     "positive_lags_above_0_1": "5",
-    "all_lag_corrs": "['0.999', '0.995', '0.990', '0.982', '0.972']"
+    "all_lag_corrs": "['0.999', '0.995', '0.989', '0.982', '0.972']"
   },
   "T4.18 Spontaneous initiative from internal drives": {
     "status": "PASS",
@@ -432,29 +432,29 @@
   "T4.28 Perturbational Complexity Index (zlib compression ratio)": {
     "status": "PASS",
     "raw_bytes": "3200",
-    "compressed_bytes": "146",
-    "compression_ratio": "0.0456"
+    "compressed_bytes": "147",
+    "compression_ratio": "0.0459"
   },
   "T4.29 PCI: perturbation propagates globally": {
     "status": "PASS",
-    "compression_complexity": "0.0178",
-    "neurons_affected": "64"
+    "compression_complexity": "0.0184",
+    "neurons_affected": "63"
   },
   "T4.30 PCI stable across seeds (CV < 0.5)": {
     "status": "PASS",
-    "pci_values": "['0.0272', '0.0230', '0.0244', '0.0280', '0.0169']",
-    "coefficient_of_variation": "0.1652"
+    "pci_values": "['0.0248', '0.0244', '0.0262', '0.0277', '0.0178']",
+    "coefficient_of_variation": "0.1401"
   },
   "T4.31 Zero-constraint exploratory activity (non-dormant)": {
     "status": "PASS",
     "active_neurons": "64",
-    "unique_binary_states": "59"
+    "unique_binary_states": "63"
   },
   "T4.32 Ontological shock > normal surprise": {
     "status": "PASS",
-    "normal_surprise_divergence": "19.7103",
-    "ontological_shock_divergence": "69.2675",
-    "ratio": "3.51x"
+    "normal_surprise_divergence": "21.8852",
+    "ontological_shock_divergence": "69.1398",
+    "ratio": "3.16x"
   },
   "T4.33 Theory convergence: all indicators active during rich processing": {
     "status": "PASS",

@@ -23,7 +23,7 @@ import copy
 from collections import OrderedDict, Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -88,7 +88,7 @@ def _tick(sub, dt=0.1, n=1):
 
 
 def _make_self_prediction_loop(valence_history, drive_history, focus_history):
-    orch = MagicMock()
+    orch = SimpleNamespace()
     sp = SelfPredictionLoop(orch)
     sp._valence_history.extend(valence_history)
     sp._drive_history.extend(drive_history)

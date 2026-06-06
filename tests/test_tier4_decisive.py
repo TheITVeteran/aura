@@ -36,8 +36,8 @@ import tempfile
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock, AsyncMock, patch
 
 import numpy as np
 import pytest
@@ -136,7 +136,7 @@ def _make_self_prediction_loop(
     focus_history: List[str],
 ) -> SelfPredictionLoop:
     """Build a SelfPredictionLoop with injected history (no orchestrator needed)."""
-    orch = MagicMock()
+    orch = SimpleNamespace()
     sp = SelfPredictionLoop(orch)
     sp._valence_history.extend(valence_history)
     sp._drive_history.extend(drive_history)
