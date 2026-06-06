@@ -254,7 +254,11 @@ async def test_runtime_heartbeat_refuses_boot_blockers_even_when_required_probes
         },
         "memory": {
             "ok": True,
-            "components": {"state_repository": True, "memory_facade": True},
+            "components": {
+                "state_repository": True,
+                "memory_facade": True,
+                "memory_write_gateway": True,
+            },
         },
         "scheduler": {"ok": True, "components": {"scheduler": True}},
         "tool_governance": {

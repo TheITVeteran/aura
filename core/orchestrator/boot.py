@@ -236,7 +236,13 @@ class OrchestratorBootMixin(
 
         # v5.0.1 FIX: Register Facades early so coordinators can resolve them immediately
         try:
+            from core.memory.memory_write_gateway import get_memory_write_gateway
             from core.memory.memory_facade import MemoryFacade
+
+            ServiceContainer.register_instance(
+                "memory_write_gateway",
+                get_memory_write_gateway(),
+            )
 
             mem_facade = MemoryFacade(orchestrator=self)
             mem_facade.setup()

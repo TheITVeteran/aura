@@ -76,6 +76,16 @@ class ConcreteMemoryWriteGateway(MemoryWriteGatewayBase):
         self._quarantine_dir = self.root / "_quarantine"
         self._quarantine_dir.mkdir(exist_ok=True)
 
+    def is_ready(self) -> bool:
+        """Health-contract liveness probe for the canonical memory write path."""
+        return bool(
+            self.root.exists()
+            and self.root.is_dir()
+            and self._quarantine_dir.exists()
+            and self._quarantine_dir.is_dir()
+            and callable(self._governance)
+        )
+
     async def write(self, request: MemoryWriteRequest) -> MemoryWriteReceiptDC:
         family = (request.metadata or {}).get("family", "episodic")
         record_id = (request.metadata or {}).get("record_id") or f"mem-{uuid.uuid4()}"

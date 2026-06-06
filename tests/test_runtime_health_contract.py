@@ -217,6 +217,7 @@ def test_runtime_contract_requires_kernel_inference_memory_scheduler_and_tool_go
     assert required["llm_router"].liveness_check == "is_ready"
     assert required["state_repository"].liveness_check == "is_initialized"
     assert required["memory_facade"].liveness_check == "is_ready"
+    assert required["memory_write_gateway"].liveness_check == "is_ready"
     assert required["scheduler"].liveness_check == "is_alive"
     assert required["unified_will"].liveness_check == "is_alive"
     assert required["authority_gateway"].liveness_check == "is_ready"
@@ -333,13 +334,17 @@ def test_required_probe_groups_reject_partial_or_forged_payloads():
             "ok": True,
             "components": {"inference_gate": True, "llm_router": True},
         },
-        "memory": {"ok": True, "components": {"state_repository": True, "memory_facade": True}},
+        "memory": {
+            "ok": True,
+            "components": {"state_repository": True, "memory_facade": True},
+        },
         "scheduler": {"ok": True, "components": {"scheduler": True}},
     }
 
     assert required_probe_groups_pass(forged) is False
     assert required_probe_blockers(forged) == [
         "runtime_required_probes",
+        "probe:memory",
         "probe:tool_governance",
     ]
 

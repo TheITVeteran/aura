@@ -17,6 +17,8 @@ class WelfareState:
     thermal_load: float = 35.0    # CPU temperature proxy
     distress_level: float = 0.0   # Bounded ethical distress analog
     welfare_index: float = 1.0    # Unified welfare metric (0.0 to 1.0)
+    viability_state: str = "healthy"
+
 
 
 @dataclass

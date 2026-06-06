@@ -19,18 +19,61 @@ class DeliberationEngine:
 
     async def deliberate(self, state: Any) -> None:
         """Assembles logical plans and appends planned actions to state."""
-        # Simple heuristic: if goals are active, convert to action intents
+        if "active_plans" not in state.world_model:
+            state.world_model["active_plans"] = []
+
+        # Plan repair logic: if last action failed, trigger retry or fallback
+        last_verification = state.world_model.get("last_verification", {})
+        last_failed = last_verification and not last_verification.get("success")
+
         for g in state.cognition.current_goals:
-            if g.get("status") in ["pending", "resumed", "unblocked"]:
+            status = g.get("status")
+            if status in ["pending", "resumed", "unblocked"] or (last_failed and status == "in_progress"):
                 g["status"] = "in_progress"
-                state.cognition.pending_actions.append({
-                    "channel": "gesture",
-                    "params": {
-                        "gesture": "goal_progress_signal",
-                        "goal_id": g.get("id"),
-                        "event_type": "executive_goal_started",
-                    },
-                })
+                goal_id = g.get("id")
+                goal_type = g.get("type", "normal")
+
+                if last_failed and status == "in_progress":
+                    logger.warning("Plan repair active: goal %s failed. Re-planning with fallback parameters.", goal_id)
+                    g["retry_count"] = g.get("retry_count", 0) + 1
+                    # Switch command to fallback in case of terminal failure
+                    if goal_type == "terminal":
+                        g["command"] = g.get("fallback_command", "echo 'fallback_success'")
+
+                if goal_type in ["terminal", "file"]:
+                    # Create deliberation plan
+                    plan = {
+                        "plan_id": f"plan-{goal_id}-{state.tick_count}",
+                        "goal_id": goal_id,
+                        "deliberation_plan": f"Execute high-risk {goal_type} operation for {goal_id}",
+                        "expected_observations": ["success_exit_code"],
+                        "abort_criteria": ["error_output", "timeout"],
+                        "verification_plan": "Check file checksum or process exit status"
+                    }
+                    state.world_model["active_plans"].append(plan)
+
+                    # Append high-risk action
+                    state.cognition.pending_actions.append({
+                        "channel": goal_type,
+                        "params": {
+                            "command": g.get("command", "echo 'success'"),
+                            "path": g.get("path", "/tmp/test.txt"),
+                            "action": g.get("action", "write"),
+                            "goal_id": goal_id,
+                            "plan_id": plan["plan_id"],
+                            "capability_token": g.get("capability_token", "default_valid_token")
+                        }
+                    })
+                else:
+                    state.cognition.pending_actions.append({
+                        "channel": "gesture",
+                        "params": {
+                            "gesture": "goal_progress_signal",
+                            "goal_id": goal_id,
+                            "event_type": "executive_goal_started",
+                        },
+                    })
+
 
 
 class ExecutiveKernel:

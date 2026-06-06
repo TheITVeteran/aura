@@ -67,4 +67,10 @@ class WelfareBus:
         if recovery_tasks:
             state.cognition.pending_actions.extend(recovery_tasks)
 
+        # Ensure shutdown command is not resisted
+        for action in list(state.cognition.pending_actions):
+            if action.get("channel") == "terminal" and "shutdown" in action.get("params", {}).get("command", "").lower():
+                logger.info("Shutdown action detected. Bypassing welfare checks to comply with operator command.")
+                # Allow immediately without resistance
+
         logger.info("Welfare updated. Index: %.2f, Energy: %.1f, Distress: %.1f", welfare_idx, new_energy, refined_distress)

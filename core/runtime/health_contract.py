@@ -27,7 +27,7 @@ HEALTH_CONTRACT_VERSION = "runtime-health-v1"
 REQUIRED_HEALTH_PROBE_GROUPS: dict[str, tuple[str, ...]] = {
     "kernel": ("kernel_interface",),
     "inference": ("inference_gate", "llm_router"),
-    "memory": ("state_repository", "memory_facade"),
+    "memory": ("state_repository", "memory_facade", "memory_write_gateway"),
     "scheduler": ("scheduler",),
     "tool_governance": ("unified_will", "authority_gateway", "capability_engine"),
 }
@@ -84,6 +84,13 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "memory_facade",
         ServiceTier.CRITICAL,
         "Canonical memory gateway. Without it, Aura cannot safely read or write long-term memory.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Memory Write Gateway",
+        "memory_write_gateway",
+        ServiceTier.CRITICAL,
+        "Canonical governed durable memory write gateway. Without it, memory writes cannot be trusted.",
         liveness_check="is_ready",
     ),
     ServiceRequirement(

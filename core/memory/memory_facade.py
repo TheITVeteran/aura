@@ -124,12 +124,67 @@ class MemoryFacade:
     def is_ready(self) -> bool:
         """Deep liveness probe for the runtime health contract."""
         self._refresh_subsystems()
-        primary_store_online = any(
-            subsystem is not None
-            for subsystem in (self._episodic, self._semantic, self._vector, self._graph)
+        return any(
+            self._memory_backend_ready(
+                subsystem,
+                read_methods=read_methods,
+                write_methods=write_methods,
+            )
+            for subsystem, read_methods, write_methods in (
+                (
+                    self._episodic,
+                    ("recall_recent_async", "recall_recent", "search"),
+                    ("record_episode_async", "record_episode", "add_memory"),
+                ),
+                (
+                    self._semantic,
+                    ("search_memories", "search", "get"),
+                    ("remember", "add_memory", "index"),
+                ),
+                (
+                    self._vector,
+                    ("search_memories", "search_similar", "search"),
+                    ("add_memory", "remember", "index"),
+                ),
+                (
+                    self._graph,
+                    ("search_knowledge", "search"),
+                    ("update_belief", "upsert_node", "add_memory"),
+                ),
+                (
+                    self._vault,
+                    ("search", "get_recent", "get"),
+                    ("add_memory", "remember"),
+                ),
+                (
+                    self._cold,
+                    ("search", "retrieve", "get"),
+                    ("add_memory", "store", "write"),
+                ),
+            )
         )
-        state_repo_online = ServiceContainer.get("state_repository", default=None) is not None
-        return bool(primary_store_online or state_repo_online)
+
+    @staticmethod
+    def _memory_backend_ready(
+        backend: Any,
+        *,
+        read_methods: tuple[str, ...],
+        write_methods: tuple[str, ...],
+    ) -> bool:
+        if backend is None:
+            return False
+        for probe_name in ("is_ready", "is_initialized", "is_alive"):
+            probe = getattr(backend, probe_name, None)
+            if callable(probe):
+                try:
+                    if not bool(probe()):
+                        return False
+                except (RuntimeError, AttributeError, TypeError, ValueError):
+                    return False
+                break
+        has_read = any(callable(getattr(backend, name, None)) for name in read_methods)
+        has_write = any(callable(getattr(backend, name, None)) for name in write_methods)
+        return bool(has_read or has_write)
 
     @property
     def episodic(self): return self._episodic

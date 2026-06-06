@@ -18,6 +18,15 @@ class ActionPostconditionVerifier:
         # fallbacks must remain non-success until a postcondition proves effect.
         success = status == "success"
         
+        # Check for false success:
+        # If the channel is file/terminal and output path is specified, check if it actually exists.
+        import os
+        path = receipt.get("path")
+        if path and (channel == "file" or (channel == "terminal" and "output" in receipt)):
+            if success and not os.path.exists(path):
+                logger.warning("False success detected! Tool reported success but output path '%s' does not exist.", path)
+                success = False
+
         # Determine side effects
         side_effects = []
         if channel == "file" and receipt.get("action") == "write":
@@ -42,4 +51,5 @@ class ActionPostconditionVerifier:
         # Save verification feedback onto the world model
         state.world_model["last_verification"] = verification
         return verification
+
         

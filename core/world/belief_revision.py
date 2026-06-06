@@ -53,12 +53,42 @@ class BeliefRevisionEngine:
         expected = state.world_model.get("active_beliefs", {}).get("host_cpu", 10.0)
         surprise = self.uncertainty.calculate_uncertainty(expected, cpu)
         
-        # Revise beliefs
-        state.world_model["active_beliefs"] = {
+        # Check for logical contradictions in pending facts
+        import time
+        pending_facts = state.world_model.get("pending_facts", [])
+        conflict_logs = state.world_model.setdefault("conflict_logs", [])
+        
+        # Initialize active beliefs dict
+        active_beliefs = state.world_model.setdefault("active_beliefs", {})
+        active_beliefs.update({
             "host_cpu": cpu,
             "host_memory": memory,
             "surprise_index": surprise
-        }
+        })
+        
+        for fact in pending_facts:
+            key = fact.get("key")
+            value = fact.get("value")
+            timestamp = fact.get("timestamp", time.time())
+            
+            if key in active_beliefs:
+                old_val = active_beliefs[key]
+                if old_val != value:
+                    logger.warning("Contradiction detected for key '%s': '%s' vs '%s'", key, old_val, value)
+                    conflict_logs.append({
+                        "key": key,
+                        "old_value": old_val,
+                        "new_value": value,
+                        "timestamp": timestamp
+                    })
+                    # Increase uncertainty / surprise
+                    surprise = min(1.0, surprise + 0.3)
+            active_beliefs[key] = value
+
+        # Clear pending facts
+        state.world_model["pending_facts"] = []
         
         state.cognition.uncertainty_score = surprise
+        active_beliefs["surprise_index"] = surprise
         logger.info("Revised world model beliefs. Surprise index: %.2f", surprise)
+

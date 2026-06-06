@@ -149,7 +149,11 @@ def _complete_required_probe_payload() -> dict[str, object]:
         },
         "memory": {
             "ok": True,
-            "components": {"state_repository": True, "memory_facade": True},
+            "components": {
+                "state_repository": True,
+                "memory_facade": True,
+                "memory_write_gateway": True,
+            },
         },
         "scheduler": {"ok": True, "components": {"scheduler": True}},
         "tool_governance": {

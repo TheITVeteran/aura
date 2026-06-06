@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.container import ServiceContainer
 from core.memory.black_hole_vault import BlackHoleVault
 from core.memory.memory_facade import MemoryFacade
 from core.skills.memory_ops import MemoryOpsInput, MemoryOpsSkill
@@ -52,6 +53,48 @@ def install_memory_gateway_fixture(monkeypatch):
         lambda: gateway,
     )
     return gateway
+
+
+def test_memory_facade_ready_requires_actual_memory_backend():
+    ServiceContainer.clear()
+    try:
+        ServiceContainer.register_instance(
+            "state_repository",
+            SimpleNamespace(is_initialized=lambda: True),
+        )
+        facade = MemoryFacade()
+
+        assert facade.is_ready() is False
+
+        ServiceContainer.register_instance(
+            "vector_memory",
+            SimpleNamespace(
+                is_ready=lambda: True,
+                add_memory=lambda *_args, **_kwargs: True,
+                search=lambda *_args, **_kwargs: [],
+            ),
+        )
+
+        assert facade.is_ready() is True
+    finally:
+        ServiceContainer.clear()
+
+
+def test_memory_facade_ready_rejects_unhealthy_memory_backend():
+    ServiceContainer.clear()
+    try:
+        ServiceContainer.register_instance(
+            "vector_memory",
+            SimpleNamespace(
+                is_ready=lambda: False,
+                add_memory=lambda *_args, **_kwargs: True,
+                search=lambda *_args, **_kwargs: [],
+            ),
+        )
+
+        assert MemoryFacade().is_ready() is False
+    finally:
+        ServiceContainer.clear()
 
 
 @pytest.mark.asyncio
