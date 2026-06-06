@@ -1,10 +1,32 @@
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
 
 from core.brain.cognitive_engine import CognitiveEngine
-from core.brain.types import ThinkingMode
 from core.config import get_config
+from core.state.aura_state import AuraState
+
+
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.result
+
+
+class InMemoryStateRepository:
+    def __init__(self, state):
+        self.state = state
+        self.commits = []
+
+    async def get_current(self):
+        return self.state
+
+    async def commit(self, state, cause=None):
+        self.state = state
+        self.commits.append(SimpleNamespace(state=state, cause=cause))
 
 @pytest.fixture
 def config():
@@ -20,38 +42,33 @@ def engine():
     container = get_container()
     container.reset()
     
-    mock_router = AsyncMock()
-    mock_router.think = AsyncMock(return_value="Router response.")
-    mock_router.last_tier = "unknown"
-    container.register_instance("llm_router", mock_router)
+    router = SimpleNamespace(
+        think=AsyncCallRecorder(result="Router response."),
+        last_tier="unknown",
+    )
+    container.register_instance("llm_router", router)
     
-    mock_state = MagicMock()
-    mock_state.cognition.working_memory = []
-    mock_state.cognition.last_thought_at = 1710450000.0 # Some timestamp
+    state = AuraState.default()
+    state.cognition.working_memory = []
+    state.cognition.last_thought_at = 1710450000.0 # Some timestamp
     
     # Affect attributes need to be numbers for AffectUpdatePhase
-    mock_state.affect.valence = 0.0
-    mock_state.affect.arousal = 0.5
-    mock_state.affect.curiosity = 0.5
-    mock_state.affect.social_hunger = 0.5
-    
-    # mock_state.derive should return a new MagicMock but for simplicity:
-    mock_state.derive.return_value = mock_state
+    state.affect.valence = 0.0
+    state.affect.arousal = 0.5
+    state.affect.curiosity = 0.5
+    state.affect.social_hunger = 0.5
     
     # CognitiveRoutingPhase sets cognition.current_mode
-    mock_state.cognition.current_mode = None 
+    state.cognition.current_mode = None
     
-    mock_repo = AsyncMock()
-    mock_repo.get_current.return_value = mock_state
-    mock_repo.commit = AsyncMock()
-    container.register_instance("state_repository", mock_repo)
+    repo = InMemoryStateRepository(state)
+    container.register_instance("state_repository", repo)
     
     eng = CognitiveEngine()
     eng.setup() # Initialize phases
     
     # Store refs for easy assertion
-    eng._mock_router = mock_router
-    eng._mock_state = mock_state
+    eng._test_router = router
+    eng._test_state = state
     
     return eng
-

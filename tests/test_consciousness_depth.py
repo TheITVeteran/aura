@@ -4,11 +4,10 @@ Validates that deepened consciousness modules actually compute,
 provide context blocks, close feedback loops, and degrade gracefully.
 
 These tests run WITHOUT a live LLM — they exercise the consciousness
-infrastructure directly with mocked/default state.
+infrastructure directly with local/default state.
 """
 import asyncio
 import time
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
