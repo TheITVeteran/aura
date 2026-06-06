@@ -1,9 +1,18 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+class CallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.result
 
 
 def test_action_log_route_registered_before_spa_catchall():
@@ -99,8 +108,9 @@ def test_refusal_engine_detects_vendor_impersonation_prompt():
 def test_executive_authority_records_to_unified_action_log(monkeypatch):
     from core.consciousness.executive_authority import ExecutiveAuthority
 
-    fake_log = MagicMock()
-    monkeypatch.setattr("core.unified_action_log.get_action_log", lambda: fake_log)
+    log_record = CallRecorder()
+    action_log = SimpleNamespace(record=log_record)
+    monkeypatch.setattr("core.unified_action_log.get_action_log", lambda: action_log)
 
     decision = ExecutiveAuthority()._record(
         "released",
@@ -111,8 +121,8 @@ def test_executive_authority_records_to_unified_action_log(monkeypatch):
     )
 
     assert decision["action"] == "released"
-    fake_log.record.assert_called_once()
-    args = fake_log.record.call_args.args
+    assert len(log_record.calls) == 1
+    args = log_record.calls[0].args
     assert args[1] == "ExecutiveAuthority.assistant"
     assert args[2] == "gen3_constitutional"
     assert args[3] == "released"
@@ -122,34 +132,47 @@ def test_executive_authority_records_to_unified_action_log(monkeypatch):
 def test_volition_connection_respects_agency_bus_block(tmp_path, monkeypatch):
     from core.volition import VolitionEngine
 
-    orchestrator = MagicMock()
-    orchestrator.status.running = True
-    orchestrator.cognitive_engine = MagicMock()
-    orchestrator.project_store = MagicMock()
-    orchestrator.strategic_planner = MagicMock()
-    orchestrator.conversation_history = []
+    orchestrator = SimpleNamespace(
+        status=SimpleNamespace(running=True),
+        cognitive_engine=SimpleNamespace(),
+        project_store=SimpleNamespace(),
+        strategic_planner=SimpleNamespace(),
+        conversation_history=[],
+    )
 
     drive = SimpleNamespace(name="Connection", urgency=0.95)
-    orchestrator.soul = MagicMock(get_dominant_drive=MagicMock(return_value=drive))
+    orchestrator.soul = SimpleNamespace(get_dominant_drive=CallRecorder(result=drive))
 
-    with patch("core.volition.config") as mock_config:
-        mock_config.paths = MagicMock()
-        mock_config.paths.brain_dir = tmp_path / "brain"
-        get_task_tracker().create_task(get_storage_gateway().create_dir(mock_config.paths.brain_dir, cause='test_volition_connection_respects_agency_bus_block'))
-        mock_config.paths.data_dir = tmp_path / "data"
-        get_task_tracker().create_task(get_storage_gateway().create_dir(mock_config.paths.data_dir, cause='test_volition_connection_respects_agency_bus_block'))
+    config_paths = SimpleNamespace(
+        brain_dir=tmp_path / "brain",
+        data_dir=tmp_path / "data",
+    )
+    get_task_tracker().create_task(
+        get_storage_gateway().create_dir(
+            config_paths.brain_dir,
+            cause="test_volition_connection_respects_agency_bus_block",
+        )
+    )
+    get_task_tracker().create_task(
+        get_storage_gateway().create_dir(
+            config_paths.data_dir,
+            cause="test_volition_connection_respects_agency_bus_block",
+        )
+    )
+    monkeypatch.setattr("core.volition.config", SimpleNamespace(paths=config_paths))
 
-        engine = VolitionEngine(orchestrator)
+    engine = VolitionEngine(orchestrator)
 
-    fake_bus = MagicMock()
-    fake_bus.submit.return_value = False
-    fake_log = MagicMock()
-    monkeypatch.setattr("core.agency_core.AgencyBus.get", lambda: fake_bus)
-    monkeypatch.setattr("core.unified_action_log.get_action_log", lambda: fake_log)
+    bus_submit = CallRecorder(result=False)
+    agency_bus = SimpleNamespace(submit=bus_submit)
+    log_record = CallRecorder()
+    action_log = SimpleNamespace(record=log_record)
+    monkeypatch.setattr("core.agency_core.AgencyBus.get", lambda: agency_bus)
+    monkeypatch.setattr("core.unified_action_log.get_action_log", lambda: action_log)
 
     goal = engine._check_soul_drives()
 
     assert goal is None
     assert engine.unanswered_speak_count == 0
-    fake_log.record.assert_called_once()
-    assert fake_log.record.call_args.args[3] == "bus_cooldown"
+    assert len(log_record.calls) == 1
+    assert log_record.calls[0].args[3] == "bus_cooldown"
