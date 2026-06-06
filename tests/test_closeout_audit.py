@@ -9,6 +9,7 @@ from tools.closeout.semantic_review_ledger import (
     append_entries,
     build_arg_parser,
     build_review_entry,
+    build_semantic_review_queue,
     main as semantic_review_main,
     record_reviews_from_args,
     summarize_semantic_reviews,
@@ -202,3 +203,39 @@ def test_semantic_review_uses_closeout_text_classification(tmp_path):
 
     assert summary["tracked_text_file_count"] == 1
     assert summary["tracked_text_line_count"] == 2
+
+
+def test_semantic_review_status_reports_code_coverage_and_unreviewed_queue(tmp_path):
+    reviewed = tmp_path / "reviewed.py"
+    reviewed.write_text("x = 1\n", encoding="utf-8")
+    code = tmp_path / "large.py"
+    code.write_text("a\nb\nc\n", encoding="utf-8")
+    data = tmp_path / "data.json"
+    data.write_text('{"ok": true}\n' * 5, encoding="utf-8")
+    ledger = tmp_path / "SEMANTIC_REVIEW_LEDGER.jsonl"
+    append_entries(
+        ledger,
+        [build_review_entry(reviewed, reviewer="codex", checkpoint_id="reviewed", root=tmp_path)],
+    )
+
+    summary = summarize_semantic_reviews(
+        ledger_path=ledger,
+        tracked_paths=[reviewed, code, data],
+        root=tmp_path,
+    )
+    queue = build_semantic_review_queue(
+        ledger_path=ledger,
+        tracked_paths=[reviewed, code, data],
+        root=tmp_path,
+        code_only=True,
+        limit=5,
+    )
+
+    assert summary["tracked_text_file_count"] == 3
+    assert summary["tracked_code_file_count"] == 2
+    assert summary["fully_reviewed_code_file_count"] == 1
+    assert summary["unreviewed_file_count"] == 2
+    assert summary["unreviewed_code_file_count"] == 1
+    assert summary["unreviewed_files"][0]["file"] == "large.py"
+    assert summary["unreviewed_files"][0]["code"] is True
+    assert queue["files"] == [summary["unreviewed_files"][0]]

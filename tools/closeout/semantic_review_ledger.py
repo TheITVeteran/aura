@@ -30,6 +30,7 @@ class CurrentFile:
     path: str
     sha256: str
     text: bool
+    code: bool
     line_count: int
     lines: tuple[str, ...]
 
@@ -66,6 +67,27 @@ def _is_text(path: Path, data: bytes) -> bool:
             return False
 
 
+def _is_code(path: Path) -> bool:
+    try:
+        from tools.closeout.run_codebase_closeout_audit import CODE_EXTENSIONS
+
+        return path.suffix.lower() in CODE_EXTENSIONS or path.name == "Makefile"
+    except (ImportError, AttributeError):
+        return path.suffix.lower() in {
+            ".css",
+            ".html",
+            ".js",
+            ".jsx",
+            ".mjs",
+            ".py",
+            ".rs",
+            ".sh",
+            ".sql",
+            ".ts",
+            ".tsx",
+        } or path.name == "Makefile"
+
+
 def current_file(path: Path, *, root: Path = ROOT) -> CurrentFile:
     data = path.read_bytes()
     text = _is_text(path, data)
@@ -76,6 +98,7 @@ def current_file(path: Path, *, root: Path = ROOT) -> CurrentFile:
         path=_rel(path, root),
         sha256=_sha256_bytes(data),
         text=text,
+        code=_is_code(path),
         line_count=len(lines),
         lines=lines,
     )
@@ -193,6 +216,7 @@ def summarize_semantic_reviews(
     ledger_path: Path = DEFAULT_LEDGER,
     tracked_paths: list[Path] | None = None,
     root: Path = ROOT,
+    unreviewed_limit: int = 100,
 ) -> dict[str, Any]:
     tracked_paths = tracked_paths if tracked_paths is not None else _run_git_ls_files(root)
     current_by_path: dict[str, CurrentFile] = {}
@@ -233,18 +257,24 @@ def summarize_semantic_reviews(
 
     reviewed_files: dict[str, dict[str, Any]] = {}
     reviewed_line_count = 0
+    reviewed_code_line_count = 0
     fully_reviewed_count = 0
+    fully_reviewed_code_count = 0
     fully_reviewed_files: set[str] = set()
     for file_name, spans in sorted(current_spans.items()):
         info = current_by_path[file_name]
         merged = _merge_spans(spans)
         line_count = _span_count(merged)
         reviewed_line_count += line_count
+        if info.code:
+            reviewed_code_line_count += line_count
         fully_reviewed = line_count == info.line_count
         fully_reviewed_count += int(fully_reviewed)
+        fully_reviewed_code_count += int(fully_reviewed and info.code)
         if fully_reviewed:
             fully_reviewed_files.add(file_name)
         reviewed_files[file_name] = {
+            "code": info.code,
             "line_count": info.line_count,
             "reviewed_line_count": line_count,
             "fully_reviewed": fully_reviewed,
@@ -272,18 +302,50 @@ def summarize_semantic_reviews(
             stale_entries.append(candidate)
 
     total_text_lines = sum(info.line_count for info in current_by_path.values())
+    total_code_lines = sum(info.line_count for info in current_by_path.values() if info.code)
     coverage = reviewed_line_count / total_text_lines if total_text_lines else 0.0
+    code_coverage = reviewed_code_line_count / total_code_lines if total_code_lines else 0.0
+    unreviewed_files: list[dict[str, Any]] = []
+    for file_name, info in sorted(current_by_path.items()):
+        reviewed = reviewed_files.get(file_name, {})
+        reviewed_lines = int(reviewed.get("reviewed_line_count", 0))
+        if reviewed_lines >= info.line_count:
+            continue
+        unreviewed_files.append(
+            {
+                "file": file_name,
+                "code": info.code,
+                "line_count": info.line_count,
+                "reviewed_line_count": reviewed_lines,
+                "missing_line_count": info.line_count - reviewed_lines,
+            }
+        )
+    unreviewed_files.sort(
+        key=lambda item: (
+            not bool(item["code"]),
+            -int(item["missing_line_count"]),
+            str(item["file"]),
+        )
+    )
     return {
         "schema": "aura.closeout.semantic_review_status.v1",
         "ledger_path": str(ledger_path),
         "ledger_exists": ledger_path.exists(),
         "entry_count": len(entries),
         "tracked_text_file_count": len(current_by_path),
+        "tracked_code_file_count": sum(1 for info in current_by_path.values() if info.code),
         "tracked_text_line_count": total_text_lines,
+        "tracked_code_line_count": total_code_lines,
         "reviewed_file_count": len(reviewed_files),
         "fully_reviewed_text_file_count": fully_reviewed_count,
+        "fully_reviewed_code_file_count": fully_reviewed_code_count,
         "semantic_reviewed_line_count": reviewed_line_count,
+        "semantic_reviewed_code_line_count": reviewed_code_line_count,
         "semantic_review_coverage_ratio": round(coverage, 6),
+        "semantic_code_review_coverage_ratio": round(code_coverage, 6),
+        "unreviewed_file_count": len(unreviewed_files),
+        "unreviewed_code_file_count": sum(1 for item in unreviewed_files if item["code"]),
+        "unreviewed_files": unreviewed_files[: max(0, int(unreviewed_limit))],
         "stale_review_count": len(stale_entries),
         "superseded_stale_review_count": len(superseded_stale_entries),
         "orphan_review_count": len(active_orphan_entries),
@@ -352,6 +414,35 @@ def record_reviews_from_args(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def build_semantic_review_queue(
+    *,
+    ledger_path: Path = DEFAULT_LEDGER,
+    limit: int = 50,
+    code_only: bool = False,
+    tracked_paths: list[Path] | None = None,
+    root: Path = ROOT,
+) -> dict[str, Any]:
+    limit = max(0, int(limit))
+    summary = summarize_semantic_reviews(
+        ledger_path=ledger_path,
+        tracked_paths=tracked_paths,
+        root=root,
+        unreviewed_limit=max(limit, 100),
+    )
+    files = summary["unreviewed_files"]
+    if code_only:
+        files = [item for item in files if item["code"]]
+    return {
+        "schema": "aura.closeout.semantic_review_queue.v1",
+        "ledger_path": summary["ledger_path"],
+        "limit": limit,
+        "code_only": bool(code_only),
+        "unreviewed_file_count": summary["unreviewed_file_count"],
+        "unreviewed_code_file_count": summary["unreviewed_code_file_count"],
+        "files": files[:limit],
+    }
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -371,6 +462,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="Summarize current semantic review coverage.")
     status.add_argument("--ledger", default=os.environ.get("AURA_SEMANTIC_REVIEW_LEDGER", str(DEFAULT_LEDGER)))
+
+    queue = subparsers.add_parser("queue", help="List unreviewed files in closeout priority order.")
+    queue.add_argument("--ledger", default=os.environ.get("AURA_SEMANTIC_REVIEW_LEDGER", str(DEFAULT_LEDGER)))
+    queue.add_argument("--limit", type=int, default=50)
+    queue.add_argument("--code-only", action="store_true")
     return parser
 
 
@@ -378,8 +474,14 @@ def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
     if args.command == "record":
         payload = record_reviews_from_args(args)
-    else:
+    elif args.command == "status":
         payload = summarize_semantic_reviews(ledger_path=Path(args.ledger))
+    else:
+        payload = build_semantic_review_queue(
+            ledger_path=Path(args.ledger),
+            limit=args.limit,
+            code_only=args.code_only,
+        )
     try:
         sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True, default=str))
         sys.stdout.write("\n")
