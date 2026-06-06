@@ -977,7 +977,7 @@ def _setup_worker_env():
     cached_sdk = os.environ.get("AURA_SDK_PATH")
     if cached_sdk and os.path.exists(cached_sdk):
         os.environ["SDKROOT"] = cached_sdk
-        print(f"Using cached SDK root: {cached_sdk}")
+        logger.info("Using cached SDK root: %s", cached_sdk)
     else:
         try:
             proc = get_subprocess_gateway().run(
@@ -1000,7 +1000,7 @@ def _setup_worker_env():
                 action="continued worker startup without probed SDKROOT",
                 severity="degraded",
             )
-            print(f"⚠️ [MLX_WORKER_ENV] Failed to probe environment: {e}")
+            logger.warning("MLX worker SDKROOT probe failed: %s", e)
 
     try:
         ver_info = platform.mac_ver()
@@ -1025,7 +1025,7 @@ def _setup_worker_env():
             action="continued worker startup without derived Mac deployment target/CPATH",
             severity="degraded",
         )
-        print(f"⚠️ [MLX_WORKER_ENV] Failed to probe Mac version/CPATH: {e}")
+        logger.warning("MLX worker deployment target/CPATH probe failed: %s", e)
 
     os.environ["MLX_NUM_THREADS"] = "10"   # M-series has 10+ perf cores
     os.environ["OMP_NUM_THREADS"] = "1"
@@ -1194,8 +1194,8 @@ class _PromptCacheLRU:
             self._delete(model_key, tokens)
             try:
                 self._lru.remove((model_key, tuple(tokens)))
-            except ValueError:
-                pass  # no-op: intentional
+            except ValueError as exc:
+                logger.debug("Prompt cache LRU entry already absent during extract: %s", exc)
             return cache_entry
 
         cache_entry.count -= 1
@@ -1244,8 +1244,8 @@ class _PromptCacheLRU:
             current["cache"].count += 1
             try:
                 self._lru.remove(cache_key)
-            except ValueError:
-                pass  # no-op: intentional
+            except ValueError as exc:
+                logger.debug("Prompt cache LRU entry already absent during insert refresh: %s", exc)
         else:
             current["cache"] = _PromptCacheEntry(prompt_cache, 1)
 
@@ -1302,16 +1302,16 @@ def _mlx_worker_loop(
     All Metal/GPU work, model loading, and inference happen inside this
     function's process boundary.  The parent communicates via IPC queues.
     """
-    try:
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-    except (OSError, ValueError):
-        pass  # signal handlers can only be set from the main thread
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - MLXWorker - %(levelname)s - %(message)s',
         stream=sys.stderr
     )
     logger = logging.getLogger("MLXWorker")
+    try:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except (OSError, ValueError) as exc:
+        logger.debug("MLX worker SIGINT ignore hook unavailable: %s", exc)
 
     # Configure worker-specific environment (Metal, SDK, thread limits).
     # This MUST run inside the subprocess, not at module import time,
@@ -1715,7 +1715,7 @@ def _mlx_worker_loop(
                         if "repetition_penalty" in _sparams:
                             sampler_kwargs["repetition_penalty"] = repetition_penalty
                     except (TypeError, ValueError):
-                        pass  # no-op: signature introspection unavailable
+                        logger.debug("make_sampler signature introspection unavailable")
                     kwargs["sampler"] = make_sampler(**sampler_kwargs)
 
                 # [v11.0 HARDENING] Logits Processors (JSON Enforcement)
@@ -1823,7 +1823,7 @@ def _mlx_worker_loop(
                                         logger.warning("⚠️ High memory pressure detected in worker. Clearing MLX cache.")
                                         mx.clear_cache()
                                 except (ImportError, OSError, AttributeError):
-                                    pass  # no-op: psutil unavailable or VM stats inaccessible
+                                    logger.debug("Worker memory pressure probe unavailable")
 
                             # [v11.5 HARDENING] Internal Worker Retries for Structured Leaks & Loops
                             # We allow up to 2 retries if the LLM gets stuck in a loop or returns empty on a schema.
@@ -2303,7 +2303,7 @@ def _mlx_worker_loop(
                         if "repetition_penalty" in _sparams2:
                             sampler_kwargs["repetition_penalty"] = repetition_penalty
                     except (TypeError, ValueError):
-                        pass  # no-op: signature introspection unavailable
+                        logger.debug("stream make_sampler signature introspection unavailable")
                     kwargs["sampler"] = make_sampler(**sampler_kwargs)
 
                 # Apply MLX penalties via logits processors
@@ -2463,8 +2463,13 @@ def _mlx_worker_loop(
                 try:
                     if prompt_cache_lru is not None:
                         prompt_cache_lru.clear()
-                except (RuntimeError, AttributeError, TypeError, ValueError):
-                    pass  # no-op: intentional
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    _record_mlx_degradation(
+                        exc,
+                        action="continued clear_cache response after prompt cache clear failed",
+                        severity="warning",
+                    )
+                    logger.debug("Prompt cache clear failed during worker clear_cache action: %s", exc)
                 ipc_writer.put({"status": "ok"})
 
         except KeyboardInterrupt:
@@ -2493,4 +2498,5 @@ def _mlx_worker_loop(
             )
 
 if __name__ == "__main__":
-    print("MLX Worker: Running in multiprocessing mode. Use mlx_client.py to launch.")
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+    logger.info("MLX Worker: Running in multiprocessing mode. Use mlx_client.py to launch.")

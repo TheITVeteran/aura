@@ -1301,6 +1301,8 @@ def test_strict_answer_contract_is_deterministic_and_cache_isolated():
     assert "def _first_token_suppression_ids" in worker_source
     assert "def _normalize_strict_value_response" in worker_source
     assert "_STRICT_VALUE_UNUSABLE_RE" in worker_source
+    assert "print(" not in worker_source
+    assert "pass  # no-op" not in worker_source
     assert "Rendering native strict-value chat template" in worker_source
     assert "Strict contract non-empty start guard ACTIVE" in worker_source
     assert 'response_text = _normalize_strict_answer_response(' in worker_source
