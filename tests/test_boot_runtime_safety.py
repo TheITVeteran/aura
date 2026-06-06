@@ -2,10 +2,10 @@ import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import core.runtime.boot_safety as boot_safety_module
 from core.brain.inference_gate import InferenceGate
 from core.brain.llm_health_router import build_router_from_config
 from core.config import PROJECT_ROOT, config
@@ -21,6 +21,16 @@ from core.sensory_motor_cortex import SensoryMotorCortex
 from core.utils.memory_monitor import AppleSiliconMemoryMonitor
 
 VISION_TEST_ROOT = Path(tempfile.gettempdir()) / "aura-test"
+
+
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self.result
 
 
 def test_config_exports_project_root_alias():
@@ -47,9 +57,9 @@ def test_main_process_camera_policy_blocks_darwin_without_override(monkeypatch):
 def test_continuous_vision_blocks_forced_camera_on_darwin(monkeypatch):
     monkeypatch.setenv("AURA_FORCE_CAMERA", "1")
     monkeypatch.delenv("AURA_ALLOW_UNSAFE_MAIN_PROCESS_CAMERA", raising=False)
+    monkeypatch.setattr(boot_safety_module.sys, "platform", "darwin")
 
-    with patch("core.runtime.boot_safety.sys.platform", "darwin"):
-        buffer = ContinuousSensoryBuffer(VISION_TEST_ROOT)
+    buffer = ContinuousSensoryBuffer(VISION_TEST_ROOT)
 
     assert buffer.camera_enabled is False
 
@@ -57,9 +67,9 @@ def test_continuous_vision_blocks_forced_camera_on_darwin(monkeypatch):
 def test_sensory_motor_cortex_blocks_forced_camera_on_darwin(monkeypatch):
     monkeypatch.setenv("AURA_FORCE_CAMERA", "1")
     monkeypatch.delenv("AURA_ALLOW_UNSAFE_MAIN_PROCESS_CAMERA", raising=False)
+    monkeypatch.setattr(boot_safety_module.sys, "platform", "darwin")
 
-    with patch("core.runtime.boot_safety.sys.platform", "darwin"):
-        cortex = SensoryMotorCortex()
+    cortex = SensoryMotorCortex()
 
     assert cortex.camera_enabled is False
 
@@ -92,18 +102,21 @@ def test_sensory_motor_cortex_skips_volition_while_processing():
 
 @pytest.mark.asyncio
 async def test_sensory_motor_cortex_routes_idle_volition_into_autonomy():
+    trigger_autonomous_thought = AsyncCallRecorder()
+    generate_autonomous_thought = AsyncCallRecorder()
+    emit_spontaneous_message = AsyncCallRecorder()
     orchestrator = SimpleNamespace(
-        _trigger_autonomous_thought=AsyncMock(),
-        generate_autonomous_thought=AsyncMock(),
-        emit_spontaneous_message=AsyncMock(),
+        _trigger_autonomous_thought=trigger_autonomous_thought,
+        generate_autonomous_thought=generate_autonomous_thought,
+        emit_spontaneous_message=emit_spontaneous_message,
     )
     cortex = SensoryMotorCortex(orchestrator=orchestrator)
 
     await cortex._dispatch_idle_volition(reason="idle_timeout")
 
-    orchestrator._trigger_autonomous_thought.assert_awaited_once_with(False)
-    orchestrator.generate_autonomous_thought.assert_not_called()
-    orchestrator.emit_spontaneous_message.assert_not_called()
+    assert trigger_autonomous_thought.calls == [((False,), {})]
+    assert generate_autonomous_thought.calls == []
+    assert emit_spontaneous_message.calls == []
 
 
 def test_memory_monitor_uses_psutil_pressure_sample(monkeypatch):
@@ -146,7 +159,8 @@ async def test_lazy_local_client_initializes_off_event_loop(monkeypatch):
     from core.brain.llm.model_registry import BRAINSTEM_ENDPOINT
 
     client = router.endpoints[BRAINSTEM_ENDPOINT].client
-    downstream = SimpleNamespace(generate_text_async=AsyncMock(return_value="ok"))
+    generate_text_async = AsyncCallRecorder("ok")
+    downstream = SimpleNamespace(generate_text_async=generate_text_async)
     offloads = []
 
     async def fake_to_thread(fn):
@@ -158,7 +172,7 @@ async def test_lazy_local_client_initializes_off_event_loop(monkeypatch):
 
     assert await client.generate_text_async("hello") == "ok"
     assert len(offloads) == 1
-    downstream.generate_text_async.assert_awaited_once_with("hello")
+    assert generate_text_async.calls == [(("hello",), {})]
 
 
 def test_desktop_safe_boot_tracks_app_launch_context(monkeypatch):
@@ -347,17 +361,22 @@ async def test_continuous_vision_defers_screen_backend_without_permission(monkey
             self.mss_calls += 1
             raise AssertionError("mss() should not be called without active permission")
 
-    guard = MagicMock()
-    guard.check_permission = AsyncMock(return_value={"granted": False, "status": "deferred"})
+    check_permission = AsyncCallRecorder({"granted": False, "status": "deferred"})
+    guard = SimpleNamespace(check_permission=check_permission)
 
     fake_mss = _FakeMSSModule()
     monkeypatch.setitem(sys.modules, "mss", fake_mss)
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        classmethod(lambda cls, name, default=None: guard if name == "permission_guard" else default),
+    )
 
-    with patch("core.container.ServiceContainer.get", return_value=guard):
-        buffer = ContinuousSensoryBuffer(VISION_TEST_ROOT)
-        ready = await buffer._ensure_screen_backend()
+    buffer = ContinuousSensoryBuffer(VISION_TEST_ROOT)
+    ready = await buffer._ensure_screen_backend()
 
     assert ready is False
+    assert len(check_permission.calls) == 1
     assert fake_mss.mss_calls == 0
     assert buffer.sct is None
     assert buffer.monitor is None

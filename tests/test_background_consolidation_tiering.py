@@ -1,5 +1,4 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -9,10 +8,21 @@ from core.runtime.errors import get_degradation_tracker
 from core.state.aura_state import AuraState
 
 
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self.result
+
+
 @pytest.mark.asyncio
 async def test_sovereign_pruner_uses_background_think_lane():
+    think = AsyncCallRecorder(SimpleNamespace(content="The exchange revealed a stable preference."))
     brain = SimpleNamespace(
-        think=AsyncMock(return_value=SimpleNamespace(content="The exchange revealed a stable preference.")),
+        think=think,
     )
     orchestrator = SimpleNamespace(cognitive_engine=brain)
     pruner = SovereignPruner(orchestrator=orchestrator)
@@ -29,7 +39,8 @@ async def test_sovereign_pruner_uses_background_think_lane():
     )
 
     assert result == "The exchange revealed a stable preference."
-    _, kwargs = brain.think.await_args
+    assert len(think.calls) == 1
+    _, kwargs = think.calls[0]
     assert kwargs["origin"] == "sovereign_pruner"
     assert kwargs["is_background"] is True
 
@@ -59,7 +70,8 @@ async def test_memory_consolidation_skips_ephemeral_fallback_messages():
 
 @pytest.mark.asyncio
 async def test_memory_consolidation_commits_completed_turn_to_memory_facade():
-    memory_facade = SimpleNamespace(commit_interaction=AsyncMock())
+    commit_interaction = AsyncCallRecorder()
+    memory_facade = SimpleNamespace(commit_interaction=commit_interaction)
     container = SimpleNamespace(
         get=lambda name, default=None: memory_facade if name == "memory_facade" else default
     )
@@ -76,8 +88,8 @@ async def test_memory_consolidation_commits_completed_turn_to_memory_facade():
 
     new_state = await phase.execute(state, objective="Discuss the song")
 
-    memory_facade.commit_interaction.assert_awaited_once()
-    _, kwargs = memory_facade.commit_interaction.await_args
+    assert len(commit_interaction.calls) == 1
+    _, kwargs = commit_interaction.calls[0]
     assert kwargs["context"] == "What do you think this song means?"
     assert kwargs["action"] == "conversation_reply"
     assert kwargs["outcome"] == "It feels like a song about clarity under pressure."

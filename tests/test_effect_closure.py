@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
@@ -23,6 +22,16 @@ class _ReplyQueue:
 
     def put_nowait(self, value: str, **_kwargs) -> None:
         self.items.append(value)
+
+
+class _AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self.result
 
 
 class _DemoSkill(BaseSkill):
@@ -125,24 +134,26 @@ async def test_base_skill_blocks_direct_execution_when_runtime_live(service_cont
 @pytest.mark.asyncio
 async def test_capability_engine_executes_skill_inside_governed_scope(service_container, monkeypatch):
     _live_runtime(service_container)
+    begin_tool_execution = _AsyncCallRecorder(
+        SimpleNamespace(
+            approved=True,
+            constraints={},
+            capability_token_id="tok-1",
+            decision=ConstitutionalDecision(
+                proposal_id="tool-1",
+                kind=ProposalKind.TOOL,
+                outcome=ProposalOutcome.APPROVED,
+                reason="ok",
+                source="test",
+                constraints={"will_receipt_id": "will-1", "governance_domain": "tool_execution"},
+            ),
+        )
+    )
+    finish_tool_execution = _AsyncCallRecorder()
 
     fake_constitution = SimpleNamespace(
-        begin_tool_execution=AsyncMock(
-            return_value=SimpleNamespace(
-                approved=True,
-                constraints={},
-                capability_token_id="tok-1",
-                decision=ConstitutionalDecision(
-                    proposal_id="tool-1",
-                    kind=ProposalKind.TOOL,
-                    outcome=ProposalOutcome.APPROVED,
-                    reason="ok",
-                    source="test",
-                    constraints={"will_receipt_id": "will-1", "governance_domain": "tool_execution"},
-                ),
-            )
-        ),
-        finish_tool_execution=AsyncMock(),
+        begin_tool_execution=begin_tool_execution,
+        finish_tool_execution=finish_tool_execution,
     )
     monkeypatch.setattr("core.constitution.get_constitutional_core", lambda *_a, **_k: fake_constitution)
     monkeypatch.setattr(
@@ -179,8 +190,8 @@ async def test_capability_engine_executes_skill_inside_governed_scope(service_co
     result = await CapabilityEngine.execute(engine, "demo_skill", {"value": "ok"}, context={})
 
     assert result["ok"] is True
-    fake_constitution.begin_tool_execution.assert_awaited_once()
-    fake_constitution.finish_tool_execution.assert_awaited_once()
+    assert len(begin_tool_execution.calls) == 1
+    assert len(finish_tool_execution.calls) == 1
 
 
 def test_silent_failover_marks_fallback_as_inferred_and_uncommitted():
