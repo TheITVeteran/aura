@@ -28,6 +28,16 @@ class InferenceGateRecorder:
         return "cortex_startup_quiet"
 
 
+class ContextGenerateClient:
+    def __init__(self, response: str = "context response"):
+        self.response = response
+        self.calls = []
+
+    async def generate(self, prompt, context=None):
+        self.calls.append({"prompt": prompt, "context": dict(context or {})})
+        return self.response
+
+
 @pytest.fixture
 def router_clients():
     router = HealthAwareLLMRouter()
@@ -205,3 +215,42 @@ async def test_gui_report_mapping(router_clients):
     await router.generate("Hello", prefer_tier="secondary", deep_handoff=True)
     report = router.get_health_report()
     assert report["current_tier"] == "Solver (72B)"
+
+
+@pytest.mark.asyncio
+async def test_router_preserves_clean_surface_contract_for_context_generate_client():
+    router = HealthAwareLLMRouter()
+    client = ContextGenerateClient("32B clean surface")
+    router.register(
+        name="Cortex",
+        url="internal",
+        model="cortex-32b",
+        is_local=True,
+        tier="local",
+        client=client,
+    )
+
+    result = await router.generate_with_metadata(
+        "Write a direct user-visible answer.",
+        prefer_tier="primary",
+        origin="user",
+        purpose="chat",
+        foreground_request=True,
+        clean_user_surface_contract=True,
+        clean_user_surface_recurrent_loops=1,
+        clean_user_surface_steering_alpha=0.25,
+        operator_evidence_contract=True,
+        skip_runtime_payload=True,
+    )
+
+    assert result["endpoint"] == "Cortex"
+    assert result["text"] == "32B clean surface"
+    assert len(client.calls) == 1
+    context = client.calls[0]["context"]
+    assert context["origin"] == "user"
+    assert context["prefer_tier"] == "primary"
+    assert context["foreground_request"] is True
+    assert context["operator_evidence_contract"] is True
+    assert context["clean_user_surface_contract"] is True
+    assert context["clean_user_surface_recurrent_loops"] == 1
+    assert context["clean_user_surface_steering_alpha"] == 0.25

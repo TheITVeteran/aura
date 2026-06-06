@@ -1241,6 +1241,10 @@ def test_health_router_preserves_inference_gate_context_for_direct_generate():
     assert '"max_tokens"' in source
     assert '"strict_answer_contract"' in source
     assert '"strict_value_contract"' in source
+    assert '"operator_evidence_contract"' in source
+    assert '"clean_user_surface_contract"' in source
+    assert '"clean_user_surface_steering_alpha"' in source
+    assert '"clean_user_surface_recurrent_loops"' in source
     assert '"disable_prompt_cache"' in source
 
 
