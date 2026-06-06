@@ -1,6 +1,6 @@
 import time
+import inspect
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -8,6 +8,42 @@ from core.container import ServiceContainer
 from core.self_modification import self_modification_engine as sm_mod
 from core.self_modification.safe_modification import LogicTransplant, SafeSelfModification
 from core.self_modification.shadow_ast_healer import ShadowASTHealer
+
+
+class _RecordedCall:
+    def __init__(self, args, kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+
+class _AsyncCallRecorder:
+    def __init__(self, result=None, *, side_effect=None):
+        self.return_value = result
+        self.side_effect = side_effect
+        self.await_args_list = []
+        self.await_args = None
+
+    @property
+    def await_count(self):
+        return len(self.await_args_list)
+
+    def __call__(self, *args, **kwargs):
+        call = _RecordedCall(args, kwargs)
+        self.await_args_list.append(call)
+        self.await_args = call
+
+        async def _complete():
+            if isinstance(self.side_effect, BaseException):
+                raise self.side_effect
+            if callable(self.side_effect):
+                value = self.side_effect(*args, **kwargs)
+            else:
+                value = self.return_value
+            if inspect.isawaitable(value):
+                return await value
+            return value
+
+        return _complete()
 
 
 @pytest.mark.asyncio
@@ -57,7 +93,7 @@ async def test_runtime_self_modification_promotion_requires_operator_opt_in(monk
     engine.auto_fix_enabled = True
     engine._auto_fix_requested = True
     engine.session_stats = {"session_start": time.time()}
-    engine.diagnose_current_bugs = AsyncMock(return_value=[])
+    engine.diagnose_current_bugs = _AsyncCallRecorder(result=[])
 
     result = await engine.run_autonomous_cycle()
 
@@ -153,7 +189,9 @@ async def test_autonomous_cycle_returns_structured_failure_when_diagnosis_crashe
     )
     engine.auto_fix_enabled = False
     engine.session_stats = {"session_start": time.time()}
-    engine.diagnose_current_bugs = AsyncMock(side_effect=RuntimeError("diagnosis down"))
+    engine.diagnose_current_bugs = _AsyncCallRecorder(
+        side_effect=RuntimeError("diagnosis down")
+    )
 
     result = await engine.run_autonomous_cycle()
 
@@ -181,7 +219,9 @@ async def test_refinement_cycle_returns_structured_failure_when_analysis_crashes
     )
     engine.session_stats = {"session_start": time.time()}
     engine.kernel_refiner = SimpleNamespace(
-        analyze_kernel_health=AsyncMock(side_effect=RuntimeError("refiner down"))
+        analyze_kernel_health=_AsyncCallRecorder(
+            side_effect=RuntimeError("refiner down")
+        )
     )
 
     result = await engine.run_refinement_cycle()
@@ -202,7 +242,7 @@ async def test_report_optimization_preserves_sandbox_results_for_safe_apply():
     fix = SimpleNamespace(target_file="core/example.py")
     sandbox_results = {"success": True, "suite": "sandbox"}
     engine.code_repair = SimpleNamespace(
-        repair_bug=AsyncMock(return_value=(True, fix, sandbox_results))
+        repair_bug=_AsyncCallRecorder(result=(True, fix, sandbox_results))
     )
     captured = {}
 
@@ -223,19 +263,19 @@ async def test_report_optimization_preserves_sandbox_results_for_safe_apply():
 
 
 @pytest.mark.asyncio
-async def test_swarm_review_accepts_logic_transplant_patch_shape():
+async def test_swarm_review_accepts_logic_transplant_patch_shape(monkeypatch):
     engine = sm_mod.AutonomousSelfModificationEngine.__new__(
         sm_mod.AutonomousSelfModificationEngine
     )
-    swarm = SimpleNamespace(delegate_debate=AsyncMock(return_value="APPROVE"))
+    swarm = SimpleNamespace(delegate_debate=_AsyncCallRecorder(result="APPROVE"))
     fix = LogicTransplant(
         target_file="core/example.py",
         explanation="whole-file import repair",
         chunks=[{"original": "value = 1\n", "fixed": "value = 2\n"}],
     )
 
-    with patch("core.container.ServiceContainer.get", return_value=swarm):
-        result = await engine._swarm_review({"fix": fix, "bug": {"diagnosis": "repair"}})
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(lambda *_args, **_kwargs: swarm))
+    result = await engine._swarm_review({"fix": fix, "bug": {"diagnosis": "repair"}})
 
     assert result is True
     topic = swarm.delegate_debate.await_args.args[0]
@@ -255,8 +295,8 @@ async def test_swarm_review_fails_closed_when_delegator_missing(monkeypatch):
     )
     fix = SimpleNamespace(target_file="core/example.py", fixed_code="value = 2\n")
 
-    with patch("core.container.ServiceContainer.get", return_value=None):
-        result = await engine._swarm_review({"fix": fix, "bug": {"diagnosis": "repair"}})
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(lambda *_args, **_kwargs: None))
+    result = await engine._swarm_review({"fix": fix, "bug": {"diagnosis": "repair"}})
 
     assert result is False
     assert recorded
@@ -277,11 +317,11 @@ async def test_swarm_review_force_fails_closed_without_delegator(monkeypatch):
     )
     fix = SimpleNamespace(target_file="core/example.py", fixed_code="value = 2\n")
 
-    with patch("core.container.ServiceContainer.get", return_value=None):
-        result = await engine._swarm_review(
-            {"fix": fix, "bug": {"diagnosis": "repair"}},
-            force=True,
-        )
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(lambda *_args, **_kwargs: None))
+    result = await engine._swarm_review(
+        {"fix": fix, "bug": {"diagnosis": "repair"}},
+        force=True,
+    )
 
     assert result is False
     assert recorded
@@ -443,9 +483,11 @@ async def test_safe_modification_blocks_branch_promotion_outside_repair_lab(tmp_
     safe_mod.event_bus = None
     safe_mod.backup = Backup()
     safe_mod.git = Git()
-    safe_mod.boot_validator = SimpleNamespace(validate_boot=AsyncMock(return_value=(True, "ok")))
+    safe_mod.boot_validator = SimpleNamespace(
+        validate_boot=_AsyncCallRecorder(result=(True, "ok"))
+    )
     safe_mod.modification_log = tmp_path / "modifications.jsonl"
-    safe_mod._run_full_test_suite = AsyncMock(
+    safe_mod._run_full_test_suite = _AsyncCallRecorder(
         side_effect=AssertionError("promotion policy must block before suite execution")
     )
 
@@ -498,8 +540,10 @@ async def test_safe_modification_refuses_preview_or_bare_success_evidence(tmp_pa
     }
     safe_mod.event_bus = None
     safe_mod.backup = SimpleNamespace(create_backup=lambda *_args, **_kwargs: "backup-id")
-    safe_mod.git = SimpleNamespace(create_branch=AsyncMock(return_value=False))
-    safe_mod.boot_validator = SimpleNamespace(validate_boot=AsyncMock(return_value=(True, "ok")))
+    safe_mod.git = SimpleNamespace(create_branch=_AsyncCallRecorder(result=False))
+    safe_mod.boot_validator = SimpleNamespace(
+        validate_boot=_AsyncCallRecorder(result=(True, "ok"))
+    )
     safe_mod.modification_log = tmp_path / "modifications.jsonl"
 
     full_suite_calls = []
@@ -556,11 +600,13 @@ async def test_safe_modification_blocks_no_branch_promotion_without_supervision(
     }
     safe_mod.event_bus = None
     safe_mod.backup = SimpleNamespace(create_backup=lambda *_args, **_kwargs: "backup-id")
-    safe_mod.git = SimpleNamespace(create_branch=AsyncMock(return_value=False))
-    safe_mod.boot_validator = SimpleNamespace(validate_boot=AsyncMock(return_value=(True, "ok")))
+    safe_mod.git = SimpleNamespace(create_branch=_AsyncCallRecorder(result=False))
+    safe_mod.boot_validator = SimpleNamespace(
+        validate_boot=_AsyncCallRecorder(result=(True, "ok"))
+    )
     safe_mod.modification_log = tmp_path / "modifications.jsonl"
 
-    safe_mod._run_full_test_suite = AsyncMock(
+    safe_mod._run_full_test_suite = _AsyncCallRecorder(
         side_effect=AssertionError("branch policy must block before suite execution")
     )
 
@@ -623,10 +669,12 @@ async def test_safe_modification_allows_supervised_no_branch_promotion(
     }
     safe_mod.event_bus = None
     safe_mod.backup = Backup()
-    safe_mod.git = SimpleNamespace(create_branch=AsyncMock(return_value=False))
-    safe_mod.boot_validator = SimpleNamespace(validate_boot=AsyncMock(return_value=(True, "ok")))
+    safe_mod.git = SimpleNamespace(create_branch=_AsyncCallRecorder(result=False))
+    safe_mod.boot_validator = SimpleNamespace(
+        validate_boot=_AsyncCallRecorder(result=(True, "ok"))
+    )
     safe_mod.modification_log = tmp_path / "modifications.jsonl"
-    safe_mod._run_full_test_suite = AsyncMock(return_value=True)
+    safe_mod._run_full_test_suite = _AsyncCallRecorder(result=True)
 
     fix = SimpleNamespace(
         target_file="core/example.py",
