@@ -1,13 +1,32 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from core.ops.resilient_boot import BootStatus, ResilientBoot
 
 
-class _DummyOrchestrator:
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.result
+
+
+class CallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.result
+
+
+class _OrchestratorShell:
     __slots__ = ()
 
 
@@ -16,7 +35,7 @@ async def _failing_llm_stage():
     raise RuntimeError("llama_server_missing")
 
 
-def _stub_boot_dependencies(monkeypatch):
+def _install_boot_dependencies(monkeypatch):
     immunity = SimpleNamespace(
         hook_system=lambda: None,
         registry=SimpleNamespace(
@@ -33,24 +52,28 @@ def _stub_boot_dependencies(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stage_llm_prepares_client_without_warmup():
-    boot = ResilientBoot(_DummyOrchestrator())
-    client = MagicMock()
-    client.warmup = AsyncMock()
+async def test_stage_llm_prepares_client_without_warmup(monkeypatch):
+    boot = ResilientBoot(_OrchestratorShell())
+    client = SimpleNamespace(warmup=AsyncCallRecorder())
+    get_client = CallRecorder(result=client)
 
-    with patch("core.brain.llm.mlx_client.get_mlx_client", return_value=client) as get_client:
-        with patch("core.brain.llm.model_registry.get_local_backend", return_value="mlx"):
-            with patch("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                with patch("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
-                    await boot._stage_llm()
+    monkeypatch.setattr("core.brain.llm.mlx_client.get_mlx_client", get_client)
+    monkeypatch.setattr("core.brain.llm.model_registry.get_local_backend", lambda: "mlx")
+    model_path_lookup = CallRecorder(result="/models/active")
+    monkeypatch.setattr("core.brain.llm.model_registry.get_runtime_model_path", model_path_lookup)
+    monkeypatch.setattr("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE")
+    await boot._stage_llm()
 
-    get_client.assert_called_once_with(model_path="/models/active")
-    client.warmup.assert_not_awaited()
+    assert len(model_path_lookup.calls) == 1
+    assert model_path_lookup.calls[0].args == ("ACTIVE",)
+    assert len(get_client.calls) == 1
+    assert get_client.calls[0].kwargs == {"model_path": "/models/active"}
+    assert client.warmup.calls == []
 
 
 @pytest.mark.asyncio
 async def test_resilient_boot_strict_runtime_fails_closed_on_llm_stage_error(service_container, monkeypatch):
-    _stub_boot_dependencies(monkeypatch)
+    _install_boot_dependencies(monkeypatch)
     monkeypatch.setenv("AURA_STRICT_RUNTIME", "1")
 
     orchestrator = SimpleNamespace(status=SimpleNamespace(initialized=False, health_metrics={}))
@@ -64,7 +87,7 @@ async def test_resilient_boot_strict_runtime_fails_closed_on_llm_stage_error(ser
 
 @pytest.mark.asyncio
 async def test_resilient_boot_non_strict_runtime_degrades_on_llm_stage_error(service_container, monkeypatch):
-    _stub_boot_dependencies(monkeypatch)
+    _install_boot_dependencies(monkeypatch)
     monkeypatch.delenv("AURA_STRICT_RUNTIME", raising=False)
 
     orchestrator = SimpleNamespace(status=SimpleNamespace(initialized=False, health_metrics={}))
