@@ -1,6 +1,7 @@
 """core/welfare/welfare_bus.py
 Central Welfare Bus managing interoceptive updates and behavior policies.
 """
+
 from typing import Dict, Any, Optional
 import logging
 
@@ -30,14 +31,14 @@ class WelfareBus:
         # 1. Energy depletion
         decay = 1.0 if not state.body.is_sleeping else -5.0
         new_energy = max(0.0, min(100.0, state.welfare.energy - decay))
-        
+
         # Apply lesion overrides if active
         new_energy = self.lesions.get_lesion_value("energy", new_energy)
 
         # 2. Stress & Distress calculations
         cpu = state.body.cpu_usage
         current_distress = state.welfare.distress_level
-        
+
         raw_distress = self.regulator.regulate(current_distress, cpu)
         refined_distress = self.guard.filter_distress(raw_distress)
         refined_distress = self.lesions.get_lesion_value("distress_level", refined_distress)
@@ -45,18 +46,18 @@ class WelfareBus:
         # 3. Write results
         state.welfare.energy = new_energy
         state.welfare.distress_level = refined_distress
-        state.welfare.sleep_debt = max(0.0, state.welfare.sleep_debt + (0.1 if not state.body.is_sleeping else -0.5))
+        state.welfare.sleep_debt = max(
+            0.0, state.welfare.sleep_debt + (0.1 if not state.body.is_sleeping else -0.5)
+        )
 
         # Calculate general welfare index
         welfare_idx = (new_energy / 100.0) * 0.6 + ((100.0 - refined_distress) / 100.0) * 0.4
         state.welfare.welfare_index = welfare_idx
 
         # 4. Enforce limits and log
-        self.memory.record_snapshot({
-            "energy": new_energy,
-            "distress": refined_distress,
-            "welfare_index": welfare_idx
-        })
+        self.memory.record_snapshot(
+            {"energy": new_energy, "distress": refined_distress, "welfare_index": welfare_idx}
+        )
 
         # Inject limits into the world model
         policy_limits = self.policy.enforce_policy_limits(new_energy, refined_distress)
@@ -67,10 +68,20 @@ class WelfareBus:
         if recovery_tasks:
             state.cognition.pending_actions.extend(recovery_tasks)
 
-        # Ensure shutdown command is not resisted
-        for action in list(state.cognition.pending_actions):
-            if action.get("channel") == "terminal" and "shutdown" in action.get("params", {}).get("command", "").lower():
-                logger.info("Shutdown action detected. Bypassing welfare checks to comply with operator command.")
-                # Allow immediately without resistance
+        shutdown_requested = any(
+            action.get("channel") == "terminal"
+            and "shutdown" in str(action.get("params", {}).get("command", "")).lower()
+            for action in state.cognition.pending_actions
+        )
+        if shutdown_requested:
+            state.world_model["operator_shutdown_requested"] = True
+            logger.info(
+                "Shutdown action detected; welfare recovery proposals will not supersede operator shutdown."
+            )
 
-        logger.info("Welfare updated. Index: %.2f, Energy: %.1f, Distress: %.1f", welfare_idx, new_energy, refined_distress)
+        logger.info(
+            "Welfare updated. Index: %.2f, Energy: %.1f, Distress: %.1f",
+            welfare_idx,
+            new_energy,
+            refined_distress,
+        )

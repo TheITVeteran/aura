@@ -2,6 +2,7 @@
 Execution steps for a single tick of the canonical organism loop.
 Enforces Pydantic contracts and broadcasts loop states to the EventBus.
 """
+
 import logging
 import time
 import uuid
@@ -25,7 +26,7 @@ from core.organism.life_events import (
     ValueUpdated,
     IdentityUpdated,
     RepairProposed,
-    PrivacyClass
+    PrivacyClass,
 )
 from core.version import VERSION
 
@@ -52,6 +53,7 @@ class LifeTickProcessor:
     async def _publish_event(self, topic: str, event: Any) -> None:
         try:
             from core.event_bus import get_event_bus, EventPriority
+
             eb = get_event_bus()
             if hasattr(event, "model_dump"):
                 data = event.model_dump()
@@ -126,6 +128,7 @@ class LifeTickProcessor:
     async def _perceive_world(self, state: LifeState) -> None:
         try:
             from core.body.body_runtime import get_body_runtime
+
             body = get_body_runtime()
             observations = await body.perceive_all(state)
             state.world_model["last_observations"] = observations
@@ -139,7 +142,7 @@ class LifeTickProcessor:
                 parsed_content=observations,
                 confidence=0.95,
                 uncertainty=0.05,
-                privacy_class=PrivacyClass.LOCAL_ONLY
+                privacy_class=PrivacyClass.LOCAL_ONLY,
             )
             await self._publish_event("organism/perception", event)
         except _LIFE_TICK_RECOVERABLE_ERRORS as exc:
@@ -149,6 +152,7 @@ class LifeTickProcessor:
     async def _update_body(self, state: LifeState) -> None:
         try:
             from core.body.body_runtime import get_body_runtime
+
             body = get_body_runtime()
             status = await body.get_system_status()
             state.body.battery_level = status.get("battery", 100.0)
@@ -181,7 +185,7 @@ class LifeTickProcessor:
                 uncertainty_load=state.cognition.uncertainty_score,
                 error_rate=0.0,
                 repair_need=scaling["defer_dream_cycles"],
-                user_interruptibility=10.0
+                user_interruptibility=10.0,
             )
             await self._publish_event("organism/body_state", event)
         except _LIFE_TICK_RECOVERABLE_ERRORS as exc:
@@ -190,6 +194,7 @@ class LifeTickProcessor:
     async def _update_beliefs(self, state: LifeState) -> None:
         try:
             from core.world.belief_revision import BeliefRevisionEngine
+
             engine = BeliefRevisionEngine()
             await engine.revise_beliefs(state)
 
@@ -204,7 +209,7 @@ class LifeTickProcessor:
                 decay_policy="dynamic_decay",
                 contradictions=[],
                 supporting_evidence=["observations"],
-                downstream_uses=["attention", "welfare"]
+                downstream_uses=["attention", "welfare"],
             )
             await self._publish_event("organism/beliefs", event)
         except _LIFE_TICK_RECOVERABLE_ERRORS as exc:
@@ -213,6 +218,7 @@ class LifeTickProcessor:
     async def _update_goals_drives_preferences(self, state: LifeState) -> None:
         try:
             from core.agency.mission_manager import get_mission_manager
+
             manager = get_mission_manager()
             await manager.update_goals_and_drives(state)
 
@@ -233,7 +239,7 @@ class LifeTickProcessor:
                     allowed_tools=list(goal.get("allowed_tools", [])),
                     forbidden_tools=list(goal.get("forbidden_tools", [])),
                     risk_class=str(goal.get("risk_class", "low")),
-                    dependencies=list(goal.get("dependencies", []))
+                    dependencies=list(goal.get("dependencies", [])),
                 )
                 await self._publish_event("organism/goals", event)
         except _LIFE_TICK_RECOVERABLE_ERRORS as exc:
@@ -242,6 +248,7 @@ class LifeTickProcessor:
     async def _choose_attention(self, state: LifeState) -> None:
         try:
             from core.executive.attention_controller import AttentionController
+
             controller = AttentionController()
             state.cognition.active_attention = await controller.focus_attention(state)
 
@@ -253,7 +260,7 @@ class LifeTickProcessor:
                 target_object=state.cognition.active_attention,
                 reason_for_attention="priority_reconciliation",
                 salience_score=1.0,
-                estimated_cost=0.1
+                estimated_cost=0.1,
             )
             await self._publish_event("organism/attention", event)
         except _LIFE_TICK_RECOVERABLE_ERRORS as exc:
@@ -262,17 +269,18 @@ class LifeTickProcessor:
     async def _deliberate(self, state: LifeState) -> None:
         try:
             from core.executive.executive_kernel import DeliberationEngine
+
             engine = DeliberationEngine()
             await engine.deliberate(state)
 
             # Process global workspace tick (metacognition and monologue)
             try:
                 from core.workspace.global_workspace import GlobalWorkspace
+
                 gw = GlobalWorkspace()
                 gw.process_workspace_tick(state)
             except _LIFE_TICK_RECOVERABLE_ERRORS as e:
                 record_degradation("organism.workspace_tick", e)
-
 
             # Build and publish PlanProposed
             plans = state.world_model.get("active_plans", [])
@@ -291,7 +299,7 @@ class LifeTickProcessor:
                         fallbacks=list(plan.get("fallbacks", [])),
                         verification_method="postcondition",
                         abort_conditions=list(plan.get("abort_criteria", [])),
-                        estimated_cost=float(plan.get("estimated_cost", 0.0))
+                        estimated_cost=float(plan.get("estimated_cost", 0.0)),
                     )
                     await self._publish_event("organism/plans", event)
             else:
@@ -308,7 +316,7 @@ class LifeTickProcessor:
                     fallbacks=[],
                     verification_method="postcondition",
                     abort_conditions=[],
-                    estimated_cost=0.0
+                    estimated_cost=0.0,
                 )
                 await self._publish_event("organism/plans", event)
 
@@ -323,17 +331,30 @@ class LifeTickProcessor:
     async def _act_or_inhibit(self, state: LifeState, intent: Dict[str, Any]) -> Dict[str, Any]:
         try:
             from core.executive.inhibition_system import ActionInhibitor
+
             inhibitor = ActionInhibitor()
-            
+
+            channel = str(intent.get("channel", "unknown"))
+            params = intent.get("params", {})
+            if not isinstance(params, dict):
+                params = {}
+            action_id = str(
+                intent.get("action_id") or params.get("action_id") or f"act-{state.tick_count}"
+            )
+            risk_score = float(
+                intent.get("risk_score", 4.0 if channel in ["terminal", "file"] else 1.0)
+            )
+            capability_token = params.get("capability_token") or intent.get("capability_token")
+
             # 1. Requested
             req_event = ActionRequested(
-                event_id=f"req-{uuid.uuid4()}",
+                event_id=self._new_id("req"),
                 source="executive",
-                action_id=f"act-{state.tick_count}",
-                channel=intent.get("channel", "unknown"),
-                params=intent.get("params", {}),
-                risk_score=4.0 if intent.get("channel") in ["terminal", "file"] else 1.0,
-                requires_approval=False
+                action_id=action_id,
+                channel=channel,
+                params=params,
+                risk_score=risk_score,
+                requires_approval=risk_score >= 4.0,
             )
             await self._publish_event("organism/action_requested", req_event)
 
@@ -343,37 +364,46 @@ class LifeTickProcessor:
 
             # 2. Approved
             app_event = ActionApproved(
-                event_id=f"appr-{uuid.uuid4()}",
+                event_id=self._new_id("appr"),
                 source="executive",
                 action_id=req_event.action_id,
-                approved_by="governance_kernel",
+                approved_by="inhibition_system",
                 posture="owner_autonomous",
-                capability_token="valid_token"
+                capability_token=str(capability_token) if capability_token else None,
+                authority_receipt_id=(
+                    str(params.get("authority_receipt_id") or params.get("will_receipt_id"))
+                    if params.get("authority_receipt_id") or params.get("will_receipt_id")
+                    else None
+                ),
             )
             await self._publish_event("organism/action_approved", app_event)
 
             # 3. Executed
             from core.body.action_body import get_action_body
+
             action_body = get_action_body()
             receipt = await action_body.execute_action(intent, state)
+            if not isinstance(receipt, dict):
+                receipt = {"status": "failed", "error": "motor returned non-dict receipt"}
 
             # Copy causal plan and goal metadata to receipt for verification tracking
-            if "plan_id" in intent.get("params", {}):
-                receipt["plan_id"] = intent["params"]["plan_id"]
-            if "goal_id" in intent.get("params", {}):
-                receipt["goal_id"] = intent["params"]["goal_id"]
+            if "plan_id" in params:
+                receipt["plan_id"] = params["plan_id"]
+            if "goal_id" in params:
+                receipt["goal_id"] = params["goal_id"]
             receipt["action_id"] = req_event.action_id
+            receipt.setdefault("receipt_id", self._new_id("rec"))
 
             exec_event = ActionExecuted(
-                event_id=f"exec-{uuid.uuid4()}",
+                event_id=self._new_id("exec"),
                 source="body",
                 action_id=req_event.action_id,
-                receipt_id=receipt.get("receipt_id", f"rec-{uuid.uuid4()}"),
-                channel=intent.get("channel", "unknown"),
+                receipt_id=str(receipt["receipt_id"]),
+                channel=channel,
                 status=receipt.get("status", "success"),
                 stdout=receipt.get("stdout"),
                 stderr=receipt.get("stderr"),
-                exit_code=receipt.get("exit_code")
+                exit_code=receipt.get("exit_code"),
             )
             await self._publish_event("organism/action_executed", exec_event)
             return receipt
@@ -384,6 +414,7 @@ class LifeTickProcessor:
     async def _verify_consequence(self, state: LifeState, receipt: Dict[str, Any]) -> None:
         try:
             from core.body.action_postcondition import ActionPostconditionVerifier
+
             verifier = ActionPostconditionVerifier()
             verification = await verifier.verify(receipt, state)
 
@@ -406,13 +437,15 @@ class LifeTickProcessor:
 
             # Update prediction accuracy history
             prediction_history = state.world_model.setdefault("prediction_history", [])
-            prediction_history.append({
-                "action_id": receipt.get("action_id"),
-                "expected": expected,
-                "observed": observed,
-                "success": success,
-                "timestamp": time.time()
-            })
+            prediction_history.append(
+                {
+                    "action_id": receipt.get("action_id"),
+                    "expected": expected,
+                    "observed": observed,
+                    "success": success,
+                    "timestamp": time.time(),
+                }
+            )
 
             # Build and publish ConsequenceVerified
             event = ConsequenceVerified(
@@ -423,7 +456,7 @@ class LifeTickProcessor:
                 observed_evidence=observed,
                 success=success,
                 side_effects=verification.get("side_effects", []),
-                mismatch_description=mismatch
+                mismatch_description=mismatch,
             )
             await self._publish_event("organism/consequences", event)
 
@@ -433,6 +466,7 @@ class LifeTickProcessor:
     async def _update_memory(self, state: LifeState, receipt: Optional[Dict[str, Any]]) -> None:
         try:
             from core.memory.autobiography import AutobiographyEngine
+
             engine = AutobiographyEngine()
             await engine.record_tick_event(state, receipt)
 
@@ -442,8 +476,10 @@ class LifeTickProcessor:
                 source="memory",
                 memory_id=f"ep-{state.tick_count}",
                 type="episodic",
-                content=self._event_content(state.autobiographical_memory[-1]) if state.autobiographical_memory else {},
-                sensitivity=PrivacyClass.LOCAL_ONLY
+                content=self._event_content(state.autobiographical_memory[-1])
+                if state.autobiographical_memory
+                else {},
+                sensitivity=PrivacyClass.LOCAL_ONLY,
             )
             await self._publish_event("organism/memory", event)
         except _LIFE_TICK_RECOVERABLE_ERRORS as exc:
@@ -452,11 +488,13 @@ class LifeTickProcessor:
     async def _update_welfare(self, state: LifeState) -> None:
         try:
             from core.welfare.welfare_bus import WelfareBus
+
             bus = WelfareBus()
             await bus.evaluate_welfare(state)
 
             # Tick the viability engine and update LifeState viability
             from core.organism.viability import get_viability
+
             viability_engine = get_viability()
             viability_state = viability_engine.tick()
             state.welfare.viability_state = viability_state.value
@@ -469,7 +507,7 @@ class LifeTickProcessor:
                 energy=state.welfare.energy,
                 stress=state.welfare.stress,
                 distress_level=state.welfare.distress_level,
-                sleep_debt=state.welfare.sleep_debt
+                sleep_debt=state.welfare.sleep_debt,
             )
             await self._publish_event("organism/welfare", event)
         except _LIFE_TICK_RECOVERABLE_ERRORS as exc:
@@ -478,6 +516,7 @@ class LifeTickProcessor:
     async def _update_values(self, state: LifeState) -> None:
         try:
             from core.values.preference_provenance import PreferenceProvenanceManager
+
             manager = PreferenceProvenanceManager()
             await manager.evaluate_preferences(state)
 
@@ -489,7 +528,7 @@ class LifeTickProcessor:
                 statement="balance_efficiency_and_correctness",
                 priority=state.active_preferences.get("accuracy", 0.8),
                 hard_limit=False,
-                conflicts=[]
+                conflicts=[],
             )
             await self._publish_event("organism/values", event)
         except _LIFE_TICK_RECOVERABLE_ERRORS as exc:
@@ -498,6 +537,7 @@ class LifeTickProcessor:
     async def _consolidate_identity(self, state: LifeState) -> None:
         try:
             from core.identity.identity_kernel import IdentityKernel
+
             kernel = IdentityKernel()
             await kernel.guard_identity_continuity(state)
 
@@ -506,11 +546,17 @@ class LifeTickProcessor:
                 event_id=self._new_id("id"),
                 source="identity",
                 active_version=str(state.identity.get("version") or VERSION),
-                active_modules=list(state.identity.get("active_modules", ["organism", "body", "memory"])),
+                active_modules=list(
+                    state.identity.get("active_modules", ["organism", "body", "memory"])
+                ),
                 disabled_modules=list(state.identity.get("disabled_modules", [])),
                 known_limitations=["subjective_experience_not_established"],
-                active_permissions=list(state.identity.get("active_permissions", ["local_execution"])),
-                capability_boundaries=list(state.identity.get("capability_boundaries", ["sandbox"]))
+                active_permissions=list(
+                    state.identity.get("active_permissions", ["local_execution"])
+                ),
+                capability_boundaries=list(
+                    state.identity.get("capability_boundaries", ["sandbox"])
+                ),
             )
             await self._publish_event("organism/identity", event)
         except _LIFE_TICK_RECOVERABLE_ERRORS as exc:
@@ -519,6 +565,7 @@ class LifeTickProcessor:
     async def _offline_cycle(self, state: LifeState) -> None:
         try:
             from core.sleep.sleep_cycle import SleepManager
+
             manager = SleepManager()
             if await manager.should_trigger_sleep(state):
                 # Build and publish RepairProposed
@@ -529,7 +576,7 @@ class LifeTickProcessor:
                     subsystem="welfare",
                     issue_description="energy_depleted",
                     patch_diff="restore_energy_budget",
-                    rollback_plan="exit_sleep"
+                    rollback_plan="exit_sleep",
                 )
                 await self._publish_event("organism/repair", rep_event)
                 await manager.execute_sleep_cycle(state)
