@@ -969,6 +969,53 @@ function escText(value, fallback = '--') {
     return text || fallback;
 }
 
+function safeDisplayUrl(rawUrl, { imageOnly = false } = {}) {
+    const value = String(rawUrl || '').trim();
+    if (!value) return '';
+    try {
+        const parsed = new URL(value, window.location.origin);
+        if (parsed.protocol === 'javascript:' || parsed.protocol === 'vbscript:') return '';
+        if (imageOnly && parsed.protocol === 'data:' && !parsed.href.startsWith('data:image/')) return '';
+        if (['http:', 'https:', 'blob:', 'data:'].includes(parsed.protocol)) return parsed.href;
+        if (parsed.origin === window.location.origin && parsed.pathname.startsWith('/')) return parsed.href;
+    } catch (_err) {
+        return '';
+    }
+    return '';
+}
+
+function messageBadgeHtml(metadata = {}) {
+    if (metadata.diagnostic) return '<span class="aura-badge diagnostic">Diagnostic</span>';
+    if (metadata.reflex) return '<span class="aura-badge reflex">Reflex</span>';
+    if (metadata.autonomic) return '<span class="aura-badge autonomic">Autonomic</span>';
+    return '';
+}
+
+function pruneVisibleMessages(messages) {
+    const MAX_VISIBLE_MESSAGES = 40;
+    while (messages && messages.children.length > MAX_VISIBLE_MESSAGES) {
+        messages.removeChild(messages.firstChild);
+    }
+}
+
+function renderRetryPanel(container, message, retryLabel, retryHandler) {
+    if (!container) return;
+    container.replaceChildren();
+    const box = document.createElement('div');
+    box.className = 'mem-empty';
+    box.append(document.createTextNode(message));
+    if (retryHandler) {
+        box.appendChild(document.createElement('br'));
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'skills-retry-btn';
+        button.textContent = retryLabel || 'RETRY';
+        button.addEventListener('click', retryHandler);
+        box.appendChild(button);
+    }
+    container.appendChild(box);
+}
+
 function toolDomId(name) {
     return `skill-card-${String(name || 'unknown').replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
 }
@@ -1569,7 +1616,11 @@ function reconnectLiveSurface(reason = 'resume') {
             ws.send(JSON.stringify({ type: 'ping', reason }));
         } catch (err) {
             console.warn('[WS] Resume ping failed, reconnecting:', err);
-            try { ws.close(); } catch {}
+            try {
+                ws.close();
+            } catch (closeErr) {
+                console.warn('[WS] Failed to close stale socket before reconnect:', closeErr);
+            }
             connect();
         }
     }
@@ -1652,6 +1703,92 @@ class VoiceStreamPlayer {
 }
 const voicePlayer = new VoiceStreamPlayer();
 
+function appendGeneratedImageMessage(imageUrl, metadata = {}) {
+    const safeUrl = safeDisplayUrl(imageUrl, { imageOnly: true });
+    if (!safeUrl) {
+        appendMsg(
+            'aura',
+            'An image action returned an unsafe or unreadable URL, so the desktop UI refused to render it.',
+            false,
+            { diagnostic: true }
+        );
+        return;
+    }
+
+    const messages = DOM.messages || $('messages');
+    if (!messages) return;
+
+    const div = document.createElement('div');
+    div.className = 'msg aura';
+
+    const avatar = document.createElement('div');
+    avatar.className = 'aura-avatar';
+    div.appendChild(avatar);
+
+    const badge = document.createElement('span');
+    if (metadata.diagnostic) {
+        badge.className = 'aura-badge diagnostic';
+        badge.textContent = 'Diagnostic';
+    } else if (metadata.reflex) {
+        badge.className = 'aura-badge reflex';
+        badge.textContent = 'Reflex';
+    } else if (metadata.autonomic) {
+        badge.className = 'aura-badge autonomic';
+        badge.textContent = 'Autonomic';
+    }
+    if (badge.className) div.appendChild(badge);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'gen-image-wrap';
+
+    const loading = document.createElement('div');
+    loading.className = 'gen-image-loading';
+    loading.textContent = 'Manifesting visualization...';
+    wrap.appendChild(loading);
+
+    const image = document.createElement('img');
+    image.src = safeUrl;
+    image.alt = 'Generated Image';
+    image.className = 'gen-image';
+    image.addEventListener('load', () => {
+        loading.style.display = 'none';
+    });
+    image.addEventListener('error', () => {
+        const retries = Number(image.dataset.retryCount || 0);
+        if (retries >= 1) {
+            loading.textContent = 'Image failed to load.';
+            return;
+        }
+        image.dataset.retryCount = String(retries + 1);
+        loading.textContent = 'Image loading... please wait';
+        const retryUrl = new URL(safeUrl, window.location.origin);
+        if (!['http:', 'https:'].includes(retryUrl.protocol)) {
+            loading.textContent = 'Image failed to load.';
+            return;
+        }
+        retryUrl.searchParams.set('retry', String(Date.now()));
+        window.setTimeout(() => {
+            image.src = retryUrl.href;
+        }, 5000);
+    });
+    image.addEventListener('click', () => {
+        window.open(safeUrl, '_blank', 'noopener,noreferrer');
+    });
+    wrap.appendChild(image);
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'gen-save-btn';
+    saveBtn.type = 'button';
+    saveBtn.textContent = 'MANIFEST TO DESKTOP';
+    saveBtn.addEventListener('click', () => saveImageToDevice(safeUrl));
+    wrap.appendChild(saveBtn);
+
+    div.appendChild(wrap);
+    messages.appendChild(div);
+    pruneVisibleMessages(messages);
+    if (!state.userScrolledUp) messages.scrollTop = messages.scrollHeight;
+}
+
 function handleWsEvent(data) {
     const type = data.kind || data.type;
     if (!['chat_stream_chunk', 'heartbeat', 'ping', 'pong'].includes(type)) {
@@ -1686,32 +1823,24 @@ function handleWsEvent(data) {
     } else if (type === 'action_result') {
         const { tool, result, metadata } = data;
         const isAutonomic = metadata && metadata.autonomic;
-        const badge = isAutonomic ? '<span class="badge badge-autonomic">[Autonomic]</span> ' : '';
 
         // Phase 36: Check for image display at both levels (result and data)
         const displayType = (result && result.display_type) || data.display_type;
         const imageUrl = (result && result.url) || data.url;
 
         if (displayType === 'image' && imageUrl) {
-            const saveBtn = `<button class="gen-save-btn" onclick="saveImageToDevice('${imageUrl}')">MANIFEST TO DESKTOP</button>`;
-            const html = `${badge}<div class="gen-image-wrap"><div class="gen-image-loading" id="img-loading-${Date.now()}">Manifesting visualization...</div><img src="${imageUrl}" alt="Generated Image" class="gen-image" onload="this.previousElementSibling.style.display='none';" onerror="this.previousElementSibling.textContent='Image loading... please wait'; var self=this; setTimeout(function(){self.src=self.src.split('&retry')[0]+'&retry='+Date.now()},5000);" onclick="window.open('${imageUrl}', '_blank')">${saveBtn}</div>`;
-            appendMsg('aura', html, true);
+            appendGeneratedImageMessage(imageUrl, { autonomic: isAutonomic });
             $('typing-ind').classList.remove('show');
         } else if (result) {
             // Non-image action results — show the message if available
             const msg = result.message || `Completed ${tool || 'action'}.`;
-            appendMsg('aura', badge + msg, !!badge);
+            appendMsg('aura', msg, false, { autonomic: isAutonomic });
             $('typing-ind').classList.remove('show');
         }
     } else if (type === 'aura_message' || type === 'chat_response') {
         const msg = data.message || data.content;
         const meta = data.metadata || {};
         if (msg && msg.trim()) {
-            let badge = '';
-            if (meta.autonomic) badge = '<span class="badge badge-autonomic">[Autonomic]</span> ';
-            if (meta.reflex) badge = '<span class="badge badge-reflex">[Reflex]</span> ';
-            if (meta.diagnostic) badge = '<span class="badge badge-diagnostic">⚠️</span> ';
-
             // ZENITH: Content-based deduplication.
             // Use content-only fingerprint — the same response can arrive
             // via HTTP and via WebSocket with different IDs.
@@ -1729,7 +1858,7 @@ function handleWsEvent(data) {
                 }
             }
 
-            appendMsg('aura', badge + msg, !!badge, meta);
+            appendMsg('aura', msg, false, meta);
             $('typing-ind').classList.remove('show');
             triggerVoiceOrb('speaking');
         }
@@ -2428,23 +2557,11 @@ async function appendMsg(role, text, isHtml = false, metadata = {}) {
     const messages = DOM.messages || $('messages');
     const div = document.createElement('div');
     div.className = `msg ${role} typing`;
-
-    // Add Badge if metadata present
-    if (metadata.reflex) {
-        div.innerHTML = `<span class="aura-badge reflex">Reflex</span>`;
-    } else if (metadata.autonomic) {
-        div.innerHTML = `<span class="aura-badge autonomic">Autonomic</span>`;
-    }
+    const isAura = role === 'aura';
+    const badgeHtml = isAura ? messageBadgeHtml(metadata) : '';
 
     messages.appendChild(div);
-
-    // THE FIX: Prune old DOM nodes to keep the UI buttery smooth indefinitely
-    const MAX_VISIBLE_MESSAGES = 40;
-    while (messages.children.length > MAX_VISIBLE_MESSAGES) {
-        messages.removeChild(messages.firstChild);
-    }
-
-    const isAura = role === 'aura';
+    pruneVisibleMessages(messages);
 
     const render = (t) => {
         if (isHtml) return t;
@@ -2548,7 +2665,6 @@ async function appendMsg(role, text, isHtml = false, metadata = {}) {
                 i = nextLimit;
                 lastTypeTime = timestamp;
 
-                const badgeHtml = (metadata.reflex ? `<span class="aura-badge reflex">Reflex</span>` : (metadata.autonomic ? `<span class="aura-badge autonomic">Autonomic</span>` : ''));
                 div.innerHTML = `<div class="aura-avatar"></div>` + badgeHtml + `<div class="msg-content">` + render(currentWordRaw) + thoughtHtml + `</div><div class="msg-meta" data-timestamp="${tsStr}"><span class="msg-timestamp">${tsStr}</span></div>`;
                 if (!state.userScrolledUp) messages.scrollTop = messages.scrollHeight;
             }
@@ -2562,9 +2678,9 @@ async function appendMsg(role, text, isHtml = false, metadata = {}) {
         requestAnimationFrame(typeChunk);
     } else {
         if (isAura) {
-            div.innerHTML = `<div class="aura-avatar"></div>` + (div.innerHTML || '') + `<div class="msg-content">` + render(text) + thoughtHtml + `</div><div class="msg-meta" data-timestamp="${tsStr}"><span class="msg-timestamp">${tsStr}</span></div>`;
+            div.innerHTML = `<div class="aura-avatar"></div>` + badgeHtml + `<div class="msg-content">` + render(text) + thoughtHtml + `</div><div class="msg-meta" data-timestamp="${tsStr}"><span class="msg-timestamp">${tsStr}</span></div>`;
         } else {
-            div.innerHTML += `<div class="msg-content">` + render(text) + `</div><div class="msg-meta" data-timestamp="${tsStr}"><span class="msg-timestamp">${tsStr}</span></div>`;
+            div.innerHTML = `<div class="msg-content">` + render(text) + `</div><div class="msg-meta" data-timestamp="${tsStr}"><span class="msg-timestamp">${tsStr}</span></div>`;
         }
         div.classList.remove('typing');
         if (!state.userScrolledUp) messages.scrollTop = messages.scrollHeight;
@@ -2583,11 +2699,7 @@ function startStreamMsg(role) {
     }
     messages.appendChild(activeStreamDiv);
     activeStreamContentRaw = '';
-
-    const MAX_VISIBLE_MESSAGES = 40;
-    while (messages.children.length > MAX_VISIBLE_MESSAGES) {
-        messages.removeChild(messages.firstChild);
-    }
+    pruneVisibleMessages(messages);
 }
 
 function appendStreamChunk(chunk) {
@@ -3479,7 +3591,8 @@ async function loadSkills() {
                 const d = await res.json();
                 tools = Array.isArray(d.tools) ? d.tools : [];
             }
-        } catch (_err) {
+        } catch (err) {
+            console.warn('[Tools] catalog fetch failed; trying legacy skills endpoint:', err);
             tools = [];
         }
 
@@ -3494,9 +3607,10 @@ async function loadSkills() {
         }
         renderToolCatalog(tools);
     } catch (e) {
+        console.warn('[Tools] load failed:', e);
         const list = $('skills-list');
         if (list && !(state.toolCatalog && state.toolCatalog.length)) {
-            list.innerHTML = '<div class="mem-empty">Failed to load tools<br><button class="skills-retry-btn" onclick="loadSkills()">RETRY</button></div>';
+            renderRetryPanel(list, 'Failed to load tools', 'RETRY', () => loadSkills());
         }
     }
 }
@@ -3654,8 +3768,11 @@ async function loadMemory(type) {
             return;
         }
     } catch (e) {
+        console.warn('[Memory] load failed:', e);
         const cont = $('mem-content');
-        if (cont) cont.innerHTML = '<div class="mem-empty">Failed to load memories<br><button class="skills-retry-btn" onclick="loadMemory(state.activeMem)">RETRY</button></div>';
+        if (cont) {
+            renderRetryPanel(cont, 'Failed to load memories', 'RETRY', () => loadMemory(state.activeMem));
+        }
         showBriefNotification('Memory load failed — check connection');
     }
 }
@@ -3983,6 +4100,7 @@ if (termSendBtn) termSendBtn.addEventListener('click', async (e) => {
         }
         if (d.ok) { input.value = ''; if ($('term-pending')) $('term-pending').textContent = parseInt($('term-pending').textContent || '0') + 1; }
     } catch (e) {
+        console.warn('[Terminal] Send failed:', e);
         if (result) { result.textContent = '✗ Request failed'; result.style.color = 'var(--error)'; }
     }
 });
@@ -3994,7 +4112,10 @@ if (rebootBtn) rebootBtn.addEventListener('click', async (e) => {
     if (confirm('Reboot Aura? This will restart the server process.')) {
         try {
             await fetch('/api/reboot', { method: 'POST' });
-        } catch (e) { }
+        } catch (e) {
+            console.warn('[System] Reboot request failed:', e);
+            appendMsg('aura', '⚠ Reboot request failed before it reached the server.', false, { diagnostic: true });
+        }
     }
 });
 
@@ -4188,11 +4309,18 @@ function loadSettings() {
     try {
         const saved = localStorage.getItem(SETTINGS_KEY);
         return saved ? { ...defaultSettings, ...JSON.parse(saved) } : { ...defaultSettings };
-    } catch { return { ...defaultSettings }; }
+    } catch (err) {
+        console.warn('[Settings] Failed to load saved settings; using defaults:', err);
+        return { ...defaultSettings };
+    }
 }
 
 function saveSettings(s) {
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
+    try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    } catch (err) {
+        console.warn('[Settings] Failed to persist settings:', err);
+    }
 }
 
 function applySettings(s) {

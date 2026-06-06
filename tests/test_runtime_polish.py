@@ -421,6 +421,25 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "if (runtimeHealthy && (bootReady || standby))" in aura_js
 
 
+def test_desktop_shell_renders_tool_results_without_inline_html_handlers():
+    aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+    aura_css = (PROJECT_ROOT / "interface" / "static" / "aura.css").read_text(encoding="utf-8")
+
+    assert "function safeDisplayUrl" in aura_js
+    assert "function appendGeneratedImageMessage" in aura_js
+    assert "appendMsg('aura', msg, false, meta)" in aura_js
+    assert "appendMsg('aura', msg, false, { autonomic: isAutonomic })" in aura_js
+    assert "onclick=\"saveImageToDevice" not in aura_js
+    assert "onload=\"this.previousElementSibling" not in aura_js
+    assert "onclick=\"loadSkills()" not in aura_js
+    assert "onclick=\"loadMemory(state.activeMem)" not in aura_js
+    assert "appendMsg('aura', badge + msg" not in aura_js
+    assert "function renderRetryPanel" in aura_js
+    assert "console.warn('[Settings] Failed to persist settings:', err)" in aura_js
+    assert ".aura-badge.diagnostic" in aura_css
+    assert "letter-spacing: -" not in aura_css
+
+
 def test_native_shell_waits_for_readiness_heartbeat():
     native_shell = (PROJECT_ROOT / "native" / "aura-shell" / "src" / "main.rs").read_text(encoding="utf-8")
 

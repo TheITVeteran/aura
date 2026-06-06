@@ -57,7 +57,7 @@ html, body {
     text-rendering: optimizeLegibility;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01', 'ss03';
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.005em;
+    letter-spacing: 0;
 }
 
 * {
@@ -349,7 +349,7 @@ header {
    font if a parent class bleeds in). */
 .chat-msg, .chat-content, .msg-body, .message-text {
     font-family: var(--font-chat);
-    letter-spacing: -0.005em;
+    letter-spacing: 0;
 }
 
 .hud-stat .status-ok {
@@ -480,6 +480,11 @@ header {
 
 .aura-badge.autonomic {
     background: var(--accent);
+}
+
+.aura-badge.diagnostic {
+    background: var(--warn);
+    color: #120800;
 }
 
 /* ── Thought Block: Chain-of-Thought Expansion ────────────── */
