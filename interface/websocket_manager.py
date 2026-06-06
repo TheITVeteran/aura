@@ -68,17 +68,22 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
 
         report = runtime_health_report()
         required = required_probe_status(report)
-        healthy = bool(report.get("healthy", False)) and required_probe_groups_pass(required)
-        blockers = required_probe_blockers(required) if not healthy else []
+        runtime_probe_healthy = required_probe_groups_pass(required)
+        healthy = bool(report.get("healthy", False)) and runtime_probe_healthy
+        blockers = required_probe_blockers(required)
+        if not bool(report.get("healthy", False)):
+            blockers.extend(_runtime_report_blockers(report))
         return {
             "type": kind,
             "timestamp": time.time(),
             "transport_connected": True,
             "transport_only": False,
+            "status": "healthy" if healthy else "unhealthy",
             "healthy": healthy,
+            "runtime_probe_healthy": runtime_probe_healthy,
             "runtime_status": str(report.get("status", "unknown")),
             "required_probes": required,
-            "blockers": blockers,
+            "blockers": list(dict.fromkeys(blockers)),
         }
     except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation("websocket_manager", exc)
@@ -87,11 +92,28 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
             "timestamp": time.time(),
             "transport_connected": True,
             "transport_only": False,
+            "status": "unhealthy",
             "healthy": False,
+            "runtime_probe_healthy": False,
             "runtime_status": "unknown",
             "required_probes": {"all_passed": False},
             "blockers": ["runtime_health_probe_error"],
         }
+
+
+def _runtime_report_blockers(report: dict[str, Any]) -> list[str]:
+    blockers = list(report.get("probe_blockers", []) or [])
+    failures = report.get("failures", {}) if isinstance(report.get("failures"), dict) else {}
+    for tier in ("critical", "important"):
+        for failure in failures.get(tier, []) or []:
+            if not isinstance(failure, dict):
+                continue
+            key = str(failure.get("container_key") or "").strip()
+            blockers.append(f"{tier}:{key}" if key else f"runtime_{tier}_failure")
+    if not blockers:
+        status = str(report.get("status", "unknown") or "unknown")
+        blockers.append(f"runtime_status:{status}")
+    return list(dict.fromkeys(blockers))
 
 
 # ── Broadcast Bus ────────────────────────────────────────────

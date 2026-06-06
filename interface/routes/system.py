@@ -33,7 +33,7 @@ from core.runtime_tools import get_runtime_state
 from core.scheduler import scheduler
 from core.version import VERSION, version_string
 from interface.auth import _require_internal, _restore_owner_session_from_request
-from interface.websocket_manager import broadcast_bus, ws_manager
+from interface.websocket_manager import broadcast_bus, runtime_heartbeat_payload, ws_manager
 
 _SYSTEM_RECOVERABLE_ERRORS = (
     AttributeError,
@@ -805,7 +805,7 @@ async def telemetry_stream(request: Request):
                 try:
                     item = await asyncio.wait_for(q.get(), timeout=_SSE_IDLE_HEARTBEAT_S)
                 except TimeoutError:
-                    heartbeat = json.dumps({"type": "heartbeat", "timestamp": time.time()})
+                    heartbeat = json.dumps(runtime_heartbeat_payload("heartbeat"))
                     yield f"event: heartbeat\ndata: {heartbeat}\n\n"
                     continue
 

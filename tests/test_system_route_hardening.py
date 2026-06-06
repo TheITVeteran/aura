@@ -95,6 +95,18 @@ async def test_telemetry_stream_emits_idle_heartbeat_and_unsubscribes(monkeypatc
     monkeypatch.setattr(system_routes.config.security, "internal_only_mode", False)
     monkeypatch.setattr(system_routes, "_SSE_IDLE_HEARTBEAT_S", 0.001)
     monkeypatch.setattr(system_routes, "broadcast_bus", _Bus())
+    monkeypatch.setattr(
+        system_routes,
+        "runtime_heartbeat_payload",
+        lambda kind="heartbeat": {
+            "type": kind,
+            "healthy": False,
+            "runtime_probe_healthy": False,
+            "transport_only": False,
+            "required_probes": {"all_passed": False},
+            "blockers": ["runtime_required_probes"],
+        },
+    )
 
     response = await system_routes.telemetry_stream(_Request())
     iterator = response.body_iterator
@@ -104,6 +116,13 @@ async def test_telemetry_stream_emits_idle_heartbeat_and_unsubscribes(monkeypatc
 
     assert "event: telemetry" in first_event
     assert "event: heartbeat" in heartbeat_event
+    heartbeat_payload = json.loads(heartbeat_event.split("data: ", 1)[1])
+    assert heartbeat_payload["type"] == "heartbeat"
+    assert heartbeat_payload["healthy"] is False
+    assert heartbeat_payload["runtime_probe_healthy"] is False
+    assert heartbeat_payload["transport_only"] is False
+    assert heartbeat_payload["required_probes"]["all_passed"] is False
+    assert "runtime_required_probes" in heartbeat_payload["blockers"]
     assert unsubscribed == [queue]
 
 

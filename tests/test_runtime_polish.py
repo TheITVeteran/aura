@@ -253,6 +253,8 @@ def test_websocket_runtime_heartbeat_requires_runtime_probe_groups(monkeypatch):
     assert payload["type"] == "pong"
     assert payload["transport_connected"] is True
     assert payload["healthy"] is False
+    assert payload["runtime_probe_healthy"] is False
+    assert payload["status"] == "unhealthy"
     assert payload["required_probes"]["inference"]["ok"] is False
     assert "runtime_required_probes" in payload["blockers"]
     assert "probe:inference" in payload["blockers"]
@@ -294,8 +296,40 @@ def test_websocket_runtime_heartbeat_rejects_forged_all_passed(monkeypatch):
 
     assert payload["type"] == "ping"
     assert payload["healthy"] is False
+    assert payload["runtime_probe_healthy"] is False
     assert "runtime_required_probes" in payload["blockers"]
     assert "probe:memory" in payload["blockers"]
+
+
+def test_websocket_runtime_heartbeat_reports_runtime_contract_degradation(monkeypatch):
+    from core.runtime import health_contract as health_contract_module
+    from interface.websocket_manager import runtime_heartbeat_payload
+
+    monkeypatch.setattr(
+        health_contract_module,
+        "runtime_health_report",
+        lambda: {
+            "healthy": False,
+            "status": "degraded",
+            "failures": {
+                "critical": [],
+                "important": [{"container_key": "event_bus"}],
+            },
+            "probe_blockers": [],
+        },
+    )
+    monkeypatch.setattr(
+        health_contract_module,
+        "required_probe_status",
+        lambda _report: _complete_required_probe_payload(),
+    )
+
+    payload = runtime_heartbeat_payload("heartbeat")
+
+    assert payload["healthy"] is False
+    assert payload["runtime_probe_healthy"] is True
+    assert payload["status"] == "unhealthy"
+    assert "important:event_bus" in payload["blockers"]
 
 
 def _complete_required_probe_payload() -> dict[str, object]:
@@ -406,12 +440,16 @@ async def test_api_heartbeat_reports_healthy_only_with_all_required_probe_compon
 def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
     server = (PROJECT_ROOT / "interface" / "server.py").read_text(encoding="utf-8")
+    system_routes = (PROJECT_ROOT / "interface" / "routes" / "system.py").read_text(encoding="utf-8")
     websocket_manager = (PROJECT_ROOT / "interface" / "websocket_manager.py").read_text(encoding="utf-8")
 
     assert "runtime_heartbeat_payload(\"pong\")" in server
+    assert "runtime_heartbeat_payload(\"heartbeat\")" in system_routes
     assert "runtime_heartbeat_payload(\"heartbeat\")" in websocket_manager
     assert "runtime_heartbeat_payload(\"ping\")" in websocket_manager
     assert "payloadRuntimeHealthy(payload)" in aura_js
+    assert "payload.transport_only === true" in aura_js
+    assert "payload.runtime_probe_healthy === false" in aura_js
     assert "requiredRuntimeProbesPass(requiredProbes)" in aura_js
     assert "memory: ['state_repository', 'memory_facade', 'memory_write_gateway']" in aura_js
     assert "runtimeHealthBlockers(payload).length > 0" in aura_js

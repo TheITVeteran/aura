@@ -2966,6 +2966,8 @@ function requiredProbesFromPayload(payload) {
 
 function payloadRuntimeHealthy(payload) {
     if (!payload || typeof payload !== 'object') return false;
+    if (payload.transport_only === true) return false;
+    if (payload.runtime_probe_healthy === false) return false;
     const requiredProbes = requiredProbesFromPayload(payload);
     if (!requiredRuntimeProbesPass(requiredProbes)) return false;
     if (runtimeHealthBlockers(payload).length > 0) return false;
@@ -2979,6 +2981,8 @@ function payloadRuntimeHealthy(payload) {
 function runtimeHealthBlockers(payload) {
     if (!payload || typeof payload !== 'object') return ['runtime_health_unavailable'];
     const blockers = Array.isArray(payload.blockers) ? payload.blockers.slice() : [];
+    if (payload.transport_only === true) blockers.push('runtime_transport_only');
+    if (payload.runtime_probe_healthy === false) blockers.push('runtime_required_probes');
     const boot = payload.boot || (payload.telemetry && payload.telemetry.boot) || {};
     if (Array.isArray(boot.blockers)) blockers.push(...boot.blockers);
     const required = requiredProbesFromPayload(payload);
