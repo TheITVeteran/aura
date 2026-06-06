@@ -58,7 +58,6 @@ class AuthorityGateway:
         self._capabilities = get_capability_manager()
         self._current_posture = "defensive_sandboxed"
         self._active_tokens: Dict[str, Dict[str, Any]] = {}
-        self._hmac_key = secrets.token_bytes(32)
 
     def issue_user_presence_token(
         self,
@@ -100,46 +99,32 @@ class AuthorityGateway:
         confidence: float | None = None,
         verifier: str = "voice_identity",
     ) -> str:
-        """Authenticate user voice print, transition posture to owner_autonomous, and issue a 60s TTL cryptographic HMAC token."""
+        """Compatibility wrapper for verified speaker identity.
+
+        This issues a user-presence token only. It never creates an
+        authorization bypass or an autonomous posture.
+        """
         if not voice_print_data:
             raise ValueError("voice print evidence is empty")
-        
-        confidence_val = float(confidence) if confidence is not None else 1.0
-        if confidence_val < 0.80:
-            raise ValueError(f"voice print confidence too low: {confidence_val:.3f}")
-            
-        import hmac
-        import hashlib
-        
-        expires_at = time.time() + 60.0
-        token_payload = f"owner_autonomous|{expires_at}|{confidence_val}".encode()
-        signature = hmac.new(self._hmac_key, token_payload, hashlib.sha256).hexdigest()
-        token_id = f"tok_{signature[:16]}"
-        
-        self._active_tokens[token_id] = {
-            "expires_at": expires_at,
-            "posture": "owner_autonomous",
-            "signature": signature,
-            "confidence": confidence_val,
-            "source": "voice",
-            "evidence": {
+        if confidence is None:
+            raise ValueError("voice print confidence is required")
+        return self.issue_user_presence_token(
+            source="voice",
+            evidence={
                 "verified": True,
-                "confidence": confidence_val,
+                "confidence": float(confidence),
                 "verifier": str(verifier or "voice_identity"),
                 "sample_bytes": len(voice_print_data),
-            }
-        }
-        self._current_posture = "owner_autonomous"
-        logger.info("🔑 Posture transitioned to owner_autonomous. Cryptographic token %s issued (expires in 60s)", token_id)
-        return token_id
+            },
+        )
 
     def is_owner_autonomous_active(self) -> bool:
-        """Check if the system is in owner_autonomous or owner_present posture."""
+        """Compatibility check for an active verified user-presence session."""
         self._revert_posture_if_expired()
-        return self._current_posture in ("owner_autonomous", "owner_present") and len(self._active_tokens) > 0
+        return self._current_posture == "owner_present" and len(self._active_tokens) > 0
 
-    def verify_capability_token(self, token_id: str) -> bool:
-        """Verify a short-lived capability token (supporting both presence and autonomous tokens)."""
+    def verify_user_presence_token(self, token_id: str) -> bool:
+        """Verify a short-lived user-presence token."""
         self._revert_posture_if_expired()
         if not token_id:
             return False
@@ -152,10 +137,6 @@ class AuthorityGateway:
             self._revert_posture_if_expired()
             return False
         return True
-
-    def verify_user_presence_token(self, token_id: str) -> bool:
-        """Verify a short-lived user-presence token."""
-        return self.verify_capability_token(token_id)
 
     def active_user_presence_context(self) -> Dict[str, Any]:
         self._revert_posture_if_expired()
@@ -170,7 +151,7 @@ class AuthorityGateway:
         }
 
     def _revert_posture_if_expired(self) -> None:
-        """Auto-revert posture when all presence or capability tokens expire."""
+        """Auto-revert posture when all presence tokens expire."""
         now = time.time()
         expired = []
         for token_id, record in list(self._active_tokens.items()):
@@ -183,9 +164,9 @@ class AuthorityGateway:
         for tid in expired:
             self._active_tokens.pop(tid, None)
 
-        if self._current_posture in ("owner_present", "owner_autonomous") and not self._active_tokens:
+        if self._current_posture == "owner_present" and not self._active_tokens:
             self._current_posture = "defensive_sandboxed"
-            logger.info("All user presence or autonomous tokens expired; posture reverted to defensive_sandboxed.")
+            logger.info("All user presence tokens expired; posture reverted to defensive_sandboxed.")
 
     def is_ready(self) -> bool:
         """Deep readiness probe for runtime tool-governance health."""

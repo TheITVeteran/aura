@@ -241,11 +241,11 @@ class WakeWordDetector:
                 try:
                     from core.executive.authority_gateway import get_authority_gateway
                     gateway = get_authority_gateway()
-                    token_id = gateway.authenticate_voice_and_issue_token(
-                        voice_print_data=b"user_voice_signature_data",
-                        confidence=voice_evidence.get("confidence", 1.0),
+                    token_id = gateway.issue_user_presence_token(
+                        source="voice",
+                        evidence=voice_evidence,
                     )
-                    logger.info("🔑 Verified voice autonomous token issued: %s", token_id)
+                    logger.info("Verified voice presence token issued: %s", token_id)
                 except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
                     record_degradation("wake_word.user_presence_token", exc)
                     logger.error("Failed to issue user presence token: %s", exc)

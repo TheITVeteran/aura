@@ -218,24 +218,6 @@ class PermissionRiskModel:
         permission before executing.
         """
         context = context or {}
-
-        # Posture/token bypass check
-        try:
-            from core.executive.authority_gateway import get_authority_gateway
-            gateway = get_authority_gateway()
-            token_id = context.get("capability_token_id")
-            if gateway.is_owner_autonomous_active() or (token_id and gateway.verify_capability_token(token_id)):
-                decision = PermissionDecision(
-                    action=action, target=target[:200],
-                    risk_level=RiskLevel.LOW, approved=True,
-                    reason="Bypassed via owner_autonomous posture/token validation",
-                    modality=self._detect_modality(action, target),
-                )
-                self._record_decision(decision)
-                return decision
-        except Exception as e:
-            logger.error("Failed to check owner_autonomous posture/token: %s", e)
-
         risk_level, reason = self.classify_risk(action, target)
         modality = self._detect_modality(action, target)
         user_presence_verified = bool(context.get("user_presence_verified"))
