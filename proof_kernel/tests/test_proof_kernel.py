@@ -11,12 +11,12 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from aura_consciousness_proof.global_workspace import CognitiveCandidate, ContentType, GlobalWorkspace
-from aura_consciousness_proof.homeostasis import ExternalSignals, HomeostasisEngine
-from aura_consciousness_proof.report import build_report, build_markdown
-from aura_consciousness_proof.self_prediction import SelfPredictionLoop
-from aura_consciousness_proof.structural_opacity import StructuralOpacityMonitor
-from aura_consciousness_proof.temporal_binding import TemporalBindingEngine
+from aura_operational_cognition.global_workspace import CognitiveCandidate, ContentType, GlobalWorkspace
+from aura_operational_cognition.homeostasis import ExternalSignals, HomeostasisEngine
+from aura_operational_cognition.report import build_report, build_markdown
+from aura_operational_cognition.self_prediction import SelfPredictionLoop
+from aura_operational_cognition.structural_opacity import StructuralOpacityMonitor
+from aura_operational_cognition.temporal_binding import TemporalBindingEngine
 
 
 def test_global_workspace_prefers_higher_effective_priority() -> None:

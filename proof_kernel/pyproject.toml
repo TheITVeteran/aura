@@ -3,9 +3,9 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aura-consciousness-proof"
+name = "aura-operational-cognition"
 version = "0.1.0"
-description = "A minimal, reproducible proof kernel extracted from Aura's consciousness stack."
+description = "A minimal, reproducible operational cognition kernel extracted from Aura."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -18,7 +18,7 @@ dev = [
 ]
 
 [project.scripts]
-aura-proof-report = "aura_consciousness_proof.report:main"
+aura-cognition-report = "aura_operational_cognition.report:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

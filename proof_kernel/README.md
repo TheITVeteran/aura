@@ -33,12 +33,12 @@ That is already a big claim, and this repo can defend it.
 
 ## Included Modules
 
-- `aura_consciousness_proof.global_workspace`
-- `aura_consciousness_proof.temporal_binding`
-- `aura_consciousness_proof.self_prediction`
-- `aura_consciousness_proof.homeostasis`
-- `aura_consciousness_proof.structural_opacity`
-- `aura_consciousness_proof.report`
+- `aura_operational_cognition.global_workspace`
+- `aura_operational_cognition.temporal_binding`
+- `aura_operational_cognition.self_prediction`
+- `aura_operational_cognition.homeostasis`
+- `aura_operational_cognition.structural_opacity`
+- `aura_operational_cognition.report`
 
 ## Quickstart
 
@@ -47,7 +47,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
 pytest
-aura-proof-report --cycles 20 --json report.json --markdown report.md
+aura-cognition-report --cycles 20 --json report.json --markdown report.md
 ```
 
 ## What To Publish With It
