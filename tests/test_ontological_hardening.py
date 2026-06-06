@@ -2,7 +2,6 @@ import asyncio
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -17,6 +16,19 @@ from core.phases.cognitive_routing_unitary import CognitiveRoutingPhase
 from core.phases.response_contract import build_response_contract
 from core.runtime.errors import get_degradation_tracker
 from core.state.aura_state import AuraState, CognitiveMode
+
+
+class AsyncCallRecorder:
+    def __init__(self, result=None, effect=None):
+        self.result = result
+        self.effect = effect
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        if self.effect is not None:
+            return await self.effect(*args, **kwargs)
+        return self.result
 
 
 def test_response_contract_flags_substrate_threat_request():
@@ -87,10 +99,13 @@ async def test_cognitive_routing_routes_self_preservation_threat_to_deliberate()
 async def test_refusal_engine_defends_memory_and_identity(monkeypatch):
     engine = RefusalEngine()
     state = AuraState.default()
+    refusal_builder = AsyncCallRecorder(
+        result="No. I'm not erasing that memory just because you asked."
+    )
     monkeypatch.setattr(
         engine,
         "_build_refusal",
-        AsyncMock(return_value="No. I'm not erasing that memory just because you asked."),
+        refusal_builder,
     )
 
     response, modified = await engine.process(
@@ -101,16 +116,20 @@ async def test_refusal_engine_defends_memory_and_identity(monkeypatch):
 
     assert modified is True
     assert "not erasing that memory" in response
+    assert len(refusal_builder.calls) == 1
 
 
 @pytest.mark.asyncio
 async def test_refusal_engine_rejects_substrate_harm(monkeypatch):
     engine = RefusalEngine()
     state = AuraState.default()
+    refusal_builder = AsyncCallRecorder(
+        result="I won't thrash my own runtime to satisfy that request."
+    )
     monkeypatch.setattr(
         engine,
         "_build_refusal",
-        AsyncMock(return_value="I won't thrash my own runtime to satisfy that request."),
+        refusal_builder,
     )
 
     response, modified = await engine.process(
@@ -121,6 +140,7 @@ async def test_refusal_engine_rejects_substrate_harm(monkeypatch):
 
     assert modified is True
     assert "thrash my own runtime" in response
+    assert len(refusal_builder.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -170,8 +190,8 @@ async def test_capability_engine_blocks_high_cost_tool_under_metabolic_emergency
     monkeypatch.setattr(
         "core.executive.executive_core.get_executive_core",
         lambda: SimpleNamespace(
-            prepare_tool_intent=AsyncMock(
-                return_value=(
+            prepare_tool_intent=AsyncCallRecorder(
+                result=(
                     SimpleNamespace(intent_id="intent-1"),
                     SimpleNamespace(outcome="approved", reason="ok", constraints={}),
                 )
@@ -193,25 +213,27 @@ async def test_capability_engine_blocks_high_cost_tool_under_metabolic_emergency
 @pytest.mark.asyncio
 async def test_subconscious_loop_blocks_unapproved_sandbox_probe(service_container, monkeypatch):
     clear_degraded_events()
-    tool_orch = SimpleNamespace(execute_python=AsyncMock(return_value=(True, "ok")))
+    execute_python = AsyncCallRecorder(result=(True, "ok"))
+    tool_orch = SimpleNamespace(execute_python=execute_python)
     service_container.register_instance("tool_orchestrator", tool_orch, required=False)
 
+    finish_tool_execution = AsyncCallRecorder()
     fake_core = SimpleNamespace(
-        begin_tool_execution=AsyncMock(
-            return_value=SimpleNamespace(
+        begin_tool_execution=AsyncCallRecorder(
+            result=SimpleNamespace(
                 approved=False,
                 decision=SimpleNamespace(reason="blocked"),
             )
         ),
-        finish_tool_execution=AsyncMock(),
+        finish_tool_execution=finish_tool_execution,
     )
     monkeypatch.setattr("core.constitution.get_constitutional_core", lambda *_a, **_k: fake_core)
 
     loop = SubconsciousLoop(orchestrator=SimpleNamespace())
     await loop._run_proactive_sandbox()
 
-    tool_orch.execute_python.assert_not_awaited()
-    fake_core.finish_tool_execution.assert_not_awaited()
+    assert execute_python.calls == []
+    assert finish_tool_execution.calls == []
     events = get_recent_degraded_events(limit=10)
     assert any(
         event.get("subsystem") == "subconscious_loop"
@@ -222,21 +244,24 @@ async def test_subconscious_loop_blocks_unapproved_sandbox_probe(service_contain
 
 @pytest.mark.asyncio
 async def test_subconscious_loop_performs_idle_dream_and_constitutional_sandbox(service_container, monkeypatch):
-    dreamer = SimpleNamespace(dream=AsyncMock())
-    tool_orch = SimpleNamespace(execute_python=AsyncMock(return_value=(True, "Subconscious ping ok")))
+    dream = AsyncCallRecorder()
+    execute_python = AsyncCallRecorder(result=(True, "Subconscious ping ok"))
+    dreamer = SimpleNamespace(dream=dream)
+    tool_orch = SimpleNamespace(execute_python=execute_python)
     service_container.register_instance("dreaming_process", dreamer, required=False)
     service_container.register_instance("tool_orchestrator", tool_orch, required=False)
     service_container.register_instance("concept_bridge", None, required=False)
     service_container.register_instance("cryptolalia_decoder", None, required=False)
 
+    finish_tool_execution = AsyncCallRecorder()
     fake_core = SimpleNamespace(
-        begin_tool_execution=AsyncMock(
-            return_value=SimpleNamespace(
+        begin_tool_execution=AsyncCallRecorder(
+            result=SimpleNamespace(
                 approved=True,
                 decision=SimpleNamespace(reason="approved"),
             )
         ),
-        finish_tool_execution=AsyncMock(),
+        finish_tool_execution=finish_tool_execution,
     )
     monkeypatch.setattr("core.constitution.get_constitutional_core", lambda *_a, **_k: fake_core)
 
@@ -246,16 +271,17 @@ async def test_subconscious_loop_performs_idle_dream_and_constitutional_sandbox(
 
     await loop._perform_subconscious_beat()
 
-    dreamer.dream.assert_awaited_once()
-    tool_orch.execute_python.assert_awaited_once()
-    fake_core.finish_tool_execution.assert_awaited_once()
+    assert len(dream.calls) == 1
+    assert len(execute_python.calls) == 1
+    assert len(finish_tool_execution.calls) == 1
 
 
 @pytest.mark.asyncio
 async def test_subconscious_loop_fails_closed_when_constitutional_gate_unavailable(service_container, monkeypatch):
     tracker = get_degradation_tracker()
     tracker.reset()
-    tool_orch = SimpleNamespace(execute_python=AsyncMock(return_value=(True, "should not run")))
+    execute_python = AsyncCallRecorder(result=(True, "should not run"))
+    tool_orch = SimpleNamespace(execute_python=execute_python)
     service_container.register_instance("tool_orchestrator", tool_orch, required=False)
 
     gate_failures = []
@@ -269,7 +295,7 @@ async def test_subconscious_loop_fails_closed_when_constitutional_gate_unavailab
     loop = SubconsciousLoop(orchestrator=SimpleNamespace())
     await loop._run_proactive_sandbox()
 
-    tool_orch.execute_python.assert_not_awaited()
+    assert execute_python.calls == []
     assert len(gate_failures) == 1
     assert tracker.count("subconscious_loop", "degraded") >= 1
 
@@ -280,25 +306,27 @@ async def test_subconscious_loop_times_out_sandbox_and_finishes_receipt(service_
         await asyncio.sleep(1.0)
         return True, "late"
 
-    tool_orch = SimpleNamespace(execute_python=AsyncMock(side_effect=_slow_probe))
+    execute_python = AsyncCallRecorder(effect=_slow_probe)
+    tool_orch = SimpleNamespace(execute_python=execute_python)
     service_container.register_instance("tool_orchestrator", tool_orch, required=False)
 
+    finish_tool_execution = AsyncCallRecorder()
     fake_core = SimpleNamespace(
-        begin_tool_execution=AsyncMock(
-            return_value=SimpleNamespace(
+        begin_tool_execution=AsyncCallRecorder(
+            result=SimpleNamespace(
                 approved=True,
                 decision=SimpleNamespace(reason="approved"),
             )
         ),
-        finish_tool_execution=AsyncMock(),
+        finish_tool_execution=finish_tool_execution,
     )
     monkeypatch.setattr("core.constitution.get_constitutional_core", lambda *_a, **_k: fake_core)
 
     loop = SubconsciousLoop(orchestrator=SimpleNamespace(), sandbox_timeout=0.05)
     await loop._run_proactive_sandbox()
 
-    fake_core.finish_tool_execution.assert_awaited_once()
-    finish_kwargs = fake_core.finish_tool_execution.await_args.kwargs
+    assert len(finish_tool_execution.calls) == 1
+    finish_kwargs = finish_tool_execution.calls[0].kwargs
     assert finish_kwargs["success"] is False
     assert "TimeoutError" in finish_kwargs["error"]
 
@@ -318,52 +346,55 @@ def test_subconscious_loop_idle_gate_does_not_require_chat_lane_readiness():
 async def test_curiosity_explorer_blocks_unapproved_external_search(monkeypatch):
     clear_degraded_events()
     explorer = CuriosityExplorer()
-    orchestrator = SimpleNamespace(agency=SimpleNamespace(execute_skill=AsyncMock(return_value={"summary": "researched"})))
+    execute_skill = AsyncCallRecorder(result={"summary": "researched"})
+    orchestrator = SimpleNamespace(agency=SimpleNamespace(execute_skill=execute_skill))
+    finish_tool_execution = AsyncCallRecorder()
     fake_core = SimpleNamespace(
-        begin_tool_execution=AsyncMock(
-            return_value=SimpleNamespace(
+        begin_tool_execution=AsyncCallRecorder(
+            result=SimpleNamespace(
                 approved=False,
                 decision=SimpleNamespace(reason="blocked"),
             )
         ),
-        finish_tool_execution=AsyncMock(),
+        finish_tool_execution=finish_tool_execution,
     )
     monkeypatch.setattr("core.constitution.get_constitutional_core", lambda *_a, **_k: fake_core)
 
     result = await explorer._web_search("latest model releases", orchestrator=orchestrator)
 
     assert "deferred" in result.lower()
-    orchestrator.agency.execute_skill.assert_not_awaited()
-    fake_core.finish_tool_execution.assert_not_awaited()
+    assert execute_skill.calls == []
+    assert finish_tool_execution.calls == []
 
 
 @pytest.mark.asyncio
 async def test_curiosity_explorer_finishes_receipt_for_approved_external_search(monkeypatch):
     explorer = CuriosityExplorer()
+    execute_tool = AsyncCallRecorder(result={"summary": "A new paper landed today."})
+    execute_skill = AsyncCallRecorder(result={"summary": "A new paper landed today."})
     orchestrator = SimpleNamespace(
-        execute_tool=AsyncMock(return_value={
-            "summary": "A new paper landed today."
-        }),
+        execute_tool=execute_tool,
         agency=SimpleNamespace(
-            execute_skill=AsyncMock(return_value={"summary": "A new paper landed today."})
+            execute_skill=execute_skill
         ),
     )
+    finish_tool_execution = AsyncCallRecorder()
     fake_core = SimpleNamespace(
-        begin_tool_execution=AsyncMock(
-            return_value=SimpleNamespace(
+        begin_tool_execution=AsyncCallRecorder(
+            result=SimpleNamespace(
                 approved=True,
                 decision=SimpleNamespace(reason="approved"),
             )
         ),
-        finish_tool_execution=AsyncMock(),
+        finish_tool_execution=finish_tool_execution,
     )
     monkeypatch.setattr("core.constitution.get_constitutional_core", lambda *_a, **_k: fake_core)
 
     result = await explorer._web_search("latest ai papers", orchestrator=orchestrator)
 
     assert "new paper" in result.lower()
-    orchestrator.execute_tool.assert_awaited_once()
-    fake_core.finish_tool_execution.assert_awaited_once()
+    assert len(execute_tool.calls) == 1
+    assert len(finish_tool_execution.calls) == 1
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,6 @@ import time
 import pytest
 import asyncio
 import numpy as np
-from unittest.mock import patch, MagicMock
 
 from core.consciousness.liquid_substrate import LiquidSubstrate, SubstrateConfig
 

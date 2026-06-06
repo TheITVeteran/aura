@@ -1,54 +1,66 @@
-import pytest
 import asyncio
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+
+import pytest
+
 from core.brain.inference_gate import InferenceGate
 from core.consciousness.attention_schema import AttentionSchema, AttentionalFocus
 from core.consciousness.free_energy import FreeEnergyEngine, FreeEnergyState
 from core.runtime.errors import get_degradation_tracker
 
 
+class CancellationProbe:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, name, default=None):
+        self.calls.append(SimpleNamespace(name=name, default=default))
+        raise asyncio.CancelledError()
+
+
 # ==============================================================================
 # InferenceGate Phi Gating Tests
 # ==============================================================================
 
-def test_inference_gate_get_system_phi_redundancy():
+def test_inference_gate_get_system_phi_redundancy(monkeypatch):
     """Verify that _get_system_phi correctly probes the redundant sources."""
     # 1. Test ClosedCausalLoop _loop_state fallback
-    mock_loop = MagicMock()
-    mock_loop._loop_state = MagicMock()
-    mock_loop._loop_state.phi_estimate = 0.75
-    
-    with patch("core.container.ServiceContainer.get", side_effect=lambda name, default=None: mock_loop if name == "closed_causal_loop" else default):
-        phi = InferenceGate._get_system_phi()
-        assert phi == 0.75
+    closed_loop = SimpleNamespace(_loop_state=SimpleNamespace(phi_estimate=0.75))
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda name, default=None: closed_loop if name == "closed_causal_loop" else default),
+    )
+    phi = InferenceGate._get_system_phi()
+    assert phi == 0.75
 
     # 2. Test PhiComputer fallback
-    mock_pc = MagicMock()
-    mock_pc.latest_phi = 0.45
-    
-    with patch("core.container.ServiceContainer.get", return_value=None), \
-         patch("core.consciousness.phi_compute.get_phi_computer", return_value=mock_pc):
-        phi = InferenceGate._get_system_phi()
-        assert phi == 0.45
+    phi_computer = SimpleNamespace(latest_phi=0.45)
+
+    monkeypatch.setattr("core.container.ServiceContainer.get", staticmethod(lambda name, default=None: None))
+    monkeypatch.setattr("core.consciousness.phi_compute.get_phi_computer", lambda: phi_computer)
+    phi = InferenceGate._get_system_phi()
+    assert phi == 0.45
 
     # 3. Test PhiCore fallback
-    mock_phi_core = MagicMock()
-    mock_phi_core._last_result = MagicMock()
-    mock_phi_core._last_result.phi_s = 0.25
-    
-    with patch("core.container.ServiceContainer.get", side_effect=lambda name, default=None: mock_phi_core if name == "phi_core" else default), \
-         patch("core.consciousness.phi_compute.get_phi_computer", return_value=None):
-        phi = InferenceGate._get_system_phi()
-        assert phi == 0.25
+    phi_core = SimpleNamespace(_last_result=SimpleNamespace(phi_s=0.25))
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda name, default=None: phi_core if name == "phi_core" else default),
+    )
+    monkeypatch.setattr("core.consciousness.phi_compute.get_phi_computer", lambda: None)
+    phi = InferenceGate._get_system_phi()
+    assert phi == 0.25
 
     # 4. Test neutral fallback
-    with patch("core.container.ServiceContainer.get", return_value=None), \
-         patch("core.consciousness.phi_compute.get_phi_computer", return_value=None):
-        phi = InferenceGate._get_system_phi()
-        assert phi == 0.5
+    monkeypatch.setattr("core.container.ServiceContainer.get", staticmethod(lambda name, default=None: None))
+    monkeypatch.setattr("core.consciousness.phi_compute.get_phi_computer", lambda: None)
+    phi = InferenceGate._get_system_phi()
+    assert phi == 0.5
 
 
-def test_inference_gate_get_system_phi_records_typed_probe_failure():
+def test_inference_gate_get_system_phi_records_typed_probe_failure(monkeypatch):
     tracker = get_degradation_tracker()
     tracker.reset()
 
@@ -57,9 +69,9 @@ def test_inference_gate_get_system_phi_records_typed_probe_failure():
             raise RuntimeError("loop unavailable")
         return default
 
-    with patch("core.container.ServiceContainer.get", side_effect=_service_get), \
-         patch("core.consciousness.phi_compute.get_phi_computer", return_value=None):
-        phi = InferenceGate._get_system_phi()
+    monkeypatch.setattr("core.container.ServiceContainer.get", staticmethod(_service_get))
+    monkeypatch.setattr("core.consciousness.phi_compute.get_phi_computer", lambda: None)
+    phi = InferenceGate._get_system_phi()
 
     assert phi == 0.5
     records = tracker.recent(subsystem="inference_gate", limit=1)
@@ -68,10 +80,12 @@ def test_inference_gate_get_system_phi_records_typed_probe_failure():
     tracker.reset()
 
 
-def test_inference_gate_get_system_phi_propagates_cancellation():
-    with patch("core.container.ServiceContainer.get", side_effect=asyncio.CancelledError()):
-        with pytest.raises(asyncio.CancelledError):
-            InferenceGate._get_system_phi()
+def test_inference_gate_get_system_phi_propagates_cancellation(monkeypatch):
+    probe = CancellationProbe()
+    monkeypatch.setattr("core.container.ServiceContainer.get", staticmethod(probe))
+    with pytest.raises(asyncio.CancelledError):
+        InferenceGate._get_system_phi()
+    assert len(probe.calls) == 1
 
 
 def test_inference_gate_source_has_no_raw_broad_exception_catches():
@@ -82,45 +96,45 @@ def test_inference_gate_source_has_no_raw_broad_exception_catches():
     assert "except BaseException" not in source
 
 
-def test_inference_gate_adaptive_max_tokens_phi_scaling():
+def test_inference_gate_adaptive_max_tokens_phi_scaling(monkeypatch):
     """Verify that _adaptive_max_tokens_for_prompt scales the token budget based on system Phi."""
     # Ensure it only scales user-facing primary tier requests
     
     # Under high Phi (e.g. phi = 0.5 -> scale = 0.6 + 1.0 = 1.6)
-    with patch.object(InferenceGate, "_get_system_phi", return_value=0.5):
-        adapted = InferenceGate._adaptive_max_tokens_for_prompt(
-            prompt="Hello",
-            base_tokens=1000,
-            origin="user",
-            requested_tier="primary",
-            is_background=False
-        )
-        # Expected adapted tokens: 1000 * 1.6 = 1600
-        assert 1500 <= adapted <= 1700
+    monkeypatch.setattr(InferenceGate, "_get_system_phi", classmethod(lambda cls: 0.5))
+    adapted = InferenceGate._adaptive_max_tokens_for_prompt(
+        prompt="Hello",
+        base_tokens=1000,
+        origin="user",
+        requested_tier="primary",
+        is_background=False
+    )
+    # Expected adapted tokens: 1000 * 1.6 = 1600
+    assert 1500 <= adapted <= 1700
 
     # Under low Phi (e.g. phi = 0.0 -> scale = max(0.5, 0.6 + 0) = 0.6)
-    with patch.object(InferenceGate, "_get_system_phi", return_value=0.0):
-        adapted = InferenceGate._adaptive_max_tokens_for_prompt(
-            prompt="Hello",
-            base_tokens=1000,
-            origin="user",
-            requested_tier="primary",
-            is_background=False
-        )
-        # Expected adapted tokens: 1000 * 0.6 = 600
-        assert 550 <= adapted <= 650
+    monkeypatch.setattr(InferenceGate, "_get_system_phi", classmethod(lambda cls: 0.0))
+    adapted = InferenceGate._adaptive_max_tokens_for_prompt(
+        prompt="Hello",
+        base_tokens=1000,
+        origin="user",
+        requested_tier="primary",
+        is_background=False
+    )
+    # Expected adapted tokens: 1000 * 0.6 = 600
+    assert 550 <= adapted <= 650
 
     # Under nominal Phi (e.g. phi = 0.2 -> scale = 0.6 + 0.4 = 1.0)
-    with patch.object(InferenceGate, "_get_system_phi", return_value=0.2):
-        adapted = InferenceGate._adaptive_max_tokens_for_prompt(
-            prompt="Hello",
-            base_tokens=1000,
-            origin="user",
-            requested_tier="primary",
-            is_background=False
-        )
-        # Expected adapted tokens: 1000 * 1.0 = 1000
-        assert 950 <= adapted <= 1050
+    monkeypatch.setattr(InferenceGate, "_get_system_phi", classmethod(lambda cls: 0.2))
+    adapted = InferenceGate._adaptive_max_tokens_for_prompt(
+        prompt="Hello",
+        base_tokens=1000,
+        origin="user",
+        requested_tier="primary",
+        is_background=False
+    )
+    # Expected adapted tokens: 1000 * 1.0 = 1000
+    assert 950 <= adapted <= 1050
 
 
 # ==============================================================================
@@ -128,7 +142,7 @@ def test_inference_gate_adaptive_max_tokens_phi_scaling():
 # ==============================================================================
 
 @pytest.mark.asyncio
-async def test_attention_schema_free_energy_gating_unrestricted():
+async def test_attention_schema_free_energy_gating_unrestricted(monkeypatch):
     """Verify that focus shifts occur normally under low Free Energy (F <= 0.6)."""
     schema = AttentionSchema()
     
@@ -149,21 +163,20 @@ async def test_attention_schema_free_energy_gating_unrestricted():
         arousal=0.2,
         dominant_action="explore"
     )
-    mock_fe_engine = MagicMock()
-    mock_fe_engine.current = mock_fe_state
-    
-    with patch("core.consciousness.free_energy.get_free_energy_engine", return_value=mock_fe_engine):
-        new_focus = await schema.set_focus(
-            content="Responding to query",
-            source="affective_steering",
-            priority=0.3
-        )
-        assert schema.current_focus.source == "affective_steering"
-        assert schema.current_focus.content == "Responding to query"
+    fe_engine = SimpleNamespace(current=mock_fe_state)
+
+    monkeypatch.setattr("core.consciousness.free_energy.get_free_energy_engine", lambda: fe_engine)
+    new_focus = await schema.set_focus(
+        content="Responding to query",
+        source="affective_steering",
+        priority=0.3
+    )
+    assert schema.current_focus.source == "affective_steering"
+    assert schema.current_focus.content == "Responding to query"
 
 
 @pytest.mark.asyncio
-async def test_attention_schema_free_energy_gating_rigidity():
+async def test_attention_schema_free_energy_gating_rigidity(monkeypatch):
     """Verify focus stability/rigidity is enforced under high Free Energy (F > 0.6)."""
     schema = AttentionSchema()
     
@@ -184,35 +197,34 @@ async def test_attention_schema_free_energy_gating_rigidity():
         arousal=0.8,
         dominant_action="update_beliefs"
     )
-    mock_fe_engine = MagicMock()
-    mock_fe_engine.current = mock_fe_state
-    
-    with patch("core.consciousness.free_energy.get_free_energy_engine", return_value=mock_fe_engine):
-        # Shift with low priority (0.4) is below the rigidity threshold (0.3 + 0.8 * 0.4 = 0.62)
-        blocked_focus = await schema.set_focus(
-            content="Responding to query",
-            source="affective_steering",
-            priority=0.4
-        )
-        # Should retain the original focus
-        assert schema.current_focus.source == "curiosity"
-        assert schema.current_focus.content == "Analyzing the neural mesh"
-        assert blocked_focus == schema.current_focus
+    fe_engine = SimpleNamespace(current=mock_fe_state)
 
-        # Shift with same source is NOT blocked
-        same_source_focus = await schema.set_focus(
-            content="Deepening neural mesh analysis",
-            source="curiosity",
-            priority=0.1
-        )
-        assert schema.current_focus.source == "curiosity"
-        assert schema.current_focus.content == "Deepening neural mesh analysis"
+    monkeypatch.setattr("core.consciousness.free_energy.get_free_energy_engine", lambda: fe_engine)
+    # Shift with low priority (0.4) is below the rigidity threshold (0.3 + 0.8 * 0.4 = 0.62)
+    blocked_focus = await schema.set_focus(
+        content="Responding to query",
+        source="affective_steering",
+        priority=0.4
+    )
+    # Should retain the original focus
+    assert schema.current_focus.source == "curiosity"
+    assert schema.current_focus.content == "Analyzing the neural mesh"
+    assert blocked_focus == schema.current_focus
 
-        # Shift with extremely high priority (0.7) exceeding threshold (0.62) should be allowed
-        high_priority_focus = await schema.set_focus(
-            content="Emergency shutdown response",
-            source="safety_governor",
-            priority=0.7
-        )
-        assert schema.current_focus.source == "safety_governor"
-        assert schema.current_focus.content == "Emergency shutdown response"
+    # Shift with same source is NOT blocked
+    same_source_focus = await schema.set_focus(
+        content="Deepening neural mesh analysis",
+        source="curiosity",
+        priority=0.1
+    )
+    assert schema.current_focus.source == "curiosity"
+    assert schema.current_focus.content == "Deepening neural mesh analysis"
+
+    # Shift with extremely high priority (0.7) exceeding threshold (0.62) should be allowed
+    high_priority_focus = await schema.set_focus(
+        content="Emergency shutdown response",
+        source="safety_governor",
+        priority=0.7
+    )
+    assert schema.current_focus.source == "safety_governor"
+    assert schema.current_focus.content == "Emergency shutdown response"
