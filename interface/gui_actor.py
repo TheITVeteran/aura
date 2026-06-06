@@ -67,6 +67,9 @@ def _heartbeat_response_healthy(resp: Any) -> bool:
         return False
     if not bool(payload.get("healthy") is True and payload.get("status") == "healthy"):
         return False
+    blockers = payload.get("blockers")
+    if not isinstance(blockers, list) or blockers:
+        return False
     probes = payload.get("required_probes")
     if not isinstance(probes, dict) or not bool(probes.get("all_passed", False)):
         return False

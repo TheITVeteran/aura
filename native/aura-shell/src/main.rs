@@ -33,6 +33,12 @@ fn readiness_heartbeat_is_healthy(payload: &Value) -> bool {
     if payload.get("status").and_then(Value::as_str) != Some("healthy") {
         return false;
     }
+    let Some(blockers) = payload.get("blockers").and_then(Value::as_array) else {
+        return false;
+    };
+    if !blockers.is_empty() {
+        return false;
+    }
     let Some(probes) = payload.get("required_probes").and_then(Value::as_object) else {
         return false;
     };

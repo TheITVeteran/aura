@@ -1826,16 +1826,23 @@ async def api_heartbeat():
     )
     required_probes = payload.get("required_probes", {})
     probe_blockers = _heartbeat_probe_blockers(required_probes)
-    healthy = status_code == 200 and not probe_blockers
     blockers = list(payload.get("blockers", []) or [])
     for blocker in probe_blockers:
         if blocker not in blockers:
             blockers.append(blocker)
+    runtime_probe_healthy = not probe_blockers
+    healthy = (
+        status_code == 200
+        and bool(payload.get("system_ready", payload.get("ready", False)))
+        and runtime_probe_healthy
+        and not blockers
+    )
     if not healthy:
         status_code = 503
     heartbeat_payload = {
         "status": "healthy" if healthy else "unhealthy",
         "healthy": healthy,
+        "runtime_probe_healthy": runtime_probe_healthy,
         "time": time.time(),
         "required_probes": required_probes,
         "blockers": blockers,

@@ -239,3 +239,61 @@ async def test_runtime_heartbeat_refuses_partial_probe_components(monkeypatch):
     assert response.status_code == 503
     assert payload["healthy"] is False
     assert "probe:memory" in payload["blockers"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_heartbeat_refuses_boot_blockers_even_when_required_probes_pass(monkeypatch):
+    from interface.routes import system as system_routes
+
+    required_probes = {
+        "all_passed": True,
+        "kernel": {"ok": True, "components": {"kernel_interface": True}},
+        "inference": {
+            "ok": True,
+            "components": {"inference_gate": True, "llm_router": True},
+        },
+        "memory": {
+            "ok": True,
+            "components": {"state_repository": True, "memory_facade": True},
+        },
+        "scheduler": {"ok": True, "components": {"scheduler": True}},
+        "tool_governance": {
+            "ok": True,
+            "components": {
+                "unified_will": True,
+                "authority_gateway": True,
+                "capability_engine": True,
+            },
+        },
+    }
+    monkeypatch.setattr(system_routes, "_get_runtime_state_safe", lambda: {"state": {}})
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_conversation_lane_status_resilient",
+        lambda: {"conversation_ready": False, "state": "failed"},
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "build_boot_health_snapshot",
+        lambda orch, rt, is_gui_proxy=False, conversation_lane=None: (
+            {
+                "ready": True,
+                "system_ready": True,
+                "conversation_ready": False,
+                "boot_phase": "conversation_failed",
+                "blockers": ["conversation_ready", "conversation_failed"],
+                "required_probes": required_probes,
+            },
+            200,
+        ),
+    )
+
+    response = await system_routes.api_heartbeat()
+    payload = json.loads(response.body)
+
+    assert response.status_code == 503
+    assert payload["healthy"] is False
+    assert payload["runtime_probe_healthy"] is True
+    assert payload["status"] == "unhealthy"
+    assert payload["required_probes"]["all_passed"] is True
+    assert "conversation_failed" in payload["blockers"]

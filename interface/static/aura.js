@@ -2856,6 +2856,7 @@ function payloadRuntimeHealthy(payload) {
     if (!payload || typeof payload !== 'object') return false;
     const requiredProbes = requiredProbesFromPayload(payload);
     if (!requiredRuntimeProbesPass(requiredProbes)) return false;
+    if (runtimeHealthBlockers(payload).length > 0) return false;
     if (payload.healthy === false) return false;
     const boot = payload.boot || (payload.telemetry && payload.telemetry.boot) || {};
     if (boot.ready === false || boot.system_ready === false) return false;

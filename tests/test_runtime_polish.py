@@ -142,6 +142,52 @@ def test_gui_actor_rejects_heartbeat_without_required_probe_groups():
     assert _heartbeat_response_healthy(_Response()) is False
 
 
+def test_gui_actor_rejects_heartbeat_with_missing_or_nonempty_blockers():
+    from interface.gui_actor import _heartbeat_response_healthy
+
+    valid_probes = {
+        "all_passed": True,
+        "kernel": {"ok": True, "components": {"kernel_interface": True}},
+        "inference": {
+            "ok": True,
+            "components": {"inference_gate": True, "llm_router": True},
+        },
+        "memory": {
+            "ok": True,
+            "components": {"state_repository": True, "memory_facade": True},
+        },
+        "scheduler": {"ok": True, "components": {"scheduler": True}},
+        "tool_governance": {
+            "ok": True,
+            "components": {
+                "unified_will": True,
+                "authority_gateway": True,
+                "capability_engine": True,
+            },
+        },
+    }
+
+    class _Response:
+        status_code = 200
+
+        def __init__(self, blockers_marker):
+            self.blockers_marker = blockers_marker
+
+        def json(self):
+            payload = {
+                "healthy": True,
+                "status": "healthy",
+                "required_probes": valid_probes,
+            }
+            if self.blockers_marker != "missing":
+                payload["blockers"] = self.blockers_marker
+            return payload
+
+    assert _heartbeat_response_healthy(_Response("missing")) is False
+    assert _heartbeat_response_healthy(_Response(["conversation_failed"])) is False
+    assert _heartbeat_response_healthy(_Response([])) is True
+
+
 def test_gui_actor_rejects_heartbeat_without_required_probe_components():
     from interface.gui_actor import _heartbeat_response_healthy
 
@@ -257,6 +303,7 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "runtime_heartbeat_payload(\"ping\")" in websocket_manager
     assert "payloadRuntimeHealthy(payload)" in aura_js
     assert "requiredRuntimeProbesPass(requiredProbes)" in aura_js
+    assert "runtimeHealthBlockers(payload).length > 0" in aura_js
     assert "runtime_health_unverified" in aura_js
     assert "applyRuntimeHeartbeat(data)" in aura_js
     assert "setConnectionVisual('online');\n        dismissSplash();" not in aura_js
@@ -271,6 +318,7 @@ def test_native_shell_waits_for_readiness_heartbeat():
     assert "resp.status().is_success()" in native_shell
     assert "readiness_heartbeat_is_healthy" in native_shell
     assert "tool_governance" in native_shell
+    assert "payload.get(\"blockers\")" in native_shell
 
 
 def test_input_bus_normalizes_external_priority_values():
