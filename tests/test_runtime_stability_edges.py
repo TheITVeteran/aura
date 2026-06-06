@@ -1,11 +1,12 @@
 import asyncio
+import importlib
+import inspect
 import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.brain.llm.mlx_client import MLXLocalClient
 from core.container import ServiceContainer
@@ -15,10 +16,280 @@ TMP_ROOT = Path(tempfile.gettempdir())
 TEST_MODEL = str(TMP_ROOT / "test-model")
 
 
+_MISSING = object()
+
+
+class _RecordedCall:
+    def __init__(self, args, kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    def __iter__(self):
+        yield self.args
+        yield self.kwargs
+
+
+class _CallRecorder:
+    def __init__(
+        self,
+        *args,
+        return_value=_MISSING,
+        side_effect=None,
+        wraps=None,
+        spec=None,
+        **attrs,
+    ):
+        self.return_value = None if return_value is _MISSING else return_value
+        self.side_effect = side_effect
+        self.wraps = wraps
+        self.calls = []
+        self.call_args = None
+        for key, value in attrs.items():
+            setattr(self, key, value)
+
+    @property
+    def called(self):
+        return bool(self.calls)
+
+    @property
+    def call_count(self):
+        return len(self.calls)
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        child = _CallRecorder()
+        setattr(self, name, child)
+        return child
+
+    def _next_effect(self):
+        effect = self.side_effect
+        if isinstance(effect, BaseException):
+            raise effect
+        if isinstance(effect, list):
+            if not effect:
+                raise StopIteration
+            value = effect.pop(0)
+            if isinstance(value, BaseException):
+                raise value
+            return value
+        return _MISSING
+
+    def __call__(self, *args, **kwargs):
+        call = _RecordedCall(args, kwargs)
+        self.calls.append(call)
+        self.call_args = call
+        effect_value = self._next_effect()
+        if effect_value is not _MISSING:
+            return effect_value
+        if callable(self.side_effect):
+            return self.side_effect(*args, **kwargs)
+        if self.wraps is not None:
+            return self.wraps(*args, **kwargs)
+        return self.return_value
+
+    def assert_called_once(self):
+        assert len(self.calls) == 1
+
+    def assert_called_once_with(self, *args, **kwargs):
+        self.assert_called_once()
+        call = self.calls[0]
+        assert call.args == args
+        assert call.kwargs == kwargs
+
+    def assert_any_call(self, *args, **kwargs):
+        assert any(call.args == args and call.kwargs == kwargs for call in self.calls)
+
+    def assert_not_called(self):
+        assert not self.calls
+
+
+class _AsyncCallRecorder:
+    def __init__(self, result=None, *, return_value=None, side_effect=None):
+        self.return_value = result if return_value is None else return_value
+        self.side_effect = side_effect
+        self.await_args_list = []
+        self.await_args = None
+
+    @property
+    def await_count(self):
+        return len(self.await_args_list)
+
+    @property
+    def called(self):
+        return bool(self.await_args_list)
+
+    def _next_effect(self):
+        effect = self.side_effect
+        if isinstance(effect, BaseException):
+            raise effect
+        if isinstance(effect, list):
+            if not effect:
+                raise StopIteration
+            value = effect.pop(0)
+            if isinstance(value, BaseException):
+                raise value
+            return value
+        return _MISSING
+
+    def __call__(self, *args, **kwargs):
+        call = _RecordedCall(args, kwargs)
+        self.await_args_list.append(call)
+        self.await_args = call
+
+        async def _complete():
+            effect_value = self._next_effect()
+            if effect_value is not _MISSING:
+                return effect_value
+            if callable(self.side_effect):
+                value = self.side_effect(*args, **kwargs)
+            else:
+                value = self.return_value
+            if inspect.isawaitable(value):
+                return await value
+            return value
+
+        return _complete()
+
+    def assert_awaited_once(self):
+        assert len(self.await_args_list) == 1
+
+    def assert_awaited_once_with(self, *args, **kwargs):
+        self.assert_awaited_once()
+        call = self.await_args_list[0]
+        assert call.args == args
+        assert call.kwargs == kwargs
+
+    def assert_any_await(self, *args, **kwargs):
+        assert any(call.args == args and call.kwargs == kwargs for call in self.await_args_list)
+
+    def assert_not_awaited(self):
+        assert not self.await_args_list
+
+
+def _resolve_dotted_path(target):
+    parts = target.split(".")
+    for index in range(len(parts) - 1, 0, -1):
+        module_name = ".".join(parts[:index])
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        owner = module
+        for part in parts[index:-1]:
+            owner = getattr(owner, part)
+        return owner, parts[-1]
+    raise ImportError(f"Cannot resolve dotted target: {target}")
+
+
+class _SwapContext:
+    def __init__(self, owner, name, replacement, *, create=False):
+        self.owner = owner
+        self.name = name
+        self.replacement = replacement
+        self.create = create
+        self.had_original = False
+        self.original = None
+
+    def __enter__(self):
+        self.had_original = hasattr(self.owner, self.name)
+        if self.had_original:
+            self.original = getattr(self.owner, self.name)
+        elif not self.create:
+            raise AttributeError(self.name)
+        setattr(self.owner, self.name, self.replacement)
+        return self.replacement
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.had_original:
+            setattr(self.owner, self.name, self.original)
+        else:
+            delattr(self.owner, self.name)
+        return False
+
+
+class _SwapDictContext:
+    def __init__(self, mapping, values, *, clear=False):
+        if isinstance(mapping, str):
+            owner, name = _resolve_dotted_path(mapping)
+            mapping = getattr(owner, name)
+        self.mapping = mapping
+        self.values = dict(values)
+        self.clear = clear
+        self.original = None
+
+    def __enter__(self):
+        self.original = dict(self.mapping)
+        if self.clear:
+            self.mapping.clear()
+        self.mapping.update(self.values)
+        return self.mapping
+
+    def __exit__(self, exc_type, exc, tb):
+        self.mapping.clear()
+        self.mapping.update(self.original)
+        return False
+
+
+def _replacement(new=_MISSING, *, return_value=_MISSING, side_effect=None, wraps=None):
+    if new is not _MISSING:
+        return new
+    kwargs = {"side_effect": side_effect}
+    if wraps is not None:
+        return _CallRecorder(wraps=wraps, **kwargs)
+    if return_value is not _MISSING:
+        return _CallRecorder(return_value=return_value, **kwargs)
+    return _CallRecorder(**kwargs)
+
+
+class _Swap:
+    def __call__(
+        self,
+        target,
+        new=_MISSING,
+        *,
+        return_value=_MISSING,
+        side_effect=None,
+        create=False,
+        wraps=None,
+    ):
+        owner, name = _resolve_dotted_path(target)
+        return _SwapContext(
+            owner,
+            name,
+            _replacement(new, return_value=return_value, side_effect=side_effect, wraps=wraps),
+            create=create,
+        )
+
+    def object(
+        self,
+        owner,
+        name,
+        new=_MISSING,
+        *,
+        return_value=_MISSING,
+        side_effect=None,
+        create=False,
+        wraps=None,
+    ):
+        return _SwapContext(
+            owner,
+            name,
+            _replacement(new, return_value=return_value, side_effect=side_effect, wraps=wraps),
+            create=create,
+        )
+
+    def dict(self, mapping, values, *, clear=False):
+        return _SwapDictContext(mapping, values, clear=clear)
+
+
+swap = _Swap()
+
+
 class TestMLXCompatibility(unittest.IsolatedAsyncioTestCase):
     async def test_warm_up_alias_delegates_to_warmup(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
-        client.warmup = AsyncMock(return_value="ok")
+        client.warmup = _AsyncCallRecorder(return_value="ok")
 
         result = await client.warm_up()
 
@@ -30,15 +301,15 @@ class TestSensoryClientRecovery(unittest.IsolatedAsyncioTestCase):
     async def test_start_uses_spawn_on_darwin_and_pings_worker(self):
         client = SensoryLocalClient()
 
-        process = MagicMock()
+        process = _CallRecorder()
         process.pid = 4321
         process.is_alive.return_value = True
-        ctx = MagicMock()
+        ctx = _CallRecorder()
         ctx.Process.return_value = process
 
-        with patch("core.senses.sensory_client.sys.platform", "darwin"), \
-             patch("core.senses.sensory_client.mp.get_context", return_value=ctx) as get_context, \
-             patch.object(client, "_send_command", new=AsyncMock(side_effect=[True, True, True])) as send_command:
+        with swap("core.senses.sensory_client.sys.platform", "darwin"), \
+             swap("core.senses.sensory_client.mp.get_context", return_value=ctx) as get_context, \
+             swap.object(client, "_send_command", new=_AsyncCallRecorder(side_effect=[True, True, True])) as send_command:
             started = await client.start()
 
         self.assertTrue(started)
@@ -50,18 +321,18 @@ class TestSensoryClientRecovery(unittest.IsolatedAsyncioTestCase):
         client = SensoryLocalClient()
 
         async def restart_worker():
-            client._req_q = MagicMock()
-            client._res_q = MagicMock()
-            client._process = MagicMock()
+            client._req_q = _CallRecorder()
+            client._res_q = _CallRecorder()
+            client._process = _CallRecorder()
             client._process.is_alive.return_value = True
             return True
 
-        client.start = AsyncMock(side_effect=restart_worker)
-        task_registry = MagicMock()
+        client.start = _AsyncCallRecorder(side_effect=restart_worker)
+        task_registry = _CallRecorder()
         task_registry.register_task.return_value = "task-1"
 
-        with patch("core.supervisor.registry.get_task_registry", return_value=task_registry), \
-             patch("core.senses.sensory_client.asyncio.to_thread", new=AsyncMock(return_value={"status": "ok"})):
+        with swap("core.supervisor.registry.get_task_registry", return_value=task_registry), \
+             swap("core.senses.sensory_client.asyncio.to_thread", new=_AsyncCallRecorder(return_value={"status": "ok"})):
             ok = await client._send_command("ping")
 
         self.assertTrue(ok)
@@ -109,7 +380,7 @@ class TestStallWatchdogRecovery(unittest.IsolatedAsyncioTestCase):
         dog._task_birth[id(task)] = time.time() - 300
 
         try:
-            with patch.dict(os.environ, {}, clear=True):
+            with swap.dict(os.environ, {}, clear=True):
                 await dog._recover_on_loop(91.0)
 
             self.assertFalse(task.cancelled())
@@ -136,8 +407,8 @@ class TestSelfHealingLoopSafety(unittest.IsolatedAsyncioTestCase):
             threading.Event().wait(0.25)
 
         started = time.perf_counter()
-        with patch.object(healer, "_foreground_runtime_busy", return_value=True), \
-             patch.object(healer, "_append_record", side_effect=slow_append):
+        with swap.object(healer, "_foreground_runtime_busy", return_value=True), \
+             swap.object(healer, "_append_record", side_effect=slow_append):
             await healer._tick()
 
         self.assertLess(time.perf_counter() - started, 0.12)
@@ -169,7 +440,7 @@ class TestShutdownCoordination(unittest.TestCase):
         tree = SupervisionTree()
         tree.add_actor(ActorSpec(name="worker", entry_point=lambda _pipe=None: None))
         actor = tree._actors["worker"]
-        actor.process = MagicMock()
+        actor.process = _CallRecorder()
         actor.process.is_alive.return_value = False
         actor.process.exitcode = -15
         actor.pipe = object()
@@ -219,7 +490,7 @@ class TestStateTransportRuntimeEdges(unittest.IsolatedAsyncioTestCase):
         from core.bus.local_pipe_bus import LocalPipeBus
 
         bus = LocalPipeBus(start_reader=False)
-        bus._write_raw_message = AsyncMock()
+        bus._write_raw_message = _AsyncCallRecorder()
         handler_calls = {"count": 0}
 
         def bad_handler(_payload, _trace_id):
@@ -267,7 +538,7 @@ class TestStateTransportRuntimeEdges(unittest.IsolatedAsyncioTestCase):
         repo._transport = transport
 
         try:
-            with patch.dict(os.environ, {"AURA_MODE": "live"}, clear=False):
+            with swap.dict(os.environ, {"AURA_MODE": "live"}, clear=False):
                 ServiceContainer.clear()
                 ServiceContainer.register_instance(
                     "state_repository",
@@ -295,7 +566,7 @@ class TestShutdownCancellationHandlers(unittest.IsolatedAsyncioTestCase):
         from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
 
         healer = SelfHealing()
-        healer._tick = AsyncMock(return_value=None)
+        healer._tick = _AsyncCallRecorder(return_value=None)
 
         try:
             await healer.start(interval=60.0)
@@ -319,14 +590,14 @@ class TestAffectBroadcastBackpressure(unittest.IsolatedAsyncioTestCase):
             async def emit(self, *_args, **_kwargs):
                 await emit_release.wait()
 
-        with patch("core.affect.damasio_v2.PhysicalActuator", return_value=MagicMock()):
+        with swap("core.affect.damasio_v2.PhysicalActuator", return_value=_CallRecorder()):
             from core.affect.damasio_v2 import AffectEngineV2
 
             engine = AffectEngineV2()
 
         engine._max_background_tasks = 2
 
-        with patch("core.container.ServiceContainer.get", return_value=_Bus()):
+        with swap("core.container.ServiceContainer.get", return_value=_Bus()):
             await engine._broadcast_event("affect_pulse")
             await engine._broadcast_event("affect_pulse")
             await engine._broadcast_event("affect_pulse")
@@ -338,33 +609,35 @@ class TestAffectBroadcastBackpressure(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
 
     async def test_affect_appraisal_skips_llm_when_foreground_lane_is_protected(self):
-        with patch("core.affect.damasio_v2.PhysicalActuator", return_value=MagicMock()):
+        with swap("core.affect.damasio_v2.PhysicalActuator", return_value=_CallRecorder()):
             from core.affect.damasio_v2 import AffectEngineV2
 
             engine = AffectEngineV2()
 
-        guarded_gate = MagicMock()
-        guarded_gate._should_quiet_background_for_cortex_startup.return_value = True
+        guarded_gate = _CallRecorder(
+            _should_quiet_background_for_cortex_startup=_CallRecorder(return_value=True)
+        )
         guarded_gate.get_conversation_status.return_value = {
             "conversation_ready": False,
             "state": "warming",
             "warmup_in_flight": True,
         }
 
-        with patch("core.container.ServiceContainer.get", return_value=guarded_gate):
+        with swap("core.container.ServiceContainer.get", return_value=guarded_gate):
             result = await engine.react("I feel frustrated and need to reflect on recent interactions.")
 
         self.assertIsNotNone(result)
         self.assertEqual(engine._llm_failure_count, 0)
 
     async def test_affect_appraisal_skips_llm_when_foreground_turn_is_active(self):
-        with patch("core.affect.damasio_v2.PhysicalActuator", return_value=MagicMock()):
+        with swap("core.affect.damasio_v2.PhysicalActuator", return_value=_CallRecorder()):
             from core.affect.damasio_v2 import AffectEngineV2
 
             engine = AffectEngineV2()
 
-        guarded_gate = MagicMock()
-        guarded_gate._foreground_user_turn_active.return_value = True
+        guarded_gate = _CallRecorder(
+            _foreground_user_turn_active=_CallRecorder(return_value=True)
+        )
         guarded_gate.get_conversation_status.return_value = {
             "conversation_ready": True,
             "state": "ready",
@@ -373,27 +646,27 @@ class TestAffectBroadcastBackpressure(unittest.IsolatedAsyncioTestCase):
             "active_generations": 0,
             "request_age_s": 0.0,
         }
-        guarded_gate.generate = AsyncMock(side_effect=AssertionError("LLM appraisal should have been deferred"))
+        guarded_gate.generate = _AsyncCallRecorder(side_effect=AssertionError("LLM appraisal should have been deferred"))
 
-        with patch("core.container.ServiceContainer.get", return_value=guarded_gate), \
-             patch("core.brain.llm.mlx_client._foreground_owner_active", return_value=False):
+        with swap("core.container.ServiceContainer.get", return_value=guarded_gate), \
+             swap("core.brain.llm.mlx_client._foreground_owner_active", return_value=False):
             result = await engine.react("I feel frustrated and need to reflect on recent interactions.")
 
         self.assertIsNotNone(result)
         self.assertEqual(engine._llm_failure_count, 0)
 
     async def test_affect_background_timeout_falls_back_without_runtime_degradation(self):
-        with patch("core.affect.damasio_v2.PhysicalActuator", return_value=MagicMock()):
+        with swap("core.affect.damasio_v2.PhysicalActuator", return_value=_CallRecorder()):
             from core.affect.damasio_v2 import AffectEngineV2
 
             engine = AffectEngineV2()
 
-        engine._background_llm_should_defer = MagicMock(return_value=False)
-        engine._appraise_with_llm = AsyncMock(side_effect=TimeoutError())
-        engine.iot_bridge.broadcast_affect_state = AsyncMock(return_value=None)
+        engine._background_llm_should_defer = _CallRecorder(return_value=False)
+        engine._appraise_with_llm = _AsyncCallRecorder(side_effect=TimeoutError())
+        engine.iot_bridge.broadcast_affect_state = _AsyncCallRecorder(return_value=None)
 
-        with patch("core.brain.llm.mlx_client._foreground_owner_active", return_value=False), \
-             patch("core.affect.damasio_v2.record_degradation") as record_degradation:
+        with swap("core.brain.llm.mlx_client._foreground_owner_active", return_value=False), \
+             swap("core.affect.damasio_v2.record_degradation") as record_degradation:
             result = await engine.react("I feel frustrated and need to reflect on recent interactions.")
 
         self.assertIsNotNone(result)
@@ -405,14 +678,14 @@ class TestEternalMemoryCaching(unittest.IsolatedAsyncioTestCase):
     async def test_eternal_memory_reuses_recent_summary_cache(self):
         from core.kernel.upgrades_10x import EternalMemoryPhase
 
-        phase = EternalMemoryPhase(MagicMock())
+        phase = EternalMemoryPhase(_CallRecorder())
         phase._summary_cache = [{"role": "system", "content": "[ETERNAL MEMORY]\nsteady"}]
         import time
         phase._last_summary_refresh_at = time.time()
         phase._summary_refresh_interval_s = 120.0
-        phase._load_eternal_slice = MagicMock(side_effect=AssertionError("should not load recent history"))
+        phase._load_eternal_slice = _CallRecorder(side_effect=AssertionError("should not load recent history"))
 
-        with patch.object(phase, "_background_llm_should_defer", return_value=False):
+        with swap.object(phase, "_background_llm_should_defer", return_value=False):
             summary = await phase._get_cached_or_refresh_summary()
 
         self.assertEqual(summary, phase._summary_cache)
@@ -423,13 +696,13 @@ class TestNativeMultimodalBridgeGuards(unittest.IsolatedAsyncioTestCase):
         from core.kernel.upgrades_10x import NativeMultimodalBridge
         from core.state.aura_state import AuraState
 
-        kernel = MagicMock()
+        kernel = _CallRecorder()
         kernel.organs = {}
         phase = NativeMultimodalBridge(kernel)
         state = AuraState()
         state.cognition.current_objective = "Please inspect the screen."
 
-        with patch.dict("os.environ", {"AURA_ENABLE_NATIVE_VISION_ACTIONS": "0"}, clear=False):
+        with swap.dict("os.environ", {"AURA_ENABLE_NATIVE_VISION_ACTIONS": "0"}, clear=False):
             new_state = await phase.execute(state, objective=state.cognition.current_objective)
 
         self.assertIs(new_state, state)
@@ -439,7 +712,7 @@ class TestJsonRepairGuards(unittest.IsolatedAsyncioTestCase):
     async def test_json_repair_handles_none_without_crashing(self):
         from core.utils.json_utils import SelfHealingJSON
 
-        repairer = SelfHealingJSON(brain=MagicMock())
+        repairer = SelfHealingJSON(brain=_CallRecorder())
 
         parsed = await repairer.parse(None)
 
@@ -448,7 +721,7 @@ class TestJsonRepairGuards(unittest.IsolatedAsyncioTestCase):
     async def test_json_repair_handles_python_style_dict_payloads(self):
         from core.utils.json_utils import SelfHealingJSON
 
-        repairer = SelfHealingJSON(brain=MagicMock())
+        repairer = SelfHealingJSON(brain=_CallRecorder())
 
         parsed = await repairer.parse(
             "{'signature_phrase': 'I am steady.', 'stable_traits': ['curious'], "
@@ -465,8 +738,8 @@ class TestExperienceConsolidatorGuards(unittest.IsolatedAsyncioTestCase):
 
         consolidator = ExperienceConsolidator(cognitive_engine=None)
         before = consolidator._last_run
-        consolidator._background_should_defer = MagicMock(return_value=True)
-        consolidator._gather_material = MagicMock(side_effect=AssertionError("foreground defer should skip work"))
+        consolidator._background_should_defer = _CallRecorder(return_value=True)
+        consolidator._gather_material = _CallRecorder(side_effect=AssertionError("foreground defer should skip work"))
 
         result = await consolidator.run_now()
 
@@ -480,9 +753,9 @@ class TestSubstrateStimulusGuards(unittest.IsolatedAsyncioTestCase):
 
         substrate = LiquidSubstrate(SubstrateConfig(neuron_count=4))
 
-        with patch(
+        with swap(
             "core.consciousness.liquid_substrate.asyncio.to_thread",
-            new=AsyncMock(return_value=None),
+            new=_AsyncCallRecorder(return_value=None),
         ) as to_thread:
             await substrate._recurrent_self_model(0.05)
 
@@ -493,9 +766,9 @@ class TestSubstrateStimulusGuards(unittest.IsolatedAsyncioTestCase):
 
         substrate = LiquidSubstrate(SubstrateConfig(neuron_count=4))
 
-        with patch(
+        with swap(
             "core.consciousness.liquid_substrate.asyncio.to_thread",
-            new=AsyncMock(return_value=None),
+            new=_AsyncCallRecorder(return_value=None),
         ) as to_thread:
             await substrate._apply_plasticity()
 
@@ -517,7 +790,7 @@ class TestSubstrateStimulusGuards(unittest.IsolatedAsyncioTestCase):
                     constraints=["neurochemical_gaba_collapse: internal_state_mutation_constrained"],
                 )
 
-        with patch(
+        with swap(
             "core.container.ServiceContainer.get",
             staticmethod(lambda name, default=None: _Authority() if name == "substrate_authority" else default),
         ):
@@ -533,8 +806,8 @@ class TestSovereignPrunerGuards(unittest.IsolatedAsyncioTestCase):
         pruner = SovereignPruner(target_retention=0.0)
         pruner._min_prune_interval_s = 0.0
         pruner._max_consolidations_per_pass = 2
-        pruner._background_should_defer = MagicMock(return_value=False)
-        pruner._consolidate = AsyncMock(side_effect=["insight-a", "insight-b"])
+        pruner._background_should_defer = _CallRecorder(return_value=False)
+        pruner._consolidate = _AsyncCallRecorder(side_effect=["insight-a", "insight-b"])
 
         memories = [
             MemoryRecord(
@@ -560,8 +833,8 @@ class TestSovereignPrunerGuards(unittest.IsolatedAsyncioTestCase):
         pruner = SovereignPruner(target_retention=0.0)
         pruner._min_prune_interval_s = 999.0
         pruner._last_prune_at = time.time()
-        pruner._background_should_defer = MagicMock(return_value=False)
-        pruner._consolidate = AsyncMock()
+        pruner._background_should_defer = _CallRecorder(return_value=False)
+        pruner._consolidate = _AsyncCallRecorder()
 
         memories = [
             MemoryRecord(
@@ -585,12 +858,12 @@ class TestLocalVisionPermissionGuards(unittest.IsolatedAsyncioTestCase):
     async def test_capture_screen_skips_screenshot_when_permission_not_granted(self):
         from core.senses.screen_vision import LocalVision
 
-        guard = MagicMock()
-        guard.check_permission = AsyncMock(
+        guard = _CallRecorder()
+        guard.check_permission = _AsyncCallRecorder(
             return_value={"granted": False, "status": "deferred", "guidance": "nope"}
         )
 
-        with patch("core.container.ServiceContainer.get", return_value=guard), patch(
+        with swap("core.container.ServiceContainer.get", return_value=guard), swap(
             "core.senses.screen_vision._screen_capture_preflight",
             return_value=False,
         ):
@@ -605,7 +878,7 @@ class TestNeuralBridgeBootSafety(unittest.IsolatedAsyncioTestCase):
 
         bridge = NeuralBridge(lightweight_mode=True)
 
-        with patch.object(bridge, "start") as start:
+        with swap.object(bridge, "start") as start:
             await bridge.load()
 
         self.assertTrue(bridge.is_trained)
@@ -617,12 +890,12 @@ class TestNeuralOrganBootSafety(unittest.IsolatedAsyncioTestCase):
     async def test_neural_organ_uses_lightweight_mode_during_safe_desktop_boot(self):
         from core.kernel.organs import OrganStub
 
-        bridge = MagicMock()
-        bridge.load = AsyncMock()
+        bridge = _CallRecorder()
+        bridge.load = _AsyncCallRecorder()
 
-        with patch.dict("os.environ", {"AURA_SAFE_BOOT_DESKTOP": "1"}, clear=False):
-            with patch("core.senses.neural_bridge.NeuralBridge", return_value=bridge) as bridge_cls:
-                organ = OrganStub("neural", MagicMock())
+        with swap.dict("os.environ", {"AURA_SAFE_BOOT_DESKTOP": "1"}, clear=False):
+            with swap("core.senses.neural_bridge.NeuralBridge", return_value=bridge) as bridge_cls:
+                organ = OrganStub("neural", _CallRecorder())
                 await organ.load()
 
         bridge_cls.assert_called_once_with(lightweight_mode=True)
@@ -639,12 +912,12 @@ class TestBackgroundPolicyGuards(unittest.TestCase):
         clear_degraded_events()
         reset_foreground_guard()
 
-        orch = MagicMock()
+        orch = _CallRecorder()
         orch.is_busy = False
         orch._suppress_unsolicited_proactivity_until = 0.0
         orch._foreground_user_quiet_until = 0.0
         orch._last_user_interaction_time = 0.0
-        orch.status = MagicMock(last_user_interaction_time=0.0)
+        orch.status = _CallRecorder(last_user_interaction_time=0.0)
 
         reason = background_activity_reason(orch, require_conversation_ready=False)
 
@@ -672,13 +945,13 @@ class TestSovereignNetworkBackgroundGuards(unittest.IsolatedAsyncioTestCase):
         from core.skills.sovereign_network import NetworkInput, SovereignNetworkSkill
 
         skill = SovereignNetworkSkill()
-        with patch(
+        with swap(
             "core.runtime.background_policy.background_activity_reason",
             return_value="foreground_quiet_window",
         ):
             result = await skill.execute(
                 NetworkInput(mode="discovery", target="192.168.1.0/30", ports="8000"),
-                {"origin": "system", "orchestrator": MagicMock()},
+                {"origin": "system", "orchestrator": _CallRecorder()},
             )
 
         self.assertFalse(result["ok"])
@@ -734,7 +1007,7 @@ class TestMetabolicCoordinatorGuards(unittest.IsolatedAsyncioTestCase):
         from core.coordinators.metabolic_coordinator import MetabolicCoordinator
 
         with self.subTest("live_lock_preserved_and_dead_lock_removed"):
-            with patch.object(
+            with swap.object(
                 metabolic_module,
                 "config",
                 SimpleNamespace(paths=SimpleNamespace(home_dir=self._make_tmp_home())),
@@ -755,7 +1028,7 @@ class TestMetabolicCoordinatorGuards(unittest.IsolatedAsyncioTestCase):
         from core.coordinators.metabolic_coordinator import MetabolicCoordinator
 
         now = time.time()
-        status = MagicMock(
+        status = _CallRecorder(
             cycle_count=5,
             last_user_interaction_time=now,
             state="ready",
@@ -764,15 +1037,15 @@ class TestMetabolicCoordinatorGuards(unittest.IsolatedAsyncioTestCase):
             is_processing=False,
             volition_level=0,
         )
-        hooks = MagicMock(trigger=AsyncMock())
-        world = MagicMock(recent_percepts=[])
-        message_queue = MagicMock()
+        hooks = _CallRecorder(trigger=_AsyncCallRecorder())
+        world = _CallRecorder(recent_percepts=[])
+        message_queue = _CallRecorder()
         message_queue._queue = []
         message_queue.full.return_value = False
         message_queue.qsize.return_value = 0
         message_queue.empty.return_value = True
 
-        orch = MagicMock(
+        orch = _CallRecorder(
             status=status,
             hooks=hooks,
             drive_controller=None,
@@ -780,12 +1053,12 @@ class TestMetabolicCoordinatorGuards(unittest.IsolatedAsyncioTestCase):
             is_busy=False,
             latent_core=None,
             predictive_model=None,
-            kernel=MagicMock(organs={}),
+            kernel=_CallRecorder(organs={}),
             message_queue=message_queue,
             world=world,
             conversation_history=[],
             memory_manager=None,
-            liquid_state=MagicMock(current=MagicMock(curiosity=0.5, frustration=0.0, energy=0.5)),
+            liquid_state=_CallRecorder(current=_CallRecorder(curiosity=0.5, frustration=0.0, energy=0.5)),
             lnn=None,
             homeostasis=None,
             mortality=None,
@@ -798,19 +1071,19 @@ class TestMetabolicCoordinatorGuards(unittest.IsolatedAsyncioTestCase):
             _last_pulse=now,
             _recovery_attempts=0,
         )
-        orch._acquire_next_message = AsyncMock(return_value=None)
-        orch._dispatch_message = MagicMock()
-        orch._publish_telemetry = MagicMock()
-        orch._emit_thought_stream = MagicMock()
+        orch._acquire_next_message = _AsyncCallRecorder(return_value=None)
+        orch._dispatch_message = _CallRecorder()
+        orch._publish_telemetry = _CallRecorder()
+        orch._emit_thought_stream = _CallRecorder()
 
         coord = MetabolicCoordinator(orch=orch)
         coord._event_bus = object()
-        coord._consume_energy = MagicMock(return_value=False)
-        coord.update_liquid_pacing = MagicMock()
-        coord.manage_memory_hygiene = MagicMock()
-        coord.process_world_decay = AsyncMock()
-        coord.trigger_autonomous_thought = AsyncMock()
-        coord.run_terminal_self_heal = AsyncMock()
+        coord._consume_energy = _CallRecorder(return_value=False)
+        coord.update_liquid_pacing = _CallRecorder()
+        coord.manage_memory_hygiene = _CallRecorder()
+        coord.process_world_decay = _AsyncCallRecorder()
+        coord.trigger_autonomous_thought = _AsyncCallRecorder()
+        coord.run_terminal_self_heal = _AsyncCallRecorder()
         coord._neural_events.append({"command": "test", "confidence": 0.9})
 
         result = await coord._process_metabolic_tasks()
@@ -861,9 +1134,9 @@ class TestSelfModificationBackgroundSafety(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             logger_system = StructuredErrorLogger(log_dir=temp_dir)
-            with patch(
+            with swap(
                 "core.self_modification.error_intelligence.asyncio.to_thread",
-                new=AsyncMock(side_effect=asyncio.CancelledError),
+                new=_AsyncCallRecorder(side_effect=asyncio.CancelledError),
             ):
                 await logger_system._append_to_log(Path(temp_dir) / "error_events.jsonl", {"ok": True})
 
@@ -874,7 +1147,7 @@ class TestSelfModificationBackgroundSafety(unittest.IsolatedAsyncioTestCase):
             ErrorPattern,
         )
 
-        brain = SimpleNamespace(think=AsyncMock(return_value=SimpleNamespace(content="{}")))
+        brain = SimpleNamespace(think=_AsyncCallRecorder(return_value=SimpleNamespace(content="{}")))
         engine = AutomatedDiagnosisEngine(brain)
         event = ErrorEvent(
             timestamp=time.time(),
@@ -894,7 +1167,7 @@ class TestSelfModificationBackgroundSafety(unittest.IsolatedAsyncioTestCase):
             severity="medium",
         )
 
-        with patch.dict(os.environ, {"AURA_SELFMOD_LLM_DIAGNOSIS": "0"}):
+        with swap.dict(os.environ, {"AURA_SELFMOD_LLM_DIAGNOSIS": "0"}):
             diagnosis = await engine.diagnose_pattern(pattern)
 
         brain.think.assert_not_awaited()
@@ -933,10 +1206,10 @@ class TestSelfModificationBackgroundSafety(unittest.IsolatedAsyncioTestCase):
     async def test_kernel_refiner_skips_llm_deep_audit_by_default(self):
         from core.self_modification.kernel_refiner import KernelRefiner
 
-        brain = SimpleNamespace(think=AsyncMock(return_value=SimpleNamespace(content='{"found": true}')))
+        brain = SimpleNamespace(think=_AsyncCallRecorder(return_value=SimpleNamespace(content='{"found": true}')))
         refiner = KernelRefiner(brain, code_base_path=".")
 
-        with patch.dict(os.environ, {"AURA_KERNEL_REFINER_LLM_AUDIT": "0"}):
+        with swap.dict(os.environ, {"AURA_KERNEL_REFINER_LLM_AUDIT": "0"}):
             result = await refiner._perform_deep_brain_audit("def evaluate(self):\n    return None\n")
 
         self.assertEqual(result, [])
@@ -945,14 +1218,14 @@ class TestSelfModificationBackgroundSafety(unittest.IsolatedAsyncioTestCase):
 
 class TestLifecycleDeduplication(unittest.IsolatedAsyncioTestCase):
     async def test_reliability_engine_start_is_idempotent_while_tasks_are_alive(self):
-        with patch.object(ServiceContainer, "_registration_locked", False):
+        with swap.object(ServiceContainer, "_registration_locked", False):
             from core.reliability_engine import ReliabilityEngine
 
         engine = ReliabilityEngine()
         engine._started = True
         engine._tasks = [SimpleNamespace(done=lambda: False)]
 
-        with patch(
+        with swap(
             "core.reliability_engine.get_task_tracker",
             side_effect=AssertionError("duplicate tasks should not be created"),
         ):
@@ -968,7 +1241,7 @@ class TestLifecycleDeduplication(unittest.IsolatedAsyncioTestCase):
         guardian._running = True
         guardian._monitor_task = existing_task
 
-        with patch(
+        with swap(
             "core.session_guardian.get_task_tracker",
             side_effect=AssertionError("duplicate monitor task should not be created"),
         ):
@@ -1005,11 +1278,11 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
         queue = await bus.subscribe("same-loop")
         loop = asyncio.get_running_loop()
 
-        with patch.object(
+        with swap.object(
             loop,
             "call_soon_threadsafe",
             side_effect=AssertionError("same-loop publish should not wake the selector pipe"),
-        ), patch.object(loop, "call_soon", wraps=loop.call_soon) as call_soon:
+        ), swap.object(loop, "call_soon", wraps=loop.call_soon) as call_soon:
             await bus.publish("same-loop", {"ok": True})
             await asyncio.sleep(0)
 
@@ -1037,7 +1310,7 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
             bus._redis = None
             return func(*args, **kwargs)
 
-        with patch("core.event_bus.asyncio.to_thread", side_effect=_racy_to_thread):
+        with swap("core.event_bus.asyncio.to_thread", side_effect=_racy_to_thread):
             await bus.publish("shutdown-race", {"ok": True})
 
         self.assertEqual(len(redis_client.published), 1)
@@ -1083,7 +1356,7 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
 
         monitor = self._terminal_monitor_without_handler()
         now = time.time()
-        with patch("core.terminal_monitor.time.time", return_value=now):
+        with swap("core.terminal_monitor.time.time", return_value=now):
             for idx in range(12):
                 monitor._ingest_error(
                     ErrorEntry(
@@ -1149,7 +1422,7 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
         forwarded = []
         clear_degraded_events()
         try:
-            with patch("core.health.degraded_events._forward_to_terminal_monitor", side_effect=forwarded.append):
+            with swap("core.health.degraded_events._forward_to_terminal_monitor", side_effect=forwarded.append):
                 ServiceContainer._emit_absent_event("voice_pipeline")
 
             events = get_recent_degraded_events(limit=5)
@@ -1165,8 +1438,8 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
         from core.runtime.foreground_guard import _reset_for_tests as reset_foreground_guard
 
         reset_foreground_guard()
-        engine = MagicMock()
-        engine.think = AsyncMock(return_value=SimpleNamespace(content="quiet inner reflection"))
+        engine = _CallRecorder()
+        engine.think = _AsyncCallRecorder(return_value=SimpleNamespace(content="quiet inner reflection"))
 
         def fake_get(name, default=None):
             if name == "cognitive_engine":
@@ -1175,10 +1448,10 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
                 return SimpleNamespace(is_busy=False, _last_user_interaction_time=time.time() - 300)
             return default
 
-        with tempfile.TemporaryDirectory() as temp_dir, patch(
+        with tempfile.TemporaryDirectory() as temp_dir, swap(
             "core.agency.private_phenomenology.ServiceContainer.get",
             side_effect=fake_get,
-        ), patch.dict(os.environ, {"AURA_PHENOMENOLOGY_USE_LLM": "0"}):
+        ), swap.dict(os.environ, {"AURA_PHENOMENOLOGY_USE_LLM": "0"}):
             phenomenology = PrivatePhenomenology(storage_path=str(Path(temp_dir) / "monologue.jsonl"))
             reflection = await phenomenology.reflect({"P": 0.1, "A": 0.2, "D": 0.3}, [{"event": "test"}])
 
@@ -1190,8 +1463,8 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
         from core.runtime.foreground_guard import _reset_for_tests as reset_foreground_guard
 
         reset_foreground_guard()
-        engine = MagicMock()
-        engine.think = AsyncMock(return_value=SimpleNamespace(content="quiet inner reflection"))
+        engine = _CallRecorder()
+        engine.think = _AsyncCallRecorder(return_value=SimpleNamespace(content="quiet inner reflection"))
 
         def fake_get(name, default=None):
             if name == "cognitive_engine":
@@ -1200,10 +1473,10 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
                 return SimpleNamespace(is_busy=False, _last_user_interaction_time=time.time() - 300)
             return default
 
-        with tempfile.TemporaryDirectory() as temp_dir, patch(
+        with tempfile.TemporaryDirectory() as temp_dir, swap(
             "core.agency.private_phenomenology.ServiceContainer.get",
             side_effect=fake_get,
-        ), patch.dict(os.environ, {"AURA_PHENOMENOLOGY_USE_LLM": "1"}):
+        ), swap.dict(os.environ, {"AURA_PHENOMENOLOGY_USE_LLM": "1"}):
             phenomenology = PrivatePhenomenology(storage_path=str(Path(temp_dir) / "monologue.jsonl"))
             await phenomenology.reflect({"P": 0.1, "A": 0.2, "D": 0.3}, [{"event": "test"}])
 
@@ -1242,9 +1515,9 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
         from core.skills.reddit_adapter import RedditAdapterSkill, RedditInput
 
         skill = RedditAdapterSkill()
-        skill._ensure_logged_in = AsyncMock(return_value=False)
+        skill._ensure_logged_in = _AsyncCallRecorder(return_value=False)
 
-        result = await skill._handle_check_inbox(MagicMock(), RedditInput(mode="check_inbox"))
+        result = await skill._handle_check_inbox(_CallRecorder(), RedditInput(mode="check_inbox"))
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["status"], "login_unavailable")
