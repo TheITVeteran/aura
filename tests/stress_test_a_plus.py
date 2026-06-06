@@ -15,25 +15,29 @@ from core.container import ServiceContainer
 from core.memory.sqlite_storage import SQLiteMemory
 from core.skill_management.hephaestus import HephaestusEngine
 from infrastructure.resilience import AsyncCircuitBreaker, CircuitState
-from core.world_model.belief_graph import belief_graph
+from core.world_model.belief_graph import BeliefGraph
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("A+StressTest")
 
 # 1. Thread-Safe BeliefGraph Stress Test
-def test_belief_graph_concurrency():
+def test_belief_graph_concurrency(tmp_path):
     logger.info("Running BeliefGraph concurrency test...")
+    graph = BeliefGraph(
+        persist_path=str(tmp_path / "beliefs.json"),
+        causal_path=str(tmp_path / "causal_graph.json"),
+    )
 
     def worker(worker_id):
         for i in range(100):
-            belief_graph.update_belief(
-                source=f"agent_{worker_id}",
+            graph.update_belief(
+                source=f"agent_{worker_id}_{i}",
                 relation="observes",
                 target=f"entity_{i}",
                 confidence_score=0.9
             )
             # Mixed read/write
-            _ = belief_graph.get_beliefs()
+            _ = graph.get_beliefs()
             
     threads = [threading.Thread(target=worker, args=(j,)) for j in range(10)]
     for t in threads:
@@ -41,40 +45,38 @@ def test_belief_graph_concurrency():
     for t in threads:
         t.join()
 
-    beliefs = belief_graph.get_beliefs()
+    beliefs = graph.get_beliefs()
     logger.info(f"Final Belief Count: {len(beliefs)}")
     assert len(beliefs) >= 100
-    # Clean up for next tests
-    belief_graph.persist_path = str(Path(tempfile.gettempdir()) / "test_beliefs.json")
     logger.info("✓ BeliefGraph concurrency test PASSED.")
 
 # 2. Concurrent SQLite Stress Test
 @pytest.mark.asyncio
-async def test_sqlite_memory_concurrency():
+async def test_sqlite_memory_concurrency(tmp_path):
     logger.info("Running SQLiteMemory concurrency test...")
-    db = SQLiteMemory(storage_file=str(Path(tempfile.gettempdir()) / "stress_test.db"))
-    await db._get_conn() 
-    await db._ensure_schema()
-    
-    async def worker(worker_id):
-        for i in range(50):
-            # FIXED: Pass a dictionary instead of kwargs
-            await db.log_event_async({
-                "event_type": "stress",
-                "goal": f"Worker {worker_id}",
-                "outcome": f"event {i}",
-                "cost": 0.01
-            })
-            
-    tasks = [worker(j) for j in range(10)]
-    await asyncio.gather(*tasks)
-    
-    # Verify count
-    async with db._lock: # SQLiteMemory uses _lock
+    db = SQLiteMemory(storage_file=str(tmp_path / "stress_test.db"))
+    try:
+        await db._get_conn()
+        await db._ensure_schema()
+
+        async def worker(worker_id):
+            for i in range(50):
+                await db.log_event_async({
+                    "event_type": "stress",
+                    "goal": f"Worker {worker_id}",
+                    "outcome": f"event {i}",
+                    "cost": 0.01
+                })
+
+        tasks = [worker(j) for j in range(10)]
+        await asyncio.gather(*tasks)
+
         conn = await db._get_conn()
-        cursor = await conn.execute("SELECT COUNT(*) FROM episodic")
-        count = (await cursor.fetchone())[0]
+        async with conn.execute("SELECT COUNT(*) FROM episodic") as cursor:
+            count = (await cursor.fetchone())[0]
         assert count >= 500
+    finally:
+        await db.on_stop_async()
 
     
     logger.info("✓ SQLiteMemory concurrency test PASSED.")
@@ -111,22 +113,21 @@ async def test_circuit_breaker_resilience():
 
 # 4. Sandbox Resource Limit Test
 @pytest.mark.asyncio
-async def test_sandbox_resource_limits():
+async def test_sandbox_resource_limits(monkeypatch):
     logger.info("Running Sandbox Resource Limit test...")
-    from unittest.mock import patch
-    
-    # 0. Clear and Setup mocks
+
+    # 0. Clear and setup explicit collaborators.
     ServiceContainer.clear()
-    
-    class MockRegistry:
+
+    class SkillRegistry:
         async def discover_skills(self):
             return []
-    
+
     class SimpleBrain:
         async def think(self, *args, **kwargs):
             return type('Res', (), {'content': 'def execute(params, context=None):\n    return {"ok": True}'})()
 
-    ServiceContainer.register_instance("capability_engine", MockRegistry())
+    ServiceContainer.register_instance("capability_engine", SkillRegistry())
     ServiceContainer.register_instance("cognitive_engine", SimpleBrain())
 
     engine = HephaestusEngine()
@@ -137,28 +138,29 @@ import time
 def execute(params, context=None):
     while True: pass
 """
-    async def mock_draft_loop(name, obj):
+
+    async def draft_loop(name, obj):
         return {"ok": True, "code": infinite_loop_code, "description": "Loop", "logic_description": "Loop"}
-    
-    with patch.object(HephaestusEngine, '_draft_logic', side_effect=mock_draft_loop):
-        logger.info("  - Testing CPU timeout / Infinite loop protection...")
-        result = await engine.synthesize_skill("infinite_loop", "test_loop")
-        logger.info(f"Infinite loop result: {result}")
-        assert result["ok"] is False
-        # Check for timeout or any error that indicates sub-process failure
-        assert any(x in result["error"].lower() for x in ["timeout", "loop", "failed"])
-        logger.info("  - Infinite loop correctly blocked.")
+
+    monkeypatch.setattr(HephaestusEngine, '_draft_logic', draft_loop)
+    logger.info("  - Testing CPU timeout / Infinite loop protection...")
+    result = await engine.synthesize_skill("infinite_loop", "test_loop")
+    logger.info(f"Infinite loop result: {result}")
+    assert result["ok"] is False
+    # Check for timeout or any error that indicates sub-process failure
+    assert any(x in result["error"].lower() for x in ["timeout", "loop", "failed"])
+    logger.info("  - Infinite loop correctly blocked.")
 
     # 2. OOM Test
     oom_code = 'x = [0] * (512 * 1024 * 1024 // 4) # 512MB'
-    async def mock_draft_oom(name, obj):
+    async def draft_oom(name, obj):
         return {"ok": True, "code": oom_code, "description": "OOM", "logic_description": "OOM"}
-    
-    with patch.object(HephaestusEngine, '_draft_logic', side_effect=mock_draft_oom):
-        logger.info("  - Testing Memory/OOM protection...")
-        result = await engine.synthesize_skill("oom_skill", "test_oom")
-        logger.info(f"OOM result: {result}")
-        assert result["ok"] is False
+
+    monkeypatch.setattr(HephaestusEngine, '_draft_logic', draft_oom)
+    logger.info("  - Testing Memory/OOM protection...")
+    result = await engine.synthesize_skill("oom_skill", "test_oom")
+    logger.info(f"OOM result: {result}")
+    assert result["ok"] is False
     
     logger.info("✓ Sandbox Resource Limit test PASSED.")
 

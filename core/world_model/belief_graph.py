@@ -8,6 +8,7 @@ import os
 import time
 import re
 import math
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -59,6 +60,7 @@ class BeliefGraph:
         self._dirty = False # For main graph
         self._causal_last_save = 0.0 # For causal links
         self._causal_dirty = False # For causal links
+        self._graph_lock = threading.RLock()
 
         # Phase 44: Index sets for O(E) optimization (BUG-044)
         self._goal_edges = set()
@@ -123,27 +125,28 @@ class BeliefGraph:
         """Check if a proposed belief contradicts existing state.
         Returns the existing conflicting belief if found.
         """
-        # Logic: if (S, T) has an edge but with a different relation, it's a structural contradiction.
-        # Or if (S, p, T) exists but with a different T for a functional relation.
-        # For simplicity, we check if an edge between source and target exists with different relation.
-        if self.graph.has_edge(source, target):
-            existing = self.graph[source][target]
-            if existing.get('relation') != relation:
-                return {"source": source, "target": target, **existing}
+        with self._graph_lock:
+            # Logic: if (S, T) has an edge but with a different relation, it's a structural contradiction.
+            # Or if (S, p, T) exists but with a different T for a functional relation.
+            # For simplicity, we check if an edge between source and target exists with different relation.
+            if self.graph.has_edge(source, target):
+                existing = self.graph[source][target]
+                if existing.get('relation') != relation:
+                    return {"source": source, "target": target, **existing}
 
-        # Check for functional contradiction (e.g., Aura | state | idle vs Aura | state | busy)
-        # This requires more metadata about relations, but for now we look at all relations from source
-        if source not in self.graph:
+            # Check for functional contradiction (e.g., Aura | state | idle vs Aura | state | busy)
+            # This requires more metadata about relations, but for now we look at all relations from source
+            if source not in self.graph:
+                return None
+
+            for t, data in self.graph[source].items():
+                # Goal relations are not functional (you can have many goals)
+                if data.get('relation') == relation and t != target and relation != "pursue_goal":
+                    # E.g. "User | name | Bryan" vs "User | name | John"
+                    # This is a contradiction for many-to-one relations.
+                    return {"source": source, "target": t, **data}
+
             return None
-
-        for t, data in self.graph[source].items():
-            # Goal relations are not functional (you can have many goals)
-            if data.get('relation') == relation and t != target and relation != "pursue_goal":
-                # E.g. "User | name | Bryan" vs "User | name | John"
-                # This is a contradiction for many-to-one relations.
-                return {"source": source, "target": t, **data}
-
-        return None
 
     def update_belief(self, source: str, relation: str, target: str, confidence_score: float = 0.1, centrality: float = 0.1, is_goal: bool = False):
         """Bayesian-ish update with contradiction detection (Epistemic resolution).
@@ -226,93 +229,96 @@ class BeliefGraph:
                 return
             logger.debug("BeliefAuthority audit skipped for belief graph update: %s", exc)
 
-        # 1. Detection: Check for existing contradictions
-        contradiction = self.detect_contradiction(source, relation, target)
-        if contradiction:
-            # CONTRADICTION FOUND - Resolve through Epistemic weighting
-            return self._resolve_cognitive_dissonance(source, relation, target, contradiction["target"], confidence_score, centrality)
+        with self._graph_lock:
+            # 1. Detection: Check for existing contradictions
+            contradiction = self.detect_contradiction(source, relation, target)
+            if contradiction:
+                # CONTRADICTION FOUND - Resolve through Epistemic weighting
+                return self._resolve_cognitive_dissonance(source, relation, target, contradiction["target"], confidence_score, centrality)
 
-        # 2. Update logic
-        if self.graph.has_edge(source, target):
-            edge_data = self.graph[source][target]
-            # Reinforce: move toward 1.0 based on evidence
-            new_conf = max(0.0, min(1.0, (edge_data['confidence'] * 0.8) + (confidence_score * 0.2)))
-            # Centrality creeps up with repeated evidence
-            new_cent = max(edge_data.get('centrality', 0.1), centrality)
+            # 2. Update logic
+            if self.graph.has_edge(source, target):
+                edge_data = self.graph[source][target]
+                # Reinforce: move toward 1.0 based on evidence
+                new_conf = max(0.0, min(1.0, (edge_data['confidence'] * 0.8) + (confidence_score * 0.2)))
+                # Centrality creeps up with repeated evidence
+                new_cent = max(edge_data.get('centrality', 0.1), centrality)
 
-            self.graph.add_edge(
-                source, target,
-                relation=relation,
-                confidence=new_conf,
-                centrality=new_cent,
-                last_updated=time.time(),
-                evidence_count=edge_data.get('evidence_count', 1) + 1,
-                is_goal=is_goal or edge_data.get('is_goal', False)
-            )
-        else:
-            # New belief
-            self.graph.add_edge(
-                source, target,
-                relation=relation,
-                confidence=max(0.0, min(1.0, confidence_score)),
-                centrality=centrality,
-                last_updated=time.time(),
-                evidence_count=1,
-                is_goal=is_goal
-            )
+                self.graph.add_edge(
+                    source, target,
+                    relation=relation,
+                    confidence=new_conf,
+                    centrality=new_cent,
+                    last_updated=time.time(),
+                    evidence_count=edge_data.get('evidence_count', 1) + 1,
+                    is_goal=is_goal or edge_data.get('is_goal', False)
+                )
+            else:
+                # New belief
+                self.graph.add_edge(
+                    source, target,
+                    relation=relation,
+                    confidence=max(0.0, min(1.0, confidence_score)),
+                    centrality=centrality,
+                    last_updated=time.time(),
+                    evidence_count=1,
+                    is_goal=is_goal
+                )
 
-        # Update indices (BUG-044)
-        self._update_indices(source, target, relation, confidence_score, is_goal)
+            # Update indices (BUG-044)
+            self._update_indices(source, target, relation, confidence_score, is_goal)
 
-        logger.info("Belief Updated: %s -[%s]-> %s (Cent: %.2f)", source, relation, target, centrality)
-        self._save()
+            logger.info("Belief Updated: %s -[%s]-> %s (Cent: %.2f)", source, relation, target, centrality)
+            self._save()
 
     def _resolve_cognitive_dissonance(self, s: str, p: str, o_new: str, o_old: str, new_conf: float, new_cent: float = 0.1):
         """Resolve conflicting information by weighing confidence AND centrality.
         """
-        edge_data = self.graph[s][o_old]
-        old_conf = edge_data.get('confidence', 0.0)
-        old_cent = edge_data.get('centrality', 0.1)
-        old_p = edge_data.get('relation')
+        with self._graph_lock:
+            edge_data = self.graph[s][o_old]
+            old_conf = edge_data.get('confidence', 0.0)
+            old_cent = edge_data.get('centrality', 0.1)
+            old_p = edge_data.get('relation')
 
-        # A peer resists change if old belief is highly central
-        effective_old_weight = old_conf * (1.0 + old_cent)
-        effective_new_weight = new_conf * (1.0 + new_cent)
+            # A peer resists change if old belief is highly central
+            effective_old_weight = old_conf * (1.0 + old_cent)
+            effective_new_weight = new_conf * (1.0 + new_cent)
 
-        if effective_new_weight > effective_old_weight:
-            logger.warning("🧠 Cognitive Dissonance Resolved: '%s' supersedes '%s' (Weight: %.2f > %.2f)", p, old_p, effective_new_weight, effective_old_weight)
-            # Remove old contradicting edge if it was a functional conflict
-            if o_new != o_old:
-                self._remove_from_indices(s, o_old)
-                self.graph.remove_edge(s, o_old)
+            if effective_new_weight > effective_old_weight:
+                logger.warning("🧠 Cognitive Dissonance Resolved: '%s' supersedes '%s' (Weight: %.2f > %.2f)", p, old_p, effective_new_weight, effective_old_weight)
+                # Remove old contradicting edge if it was a functional conflict
+                if o_new != o_old:
+                    self._remove_from_indices(s, o_old)
+                    self.graph.remove_edge(s, o_old)
 
-            self.graph.add_edge(s, o_new, relation=p, confidence=new_conf, centrality=new_cent, last_updated=time.time(), evidence_count=1)
-            self._update_indices(s, o_new, p, new_conf, False) # Goals are resolved differently, assuming not goal here
-        else:
-            logger.info("🧠 Dissonance Rejected: New data '%s' (Weight: %.2f) weaker than existing '%s' (Weight: %.2f)", p, effective_new_weight, old_p, effective_new_weight)
-            # Reinforce old belief
-            edge_data['confidence'] = min(1.0, edge_data.get('confidence', 0.5) + 0.02)
-            edge_data['evidence_count'] = edge_data.get('evidence_count', 1) + 1
-            edge_data['last_updated'] = time.time()
-            self._update_indices(s, o_old, old_p, edge_data['confidence'], edge_data.get('is_goal', False))
+                self.graph.add_edge(s, o_new, relation=p, confidence=new_conf, centrality=new_cent, last_updated=time.time(), evidence_count=1)
+                self._update_indices(s, o_new, p, new_conf, False) # Goals are resolved differently, assuming not goal here
+            else:
+                logger.info("🧠 Dissonance Rejected: New data '%s' (Weight: %.2f) weaker than existing '%s' (Weight: %.2f)", p, effective_new_weight, old_p, effective_new_weight)
+                # Reinforce old belief
+                edge_data['confidence'] = min(1.0, edge_data.get('confidence', 0.5) + 0.02)
+                edge_data['evidence_count'] = edge_data.get('evidence_count', 1) + 1
+                edge_data['last_updated'] = time.time()
+                self._update_indices(s, o_old, old_p, edge_data['confidence'], edge_data.get('is_goal', False))
 
-        self._save()
+            self._save()
 
     def contradict_belief(self, source: str, relation: str, target: str, strength: float = 0.3):
         """Weaken a belief based on contradicting evidence."""
-        if self.graph.has_edge(source, target):
-            edge_data = self.graph[source][target]
-            if edge_data.get('relation') == relation:
-                new_conf = max(0.0, edge_data['confidence'] - strength)
-                if new_conf < 0.05:
-                    self._remove_from_indices(source, target)
-                    self.graph.remove_edge(source, target)
-                    logger.info("Belief Dissolved: %s -[%s]-> %s", source, relation, target)
-                else:
-                    self.graph[source][target]['confidence'] = new_conf
-                    self.graph[source][target]['last_updated'] = time.time()
-                    self._update_indices(source, target, relation, new_conf, edge_data.get('is_goal', False))
-                self._save()
+        with self._graph_lock:
+            if self.graph.has_edge(source, target):
+                edge_data = self.graph[source][target]
+                if edge_data.get('relation') == relation:
+                    new_conf = max(0.0, edge_data['confidence'] - strength)
+                    if new_conf < 0.05:
+                        self._remove_from_indices(source, target)
+                        self.graph.remove_edge(source, target)
+                        logger.info("Belief Dissolved: %s -[%s]-> %s", source, relation, target)
+                    else:
+                        self.graph[source][target]['confidence'] = new_conf
+                        self.graph[source][target]['last_updated'] = time.time()
+                        self._update_indices(source, target, relation, new_conf, edge_data.get('is_goal', False))
+                    self._save()
 
     def check_action_coherence(self, action_type: str, params: Dict[str, Any]) -> Tuple[bool, float, str]:
         """
@@ -374,16 +380,17 @@ class BeliefGraph:
 
     def get_beliefs_about(self, entity: str) -> List[Dict[str, Any]]:
         """Get all known relations originating from an entity."""
-        if entity not in self.graph:
-            return []
-        results = []
-        for target, data in self.graph[entity].items():
-            results.append({
-                "source": entity,
-                "target": target,
-                **data
-            })
-        return results
+        with self._graph_lock:
+            if entity not in self.graph:
+                return []
+            results = []
+            for target, data in self.graph[entity].items():
+                results.append({
+                    "source": entity,
+                    "target": target,
+                    **data
+                })
+            return results
 
     async def query_federated(self, entity: str) -> List[Dict[str, Any]]:
         """Phase 16.2: Query both local beliefs and remote peers."""
@@ -413,7 +420,8 @@ class BeliefGraph:
 
     def get_beliefs(self) -> Dict[str, Any]:
         """Returns all beliefs as a dictionary (Compatibility with EpistemicState)."""
-        return {f"{u}->{v}": d.copy() for u, v, d in self.graph.edges(data=True)}
+        with self._graph_lock:
+            return {f"{u}->{v}": d.copy() for u, v, d in self.graph.edges(data=True)}
 
     def get_meta_uncertainty(self, source: str, target: str) -> float:
         """
@@ -421,136 +429,155 @@ class BeliefGraph:
         Scaled 0.0 (certain) to 1.0 (clueless).
         Formula: 1 / (1 + evidence_count) modulated by confidence instability.
         """
-        if not self.graph.has_edge(source, target):
-            return 1.0
+        with self._graph_lock:
+            if not self.graph.has_edge(source, target):
+                return 1.0
+            edge = self.graph[source][target]
+            count = edge.get('evidence_count', 1)
 
-        edge = self.graph[source][target]
-        count = edge.get('evidence_count', 1)
+            # Base uncertainty from evidence volume
+            base_uncertainty = 1.0 / (1.0 + math.log(count + 1))
 
-        # Base uncertainty from evidence volume
-        base_uncertainty = 1.0 / (1.0 + math.log(count + 1))
+            # If confidence is middle-of-the-road (0.5), uncertainty is higher
+            conf = edge.get('confidence', 0.5)
+            conf_entropy = 1.0 - abs(conf - 0.5) * 2.0 # 1.0 at conf=0.5, 0.0 at conf=0 or 1
 
-        # If confidence is middle-of-the-road (0.5), uncertainty is higher
-        conf = edge.get('confidence', 0.5)
-        conf_entropy = 1.0 - abs(conf - 0.5) * 2.0 # 1.0 at conf=0.5, 0.0 at conf=0 or 1
-
-        return max(0.0, min(1.0, 0.7 * base_uncertainty + 0.3 * conf_entropy))
+            return max(0.0, min(1.0, 0.7 * base_uncertainty + 0.3 * conf_entropy))
 
     def get_strong_beliefs(self, threshold: float = 0.8) -> List[Dict[str, Any]]:
         """Return only high-confidence beliefs (O(K) via index)."""
-        results = []
-        for u, v in self._strong_edges:
-            d = self.graph[u][v]
-            results.append({"source": u, "target": v, **d})
-        return results
+        with self._graph_lock:
+            results = []
+            for u, v in list(self._strong_edges):
+                if self.graph.has_edge(u, v):
+                    d = self.graph[u][v]
+                    results.append({"source": u, "target": v, **d})
+            return results
 
     def get_weak_beliefs(self, threshold: float = 0.3) -> List[Dict[str, Any]]:
         """Return uncertain beliefs (O(K) via index)."""
-        results = []
-        for u, v in self._weak_edges:
-            d = self.graph[u][v]
-            if d.get('confidence', 0.0) <= threshold: # Fine-grained filter
-                results.append({"source": u, "target": v, **d})
-        return results
+        with self._graph_lock:
+            results = []
+            for u, v in list(self._weak_edges):
+                if self.graph.has_edge(u, v):
+                    d = self.graph[u][v]
+                    if d.get('confidence', 0.0) <= threshold: # Fine-grained filter
+                        results.append({"source": u, "target": v, **d})
+            return results
 
     def get_suspended_beliefs(self) -> List[Dict[str, Any]]:
         """Return beliefs that are highly uncertain (O(K) via index)."""
-        results = []
-        for u, v in self._suspended_edges:
-            d = self.graph[u][v]
-            results.append({"source": u, "target": v, **d})
-        return results
+        with self._graph_lock:
+            results = []
+            for u, v in list(self._suspended_edges):
+                if self.graph.has_edge(u, v):
+                    d = self.graph[u][v]
+                    results.append({"source": u, "target": v, **d})
+            return results
 
     def decay(self, rate: float = 0.001):
         """Time-based belief decay."""
-        now = time.time()
-        to_remove = []
-        for u, v, d in self.graph.edges(data=True):
-            age_hours = (now - d.get('last_updated', now)) / 3600.0
-            decay_amount = rate * age_hours
-            if decay_amount > 0:
-                d['confidence'] = max(0.01, d.get('confidence', 0.5) - decay_amount)
-                if d['confidence'] < 0.02:
-                    to_remove.append((u, v))
-                else:
-                    self._update_indices(u, v, d.get('relation', ''), d['confidence'], d.get('is_goal', False))
+        with self._graph_lock:
+            now = time.time()
+            to_remove = []
+            for u, v, d in list(self.graph.edges(data=True)):
+                age_hours = (now - d.get('last_updated', now)) / 3600.0
+                decay_amount = rate * age_hours
+                if decay_amount > 0:
+                    d['confidence'] = max(0.01, d.get('confidence', 0.5) - decay_amount)
+                    if d['confidence'] < 0.02:
+                        to_remove.append((u, v))
+                    else:
+                        self._update_indices(u, v, d.get('relation', ''), d['confidence'], d.get('is_goal', False))
 
-        for u, v in to_remove:
-            self._remove_from_indices(u, v)
-            self.graph.remove_edge(u, v)
+            for u, v in to_remove:
+                self._remove_from_indices(u, v)
+                self.graph.remove_edge(u, v)
 
-        if to_remove:
-            self._save()
-            logger.info("Belief decay: %d beliefs dissolved", len(to_remove))
+            if to_remove:
+                self._save()
+                logger.info("Belief decay: %d beliefs dissolved", len(to_remove))
 
     def get_goals(self) -> List[Dict[str, Any]]:
         """Return all active goals (O(K) via index)."""
-        results = []
-        for u, v in self._goal_edges:
-            d = self.graph[u][v]
-            results.append({"source": u, "target": v, **d})
-        return results
+        with self._graph_lock:
+            results = []
+            for u, v in list(self._goal_edges):
+                if self.graph.has_edge(u, v):
+                    d = self.graph[u][v]
+                    results.append({"source": u, "target": v, **d})
+            return results
 
     def get_summary(self) -> Dict[str, Any]:
         """Status overview of the world model."""
-        return {
-            "total_beliefs": self.graph.number_of_edges(),
-            "entities": self.graph.number_of_nodes(),
-            "strong": len(self.get_strong_beliefs(0.8)),
-            "weak": len(self.get_weak_beliefs(0.3)),
-            "active_goals": len(self.get_goals())
-        }
+        with self._graph_lock:
+            return {
+                "total_beliefs": self.graph.number_of_edges(),
+                "entities": self.graph.number_of_nodes(),
+                "strong": len(self.get_strong_beliefs(0.8)),
+                "weak": len(self.get_weak_beliefs(0.3)),
+                "active_goals": len(self.get_goals())
+            }
 
     def _save(self, force: bool = False):
         """Throttled save to prevent O(N) writes (BUG-039)."""
-        now = time.time()
-        if not force and now - self._last_save < 30:
-            self._dirty = True
-            return
+        with self._graph_lock:
+            now = time.time()
+            if not force and now - self._last_save < 30:
+                self._dirty = True
+                return
 
-        try:
-            self._last_save = now
-            self._dirty = False
-            os.makedirs(os.path.dirname(self._persist_path), exist_ok=True)
-            # Serialization of NetworkX graph to simple dict for JSON
-            data = {
-                "nodes": {n: self.graph.nodes[n] for n in self.graph.nodes},
-                "edges": []
-            }
-            for u, v, d in self.graph.edges(data=True):
-                data["edges"].append({"source": u, "target": v, **d})
+            try:
+                self._last_save = now
+                self._dirty = False
+                os.makedirs(os.path.dirname(self._persist_path), exist_ok=True)
+                # Serialization of NetworkX graph to simple dict for JSON
+                data = {
+                    "nodes": {n: self.graph.nodes[n] for n in self.graph.nodes},
+                    "edges": []
+                }
+                for u, v, d in self.graph.edges(data=True):
+                    data["edges"].append({"source": u, "target": v, **d})
 
-            from core.runtime.file_write_gateway import get_file_write_gateway
+                from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
-                self._persist_path,
-                json.dumps(data, indent=2),
-                source="belief_graph.save_graph",
-            )
-        except (OSError, IOError) as e:
-            record_degradation('belief_graph', e)
-            logger.error("Failed to save world model: %s", e)
+                get_file_write_gateway().write_text(
+                    self._persist_path,
+                    json.dumps(data, indent=2),
+                    source="belief_graph.save_graph",
+                )
+            except (OSError, IOError) as e:
+                record_degradation('belief_graph', e)
+                logger.error("Failed to save world model: %s", e)
 
     def _load(self):
-        try:
-            if os.path.exists(self._persist_path):
-                with open(self._persist_path, "r") as f:
-                    data = json.load(f)
+        with self._graph_lock:
+            try:
+                if os.path.exists(self._persist_path):
+                    with open(self._persist_path, "r") as f:
+                        data = json.load(f)
 
-                # Restore nodes
-                for node_id, attrs in data.get("nodes", {}).items():
-                    self.graph.add_node(node_id, **attrs)
+                    # Restore nodes
+                    for node_id, attrs in data.get("nodes", {}).items():
+                        self.graph.add_node(node_id, **attrs)
 
-                # Restore edges
-                for edge in data.get("edges", []):
-                    source = edge.pop("source")
-                    target = edge.pop("target")
-                    self.graph.add_edge(source, target, **edge)
+                    # Restore edges
+                    for edge in data.get("edges", []):
+                        source = edge.pop("source")
+                        target = edge.pop("target")
+                        self.graph.add_edge(source, target, **edge)
+                        self._update_indices(
+                            source,
+                            target,
+                            edge.get("relation", ""),
+                            float(edge.get("confidence", 0.0) or 0.0),
+                            bool(edge.get("is_goal", False)),
+                        )
 
-                logger.info("Loaded %d beliefs from disk", self.graph.number_of_edges())
-        except (OSError, ConnectionError, TimeoutError) as e:
-            record_degradation('belief_graph', e)
-            logger.warning("Failed to load world model: %s", e)
+                    logger.info("Loaded %d beliefs from disk", self.graph.number_of_edges())
+            except (OSError, ConnectionError, TimeoutError) as e:
+                record_degradation('belief_graph', e)
+                logger.warning("Failed to load world model: %s", e)
 
     # ── Causal Engine (Merged from ACG) ───────────────────────
     def record_outcome(self, action: Union[str, Dict[str, Any]], context: str, outcome: Any, success: bool):
