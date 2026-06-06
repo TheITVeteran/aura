@@ -36,6 +36,13 @@ class _SafeEncoder(json.JSONEncoder):
             return str(obj)
 
 
+class StateManagerWriteDecision:
+    def __init__(self, receipt_id: str, domain: str, source: str):
+        self.receipt_id = receipt_id
+        self.domain = domain
+        self.source = source
+
+
 class StateManager:
     """Manages system state snapshots for resilience and recovery.
     Saves critical data (memory, configuration, active tasks) to disk.
@@ -49,7 +56,7 @@ class StateManager:
         """Asynchronously save a snapshot using a background thread."""
         from core.utils.executor import run_in_thread
         return await run_in_thread(self.save_snapshot, orchestrator_state, reason)
-
+    
     def save_snapshot(self, orchestrator_state: Dict[str, Any], reason: str = "periodic") -> bool:
         """Save a snapshot of the current system state.
         
@@ -80,45 +87,53 @@ class StateManager:
             checksum = zlib.crc32(data_bytes) & 0xffffffff # Force unsigned
             payload = checksum.to_bytes(4, 'big') + data_bytes
             
-            if reason == "existential":
-                existential_path = self.snapshot_dir / "existential_snapshot.json"
-                get_file_write_gateway().write_bytes(
-                    existential_path,
-                    payload,
-                    source="resilience.state_manager.existential_snapshot",
-                )
-                logger.info("🛡️ Hardened Existential Snapshot secured.")
+            from core.governance_context import governed_scope_sync
 
-            # specific snapshot for history if it's significant
-            if reason in ["shutdown", "error", "manual"]:
-                history_path = self.snapshot_dir / f"snapshot_{timestamp}_{reason}.json"
-                get_file_write_gateway().write_bytes(
-                    history_path,
-                    payload,
-                    source="resilience.state_manager.history_snapshot",
-                )
-                
-            get_file_write_gateway().write_bytes(
-                latest_path,
-                payload,
-                source="resilience.state_manager.latest_snapshot",
+            decision = StateManagerWriteDecision(
+                receipt_id=f"state-manager-file-write:{reason}:{time.time_ns()}",
+                domain="state_mutation",
+                source=f"resilience.state_manager.{reason}",
             )
-            
-            # Wire EternalRecord for long-term persistence
-            if reason in ["manual", "existential", "shutdown"]:
-                try:
-                    from core.resilience.eternal_record import EternalRecord
-                    # Use the parent of snapshots dir as brain_dir
-                    brain_dir = self.snapshot_dir.parent
-                    recorder = EternalRecord(brain_dir)
+            with governed_scope_sync(decision):
+                if reason == "existential":
+                    existential_path = self.snapshot_dir / "existential_snapshot.json"
+                    get_file_write_gateway().write_bytes(
+                        existential_path,
+                        payload,
+                        source="resilience.state_manager.existential_snapshot",
+                    )
+                    logger.info("🛡️ Hardened Existential Snapshot secured.")
+
+                # specific snapshot for history if it's significant
+                if reason in ["shutdown", "error", "manual"]:
+                    history_path = self.snapshot_dir / f"snapshot_{timestamp}_{reason}.json"
+                    get_file_write_gateway().write_bytes(
+                        history_path,
+                        payload,
+                        source="resilience.state_manager.history_snapshot",
+                    )
                     
-                    # Snapshot the Knowledge Graph if it exists
-                    kg_path = Path(config.paths.data_dir) / "knowledge_graph.db"
-                    recorder.create_snapshot(kg_path)
-                    logger.info("🏺 Eternal Record snapshot triggered via StateManager (%s)", reason)
-                except (ImportError, AttributeError, RuntimeError) as er_err:
-                    record_degradation('state_manager', er_err)
-                    logger.error("Failed to trigger Eternal Record: %s", er_err)
+                get_file_write_gateway().write_bytes(
+                    latest_path,
+                    payload,
+                    source="resilience.state_manager.latest_snapshot",
+                )
+            
+                # Wire EternalRecord for long-term persistence
+                if reason in ["manual", "existential", "shutdown"]:
+                    try:
+                        from core.resilience.eternal_record import EternalRecord
+                        # Use the parent of snapshots dir as brain_dir
+                        brain_dir = self.snapshot_dir.parent
+                        recorder = EternalRecord(brain_dir)
+                        
+                        # Snapshot the Knowledge Graph if it exists
+                        kg_path = Path(config.paths.data_dir) / "knowledge_graph.db"
+                        recorder.create_snapshot(kg_path)
+                        logger.info("🏺 Eternal Record snapshot triggered via StateManager (%s)", reason)
+                    except (ImportError, AttributeError, RuntimeError) as er_err:
+                        record_degradation('state_manager', er_err)
+                        logger.error("Failed to trigger Eternal Record: %s", er_err)
 
             logger.debug("State snapshot saved (%s).", reason)
             return True

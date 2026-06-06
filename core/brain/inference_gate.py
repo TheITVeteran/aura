@@ -374,8 +374,9 @@ class InferenceGate:
                 action="continued bounded inference fallback after non-fatal degradation",
             )
             logger.debug("Cortex warmup memory probe failed: %s", exc)
-            # [v57-CORTEX] On probe failure, ADMIT for primary workloads
-            # Better to try and OOM than to never try at all
+            force_warmup = str(
+                os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")
+            ).strip().lower() in {"1", "true", "yes", "on"}
             return {
                 "context": str(context or "background"),
                 "pressure_pct": 0.0,
@@ -383,16 +384,19 @@ class InferenceGate:
                 "total_gb": 0.0,
                 "max_pressure_pct": 100.0,
                 "min_available_gb": 0.0,
-                "can_admit": True if context_key in {"FOREGROUND", "RECOVERY"} else False,
-                "reason": "memory_probe_failed" if context_key not in {"FOREGROUND", "RECOVERY"} else "",
+                "can_admit": force_warmup,
+                "reason": "" if force_warmup else "memory_probe_failed",
             }
 
     def _cortex_warmup_deferral_reason(self, context: str = "background") -> str | None:
         # [HARDENING v57-CORTEX] User-facing requests MUST have cortex priority
         # System should function with 32B as primary, never defer for memory when user is waiting
         if context == "foreground":
-            return None  # NEVER defer cortex for foreground user requests
-        
+            snapshot = self._cortex_warmup_admission_snapshot(context)
+            if snapshot.get("reason") == "memory_probe_failed":
+                return "memory_probe_failed"
+            return None
+
         if str(os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")).strip().lower() in {
             "1",
             "true",
@@ -2175,79 +2179,6 @@ class InferenceGate:
             logger.info("🤫 Silence Protocol: model chose not to respond.")
             return InferenceGate.SILENCE_SENTINEL
         return text
-
-    async def _attempt_cloud_fallback_last_resort(
-        self,
-        system_prompt: str,
-        prompt: str,
-        is_user_facing: bool,
-        user_input_for_eval: str | None = None,
-    ) -> str | None:
-        """
-        [HARDENING v57] LAST RESORT CLOUD RETRY
-        
-        Even when cloud_fallback is disabled, try cloud as absolute final fallback.
-        This ensures system ALWAYS has offline+cloud hybrid capability.
-        Treats cloud as true last resort—only tries if everything local failed.
-        """
-        try:
-            # [v57] PRIVACY: Still scrub PII even in last resort path
-            scrubbed_payload = self._scrub_cloud_payload(system_prompt, prompt)
-            if scrubbed_payload is None:
-                logger.warning("🆘 PII scrubbing failed on last resort cloud attempt")
-                return None
-            cloud_system_prompt, cloud_prompt = scrubbed_payload
-            
-            from core.container import ServiceContainer
-            
-            # Try APIAdapter first
-            adapter = ServiceContainer.get("api_adapter", default=None)
-            if adapter and getattr(adapter, "has_gemini", False):
-                try:
-                    logger.info("🆘 [LAST RESORT] Trying Gemini via APIAdapter...")
-                    result = await asyncio.wait_for(
-                        adapter.generate(
-                            f"{cloud_system_prompt}\n\nUser: {cloud_prompt}\nAura:",
-                            {"model_tier": "api_fast", "max_tokens": 600, "temperature": 0.6},
-                        ),
-                        timeout=20.0,
-                    )
-                    if result and result.strip():
-                        logger.info("🆘 [LAST RESORT] APIAdapter succeeded")
-                        return self._stabilize_user_facing_text(
-                            result.strip(),
-                            prompt,
-                            is_user_facing=is_user_facing,
-                        )
-                except _INFERENCE_RECOVERABLE_ERRORS as e:
-                    logger.debug("🆘 APIAdapter last resort failed: %s", e)
-                    pass
-            
-            # Try HealthRouter as secondary
-            router = ServiceContainer.get("llm_router", default=None)
-            if router:
-                try:
-                    logger.info("🆘 [LAST RESORT] Trying HealthRouter...")
-                    result = await asyncio.wait_for(
-                        router.think(cloud_prompt, system_prompt=cloud_system_prompt),
-                        timeout=20.0,
-                    )
-                    if isinstance(result, str) and result.strip():
-                        logger.info("🆘 [LAST RESORT] HealthRouter succeeded")
-                        return self._stabilize_user_facing_text(
-                            result.strip(),
-                            prompt,
-                            is_user_facing=is_user_facing,
-                        )
-                except _INFERENCE_RECOVERABLE_ERRORS as e:
-                    logger.debug("🆘 HealthRouter last resort failed: %s", e)
-                    pass
-            
-            logger.warning("🆘 [LAST RESORT] Cloud attempt exhausted")
-            return None
-        except _INFERENCE_RECOVERABLE_ERRORS as e:
-            logger.debug("🆘 Last resort cloud fallback failed completely: %s", e)
-            return None
 
     async def _generate_with_client(
         self,
@@ -5251,12 +5182,14 @@ class InferenceGate:
 
         # 2. Optional cloud fallback.
         if not allow_cloud_fallback:
-            logger.error("Local inference paths exhausted. Cloud fallback normally disabled.")
+            logger.error("Local inference paths exhausted. Cloud fallback disabled by request policy.")
             if proof_evaluation_contract:
                 logger.error("Proof/evaluation contract exhausted Cortex without valid text.")
                 return None
-            # STABILITY FIX: For user-facing requests, trigger immediate cortex recovery
-            # and return a genuine acknowledgment instead of None (which causes "I'm having trouble")
+            # User-facing requests still trigger local Cortex recovery, but
+            # ``allow_cloud_fallback=False`` is a hard boundary. Do not route to
+            # Gemini/HealthRouter from this branch; callers set this flag for
+            # privacy, proof isolation, or offline operation.
             if _is_user_facing:
                 # [BUG FIX] Force-kill stuck worker and drain queues IMMEDIATELY.
                 # Without this, the old worker's IPC feeder threads stay blocked on
@@ -5317,24 +5250,6 @@ class InferenceGate:
                         logger.info("Reset UnitaryResponsePhase circuit to HALF_OPEN for recovery")
                 except _INFERENCE_RECOVERABLE_ERRORS as exc:
                     logger.debug("Circuit-breaker recovery reset unavailable: %s", exc)
-                
-                # [HARDENING v57] LAST RESORT CLOUD RETRY: Even when cloud_fallback is disabled,
-                # try cloud as absolute final fallback. Ensures system ALWAYS has offline+cloud hybrid,
-                # never purely offline-only when cloud is reachable.
-                logger.warning("🆘 [LAST RESORT] Attempting cloud retry despite disabled cloud_fallback...")
-                user_input_for_eval = prompt
-                if messages:
-                    for m in reversed(messages):
-                        if str(m.get("role", "") or "").strip().lower() == "user":
-                            user_input_for_eval = str(m.get("content", ""))
-                            break
-                last_resort_result = await self._attempt_cloud_fallback_last_resort(
-                    system_prompt, prompt, _is_user_facing, user_input_for_eval
-                )
-                if last_resort_result:
-                    logger.info("🆘 [LAST RESORT] Cloud retry succeeded!")
-                    return last_resort_result
-                
                 return self._user_facing_recovery_response(prompt)
             return None
 

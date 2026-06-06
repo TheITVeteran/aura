@@ -1144,6 +1144,46 @@ async def test_user_facing_primary_falls_back_to_brainstem_when_cortex_fails_wit
     assert not cpu.deadlines
 
 
+@pytest.mark.asyncio
+async def test_cloud_disabled_blocks_hidden_last_resort_cloud_calls(monkeypatch):
+    gate = InferenceGate()
+    gate._mlx_client = _NoTextReadyClient()
+    gate._cortex_recovery_in_progress = True
+    no_text = _NoTextClient()
+
+    monkeypatch.setattr(asyncio, "sleep", AsyncCallProbe(return_value=None))
+
+    def _fake_get_mlx_client(model_path=None, **kwargs):
+        return no_text
+
+    def _cloud_service_trap(*args, **kwargs):
+        service_name = str(args[-1] if args else "")
+        if service_name in {"api_adapter", "llm_router"}:
+            raise AssertionError("cloud service lookup is forbidden when allow_cloud_fallback is false")
+        return kwargs.get("default")
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                with replace("core.container.ServiceContainer.get", side_effect=_cloud_service_trap):
+                    with replace.object(
+                        InferenceGate,
+                        "_user_facing_recovery_response",
+                        lambda cls, prompt: "local recovery response",
+                    ):
+                        result = await gate.generate(
+                            "Can you answer locally?",
+                            context={
+                                "origin": "user",
+                                "prefer_tier": "primary",
+                                "allow_cloud_fallback": False,
+                                "allow_mesh_cognition": False,
+                            },
+                        )
+
+    assert result == "local recovery response"
+
+
 def test_conversation_status_is_not_ready_after_timeout_mark():
     gate = InferenceGate()
 
@@ -1725,6 +1765,40 @@ async def test_foreground_ready_proceeds_with_cold_cortex_spawn_under_pressure(m
     client.warmup.assert_awaited_once()
     assert lane["conversation_ready"] is True
     assert lane["state"] == "ready"
+
+
+def test_cortex_warmup_probe_failure_is_not_admitted_without_override(monkeypatch):
+    monkeypatch.delenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", raising=False)
+
+    def _memory_probe_failure():
+        raise OSError("sysctl unavailable")
+
+    monkeypatch.setattr("core.brain.inference_gate.psutil.virtual_memory", _memory_probe_failure)
+
+    snapshot = InferenceGate._cortex_warmup_admission_snapshot("foreground")
+
+    assert snapshot["can_admit"] is False
+    assert snapshot["reason"] == "memory_probe_failed"
+
+
+@pytest.mark.asyncio
+async def test_foreground_ready_blocks_cold_cortex_when_memory_probe_fails(monkeypatch):
+    monkeypatch.delenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", raising=False)
+    gate = InferenceGate()
+    client = _LaneWarmupClient()
+    gate._mlx_client = client
+
+    def _memory_probe_failure():
+        raise OSError("sysctl unavailable")
+
+    monkeypatch.setattr("core.brain.inference_gate.psutil.virtual_memory", _memory_probe_failure)
+
+    with pytest.raises(RuntimeError, match="foreground_warmup_deferred:memory_probe_failed"):
+        await gate.ensure_foreground_ready(timeout=15.0)
+
+    client.warmup.assert_not_awaited()
+    assert client.state == "recovering"
+    assert client.last_error == "foreground_warmup_deferred_memory_pressure"
 
 
 def test_desktop_safe_boot_skips_deferred_cortex_prewarm(monkeypatch):
