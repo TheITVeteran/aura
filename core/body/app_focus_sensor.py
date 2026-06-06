@@ -39,6 +39,9 @@ class AppFocusSensor(BaseSensor):
                 return {
                     "active_app": app_name,
                     "is_browser": app_name in ["Google Chrome", "Safari", "Firefox"],
+                    "status": "healthy",
+                    "confidence": 1.0,
+                    "claim_allowed": True,
                     "timestamp": time.time(),
                 }
         except _APP_FOCUS_SENSOR_ERRORS as e:
@@ -46,8 +49,11 @@ class AppFocusSensor(BaseSensor):
             logger.debug("Failed to query active app via AppleScript: %s", e)
 
         return {
-            "active_app": None,
+            "active_app": "unavailable",
             "is_browser": False,
-            "status": "unavailable",
-            "error": "Failed to query macOS front window",
+            "status": "degraded",
+            "error": "macOS accessibility or System Events is unavailable",
+            "confidence": 0.0,
+            "claim_allowed": False,
+            "timestamp": time.time(),
         }

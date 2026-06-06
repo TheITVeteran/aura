@@ -162,12 +162,16 @@ _READ_ONLY_EFFECT_SKILLS = frozenset(
         "query_beliefs",
         "system_proprioception",
         "evolution_status",
+        "malware_analysis",
+        "sec_ops",
+        "stealth_ops",
     }
 )
 
 _PURE_COMPUTE_EFFECT_SKILLS = frozenset(
     {
         "induced_repeating_shift_decode",
+        "propagation",
     }
 )
 

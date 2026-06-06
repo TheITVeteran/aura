@@ -80,17 +80,6 @@ aura_icon.icns
 mujoco_screen.png
 interface/static/aura_avatar.png
 
-# Private modules (kept locally, not in public repo)
-skills/propagation.py
-skills/sec_ops.py
-skills/stealth_ops.py
-skills/network_recon.py
-core/skills/propagation.py
-core/skills/sec_ops.py
-core/skills/stealth_ops.py
-core/privacy_stealth.py
-core/orchestrator/privacy_stealth.py
-
 # Dev scripts with hardcoded paths
 scripts/export_*.py
 scripts/generate_export.py

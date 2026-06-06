@@ -23,6 +23,7 @@ except (ImportError, AttributeError, RuntimeError) as exc:  # pragma: no cover -
     _SOUNDDEVICE_IMPORT_ERROR = exc
 
 from core.skills.base_skill import BaseSkill
+from core.exceptions import ContainerError
 from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Skills.Audio")
@@ -164,7 +165,7 @@ class AudioListenerSkill(BaseSkill):
             try:
                 from core.container import ServiceContainer
                 self._voice_engine = ServiceContainer.get("voice_engine")
-            except (ImportError, AttributeError, RuntimeError) as e:
+            except (ImportError, AttributeError, RuntimeError, ContainerError) as e:
                 record_degradation('listen', e)
                 logger.error("Failed to resolve voice_engine: %s", e)
         return self._voice_engine

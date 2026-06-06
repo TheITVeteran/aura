@@ -233,7 +233,7 @@ class AuthorityGateway:
                     decision,
                 )
         except (ImportError, AttributeError) as exc:
-            record_degradation('authority_gateway', exc)
+            record_degradation('authority_gateway', exc, enforce_failure_policy=False)
             logger.warning("UnifiedWill gate unavailable; failing closed: %s", exc)
             return (
                 AuthorityDecision(
@@ -252,6 +252,7 @@ class AuthorityGateway:
                 'authority_gateway', exc,
                 severity='warning',
                 action='will_gate returned will_unavailable after Will crash',
+                enforce_failure_policy=False,
             )
             logger.warning("UnifiedWill gate crashed; failing closed: %s", exc)
             return (
@@ -301,7 +302,7 @@ class AuthorityGateway:
                 )
         except (ImportError, AttributeError, RuntimeError) as e:
             from core.runtime.errors import record_degradation
-            record_degradation('authority_gateway', e)
+            record_degradation('authority_gateway', e, enforce_failure_policy=False)
 
         # 1. Affective Gate: Block if highly agitated/negative
         valence, arousal, anger = 0.0, 0.0, 0.0
@@ -325,7 +326,7 @@ class AuthorityGateway:
             from core.runtime.errors import record_degradation
             import logging
             logger = logging.getLogger("Aura.AuthorityGateway")
-            record_degradation('authority_gateway', e)
+            record_degradation('authority_gateway', e, enforce_failure_policy=False)
             logger.debug("Social governance affect fetch failed: %s", e)
         
         # 1. Affective Gate: Allow social engagement even during stress, but tag as degraded
@@ -341,7 +342,7 @@ class AuthorityGateway:
 
         # 2. Epistemic/Safety Gate (Hard Block for sensitive data)
         try:
-            from core.privacy_stealth import MetadataScrubber
+            from core.utils.privacy_hygiene import MetadataScrubber
             scrubber = MetadataScrubber()
             cleaned = scrubber.scrub_text(content)
             if cleaned != content:
@@ -354,7 +355,7 @@ class AuthorityGateway:
                     source=source
                 )
         except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('authority_gateway', e)
+            record_degradation('authority_gateway', e, enforce_failure_policy=False)
             logger.debug("Social governance epistemic gate failed: %s", e)
 
         return None
@@ -991,13 +992,13 @@ class AuthorityGateway:
             try:
                 self._get_executive_core().complete_intent(executive_intent_id, success=success)
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('authority_gateway', exc)
+                record_degradation('authority_gateway', exc, enforce_failure_policy=False)
                 logger.error("Executive intent completion failed: %s", exc, exc_info=True)
         if capability_token_id:
             try:
                 self._capabilities.revoke_token(capability_token_id)
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('authority_gateway', exc)
+                record_degradation('authority_gateway', exc, enforce_failure_policy=False)
                 logger.error("Capability token revoke failed: %s", exc, exc_info=True)
 
     def _complete_intent_safely(self, intent_id: Optional[str], *, success: bool = True) -> None:
@@ -1006,7 +1007,7 @@ class AuthorityGateway:
         try:
             self._get_executive_core().complete_intent(intent_id, success=success)
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('authority_gateway', exc)
+            record_degradation('authority_gateway', exc, enforce_failure_policy=False)
             logger.error("Executive intent completion failed: %s", exc, exc_info=True)
 
     def _get_executive_core(self) -> Any:
@@ -1140,7 +1141,7 @@ class AuthorityGateway:
                 is_critical=is_critical,
             )
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('authority_gateway', exc)
+            record_degradation('authority_gateway', exc, enforce_failure_policy=False)
             if require_substrate:
                 return (
                     self._contextualize(
@@ -1197,6 +1198,6 @@ def get_authority_gateway() -> AuthorityGateway:
         try:
             ServiceContainer.register_instance("authority_gateway", _instance, required=False)
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('authority_gateway', exc)
+            record_degradation('authority_gateway', exc, enforce_failure_policy=False)
             logger.error("AuthorityGateway registration failed: %s", exc, exc_info=True)
     return _instance

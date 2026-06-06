@@ -110,7 +110,7 @@ def _scrub_content(text: str) -> str:
         scrubbed = pattern.sub("[REDACTED]", scrubbed)
     # Also run MetadataScrubber if available
     try:
-        from core.privacy_stealth import get_stealth_mode
+        from core.utils.privacy_hygiene import get_stealth_mode
 
         stealth = get_stealth_mode()
         scrubbed = stealth.scrubber.scrub_text(scrubbed)

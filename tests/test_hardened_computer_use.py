@@ -196,6 +196,26 @@ async def test_computer_use_run_command_intercepts(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_computer_use_run_command_nonzero_exit_is_failure(monkeypatch):
+    skill = ComputerUseSkill()
+
+    class FakeSubprocessGateway:
+        def run(self, args, **kwargs):
+            return SimpleNamespace(returncode=7, stdout="", stderr="fatal: not a repository")
+
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+
+    result = await skill.execute({"action": "run_command", "target": "git status"}, {})
+
+    assert result["ok"] is False
+    assert result["exit_code"] == 7
+    assert result["error"] == "fatal: not a repository"
+
+
+@pytest.mark.asyncio
 async def test_computer_use_missing_permission_guard_fails_closed(monkeypatch):
     from core.container import ServiceContainer
 

@@ -1,18 +1,21 @@
 """core/governance_context.py -- Governed Execution Context
 ============================================================
-Makes governance PHYSICALLY INESCAPABLE at the Python interpreter level.
+Enforces governed execution boundaries. When active or strict mode is enabled,
+governance is inescapable at the Python interpreter level.
 
 Uses contextvars to carry the active WillReceipt through the entire
 call stack. Any code path can check whether it's running inside a
 governed context, and critical paths ASSERT it.
 
-This is the mechanism that transforms governance from "social" (callers
-must honor it) to "physical" (callers cannot bypass it).
-
 Three mechanisms:
   1. GovernanceContext (contextvars) — carries active receipt through stack
   2. @governed decorator — wraps functions to require active context
   3. governed_scope() context manager — creates a governed context from a WillDecision
+
+Execution modes:
+  - Active/Strict Mode: Consequential operations fail closed if not governed.
+  - Degraded/Boot Mode: Returns a degraded_mode token for early initialization,
+    preflight checks, and local test runs.
 
 Usage:
     from core.governance_context import governed_scope, require_governance
@@ -266,7 +269,7 @@ def require_governance(
                     token.domain,
                 )
                 _record_violation(f"{operation}:domain:{token.domain}")
-                if strict:
+                if strict or os.getenv("AURA_GOVERNANCE_MODE", "").strip().lower() == "production":
                     raise GovernanceViolation(
                         f"{operation} requires governance domain {sorted(normalized_allowed)} "
                         f"but active token domain is {token.domain}"
@@ -283,7 +286,7 @@ def require_governance(
 
     # Return a violation token that tracks the bypass
     _record_violation(operation)
-    if strict:
+    if strict or os.getenv("AURA_GOVERNANCE_MODE", "").strip().lower() == "production":
         raise GovernanceViolation(f"{operation} called outside governed context")
     return GovernanceToken(receipt_id="VIOLATION", domain="ungoverned", source=operation, ttl=1)
 

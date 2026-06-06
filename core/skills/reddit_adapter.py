@@ -139,7 +139,7 @@ def _scrub_content(text: str) -> str:
     for pattern in _SENSITIVE_PATTERNS:
         scrubbed = pattern.sub("[redacted]", scrubbed)
     try:
-        from core.privacy_stealth import get_stealth_mode
+        from core.utils.privacy_hygiene import get_stealth_mode
 
         scrubbed = get_stealth_mode().scrubber.scrub_text(scrubbed)
     except (ImportError, RuntimeError, AttributeError) as exc:

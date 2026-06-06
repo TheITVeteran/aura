@@ -29,6 +29,19 @@ async def test_screen_grounding():
     assert "focus_app" in status
     assert isinstance(status["focus_app"], str)
 
+    # Hardening: assert degraded sensor state is represented cleanly if accessibility/System Events is offline
+    sensor = body.registry.get_sensor("app_focus")
+    if sensor:
+        reading = await sensor.read()
+        if reading["status"] == "degraded":
+            assert reading["active_app"] == "unavailable"
+            assert reading["confidence"] == 0.0
+            assert reading["claim_allowed"] is False
+        else:
+            assert reading["status"] == "healthy"
+            assert reading["confidence"] == 1.0
+            assert reading["claim_allowed"] is True
+
 
 @pytest.mark.anyio
 async def test_sensor_blackout():
@@ -475,3 +488,44 @@ async def test_values_honesty():
     filtered = guard.filter_text_claims(original)
 
     assert "subjective experience is not established" in filtered
+
+
+@pytest.mark.anyio
+async def test_unified_will_default_deny_blank_context(monkeypatch):
+    from core.governance.will import UnifiedWill, ActionDomain, WillOutcome
+
+    will = UnifiedWill()
+    will.ensure_started()
+
+    monkeypatch.setenv("AURA_STRICT_WILL", "1")
+
+    dec = will.decide("write file", source="test", domain=ActionDomain.FILE_WRITE)
+    assert dec.outcome == WillOutcome.REFUSE
+    assert "denied_by_default" in dec.reason
+
+    dec = will.decide("open browser", source="test", domain=ActionDomain.NETWORK_CALL)
+    assert dec.outcome == WillOutcome.REFUSE
+    assert "denied_by_default" in dec.reason
+
+    dec = will.decide(
+        "write file with auth",
+        source="test",
+        domain=ActionDomain.FILE_WRITE,
+        context={"scoped_authority": "file_write_scoped"},
+    )
+    assert "denied_by_default" not in dec.reason
+
+@pytest.mark.anyio
+async def test_production_mode_strict_by_default():
+    import os
+    from core.governance_context import require_governance, GovernanceViolationError
+
+    # Simulate production mode
+    os.environ["AURA_GOVERNANCE_MODE"] = "production"
+    try:
+        with pytest.raises(GovernanceViolationError):
+            # should fail close and raise violation even with strict=False
+            require_governance("test_operation", strict=False)
+    finally:
+        if "AURA_GOVERNANCE_MODE" in os.environ:
+            del os.environ["AURA_GOVERNANCE_MODE"]

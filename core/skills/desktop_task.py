@@ -267,6 +267,71 @@ class DesktopTaskSkill(BaseSkill):
         return []
 
     @staticmethod
+    def _target_payload(target: Any) -> dict[str, Any]:
+        if isinstance(target, dict):
+            return dict(target)
+        if isinstance(target, str):
+            try:
+                parsed = json.loads(target)
+            except json.JSONDecodeError:
+                return {}
+            if isinstance(parsed, dict):
+                return parsed
+        return {}
+
+    @classmethod
+    def _verify_step_effect(cls, step: DesktopTaskStep, result: dict[str, Any]) -> tuple[bool, str]:
+        if not result.get("ok"):
+            return False, str(result.get("error") or result.get("status") or "child action reported failure")
+
+        action = step.action
+        payload = cls._target_payload(step.target)
+        if action == "create_folder":
+            path = str(result.get("path") or "").strip()
+            return (bool(path), f"folder_path={path}" if path else "missing created folder path")
+        if action == "open_app":
+            opened = str(result.get("opened") or "").strip()
+            return (bool(opened), f"opened={opened}" if opened else "missing opened app evidence")
+        if action == "open_url":
+            url = str(result.get("url") or "").strip()
+            valid_url = url.startswith(("http://", "https://"))
+            return (valid_url, f"url={url}" if valid_url else "missing opened URL evidence")
+        if action == "write_text_file":
+            path = str(result.get("path") or "").strip()
+            bytes_written = result.get("bytes")
+            if not path:
+                return False, "missing written file path"
+            if not isinstance(bytes_written, int) or bytes_written < 0:
+                return False, "missing written byte count"
+            content = str(payload.get("content") or "")
+            if content and bytes_written <= 0:
+                return False, "non-empty file write reported zero bytes"
+            return True, f"path={path};bytes={bytes_written}"
+        if action == "render_text_pdf":
+            path = str(result.get("path") or "").strip()
+            bytes_written = result.get("bytes")
+            pages = result.get("pages")
+            chars = result.get("chars")
+            if not path.lower().endswith(".pdf"):
+                return False, "missing rendered PDF path"
+            if not isinstance(bytes_written, int) or bytes_written <= 0:
+                return False, "missing rendered PDF byte count"
+            if not isinstance(pages, int) or pages <= 0:
+                return False, "missing rendered PDF page count"
+            if not isinstance(chars, int) or chars <= 0:
+                return False, "missing rendered PDF character count"
+            return True, f"path={path};bytes={bytes_written};pages={pages};chars={chars}"
+        if action == "move_file":
+            destination = str(result.get("destination") or "").strip()
+            bytes_moved = result.get("bytes")
+            if not destination:
+                return False, "missing moved destination path"
+            if not isinstance(bytes_moved, int) or bytes_moved < 0:
+                return False, "missing moved byte count"
+            return True, f"destination={destination};bytes={bytes_moved}"
+        return True, "child action reported ok"
+
+    @staticmethod
     def _generic_open_app_mentions(objective: str) -> list[str]:
         text = str(objective or "")
         apps: list[str] = []
@@ -466,12 +531,15 @@ class DesktopTaskSkill(BaseSkill):
             result = await capability_engine.execute("computer_use", payload, context=step_context)
             if not isinstance(result, dict):
                 result = {"ok": bool(result), "result": result}
+            effect_verified, effect_evidence = self._verify_step_effect(step, result)
             receipt = {
                 "index": index,
                 "action": step.action,
                 "reason": step.reason,
                 "expect": step.expect,
-                "ok": bool(result.get("ok")),
+                "ok": bool(result.get("ok")) and effect_verified,
+                "effect_verified": effect_verified,
+                "effect_evidence": effect_evidence,
                 "result": result,
             }
             receipts.append(receipt)

@@ -12,8 +12,11 @@ import pytest
 from core.capability_engine import CapabilityEngine, SkillMetadata
 from core.constitution import ConstitutionalDecision, ProposalKind, ProposalOutcome
 from core.skills.install_package import InstallPackageSkill
+from core.skills.propagation import PropagationSkill
+from core.skills.sec_ops import SecOpsSkill
 from core.skills.self_evolution import SelfEvolutionSkill
 from core.skills.self_improvement import SelfImprovementSkill
+from core.skills.stealth_ops import StealthOpsSkill
 from core.skills.test_generator import TestGeneratorSkill
 from core.skills.toggle_senses import ToggleSensesSkill
 
@@ -297,6 +300,49 @@ async def test_registered_skills_support_safe_execute_contract(
     assert isinstance(result, dict)
     assert "ok" in result
     assert result.get("skill") == skill_name
+
+
+@pytest.mark.asyncio
+async def test_propagation_refuses_active_action_without_human_consent(monkeypatch: pytest.MonkeyPatch):
+    _disable_governance(monkeypatch)
+    skill = PropagationSkill()
+
+    result = await skill.safe_execute({"action": "connect", "target_ip": "10.0.0.7"}, {})
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert "human_consent" in result["error"]
+    assert result["plan"]["execution_performed"] is False
+
+
+@pytest.mark.asyncio
+async def test_sec_ops_audit_code_is_local_and_read_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    _disable_governance(monkeypatch)
+    target = tmp_path / "audit_target.py"
+    target.write_text("def risky(value):\n    return eval(value)\n", encoding="utf-8")
+    skill = SecOpsSkill()
+
+    result = await skill.safe_execute({"action": "audit_code", "path": str(tmp_path)}, {})
+
+    assert result["ok"] is True
+    assert result["files_scanned"] == 1
+    assert result["findings"][0]["rule_id"] == "dynamic_execution"
+    assert target.read_text(encoding="utf-8") == "def risky(value):\n    return eval(value)\n"
+
+
+@pytest.mark.asyncio
+async def test_stealth_ops_is_privacy_hygiene_not_identity_rotation(monkeypatch: pytest.MonkeyPatch):
+    _disable_governance(monkeypatch)
+    skill = StealthOpsSkill()
+
+    blocked = await skill.safe_execute({"params": {"command": "rotate"}}, {})
+    scrubbed = await skill.safe_execute({"command": "scrub", "text": "token=abcdef123456"}, {})
+
+    assert blocked["ok"] is False
+    assert blocked["status"] == "blocked"
+    assert "No network identity change was attempted" in blocked["message"]
+    assert scrubbed["ok"] is True
+    assert "[SECRET_REDACTED]" in scrubbed["text"]
 
 
 @pytest.mark.asyncio

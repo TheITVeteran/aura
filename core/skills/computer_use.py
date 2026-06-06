@@ -1057,7 +1057,15 @@ end tell
                     source="computer_use",
                 )
                 output = (result.stdout or result.stderr or "").strip()[:3000]
-                return {"ok": True, "output": output, "exit_code": result.returncode}
+                ok = result.returncode == 0
+                payload: dict[str, Any] = {
+                    "ok": ok,
+                    "output": output,
+                    "exit_code": result.returncode,
+                }
+                if not ok:
+                    payload["error"] = output or f"Command failed with exit code {result.returncode}."
+                return payload
 
             elif action == "open_app":
                 result = await asyncio.to_thread(

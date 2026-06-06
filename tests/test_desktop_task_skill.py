@@ -5,6 +5,49 @@ import pytest
 from core.skills.desktop_task import DesktopTaskSkill
 
 
+def _fake_computer_use_result(params):
+    action = params["action"]
+    target = params.get("target") or ""
+    try:
+        payload = json.loads(target)
+    except (TypeError, json.JSONDecodeError):
+        payload = {}
+    if action == "create_folder":
+        return {"ok": True, "action": action, "path": payload.get("path", "Aura Proof")}
+    if action == "open_app":
+        return {"ok": True, "opened": target, "returncode": 0}
+    if action == "open_url":
+        return {"ok": True, "action": action, "url": target}
+    if action == "write_text_file":
+        content = str(payload.get("content") or "")
+        return {
+            "ok": True,
+            "action": action,
+            "path": payload.get("path", "Aura Proof/receipt.txt"),
+            "bytes": len(content.encode("utf-8")),
+        }
+    if action == "render_text_pdf":
+        body = str(payload.get("body") or "")
+        return {
+            "ok": True,
+            "action": action,
+            "path": payload.get("path", "Aura Proof/receipt.pdf"),
+            "bytes": max(128, len(body.encode("utf-8"))),
+            "pages": 1,
+            "chars": len(body),
+        }
+    if action == "move_file":
+        return {
+            "ok": True,
+            "action": action,
+            "destination": payload.get("destination", "Aura Proof/moved.txt"),
+            "bytes": 12,
+        }
+    if action == "set_clipboard":
+        return {"ok": True, "action": action, "chars": len(str(target))}
+    return {"ok": True, "action": action, "summary": f"{action} ok"}
+
+
 @pytest.mark.asyncio
 async def test_desktop_task_executes_bounded_steps_through_capability_engine(monkeypatch):
     from core.container import ServiceContainer
@@ -14,7 +57,7 @@ async def test_desktop_task_executes_bounded_steps_through_capability_engine(mon
     class FakeCapabilityEngine:
         async def execute(self, skill_name, params, context=None):
             calls.append((skill_name, params, context or {}))
-            return {"ok": True, "summary": f"{params['action']} ok"}
+            return _fake_computer_use_result(params)
 
     monkeypatch.setattr(
         ServiceContainer,
@@ -46,6 +89,41 @@ async def test_desktop_task_executes_bounded_steps_through_capability_engine(mon
     assert json.loads(calls[2][1]["target"])["content"] == "done"
     assert calls[0][2]["route"] == "desktop_task.computer_use"
     assert calls[0][2]["user_requested_action"] is True
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_rejects_child_ok_without_required_effect_evidence(monkeypatch):
+    from core.container import ServiceContainer
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            return {"ok": True, "summary": "claimed success without a file receipt"}
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    skill = DesktopTaskSkill()
+    result = await skill.execute(
+        {
+            "objective": "Write a durable receipt file.",
+            "steps": [
+                {
+                    "action": "write_text_file",
+                    "target": {"path": "Aura Proof/receipt.txt", "content": "done"},
+                    "reason": "Write receipt",
+                }
+            ],
+        },
+        {"origin": "user"},
+    )
+
+    assert result["ok"] is False
+    assert result["steps_completed"] == 0
+    assert result["failures"][0]["effect_verified"] is False
+    assert result["failures"][0]["effect_evidence"] == "missing written file path"
 
 
 @pytest.mark.asyncio
@@ -92,7 +170,7 @@ async def test_desktop_task_derives_general_plan_from_desktop_objective(monkeypa
     class FakeCapabilityEngine:
         async def execute(self, skill_name, params, context=None):
             calls.append((skill_name, params, context or {}))
-            return {"ok": True, "summary": f"{params['action']} ok"}
+            return _fake_computer_use_result(params)
 
     monkeypatch.setattr(
         ServiceContainer,
@@ -145,7 +223,7 @@ async def test_desktop_task_uses_cognitive_engine_structured_plan_before_fallbac
     class FakeCapabilityEngine:
         async def execute(self, skill_name, params, context=None):
             calls.append((skill_name, params, context or {}))
-            return {"ok": True, "summary": f"{params['action']} ok"}
+            return _fake_computer_use_result(params)
 
     monkeypatch.setattr(
         ServiceContainer,

@@ -16,8 +16,6 @@ files_to_patch = [
     "core/memory/learning/tool_learning.py",
     "core/memory/knowledge_graph.py",
     "core/identity/heartstone.py",
-    "core/privacy_stealth.py",
-    "core/device_discovery.py",
     "core/memory/episodic_memory.py",
 ]
 

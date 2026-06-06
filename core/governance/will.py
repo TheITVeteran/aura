@@ -33,6 +33,7 @@ import hmac
 import json
 import logging
 import math
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -90,6 +91,11 @@ def _score_memory_results(results: Any) -> float:
         except (TypeError, ValueError):
             best = max(best, 0.35)
     return max(0.0, min(1.0, best))
+
+
+def _strict_default_deny_enabled() -> bool:
+    mode = os.environ.get("AURA_GOVERNANCE_MODE", "").strip().lower()
+    return os.environ.get("AURA_STRICT_WILL") == "1" or mode in {"production", "strict"}
 
 
 # ---------------------------------------------------------------------------
@@ -1359,6 +1365,47 @@ class UnifiedWill:
         """
         reasons: list[str] = []
         constraints: list[str] = []
+
+        # ── High-risk default-deny gate ──────────────────────────────
+        # High-risk domains require explicit authority/promotion/authorization in the context.
+        # Strict/production mode refuses blank or under-scoped context instead of inferring permission.
+        if _strict_default_deny_enabled() and domain in {
+            ActionDomain.FILE_WRITE,
+            ActionDomain.NETWORK_CALL,
+            ActionDomain.CLOUD_CALL,
+            ActionDomain.CI_CD,
+            ActionDomain.TOOL_EXECUTION,
+            ActionDomain.SELF_MODIFICATION,
+            ActionDomain.EXTERNAL_ACTION,
+        }:
+            has_scoped_authority = bool(
+                context.get("scoped_authority")
+                or context.get("authority")
+                or context.get("capability_token")
+            )
+            has_lab_gate = bool(
+                context.get("lab_promotion_gate")
+                or context.get("promotion_gate")
+            )
+            has_explicit_auth = bool(
+                context.get("explicit_authorization")
+                or context.get("authorization")
+                or context.get("user_granted_permission")
+                or context.get("user_explicit_action_request")
+                or context.get("user_explicitly_authorized")
+            )
+
+            if domain == ActionDomain.SELF_MODIFICATION:
+                if not has_lab_gate:
+                    reasons.append("denied_by_default: self_modification requires lab/promotion gate in context")
+                    return WillOutcome.REFUSE, "; ".join(reasons), constraints
+            elif domain == ActionDomain.EXTERNAL_ACTION:
+                if not has_explicit_auth:
+                    reasons.append("denied_by_default: external_action requires explicit authorization in context")
+                    return WillOutcome.REFUSE, "; ".join(reasons), constraints
+            elif not has_scoped_authority:
+                reasons.append(f"denied_by_default: {domain.value} requires scoped authority in context")
+                return WillOutcome.REFUSE, "; ".join(reasons), constraints
 
         # ── Identity gate (hardest constraint) ──────────────────────
         if identity_alignment == IdentityAlignment.VIOLATION:

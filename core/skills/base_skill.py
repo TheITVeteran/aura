@@ -20,6 +20,8 @@ from typing import Any, Dict, Optional, Tuple, Type
 
 from pydantic import BaseModel
 
+from core.exceptions import ContainerError
+
 
 logger = logging.getLogger("Skills")
 
@@ -30,6 +32,7 @@ _SKILL_RECOVERABLE_ERRORS = (
     TimeoutError,
     OSError,
     LookupError,
+    ContainerError,
     sqlite3.Error,
     TypeError,
     ValueError,
