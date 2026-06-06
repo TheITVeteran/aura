@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.container import ServiceContainer
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -253,11 +254,15 @@ class CapabilityDiscovery:
             try:
                 d.mkdir(parents=True, exist_ok=True)
                 test_file = d / ".aura_write_test"
-                get_file_write_gateway().write_text(
-                    test_file,
-                    "test",
-                    source="capability_discovery.writable_dir_probe",
-                )
+                with local_internal_governed_scope(
+                    "capability_discovery.writable_dir_probe",
+                    receipt_prefix="capability-write-probe",
+                ):
+                    get_file_write_gateway().write_text(
+                        test_file,
+                        "test",
+                        source="capability_discovery.writable_dir_probe",
+                    )
                 test_file.unlink()
                 report.writable_directories.append(str(d))
             except (OSError, PermissionError, RuntimeError) as exc:

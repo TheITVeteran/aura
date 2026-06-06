@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.container import ServiceContainer
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.event_bus import get_event_bus, EventPriority
@@ -203,12 +204,13 @@ class PerceptionDaemon:
 
                 # 4. Terminal / Process State Check
                 try:
-                    proc = await get_subprocess_gateway().run_async(
-                        ["ps", "-A", "-o", "comm"],
-                        read_only=True,
-                        timeout=1.0,
-                        source="perception_daemon.terminal_process",
-                    )
+                    with local_internal_governed_scope("perception_daemon.terminal_process", domain="tool_execution"):
+                        proc = await get_subprocess_gateway().run_async(
+                            ["ps", "-A", "-o", "comm"],
+                            read_only=True,
+                            timeout=1.0,
+                            source="perception_daemon.terminal_process",
+                        )
                     if proc.returncode == 0:
                         lines = proc.stdout.splitlines()
                         running_shells = [l for l in lines if any(s in l for s in ("zsh", "bash", "sh"))]
@@ -234,9 +236,12 @@ class PerceptionDaemon:
                                     continue
                                 fp = Path(root) / file
                                 try:
-                                    mtime = fp.stat().st_mtime
+                                    mtime = fp.stat(follow_symlinks=False).st_mtime
                                     if time.time() - mtime < self.check_interval:
                                         recent_files.append(str(fp))
+                                except FileNotFoundError:
+                                    # Expected if a file is deleted or is a broken symlink
+                                    pass
                                 except OSError as e:
                                     record_degradation("perception_daemon.file_stat", e)
                                     logger.debug("File stat check failed for %s: %s", fp, e)
@@ -334,12 +339,13 @@ class PerceptionDaemon:
 
     async def _check_clipboard(self) -> Optional[str]:
         try:
-            proc = await get_subprocess_gateway().run_async(
-                ["pbpaste"],
-                read_only=True,
-                timeout=1.0,
-                source="perception_daemon.clipboard",
-            )
+            with local_internal_governed_scope("perception_daemon.clipboard", domain="tool_execution"):
+                proc = await get_subprocess_gateway().run_async(
+                    ["pbpaste"],
+                    read_only=True,
+                    timeout=1.0,
+                    source="perception_daemon.clipboard",
+                )
             if proc.returncode == 0:
                 return proc.stdout.strip()
             return None
@@ -349,13 +355,14 @@ class PerceptionDaemon:
 
     async def _check_active_window(self) -> Optional[str]:
         try:
-            cmd = ["osascript", "-e", 'tell application "System Events" to get name of first application process whose frontmost is true']
-            proc = await get_subprocess_gateway().run_async(
-                cmd,
-                read_only=True,
-                timeout=1.5,
-                source="perception_daemon.active_window",
-            )
+            with local_internal_governed_scope("perception_daemon.active_window", domain="tool_execution"):
+                cmd = ["osascript", "-e", 'tell application "System Events" to get name of first application process whose frontmost is true']
+                proc = await get_subprocess_gateway().run_async(
+                    cmd,
+                    read_only=True,
+                    timeout=1.5,
+                    source="perception_daemon.active_window",
+                )
             if proc.returncode == 0:
                 return proc.stdout.strip()
             return None

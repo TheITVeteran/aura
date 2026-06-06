@@ -24,6 +24,8 @@ from core.governance_context import (
     governed_scope,
     governed_scope_sync,
     is_governed,
+    local_internal_decision,
+    local_internal_governed_scope,
     require_governance,
 )
 from core.will import ActionDomain, WillDecision, WillOutcome, get_will
@@ -83,6 +85,22 @@ class TestGovernanceContext:
         token = GovernanceToken(receipt_id="fresh", domain="test", source="test")
         assert token.valid
         assert not token.expired
+
+    def test_local_internal_scope_generates_auditable_state_token(self):
+        """Internal maintenance writes should use explicit governed tokens."""
+        with local_internal_governed_scope("unit.test.state_write") as token:
+            assert is_governed()
+            assert token.domain == "state_mutation"
+            assert token.source == "unit.test.state_write"
+            assert token.receipt_id.startswith("local-internal-unit-test-state-write:")
+            assert ("governance_origin", "local_internal") in token.constraints
+
+        assert not is_governed()
+
+    def test_local_internal_decision_rejects_unowned_domains(self):
+        """Local maintenance scopes must not authorize arbitrary surfaces."""
+        with pytest.raises(ValueError, match="unsupported local internal governance domain"):
+            local_internal_decision("unit.test.network", domain="network")
 
 
 class TestGovernanceEnforcement:

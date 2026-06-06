@@ -1769,16 +1769,14 @@ async def test_foreground_ready_proceeds_with_cold_cortex_spawn_under_pressure(m
 
 def test_cortex_warmup_probe_failure_is_not_admitted_without_override(monkeypatch):
     monkeypatch.delenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", raising=False)
-
-    def _memory_probe_failure():
-        raise OSError("sysctl unavailable")
-
-    monkeypatch.setattr("core.brain.inference_gate.psutil.virtual_memory", _memory_probe_failure)
+    memory_probe = CallProbe(side_effect=OSError("sysctl unavailable"))
+    monkeypatch.setattr("core.brain.inference_gate.psutil.virtual_memory", memory_probe)
 
     snapshot = InferenceGate._cortex_warmup_admission_snapshot("foreground")
 
     assert snapshot["can_admit"] is False
     assert snapshot["reason"] == "memory_probe_failed"
+    memory_probe.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1787,11 +1785,8 @@ async def test_foreground_ready_blocks_cold_cortex_when_memory_probe_fails(monke
     gate = InferenceGate()
     client = _LaneWarmupClient()
     gate._mlx_client = client
-
-    def _memory_probe_failure():
-        raise OSError("sysctl unavailable")
-
-    monkeypatch.setattr("core.brain.inference_gate.psutil.virtual_memory", _memory_probe_failure)
+    memory_probe = CallProbe(side_effect=OSError("sysctl unavailable"))
+    monkeypatch.setattr("core.brain.inference_gate.psutil.virtual_memory", memory_probe)
 
     with pytest.raises(RuntimeError, match="foreground_warmup_deferred:memory_probe_failed"):
         await gate.ensure_foreground_ready(timeout=15.0)
@@ -1799,6 +1794,7 @@ async def test_foreground_ready_blocks_cold_cortex_when_memory_probe_fails(monke
     client.warmup.assert_not_awaited()
     assert client.state == "recovering"
     assert client.last_error == "foreground_warmup_deferred_memory_pressure"
+    assert len(memory_probe.calls) == 2
 
 
 def test_desktop_safe_boot_skips_deferred_cortex_prewarm(monkeypatch):

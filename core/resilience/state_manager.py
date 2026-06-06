@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 import zlib
 
 from core.config import config
+from core.governance_context import local_internal_governed_scope
 from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Core.Resilience.StateManager")
@@ -34,13 +35,6 @@ class _SafeEncoder(json.JSONEncoder):
             return super().default(obj)
         except TypeError:
             return str(obj)
-
-
-class StateManagerWriteDecision:
-    def __init__(self, receipt_id: str, domain: str, source: str):
-        self.receipt_id = receipt_id
-        self.domain = domain
-        self.source = source
 
 
 class StateManager:
@@ -87,14 +81,10 @@ class StateManager:
             checksum = zlib.crc32(data_bytes) & 0xffffffff # Force unsigned
             payload = checksum.to_bytes(4, 'big') + data_bytes
             
-            from core.governance_context import governed_scope_sync
-
-            decision = StateManagerWriteDecision(
-                receipt_id=f"state-manager-file-write:{reason}:{time.time_ns()}",
-                domain="state_mutation",
-                source=f"resilience.state_manager.{reason}",
-            )
-            with governed_scope_sync(decision):
+            with local_internal_governed_scope(
+                f"resilience.state_manager.{reason}",
+                receipt_prefix=f"state-manager-file-write:{reason}",
+            ):
                 if reason == "existential":
                     existential_path = self.snapshot_dir / "existential_snapshot.json"
                     get_file_write_gateway().write_bytes(

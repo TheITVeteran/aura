@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 from enum import Enum
 from datetime import datetime
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.UnifiedSelf")
@@ -182,11 +183,15 @@ class UnifiedSelf:
             self._storage_path.parent.mkdir(parents=True, exist_ok=True)
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
-                self._storage_path,
-                json.dumps(self._state.to_dict(), indent=2),
-                source="unified_self.save_to_disk",
-            )
+            with local_internal_governed_scope(
+                "unified_self.save_to_disk",
+                receipt_prefix="unified-self-save",
+            ):
+                get_file_write_gateway().write_text(
+                    self._storage_path,
+                    json.dumps(self._state.to_dict(), indent=2),
+                    source="unified_self.save_to_disk",
+                )
         except _UNIFIED_SELF_RECOVERABLE_ERRORS as e:
             record_degradation("unified_self", e)
 

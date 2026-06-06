@@ -15,10 +15,28 @@ import binascii
 import hashlib
 import logging
 import os
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger("Aura.BlackHole")
+
+_BLACK_HOLE_CRYPTO_ERRORS = (
+    InvalidTag,
+    RuntimeError,
+    AttributeError,
+    TypeError,
+    ValueError,
+)
+_BLACK_HOLE_DECODE_ERRORS = (
+    InvalidTag,
+    binascii.Error,
+    RuntimeError,
+    AttributeError,
+    TypeError,
+    UnicodeDecodeError,
+    ValueError,
+)
 
 
 class DecodedPayload(str):
@@ -103,7 +121,7 @@ class BlackHole:
             nonce = blob[:12]
             ciphertext = blob[12:]
             return self._aesgcm.decrypt(nonce, ciphertext, None)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+        except _BLACK_HOLE_CRYPTO_ERRORS as e:
             record_degradation('black_hole', e)
             logger.error("BlackHole decryption FAILED: %s", e)
             raise ValueError("Decryption/Authentication failure.") from e
@@ -147,7 +165,7 @@ def decode_payload(b64_blob: str, key_b64: str) -> DecodedPayload:
         
         decrypted = aesgcm.decrypt(nonce, ciphertext, None).decode()
         return DecodedPayload(decrypted)
-    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+    except _BLACK_HOLE_DECODE_ERRORS as e:
         record_degradation('black_hole', e)
         logger.debug("decode_payload failed: %s", e)  # Downgraded — happens on first boot with no stored data
         return DecodedPayload("")

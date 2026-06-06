@@ -24,7 +24,7 @@ from __future__ import annotations
 from core.runtime.errors import record_degradation
 
 from core.utils.task_tracker import get_task_tracker
-from core.runtime.atomic_writer import atomic_write_text
+from core.governance_context import local_internal_governed_scope
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -94,13 +94,14 @@ def _get_hmac_secret() -> bytes:
     machine_id = ""
     try:
         # macOS
-        result = get_subprocess_gateway().run(
-            ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
-            capture_output=True,
-            read_only=True,
-            timeout=3,
-            source="security.integrity_guardian.machine_id",
-        )
+        with local_internal_governed_scope("security.integrity_guardian.machine_id", domain="tool_execution"):
+            result = get_subprocess_gateway().run(
+                ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                capture_output=True,
+                read_only=True,
+                timeout=3,
+                source="security.integrity_guardian.machine_id",
+            )
         for line in result.stdout.splitlines():
             if "IOPlatformUUID" in line:
                 machine_id = line.split('"')[-2]
@@ -341,11 +342,12 @@ class IntegrityGuardian:
             "missing": missing,
         }
         try:
-            get_file_write_gateway().append_text(
-                ALERT_LOG_PATH,
-                json.dumps(entry) + "\n",
-                source="security.integrity_guardian.alert",
-            )
+            with local_internal_governed_scope("security.integrity_guardian.alert", domain="file_write"):
+                get_file_write_gateway().append_text(
+                    ALERT_LOG_PATH,
+                    json.dumps(entry) + "\n",
+                    source="security.integrity_guardian.alert",
+                )
         except (json.JSONDecodeError, TypeError, ValueError) as _exc:
             record_degradation('integrity_guardian', _exc)
             logger.debug("Suppressed Exception: %s", _exc)
@@ -441,7 +443,16 @@ class IntegrityGuardian:
                 "built_at": time.time(),
                 "source_revision": self._current_source_revision(),
             }
-            atomic_write_text(MANIFEST_PATH, json.dumps(data, indent=2))
+            with local_internal_governed_scope(
+                "security.integrity_guardian.manifest",
+                domain="file_write",
+                receipt_prefix="integrity-manifest-write",
+            ):
+                get_file_write_gateway().write_text(
+                    MANIFEST_PATH,
+                    json.dumps(data, indent=2),
+                    source="security.integrity_guardian.manifest",
+                )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('integrity_guardian', e)
             logger.debug("Manifest save failed: %s", e)
@@ -503,14 +514,15 @@ class IntegrityGuardian:
         return {cls._normalize_repo_path(path_blob)}
 
     def _git_active_paths(self) -> Set[str]:
-        status = get_subprocess_gateway().run(
-            ["git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=no"],
-            cwd=str(_BASE_DIR),
-            capture_output=True,
-            timeout=8.0,
-            read_only=True,
-            source="security.integrity_guardian.git_status",
-        )
+        with local_internal_governed_scope("security.integrity_guardian.git_status", domain="tool_execution"):
+            status = get_subprocess_gateway().run(
+                ["git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=no"],
+                cwd=str(_BASE_DIR),
+                capture_output=True,
+                timeout=8.0,
+                read_only=True,
+                source="security.integrity_guardian.git_status",
+            )
         if status.returncode not in (0, 1):
             raise RuntimeError(f"git status returned {status.returncode}")
 

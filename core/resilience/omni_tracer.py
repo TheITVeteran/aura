@@ -25,6 +25,7 @@ import psutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.file_write_gateway import get_file_write_gateway
 
 _TRACE_FILE = Path.home() / ".aura" / "run" / "omni_trace.jsonl"
@@ -115,11 +116,15 @@ def _omni_writer_loop():
                 continue
             
             _ensure_trace_dir()
-            get_file_write_gateway().append_text(
-                _TRACE_FILE,
-                "".join(line + "\n" for line in batch),
-                source="resilience.omni_tracer.trace",
-            )
+            with local_internal_governed_scope(
+                "resilience.omni_tracer.trace",
+                receipt_prefix="omni-tracer-append",
+            ):
+                get_file_write_gateway().append_text(
+                    _TRACE_FILE,
+                    "".join(line + "\n" for line in batch),
+                    source="resilience.omni_tracer.trace",
+                )
             del batch
         except (OSError, IOError):
             time.sleep(1)

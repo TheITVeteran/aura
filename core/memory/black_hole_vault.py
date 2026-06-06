@@ -1,4 +1,3 @@
-from core.runtime.errors import record_degradation
 import os
 import time
 import json
@@ -11,7 +10,9 @@ from core.memory.horcrux import HorcruxManager
 from core.memory.black_hole import encode_payload, decode_payload
 from core.memory.physics import bekenstein_check, hawking_decay
 from core.memory.retention_policy import MemoryRetentionPolicy, black_hole_retention_policy
-from core.runtime.atomic_writer import atomic_write_text
+from core.governance_context import local_internal_governed_scope
+from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 try:
     from core.memory.rag import chunk_text, tokenize, compute_term_freq, retrieve_memories
 except (ImportError, AttributeError, RuntimeError):
@@ -22,6 +23,14 @@ except (ImportError, AttributeError, RuntimeError):
 logger = logging.getLogger("Aura.BlackHoleVault")
 
 SEMANTIC_DECAY_LAMBDA_PER_DAY = 0.08
+_VAULT_LOAD_ERRORS = (
+    OSError,
+    json.JSONDecodeError,
+    RuntimeError,
+    TypeError,
+    UnicodeDecodeError,
+    ValueError,
+)
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -121,7 +130,9 @@ class BlackHoleVault:
             res = decode_payload(encrypted_data, self.key)
             raw_json = res.get("decoded", "")
             self.memories = json.loads(raw_json) if raw_json else []
-        except (OSError, ConnectionError, TimeoutError):
+        except _VAULT_LOAD_ERRORS as e:
+            record_degradation("black_hole_vault.load", e)
+            logger.warning("Failed to load vault (falling back to empty): %s", e)
             self._fallback_mode = True
             self.memories = []
             
@@ -131,7 +142,16 @@ class BlackHoleVault:
             return
         raw_json = json.dumps(self.memories)
         encoded = encode_payload(raw_json, self.key)
-        atomic_write_text(self.memories_file, encoded["encoded"])
+        with local_internal_governed_scope(
+            "black_hole_vault.save_vault",
+            domain="memory_write",
+            receipt_prefix="black-hole-vault-save",
+        ):
+            get_file_write_gateway().write_text(
+                self.memories_file,
+                encoded["encoded"],
+                source="black_hole_vault.save_vault",
+            )
         self._dirty = False
             
     def add_memory(

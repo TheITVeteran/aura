@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
 from core.config import config
+from core.governance_context import local_internal_governed_scope
 
 logger = logging.getLogger("WorldModel.BeliefGraph")
 
@@ -541,11 +542,15 @@ class BeliefGraph:
 
                 from core.runtime.file_write_gateway import get_file_write_gateway
 
-                get_file_write_gateway().write_text(
-                    self._persist_path,
-                    json.dumps(data, indent=2),
-                    source="belief_graph.save_graph",
-                )
+                with local_internal_governed_scope(
+                    "belief_graph.save_graph",
+                    receipt_prefix="belief-graph-save",
+                ):
+                    get_file_write_gateway().write_text(
+                        self._persist_path,
+                        json.dumps(data, indent=2),
+                        source="belief_graph.save_graph",
+                    )
             except (OSError, IOError) as e:
                 record_degradation('belief_graph', e)
                 logger.error("Failed to save world model: %s", e)
@@ -655,11 +660,15 @@ class BeliefGraph:
             os.makedirs(os.path.dirname(self._causal_path), exist_ok=True)
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
-                self._causal_path,
-                json.dumps(self.causal_links, indent=2),
-                source="belief_graph.save_causal",
-            )
+            with local_internal_governed_scope(
+                "belief_graph.save_causal",
+                receipt_prefix="belief-graph-causal-save",
+            ):
+                get_file_write_gateway().write_text(
+                    self._causal_path,
+                    json.dumps(self.causal_links, indent=2),
+                    source="belief_graph.save_causal",
+                )
         except (OSError, IOError) as e:
             record_degradation('belief_graph', e)
             logger.error("Failed to save ACG: %s", e)

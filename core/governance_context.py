@@ -43,7 +43,7 @@ import functools
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -78,6 +78,21 @@ class GovernanceToken:
     @property
     def valid(self) -> bool:
         return bool(self.receipt_id) and not self.expired
+
+
+@dataclass(frozen=True)
+class LocalGovernanceDecision:
+    """Runtime-owned decision for internal maintenance work.
+
+    This is intentionally narrow: it exists for local durability and telemetry
+    operations that must be governed even when they are not directly initiated
+    by a user-facing Will decision.
+    """
+
+    receipt_id: str
+    domain: str
+    source: str
+    constraints: dict[str, Any] = field(default_factory=dict)
 
 
 class GovernanceViolationError(RuntimeError):
@@ -149,6 +164,58 @@ def normalize_governance_domain(value: Any) -> str:
         "continuity": "state_mutation",
     }
     return aliases.get(text, text)
+
+
+_LOCAL_INTERNAL_DOMAINS = {
+    "file_write",
+    "memory_write",
+    "state_mutation",
+    "self_modification",
+    "tool_execution",
+}
+
+
+def _receipt_component(value: str) -> str:
+    text = str(value or "local").strip().lower()
+    cleaned = "".join(ch if ch.isalnum() else "-" for ch in text)
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    return cleaned.strip("-")[:96] or "local"
+
+
+def local_internal_decision(
+    source: str,
+    *,
+    domain: str = "state_mutation",
+    receipt_prefix: str | None = None,
+    constraints: Mapping[str, Any] | None = None,
+) -> LocalGovernanceDecision:
+    """Build a governed decision for local runtime maintenance.
+
+    Use this for internal durability writes, trace persistence, and health
+    artifacts. User/tool actions still need their upstream Will/Authority
+    receipts; this helper is not a substitute for consequential action
+    authorization.
+    """
+    source_text = str(source or "").strip()
+    if not source_text:
+        raise ValueError("local governance source is required")
+    normalized_domain = normalize_governance_domain(domain)
+    if normalized_domain not in _LOCAL_INTERNAL_DOMAINS:
+        raise ValueError(f"unsupported local internal governance domain: {domain}")
+    receipt_root = receipt_prefix or f"local-internal-{_receipt_component(source_text)}"
+    constraint_payload = {
+        "governance_origin": "local_internal",
+        "runtime_generated": True,
+    }
+    if constraints:
+        constraint_payload.update(dict(constraints))
+    return LocalGovernanceDecision(
+        receipt_id=f"{receipt_root}:{time.time_ns()}",
+        domain=normalized_domain,
+        source=source_text,
+        constraints=constraint_payload,
+    )
 
 
 def _decision_constraints(decision: Any) -> dict[str, Any]:
@@ -229,6 +296,25 @@ def governed_scope_sync(decision: Any):
         yield token
     finally:
         _active_receipt.reset(reset_token)
+
+
+@contextmanager
+def local_internal_governed_scope(
+    source: str,
+    *,
+    domain: str = "state_mutation",
+    receipt_prefix: str | None = None,
+    constraints: Mapping[str, Any] | None = None,
+):
+    """Create a governed scope for local runtime maintenance work."""
+    decision = local_internal_decision(
+        source,
+        domain=domain,
+        receipt_prefix=receipt_prefix,
+        constraints=constraints,
+    )
+    with governed_scope_sync(decision) as token:
+        yield token
 
 
 # ---------------------------------------------------------------------------
