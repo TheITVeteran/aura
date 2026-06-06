@@ -8,15 +8,66 @@ Run: pytest tests/test_stability_v53.py -v
 """
 import asyncio
 import gc
+import inspect
 import os
 import sys
 import time
 import threading
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+class RecordedCall:
+    def __init__(self, args, kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+
+class CallRecorder:
+    def __init__(self, result=None, *, side_effect=None):
+        self.result = result
+        self.side_effect = side_effect
+        self.calls = []
+        self.call_args = None
+
+    @property
+    def call_count(self):
+        return len(self.calls)
+
+    def __call__(self, *args, **kwargs):
+        call = RecordedCall(args, kwargs)
+        self.calls.append(call)
+        self.call_args = call
+        if isinstance(self.side_effect, BaseException):
+            raise self.side_effect
+        if callable(self.side_effect):
+            return self.side_effect(*args, **kwargs)
+        return self.result
+
+    def assert_called_once(self):
+        assert len(self.calls) == 1
+
+
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(RecordedCall(args, kwargs))
+        return self.result
+
+
+class TaskHandle:
+    def __init__(self):
+        self.add_done_callback = CallRecorder()
+
+    def done(self):
+        return False
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SECTION 1: InferenceGate — Conversation Status & State Machine
@@ -116,19 +167,21 @@ class TestConversationStatus:
         """Lane stuck in 'warming' for >90s with no active task should reset to 'cold'."""
         gate = self._make_gate()
         # Scripted MLX client that reports "warming" with old timestamps
-        mock_mlx = MagicMock()
-        mock_mlx.get_lane_status.return_value = {
-            "state": "warming",
-            "last_error": "",
-            "conversation_ready": False,
-            "last_transition_at": time.time() - 120,  # 2 minutes ago
-            "last_ready_at": 0.0,
-            "last_progress_at": time.time() - 120,
-            "warmup_attempted": True,
-            "warmup_in_flight": False,
-        }
-        mock_mlx._warmup_in_flight = False
-        gate._mlx_client = mock_mlx
+        gate._mlx_client = SimpleNamespace(
+            get_lane_status=CallRecorder(
+                {
+                    "state": "warming",
+                    "last_error": "",
+                    "conversation_ready": False,
+                    "last_transition_at": time.time() - 120,  # 2 minutes ago
+                    "last_ready_at": 0.0,
+                    "last_progress_at": time.time() - 120,
+                    "warmup_attempted": True,
+                    "warmup_in_flight": False,
+                }
+            ),
+            _warmup_in_flight=False,
+        )
         gate._prewarm_task = None
         gate._deferred_prewarm_task = None
         gate._cortex_recovery_in_progress = False
@@ -172,21 +225,23 @@ class TestCortexRecovery:
         gate._last_background_memory_shed_at = 0.0
         gate._last_spare_maintenance_at = 0.0
 
-        mock_mlx = MagicMock()
-        mock_mlx.is_alive.return_value = False
-        mock_mlx.warmup = AsyncMock()
-        mock_mlx.get_lane_status.return_value = {
-            "state": "failed", "last_error": "process_died",
-            "conversation_ready": False, "last_transition_at": 0.0,
-            "last_ready_at": 0.0, "last_progress_at": 0.0,
-            "warmup_attempted": True, "warmup_in_flight": False,
-        }
-        mock_mlx.note_lane_recovering = MagicMock()
-        mock_mlx._warmup_in_flight = False
-        gate._mlx_client = mock_mlx
+        gate._mlx_client = SimpleNamespace(
+            is_alive=CallRecorder(False),
+            warmup=AsyncCallRecorder(),
+            get_lane_status=CallRecorder(
+                {
+                    "state": "failed", "last_error": "process_died",
+                    "conversation_ready": False, "last_transition_at": 0.0,
+                    "last_ready_at": 0.0, "last_progress_at": 0.0,
+                    "warmup_attempted": True, "warmup_in_flight": False,
+                }
+            ),
+            note_lane_recovering=CallRecorder(),
+            _warmup_in_flight=False,
+        )
         return gate
 
-    def test_recovery_exhausted_at_tracks_separately(self):
+    def test_recovery_exhausted_at_tracks_separately(self, monkeypatch):
         """v53 fix: exhausted_at uses dedicated timestamp, not _last_cortex_check."""
         gate = self._make_gate_with_dead_cortex()
         gate._cortex_recovery_attempts = 5
@@ -194,18 +249,21 @@ class TestCortexRecovery:
         gate._last_cortex_check = 0.0  # Allow rate limit to pass
 
         loop = asyncio.new_event_loop()
-        # Patch out asyncio.create_task
-        with patch("asyncio.create_task") as mock_create:
-            mock_task = MagicMock()
-            mock_task.add_done_callback = MagicMock()
-            mock_create.return_value = mock_task
-            loop.run_until_complete(gate._ensure_cortex_recovery())
+        task = TaskHandle()
+
+        def create_task(awaitable, *args, **kwargs):
+            if inspect.isawaitable(awaitable):
+                awaitable.close()
+            return task
+
+        monkeypatch.setattr(asyncio, "create_task", CallRecorder(side_effect=create_task))
+        loop.run_until_complete(gate._ensure_cortex_recovery())
 
         # Should have set exhausted_at
         assert gate._cortex_recovery_exhausted_at > 0, "Should track exhaustion timestamp"
         loop.close()
 
-    def test_recovery_retries_after_5min_cooldown(self):
+    def test_recovery_retries_after_5min_cooldown(self, monkeypatch):
         """After 5 failures + 5 min cooldown, recovery counter resets and retries."""
         gate = self._make_gate_with_dead_cortex()
         gate._cortex_recovery_attempts = 5
@@ -213,11 +271,15 @@ class TestCortexRecovery:
         gate._last_cortex_check = 0.0
 
         loop = asyncio.new_event_loop()
-        with patch("asyncio.create_task") as mock_create:
-            mock_task = MagicMock()
-            mock_task.add_done_callback = MagicMock()
-            mock_create.return_value = mock_task
-            loop.run_until_complete(gate._ensure_cortex_recovery())
+        task = TaskHandle()
+
+        def create_task(awaitable, *args, **kwargs):
+            if inspect.isawaitable(awaitable):
+                awaitable.close()
+            return task
+
+        monkeypatch.setattr(asyncio, "create_task", CallRecorder(side_effect=create_task))
+        loop.run_until_complete(gate._ensure_cortex_recovery())
 
         assert gate._cortex_recovery_attempts == 0, "Counter should reset after 5min cooldown"
         loop.close()

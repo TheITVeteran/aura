@@ -6,14 +6,50 @@ and graceful degradation.
 """
 
 import asyncio
+import inspect
+import threading
 import time
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+from types import SimpleNamespace
 
 from core.agi.agi_integration import AGIIntegrationLayer
 from core.brain.homeostatic_modulator import InferenceModulation
 from core.container import ServiceContainer
+
+
+class RecordedCall:
+    def __init__(self, args, kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+
+class CallRecorder:
+    def __init__(self, result=None, *, side_effect=None):
+        self.result = result
+        self.side_effect = side_effect
+        self.calls = []
+        self.call_args = None
+
+    @property
+    def call_count(self):
+        return len(self.calls)
+
+    def __call__(self, *args, **kwargs):
+        call = RecordedCall(args, kwargs)
+        self.calls.append(call)
+        self.call_args = call
+        if isinstance(self.side_effect, BaseException):
+            raise self.side_effect
+        if callable(self.side_effect):
+            return self.side_effect(*args, **kwargs)
+        return self.result
+
+    def assert_called_once(self):
+        assert len(self.calls) == 1
+
+    def assert_not_called(self):
+        assert not self.calls
 
 
 # ---------------------------------------------------------------------------
@@ -56,92 +92,91 @@ def test_integration_layer_initializes_cleanly(integration_layer):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_tick_increments_counter(integration_layer):
+async def test_run_tick_increments_counter(integration_layer, monkeypatch):
     """A single tick should increment tick_count and update last_tick_time."""
-    # Patch ServiceContainer.get so no real services are touched
-    with patch.object(ServiceContainer, "get", return_value=None):
-        await integration_layer._run_tick()
+    monkeypatch.setattr(ServiceContainer, "get", lambda *args, **kwargs: None)
+    await integration_layer._run_tick()
 
     assert integration_layer.tick_count == 1
     assert integration_layer.last_tick_time > 0.0
 
 
 @pytest.mark.asyncio
-async def test_run_tick_steps_precision_engine(integration_layer):
+async def test_run_tick_steps_precision_engine(integration_layer, monkeypatch):
     """Tick should call precision.step() when the engine is registered."""
-    mock_precision = MagicMock()
+    precision = SimpleNamespace(step=CallRecorder())
 
     def lookup(name, default=None):
         if name == "precision_engine":
-            return mock_precision
+            return precision
         return default
 
-    with patch.object(ServiceContainer, "get", side_effect=lookup):
-        await integration_layer._run_tick()
+    monkeypatch.setattr(ServiceContainer, "get", lookup)
+    await integration_layer._run_tick()
 
-    mock_precision.step.assert_called_once()
+    precision.step.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_run_tick_contraction_every_30_ticks(integration_layer):
+async def test_run_tick_contraction_every_30_ticks(integration_layer, monkeypatch):
     """Dimensional contraction should trigger every 30 ticks."""
-    mock_expansion = MagicMock()
-    mock_expansion.evaluate_contraction.return_value = []
+    expansion = SimpleNamespace(evaluate_contraction=CallRecorder([]))
 
     def lookup(name, default=None):
         if name == "dimensional_expansion":
-            return mock_expansion
+            return expansion
         return default
 
-    with patch.object(ServiceContainer, "get", side_effect=lookup):
-        # Run 29 ticks — no contraction yet
-        for _ in range(29):
-            await integration_layer._run_tick()
-        mock_expansion.evaluate_contraction.assert_not_called()
-
-        # 30th tick triggers contraction
+    monkeypatch.setattr(ServiceContainer, "get", lookup)
+    # Run 29 ticks — no contraction yet
+    for _ in range(29):
         await integration_layer._run_tick()
-        mock_expansion.evaluate_contraction.assert_called_once()
+    expansion.evaluate_contraction.assert_not_called()
+
+    # 30th tick triggers contraction
+    await integration_layer._run_tick()
+    expansion.evaluate_contraction.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_run_tick_saves_projection_every_300s(integration_layer):
+async def test_run_tick_saves_projection_every_300s(integration_layer, monkeypatch):
     """Projection weights save should trigger after 300 seconds elapse."""
     # Force last_save_time into the past
     integration_layer.last_save_time = time.time() - 301.0
 
-    mock_projection = MagicMock()
-    integration_layer.modulator.projection = mock_projection
+    projection = SimpleNamespace(save=CallRecorder())
+    integration_layer.modulator.projection = projection
 
-    with patch.object(ServiceContainer, "get", return_value=None):
-        await integration_layer._run_tick()
+    monkeypatch.setattr(ServiceContainer, "get", lambda *args, **kwargs: None)
+    await integration_layer._run_tick()
 
-    mock_projection.save.assert_called_once()
+    projection.save.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
 # Inference callback
 # ---------------------------------------------------------------------------
 
-def test_on_inference_complete_returns_metrics(integration_layer, base_modulation):
+def test_on_inference_complete_returns_metrics(integration_layer, base_modulation, monkeypatch):
     """Callback should return surprise/coherence dict."""
-    mock_substrate = MagicMock()
-    mock_substrate.idx_valence = 0
-    mock_substrate.idx_arousal = 1
-    mock_substrate.x = np.array([0.5, 0.5, 0.0, 0.0, 0.0], dtype=np.float32)
+    substrate = SimpleNamespace(
+        idx_valence=0,
+        idx_arousal=1,
+        x=np.array([0.5, 0.5, 0.0, 0.0, 0.0], dtype=np.float32),
+    )
 
     def lookup(name, default=None):
         if name == "liquid_substrate":
-            return mock_substrate
+            return substrate
         return default
 
-    with patch.object(ServiceContainer, "get", side_effect=lookup):
-        metrics = integration_layer.on_inference_complete(
-            output_text="test output",
-            token_ids=[1, 2, 3],
-            logprobs=[-0.1, -0.2, -0.15],
-            modulation=base_modulation,
-        )
+    monkeypatch.setattr(ServiceContainer, "get", lookup)
+    metrics = integration_layer.on_inference_complete(
+        output_text="test output",
+        token_ids=[1, 2, 3],
+        logprobs=[-0.1, -0.2, -0.15],
+        modulation=base_modulation,
+    )
 
     assert "surprise" in metrics
     assert "coherence" in metrics
@@ -149,19 +184,19 @@ def test_on_inference_complete_returns_metrics(integration_layer, base_modulatio
     assert isinstance(metrics["coherence"], float)
 
 
-def test_on_inference_complete_graceful_degradation(integration_layer, base_modulation):
+def test_on_inference_complete_graceful_degradation(integration_layer, base_modulation, monkeypatch):
     """If feedback loop throws, callback should return safe defaults."""
-    with patch.object(
+    monkeypatch.setattr(
         integration_layer.feedback_loop,
         "process_output",
-        side_effect=RuntimeError("boom"),
-    ):
-        metrics = integration_layer.on_inference_complete(
-            output_text="test",
-            token_ids=[1],
-            logprobs=None,
-            modulation=base_modulation,
-        )
+        CallRecorder(side_effect=RuntimeError("boom")),
+    )
+    metrics = integration_layer.on_inference_complete(
+        output_text="test",
+        token_ids=[1],
+        logprobs=None,
+        modulation=base_modulation,
+    )
 
     assert metrics == {"surprise": 0.5, "coherence": 0.0}
 
@@ -170,24 +205,24 @@ def test_on_inference_complete_graceful_degradation(integration_layer, base_modu
 # Modulation retrieval
 # ---------------------------------------------------------------------------
 
-def test_get_modulation_returns_inference_modulation(integration_layer):
+def test_get_modulation_returns_inference_modulation(integration_layer, monkeypatch):
     """get_modulation should return an InferenceModulation dataclass."""
-    with patch.object(ServiceContainer, "get", return_value=None):
-        mod = integration_layer.get_modulation()
+    monkeypatch.setattr(ServiceContainer, "get", lambda *args, **kwargs: None)
+    mod = integration_layer.get_modulation()
 
     assert isinstance(mod, InferenceModulation)
     assert 0.0 < mod.temperature <= 1.5
     assert 0.0 < mod.top_p <= 1.0
 
 
-def test_get_modulation_graceful_degradation(integration_layer):
+def test_get_modulation_graceful_degradation(integration_layer, monkeypatch):
     """If modulator throws, get_modulation should return safe defaults."""
-    with patch.object(
+    monkeypatch.setattr(
         integration_layer.modulator,
         "compute_modulation",
-        side_effect=RuntimeError("broken"),
-    ):
-        mod = integration_layer.get_modulation()
+        CallRecorder(side_effect=RuntimeError("broken")),
+    )
+    mod = integration_layer.get_modulation()
 
     assert isinstance(mod, InferenceModulation)
     assert mod.temperature == 0.7
@@ -198,52 +233,51 @@ def test_get_modulation_graceful_degradation(integration_layer):
 # Telemetry aggregation
 # ---------------------------------------------------------------------------
 
-def test_get_unified_telemetry_minimal(integration_layer):
+def test_get_unified_telemetry_minimal(integration_layer, monkeypatch):
     """Telemetry should include integration block even with no services."""
-    with patch.object(ServiceContainer, "get", return_value=None):
-        telemetry = integration_layer.get_unified_telemetry()
+    monkeypatch.setattr(ServiceContainer, "get", lambda *args, **kwargs: None)
+    telemetry = integration_layer.get_unified_telemetry()
 
     assert "integration" in telemetry
     assert telemetry["integration"]["ticks"] == 0
     assert "uptime_seconds" in telemetry["integration"]
 
 
-def test_get_unified_telemetry_with_services(integration_layer):
+def test_get_unified_telemetry_with_services(integration_layer, monkeypatch):
     """Telemetry should aggregate data from all registered services."""
-    mock_precision = MagicMock()
-    mock_precision.get_state_dict.return_value = {"arousal": 0.6, "fatigue": 0.2}
+    precision = SimpleNamespace(get_state_dict=CallRecorder({"arousal": 0.6, "fatigue": 0.2}))
 
-    mock_substrate = MagicMock()
-    mock_substrate.idx_valence = 0
-    mock_substrate.idx_arousal = 1
-    mock_substrate.idx_frustration = 2
-    mock_substrate.idx_curiosity = 3
-    mock_substrate.idx_focus = 4
-    mock_substrate.x = np.array([0.7, 0.5, 0.1, 0.3, 0.8], dtype=np.float64)
+    substrate = SimpleNamespace(
+        idx_valence=0,
+        idx_arousal=1,
+        idx_frustration=2,
+        idx_curiosity=3,
+        idx_focus=4,
+        x=np.array([0.7, 0.5, 0.1, 0.3, 0.8], dtype=np.float64),
+        sync_lock=threading.Lock(),
+    )
 
-    mock_free_energy = MagicMock()
-    mock_free_energy.smoothed_fe = 0.42
-    mock_free_energy.current_action = "explore"
+    free_energy = SimpleNamespace(smoothed_fe=0.42, current_action="explore")
 
-    mock_expansion = MagicMock()
-    mock_expansion.get_status.return_value = {"current_dim": 18, "expanded_count": 2}
+    expansion = SimpleNamespace(get_status=CallRecorder({"current_dim": 18, "expanded_count": 2}))
 
-    mock_registry = MagicMock()
-    mock_registry.synthesized_actuators = {"a": 1}
-    mock_registry.actuators = {"a": 1, "b": 2, "c": 3}
+    registry = SimpleNamespace(
+        synthesized_actuators={"a": 1},
+        actuators={"a": 1, "b": 2, "c": 3},
+    )
 
     def lookup(name, default=None):
         mapping = {
-            "precision_engine": mock_precision,
-            "liquid_substrate": mock_substrate,
-            "free_energy_engine": mock_free_energy,
-            "dimensional_expansion": mock_expansion,
-            "actuator_registry": mock_registry,
+            "precision_engine": precision,
+            "liquid_substrate": substrate,
+            "free_energy_engine": free_energy,
+            "dimensional_expansion": expansion,
+            "actuator_registry": registry,
         }
         return mapping.get(name, default)
 
-    with patch.object(ServiceContainer, "get", side_effect=lookup):
-        telemetry = integration_layer.get_unified_telemetry()
+    monkeypatch.setattr(ServiceContainer, "get", lookup)
+    telemetry = integration_layer.get_unified_telemetry()
 
     assert "precision" in telemetry
     assert telemetry["precision"]["arousal"] == 0.6
@@ -269,42 +303,42 @@ def test_get_unified_telemetry_with_services(integration_layer):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_tick_survives_precision_engine_crash(integration_layer):
+async def test_run_tick_survives_precision_engine_crash(integration_layer, monkeypatch):
     """If PrecisionEngine.step() throws, the tick should complete gracefully."""
-    mock_precision = MagicMock()
-    mock_precision.step.side_effect = RuntimeError("FHN divergence")
+    precision = SimpleNamespace(step=CallRecorder(side_effect=RuntimeError("FHN divergence")))
 
     def lookup(name, default=None):
         if name == "precision_engine":
-            return mock_precision
+            return precision
         return default
 
-    with patch.object(ServiceContainer, "get", side_effect=lookup):
-        # Should NOT raise
-        await integration_layer._run_tick()
+    monkeypatch.setattr(ServiceContainer, "get", lookup)
+    # Should NOT raise
+    await integration_layer._run_tick()
 
     assert integration_layer.tick_count == 1
 
 
 @pytest.mark.asyncio
-async def test_run_tick_survives_expansion_crash(integration_layer):
+async def test_run_tick_survives_expansion_crash(integration_layer, monkeypatch):
     """If evaluate_contraction() throws, the tick should complete gracefully."""
-    mock_expansion = MagicMock()
-    mock_expansion.evaluate_contraction.side_effect = ValueError("matrix singular")
+    expansion = SimpleNamespace(
+        evaluate_contraction=CallRecorder(side_effect=ValueError("matrix singular"))
+    )
 
     def lookup(name, default=None):
         if name == "dimensional_expansion":
-            return mock_expansion
+            return expansion
         return default
 
     # Force tick_count to 29 so the 30th tick triggers contraction
     integration_layer.tick_count = 29
 
-    with patch.object(ServiceContainer, "get", side_effect=lookup):
-        await integration_layer._run_tick()
+    monkeypatch.setattr(ServiceContainer, "get", lookup)
+    await integration_layer._run_tick()
 
     assert integration_layer.tick_count == 30
-    mock_expansion.evaluate_contraction.assert_called_once()
+    expansion.evaluate_contraction.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -312,38 +346,49 @@ async def test_run_tick_survives_expansion_crash(integration_layer):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_start_stop_lifecycle(integration_layer):
+async def test_start_stop_lifecycle(integration_layer, monkeypatch):
     """Start should set _running, stop should clear it and save projection."""
-    mock_tracker = MagicMock()
-    mock_task = MagicMock()
-    mock_tracker.create_task.return_value = mock_task
+    task = SimpleNamespace(cancel=CallRecorder())
 
-    mock_projection = MagicMock()
-    integration_layer.modulator.projection = mock_projection
+    def create_tracked_task(awaitable, **_kwargs):
+        if inspect.isawaitable(awaitable):
+            awaitable.close()
+        return task
 
-    with patch("core.utils.task_tracker.get_task_tracker", return_value=mock_tracker):
-        with patch.object(ServiceContainer, "register"):
-            await integration_layer.start()
+    tracker = SimpleNamespace(create_task=CallRecorder(side_effect=create_tracked_task))
+
+    projection = SimpleNamespace(save=CallRecorder())
+    integration_layer.modulator.projection = projection
+
+    monkeypatch.setattr("core.utils.task_tracker.get_task_tracker", lambda: tracker)
+    monkeypatch.setattr(ServiceContainer, "register", CallRecorder())
+    await integration_layer.start()
 
     assert integration_layer._running is True
-    mock_tracker.create_task.assert_called_once()
+    tracker.create_task.assert_called_once()
 
     await integration_layer.stop()
     assert integration_layer._running is False
-    mock_task.cancel.assert_called_once()
-    mock_projection.save.assert_called_once()
+    task.cancel.assert_called_once()
+    projection.save.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_double_start_is_idempotent(integration_layer):
+async def test_double_start_is_idempotent(integration_layer, monkeypatch):
     """Calling start() twice should not spawn a second loop."""
-    mock_tracker = MagicMock()
-    mock_tracker.create_task.return_value = MagicMock()
+    task = SimpleNamespace(cancel=CallRecorder())
 
-    with patch("core.utils.task_tracker.get_task_tracker", return_value=mock_tracker):
-        with patch.object(ServiceContainer, "register"):
-            await integration_layer.start()
-            await integration_layer.start()
+    def create_tracked_task(awaitable, **_kwargs):
+        if inspect.isawaitable(awaitable):
+            awaitable.close()
+        return task
 
-    assert mock_tracker.create_task.call_count == 1
+    tracker = SimpleNamespace(create_task=CallRecorder(side_effect=create_tracked_task))
+
+    monkeypatch.setattr("core.utils.task_tracker.get_task_tracker", lambda: tracker)
+    monkeypatch.setattr(ServiceContainer, "register", CallRecorder())
+    await integration_layer.start()
+    await integration_layer.start()
+
+    assert tracker.create_task.call_count == 1
     await integration_layer.stop()
