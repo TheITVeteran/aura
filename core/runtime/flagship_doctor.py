@@ -118,8 +118,8 @@ def _log_candidates(root: Path) -> list[Path]:
         if base.exists():
             try:
                 candidates.extend(sorted(base.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)[:10])
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                pass  # no-op: intentional
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("Flagship doctor log candidate scan skipped for %s: %s", base, exc)
     return candidates
 
 
@@ -325,6 +325,103 @@ class FlagshipDoctorDaemon:
         self._monitor_thread: threading.Thread | None = None
         self._loop: Any = None
         self._heartbeat_task: Any = None
+
+    def is_alive(self) -> bool:
+        """Return daemon liveness only; use ``is_ready`` for runtime health."""
+        return bool(self._running and not is_shutdown_requested())
+
+    def is_ready(self) -> bool:
+        """Return true only when the daemon and canonical runtime probes pass."""
+        return bool(self.get_status().get("healthy", False))
+
+    def get_status(self) -> dict[str, Any]:
+        """Return a fail-closed daemon readiness snapshot.
+
+        The event-loop heartbeat is necessary but insufficient. It can only
+        contribute to a healthy verdict when the canonical runtime contract also
+        proves kernel, inference, memory, scheduler, and tool-governance probes.
+        """
+        now = time.time()
+        heartbeat_age_s = max(0.0, now - self._last_heartbeat) if self._last_heartbeat else None
+        lag_threshold, lag_context = self._lag_threshold_for_context()
+        task = self._heartbeat_task
+        try:
+            task_done = bool(task.done()) if task is not None else True
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            task_done = True
+        heartbeat_fresh = bool(
+            self._running
+            and self._loop is not None
+            and task is not None
+            and not task_done
+            and heartbeat_age_s is not None
+            and heartbeat_age_s <= lag_threshold
+        )
+
+        blockers: list[str] = []
+        if not self._running:
+            blockers.append("flagship_doctor_not_running")
+        if self._loop is None or task is None or task_done:
+            blockers.append("event_loop_heartbeat_unavailable")
+        elif not heartbeat_fresh:
+            blockers.append("event_loop_heartbeat_stale")
+
+        try:
+            from core.runtime import health_contract
+
+            runtime_report = health_contract.runtime_health_report()
+            required_probes = runtime_report.get("required_probes", {})
+            runtime_contract_operational = bool(runtime_report.get("operational", False))
+            runtime_contract_healthy = bool(runtime_report.get("healthy", False))
+            runtime_probe_healthy = health_contract.required_probe_groups_pass(required_probes)
+            probe_blockers = health_contract.required_probe_blockers(required_probes)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "flagship_doctor",
+                exc,
+                severity="critical",
+                action="failed closed: runtime health contract unavailable to flagship doctor",
+            )
+            runtime_report = {
+                "status": "unknown",
+                "healthy": False,
+                "operational": False,
+                "required_probes": {"all_passed": False},
+            }
+            required_probes = {"all_passed": False}
+            runtime_contract_operational = False
+            runtime_contract_healthy = False
+            runtime_probe_healthy = False
+            probe_blockers = ["runtime_health_probe_error", "runtime_required_probes"]
+
+        if not runtime_contract_operational:
+            blockers.append("runtime_contract")
+        if not runtime_contract_healthy:
+            blockers.append("runtime_contract_healthy")
+        blockers.extend(probe_blockers)
+        blockers = list(dict.fromkeys(blockers))
+
+        healthy = bool(
+            heartbeat_fresh
+            and runtime_contract_healthy
+            and runtime_probe_healthy
+            and not blockers
+        )
+        return {
+            "status": "healthy" if healthy else "unhealthy",
+            "healthy": healthy,
+            "daemon_running": self._running,
+            "heartbeat_fresh": heartbeat_fresh,
+            "heartbeat_age_s": round(heartbeat_age_s, 3) if heartbeat_age_s is not None else None,
+            "lag_threshold_s": round(float(lag_threshold), 3),
+            "lag_context": lag_context,
+            "runtime_contract_healthy": runtime_contract_healthy,
+            "runtime_contract_operational": runtime_contract_operational,
+            "runtime_probe_healthy": runtime_probe_healthy,
+            "required_probes": required_probes,
+            "blockers": blockers,
+            "runtime_health": runtime_report,
+        }
 
     def start(self, loop: Any = None) -> None:
         """Start the background monitoring thread and event-loop heartbeat updater."""
@@ -579,13 +676,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         out.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(out, report.to_json(), encoding="utf-8")
     if args.json:
-        print(report.to_json())
+        sys.stdout.write(report.to_json() + "\n")
     else:
-        print(f"Aura flagship doctor: {report.overall.upper()}")
+        sys.stdout.write(f"Aura flagship doctor: {report.overall.upper()}\n")
         for finding in report.findings:
-            print(f"[{finding.status.upper()}] {finding.code}: {finding.message}")
+            sys.stdout.write(f"[{finding.status.upper()}] {finding.code}: {finding.message}\n")
             if finding.suggestion:
-                print(f"  -> {finding.suggestion}")
+                sys.stdout.write(f"  -> {finding.suggestion}\n")
 
     return 1 if report.overall == "fail" else 0
 
