@@ -4,36 +4,77 @@ import asyncio
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, patch, AsyncMock
+from types import SimpleNamespace
 
 # Ensure we can import from the core directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from core.orchestrator import RobustOrchestrator
 from core.brain.personality_engine import PersonalityEngine
-from core.identity import IdentitySystem
 from core.container import ServiceContainer
+
+
+class RecordedCall:
+    def __init__(self, args, kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+
+class CallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+        self.call_args = None
+
+    @property
+    def called(self):
+        return bool(self.calls)
+
+    def __call__(self, *args, **kwargs):
+        call = RecordedCall(args, kwargs)
+        self.calls.append(call)
+        self.call_args = call
+        return self.result
+
+    def assert_called(self):
+        assert self.calls
+
+    def assert_called_once(self):
+        assert len(self.calls) == 1
+
+
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(RecordedCall(args, kwargs))
+        return self.result
+
 
 class TestPersonalityDeepening(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         ServiceContainer.clear()
         
-        # Completely manual mocks to avoid patch-related hangs in IsolatedAsyncioTestCase
-        mock_ls = MagicMock()
-        mock_ls.update = AsyncMock()
-        mock_ls.emotions = {"contemplation": MagicMock(intensity=0)}
-        mock_ls.get_status = MagicMock(return_value={"health": 1.0})
-        ServiceContainer.register_instance("liquid_state", mock_ls)
+        liquid_state = SimpleNamespace(
+            update=AsyncCallRecorder(),
+            emotions={"contemplation": SimpleNamespace(intensity=0)},
+            get_status=CallRecorder({"health": 1.0}),
+        )
+        ServiceContainer.register_instance("liquid_state", liquid_state)
         
-        mock_pe = MagicMock()
-        mock_pe.last_update = 0
-        mock_pe.internal_monologue = []
-        mock_pe.emotions = {"contemplation": MagicMock(intensity=0)}
-        ServiceContainer.register_instance("personality_engine", mock_pe)
+        personality = SimpleNamespace(
+            last_update=0,
+            internal_monologue=[],
+            emotions={"contemplation": SimpleNamespace(intensity=0)},
+        )
+        ServiceContainer.register_instance("personality_engine", personality)
         
-        mock_identity = MagicMock()
-        mock_identity.get_full_system_prompt.return_value = "System: Hello. INTERNAL MONOLOGUE: Reflection"
-        ServiceContainer.register_instance("identity", mock_identity)
+        identity = SimpleNamespace(
+            get_full_system_prompt=CallRecorder("System: Hello. INTERNAL MONOLOGUE: Reflection")
+        )
+        ServiceContainer.register_instance("identity", identity)
 
     async def asyncTearDown(self):
         ServiceContainer.clear()
@@ -43,22 +84,35 @@ class TestPersonalityDeepening(unittest.IsolatedAsyncioTestCase):
         orch = RobustOrchestrator()
         orch.setup()
         
-        # Inject mocks directly and ensure they ARE the ones used
-        pe = MagicMock()
-        pe.update = MagicMock()
+        # Inject explicit collaborators directly and ensure they are the ones used.
+        pe = SimpleNamespace(update=CallRecorder())
         orch._personality_engine = pe
         
         # Initial cycle count
         self.assertEqual(orch.status.cycle_count, 0)
         
-        # Run one cycle manually
-        with patch.object(orch, '_get_service', side_effect=lambda name, *a: pe if name == "personality_engine" else MagicMock()):
-            with patch.object(orch, '_acquire_next_message', return_value=None):
-                with patch.object(orch, '_update_liquid_pacing', return_value=None):
-                    with patch.object(orch, '_trigger_autonomous_thought', return_value=None):
-                        with patch.object(orch, '_pulse_agency_core', return_value=None):
-                             with patch.object(orch, '_run_terminal_self_heal', return_value=None):
-                                await orch._process_cycle()
+        async def no_async_work(*_args, **_kwargs):
+            return None
+
+        originals = {
+            "_get_service": orch._get_service,
+            "_acquire_next_message": orch._acquire_next_message,
+            "_update_liquid_pacing": orch._update_liquid_pacing,
+            "_trigger_autonomous_thought": orch._trigger_autonomous_thought,
+            "_pulse_agency_core": orch._pulse_agency_core,
+            "_run_terminal_self_heal": orch._run_terminal_self_heal,
+        }
+        orch._get_service = lambda name, *a: pe if name == "personality_engine" else SimpleNamespace()
+        orch._acquire_next_message = no_async_work
+        orch._update_liquid_pacing = no_async_work
+        orch._trigger_autonomous_thought = no_async_work
+        orch._pulse_agency_core = no_async_work
+        orch._run_terminal_self_heal = no_async_work
+        try:
+            await orch._process_cycle()
+        finally:
+            for name, value in originals.items():
+                setattr(orch, name, value)
         
         # Cycle count should increment
         self.assertEqual(orch.status.cycle_count, 1)
@@ -87,9 +141,10 @@ class TestPersonalityDeepening(unittest.IsolatedAsyncioTestCase):
         print(f"✓ Internal Monologue captured: {reflection}")
         
         # Check identity prompt integration
-        mock_identity = MagicMock()
-        mock_identity.get_full_system_prompt.return_value = f"INTERNAL MONOLOGUE: {reflection}"
-        ServiceContainer.register_instance("identity", mock_identity)
+        identity = SimpleNamespace(
+            get_full_system_prompt=CallRecorder(f"INTERNAL MONOLOGUE: {reflection}")
+        )
+        ServiceContainer.register_instance("identity", identity)
         
         identity = ServiceContainer.get("identity")
         prompt = identity.get_full_system_prompt()
@@ -99,12 +154,19 @@ class TestPersonalityDeepening(unittest.IsolatedAsyncioTestCase):
 
     def test_persona_persistence(self):
         """Verify persona can be persisted."""
+        from core.brain import personality_engine as personality_module
+
         pe = PersonalityEngine()
-        with patch("core.brain.personality_engine.atomic_write_text") as mocked_write:
+        writer = CallRecorder()
+        original_writer = personality_module.atomic_write_text
+        personality_module.atomic_write_text = writer
+        try:
             success = pe.persist()
             self.assertTrue(success)
-            mocked_write.assert_called_once()
-            self.assertTrue(str(mocked_write.call_args.args[0]).endswith("evolved_persona.json"))
+            writer.assert_called_once()
+            self.assertTrue(str(writer.call_args.args[0]).endswith("evolved_persona.json"))
+        finally:
+            personality_module.atomic_write_text = original_writer
         print("✓ Persona persistence verified.")
 
 if __name__ == "__main__":
