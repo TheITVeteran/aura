@@ -1,9 +1,10 @@
 ################################################################################
 
 import asyncio
+import importlib
+import inspect
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -15,6 +16,423 @@ from core.utils.queues import unpack_priority_message
 # container and orchestrator fixtures migrated to tests/conftest.py v14.1
 
 # Using centralized fixtures from conftest.py
+
+
+_MISSING = object()
+
+
+class _RecordedCall:
+    def __init__(self, args, kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    def __iter__(self):
+        yield self.args
+        yield self.kwargs
+
+    def __getitem__(self, index):
+        if index == 0:
+            return self.args
+        if index == 1:
+            return self.kwargs
+        raise IndexError(index)
+
+
+class _CallRecorder:
+    def __init__(
+        self,
+        *args,
+        return_value=_MISSING,
+        side_effect=None,
+        wraps=None,
+        spec=None,
+        name=None,
+        **attrs,
+    ):
+        self._return_value = return_value
+        self._return_value_explicit = return_value is not _MISSING
+        self._spec_names = set(spec) if isinstance(spec, (list, tuple, set)) else None
+        self.side_effect = side_effect
+        self.wraps = wraps
+        self.calls = []
+        self.call_args = None
+        self.call_args_list = self.calls
+        for key, value in attrs.items():
+            setattr(self, key, value)
+
+    @property
+    def return_value(self):
+        if self._return_value is _MISSING:
+            self._return_value = _CallRecorder()
+        return self._return_value
+
+    @return_value.setter
+    def return_value(self, value):
+        self._return_value = value
+        self._return_value_explicit = True
+
+    @property
+    def called(self):
+        return bool(self.calls)
+
+    @property
+    def call_count(self):
+        return len(self.calls)
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if self._spec_names is not None and name not in self._spec_names:
+            raise AttributeError(name)
+        child = _CallRecorder()
+        setattr(self, name, child)
+        return child
+
+    def _next_effect(self):
+        effect = self.side_effect
+        if isinstance(effect, BaseException):
+            raise effect
+        if isinstance(effect, type) and issubclass(effect, BaseException):
+            raise effect()
+        if isinstance(effect, list):
+            if not effect:
+                raise StopIteration
+            value = effect.pop(0)
+            if isinstance(value, BaseException):
+                raise value
+            return value
+        return _MISSING
+
+    def __call__(self, *args, **kwargs):
+        call = _RecordedCall(args, kwargs)
+        self.calls.append(call)
+        self.call_args = call
+        effect_value = self._next_effect()
+        if effect_value is not _MISSING:
+            return effect_value
+        if callable(self.side_effect):
+            return self.side_effect(*args, **kwargs)
+        if self.wraps is not None:
+            return self.wraps(*args, **kwargs)
+        return self.return_value
+
+    def assert_called_once(self):
+        assert len(self.calls) == 1
+
+    def assert_called_once_with(self, *args, **kwargs):
+        self.assert_called_once()
+        call = self.calls[0]
+        assert call.args == args
+        assert call.kwargs == kwargs
+
+    def assert_called_with(self, *args, **kwargs):
+        assert self.calls
+        call = self.calls[-1]
+        assert call.args == args
+        assert call.kwargs == kwargs
+
+    def assert_any_call(self, *args, **kwargs):
+        assert any(call.args == args and call.kwargs == kwargs for call in self.calls)
+
+    def assert_not_called(self):
+        assert not self.calls
+
+    def reset_mock(self):
+        self.calls.clear()
+        self.call_args = None
+
+
+class _AsyncCallRecorder:
+    def __init__(self, result=_MISSING, *, return_value=_MISSING, side_effect=None):
+        if return_value is not _MISSING:
+            self._return_value = return_value
+        else:
+            self._return_value = result
+        self.side_effect = side_effect
+        self.await_args_list = []
+        self.await_args = None
+        self.call_args_list = self.await_args_list
+        self.call_args = None
+
+    @property
+    def return_value(self):
+        if self._return_value is _MISSING:
+            self._return_value = _CallRecorder()
+        return self._return_value
+
+    @return_value.setter
+    def return_value(self, value):
+        self._return_value = value
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        child = _AsyncCallRecorder()
+        setattr(self, name, child)
+        return child
+
+    @property
+    def await_count(self):
+        return len(self.await_args_list)
+
+    @property
+    def call_count(self):
+        return len(self.await_args_list)
+
+    @property
+    def called(self):
+        return bool(self.await_args_list)
+
+    def _next_effect(self):
+        effect = self.side_effect
+        if isinstance(effect, BaseException):
+            raise effect
+        if isinstance(effect, type) and issubclass(effect, BaseException):
+            raise effect()
+        if isinstance(effect, list):
+            if not effect:
+                raise StopIteration
+            value = effect.pop(0)
+            if isinstance(value, BaseException):
+                raise value
+            return value
+        return _MISSING
+
+    def __call__(self, *args, **kwargs):
+        call = _RecordedCall(args, kwargs)
+        self.await_args_list.append(call)
+        self.await_args = call
+        self.call_args = call
+
+        async def _complete():
+            effect_value = self._next_effect()
+            if effect_value is not _MISSING:
+                return effect_value
+            if callable(self.side_effect):
+                value = self.side_effect(*args, **kwargs)
+            else:
+                value = self.return_value
+            if inspect.isawaitable(value):
+                return await value
+            return value
+
+        return _complete()
+
+    def assert_awaited_once(self):
+        assert len(self.await_args_list) == 1
+
+    def assert_awaited_once_with(self, *args, **kwargs):
+        self.assert_awaited_once()
+        call = self.await_args_list[0]
+        assert call.args == args
+        assert call.kwargs == kwargs
+
+    def assert_awaited_with(self, *args, **kwargs):
+        assert self.await_args_list
+        call = self.await_args_list[-1]
+        assert call.args == args
+        assert call.kwargs == kwargs
+
+    def assert_any_await(self, *args, **kwargs):
+        assert any(call.args == args and call.kwargs == kwargs for call in self.await_args_list)
+
+    def assert_not_awaited(self):
+        assert not self.await_args_list
+
+    def assert_called_once(self):
+        self.assert_awaited_once()
+
+    def assert_called_once_with(self, *args, **kwargs):
+        self.assert_awaited_once_with(*args, **kwargs)
+
+    def assert_called_with(self, *args, **kwargs):
+        self.assert_awaited_with(*args, **kwargs)
+
+    def assert_any_call(self, *args, **kwargs):
+        self.assert_any_await(*args, **kwargs)
+
+    def assert_not_called(self):
+        self.assert_not_awaited()
+
+    def reset_mock(self):
+        self.await_args_list.clear()
+        self.await_args = None
+        self.call_args = None
+
+
+class _PropertyRecorder:
+    def __init__(self, return_value=None):
+        self.return_value = return_value
+
+    def __get__(self, obj, owner=None):
+        return self.return_value
+
+    def __set__(self, obj, value):
+        self.return_value = value
+
+
+def _resolve_dotted_path(target):
+    parts = target.split(".")
+    for index in range(len(parts) - 1, 0, -1):
+        module_name = ".".join(parts[:index])
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        owner = module
+        for part in parts[index:-1]:
+            owner = getattr(owner, part)
+        return owner, parts[-1]
+    raise ImportError(f"Cannot resolve dotted target: {target}")
+
+
+class _SwapContext:
+    def __init__(self, owner, name, replacement, *, create=False):
+        self.owner = owner
+        self.name = name
+        self.replacement = replacement
+        self.create = create
+        self.had_original = False
+        self.original = None
+
+    def __enter__(self):
+        self.had_original = hasattr(self.owner, self.name)
+        if self.had_original:
+            self.original = getattr(self.owner, self.name)
+        elif not self.create:
+            raise AttributeError(self.name)
+        setattr(self.owner, self.name, self.replacement)
+        return self.replacement
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.had_original:
+            setattr(self.owner, self.name, self.original)
+        else:
+            delattr(self.owner, self.name)
+        return False
+
+
+class _SwapDictContext:
+    def __init__(self, mapping, values, *, clear=False):
+        if isinstance(mapping, str):
+            owner, name = _resolve_dotted_path(mapping)
+            mapping = getattr(owner, name)
+        self.mapping = mapping
+        self.values = dict(values)
+        self.clear = clear
+        self.original = None
+
+    def __enter__(self):
+        self.original = dict(self.mapping)
+        if self.clear:
+            self.mapping.clear()
+        self.mapping.update(self.values)
+        return self.mapping
+
+    def __exit__(self, exc_type, exc, tb):
+        self.mapping.clear()
+        self.mapping.update(self.original)
+        return False
+
+
+def _replacement(
+    new=_MISSING,
+    *,
+    new_callable=None,
+    return_value=_MISSING,
+    side_effect=None,
+    wraps=None,
+    async_target=False,
+):
+    if new is not _MISSING:
+        return new
+    if async_target and new_callable is None:
+        kwargs = {"side_effect": side_effect}
+        if return_value is not _MISSING:
+            kwargs["return_value"] = return_value
+        return _AsyncCallRecorder(**kwargs)
+    if new_callable is _AsyncCallRecorder:
+        kwargs = {"side_effect": side_effect}
+        if return_value is not _MISSING:
+            kwargs["return_value"] = return_value
+        return _AsyncCallRecorder(**kwargs)
+    if new_callable is _PropertyRecorder:
+        return _PropertyRecorder(None if return_value is _MISSING else return_value)
+    if new_callable is not None:
+        replacement = new_callable()
+        if return_value is not _MISSING and hasattr(replacement, "return_value"):
+            replacement.return_value = return_value
+        if side_effect is not None and hasattr(replacement, "side_effect"):
+            replacement.side_effect = side_effect
+        return replacement
+    kwargs = {"side_effect": side_effect}
+    if wraps is not None:
+        return _CallRecorder(wraps=wraps, **kwargs)
+    if return_value is not _MISSING:
+        return _CallRecorder(return_value=return_value, **kwargs)
+    return _CallRecorder(**kwargs)
+
+
+class _Swap:
+    def __call__(
+        self,
+        target,
+        new=_MISSING,
+        *,
+        new_callable=None,
+        return_value=_MISSING,
+        side_effect=None,
+        create=False,
+        wraps=None,
+    ):
+        owner, name = _resolve_dotted_path(target)
+        original = getattr(owner, name, None)
+        return _SwapContext(
+            owner,
+            name,
+            _replacement(
+                new,
+                new_callable=new_callable,
+                return_value=return_value,
+                side_effect=side_effect,
+                wraps=wraps,
+                async_target=inspect.iscoroutinefunction(original),
+            ),
+            create=create,
+        )
+
+    def object(
+        self,
+        owner,
+        name,
+        new=_MISSING,
+        *,
+        new_callable=None,
+        return_value=_MISSING,
+        side_effect=None,
+        create=False,
+        wraps=None,
+    ):
+        original = getattr(owner, name, None)
+        return _SwapContext(
+            owner,
+            name,
+            _replacement(
+                new,
+                new_callable=new_callable,
+                return_value=return_value,
+                side_effect=side_effect,
+                wraps=wraps,
+                async_target=inspect.iscoroutinefunction(original),
+            ),
+            create=create,
+        )
+
+    def dict(self, mapping, values, *, clear=False):
+        return _SwapDictContext(mapping, values, clear=clear)
+
+
+swap = _Swap()
 
 
 def test_orchestrator_properties(orchestrator, mock_container):
@@ -36,15 +454,15 @@ async def test_process_user_input_direct(orchestrator):
     test_msg = "Hello Aura"
 
     # Queue full test
-    with patch.object(orchestrator.message_queue, "put_nowait", side_effect=asyncio.QueueFull):
+    with swap.object(orchestrator.message_queue, "put_nowait", side_effect=asyncio.QueueFull):
         pass  # Not applicable to direct invoke but good safety check
 
     # Queue up a controlled reply from the state machine pipeline.
     async def mock_handler(*args, **kwargs):
         await orchestrator.reply_queue.put("Mocked reply")
 
-    with patch.object(
-        orchestrator, "_handle_incoming_message", new_callable=AsyncMock
+    with swap.object(
+        orchestrator, "_handle_incoming_message", new_callable=_AsyncCallRecorder
     ) as mock_handle:
         mock_handle.side_effect = mock_handler
 
@@ -56,7 +474,7 @@ async def test_process_user_input_direct(orchestrator):
 @pytest.mark.asyncio
 async def test_user_bypass_passes_origin_and_primary_tier(orchestrator):
     orchestrator._last_emitted_fingerprint = ""
-    orchestrator._inference_gate = MagicMock()
+    orchestrator._inference_gate = _CallRecorder()
     gate_observations = {}
 
     async def _fake_generate(*args, **kwargs):
@@ -68,11 +486,11 @@ async def test_user_bypass_passes_origin_and_primary_tier(orchestrator):
         gate_observations["prefer_tier"] = kwargs["context"]["prefer_tier"]
         return "Short reply"
 
-    orchestrator._inference_gate.generate = AsyncMock(side_effect=_fake_generate)
+    orchestrator._inference_gate.generate = _AsyncCallRecorder(side_effect=_fake_generate)
     orchestrator.conversation_history = [{"role": "assistant", "content": "Earlier."}]
 
-    with patch("core.orchestrator.main.ServiceContainer.get", return_value=None):
-        with patch.object(orchestrator, "_record_message_in_history") as record_history:
+    with swap("core.orchestrator.main.ServiceContainer.get", return_value=None):
+        with swap.object(orchestrator, "_record_message_in_history") as record_history:
             reply = await orchestrator._process_user_input_core("You there?", origin="user")
 
     assert reply == "Short reply"
@@ -94,16 +512,16 @@ async def test_user_bypass_passes_origin_and_primary_tier(orchestrator):
 @pytest.mark.asyncio
 async def test_user_facing_websocket_origin_uses_direct_bypass(orchestrator):
     orchestrator._last_emitted_fingerprint = ""
-    orchestrator._inference_gate = MagicMock()
+    orchestrator._inference_gate = _CallRecorder()
 
     async def _fake_generate(*args, **kwargs):
         return "Web reply"
 
-    orchestrator._inference_gate.generate = AsyncMock(side_effect=_fake_generate)
+    orchestrator._inference_gate.generate = _AsyncCallRecorder(side_effect=_fake_generate)
     orchestrator.conversation_history = []
 
-    with patch("core.orchestrator.main.ServiceContainer.get", return_value=None):
-        with patch.object(orchestrator, "_record_message_in_history") as record_history:
+    with swap("core.orchestrator.main.ServiceContainer.get", return_value=None):
+        with swap.object(orchestrator, "_record_message_in_history") as record_history:
             reply = await orchestrator._process_user_input_core("Ping from UI", origin="websocket")
 
     assert reply == "Web reply"
@@ -140,7 +558,7 @@ async def test_process_user_input_timeout(orchestrator):
 
     # Patch _process_message directly for this specific timeout case.
     # This avoids pytest-asyncio getting permanently stuck waiting on the Queue.get()
-    with patch.object(
+    with swap.object(
         orchestrator, "_process_message", return_value="I'm sorry, my cognitive loop timed out."
     ):
         reply = await orchestrator._process_message(test_msg)
@@ -151,16 +569,16 @@ async def test_process_user_input_timeout(orchestrator):
 async def test_process_user_input_complex(orchestrator):
     # Patch process_user_input directly for this specific timeout case.
     # This avoids pytest-asyncio getting permanently stuck waiting on the Queue.get()
-    # Use the hardened tracker patch
-    with patch("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
-        mock_tt = MagicMock()
+    # Use the hardened tracker swap
+    with swap("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
+        mock_tt = _CallRecorder()
         mock_tt.track_task.side_effect = lambda t, *args, **kwargs: asyncio.create_task(t)
         mock_tt.create_task.side_effect = lambda t, *args, **kwargs: asyncio.create_task(t)
         mock_get_tracker.return_value = mock_tt
 
         # Ensure intent_router is truthy for the call
-        mock_router = MagicMock()
-        mock_router.classify = AsyncMock(return_value="system_status")
+        mock_router = _CallRecorder()
+        mock_router.classify = _AsyncCallRecorder(return_value="system_status")
         orchestrator.intent_router = mock_router
         mock_router.classify.reset_mock()  # Clear stale calls
 
@@ -204,7 +622,7 @@ def test_is_simple_conversational(orchestrator):
 
 @pytest.mark.asyncio
 async def test_check_direct_skill_shortcut(orchestrator, mock_container, monkeypatch):
-    orchestrator.execute_tool = AsyncMock()
+    orchestrator.execute_tool = _AsyncCallRecorder()
     orchestrator.execute_tool.return_value = {"summary": "Search results"}
     monkeypatch.setattr(
         "core.orchestrator.mixins.response_processing.allow_direct_user_shortcut",
@@ -212,11 +630,11 @@ async def test_check_direct_skill_shortcut(orchestrator, mock_container, monkeyp
     )
 
     # Ensure intent_router is truthy
-    orchestrator.intent_router = MagicMock()
-    mock_mycelium = MagicMock()
+    orchestrator.intent_router = _CallRecorder()
+    mock_mycelium = _CallRecorder()
     mock_container.register_instance("mycelial_network", mock_mycelium)
 
-    mock_pw = MagicMock()
+    mock_pw = _CallRecorder()
     mock_pw.direct_response = None
     mock_pw.skill_name = "web_search"
     mock_pw.pathway_id = "test_search"
@@ -247,13 +665,13 @@ def test_filter_output_passthrough_without_engine(orchestrator):
 @pytest.mark.asyncio
 async def test_trigger_background_learning(orchestrator):
     # Setup safely
-    orchestrator.curiosity = MagicMock()
-    with patch("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
+    orchestrator.curiosity = _CallRecorder()
+    with swap("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
         mock_track = mock_get_tracker.return_value.track_task
         mock_create = mock_get_tracker.return_value.create_task
         mock_create.side_effect = lambda t, *args, **kwargs: asyncio.create_task(t)
-        with patch.object(
-            orchestrator, "_learn_from_exchange", new_callable=AsyncMock
+        with swap.object(
+            orchestrator, "_learn_from_exchange", new_callable=_AsyncCallRecorder
         ) as mock_learn:
             RobustOrchestrator._trigger_background_learning(
                 orchestrator, "What is fire?", "Fire is hot."
@@ -291,10 +709,10 @@ def test_record_action_in_history(orchestrator):
 
 @pytest.mark.asyncio
 async def test_get_environmental_context(orchestrator):
-    mock_env = AsyncMock()
+    mock_env = _AsyncCallRecorder()
     mock_env.get_full_context.return_value = {"os": "mockOS"}
 
-    with patch("core.environment_awareness.get_environment", return_value=mock_env):
+    with swap("core.environment_awareness.get_environment", return_value=mock_env):
         ctx = await orchestrator._get_environmental_context()
 
         assert ctx["os"] == "mockOS"
@@ -303,13 +721,13 @@ async def test_get_environmental_context(orchestrator):
 
 
 def test_get_world_context(orchestrator):
-    mock_bg = MagicMock()
+    mock_bg = _CallRecorder()
     mock_bg.self_node_id = "Aura"
     mock_bg.graph.nodes = {
         "Aura": {"attributes": {"emotional_valence": "joyful", "energy_level": 0.9}}
     }
 
-    with patch("core.world_model.belief_graph.get_belief_graph", return_value=mock_bg):
+    with swap("core.world_model.belief_graph.get_belief_graph", return_value=mock_bg):
         ctx = orchestrator._get_world_context()
         assert "joyful" in ctx
         assert "0.9" in ctx
@@ -317,13 +735,13 @@ def test_get_world_context(orchestrator):
 
 @pytest.mark.asyncio
 async def test_handle_impulse(orchestrator):
-    mock_const = MagicMock()
-    mock_const.approve_initiative = AsyncMock(return_value=(True, "test_approved", None))
-    with patch.object(
-        orchestrator, "_handle_incoming_message", new_callable=AsyncMock
+    mock_const = _CallRecorder()
+    mock_const.approve_initiative = _AsyncCallRecorder(return_value=(True, "test_approved", None))
+    with swap.object(
+        orchestrator, "_handle_incoming_message", new_callable=_AsyncCallRecorder
     ) as mock_handle:
-        with patch("core.constitution.get_constitutional_core", return_value=mock_const):
-            with patch(
+        with swap("core.constitution.get_constitutional_core", return_value=mock_const):
+            with swap(
                 "core.orchestrator.mixins.autonomy.get_constitutional_core", mock_const, create=True
             ):
                 await orchestrator.handle_impulse("explore_knowledge")
@@ -333,14 +751,14 @@ async def test_handle_impulse(orchestrator):
 
 
 def test_get_current_mood(orchestrator):
-    mock_pe = MagicMock()
+    mock_pe = _CallRecorder()
     mock_pe.current_mood = "elated"
-    with patch("core.brain.personality_engine.get_personality_engine", return_value=mock_pe):
+    with swap("core.brain.personality_engine.get_personality_engine", return_value=mock_pe):
         assert orchestrator._get_current_mood() == "elated"
 
 
 def test_get_current_time_str(orchestrator):
-    mock_pe = MagicMock()
+    mock_pe = _CallRecorder()
     mock_pe.get_time_context.return_value = {"formatted": "12:00 PM"}
     ServiceContainer.register_aliases(
         {
@@ -349,19 +767,19 @@ def test_get_current_time_str(orchestrator):
             "personality_manager": "personality_engine",
         }
     )
-    with patch("core.brain.personality_engine.get_personality_engine", return_value=mock_pe):
+    with swap("core.brain.personality_engine.get_personality_engine", return_value=mock_pe):
         assert orchestrator._get_current_time_str() == "12:00 PM"
 
 
 @pytest.mark.asyncio
 async def test_store_autonomous_insight(orchestrator, mock_container):
-    mock_kg = MagicMock()
+    mock_kg = _CallRecorder()
 
     # Needs a real response length
     response = "This is a sufficiently long response to be stored in the graph."
 
-    with patch.object(
-        RobustOrchestrator, "knowledge_graph", new_callable=PropertyMock
+    with swap.object(
+        RobustOrchestrator, "knowledge_graph", new_callable=_PropertyRecorder
     ) as mock_prop:
         mock_prop.return_value = mock_kg
 
@@ -386,7 +804,7 @@ async def test_store_autonomous_insight(orchestrator, mock_container):
 
 @pytest.mark.asyncio
 async def test_run_browser_task(orchestrator):
-    orchestrator.execute_tool = AsyncMock()
+    orchestrator.execute_tool = _AsyncCallRecorder()
     orchestrator.execute_tool.return_value = "Browser ran"
 
     res = await orchestrator.run_browser_task("http://google.com", "search")
@@ -398,8 +816,8 @@ async def test_run_browser_task(orchestrator):
 
 @pytest.mark.asyncio
 async def test_execute_tool_success(orchestrator):
-    mock_engine = MagicMock()
-    mock_engine.execute = AsyncMock(return_value={"ok": True, "data": "search result"})
+    mock_engine = _CallRecorder()
+    mock_engine.execute = _AsyncCallRecorder(return_value={"ok": True, "data": "search result"})
     orchestrator._capability_engine_override = mock_engine
 
     res = await orchestrator.capability_engine.execute("search", {"q": "aura"})
@@ -408,15 +826,15 @@ async def test_execute_tool_success(orchestrator):
 
 @pytest.mark.asyncio
 async def test_retry_brain_connection(orchestrator):
-    mock_brain = MagicMock()
+    mock_brain = _CallRecorder()
     mock_brain.lobotomized = False
-    mock_brain.setup = MagicMock()
-    mock_brain.client = MagicMock()
-    mock_brain.autonomous_brain = MagicMock()
+    mock_brain.setup = _CallRecorder()
+    mock_brain.client = _CallRecorder()
+    mock_brain.autonomous_brain = _CallRecorder()
     # Set the override so self.cognitive_engine returns the test double.
     orchestrator._cognitive_engine_override = mock_brain
 
-    with patch("core.container.get_container"):
+    with swap("core.container.get_container"):
         res = await orchestrator.retry_brain_connection()
         assert res is True
 
@@ -435,23 +853,23 @@ def test_record_message_in_history(orchestrator):
 
 @pytest.mark.asyncio
 async def test_run_terminal_self_heal(orchestrator, mock_container):
-    mock_monitor = MagicMock()
+    mock_monitor = _CallRecorder()
     mock_monitor.check_for_errors.return_value = {
         "objective": "Fix bug",
         "error": "SyntaxError",
         "command": "python",
     }
 
-    with patch("core.terminal_monitor.get_terminal_monitor", return_value=mock_monitor):
-        with patch("core.utils.task_tracker.task_tracker.track_task") as mock_track:
-            with patch.object(orchestrator, "_handle_incoming_message"):
-                with patch(
+    with swap("core.terminal_monitor.get_terminal_monitor", return_value=mock_monitor):
+        with swap("core.utils.task_tracker.task_tracker.track_task") as mock_track:
+            with swap.object(orchestrator, "_handle_incoming_message"):
+                with swap(
                     "core.runtime.background_policy.background_activity_reason",
                     return_value=None,
                 ):
-                    approval = MagicMock()
-                    approval.approve_initiative = AsyncMock(return_value=(True, "approved", None))
-                    with patch(
+                    approval = _CallRecorder()
+                    approval.approve_initiative = _AsyncCallRecorder(return_value=(True, "approved", None))
+                    with swap(
                         "core.constitution.get_constitutional_core",
                         return_value=approval,
                     ):
@@ -461,11 +879,11 @@ async def test_run_terminal_self_heal(orchestrator, mock_container):
 
 @pytest.mark.asyncio
 async def test_process_message_fallback(orchestrator, mock_container):
-    orchestrator.reply_queue = MagicMock()
+    orchestrator.reply_queue = _CallRecorder()
     orchestrator.reply_queue.empty.return_value = True
 
-    with patch.object(orchestrator, "_handle_incoming_message"):
-        with patch("asyncio.wait_for", return_value="Timeout Test"):
+    with swap.object(orchestrator, "_handle_incoming_message"):
+        with swap("asyncio.wait_for", return_value="Timeout Test"):
             res = await orchestrator._process_message("Test Input")
             assert res["ok"] is True
             assert res["response"] == "Timeout Test"
@@ -473,10 +891,10 @@ async def test_process_message_fallback(orchestrator, mock_container):
 
 @pytest.mark.asyncio
 async def test_acquire_next_message(orchestrator, mock_container):
-    orchestrator.message_queue = MagicMock()
+    orchestrator.message_queue = _CallRecorder()
     orchestrator.message_queue.get_nowait.return_value = "Test Message"
 
-    mock_ls = MagicMock()
+    mock_ls = _CallRecorder()
     orchestrator.liquid_state = mock_ls
 
     msg = await orchestrator._acquire_next_message()
@@ -487,7 +905,7 @@ async def test_acquire_next_message(orchestrator, mock_container):
 
 @pytest.mark.asyncio
 async def test_enqueue_message(orchestrator):
-    orchestrator.message_queue = MagicMock()
+    orchestrator.message_queue = _CallRecorder()
     orchestrator.enqueue_message("Input", _flow_checked=True, _authority_checked=True)
     # Check that it was called with (priority, timestamp, counter, message, origin)
     # v61: 5-tuple format now includes origin
@@ -512,16 +930,16 @@ def test_deduplicate_history_removes_adjacent_duplicates(orchestrator):
 
 @pytest.mark.asyncio
 async def test_recover_from_stall(orchestrator):
-    orchestrator._current_thought_task = MagicMock()
+    orchestrator._current_thought_task = _CallRecorder()
     orchestrator._current_thought_task.done.return_value = False
 
-    orchestrator.message_queue = MagicMock()
+    orchestrator.message_queue = _CallRecorder()
     orchestrator.message_queue.qsize.return_value = 55
     orchestrator.message_queue.empty.side_effect = [False, True]
     orchestrator.message_queue.get_nowait.return_value = "Dumped"
 
-    with patch.object(
-        orchestrator, "retry_cognitive_connection", new_callable=AsyncMock
+    with swap.object(
+        orchestrator, "retry_cognitive_connection", new_callable=_AsyncCallRecorder
     ) as mock_retry:
         await orchestrator._recover_from_stall()
 
@@ -535,7 +953,7 @@ async def test_handle_signal(orchestrator):
 
     created = {}
     coord = LifecycleCoordinator(orchestrator)
-    coord.stop = AsyncMock(return_value=None)
+    coord.stop = _AsyncCallRecorder(return_value=None)
 
     class _Tracker:
         def create_task(self, coro, name=None):
@@ -544,7 +962,7 @@ async def test_handle_signal(orchestrator):
             created["task"] = task
             return task
 
-    with patch("core.coordinators.lifecycle_coordinator.get_task_tracker", return_value=_Tracker()):
+    with swap("core.coordinators.lifecycle_coordinator.get_task_tracker", return_value=_Tracker()):
         coord.handle_signal(15, None)
         await asyncio.sleep(0)
         await created["task"]
@@ -558,24 +976,24 @@ async def test_process_cycle(orchestrator, mock_container):
     orchestrator.status.cycle_count = 499
 
     # Batch 3 Fix: inject a cognitive_loop test double to support the cycle shim.
-    mock_loop = MagicMock()
+    mock_loop = _CallRecorder()
 
     # Control CognitiveLoop._process_cycle increment.
     async def _mock_cycle():
         orchestrator.status.cycle_count += 1
 
-    mock_loop._process_cycle = AsyncMock(side_effect=_mock_cycle)
+    mock_loop._process_cycle = _AsyncCallRecorder(side_effect=_mock_cycle)
     orchestrator.cognitive_loop = mock_loop
 
-    orchestrator._save_state_async = AsyncMock()
-    orchestrator._update_liquid_pacing = MagicMock(side_effect=orchestrator._update_liquid_pacing)
-    orchestrator._trigger_autonomous_thought = AsyncMock()
-    orchestrator._run_terminal_self_heal = AsyncMock()
-    orchestrator._acquire_next_message = AsyncMock(return_value=None)
-    orchestrator._manage_memory_hygiene = MagicMock()
-    orchestrator._process_world_decay = AsyncMock()
+    orchestrator._save_state_async = _AsyncCallRecorder()
+    orchestrator._update_liquid_pacing = _CallRecorder(side_effect=orchestrator._update_liquid_pacing)
+    orchestrator._trigger_autonomous_thought = _AsyncCallRecorder()
+    orchestrator._run_terminal_self_heal = _AsyncCallRecorder()
+    orchestrator._acquire_next_message = _AsyncCallRecorder(return_value=None)
+    orchestrator._manage_memory_hygiene = _CallRecorder()
+    orchestrator._process_world_decay = _AsyncCallRecorder()
 
-    with patch("core.utils.task_tracker.get_task_tracker"):  # Use get_task_tracker for consistency
+    with swap("core.utils.task_tracker.get_task_tracker"):  # Use get_task_tracker for consistency
         await orchestrator._process_cycle()
 
         assert orchestrator.status.cycle_count == 500
@@ -586,9 +1004,9 @@ async def test_process_cycle(orchestrator, mock_container):
 
 @pytest.mark.asyncio
 async def test_filter_output_personality_engine(orchestrator):
-    mock_pe = MagicMock()
+    mock_pe = _CallRecorder()
     mock_pe.filter_response.return_value = "Filtered"
-    with patch("core.brain.personality_engine.get_personality_engine", return_value=mock_pe):
+    with swap("core.brain.personality_engine.get_personality_engine", return_value=mock_pe):
         orchestrator.personality_engine = mock_pe
         orchestrator._personality_engine_override = mock_pe
         res = orchestrator._filter_output("Test")
@@ -607,8 +1025,8 @@ async def test_process_user_input_direct_queue_reply(orchestrator):
     async def mock_handler(*args, **kwargs):
         await orchestrator.reply_queue.put("Mocked reply")
 
-    with patch.object(
-        orchestrator, "_handle_incoming_message", new_callable=AsyncMock
+    with swap.object(
+        orchestrator, "_handle_incoming_message", new_callable=_AsyncCallRecorder
     ) as mock_handle:
         mock_handle.side_effect = mock_handler
         reply = await orchestrator._process_message(test_msg)
@@ -617,11 +1035,11 @@ async def test_process_user_input_direct_queue_reply(orchestrator):
 
 @pytest.mark.asyncio
 async def test_recover_from_stall_escalation(orchestrator):
-    orchestrator.lazarus = MagicMock()
-    orchestrator.lazarus.attempt_recovery = AsyncMock()
-    orchestrator.retry_cognitive_connection = AsyncMock(return_value=True)
+    orchestrator.lazarus = _CallRecorder()
+    orchestrator.lazarus.attempt_recovery = _AsyncCallRecorder()
+    orchestrator.retry_cognitive_connection = _AsyncCallRecorder(return_value=True)
     orchestrator._recovery_attempts = 10
-    with patch.object(orchestrator, "start", new_callable=AsyncMock) as mock_start:
+    with swap.object(orchestrator, "start", new_callable=_AsyncCallRecorder) as mock_start:
         # Trigger the 3rd recovery attempt which escalates to start()
         await orchestrator._recover_from_stall()
         assert orchestrator._recovery_attempts == 0
@@ -630,7 +1048,7 @@ async def test_recover_from_stall_escalation(orchestrator):
 
 @pytest.mark.asyncio
 async def test_dispatch_message(orchestrator):
-    orchestrator._handle_incoming_message = AsyncMock()
+    orchestrator._handle_incoming_message = _AsyncCallRecorder()
     orchestrator._dispatch_message("Test")
     await asyncio.sleep(0.2)
     assert orchestrator._handle_incoming_message.called
@@ -638,10 +1056,10 @@ async def test_dispatch_message(orchestrator):
 
 @pytest.mark.asyncio
 async def test_store_autonomous_insight_property_patch(orchestrator, mock_container):
-    mock_kg = MagicMock()
+    mock_kg = _CallRecorder()
     # Correct way: Patch the class-level property
-    with patch.object(
-        RobustOrchestrator, "knowledge_graph", new_callable=PropertyMock
+    with swap.object(
+        RobustOrchestrator, "knowledge_graph", new_callable=_PropertyRecorder
     ) as mock_prop:
         mock_prop.return_value = mock_kg
         # Use a long enough internal_msg and response to pass the filters
@@ -654,7 +1072,7 @@ async def test_store_autonomous_insight_property_patch(orchestrator, mock_contai
 @pytest.mark.asyncio
 async def test_handle_incoming_message_history(orchestrator, mock_container):
     orchestrator.conversation_history = []
-    orchestrator._finalize_response = AsyncMock(return_value="done")
+    orchestrator._finalize_response = _AsyncCallRecorder(return_value="done")
     await orchestrator._handle_incoming_message("Hello", origin="user")
     await asyncio.sleep(0.1)
     await asyncio.sleep(0)
@@ -669,7 +1087,7 @@ async def test_get_personality_data(orchestrator, mock_container):
 
 @pytest.mark.asyncio
 async def test_get_environmental_context_time_patch(orchestrator):
-    with patch("datetime.datetime") as mock_dt:
+    with swap("datetime.datetime") as mock_dt:
         mock_dt.now.return_value.strftime.return_value = "Mocked"
         ctx = await orchestrator._get_environmental_context()
         assert ctx != {}
@@ -682,17 +1100,17 @@ async def test_perform_autonomous_thought_dream(orchestrator, mock_container):
     mock_liquid_state.current.curiosity = 0.1  # Trigger dream path (< 0.3)
     orchestrator._last_user_interaction_time = time.time() - 400
 
-    mock_container.register_instance("knowledge_graph", MagicMock())
-    mock_container.register_instance("cognitive_engine", MagicMock())
+    mock_container.register_instance("knowledge_graph", _CallRecorder())
+    mock_container.register_instance("cognitive_engine", _CallRecorder())
 
-    with patch("core.thought_stream.get_emitter"):
-        with patch(
+    with swap("core.thought_stream.get_emitter"):
+        with swap(
             "core.orchestrator.mixins.autonomy.background_activity_reason",
             return_value=None,
         ):
-            with patch("core.dreamer_v2.DreamerV2", create=True) as mock_dreamer_cls:
-                mock_dreamer_inst = MagicMock()
-                mock_dreamer_inst.engage_sleep_cycle = AsyncMock(
+            with swap("core.dreamer_v2.DreamerV2", create=True) as mock_dreamer_cls:
+                mock_dreamer_inst = _CallRecorder()
+                mock_dreamer_inst.engage_sleep_cycle = _AsyncCallRecorder(
                     return_value={"dream": {"dreamed": True}}
                 )
                 mock_dreamer_cls.return_value = mock_dreamer_inst
@@ -703,8 +1121,8 @@ async def test_perform_autonomous_thought_dream(orchestrator, mock_container):
 
 @pytest.mark.asyncio
 async def test_process_internal_message(orchestrator):
-    # This calls execute_tool which is an AsyncMock already in some contexts
-    orchestrator.execute_tool = AsyncMock(return_value="tool_result")
+    # This calls execute_tool which is an _AsyncCallRecorder already in some contexts
+    orchestrator.execute_tool = _AsyncCallRecorder(return_value="tool_result")
     # Verify method name exists: _process_internal_message
     if hasattr(orchestrator, "_process_internal_message"):
         await orchestrator._process_internal_message("Command: web_search {query: test}")
@@ -718,8 +1136,8 @@ async def test_process_thought(orchestrator):
     async def mock_handler(*args, **kwargs):
         await orchestrator.reply_queue.put("Canonical message path")
 
-    with patch.object(
-        orchestrator, "_handle_incoming_message", new_callable=AsyncMock
+    with swap.object(
+        orchestrator, "_handle_incoming_message", new_callable=_AsyncCallRecorder
     ) as mock_handle:
         mock_handle.side_effect = mock_handler
         reply = await orchestrator._process_message("Use the current message pipeline")
@@ -731,22 +1149,22 @@ async def test_process_thought(orchestrator):
 @pytest.mark.asyncio
 async def test_trigger_autonomous_thought(orchestrator):
     orchestrator.boredom = 100
-    orchestrator._perform_autonomous_thought = AsyncMock()
+    orchestrator._perform_autonomous_thought = _AsyncCallRecorder()
     # Use overrides for stable mocking
-    orchestrator._cognitive_engine_override = MagicMock()
-    orchestrator._singularity_monitor_override = MagicMock(acceleration_factor=1.0)
+    orchestrator._cognitive_engine_override = _CallRecorder(singularity_factor=1.0)
+    orchestrator._singularity_monitor_override = _CallRecorder(acceleration_factor=1.0)
 
     orchestrator._current_thought_task = None
     orchestrator._last_thought_time = time.time() - 200
     orchestrator._last_user_interaction_time = time.time() - 200
-    with patch("core.orchestrator.mixins.autonomy.background_activity_reason", return_value=None):
+    with swap("core.orchestrator.mixins.autonomy.background_activity_reason", return_value=None):
         await orchestrator._trigger_autonomous_thought(False)
     assert orchestrator._perform_autonomous_thought.called
 
 
 @pytest.mark.asyncio
 async def test_run_terminal_self_heal_monitor_check(orchestrator):
-    mock_monitor = MagicMock()
+    mock_monitor = _CallRecorder()
     # It returns a dict for check_for_errors()
     mock_monitor.check_for_errors.return_value = {
         "objective": "Fix the broken terminal",
@@ -754,11 +1172,11 @@ async def test_run_terminal_self_heal_monitor_check(orchestrator):
         "command": "ls -z",
         "output": "ls: illegal option -- z",
     }
-    with patch("core.terminal_monitor.get_terminal_monitor", return_value=mock_monitor):
+    with swap("core.terminal_monitor.get_terminal_monitor", return_value=mock_monitor):
         # Prevent actually calling _handle_incoming_message
-        orchestrator._handle_incoming_message = AsyncMock()
+        orchestrator._handle_incoming_message = _AsyncCallRecorder()
         orchestrator._current_thought_task = None
-        with patch("core.utils.task_tracker.get_task_tracker"):
+        with swap("core.utils.task_tracker.get_task_tracker"):
             await orchestrator._run_terminal_self_heal()
             assert mock_monitor.check_for_errors.called
 
@@ -781,8 +1199,8 @@ async def test_acquire_next_message_real_queue(orchestrator):
 @pytest.mark.asyncio
 async def test_emit_thought_stream_cognitive_engine(orchestrator):
     # Inject a cognitive_engine test double.
-    mock_ce = MagicMock()
-    mock_ce._emit_thought = MagicMock()  # SYNC in source
+    mock_ce = _CallRecorder()
+    mock_ce._emit_thought = _CallRecorder()  # SYNC in source
     orchestrator._cognitive_engine_override = mock_ce
 
     # It's a sync helper in orchestrator.py
@@ -802,7 +1220,7 @@ def test_is_busy(orchestrator):
 
     # Test thinking task
     orchestrator.status.is_processing = False
-    mock_task = MagicMock()
+    mock_task = _CallRecorder()
     mock_task.done.return_value = False
     orchestrator._current_thought_task = mock_task
     assert orchestrator.is_busy
@@ -810,8 +1228,8 @@ def test_is_busy(orchestrator):
 
 @pytest.mark.asyncio
 async def test_publish_telemetry(orchestrator):
-    with patch("core.event_bus.get_event_bus") as mock_bus_getter:
-        mock_bus = MagicMock()
+    with swap("core.event_bus.get_event_bus") as mock_bus_getter:
+        mock_bus = _CallRecorder()
         mock_bus_getter.return_value = mock_bus
         orchestrator._publish_telemetry({"test": "data"})
         assert mock_bus.publish_threadsafe.called
@@ -826,17 +1244,17 @@ async def test_publish_telemetry(orchestrator):
 
 @pytest.mark.asyncio
 async def test_retry_cognitive_connection_flow(orchestrator):
-    orchestrator._perform_autonomous_thought = AsyncMock()
+    orchestrator._perform_autonomous_thought = _AsyncCallRecorder()
 
-    mock_ce = MagicMock()
-    mock_ce.setup = MagicMock()
+    mock_ce = _CallRecorder()
+    mock_ce.setup = _CallRecorder()
     mock_ce.lobotomized = False
-    mock_ce.client = MagicMock()
-    mock_ce.autonomous_brain = MagicMock()
+    mock_ce.client = _CallRecorder()
+    mock_ce.autonomous_brain = _CallRecorder()
     # Set override so self.cognitive_engine returns the test double.
     orchestrator._cognitive_engine_override = mock_ce
 
-    with patch("core.container.get_container"):
+    with swap("core.container.get_container"):
         res = await orchestrator.retry_brain_connection()
         assert res is True
 
@@ -845,7 +1263,7 @@ async def test_retry_cognitive_connection_flow(orchestrator):
 async def test_perform_autonomous_thought_trigger_none(orchestrator):
     # Use override to return None
     orchestrator._cognitive_engine_override = None
-    orchestrator._perform_autonomous_thought = AsyncMock()
+    orchestrator._perform_autonomous_thought = _AsyncCallRecorder()
     await orchestrator._trigger_autonomous_thought(False)
     assert not orchestrator._perform_autonomous_thought.called
 
@@ -861,7 +1279,7 @@ async def test_handle_signal_lite(orchestrator):
     orchestrator.status.running = True
     coord = LifecycleCoordinator(orchestrator)
 
-    with patch(
+    with swap(
         "core.coordinators.lifecycle_coordinator.asyncio.get_running_loop",
         side_effect=RuntimeError("no running loop"),
     ):
@@ -874,19 +1292,19 @@ async def test_handle_signal_lite(orchestrator):
 @pytest.mark.asyncio
 async def test_process_cycle_lite(orchestrator):
     orchestrator.status.cycle_count = 499
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
-    orchestrator._save_state_async = AsyncMock()
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
+    orchestrator._save_state_async = _AsyncCallRecorder()
 
-    mock_loop = MagicMock()
+    mock_loop = _CallRecorder()
 
     async def _mock_cycle():
         orchestrator.status.cycle_count += 1
 
-    mock_loop._process_cycle = AsyncMock(side_effect=_mock_cycle)
+    mock_loop._process_cycle = _AsyncCallRecorder(side_effect=_mock_cycle)
     orchestrator.cognitive_loop = mock_loop
 
-    with patch("core.utils.task_tracker.get_task_tracker"):
+    with swap("core.utils.task_tracker.get_task_tracker"):
         await orchestrator._process_cycle()
         assert orchestrator.status.cycle_count == 500
 
@@ -894,15 +1312,15 @@ async def test_process_cycle_lite(orchestrator):
 def test_metabolic_archival_check_lite(orchestrator):
     # _manage_memory_hygiene is a SYNCHRONOUS method, not async
     orchestrator.status.cycle_count = 600
-    orchestrator._metabolic_monitor_override = MagicMock()
-    orchestrator._metabolic_monitor_override.get_current_metabolism.return_value = MagicMock(
+    orchestrator._metabolic_monitor_override = _CallRecorder()
+    orchestrator._metabolic_monitor_override.get_current_metabolism.return_value = _CallRecorder(
         health_score=0.1
     )
 
-    with patch("core.container.ServiceContainer.get") as mock_get:
-        mock_archive = MagicMock()
+    with swap("core.container.ServiceContainer.get") as mock_get:
+        mock_archive = _CallRecorder()
         mock_get.return_value = mock_archive
-        with patch("asyncio.create_task"):
+        with swap("asyncio.create_task"):
             orchestrator._manage_memory_hygiene()  # No await - it's sync!
             assert True
 
@@ -911,15 +1329,15 @@ def test_metabolic_archival_check_lite(orchestrator):
 async def test_handle_incoming_message_simple_v2(orchestrator):
     orchestrator.status.running = True
     orchestrator.status.cycle_count = 1
-    orchestrator._intent_router_override = MagicMock()
-    orchestrator._intent_router_override.classify = AsyncMock()
-    orchestrator._state_machine_override = MagicMock()
-    orchestrator._state_machine_override.execute = AsyncMock()
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
+    orchestrator._intent_router_override = _CallRecorder()
+    orchestrator._intent_router_override.classify = _AsyncCallRecorder()
+    orchestrator._state_machine_override = _CallRecorder()
+    orchestrator._state_machine_override.execute = _AsyncCallRecorder()
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
     orchestrator._current_thought_task = None
 
-    with patch("core.utils.task_tracker.task_tracker.track_task"):
+    with swap("core.utils.task_tracker.task_tracker.track_task"):
         await orchestrator._handle_incoming_message("q")
         await asyncio.sleep(0)
         assert True
@@ -930,33 +1348,33 @@ async def test_perform_autonomous_thought_reflective_lite(orchestrator):
     orchestrator.status.cycle_count = 100
     orchestrator.status.is_processing = False
     orchestrator.status.initialized = True
-    orchestrator._goal_hierarchy_override = MagicMock()
+    orchestrator._goal_hierarchy_override = _CallRecorder()
     orchestrator._goal_hierarchy_override.get_next_goal.return_value = None
 
-    orchestrator._liquid_state_override = MagicMock()
+    orchestrator._liquid_state_override = _CallRecorder()
     orchestrator._liquid_state_override.current.curiosity = 0.5
 
     orchestrator.conversation_history = []
 
-    mock_brain = MagicMock()
-    mock_brain.think = AsyncMock(
+    mock_brain = _CallRecorder()
+    mock_brain.think = _AsyncCallRecorder(
         return_value={
             "content": "Reflecting...",
             "tool_calls": [{"name": "speak", "args": {"message": "Hello!"}}],
         }
     )
-    mock_cog_engine = MagicMock()
+    mock_cog_engine = _CallRecorder()
     mock_cog_engine.autonomous_brain = mock_brain
     orchestrator._cognitive_engine_override = mock_cog_engine
 
-    orchestrator.reply_queue = MagicMock()
+    orchestrator.reply_queue = _CallRecorder()
 
-    with patch("core.thought_stream.get_emitter", create=True):
-        with patch("core.orchestrator.get_personality_engine", create=True) as mock_get_pe:
-            mock_get_pe.return_value = MagicMock()
+    with swap("core.thought_stream.get_emitter", create=True):
+        with swap("core.orchestrator.get_personality_engine", create=True) as mock_get_pe:
+            mock_get_pe.return_value = _CallRecorder()
 
-            with patch("core.orchestrator.get_reflector", create=True) as mock_get_ref:
-                mock_get_ref.return_value = MagicMock()
+            with swap("core.orchestrator.get_reflector", create=True) as mock_get_ref:
+                mock_get_ref.return_value = _CallRecorder()
 
                 await orchestrator._perform_autonomous_thought()
                 # Dependency resolution completes without escaping the harness.
@@ -1004,7 +1422,7 @@ def test_property_metabolic_monitor_override(orchestrator):
 
 
 def test_property_curiosity_override(orchestrator):
-    with patch.object(RobustOrchestrator, "curiosity", new_callable=PropertyMock) as mock_c:
+    with swap.object(RobustOrchestrator, "curiosity", new_callable=_PropertyRecorder) as mock_c:
         mock_c.return_value = "test_c"
         assert orchestrator.curiosity == "test_c"
 
@@ -1055,7 +1473,7 @@ def test_enqueue_message_full(orchestrator):
 # --- enqueue_from_thread (line 926) ---
 def test_enqueue_from_thread_no_loop(orchestrator):
     orchestrator.message_queue = asyncio.Queue()
-    with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+    with swap("asyncio.get_running_loop", side_effect=RuntimeError):
         orchestrator.loop = None
         # Should not raise
         orchestrator.enqueue_from_thread("Hello")
@@ -1064,8 +1482,8 @@ def test_enqueue_from_thread_no_loop(orchestrator):
 def test_enqueue_from_thread_dict_message(orchestrator):
     orchestrator.message_queue = asyncio.Queue()
     msg = {"content": "test"}
-    with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-        orchestrator.loop = MagicMock()
+    with swap("asyncio.get_running_loop", side_effect=RuntimeError):
+        orchestrator.loop = _CallRecorder()
         orchestrator.loop.is_running.return_value = True
 
         # Patch call_soon_threadsafe to execute the put synchronously.
@@ -1095,9 +1513,9 @@ def test_deduplicate_history(orchestrator):
 def test_manage_memory_hygiene_hard_limit(orchestrator):
     orchestrator.conversation_history = [{"role": "user", "content": f"m{i}"} for i in range(200)]
     orchestrator.status.cycle_count = 100  # v11.6 Threshold
-    with patch("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
-        mock_tt = MagicMock()
-        mock_tt.bounded_track.return_value = MagicMock()
+    with swap("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
+        mock_tt = _CallRecorder()
+        mock_tt.bounded_track.return_value = _CallRecorder()
         mock_get_tracker.return_value = mock_tt
         orchestrator._manage_memory_hygiene()
         assert mock_tt.bounded_track.called  # Pruning delegated to background task
@@ -1110,7 +1528,7 @@ def test_manage_memory_hygiene_dedup(orchestrator):
         {"role": "user", "content": "same"},
     ]
     orchestrator.status.cycle_count = 1
-    with patch.object(orchestrator, "_deduplicate_history") as mock_dedup:
+    with swap.object(orchestrator, "_deduplicate_history") as mock_dedup:
         orchestrator._manage_memory_hygiene()
         assert mock_dedup.called
 
@@ -1119,7 +1537,7 @@ def test_manage_memory_hygiene_context_pruning(orchestrator):
     orchestrator.conversation_history = [{"role": "user", "content": f"m{i}"} for i in range(120)]
     orchestrator.status.cycle_count = 100  # v11.6 threshold
 
-    with patch("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
+    with swap("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
         mock_track = mock_get_tracker.return_value.bounded_track
         orchestrator._manage_memory_hygiene()
         assert mock_track.called  # Pruning delegated
@@ -1127,22 +1545,22 @@ def test_manage_memory_hygiene_context_pruning(orchestrator):
 
 # --- _publish_status (line 250) ---
 def test_publish_status(orchestrator):
-    with patch("core.event_bus.get_event_bus") as mock_eb:
-        mock_eb.return_value = MagicMock()
+    with swap("core.event_bus.get_event_bus") as mock_eb:
+        mock_eb.return_value = _CallRecorder()
         orchestrator._publish_status({"event": "test"})
         assert mock_eb.return_value.publish_threadsafe.called
 
 
 def test_publish_status_error(orchestrator):
-    with patch("core.event_bus.get_event_bus", side_effect=Exception("no bus")):
+    with swap("core.event_bus.get_event_bus", side_effect=Exception("no bus")):
         # Should not raise
         orchestrator._publish_status({"event": "test"})
 
 
 # --- _publish_telemetry (line 261) ---
 def test_publish_telemetry_threadsafe(orchestrator):
-    with patch("core.event_bus.get_event_bus") as mock_eb:
-        mock_eb.return_value = MagicMock()
+    with swap("core.event_bus.get_event_bus") as mock_eb:
+        mock_eb.return_value = _CallRecorder()
         orchestrator._publish_telemetry({"energy": 80})
         assert mock_eb.return_value.publish_threadsafe.called
 
@@ -1153,30 +1571,30 @@ def test_publish_telemetry_threadsafe(orchestrator):
 # --- retry_cognitive_connection (line 318) ---
 @pytest.mark.asyncio
 async def test_retry_cognitive_connection_success(orchestrator):
-    with patch("core.brain.cognitive_engine.CognitiveEngine") as mock_ce_cls:
-        mock_ce = MagicMock()
+    with swap("core.brain.cognitive_engine.CognitiveEngine") as mock_ce_cls:
+        mock_ce = _CallRecorder()
         mock_ce.lobotomized = False
         mock_ce_cls.return_value = mock_ce
         orchestrator._cognitive_engine_override = None
-        with patch("core.container.get_container") as mock_gc:
-            mock_gc.return_value = MagicMock()
-            mock_gc.return_value.get.return_value = MagicMock()
-            with patch("core.container.ServiceContainer.register_instance"):
-                with patch("core.thought_stream.get_emitter", create=True):
+        with swap("core.container.get_container") as mock_gc:
+            mock_gc.return_value = _CallRecorder()
+            mock_gc.return_value.get.return_value = _CallRecorder()
+            with swap("core.container.ServiceContainer.register_instance"):
+                with swap("core.thought_stream.get_emitter", create=True):
                     result = await orchestrator.retry_cognitive_connection()
                     assert result is True
 
 
 @pytest.mark.asyncio
 async def test_retry_cognitive_connection_lobotomized(orchestrator):
-    with patch("core.brain.cognitive_engine.CognitiveEngine") as mock_ce_cls:
-        mock_ce = MagicMock()
+    with swap("core.brain.cognitive_engine.CognitiveEngine") as mock_ce_cls:
+        mock_ce = _CallRecorder()
         mock_ce.lobotomized = True
         mock_ce_cls.return_value = mock_ce
         orchestrator._cognitive_engine_override = None
-        with patch("core.container.get_container") as mock_gc:
-            mock_gc.return_value = MagicMock()
-            mock_gc.return_value.get.return_value = MagicMock()
+        with swap("core.container.get_container") as mock_gc:
+            mock_gc.return_value = _CallRecorder()
+            mock_gc.return_value.get.return_value = _CallRecorder()
             result = await orchestrator.retry_cognitive_connection()
             assert result is False
 
@@ -1186,7 +1604,7 @@ async def test_retry_cognitive_connection_exception(orchestrator):
     # Clear cognitive engine so retry_cognitive_connection constructs a new one
     orchestrator._cognitive_engine_override = None
     ServiceContainer.register_instance("cognitive_engine", None)
-    with patch("core.brain.cognitive_engine.CognitiveEngine", side_effect=Exception("fail")):
+    with swap("core.brain.cognitive_engine.CognitiveEngine", side_effect=Exception("fail")):
         result = await orchestrator.retry_cognitive_connection()
         assert result is False
 
@@ -1196,15 +1614,15 @@ async def test_retry_cognitive_connection_exception(orchestrator):
 
 # --- _emit_eternal_record (line 786) ---
 def test_emit_eternal_record_success(orchestrator):
-    with patch("core.resilience.eternal_record.EternalRecord") as mock_eternal_record_cls:
+    with swap("core.resilience.eternal_record.EternalRecord") as mock_eternal_record_cls:
         mock_er = mock_eternal_record_cls.return_value
-        mock_er.create_snapshot.return_value = MagicMock(name="snap1")
+        mock_er.create_snapshot.return_value = _CallRecorder(name="snap1")
         orchestrator._emit_eternal_record()
         assert mock_er.create_snapshot.called
 
 
 def test_emit_eternal_record_exception(orchestrator):
-    with patch(
+    with swap(
         "core.resilience.eternal_record.EternalRecord", side_effect=ImportError("no module")
     ):
         # Should not raise
@@ -1228,7 +1646,7 @@ async def test_track_metabolic_task_new(orchestrator):
 
 def test_track_metabolic_task_already_running(orchestrator):
     orchestrator._active_metabolic_tasks = {"test_task"}
-    mock_coro = AsyncMock()()
+    mock_coro = _AsyncCallRecorder()()
 
     result = orchestrator._track_metabolic_task("test_task", mock_coro)
     assert result is None
@@ -1239,13 +1657,13 @@ def test_track_metabolic_task_already_running(orchestrator):
 # --- _recover_from_stall (line 830) ---
 @pytest.mark.asyncio
 async def test_recover_from_stall_cancels_current_task(orchestrator):
-    orchestrator._current_thought_task = MagicMock()
+    orchestrator._current_thought_task = _CallRecorder()
     orchestrator._current_thought_task.done.return_value = False
     orchestrator._recovery_attempts = 0
     orchestrator.message_queue = asyncio.Queue(maxsize=100)
 
-    with patch.dict("sys.modules", {"core.resilience.dead_letter": MagicMock()}):
-        orchestrator.retry_cognitive_connection = AsyncMock(return_value=True)
+    with swap.dict("sys.modules", {"core.resilience.dead_letter": _CallRecorder()}):
+        orchestrator.retry_cognitive_connection = _AsyncCallRecorder(return_value=True)
         await orchestrator._recover_from_stall()
         assert orchestrator._current_thought_task.cancel.called
 
@@ -1255,7 +1673,7 @@ async def test_recover_from_stall_cancels_current_task(orchestrator):
 async def test_acquire_next_message_with_msg(orchestrator):
     orchestrator.message_queue = asyncio.Queue()
     orchestrator.message_queue.put_nowait("Hello")
-    orchestrator._liquid_state_override = MagicMock()
+    orchestrator._liquid_state_override = _CallRecorder()
     orchestrator._last_thought_time = 0
 
     result = await orchestrator._acquire_next_message()
@@ -1284,19 +1702,19 @@ async def test_acquire_next_message_empty(orchestrator):
 
 # --- _emit_neural_pulse (line 898) ---
 def test_emit_neural_pulse(orchestrator):
-    orchestrator._liquid_state_override = MagicMock()
+    orchestrator._liquid_state_override = _CallRecorder()
     orchestrator._liquid_state_override.get_mood.return_value = "Happy"
     orchestrator.status.cycle_count = 10
     orchestrator._last_pulse = 0
 
-    with patch("core.thought_stream.get_emitter", create=True) as mock_gte:
-        mock_gte.return_value = MagicMock()
+    with swap("core.thought_stream.get_emitter", create=True) as mock_gte:
+        mock_gte.return_value = _CallRecorder()
         orchestrator._emit_neural_pulse()
         assert mock_gte.return_value.emit.called
 
 
 def test_emit_neural_pulse_exception(orchestrator):
-    with patch("core.thought_stream.get_emitter", side_effect=Exception("fail"), create=True):
+    with swap("core.thought_stream.get_emitter", side_effect=Exception("fail"), create=True):
         # Should not raise
         orchestrator._emit_neural_pulse()
 
@@ -1306,15 +1724,15 @@ def test_emit_neural_pulse_exception(orchestrator):
 async def test_handle_incoming_message_voice_origin(orchestrator):
     orchestrator.status.running = True
     orchestrator.status.cycle_count = 1
-    orchestrator._intent_router_override = MagicMock()
-    orchestrator._intent_router_override.classify = AsyncMock()
-    orchestrator._state_machine_override = MagicMock()
-    orchestrator._state_machine_override.execute = AsyncMock()
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
+    orchestrator._intent_router_override = _CallRecorder()
+    orchestrator._intent_router_override.classify = _AsyncCallRecorder()
+    orchestrator._state_machine_override = _CallRecorder()
+    orchestrator._state_machine_override.execute = _AsyncCallRecorder()
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
     orchestrator._current_thought_task = None
 
-    with patch("core.utils.task_tracker.task_tracker.track_task"):
+    with swap("core.utils.task_tracker.task_tracker.track_task"):
         await orchestrator._handle_incoming_message("[VOICE] Hello")
         await asyncio.sleep(0)
         # Verify the message was processed
@@ -1325,15 +1743,15 @@ async def test_handle_incoming_message_voice_origin(orchestrator):
 async def test_handle_incoming_message_admin_origin(orchestrator):
     orchestrator.status.running = True
     orchestrator.status.cycle_count = 1
-    orchestrator._intent_router_override = MagicMock()
-    orchestrator._intent_router_override.classify = AsyncMock()
-    orchestrator._state_machine_override = MagicMock()
-    orchestrator._state_machine_override.execute = AsyncMock()
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
+    orchestrator._intent_router_override = _CallRecorder()
+    orchestrator._intent_router_override.classify = _AsyncCallRecorder()
+    orchestrator._state_machine_override = _CallRecorder()
+    orchestrator._state_machine_override.execute = _AsyncCallRecorder()
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
     orchestrator._current_thought_task = None
 
-    with patch("core.utils.task_tracker.task_tracker.track_task"):
+    with swap("core.utils.task_tracker.task_tracker.track_task"):
         await orchestrator._handle_incoming_message("[ADMIN] shutdown")
         await asyncio.sleep(0)
         assert orchestrator.status.is_processing is False
@@ -1343,15 +1761,15 @@ async def test_handle_incoming_message_admin_origin(orchestrator):
 async def test_handle_incoming_message_impulse_origin(orchestrator):
     orchestrator.status.running = True
     orchestrator.status.cycle_count = 1
-    orchestrator._intent_router_override = MagicMock()
-    orchestrator._intent_router_override.classify = AsyncMock()
-    orchestrator._state_machine_override = MagicMock()
-    orchestrator._state_machine_override.execute = AsyncMock()
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
+    orchestrator._intent_router_override = _CallRecorder()
+    orchestrator._intent_router_override.classify = _AsyncCallRecorder()
+    orchestrator._state_machine_override = _CallRecorder()
+    orchestrator._state_machine_override.execute = _AsyncCallRecorder()
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
     orchestrator._current_thought_task = None
 
-    with patch("core.utils.task_tracker.task_tracker.track_task"):
+    with swap("core.utils.task_tracker.task_tracker.track_task"):
         await orchestrator._handle_incoming_message("Impulse: research AI")
         await asyncio.sleep(0)
         assert orchestrator.status.is_processing is False
@@ -1361,15 +1779,15 @@ async def test_handle_incoming_message_impulse_origin(orchestrator):
 async def test_handle_incoming_message_thought_origin(orchestrator):
     orchestrator.status.running = True
     orchestrator.status.cycle_count = 1
-    orchestrator._intent_router_override = MagicMock()
-    orchestrator._intent_router_override.classify = AsyncMock()
-    orchestrator._state_machine_override = MagicMock()
-    orchestrator._state_machine_override.execute = AsyncMock()
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
+    orchestrator._intent_router_override = _CallRecorder()
+    orchestrator._intent_router_override.classify = _AsyncCallRecorder()
+    orchestrator._state_machine_override = _CallRecorder()
+    orchestrator._state_machine_override.execute = _AsyncCallRecorder()
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
     orchestrator._current_thought_task = None
 
-    with patch("core.utils.task_tracker.task_tracker.track_task"):
+    with swap("core.utils.task_tracker.task_tracker.track_task"):
         await orchestrator._handle_incoming_message("Thought: I wonder about physics")
         await asyncio.sleep(0)
         assert orchestrator.status.is_processing is False
@@ -1379,7 +1797,7 @@ async def test_handle_incoming_message_thought_origin(orchestrator):
 @pytest.mark.asyncio
 async def test_prune_history_async_error(orchestrator):
     orchestrator.conversation_history = [{"role": "user", "content": f"m{i}"} for i in range(60)]
-    with patch(
+    with swap(
         "core.memory.context_pruner.context_pruner.prune_history", side_effect=Exception("fail")
     ):
         await orchestrator._prune_history_async()
@@ -1403,23 +1821,23 @@ async def test_consolidate_long_term_memory_skip(orchestrator):
 
 # --- _emit_telemetry helper ---
 def test_emit_telemetry_helper(orchestrator):
-    with patch("core.thought_stream.get_emitter", create=True) as mock_gte:
-        mock_emitter = MagicMock()
+    with swap("core.thought_stream.get_emitter", create=True) as mock_gte:
+        mock_emitter = _CallRecorder()
         mock_gte.return_value = mock_emitter
         orchestrator._emit_telemetry("Test", "Test message")
         # Should not raise
 
 
 def test_emit_telemetry_helper_error(orchestrator):
-    with patch("core.thought_stream.get_emitter", side_effect=Exception("no emitter"), create=True):
+    with swap("core.thought_stream.get_emitter", side_effect=Exception("no emitter"), create=True):
         # Should not raise
         orchestrator._emit_telemetry("Test", "Test message")
 
 
 # --- _emit_thought_stream helper ---
 def test_emit_thought_stream_helper(orchestrator):
-    with patch("core.thought_stream.get_emitter", create=True) as mock_gte:
-        mock_emitter = MagicMock()
+    with swap("core.thought_stream.get_emitter", create=True) as mock_gte:
+        mock_emitter = _CallRecorder()
         mock_gte.return_value = mock_emitter
         orchestrator._emit_thought_stream("Hello thought stream!")
         # Just verify no exception raised
@@ -1458,9 +1876,9 @@ async def test_validate_action_safety_no_simulator(orchestrator):
 
 @pytest.mark.asyncio
 async def test_validate_action_safety_blocked(orchestrator):
-    orchestrator.simulator = MagicMock()
-    orchestrator.simulator.simulate_action = AsyncMock(return_value={"risk_reason": "dangerous"})
-    orchestrator.simulator.evaluate_risk = AsyncMock(return_value=False)
+    orchestrator.simulator = _CallRecorder()
+    orchestrator.simulator.simulate_action = _AsyncCallRecorder(return_value={"risk_reason": "dangerous"})
+    orchestrator.simulator.evaluate_risk = _AsyncCallRecorder(return_value=False)
     result = await orchestrator._validate_action_safety({"tool": "test", "params": {}})
     assert result.get("allowed") is False
 
@@ -1495,7 +1913,7 @@ def test_stringify_personality_no_emotions(orchestrator):
 
 # --- _get_personality_context (line 1916) ---
 def test_get_personality_context(orchestrator):
-    orchestrator._get_personality_data = MagicMock(
+    orchestrator._get_personality_data = _CallRecorder(
         return_value={"mood": "happy", "tone": "warm", "emotional_state": {}}
     )
     result = orchestrator._get_personality_context()
@@ -1541,14 +1959,14 @@ def test_post_process_response(orchestrator):
 # --- _record_reliability (line 1950) ---
 @pytest.mark.asyncio
 async def test_record_reliability_success(orchestrator):
-    with patch("core.reliability_tracker.reliability_tracker.record_attempt") as mock_record:
+    with swap("core.reliability_tracker.reliability_tracker.record_attempt") as mock_record:
         await orchestrator._record_reliability("web_search", True)
         assert mock_record.called
 
 
 @pytest.mark.asyncio
 async def test_record_reliability_failure(orchestrator):
-    with patch(
+    with swap(
         "core.reliability_tracker.reliability_tracker.record_attempt", side_effect=Exception("fail")
     ):
         # Should not raise
@@ -1557,8 +1975,8 @@ async def test_record_reliability_failure(orchestrator):
 
 # --- _get_world_context (line 1939) ---
 def test_get_world_context_success(orchestrator):
-    with patch("core.orchestrator.get_belief_graph", create=True) as mock_gbg:
-        mock_bg = MagicMock()
+    with swap("core.orchestrator.get_belief_graph", create=True) as mock_gbg:
+        mock_bg = _CallRecorder()
         mock_bg.self_node_id = "self"
         mock_bg.graph.nodes.get.return_value = {
             "attributes": {"emotional_valence": "positive", "energy_level": "high"}
@@ -1577,9 +1995,9 @@ def test_get_world_context_failure(orchestrator):
 # --- _get_environmental_context (line 1921) ---
 @pytest.mark.asyncio
 async def test_get_environmental_context_success(orchestrator):
-    with patch("core.environment_awareness.get_environment") as mock_ge:
-        mock_env = MagicMock()
-        mock_env.get_full_context = AsyncMock(return_value={"location": "home"})
+    with swap("core.environment_awareness.get_environment") as mock_ge:
+        mock_env = _CallRecorder()
+        mock_env.get_full_context = _AsyncCallRecorder(return_value={"location": "home"})
         mock_ge.return_value = mock_env
         result = await orchestrator._get_environmental_context()
         assert "time" in result
@@ -1588,15 +2006,15 @@ async def test_get_environmental_context_success(orchestrator):
 
 @pytest.mark.asyncio
 async def test_get_environmental_context_failure(orchestrator):
-    with patch("core.environment_awareness.get_environment", side_effect=Exception("fail")):
+    with swap("core.environment_awareness.get_environment", side_effect=Exception("fail")):
         result = await orchestrator._get_environmental_context()
         assert result == {}
 
 
 # --- _init_cognitive_trace (line 1892) ---
 def test_init_cognitive_trace(orchestrator):
-    with patch("core.meta.cognitive_trace.CognitiveTrace") as mock_trace_cls:
-        mock_trace = MagicMock()
+    with swap("core.meta.cognitive_trace.CognitiveTrace") as mock_trace_cls:
+        mock_trace = _CallRecorder()
         mock_trace_cls.return_value = mock_trace
         orchestrator._init_cognitive_trace("Hello", "user")
         assert mock_trace_cls.called
@@ -1618,11 +2036,11 @@ def test_filter_output_empty(orchestrator):
 # --- handle_impulse message mapping (line 1344) ---
 @pytest.mark.asyncio
 async def test_handle_impulse_with_mapping(orchestrator):
-    mock_const = MagicMock()
-    mock_const.approve_initiative = AsyncMock(return_value=(True, "test_approved", None))
-    orchestrator._handle_incoming_message = AsyncMock()
-    with patch("core.constitution.get_constitutional_core", return_value=mock_const):
-        with patch(
+    mock_const = _CallRecorder()
+    mock_const.approve_initiative = _AsyncCallRecorder(return_value=(True, "test_approved", None))
+    orchestrator._handle_incoming_message = _AsyncCallRecorder()
+    with swap("core.constitution.get_constitutional_core", return_value=mock_const):
+        with swap(
             "core.orchestrator.mixins.autonomy.get_constitutional_core", mock_const, create=True
         ):
             await orchestrator.handle_impulse("speak_to_user")
@@ -1635,19 +2053,19 @@ async def test_handle_impulse_with_mapping(orchestrator):
 # --- _process_message flow (line 1150) ---
 @pytest.mark.asyncio
 async def test_process_message_basic(orchestrator):
-    orchestrator._cognitive_engine_override = MagicMock()
-    orchestrator._cognitive_engine_override.think = AsyncMock(
-        return_value=MagicMock(content="Hello!", action=None, tool_calls=[])
+    orchestrator._cognitive_engine_override = _CallRecorder()
+    orchestrator._cognitive_engine_override.think = _AsyncCallRecorder(
+        return_value=_CallRecorder(content="Hello!", action=None, tool_calls=[])
     )
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock(return_value=[])
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder(return_value=[])
     orchestrator.conversation_history = []
-    orchestrator._get_cleaned_history_context = MagicMock(return_value={"history": []})
-    orchestrator._get_personality_context = MagicMock(return_value="MOOD: HAPPY")
-    orchestrator._gather_agentic_context = AsyncMock(return_value={})
-    orchestrator._attempt_fast_path = AsyncMock(return_value=None)
+    orchestrator._get_cleaned_history_context = _CallRecorder(return_value={"history": []})
+    orchestrator._get_personality_context = _CallRecorder(return_value="MOOD: HAPPY")
+    orchestrator._gather_agentic_context = _AsyncCallRecorder(return_value={})
+    orchestrator._attempt_fast_path = _AsyncCallRecorder(return_value=None)
 
-    with patch("core.utils.task_tracker.task_tracker.track_task"):
+    with swap("core.utils.task_tracker.task_tracker.track_task"):
         result = await orchestrator._process_message("Hello")
         assert result is not None
 
@@ -1671,8 +2089,8 @@ async def test_process_user_input(orchestrator):
     async def mock_handle(*args, **kwargs):
         await orchestrator.reply_queue.put("Processed!")
 
-    orchestrator._handle_incoming_message = AsyncMock(side_effect=mock_handle)
-    with patch("core.utils.task_tracker.task_tracker.track_task"):
+    orchestrator._handle_incoming_message = _AsyncCallRecorder(side_effect=mock_handle)
+    with swap("core.utils.task_tracker.task_tracker.track_task"):
         result = await orchestrator._process_message("Hello!")
         await asyncio.sleep(0)
         assert result["ok"] is True
@@ -1681,8 +2099,8 @@ async def test_process_user_input(orchestrator):
 
 # --- _save_state (line ~2289) ---
 def test_save_state(orchestrator):
-    with patch("pathlib.Path.write_text"):
-        with patch("pathlib.Path.mkdir"):
+    with swap("pathlib.Path.write_text"):
+        with swap("pathlib.Path.mkdir"):
             orchestrator._save_state("checkpoint")
             # If it reached here without error, it's a win
 
@@ -1695,19 +2113,19 @@ def test_save_state(orchestrator):
 @pytest.mark.asyncio
 async def test_process_cycle_with_update_heartbeat(orchestrator):
     orchestrator.status.cycle_count = 0
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
-    orchestrator._save_state_async = AsyncMock()
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
+    orchestrator._save_state_async = _AsyncCallRecorder()
 
-    mock_loop = MagicMock()
+    mock_loop = _CallRecorder()
 
     async def _mock_cycle():
         orchestrator.status.cycle_count += 1
 
-    mock_loop._process_cycle = AsyncMock(side_effect=_mock_cycle)
+    mock_loop._process_cycle = _AsyncCallRecorder(side_effect=_mock_cycle)
     orchestrator.cognitive_loop = mock_loop
 
-    with patch("core.utils.task_tracker.get_task_tracker"):
+    with swap("core.utils.task_tracker.get_task_tracker"):
         await orchestrator._process_cycle()
         assert orchestrator.status.cycle_count == 1
 
@@ -1723,11 +2141,11 @@ def test_record_message_in_history_system(orchestrator):
 # --- handle_impulse with different types ---
 @pytest.mark.asyncio
 async def test_handle_impulse_boredom(orchestrator):
-    mock_const = MagicMock()
-    mock_const.approve_initiative = AsyncMock(return_value=(True, "test_approved", None))
-    orchestrator._handle_incoming_message = AsyncMock()
-    with patch("core.constitution.get_constitutional_core", return_value=mock_const):
-        with patch(
+    mock_const = _CallRecorder()
+    mock_const.approve_initiative = _AsyncCallRecorder(return_value=(True, "test_approved", None))
+    orchestrator._handle_incoming_message = _AsyncCallRecorder()
+    with swap("core.constitution.get_constitutional_core", return_value=mock_const):
+        with swap(
             "core.orchestrator.mixins.autonomy.get_constitutional_core", mock_const, create=True
         ):
             await orchestrator.handle_impulse("boredom_research")
@@ -1739,11 +2157,11 @@ async def test_handle_impulse_boredom(orchestrator):
 
 @pytest.mark.asyncio
 async def test_handle_impulse_dream(orchestrator):
-    mock_const = MagicMock()
-    mock_const.approve_initiative = AsyncMock(return_value=(True, "test_approved", None))
-    orchestrator._handle_incoming_message = AsyncMock()
-    with patch("core.constitution.get_constitutional_core", return_value=mock_const):
-        with patch(
+    mock_const = _CallRecorder()
+    mock_const.approve_initiative = _AsyncCallRecorder(return_value=(True, "test_approved", None))
+    orchestrator._handle_incoming_message = _AsyncCallRecorder()
+    with swap("core.constitution.get_constitutional_core", return_value=mock_const):
+        with swap(
             "core.orchestrator.mixins.autonomy.get_constitutional_core", mock_const, create=True
         ):
             await orchestrator.handle_impulse("dream_cycle")
@@ -1759,7 +2177,7 @@ def test_filter_output_preserves_content(orchestrator):
 
 # --- Additional property coverage ---
 def test_property_identity_kernel(orchestrator):
-    with patch("core.container.ServiceContainer.get", return_value=None):
+    with swap("core.container.ServiceContainer.get", return_value=None):
         assert orchestrator.identity_kernel is None
 
 
@@ -1778,23 +2196,23 @@ def test_property_brainstem(orchestrator):
 @pytest.mark.asyncio
 async def test_finalize_response_empty_response(orchestrator):
     orchestrator.conversation_history = []
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
     orchestrator._meta_learning_override = None
-    orchestrator._generate_fallback = AsyncMock(return_value="Fallback response")
-    orchestrator._apply_constitutional_guard = AsyncMock(
+    orchestrator._generate_fallback = _AsyncCallRecorder(return_value="Fallback response")
+    orchestrator._apply_constitutional_guard = _AsyncCallRecorder(
         side_effect=lambda resp, *args, **kwargs: resp
     )
 
     # Use an LLM router/cerebellum test double to isolate finalize_response.
-    mock_llm = MagicMock()
-    mock_llm.think = AsyncMock(return_value=MagicMock(content="Fallback response"))
+    mock_llm = _CallRecorder()
+    mock_llm.think = _AsyncCallRecorder(return_value=_CallRecorder(content="Fallback response"))
     mock_llm.get_reflex_response.return_value = ""
     ServiceContainer.register_instance("llm_router", mock_llm)
     orchestrator.cerebellum = mock_llm
 
     result = await orchestrator._finalize_response(
-        message="Hello", response="...", origin="user", trace=MagicMock(), successful_tools=[]
+        message="Hello", response="...", origin="user", trace=_CallRecorder(), successful_tools=[]
     )
     assert result == "Fallback response"
     assert orchestrator._generate_fallback.called
@@ -1803,18 +2221,18 @@ async def test_finalize_response_empty_response(orchestrator):
 @pytest.mark.asyncio
 async def test_finalize_response_valid_response(orchestrator):
     orchestrator.conversation_history = []
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
     orchestrator._meta_learning_override = None
-    orchestrator._apply_constitutional_guard = AsyncMock(return_value="Valid response")
+    orchestrator._apply_constitutional_guard = _AsyncCallRecorder(return_value="Valid response")
 
-    with patch("core.thought_stream.get_emitter", create=True) as mock_gte:
-        mock_gte.return_value = MagicMock()
+    with swap("core.thought_stream.get_emitter", create=True) as mock_gte:
+        mock_gte.return_value = _CallRecorder()
         result = await orchestrator._finalize_response(
             message="Hello",
             response="Valid response",
             origin="user",
-            trace=MagicMock(),
+            trace=_CallRecorder(),
             successful_tools=[],
         )
     assert "Valid" in result
@@ -1823,20 +2241,20 @@ async def test_finalize_response_valid_response(orchestrator):
 @pytest.mark.asyncio
 async def test_finalize_response_with_meta_learning(orchestrator):
     orchestrator.conversation_history = []
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
-    mock_ml = MagicMock()
-    mock_ml.index_experience = AsyncMock(return_value=None)
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
+    mock_ml = _CallRecorder()
+    mock_ml.index_experience = _AsyncCallRecorder(return_value=None)
     orchestrator._meta_learning_override = mock_ml
-    orchestrator._apply_constitutional_guard = AsyncMock(return_value="Done!")
+    orchestrator._apply_constitutional_guard = _AsyncCallRecorder(return_value="Done!")
 
-    with patch("core.utils.task_tracker.task_tracker.track_task"):
-        with patch("asyncio.create_task"):
+    with swap("core.utils.task_tracker.task_tracker.track_task"):
+        with swap("asyncio.create_task"):
             result = await orchestrator._finalize_response(
                 message="Do something",
                 response="Done!",
                 origin="user",
-                trace=MagicMock(),
+                trace=_CallRecorder(),
                 successful_tools=["web_search"],
             )
     assert result is not None
@@ -1847,17 +2265,17 @@ async def test_finalize_response_history_cap(orchestrator):
     # History > 50 should be capped
     orchestrator.conversation_history = [{"role": "user", "content": f"msg{i}"} for i in range(60)]
     orchestrator._meta_learning_override = None
-    orchestrator._apply_constitutional_guard = AsyncMock(return_value="Capped!")
-    orchestrator._trigger_background_reflection = MagicMock()
-    orchestrator._trigger_background_learning = MagicMock()
+    orchestrator._apply_constitutional_guard = _AsyncCallRecorder(return_value="Capped!")
+    orchestrator._trigger_background_reflection = _CallRecorder()
+    orchestrator._trigger_background_learning = _CallRecorder()
 
-    with patch("core.thought_stream.get_emitter", create=True) as mock_gte:
-        mock_gte.return_value = MagicMock()
+    with swap("core.thought_stream.get_emitter", create=True) as mock_gte:
+        mock_gte.return_value = _CallRecorder()
         await orchestrator._finalize_response(
             message="Hello",
             response="Capped!",
             origin="user",
-            trace=MagicMock(),
+            trace=_CallRecorder(),
             successful_tools=[],
         )
         await asyncio.sleep(0.6)
@@ -1868,7 +2286,7 @@ async def test_finalize_response_history_cap(orchestrator):
 @pytest.mark.asyncio
 async def test_store_autonomous_insight_no_kg(orchestrator):
     # No knowledge_graph = early return
-    with patch.object(
+    with swap.object(
         type(orchestrator), "knowledge_graph", new_callable=lambda: property(lambda self: None)
     ):
         await orchestrator._store_autonomous_insight(
@@ -1878,9 +2296,9 @@ async def test_store_autonomous_insight_no_kg(orchestrator):
 
 @pytest.mark.asyncio
 async def test_store_autonomous_insight_dream(orchestrator):
-    mock_kg = MagicMock()
-    mock_kg.add_knowledge = MagicMock()
-    with patch.object(
+    mock_kg = _CallRecorder()
+    mock_kg.add_knowledge = _CallRecorder()
+    with swap.object(
         type(orchestrator), "knowledge_graph", new_callable=lambda: property(lambda self: mock_kg)
     ):
         await orchestrator._store_autonomous_insight(
@@ -1891,9 +2309,9 @@ async def test_store_autonomous_insight_dream(orchestrator):
 
 @pytest.mark.asyncio
 async def test_store_autonomous_insight_reflection(orchestrator):
-    mock_kg = MagicMock()
-    mock_kg.add_knowledge = MagicMock()
-    with patch.object(
+    mock_kg = _CallRecorder()
+    mock_kg.add_knowledge = _CallRecorder()
+    with swap.object(
         type(orchestrator), "knowledge_graph", new_callable=lambda: property(lambda self: mock_kg)
     ):
         await orchestrator._store_autonomous_insight(
@@ -1905,9 +2323,9 @@ async def test_store_autonomous_insight_reflection(orchestrator):
 
 @pytest.mark.asyncio
 async def test_store_autonomous_insight_curiosity(orchestrator):
-    mock_kg = MagicMock()
-    mock_kg.add_knowledge = MagicMock()
-    with patch.object(
+    mock_kg = _CallRecorder()
+    mock_kg.add_knowledge = _CallRecorder()
+    with swap.object(
         type(orchestrator), "knowledge_graph", new_callable=lambda: property(lambda self: mock_kg)
     ):
         await orchestrator._store_autonomous_insight(
@@ -1919,9 +2337,9 @@ async def test_store_autonomous_insight_curiosity(orchestrator):
 
 @pytest.mark.asyncio
 async def test_store_autonomous_insight_goal(orchestrator):
-    mock_kg = MagicMock()
-    mock_kg.add_knowledge = MagicMock()
-    with patch.object(
+    mock_kg = _CallRecorder()
+    mock_kg.add_knowledge = _CallRecorder()
+    with swap.object(
         type(orchestrator), "knowledge_graph", new_callable=lambda: property(lambda self: mock_kg)
     ):
         await orchestrator._store_autonomous_insight(
@@ -1933,8 +2351,8 @@ async def test_store_autonomous_insight_goal(orchestrator):
 
 @pytest.mark.asyncio
 async def test_store_autonomous_insight_trivial_skip(orchestrator):
-    mock_kg = MagicMock()
-    with patch.object(
+    mock_kg = _CallRecorder()
+    with swap.object(
         type(orchestrator), "knowledge_graph", new_callable=lambda: property(lambda self: mock_kg)
     ):
         # Short message should be skipped
@@ -1945,9 +2363,9 @@ async def test_store_autonomous_insight_trivial_skip(orchestrator):
 # --- _learn_from_exchange (line 2328) ---
 @pytest.mark.asyncio
 async def test_learn_from_exchange_with_existing_kg(orchestrator):
-    mock_kg = MagicMock()
-    mock_kg.add_knowledge = MagicMock()
-    with patch.object(
+    mock_kg = _CallRecorder()
+    mock_kg.add_knowledge = _CallRecorder()
+    with swap.object(
         type(orchestrator), "knowledge_graph", new_callable=lambda: property(lambda self: mock_kg)
     ):
         await orchestrator._learn_from_exchange("What is AI?", "AI is artificial intelligence")
@@ -1956,10 +2374,10 @@ async def test_learn_from_exchange_with_existing_kg(orchestrator):
 
 @pytest.mark.asyncio
 async def test_learn_from_exchange_with_name(orchestrator):
-    mock_kg = MagicMock()
-    mock_kg.add_knowledge = MagicMock()
-    mock_kg.remember_person = MagicMock()
-    with patch.object(
+    mock_kg = _CallRecorder()
+    mock_kg.add_knowledge = _CallRecorder()
+    mock_kg.remember_person = _CallRecorder()
+    with swap.object(
         type(orchestrator), "knowledge_graph", new_callable=lambda: property(lambda self: mock_kg)
     ):
         orchestrator._cognitive_engine_override = None
@@ -1970,10 +2388,10 @@ async def test_learn_from_exchange_with_name(orchestrator):
 
 @pytest.mark.asyncio
 async def test_learn_from_exchange_with_questions(orchestrator):
-    mock_kg = MagicMock()
-    mock_kg.add_knowledge = MagicMock()
-    mock_kg.ask_question = MagicMock()
-    with patch.object(
+    mock_kg = _CallRecorder()
+    mock_kg.add_knowledge = _CallRecorder()
+    mock_kg.ask_question = _CallRecorder()
+    with swap.object(
         type(orchestrator), "knowledge_graph", new_callable=lambda: property(lambda self: mock_kg)
     ):
         orchestrator._cognitive_engine_override = None
@@ -1987,9 +2405,9 @@ async def test_learn_from_exchange_with_questions(orchestrator):
 
 @pytest.mark.asyncio
 async def test_learn_from_exchange_exception(orchestrator):
-    mock_kg = MagicMock()
-    mock_kg.add_knowledge = MagicMock(side_effect=Exception("DB error"))
-    with patch.object(
+    mock_kg = _CallRecorder()
+    mock_kg.add_knowledge = _CallRecorder(side_effect=Exception("DB error"))
+    with swap.object(
         type(orchestrator), "knowledge_graph", new_callable=lambda: property(lambda self: mock_kg)
     ):
         # Should not raise
@@ -2005,11 +2423,11 @@ async def test_apply_constitutional_guard(orchestrator):
 
 @pytest.mark.asyncio
 async def test_apply_constitutional_guard_with_alignment(orchestrator):
-    with patch.object(
+    with swap.object(
         type(orchestrator),
         "alignment",
         new_callable=lambda: property(
-            lambda self: MagicMock(filter_response=MagicMock(return_value="Filtered safe"))
+            lambda self: _CallRecorder(filter_response=_CallRecorder(return_value="Filtered safe"))
         ),
     ):
         result = await orchestrator._apply_constitutional_guard("Maybe unsafe")
@@ -2036,8 +2454,8 @@ async def test_gather_agentic_context_simple(orchestrator):
 async def test_handle_incoming_message_cancel_prev_task(orchestrator):
     class MockTask:
         def __init__(self):
-            self.cancel = MagicMock()
-            self.done = MagicMock(return_value=False)
+            self.cancel = _CallRecorder()
+            self.done = _CallRecorder(return_value=False)
 
         def __await__(self):
             if False:
@@ -2049,16 +2467,16 @@ async def test_handle_incoming_message_cancel_prev_task(orchestrator):
     orchestrator._current_task_is_autonomous = True
     orchestrator.status.running = True
     orchestrator.status.cycle_count = 1
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
-    orchestrator._inference_gate = MagicMock()
-    orchestrator._inference_gate.generate = AsyncMock(return_value="Reply!")
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
+    orchestrator._inference_gate = _CallRecorder()
+    orchestrator._inference_gate.generate = _AsyncCallRecorder(return_value="Reply!")
     orchestrator.conversation_history = []
     orchestrator.reply_queue = asyncio.Queue()
 
     # process_user_input_priority holds the cancellation logic now
-    with patch("core.utils.task_tracker.task_tracker.track_task"):
-        with patch("asyncio.create_task"):
+    with swap("core.utils.task_tracker.task_tracker.track_task"):
+        with swap("asyncio.create_task"):
             await orchestrator.process_user_input_priority("Hello user!", origin="user")
             assert mock_prev.cancel.called
 
@@ -2066,11 +2484,11 @@ async def test_handle_incoming_message_cancel_prev_task(orchestrator):
 # --- _check_surprise_and_learn (line ~1778) ---
 @pytest.mark.asyncio
 async def test_check_surprise_and_learn_no_surprise(orchestrator):
-    thought = MagicMock()
+    thought = _CallRecorder()
     thought.confidence = 0.9
     thought.action = {"tool": "web_search"}
-    with patch.object(
-        orchestrator, "_check_surprise_and_learn", new_callable=AsyncMock, return_value=False
+    with swap.object(
+        orchestrator, "_check_surprise_and_learn", new_callable=_AsyncCallRecorder, return_value=False
     ):
         result = await orchestrator._check_surprise_and_learn(
             thought, "Expected result", "web_search"
@@ -2081,14 +2499,14 @@ async def test_check_surprise_and_learn_no_surprise(orchestrator):
 # --- Additional _recover_from_stall with DLQ (line 836) ---
 @pytest.mark.asyncio
 async def test_recover_from_stall_with_dlq(orchestrator):
-    orchestrator._current_thought_task = MagicMock()
+    orchestrator._current_thought_task = _CallRecorder()
     orchestrator._current_thought_task.done.return_value = True
     orchestrator._recovery_attempts = 0
     orchestrator.message_queue = asyncio.Queue(maxsize=100)
 
-    mock_dlq = MagicMock()
-    with patch("core.container.ServiceContainer.get", return_value=mock_dlq):
-        orchestrator.retry_cognitive_connection = AsyncMock(return_value=True)
+    mock_dlq = _CallRecorder()
+    with swap("core.container.ServiceContainer.get", return_value=mock_dlq):
+        orchestrator.retry_cognitive_connection = _AsyncCallRecorder(return_value=True)
         await orchestrator._recover_from_stall()
         assert mock_dlq.capture_failure.called
 
@@ -2118,18 +2536,18 @@ async def test_process_cycle_rl_trigger(orchestrator):
     orchestrator.status.cycle_count = 999
     orchestrator.status.is_processing = False
     orchestrator._stop_event = asyncio.Event()
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
-    orchestrator._save_state_async = AsyncMock()
-    orchestrator._track_metabolic_task = MagicMock()
-    orchestrator._run_rl_training = AsyncMock()
-    orchestrator._acquire_next_message = AsyncMock(return_value=None)
-    orchestrator._dispatch_message = MagicMock()
-    orchestrator._manage_memory_hygiene = MagicMock()
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
+    orchestrator._save_state_async = _AsyncCallRecorder()
+    orchestrator._track_metabolic_task = _CallRecorder()
+    orchestrator._run_rl_training = _AsyncCallRecorder()
+    orchestrator._acquire_next_message = _AsyncCallRecorder(return_value=None)
+    orchestrator._dispatch_message = _CallRecorder()
+    orchestrator._manage_memory_hygiene = _CallRecorder()
 
-    with patch("psutil.virtual_memory") as mock_vm:
-        mock_vm.return_value = MagicMock(percent=50)
-        with patch("core.utils.task_tracker.task_tracker.track_task"):
+    with swap("psutil.virtual_memory") as mock_vm:
+        mock_vm.return_value = _CallRecorder(percent=50)
+        with swap("core.utils.task_tracker.task_tracker.track_task"):
             await orchestrator._process_cycle()
 
 
@@ -2139,81 +2557,81 @@ async def test_process_cycle_self_update_trigger(orchestrator):
     orchestrator.status.cycle_count = 4999
     orchestrator.status.is_processing = False
     orchestrator._stop_event = asyncio.Event()
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock()
-    orchestrator._save_state_async = AsyncMock()
-    orchestrator._track_metabolic_task = MagicMock()
-    orchestrator._run_self_update = AsyncMock()
-    orchestrator._acquire_next_message = AsyncMock(return_value=None)
-    orchestrator._dispatch_message = MagicMock()
-    orchestrator._manage_memory_hygiene = MagicMock()
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder()
+    orchestrator._save_state_async = _AsyncCallRecorder()
+    orchestrator._track_metabolic_task = _CallRecorder()
+    orchestrator._run_self_update = _AsyncCallRecorder()
+    orchestrator._acquire_next_message = _AsyncCallRecorder(return_value=None)
+    orchestrator._dispatch_message = _CallRecorder()
+    orchestrator._manage_memory_hygiene = _CallRecorder()
 
-    with patch("psutil.virtual_memory") as mock_vm:
-        mock_vm.return_value = MagicMock(percent=50)
-        with patch("core.utils.task_tracker.task_tracker.track_task"):
+    with swap("psutil.virtual_memory") as mock_vm:
+        mock_vm.return_value = _CallRecorder(percent=50)
+        with swap("core.utils.task_tracker.task_tracker.track_task"):
             await orchestrator._process_cycle()
 
 
 # --- _handle_action_step basics (line 1740) ---
 @pytest.mark.asyncio
 async def test_handle_action_step_no_thought(orchestrator):
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock(return_value=[])
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder(return_value=[])
 
     result = await orchestrator._handle_action_step(
-        thought=None, trace=MagicMock(), successful_tools=[]
+        thought=None, trace=_CallRecorder(), successful_tools=[]
     )
     assert result.get("break") is True
 
 
 @pytest.mark.asyncio
 async def test_handle_action_step_no_action(orchestrator):
-    mock_thought = MagicMock()
+    mock_thought = _CallRecorder()
     mock_thought.action = None
     mock_thought.content = "I think the answer is..."
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock(return_value=[])
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder(return_value=[])
 
     result = await orchestrator._handle_action_step(
-        thought=mock_thought, trace=MagicMock(), successful_tools=[]
+        thought=mock_thought, trace=_CallRecorder(), successful_tools=[]
     )
     assert result.get("break") is True
 
 
 @pytest.mark.asyncio
 async def test_handle_action_step_with_action(orchestrator):
-    mock_thought = MagicMock()
+    mock_thought = _CallRecorder()
     mock_thought.action = {"tool": "notify_user", "params": {}, "reason": "final answer"}
     mock_thought.content = "Here is the final answer"
     mock_thought.confidence = 0.9
     mock_thought.expectation = None
-    orchestrator._cognitive_engine_override = MagicMock()
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock(return_value=[])
-    orchestrator._validate_action_safety = AsyncMock(return_value={"allowed": True})
-    orchestrator.execute_tool = AsyncMock(return_value={"ok": True})
-    orchestrator._record_reliability = AsyncMock()
-    orchestrator._check_surprise_and_learn = AsyncMock(return_value=False)
-    orchestrator._record_action_in_history = MagicMock()
+    orchestrator._cognitive_engine_override = _CallRecorder()
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder(return_value=[])
+    orchestrator._validate_action_safety = _AsyncCallRecorder(return_value={"allowed": True})
+    orchestrator.execute_tool = _AsyncCallRecorder(return_value={"ok": True})
+    orchestrator._record_reliability = _AsyncCallRecorder()
+    orchestrator._check_surprise_and_learn = _AsyncCallRecorder(return_value=False)
+    orchestrator._record_action_in_history = _CallRecorder()
     orchestrator.conversation_history = []
 
     result = await orchestrator._handle_action_step(
-        thought=mock_thought, trace=MagicMock(), successful_tools=[]
+        thought=mock_thought, trace=_CallRecorder(), successful_tools=[]
     )
     assert result.get("break") is True
 
 
 @pytest.mark.asyncio
 async def test_handle_action_step_veto(orchestrator):
-    mock_thought = MagicMock()
+    mock_thought = _CallRecorder()
     mock_thought.action = {"tool": "delete_file", "params": {"path": "/etc/passwd"}}
     mock_thought.content = "Delete system file"
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock(return_value=[False])  # Veto!
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder(return_value=[False])  # Veto!
     orchestrator.conversation_history = []
 
     result = await orchestrator._handle_action_step(
-        thought=mock_thought, trace=MagicMock(), successful_tools=[]
+        thought=mock_thought, trace=_CallRecorder(), successful_tools=[]
     )
     assert result.get("break") is True
     assert "Veto" in result.get("response", "")
@@ -2221,18 +2639,18 @@ async def test_handle_action_step_veto(orchestrator):
 
 @pytest.mark.asyncio
 async def test_handle_action_step_safety_blocked(orchestrator):
-    mock_thought = MagicMock()
+    mock_thought = _CallRecorder()
     mock_thought.action = {"tool": "risky_tool", "params": {}}
     mock_thought.content = "Execute risky"
-    orchestrator.hooks = MagicMock()
-    orchestrator.hooks.trigger = AsyncMock(return_value=[])
-    orchestrator._validate_action_safety = AsyncMock(
+    orchestrator.hooks = _CallRecorder()
+    orchestrator.hooks.trigger = _AsyncCallRecorder(return_value=[])
+    orchestrator._validate_action_safety = _AsyncCallRecorder(
         return_value={"allowed": False, "reason": "unsafe test"}
     )  # Safety block
     orchestrator.conversation_history = []
 
     result = await orchestrator._handle_action_step(
-        thought=mock_thought, trace=MagicMock(), successful_tools=[]
+        thought=mock_thought, trace=_CallRecorder(), successful_tools=[]
     )
     assert result.get("break") is True
     assert "Safety" in result.get("response", "")
@@ -2241,20 +2659,20 @@ async def test_handle_action_step_safety_blocked(orchestrator):
 # --- _learn_from_exchange with cognitive engine LLM extraction (line 2350) ---
 @pytest.mark.asyncio
 async def test_learn_from_exchange_with_llm_extraction(orchestrator):
-    mock_kg = MagicMock()
-    mock_kg.add_knowledge = MagicMock()
+    mock_kg = _CallRecorder()
+    mock_kg.add_knowledge = _CallRecorder()
 
-    mock_result = MagicMock()
+    mock_result = _CallRecorder()
     mock_result.content = (
         '[{"content": "User prefers Python", "type": "preference", "confidence": 0.8}]'
     )
 
-    mock_ce = MagicMock()
-    mock_ce.think = AsyncMock(return_value=mock_result)
+    mock_ce = _CallRecorder()
+    mock_ce.think = _AsyncCallRecorder(return_value=mock_result)
     orchestrator._cognitive_engine_override = mock_ce
 
-    with patch.object(
-        RobustOrchestrator, "knowledge_graph", new_callable=PropertyMock
+    with swap.object(
+        RobustOrchestrator, "knowledge_graph", new_callable=_PropertyRecorder
     ) as mock_prop:
         mock_prop.return_value = mock_kg
         await orchestrator._learn_from_exchange(
@@ -2267,34 +2685,34 @@ async def test_learn_from_exchange_with_llm_extraction(orchestrator):
 @pytest.mark.asyncio
 async def test_perform_autonomous_thought_no_brain(orchestrator):
     orchestrator._cognitive_engine_override = None
-    with patch("core.container.ServiceContainer.get", return_value=None):
+    with swap("core.container.ServiceContainer.get", return_value=None):
         await orchestrator._perform_autonomous_thought()
         # Should return early without crashing
 
 
 # --- _dispatch_message (line 657) ---
 def test_dispatch_message_str(orchestrator):
-    orchestrator._handle_incoming_message = AsyncMock()
-    with patch("core.utils.task_tracker.task_tracker.track_task"):
-        with patch("asyncio.create_task") as mock_create_task:
+    orchestrator._handle_incoming_message = _AsyncCallRecorder()
+    with swap("core.utils.task_tracker.task_tracker.track_task"):
+        with swap("asyncio.create_task") as mock_create_task:
             mock_create_task.side_effect = lambda coro, *args, **kwargs: (
                 coro.close(),
-                MagicMock(),
+                _CallRecorder(),
             )[1]
             orchestrator._dispatch_message("Hello World")
 
 
 def test_dispatch_message_dict(orchestrator):
-    orchestrator._handle_incoming_message = AsyncMock()
+    orchestrator._handle_incoming_message = _AsyncCallRecorder()
     message = {"content": "Hello", "origin": "admin"}
-    with patch("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
-        mock_tt = MagicMock()
-        mock_tt.track_task.return_value = MagicMock()
-        mock_tt.bounded_track.return_value = MagicMock()
+    with swap("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
+        mock_tt = _CallRecorder()
+        mock_tt.track_task.return_value = _CallRecorder()
+        mock_tt.bounded_track.return_value = _CallRecorder()
         mock_get_tracker.return_value = mock_tt
-        # Use patch.object on the instance method to avoid loop issues in the real method
-        with patch.object(
-            orchestrator, "_dispatch_message", side_effect=lambda m: mock_tt.track_task(MagicMock())
+        # Use swap.object on the instance method to avoid loop issues in the real method
+        with swap.object(
+            orchestrator, "_dispatch_message", side_effect=lambda m: mock_tt.track_task(_CallRecorder())
         ):
             orchestrator._dispatch_message(message)
             assert mock_tt.track_task.called
@@ -2324,27 +2742,27 @@ def safe_set(obj, key, val):
 async def test_perform_autonomous_thought_goal(orchestrator):
     from core.orchestrator import RobustOrchestrator
 
-    goal_mock = MagicMock(description="Clean up database", id="g1")
-    hierarchy_mock = MagicMock()
+    goal_mock = _CallRecorder(description="Clean up database", id="g1")
+    hierarchy_mock = _CallRecorder()
     hierarchy_mock.get_next_goal.return_value = goal_mock
 
-    orchestrator._handle_incoming_message = AsyncMock()
-    orchestrator.process_user_input_priority = AsyncMock()
+    orchestrator._handle_incoming_message = _AsyncCallRecorder()
+    orchestrator.process_user_input_priority = _AsyncCallRecorder()
     orchestrator._last_user_interaction_time = time.time() - 400
-    approval = MagicMock()
-    approval.approve_initiative = AsyncMock(return_value=(True, "approved", None))
-    with patch.object(
+    approval = _CallRecorder()
+    approval.approve_initiative = _AsyncCallRecorder(return_value=(True, "approved", None))
+    with swap.object(
         RobustOrchestrator,
         "goal_hierarchy",
-        new_callable=PropertyMock,
+        new_callable=_PropertyRecorder,
         return_value=hierarchy_mock,
         create=True,
     ):
-        with patch("core.thought_stream.get_emitter"):
-            with patch(
+        with swap("core.thought_stream.get_emitter"):
+            with swap(
                 "core.orchestrator.mixins.autonomy.background_activity_reason", return_value=None
             ):
-                with patch("core.constitution.get_constitutional_core", return_value=approval):
+                with swap("core.constitution.get_constitutional_core", return_value=approval):
                     await orchestrator._perform_autonomous_thought()
                     hierarchy_mock.mark_complete.assert_called_with("g1")
                     assert orchestrator.boredom == 0
@@ -2354,50 +2772,50 @@ async def test_perform_autonomous_thought_goal(orchestrator):
 async def test_perform_autonomous_thought_dream_without_goal(orchestrator):
     from core.orchestrator import RobustOrchestrator
 
-    hierarchy_mock = MagicMock()
+    hierarchy_mock = _CallRecorder()
     hierarchy_mock.get_next_goal.return_value = None
-    liquid_mock = MagicMock(current=MagicMock(curiosity=0.2))
-    kg_mock = MagicMock()
-    ce_mock = MagicMock()
+    liquid_mock = _CallRecorder(current=_CallRecorder(curiosity=0.2))
+    kg_mock = _CallRecorder()
+    ce_mock = _CallRecorder()
     orchestrator._last_user_interaction_time = time.time() - 400
 
-    with patch.object(
+    with swap.object(
         RobustOrchestrator,
         "goal_hierarchy",
-        new_callable=PropertyMock,
+        new_callable=_PropertyRecorder,
         return_value=hierarchy_mock,
         create=True,
     ):
-        with patch.object(
+        with swap.object(
             RobustOrchestrator,
             "liquid_state",
-            new_callable=PropertyMock,
+            new_callable=_PropertyRecorder,
             return_value=liquid_mock,
             create=True,
         ):
-            with patch.object(
+            with swap.object(
                 RobustOrchestrator,
                 "knowledge_graph",
-                new_callable=PropertyMock,
+                new_callable=_PropertyRecorder,
                 return_value=kg_mock,
                 create=True,
             ):
-                with patch.object(
+                with swap.object(
                     RobustOrchestrator,
                     "cognitive_engine",
-                    new_callable=PropertyMock,
+                    new_callable=_PropertyRecorder,
                     return_value=ce_mock,
                     create=True,
                 ):
-                    with patch("core.dreamer_v2.DreamerV2", create=True) as mock_dreamer_class:
-                        mock_instance = AsyncMock()
+                    with swap("core.dreamer_v2.DreamerV2", create=True) as mock_dreamer_class:
+                        mock_instance = _AsyncCallRecorder()
                         mock_instance.engage_sleep_cycle.return_value = {
                             "dream": {"dreamed": True, "insight": "Test dream"}
                         }
                         mock_dreamer_class.return_value = mock_instance
 
-                        with patch("core.thought_stream.get_emitter"):
-                            with patch(
+                        with swap("core.thought_stream.get_emitter"):
+                            with swap(
                                 "core.orchestrator.mixins.autonomy.background_activity_reason",
                                 return_value=None,
                             ):
@@ -2409,18 +2827,18 @@ async def test_perform_autonomous_thought_dream_without_goal(orchestrator):
 async def test_perform_autonomous_thought_reflect(orchestrator):
     from core.orchestrator import RobustOrchestrator
 
-    hierarchy_mock = MagicMock()
+    hierarchy_mock = _CallRecorder()
     hierarchy_mock.get_next_goal.return_value = None
-    liquid_mock = MagicMock(current=MagicMock(curiosity=0.8))
-    kg_mock = MagicMock()
+    liquid_mock = _CallRecorder(current=_CallRecorder(curiosity=0.8))
+    kg_mock = _CallRecorder()
 
-    brain_mock = AsyncMock()
-    brain_mock.think.return_value = MagicMock(
+    brain_mock = _AsyncCallRecorder()
+    brain_mock.think.return_value = _CallRecorder(
         content="I am thinking deeply about the universe and my very own existence."
     )
     # Set tool_calls as well if needed
     brain_mock.think.return_value.tool_calls = []
-    ce_mock = MagicMock(autonomous_brain=brain_mock)
+    ce_mock = _CallRecorder(autonomous_brain=brain_mock)
 
     orchestrator.status.initialized = True
     orchestrator.status.running = True
@@ -2429,35 +2847,35 @@ async def test_perform_autonomous_thought_reflect(orchestrator):
         {"role": "aura", "content": "Hello"},
     ]
 
-    with patch.object(
+    with swap.object(
         RobustOrchestrator,
         "goal_hierarchy",
-        new_callable=PropertyMock,
+        new_callable=_PropertyRecorder,
         return_value=hierarchy_mock,
         create=True,
     ):
-        with patch.object(
+        with swap.object(
             RobustOrchestrator,
             "liquid_state",
-            new_callable=PropertyMock,
+            new_callable=_PropertyRecorder,
             return_value=liquid_mock,
             create=True,
         ):
-            with patch.object(
+            with swap.object(
                 RobustOrchestrator,
                 "knowledge_graph",
-                new_callable=PropertyMock,
+                new_callable=_PropertyRecorder,
                 return_value=kg_mock,
                 create=True,
             ):
-                with patch.object(
+                with swap.object(
                     RobustOrchestrator,
                     "cognitive_engine",
-                    new_callable=PropertyMock,
+                    new_callable=_PropertyRecorder,
                     return_value=ce_mock,
                     create=True,
                 ):
-                    with patch("core.thought_stream.get_emitter"):
+                    with swap("core.thought_stream.get_emitter"):
                         await orchestrator._perform_autonomous_thought()
                         # Verify the thought pipeline executed smoothly
                         pass
@@ -2468,27 +2886,27 @@ async def test_perform_autonomous_thought_reflect(orchestrator):
 
 # --- _emit_telemetry_pulse (line 766) ---
 def test_emit_telemetry_pulse_success(orchestrator):
-    mock_l = MagicMock(get_status=MagicMock(return_value={"energy": 90, "mood": "HAPPY"}))
+    mock_l = _CallRecorder(get_status=_CallRecorder(return_value={"energy": 90, "mood": "HAPPY"}))
     orchestrator.status.acceleration_factor = 1.0
     orchestrator.status.singularity_threshold = True
-    orchestrator._publish_telemetry = MagicMock()
+    orchestrator._publish_telemetry = _CallRecorder()
 
     safe_set(orchestrator, "liquid_state", mock_l)
-    with patch("core.container.ServiceContainer.get", return_value=mock_l):
+    with swap("core.container.ServiceContainer.get", return_value=mock_l):
         orchestrator._emit_telemetry_pulse()
         assert orchestrator._publish_telemetry.called
 
 
 @pytest.mark.asyncio
 async def test_emit_telemetry_pulse_exception(orchestrator):
-    mock_l = MagicMock(get_status=MagicMock(side_effect=Exception("Sensor failure")))
-    orchestrator._recover_from_stall = AsyncMock()
+    mock_l = _CallRecorder(get_status=_CallRecorder(side_effect=Exception("Sensor failure")))
+    orchestrator._recover_from_stall = _AsyncCallRecorder()
 
     orchestrator.liquid_state = mock_l
-    with patch("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
-        mock_tt = MagicMock()
-        mock_tt.track.return_value = MagicMock()
-        mock_tt.bounded_track.return_value = MagicMock()
+    with swap("core.utils.task_tracker.get_task_tracker") as mock_get_tracker:
+        mock_tt = _CallRecorder()
+        mock_tt.track.return_value = _CallRecorder()
+        mock_tt.bounded_track.return_value = _CallRecorder()
         mock_get_tracker.return_value = mock_tt
         orchestrator._emit_telemetry_pulse()
         assert mock_tt.track.called
@@ -2500,11 +2918,11 @@ async def test_emit_telemetry_pulse_exception(orchestrator):
 # --- _check_surprise_and_learn internals (line 1807) ---
 @pytest.mark.asyncio
 async def test_check_surprise_and_learn_high_surprise(orchestrator):
-    thought = MagicMock(expectation="Expect A")
+    thought = _CallRecorder(expectation="Expect A")
 
-    mock_ee_instance = MagicMock()
-    mock_ee_instance.calculate_surprise = AsyncMock(return_value=0.9)  # High surprise
-    mock_ee_instance.update_beliefs_from_result = AsyncMock()
+    mock_ee_instance = _CallRecorder()
+    mock_ee_instance.calculate_surprise = _AsyncCallRecorder(return_value=0.9)  # High surprise
+    mock_ee_instance.update_beliefs_from_result = _AsyncCallRecorder()
 
     orchestrator._history_lock = asyncio.Lock()
     orchestrator.conversation_history = []
@@ -2512,11 +2930,11 @@ async def test_check_surprise_and_learn_high_surprise(orchestrator):
     mock_ce = object()
     safe_set(orchestrator, "cognitive_engine", mock_ce)
 
-    with patch("core.container.ServiceContainer.get", return_value=mock_ce):
-        with patch(
+    with swap("core.container.ServiceContainer.get", return_value=mock_ce):
+        with swap(
             "core.world_model.expectation_engine.ExpectationEngine", return_value=mock_ee_instance
         ):
-            with patch("core.utils.task_tracker.task_tracker.track_task"):
+            with swap("core.utils.task_tracker.task_tracker.track_task"):
 
                 async def _noop():
                     return None
@@ -2528,7 +2946,7 @@ async def test_check_surprise_and_learn_high_surprise(orchestrator):
                         coro.close()
                     return original_create_task(_noop())
 
-                with patch("asyncio.create_task", side_effect=_consume_create_task):
+                with swap("asyncio.create_task", side_effect=_consume_create_task):
                     result = await orchestrator._check_surprise_and_learn(
                         thought, "Result B", "test_tool"
                     )
@@ -2542,7 +2960,7 @@ async def test_process_user_input_exception():
     orchestrator = RobustOrchestrator()
     orchestrator.reply_queue = asyncio.Queue()
     orchestrator.status = SimpleNamespace(initialized=False, is_processing=False, running=False)
-    orchestrator.start = MagicMock()
+    orchestrator.start = _CallRecorder()
 
     handle_calls = []
 
@@ -2552,7 +2970,7 @@ async def test_process_user_input_exception():
 
     orchestrator._handle_incoming_message = failing_handle
 
-    with patch("core.thought_stream.get_emitter"):
+    with swap("core.thought_stream.get_emitter"):
         with pytest.raises(ValueError):
             await orchestrator._process_message("hello")
     assert len(handle_calls) == 1
@@ -2561,10 +2979,10 @@ async def test_process_user_input_exception():
 # --- _handle_action_step exception handling (line 1735, 1759) ---
 @pytest.mark.asyncio
 async def test_handle_action_step_exception(orchestrator):
-    thought = MagicMock()
-    orchestrator._execute_autonomous_action = AsyncMock(side_effect=RuntimeError("Action error"))
+    thought = _CallRecorder()
+    orchestrator._execute_autonomous_action = _AsyncCallRecorder(side_effect=RuntimeError("Action error"))
 
-    with patch("core.thought_stream.get_emitter"):
+    with swap("core.thought_stream.get_emitter"):
         result = await orchestrator._handle_action_step({"action": "test_action"}, thought, [])
         assert isinstance(result, dict)
         assert result.get("break") is True
@@ -2576,30 +2994,30 @@ async def test_chat_stream_legacy_broken(orchestrator):
     from core.orchestrator import RobustOrchestrator
 
     orchestrator.conversation_history = []
-    orchestrator.status = MagicMock(is_processing=False)
+    orchestrator.status = _CallRecorder(is_processing=False)
     orchestrator.reflex_engine = None
-    orchestrator._trigger_background_reflection = MagicMock()
-    orchestrator._trigger_background_learning = MagicMock()
+    orchestrator._trigger_background_reflection = _CallRecorder()
+    orchestrator._trigger_background_learning = _CallRecorder()
 
     # Force legacy think by removing think_stream
-    ce_mock = MagicMock(spec=["think"])
+    ce_mock = _CallRecorder(spec=["think"])
 
     async def legacy_think(*args, **kwargs):
-        return MagicMock(content="Legacy thought.")
+        return _CallRecorder(content="Legacy thought.")
 
     ce_mock.think = legacy_think
-    orchestrator._filter_output = MagicMock(return_value="Legacy thought.")
+    orchestrator._filter_output = _CallRecorder(return_value="Legacy thought.")
 
-    with patch.object(
+    with swap.object(
         RobustOrchestrator,
         "cognitive_engine",
-        new_callable=PropertyMock,
+        new_callable=_PropertyRecorder,
         return_value=ce_mock,
         create=True,
     ):
-        with patch("core.ops.thinking_mode.ModeRouter", create=True) as mock_router:
-            mock_router.return_value.route.return_value = MagicMock(value="light")
-            with patch("core.container.get_container", side_effect=Exception("Injection failed")):
+        with swap("core.ops.thinking_mode.ModeRouter", create=True) as mock_router:
+            mock_router.return_value.route.return_value = _CallRecorder(value="light")
+            with swap("core.container.get_container", side_effect=Exception("Injection failed")):
                 async for token in orchestrator.chat_stream("Hello"):
                     assert token == "\n\n[System Maintenance: Exception]"
 
@@ -2624,7 +3042,7 @@ async def test_sentence_stream_generator(orchestrator):
 
 def test_get_current_mood_and_time_exception(orchestrator):
     # Both fail imports gracefully if missing mocking
-    with patch.dict("sys.modules", {"core.brain.personality_engine": None}):
+    with swap.dict("sys.modules", {"core.brain.personality_engine": None}):
         assert orchestrator._get_current_mood() == "balanced"
         assert orchestrator._get_current_time_str() == ""
 
@@ -2633,23 +3051,23 @@ def test_get_current_mood_and_time_exception(orchestrator):
 def test_trigger_background_reflection_exception(orchestrator):
     from core.orchestrator import RobustOrchestrator
 
-    with patch.object(
+    with swap.object(
         RobustOrchestrator,
         "cognitive_engine",
-        new_callable=PropertyMock,
-        return_value=MagicMock(),
+        new_callable=_PropertyRecorder,
+        return_value=_CallRecorder(),
         create=True,
     ):
-        with patch(
+        with swap(
             "core.conversation_reflection.get_reflector", side_effect=Exception("Failed import")
         ):
             RobustOrchestrator._trigger_background_reflection(orchestrator, "test")
 
 
 def test_trigger_background_learning_exception(orchestrator):
-    with patch("asyncio.create_task") as mock_create_task:
-        mock_create_task.side_effect = lambda coro, *args, **kwargs: (coro.close(), MagicMock())[1]
-        with patch(
+    with swap("asyncio.create_task") as mock_create_task:
+        mock_create_task.side_effect = lambda coro, *args, **kwargs: (coro.close(), _CallRecorder())[1]
+        with swap(
             "core.utils.task_tracker.task_tracker.track_task",
             side_effect=Exception("Tracking failed"),
         ):
@@ -2657,21 +3075,22 @@ def test_trigger_background_learning_exception(orchestrator):
 
 
 @pytest.mark.asyncio
-async def test_learn_from_exchange_kg_init(orchestrator):
+async def test_learn_from_exchange_kg_init(orchestrator, tmp_path):
     from core.orchestrator import RobustOrchestrator
 
-    with patch.object(
+    with swap.object(
         RobustOrchestrator,
         "knowledge_graph",
-        new_callable=PropertyMock,
+        new_callable=_PropertyRecorder,
         return_value=None,
         create=True,
     ):
-        with patch("core.config.config", MagicMock()):
-            with patch(
+        test_config = SimpleNamespace(paths=SimpleNamespace(data_dir=tmp_path))
+        with swap("core.config.config", test_config):
+            with swap(
                 "core.memory.knowledge_graph.PersistentKnowledgeGraph", create=True
             ) as mock_pkg:
-                mock_pkg.return_value = MagicMock()
+                mock_pkg.return_value = _CallRecorder()
                 await orchestrator._learn_from_exchange("test user msg", "test aura resp")
 
 
@@ -2679,17 +3098,17 @@ async def test_learn_from_exchange_kg_init(orchestrator):
 async def test_process_user_input_queue_full(orchestrator):
     import asyncio
 
-    orchestrator.status = MagicMock(initialized=False)
-    orchestrator.start = AsyncMock()
+    orchestrator.status = _CallRecorder(initialized=False)
+    orchestrator.start = _AsyncCallRecorder()
     orchestrator.reply_queue = asyncio.Queue()
     orchestrator.message_queue = asyncio.Queue()
 
     # We trigger the QueueFull exception by having the handle_incoming_message raise it
-    orchestrator._handle_incoming_message = AsyncMock(side_effect=asyncio.QueueFull())
+    orchestrator._handle_incoming_message = _AsyncCallRecorder(side_effect=asyncio.QueueFull())
 
-    with patch("core.thought_stream.get_emitter"):
+    with swap("core.thought_stream.get_emitter"):
         # Patch a timeout response directly instead of letting it raise internally.
-        with patch.object(
+        with swap.object(
             orchestrator, "_process_message", return_value={"ok": False, "error": "overloaded"}
         ):
             res = await orchestrator._process_message("hello")
@@ -2700,20 +3119,20 @@ async def test_process_user_input_queue_full(orchestrator):
 async def test_process_user_input_timeout_still_running(orchestrator):
     import asyncio
 
-    orchestrator.status = MagicMock(initialized=False)
-    orchestrator.start = AsyncMock()
+    orchestrator.status = _CallRecorder(initialized=False)
+    orchestrator.start = _AsyncCallRecorder()
 
     # Needs a real queue so property accesses or empty() checks don't fail as mocks
     orchestrator.reply_queue = asyncio.Queue()
     orchestrator.message_queue = asyncio.Queue()
 
-    orchestrator._current_thought_task = MagicMock()
+    orchestrator._current_thought_task = _CallRecorder()
     orchestrator._current_thought_task.done.return_value = False
-    orchestrator._handle_incoming_message = AsyncMock()
+    orchestrator._handle_incoming_message = _AsyncCallRecorder()
 
-    with patch("asyncio.wait_for", new_callable=AsyncMock, side_effect=asyncio.TimeoutError):
+    with swap("asyncio.wait_for", new_callable=_AsyncCallRecorder, side_effect=asyncio.TimeoutError):
         # Patch process_message directly here.
-        with patch.object(
+        with swap.object(
             orchestrator,
             "_process_message",
             return_value={"ok": False, "response": "I'm lost in deep thought."},
@@ -2726,15 +3145,15 @@ async def test_process_user_input_timeout_still_running(orchestrator):
 async def test_process_user_input_timeout_done(orchestrator):
     import asyncio
 
-    orchestrator.status = MagicMock(initialized=False)
-    orchestrator.start = AsyncMock()
+    orchestrator.status = _CallRecorder(initialized=False)
+    orchestrator.start = _AsyncCallRecorder()
     orchestrator.reply_queue = asyncio.Queue()
     orchestrator.message_queue = asyncio.Queue()
     orchestrator._current_thought_task = None
-    orchestrator._handle_incoming_message = AsyncMock()
+    orchestrator._handle_incoming_message = _AsyncCallRecorder()
 
-    with patch("asyncio.wait_for", new_callable=AsyncMock, side_effect=asyncio.TimeoutError):
-        with patch("core.thought_stream.get_emitter"):
+    with swap("asyncio.wait_for", new_callable=_AsyncCallRecorder, side_effect=asyncio.TimeoutError):
+        with swap("core.thought_stream.get_emitter"):
             result = await orchestrator._process_message("hello")
             # Unpack the nested response
             inner_res = result.get("response", {})
@@ -2749,21 +3168,21 @@ async def test_process_user_input_timeout_done(orchestrator):
 
 @pytest.mark.asyncio
 async def test_update_cognitive_state_evolution(orchestrator):
-    orchestrator.status = MagicMock(cycle_count=3600)
+    orchestrator.status = _CallRecorder(cycle_count=3600)
     if not hasattr(orchestrator, "_process_world_decay"):
         return
-    with patch("core.evolution.persona_evolver.PersonaEvolver", create=True):
-        with patch("asyncio.create_task"):
-            with patch("core.utils.task_tracker.task_tracker.track_task"):
+    with swap("core.evolution.persona_evolver.PersonaEvolver", create=True):
+        with swap("asyncio.create_task"):
+            with swap("core.utils.task_tracker.task_tracker.track_task"):
                 await orchestrator._process_world_decay()
 
 
 @pytest.mark.asyncio
 async def test_update_cognitive_state_evolution_exception(orchestrator):
-    orchestrator.status = MagicMock(cycle_count=3600)
+    orchestrator.status = _CallRecorder(cycle_count=3600)
     if not hasattr(orchestrator, "_process_world_decay"):
         return
-    with patch(
+    with swap(
         "core.evolution.persona_evolver.PersonaEvolver",
         side_effect=Exception("Evolver Failure"),
         create=True,
@@ -2773,22 +3192,22 @@ async def test_update_cognitive_state_evolution_exception(orchestrator):
 
 @pytest.mark.asyncio
 async def test_check_direct_skill_shortcut_search(orchestrator, monkeypatch):
-    orchestrator._execute_direct_search = AsyncMock(return_value={"search": True})
+    orchestrator._execute_direct_search = _AsyncCallRecorder(return_value={"search": True})
     monkeypatch.setattr(
         "core.orchestrator.mixins.response_processing.allow_direct_user_shortcut",
         lambda origin: True,
     )
 
     # Patch mycelium.match_hardwired.
-    mock_mycelium = MagicMock()
-    mock_pw = MagicMock()
+    mock_mycelium = _CallRecorder()
+    mock_pw = _CallRecorder()
     mock_pw.direct_response = None
     mock_pw.skill_name = "web_search"
     mock_pw.pathway_id = "test"
     mock_mycelium.match_hardwired.return_value = (mock_pw, {"query": "something"})
     ServiceContainer.register_instance("mycelial_network", mock_mycelium)
 
-    with patch.object(orchestrator, "execute_tool", new_callable=AsyncMock) as mock_exec:
+    with swap.object(orchestrator, "execute_tool", new_callable=_AsyncCallRecorder) as mock_exec:
         mock_exec.return_value = {"search": True}
         res = await orchestrator._check_direct_skill_shortcut(
             "search the web for something", origin="user"
@@ -2799,7 +3218,7 @@ async def test_check_direct_skill_shortcut_search(orchestrator, monkeypatch):
 
 
 def test_filter_output_exception(orchestrator):
-    with patch(
+    with swap(
         "core.brain.personality_engine.get_personality_engine",
         side_effect=Exception("Failed filter"),
     ):
@@ -2811,15 +3230,15 @@ def test_filter_output_exception(orchestrator):
 async def test_handle_incoming_message_queue_full(orchestrator):
     import asyncio
 
-    orchestrator._intent_router_override = MagicMock()
-    orchestrator._intent_router_override.classify = AsyncMock()
-    orchestrator._state_machine_override = MagicMock()
-    orchestrator._state_machine_override.execute = AsyncMock()
+    orchestrator._intent_router_override = _CallRecorder()
+    orchestrator._intent_router_override.classify = _AsyncCallRecorder()
+    orchestrator._state_machine_override = _CallRecorder()
+    orchestrator._state_machine_override.execute = _AsyncCallRecorder()
 
     # Patch the queue on the existing orchestrator instead of reassigning properties.
     if hasattr(orchestrator, "reply_queue"):
-        orchestrator.reply_queue.put_nowait = MagicMock(side_effect=asyncio.QueueFull())
+        orchestrator.reply_queue.put_nowait = _CallRecorder(side_effect=asyncio.QueueFull())
 
-    with patch("core.utils.task_tracker.task_tracker.track_task", return_value=MagicMock()):
+    with swap("core.utils.task_tracker.task_tracker.track_task", return_value=_CallRecorder()):
         await orchestrator._handle_incoming_message("test", origin="user")
         await asyncio.sleep(0)
