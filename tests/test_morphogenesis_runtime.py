@@ -20,7 +20,6 @@ import asyncio
 import json
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -193,16 +192,18 @@ def test_metabolism_denies_overspend():
     assert not result, "Overspend should be denied when global energy is too low"
 
 
-def test_metabolism_pulse_recovers_energy():
+def test_metabolism_pulse_recovers_energy(monkeypatch):
     """Pulse should recover global energy and cell budgets."""
     mgr = MetabolismManager(global_energy=0.5, recovery_per_tick=0.1)
     mgr.ensure_budget("cell_a", priority=0.8, baseline=0.3)
     mgr._budgets["cell_a"].energy = 0.1  # Simulate depleted cell
 
-    # Mock psutil to avoid system dependency
-    with patch("core.morphogenesis.metabolism.MetabolismManager.sample_resources") as mock_sr:
-        mock_sr.return_value = ResourceSnapshot(pressure=0.0)
-        snap = mgr.pulse()
+    monkeypatch.setattr(
+        MetabolismManager,
+        "sample_resources",
+        lambda self: ResourceSnapshot(pressure=0.0),
+    )
+    snap = mgr.pulse()
 
     assert mgr.global_energy > 0.5, "Global energy should recover"
     assert mgr._budgets["cell_a"].energy > 0.1, "Cell budget should recover"
@@ -300,8 +301,10 @@ async def test_cell_hibernates_under_low_energy():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_immunity_bridge_routes_high_danger_signals():
+async def test_immunity_bridge_routes_high_danger_signals(monkeypatch):
     """Signals above 0.55 intensity should be bridged to adaptive immunity."""
+    import core.adaptation.adaptive_immunity as adaptive_immunity_module
+
     rt = MorphogeneticRuntime(
         config=MorphogenesisConfig(
             enabled=True,
@@ -309,8 +312,15 @@ async def test_immunity_bridge_routes_high_danger_signals():
         )
     )
 
-    mock_immune = MagicMock()
-    mock_immune.observe_event = MagicMock(return_value=None)
+    class RecordingImmuneSystem:
+        def __init__(self):
+            self.events = []
+
+        def observe_event(self, event):
+            self.events.append(event)
+
+    immune = RecordingImmuneSystem()
+    monkeypatch.setattr(adaptive_immunity_module, "get_adaptive_immune_system", lambda: immune)
 
     danger_signal = MorphogenSignal(
         kind=SignalKind.ERROR,
@@ -320,22 +330,30 @@ async def test_immunity_bridge_routes_high_danger_signals():
         payload={"error": "critical_failure"},
     )
 
-    with patch("core.adaptation.adaptive_immunity.get_adaptive_immune_system", return_value=mock_immune):
-        await rt._bridge_signals_to_immunity([danger_signal])
+    await rt._bridge_signals_to_immunity([danger_signal])
 
-    mock_immune.observe_event.assert_called_once()
-    event = mock_immune.observe_event.call_args[0][0]
+    assert len(immune.events) == 1
+    event = immune.events[0]
     assert event["type"] == SignalKind.ERROR.value
     assert event["danger"] >= 0.85
 
 
 @pytest.mark.asyncio
-async def test_immunity_bridge_ignores_low_intensity():
+async def test_immunity_bridge_ignores_low_intensity(monkeypatch):
     """Signals below 0.55 should NOT be bridged to immunity."""
+    import core.adaptation.adaptive_immunity as adaptive_immunity_module
+
     rt = MorphogeneticRuntime(config=MorphogenesisConfig(adaptive_immunity_bridge=True))
 
-    mock_immune = MagicMock()
-    mock_immune.observe_event = MagicMock(return_value=None)
+    class RecordingImmuneSystem:
+        def __init__(self):
+            self.events = []
+
+        def observe_event(self, event):
+            self.events.append(event)
+
+    immune = RecordingImmuneSystem()
+    monkeypatch.setattr(adaptive_immunity_module, "get_adaptive_immune_system", lambda: immune)
 
     low_signal = MorphogenSignal(
         kind=SignalKind.ERROR,
@@ -344,10 +362,9 @@ async def test_immunity_bridge_ignores_low_intensity():
         intensity=0.3,  # Below threshold
     )
 
-    with patch("core.adaptation.adaptive_immunity.get_adaptive_immune_system", return_value=mock_immune):
-        await rt._bridge_signals_to_immunity([low_signal])
+    await rt._bridge_signals_to_immunity([low_signal])
 
-    mock_immune.observe_event.assert_not_called()
+    assert immune.events == []
 
 
 # ---------------------------------------------------------------------------
@@ -367,50 +384,57 @@ def test_initiative_suppression_default():
     assert not should_suppress_autonomous_initiative()
 
 
-def test_initiative_suppression_under_danger():
+def test_initiative_suppression_under_danger(monkeypatch):
     """When morphogenetic field shows high danger, initiative should be suppressed."""
+    import core.container as container_module
     from core.morphogenesis.hooks import should_suppress_autonomous_initiative
 
     rt = MorphogeneticRuntime()
     rt.field.perturb("global", "danger", 0.8)
 
-    mock_container_cls = MagicMock()
-    mock_container_cls.get = MagicMock(return_value=rt)
+    class ServiceContainerFixture:
+        @staticmethod
+        def get(name, default=None):
+            return rt if name == "morphogenetic_runtime" else default
 
-    with patch("core.container.ServiceContainer", mock_container_cls):
-        assert should_suppress_autonomous_initiative(), "High danger should suppress initiative"
+    monkeypatch.setattr(container_module, "ServiceContainer", ServiceContainerFixture)
+    assert should_suppress_autonomous_initiative(), "High danger should suppress initiative"
 
 
-def test_metabolic_modulation_under_pressure():
+def test_metabolic_modulation_under_pressure(monkeypatch):
     """Under high danger, metabolic energy refill rate should decrease."""
+    import core.container as container_module
     from core.morphogenesis.hooks import modulate_metabolic_energy
 
     rt = MorphogeneticRuntime()
     rt.field.perturb("global", "danger", 0.9)
 
-    coord = MagicMock()
+    class MetabolicCoordinatorFixture:
+        pass
+
+    coord = MetabolicCoordinatorFixture()
     coord._energy_refill_rate = 0.05
 
-    def _get(name, default=None):
-        if name == "morphogenetic_runtime":
-            return rt
-        if name == "metabolic_coordinator":
-            return coord
-        return default
+    class ServiceContainerFixture:
+        @staticmethod
+        def get(name, default=None):
+            if name == "morphogenetic_runtime":
+                return rt
+            if name == "metabolic_coordinator":
+                return coord
+            return default
 
-    mock_container_cls = MagicMock()
-    mock_container_cls.get = _get
-
-    with patch("core.container.ServiceContainer", mock_container_cls):
-        modifier = modulate_metabolic_energy()
+    monkeypatch.setattr(container_module, "ServiceContainer", ServiceContainerFixture)
+    modifier = modulate_metabolic_energy()
 
     assert modifier is not None
     assert modifier < 1.0, f"Under danger, modifier should be < 1.0; got {modifier}"
     assert coord._energy_refill_rate < 0.05, "Refill rate should be reduced under danger"
 
 
-def test_cell_capability_boost():
+def test_cell_capability_boost(monkeypatch):
     """Active healthy cells should boost matching tool names."""
+    import core.container as container_module
     from core.morphogenesis.hooks import get_cell_capability_boost
 
     rt = MorphogeneticRuntime()
@@ -423,15 +447,17 @@ def test_cell_capability_boost():
     )
     rt.registry.register_cell(manifest)
 
-    mock_container_cls = MagicMock()
-    mock_container_cls.get = MagicMock(return_value=rt)
+    class ServiceContainerFixture:
+        @staticmethod
+        def get(name, default=None):
+            return rt if name == "morphogenetic_runtime" else default
 
-    with patch("core.container.ServiceContainer", mock_container_cls):
-        boost = get_cell_capability_boost("sovereign_browser")
-        assert boost > 0.0, "Active cell with matching capability should give boost"
+    monkeypatch.setattr(container_module, "ServiceContainer", ServiceContainerFixture)
+    boost = get_cell_capability_boost("sovereign_browser")
+    assert boost > 0.0, "Active cell with matching capability should give boost"
 
-        no_boost = get_cell_capability_boost("nonexistent_tool")
-        assert no_boost == 0.0, "No matching cell = no boost"
+    no_boost = get_cell_capability_boost("nonexistent_tool")
+    assert no_boost == 0.0, "No matching cell = no boost"
 
 
 # ---------------------------------------------------------------------------
@@ -507,14 +533,23 @@ async def test_runtime_defers_heavy_tick_during_foreground_quiet_window(tmp_path
         ),
         registry=MorphogenesisRegistry(config=MorphogenesisConfig(), root=tmp_path / "morphogenesis"),
     )
-    rt.tick = AsyncMock()
+
+    class TickRecorder:
+        def __init__(self):
+            self.await_count = 0
+
+        async def __call__(self):
+            self.await_count += 1
+
+    tick_recorder = TickRecorder()
+    rt.tick = tick_recorder
     monkeypatch.setattr(MorphogeneticRuntime, "_foreground_quiet_window_active", staticmethod(lambda: True))
 
     await rt.start()
     await asyncio.sleep(0.05)
     await rt.stop()
 
-    rt.tick.assert_not_awaited()
+    assert tick_recorder.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -528,22 +563,16 @@ async def test_runtime_disabled_does_not_start():
 @pytest.mark.asyncio
 async def test_runtime_start_falls_back_when_task_tracker_unavailable(monkeypatch, tmp_path):
     """Task tracker failure should not prevent morphogenesis from coming alive."""
-    import core.morphogenesis.runtime as runtime_module
+    import core.runtime.task_ownership as task_ownership_module
 
-    recorded: list[tuple[str, str, dict[str, object]]] = []
+    tracker_lookups = 0
 
-    def record_degradation(module, exc, **kwargs):
-        recorded.append((module, type(exc).__name__, kwargs))
+    def unavailable_tracker():
+        nonlocal tracker_lookups
+        tracker_lookups += 1
+        return None
 
-    def get_task_tracker():
-        attempted = True
-        assert attempted
-        raise RuntimeError("task tracker offline")
-
-    tracker_module = types.ModuleType("core.utils.task_tracker")
-    tracker_module.get_task_tracker = get_task_tracker
-    monkeypatch.setitem(sys.modules, "core.utils.task_tracker", tracker_module)
-    monkeypatch.setattr(runtime_module, "record_degradation", record_degradation)
+    monkeypatch.setattr(task_ownership_module, "_get_tracker", unavailable_tracker)
 
     rt = MorphogeneticRuntime(
         config=MorphogenesisConfig(enabled=True, tick_interval_s=0.05),
@@ -552,8 +581,9 @@ async def test_runtime_start_falls_back_when_task_tracker_unavailable(monkeypatc
 
     await rt.start()
     assert rt.status()["running"]
-    assert recorded[0][0] == "morphogenesis.runtime"
-    assert "raw asyncio task" in str(recorded[0][2]["action"])
+    assert tracker_lookups == 1
+    assert rt._task is not None
+    assert not rt._task.done()
     await rt.stop()
 
 

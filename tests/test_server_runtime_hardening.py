@@ -5505,7 +5505,7 @@ def test_formal_state_commit_recovery_invariant():
 def test_formal_actor_lifecycle_rejects_invalid_transition():
     from core.runtime.formal_models import ActorLifecycle, ActorState
 
-    actor = ActorLifecycle("dummy")
+    actor = ActorLifecycle("formal_lifecycle_actor")
     assert actor.transition(ActorState.HEALTHY) is False  # can't skip BOOTING
     actor.transition(ActorState.BOOTING)
     actor.transition(ActorState.HEALTHY)

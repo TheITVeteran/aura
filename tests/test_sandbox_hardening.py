@@ -20,7 +20,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
 import pytest
 
@@ -138,11 +138,14 @@ class TestShadowASTHealerGovernance:
 
         try:
             healer = ShadowASTHealer()
-            # Mock governance to deny
-            with patch.object(healer, "_check_governance", return_value=False):
+            original_check = healer._check_governance
+            healer._check_governance = lambda *_args, **_kwargs: False
+            try:
                 asyncio.run(
                     healer.attempt_repair(temp_path, "name 'undefined_var' is not defined")
                 )
+            finally:
+                healer._check_governance = original_check
             # File should be unchanged
             content = temp_path.read_text()
             assert "original content" in content
@@ -173,18 +176,29 @@ class TestShadowASTHealerGovernance:
 class TestServiceContainerLocking:
     """Verify ServiceContainer registration lock cannot be silently bypassed."""
 
-    def test_unlock_registration_logs_audit_trail(self):
+    def test_unlock_registration_logs_audit_trail(self, monkeypatch):
         """unlock_registration() must produce an auditable log entry."""
+        import core.container as container_module
         from core.container import ServiceContainer
 
-        with patch("core.container.logger") as mock_logger:
-            ServiceContainer.unlock_registration(caller="test_suite", reason="verifying audit trail")
-            # Must log at WARNING level (not just debug) for audit visibility
-            calls = [str(c) for c in mock_logger.method_calls]
-            assert any("UNLOCK" in str(c).upper() for c in calls), \
-                "unlock_registration() must log at audit-visible level"
-            # Re-lock to restore state
-            ServiceContainer.lock_registration()
+        class RecordingLogger:
+            def __init__(self):
+                self.warning_calls = []
+
+            def warning(self, message, *args, **kwargs):
+                self.warning_calls.append((message, args, kwargs))
+
+            def info(self, *args, **kwargs):
+                return None
+
+        logger = RecordingLogger()
+        monkeypatch.setattr(container_module, "logger", logger)
+
+        ServiceContainer.unlock_registration(caller="test_suite", reason="verifying audit trail")
+        calls = [str(call) for call in logger.warning_calls]
+        assert any("UNLOCK" in call.upper() for call in calls), \
+            "unlock_registration() must log at audit-visible level"
+        ServiceContainer.lock_registration()
 
     def test_lock_prevents_factory_registration(self):
         """After locking, factory-based register() should be blocked."""
@@ -212,7 +226,7 @@ class TestSnapshotThawGovernance:
         """Thaw must log that governance was consulted."""
         from core.resilience.snapshot_manager import SnapshotManager
 
-        manager = SnapshotManager(orchestrator=MagicMock())
+        manager = SnapshotManager(orchestrator=SimpleNamespace())
 
         # Create a minimal valid snapshot
         manager.snapshot_file.parent.mkdir(parents=True, exist_ok=True)
@@ -224,16 +238,14 @@ class TestSnapshotThawGovernance:
         }
         manager.snapshot_file.write_text(json.dumps(snapshot))
 
-        with patch("core.resilience.snapshot_manager.logger"):
-            manager.thaw()
-            # Verify governance was at least logged
-            # The thaw should complete (governance check is now inline)
+        manager.thaw()
+        # The thaw should complete with governance approval encoded in the snapshot.
 
     def test_snapshot_version_mismatch_rejected(self):
         """Snapshots with wrong version must be rejected."""
         from core.resilience.snapshot_manager import SnapshotManager
 
-        manager = SnapshotManager(orchestrator=MagicMock())
+        manager = SnapshotManager(orchestrator=SimpleNamespace())
         manager.snapshot_file.parent.mkdir(parents=True, exist_ok=True)
         snapshot = {"version": "0.0", "timestamp": time.time(), "subsystems": {}}
         manager.snapshot_file.write_text(json.dumps(snapshot))
@@ -241,21 +253,32 @@ class TestSnapshotThawGovernance:
         result = manager.thaw()
         assert result is False
 
-    def test_thaw_governance_calls_unified_will_with_canonical_signature(self):
+    def test_thaw_governance_calls_unified_will_with_canonical_signature(self, monkeypatch):
         """Snapshot thaw should use UnifiedWill's content/source/domain signature."""
+        import core.will as will_module
         from core.resilience.snapshot_manager import SnapshotManager
 
-        manager = SnapshotManager(orchestrator=MagicMock())
-        decision = MagicMock()
-        decision.is_approved.return_value = True
-        will = MagicMock()
-        will.decide.return_value = decision
+        manager = SnapshotManager(orchestrator=SimpleNamespace())
 
-        with patch("core.will.get_will", return_value=will):
-            approved = manager._governance_approve_thaw()
+        class ApprovedDecision:
+            def is_approved(self):
+                return True
+
+        class RecordingWill:
+            def __init__(self):
+                self.decide_kwargs = None
+
+            def decide(self, **kwargs):
+                self.decide_kwargs = kwargs
+                return ApprovedDecision()
+
+        will = RecordingWill()
+        monkeypatch.setattr(will_module, "get_will", lambda: will)
+        approved = manager._governance_approve_thaw()
 
         assert approved is True
-        _, kwargs = will.decide.call_args
+        kwargs = will.decide_kwargs
+        assert kwargs is not None
         assert kwargs["content"] == "snapshot_thaw"
         assert kwargs["source"] == "snapshot_manager"
         assert kwargs["domain"].value == "state_mutation"
