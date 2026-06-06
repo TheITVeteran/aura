@@ -28,6 +28,7 @@ _PREFIX_ORIGIN_MAP = {
     "[VOICE]": "voice",
     "[ADMIN]": "admin",
 }
+THINKING_WATCHDOG_TIMEOUT_S = 300.0
 
 
 def _record_incoming_degradation(
@@ -1548,14 +1549,18 @@ class IncomingLogicMixin:
 
             self._current_task_is_autonomous = origin not in ("user", "voice", "admin")  # v47
 
-            # v14.1 HARDENING: Thinking Watchdog (120s)
+            # v14.1 HARDENING: Thinking Watchdog
             # Wrap the task in a wait_for to prevent infinite hangs.
             async def _watchdog_wrapper():
                 try:
-                    return await asyncio.wait_for(_execute_and_reply(), timeout=300.0)
+                    return await asyncio.wait_for(
+                        _execute_and_reply(),
+                        timeout=THINKING_WATCHDOG_TIMEOUT_S,
+                    )
                 except TimeoutError:
                     logger.error(
-                        "🛑 [WATCHDOG] Thinking task exceeded 300s limit. Force terminating."
+                        "🛑 [WATCHDOG] Thinking task exceeded %.0fs limit. Force terminating.",
+                        THINKING_WATCHDOG_TIMEOUT_S,
                     )
                     await self._handle_thinking_timeout(origin)
                     return "Cognitive process timed out."

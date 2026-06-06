@@ -12,9 +12,10 @@ This satisfies Phase 22.10.
 import json
 import logging
 import time
-from dataclasses import dataclass, field, asdict
+import uuid
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List
 
 from core.runtime.file_write_gateway import get_file_write_gateway
 
@@ -50,7 +51,7 @@ class RSILab:
 
     def submit_candidate(self, artifact_type: str, content: Any, rationale: str) -> str:
         """Submit a new artifact for evaluation."""
-        candidate_id = f"cand_{int(time.time())}_{len(self.candidates)}"
+        candidate_id = f"cand_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
         candidate = CandidateArtifact(
             id=candidate_id,
             artifact_type=artifact_type,
@@ -169,19 +170,30 @@ class RSILab:
         """Fetch candidates that passed evaluation and are ready for promotion."""
         return [c for c in self.candidates.values() if c.status == 'passed']
 
-    def promote(self, candidate_id: str):
+    def promote(self, candidate_id: str) -> bool:
         """Mark as promoted. The actual integration is handled by the caller."""
-        if candidate_id in self.candidates:
-            self.candidates[candidate_id].status = 'promoted'
-            self._save()
-            logger.info(f"🚀 Candidate {candidate_id} promoted to core!")
+        candidate = self.candidates.get(candidate_id)
+        if candidate is None:
+            logger.warning("RSI Lab promotion rejected unknown candidate: %s", candidate_id)
+            return False
+        if candidate.status != 'passed':
+            logger.warning(
+                "RSI Lab promotion rejected candidate %s with status %s.",
+                candidate_id,
+                candidate.status,
+            )
+            return False
+        candidate.status = 'promoted'
+        self._save()
+        logger.info(f"🚀 Candidate {candidate_id} promoted to core!")
+        return True
 
     def _save(self):
         try:
             data = {k: asdict(v) for k, v in self.candidates.items()}
             get_file_write_gateway().write_text(
                 self.lab_dir / "candidates.json",
-                json.dumps(data, indent=4),
+                json.dumps(data, indent=4, sort_keys=True),
                 source="research.meta_learning_loop.candidates",
             )
         except RSI_LAB_IO_ERRORS as e:
@@ -192,11 +204,27 @@ class RSILab:
         if not file_path.exists():
             return
         try:
-            with open(file_path, "r") as f:
-                data = json.load(f)
-            self.candidates = {k: CandidateArtifact(**v) for k, v in data.items()}
+            data = json.loads(file_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, TypeError, ValueError) as e:
             logger.error(f"Failed to load RSI Lab candidates: {e}")
+            return
+        if not isinstance(data, dict):
+            logger.error("Failed to load RSI Lab candidates: expected object, got %s", type(data).__name__)
+            return
+
+        loaded: Dict[str, CandidateArtifact] = {}
+        invalid: list[str] = []
+        for candidate_id, payload in data.items():
+            if not isinstance(payload, dict):
+                invalid.append(str(candidate_id))
+                continue
+            try:
+                loaded[str(candidate_id)] = CandidateArtifact(**payload)
+            except (TypeError, ValueError) as exc:
+                invalid.append(f"{candidate_id}:{type(exc).__name__}")
+        if invalid:
+            logger.error("Skipped invalid RSI Lab candidate records: %s", ", ".join(invalid[:10]))
+        self.candidates = loaded
 
 def register_rsi_lab(orchestrator=None):
     from core.container import ServiceContainer

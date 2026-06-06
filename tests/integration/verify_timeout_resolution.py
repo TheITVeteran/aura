@@ -1,7 +1,9 @@
 import asyncio
-from pathlib import Path
+import inspect
 
 import pytest
+
+from core.orchestrator.mixins import incoming_logic
 
 
 class SlowThinkingEngine:
@@ -16,10 +18,10 @@ class SlowThinkingEngine:
 
 
 def test_live_thinking_watchdog_uses_current_runtime_budget():
-    source = Path("core/orchestrator/mixins/incoming_logic.py").read_text(encoding="utf-8")
+    source = inspect.getsource(incoming_logic.IncomingLogicMixin._original_handle_incoming_logic)
 
-    assert "timeout=300.0" in source
-    assert "Thinking task exceeded 300s limit" in source
+    assert incoming_logic.THINKING_WATCHDOG_TIMEOUT_S == 300.0
+    assert "timeout=THINKING_WATCHDOG_TIMEOUT_S" in source
 
 
 @pytest.mark.asyncio

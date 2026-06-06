@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -254,6 +255,42 @@ async def test_rsi_lab_requires_validation_evidence_for_promotion(monkeypatch, t
     assert "validation_passed" in lab.candidates[weak_id].evaluation_report["blocking_failures"]
     assert lab.candidates[strong_id].status == "passed"
     assert lab.candidates[strong_id].evaluation_report["checks"]["receipt_present"] is True
+    assert lab.promote(weak_id) is False
+    assert lab.candidates[weak_id].status == "failed"
+    assert lab.promote("missing-candidate") is False
+    assert lab.promote(strong_id) is True
+    assert lab.candidates[strong_id].status == "promoted"
+
+
+def test_rsi_lab_loads_valid_candidates_while_skipping_corrupt_records(monkeypatch, tmp_path):
+    from research.meta_learning_loop import RSILab
+
+    monkeypatch.setattr(type(config.paths), "_runtime_home_cache", tmp_path)
+    lab_dir = tmp_path / "data" / "rsi_lab"
+    lab_dir.mkdir(parents=True)
+    (lab_dir / "candidates.json").write_text(
+        json.dumps(
+            {
+                "valid": {
+                    "id": "valid",
+                    "artifact_type": "heuristic",
+                    "content": {"rule": "prefer verified changes because they are reversible"},
+                    "rationale": "Keep only candidates with enough evidence because promotion is risky.",
+                    "status": "pending_eval",
+                    "score": 0.0,
+                    "evaluation_report": {},
+                    "created_at": 1.0,
+                },
+                "corrupt": ["not", "a", "candidate"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    lab = RSILab()
+
+    assert list(lab.candidates) == ["valid"]
+    assert lab.candidates["valid"].artifact_type == "heuristic"
 
 
 @pytest.mark.asyncio
