@@ -3,7 +3,7 @@ import tempfile
 import threading
 from collections import deque
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -22,6 +22,28 @@ QWEN32_GGUF = str(TMP_ROOT / "qwen2.5-32b-instruct-q5_k_m.gguf")
 QWEN7_GGUF = str(TMP_ROOT / "qwen2.5-7b-instruct-q4_k_m.gguf")
 QWEN72_GGUF = str(TMP_ROOT / "qwen2.5-72b-instruct-q4_k_m.gguf")
 QWEN15_GGUF = str(TMP_ROOT / "qwen2.5-1.5b-instruct-q4_k_m.gguf")
+
+
+class AsyncCallRecorder:
+    def __init__(self, result=None, *, side_effect=None):
+        self.result = result
+        self.side_effect = side_effect
+        self.calls = []
+        self.await_args = None
+
+    async def __call__(self, *args, **kwargs):
+        call = SimpleNamespace(args=args, kwargs=kwargs)
+        self.calls.append(call)
+        self.await_args = call
+        if self.side_effect is not None:
+            if isinstance(self.side_effect, BaseException):
+                raise self.side_effect
+            if callable(self.side_effect):
+                return self.side_effect(*args, **kwargs)
+        return self.result
+
+    def assert_awaited_once(self):
+        assert len(self.calls) == 1
 
 
 def _register(client: LocalServerClient) -> LocalServerClient:
@@ -134,7 +156,7 @@ async def test_message_payload_sanitization_drops_non_json_metadata():
         return 200, {"choices": [{"message": {"content": "Hello from Cortex."}}]}, ""
 
     client._request_json = request_json
-    client._ensure_runtime_ready = AsyncMock(return_value=True)
+    client._ensure_runtime_ready = AsyncCallRecorder(result=True)
 
     result = await client.generate_text_async(
         "hello",
@@ -167,7 +189,7 @@ def test_is_alive_repairs_adopted_runtime_without_owned_process():
 async def test_response_parser_handles_part_arrays_and_reasoning_fallback():
     client = LocalServerClient(QWEN32_GGUF)
     client._lane_state = "ready"
-    client._ensure_runtime_ready = AsyncMock(return_value=True)
+    client._ensure_runtime_ready = AsyncCallRecorder(result=True)
 
     responses = deque(
         [
@@ -218,7 +240,7 @@ async def test_response_parser_handles_part_arrays_and_reasoning_fallback():
 @pytest.mark.asyncio
 async def test_warmup_rejects_empty_generation_as_runtime_readiness():
     client = LocalServerClient(QWEN32_GGUF)
-    client._ensure_runtime_ready = AsyncMock(return_value=True)
+    client._ensure_runtime_ready = AsyncCallRecorder(result=True)
 
     class _FakeHttpClient:
         async def post(self, _url, json=None, **_kwargs):
@@ -243,7 +265,7 @@ async def test_warmup_rejects_empty_generation_as_runtime_readiness():
 @pytest.mark.asyncio
 async def test_solver_background_warmup_preserves_background_runtime_intent():
     client = LocalServerClient(QWEN72_GGUF)
-    client._ensure_runtime_ready = AsyncMock(return_value=False)
+    client._ensure_runtime_ready = AsyncCallRecorder(result=False)
 
     await client.warmup(foreground_request=False)
 
@@ -254,7 +276,7 @@ async def test_solver_background_warmup_preserves_background_runtime_intent():
 async def test_single_empty_generation_does_not_immediately_crash_foreground_lane():
     client = LocalServerClient(QWEN32_GGUF)
     client._lane_state = "ready"
-    client._ensure_runtime_ready = AsyncMock(return_value=True)
+    client._ensure_runtime_ready = AsyncCallRecorder(result=True)
 
     class _FakeHttpClient:
         async def post(self, _url, json=None, **_kwargs):
@@ -296,7 +318,7 @@ async def test_restart_server_wait_is_offloaded_from_event_loop(monkeypatch):
         return func(*args, **kwargs)
 
     client._process = _Proc()
-    client.warmup = AsyncMock(return_value=None)
+    client.warmup = AsyncCallRecorder(result=None)
     monkeypatch.setattr(local_server_client.asyncio, "to_thread", _fake_to_thread)
 
     await client._restart_server()
@@ -309,7 +331,7 @@ async def test_restart_server_wait_is_offloaded_from_event_loop(monkeypatch):
 @pytest.mark.asyncio
 async def test_restart_server_does_not_claim_success_until_lane_ready():
     client = LocalServerClient(QWEN32_GGUF)
-    client.warmup = AsyncMock(return_value=None)
+    client.warmup = AsyncCallRecorder(result=None)
     client._http_health_check = lambda: False
 
     await client._restart_server()
@@ -321,7 +343,7 @@ async def test_restart_server_does_not_claim_success_until_lane_ready():
 @pytest.mark.asyncio
 async def test_restart_server_marks_failed_when_warmup_raises():
     client = LocalServerClient(QWEN32_GGUF)
-    client.warmup = AsyncMock(side_effect=RuntimeError("warmup exploded"))
+    client.warmup = AsyncCallRecorder(side_effect=RuntimeError("warmup exploded"))
 
     await client._restart_server()
 
@@ -334,7 +356,7 @@ async def test_restart_server_marks_failed_when_warmup_raises():
 @pytest.mark.asyncio
 async def test_generate_text_records_latent_bridge_fallback(monkeypatch):
     client = LocalServerClient(QWEN32_GGUF)
-    client._ensure_runtime_ready = AsyncMock(return_value=False)
+    client._ensure_runtime_ready = AsyncCallRecorder(result=False)
 
     bridge_calls = []
 
@@ -459,8 +481,7 @@ def test_memory_guard_handles_deque_history_without_index_pop_failure():
 
 def test_local_server_supervision_status_and_fragmentation_recycle():
     client = LocalServerClient(QWEN32_GGUF)
-    proc = MagicMock()
-    proc.poll.return_value = None
+    proc = SimpleNamespace(poll=lambda: None)
     client._process = proc
     client._lane_state = "ready"
     client._process_started_at = 100.0

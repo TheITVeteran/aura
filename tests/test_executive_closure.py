@@ -1,7 +1,6 @@
 import asyncio
 import threading
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -12,8 +11,50 @@ from core.utils.output_gate import AutonomousOutputGate
 from core.brain.llm.mlx_client import _notify_closed_loop_output as notify_mlx_closed_loop
 
 
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.result
+
+    def assert_awaited_once(self):
+        assert len(self.calls) == 1
+
+
+class CallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    @property
+    def called(self):
+        return bool(self.calls)
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.result
+
+    def reset(self):
+        self.calls.clear()
+
+    def assert_called_once(self):
+        assert len(self.calls) == 1
+
+    def assert_not_called(self):
+        assert not self.calls
+
+    def assert_called_once_with(self, *args, **kwargs):
+        self.assert_called_once()
+        call = self.calls[0]
+        assert call.args == args
+        assert call.kwargs == kwargs
+
+
 @pytest.mark.asyncio
-async def test_executive_closure_engine_integrates_runtime_signals(service_container):
+async def test_executive_closure_engine_integrates_runtime_signals(service_container, monkeypatch):
     state = AuraState()
     state.loop_cycle = 24
     state.motivation.budgets["energy"]["level"] = 15.0
@@ -44,8 +85,8 @@ async def test_executive_closure_engine_integrates_runtime_signals(service_conta
     service_container.register_instance(
         "homeostasis",
         SimpleNamespace(
-            pulse=AsyncMock(
-                return_value={
+            pulse=AsyncCallRecorder(
+                {
                     "integrity": 0.91,
                     "persistence": 0.88,
                     "curiosity": 0.62,
@@ -66,21 +107,24 @@ async def test_executive_closure_engine_integrates_runtime_signals(service_conta
     )
     goal_hierarchy = SimpleNamespace(
         get_next_goal=lambda: SimpleNamespace(description="Protect continuity"),
-        add_goal=MagicMock(),
+        add_goal=CallRecorder(),
     )
     service_container.register_instance("goal_hierarchy", goal_hierarchy)
-    self_model = SimpleNamespace(update_belief=AsyncMock())
+    self_model = SimpleNamespace(update_belief=AsyncCallRecorder())
     service_container.register_instance("self_model", self_model)
-    service_container.register_instance("volition_engine", SimpleNamespace(tick=AsyncMock(return_value=None)))
+    service_container.register_instance("volition_engine", SimpleNamespace(tick=AsyncCallRecorder()))
 
-    async def _mock_propose(state, goal, **kwargs):
+    async def governed_proposal(state, goal, **kwargs):
         import time as _time
         state.cognition.pending_initiatives.append({"goal": goal, "ts": _time.time()})
         return state, {"action": "queued", "reason": "test_approved"}
 
     engine = ExecutiveClosureEngine()
-    with patch("core.consciousness.executive_closure.propose_governed_initiative_to_state", side_effect=_mock_propose):
-        result = await engine.integrate(state)
+    monkeypatch.setattr(
+        "core.consciousness.executive_closure.propose_governed_initiative_to_state",
+        governed_proposal,
+    )
+    result = await engine.integrate(state)
     await asyncio.sleep(0)
 
     assert result.free_energy == pytest.approx(0.28, abs=1e-6)
@@ -99,7 +143,7 @@ async def test_executive_closure_engine_integrates_runtime_signals(service_conta
 
 
 @pytest.mark.asyncio
-async def test_executive_closure_demotes_intrinsic_maintenance_objective(service_container):
+async def test_executive_closure_demotes_intrinsic_maintenance_objective(service_container, monkeypatch):
     state = AuraState()
     state.loop_cycle = 24
     state.cognition.current_objective = "Protect identity, memory integrity, and process continuity."
@@ -127,8 +171,8 @@ async def test_executive_closure_demotes_intrinsic_maintenance_objective(service
     service_container.register_instance(
         "homeostasis",
         SimpleNamespace(
-            pulse=AsyncMock(
-                return_value={
+            pulse=AsyncCallRecorder(
+                {
                     "integrity": 0.94,
                     "persistence": 0.92,
                     "curiosity": 0.55,
@@ -147,16 +191,19 @@ async def test_executive_closure_demotes_intrinsic_maintenance_objective(service
             },
         ),
     )
-    service_container.register_instance("volition_engine", SimpleNamespace(tick=AsyncMock(return_value=None)))
+    service_container.register_instance("volition_engine", SimpleNamespace(tick=AsyncCallRecorder()))
 
-    async def _mock_propose(state, goal, **kwargs):
+    async def governed_proposal(state, goal, **kwargs):
         import time as _time
         state.cognition.pending_initiatives.append({"goal": goal, "ts": _time.time()})
         return state, {"action": "queued", "reason": "test_approved"}
 
     engine = ExecutiveClosureEngine()
-    with patch("core.consciousness.executive_closure.propose_governed_initiative_to_state", side_effect=_mock_propose):
-        result = await engine.integrate(state)
+    monkeypatch.setattr(
+        "core.consciousness.executive_closure.propose_governed_initiative_to_state",
+        governed_proposal,
+    )
+    result = await engine.integrate(state)
     await asyncio.sleep(0)
 
     assert result.cognition.current_objective is None
@@ -175,21 +222,21 @@ async def test_executive_closure_demotes_intrinsic_maintenance_objective(service
 
 
 def test_notify_closed_loop_output_routes_only_to_running_loop(service_container):
-    loop = SimpleNamespace(is_running=True, on_inference_output=MagicMock())
+    loop = SimpleNamespace(is_running=True, on_inference_output=CallRecorder())
     service_container.register_instance("closed_causal_loop", loop)
 
     notify_closed_loop_output("Aura is thinking.")
     loop.on_inference_output.assert_called_once_with("Aura is thinking.")
 
     loop.is_running = False
-    loop.on_inference_output.reset_mock()
+    loop.on_inference_output.reset()
     notify_closed_loop_output("Aura is still thinking.")
     loop.on_inference_output.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_output_gate_emits_closed_loop_feedback(service_container):
-    loop = SimpleNamespace(is_running=True, on_inference_output=MagicMock())
+    loop = SimpleNamespace(is_running=True, on_inference_output=CallRecorder())
     service_container.register_instance("closed_causal_loop", loop)
 
     gate = AutonomousOutputGate(orchestrator=SimpleNamespace(conversation_history=[]))
@@ -204,10 +251,14 @@ async def test_output_gate_emits_closed_loop_feedback(service_container):
     loop.on_inference_output.assert_called_once()
 
 
-def test_mlx_closed_loop_notification_helper_forwards_text():
-    with patch("core.consciousness.closed_loop.notify_closed_loop_output") as mock_notify:
-        notify_mlx_closed_loop("Local model response")
-    mock_notify.assert_called_once_with("Local model response")
+def test_mlx_closed_loop_notification_helper_forwards_text(monkeypatch):
+    notification = CallRecorder()
+    monkeypatch.setattr(
+        "core.consciousness.closed_loop.notify_closed_loop_output",
+        notification,
+    )
+    notify_mlx_closed_loop("Local model response")
+    notification.assert_called_once_with("Local model response")
 
 
 @pytest.mark.asyncio

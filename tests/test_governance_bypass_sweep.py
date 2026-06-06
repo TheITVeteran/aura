@@ -7,9 +7,9 @@ write should fail without receipt.
 from __future__ import annotations
 import ast, inspect, json, os, sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Set, Tuple
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -189,14 +189,13 @@ class TestDynamicGovernanceBlocking:
 
     @pytest.fixture
     def blocked_gateway(self, monkeypatch):
-        mock_will = MagicMock()
-        mock_will.decide = MagicMock(return_value=MagicMock(
+        will_probe = SimpleNamespace(decide=lambda *args, **kwargs: SimpleNamespace(
             is_approved=lambda: False,
-            outcome=MagicMock(value="refuse"),
+            outcome=SimpleNamespace(value="refuse"),
             reason="test_governance_block",
             receipt_id="test_receipt",
         ))
-        monkeypatch.setattr("core.will.get_will", lambda: mock_will)
+        monkeypatch.setattr("core.will.get_will", lambda: will_probe)
         from core.executive.authority_gateway import AuthorityGateway
         return AuthorityGateway()
 
