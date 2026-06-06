@@ -70,7 +70,6 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from unittest.mock import MagicMock, AsyncMock, patch
 
 import numpy as np
 import pytest

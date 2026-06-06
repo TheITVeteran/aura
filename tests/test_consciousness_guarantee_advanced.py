@@ -30,7 +30,6 @@ import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional
-from unittest.mock import MagicMock, AsyncMock, patch
 
 import numpy as np
 import pytest
@@ -408,7 +407,7 @@ class TestTemporalSelfContinuity:
         total_change = np.sum(np.abs(W_new - W_before))
         assert total_change > 0.0, "No persistent weight change"
 
-    def test_continuity_engine_saves_and_restores(self):
+    def test_continuity_engine_saves_and_restores(self, monkeypatch):
         """ContinuityEngine preserves state across sessions."""
         tmpdir = Path(tempfile.mkdtemp())
         record_path = tmpdir / "continuity.json"
@@ -434,8 +433,8 @@ class TestTemporalSelfContinuity:
 
         # Restore in a new engine
         engine = ContinuityEngine()
-        with patch("core.continuity._get_continuity_path", return_value=record_path):
-            loaded = engine.load()
+        monkeypatch.setattr("core.continuity._get_continuity_path", lambda: record_path)
+        loaded = engine.load()
 
         assert loaded is not None, "ContinuityEngine failed to load saved record"
         assert loaded.session_count == 5, f"Session count mismatch: {loaded.session_count}"
