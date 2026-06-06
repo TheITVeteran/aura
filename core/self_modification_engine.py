@@ -2,7 +2,6 @@
 Superseded by core/self_modification/self_modification_engine.py (inside package).
 """
 from core.runtime.errors import record_degradation
-from core.runtime.atomic_writer import atomic_write_text
 import warnings
 
 warnings.warn("core/self_modification_engine.py is deprecated. Use core/self_modification package.", DeprecationWarning)
@@ -24,6 +23,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("self_modification.engine")
+
+_LEGACY_DIRECT_APPLICATION_ERROR = "legacy_self_modification_engine_direct_application_disabled"
 
 class ModificationState(Enum):
     """Self-modification operational states"""
@@ -227,74 +228,62 @@ class SelfModificationEngine:
         force: bool = False,
         dry_run: bool = False
     ) -> Dict[str, Any]:
-        """Apply a modification proposal.
-        """
+        """Dry-run a legacy modification proposal or block direct application."""
         self.state = ModificationState.APPLYING
+        self.active_proposal = proposal
         
         try:
-            # Security check
-            if not force and self.require_human_approval:
-                return {
-                    "success": False,
-                    "error": "human_approval_required",
-                    "message": "Set require_human_approval=False or use force=True"
+            if dry_run:
+                event = {
+                    "proposal_id": proposal.id,
+                    "dry_run": True,
+                    "changes": len(proposal.changes),
+                    "timestamp": time.time(),
                 }
-            
-            # SANDBOX VERIFICATION
-            # Verify code safety before applying
-            if not dry_run: # Skip for dry run as it's just a plan check
-                logger.info("Verifying changes in sandbox...")
-                verify_result = self.verify_changes(proposal.changes)
-                if not verify_result["success"]:
-                    logger.error("Sandbox verification failed: %s", verify_result['error'])
-                    self.state = ModificationState.IDLE
-                    return {
-                        "success": False,
-                        "error": "sandbox_verification_failed", 
-                        "details": verify_result
-                    }
-
-            if dry_run:
-                # Validate but don't backup or apply
-                return {"success": True, "dry_run": True}
-
-            # Create backup
-            backup_path = self._create_backup(proposal)
-            if not backup_path:
-                return {"success": False, "error": "backup_failed"}
-            
-            # Apply changes
-            for change in proposal.changes:
-                result = self._apply_change(change, dry_run)
-                
-                if not result["success"] and not dry_run:
-                    # Rollback on failure
-                    logger.error("Change failed, initiating rollback: %s", result)
-                    self._rollback(backup_path)
-                    return {
-                        "success": False,
-                        "error": "application_failed",
-                        "failed_change": result,
-                        "rolled_back": True
-                    }
-            
-            if dry_run:
+                self.audit_log.append(event)
+                self.active_proposal = None
                 self.state = ModificationState.IDLE
                 return {"success": True, "dry_run": True}
-            
-            self.change_history.append(proposal)
+
+            if force or not self.require_human_approval:
+                self.state = ModificationState.BLOCKED
+                self.active_proposal = None
+                event = {
+                    "proposal_id": proposal.id,
+                    "error": _LEGACY_DIRECT_APPLICATION_ERROR,
+                    "changes": len(proposal.changes),
+                    "timestamp": time.time(),
+                }
+                self.audit_log.append(event)
+                return {
+                    "success": False,
+                    "error": _LEGACY_DIRECT_APPLICATION_ERROR,
+                    "message": (
+                        "The deprecated top-level self-modification engine is "
+                        "analysis/dry-run only. Source promotion must use the "
+                        "core.self_modification SafeSelfModification quarantine "
+                        "pipeline with explicit repair-lab or supervised approval."
+                    ),
+                    "requires": "core.self_modification.safe_modification.SafeSelfModification",
+                }
+
             self.active_proposal = None
             self.state = ModificationState.IDLE
-            
             return {
-                "success": True,
-                "changes_applied": len(proposal.changes),
-                "backup_path": str(backup_path)
+                "success": False,
+                "error": "human_approval_required",
+                "message": (
+                    "The deprecated top-level engine no longer accepts approval "
+                    "for live source mutation. Use dry_run=True for analysis, or "
+                    "submit the proposal to the safe self-modification pipeline."
+                ),
+                "requires": "core.self_modification.safe_modification.SafeSelfModification",
             }
             
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('self_modification_engine', e)
             logger.error("Proposal application failed: %s", e, exc_info=True)
+            self.active_proposal = None
             self.state = ModificationState.IDLE
             return {"success": False, "error": f"application_exception: {e}"}
             
@@ -345,27 +334,12 @@ class SelfModificationEngine:
                     "file": str(change.target_file),
                     "line": change.target_line
                 }
-            
-            # Read current content
-            content = change.target_file.read_text(encoding='utf-8')
-            lines = content.splitlines(keepends=True)
-            
-            # Apply change
-            if 0 <= change.target_line - 1 < len(lines):
-                if change.change_type == "modify":
-                    lines[change.target_line - 1] = change.modified_code + '\n'
-                elif change.change_type == "add":
-                    lines.insert(change.target_line - 1, change.modified_code + '\n')
-                elif change.change_type == "remove":
-                    lines.pop(change.target_line - 1)
-            
-            # Write back
-            atomic_write_text(change.target_file, ''.join(lines), encoding='utf-8')
-            
+
             return {
-                "success": True,
+                "success": False,
+                "error": _LEGACY_DIRECT_APPLICATION_ERROR,
                 "file": str(change.target_file),
-                "line": change.target_line
+                "line": change.target_line,
             }
             
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
