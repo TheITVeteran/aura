@@ -17,7 +17,19 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
+from core.runtime.errors import record_degradation
+
 logger = logging.getLogger("Aura.PerceptionRuntime")
+
+_PERCEPTION_RUNTIME_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 CAPABILITY_KINDS = (
@@ -148,8 +160,9 @@ class SharedAttentionState:
                     daemon.aura_focus = aura
                 if confidence is not None:
                     daemon.joint_attention_score = confidence
-        except Exception:
-            pass
+        except _PERCEPTION_RUNTIME_RECOVERABLE_ERRORS as exc:
+            record_degradation("perception_runtime.shared_attention_bridge", exc)
+            logger.debug("SharedAttentionState daemon bridge update failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +202,9 @@ class PerceptionRuntime:
         try:
             from core.perception.perception_daemon import get_perception_daemon
             self.daemon = get_perception_daemon()
-        except Exception:
+        except _PERCEPTION_RUNTIME_RECOVERABLE_ERRORS as exc:
+            record_degradation("perception_runtime.daemon_lookup", exc)
+            logger.debug("PerceptionRuntime daemon lookup failed: %s", exc)
             self.daemon = None
 
     # --- Sensor registration ----------------------------------------------

@@ -1,0 +1,69 @@
+"""core/sleep/sleep_cycle.py
+Coordinates offline sleep consolidation states and offline processing routines.
+"""
+from typing import Dict, Any, Optional
+import logging
+
+from core.sleep.dream_simulator import DreamSimulator
+from core.sleep.memory_consolidation import MemoryConsolidator
+from core.sleep.value_consolidation import ValueConsolidator
+from core.sleep.world_model_training import WorldModelTrainer
+from core.sleep.identity_consolidation import IdentityConsolidator
+from core.sleep.nightly_report import NightlyReportCompiler
+
+logger = logging.getLogger("Sleep.SleepCycle")
+
+
+class SleepManager:
+    """Canonical manager governing Aura's offline sleep loop states."""
+
+    def __init__(self):
+        self.dreamer = DreamSimulator()
+        self.memory_consolidator = MemoryConsolidator()
+        self.value_consolidator = ValueConsolidator()
+        self.world_trainer = WorldModelTrainer()
+        self.identity_consolidator = IdentityConsolidator()
+        self.reporter = NightlyReportCompiler()
+
+    async def should_trigger_sleep(self, state: Any) -> bool:
+        """Determines if the sleep criteria are satisfied (e.g. low energy)."""
+        return state.welfare.energy < 15.0 or state.welfare.sleep_debt > 16.0
+
+    async def execute_sleep_cycle(self, state: Any) -> None:
+        """Runs the complete sleep-cycle pipeline, blocking active actions."""
+        logger.info("Aura entering offline sleep consolidation cycle...")
+        state.body.is_sleeping = True
+
+        try:
+            # 1. Dream simulations
+            dreams = self.dreamer.simulate_scenarios(state.cognition.current_goals)
+
+            # 2. Memory compaction
+            await self.memory_consolidator.consolidate_logs(state)
+
+            # 3. Value consolidation
+            state.active_preferences = self.value_consolidator.consolidate_preferences(state.active_preferences)
+
+            # 4. World model causal alignment
+            self.world_trainer.train_world_model(state.world_model)
+
+            # 5. Identity alignment checks
+            from core.identity.identity_kernel import IdentityKernel
+            kernel = IdentityKernel()
+            baseline = kernel.get_current_identity()
+            state.identity = self.identity_consolidator.consolidate_identity(state.identity, baseline)
+
+            # 6. Nightly report compilation
+            report = self.reporter.compile_report(state, len(dreams))
+            state.world_model["last_nightly_report"] = report
+            logger.info("Nightly Report generated:\n%s", report)
+
+            # Reset interoceptive metrics
+            state.welfare.energy = 100.0
+            state.welfare.sleep_debt = 0.0
+            logger.info("Sleep cycle complete. Energy fully restored.")
+
+        except Exception as e:
+            logger.error("Error during sleep cycle execution: %s", e, exc_info=True)
+        finally:
+            state.body.is_sleeping = False

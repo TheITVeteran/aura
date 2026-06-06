@@ -126,7 +126,8 @@ class ConsequenceBus:
                 data=event_dict,
                 priority=EventPriority.AUTONOMIC,
             )
-        except Exception as eb_err:
+        except _SUBSCRIBER_DELIVERY_ERRORS as eb_err:
+            record_degradation("consequence_bus.event_bridge", eb_err)
             logger.debug("Failed to publish consequence to central EventBus: %s", eb_err)
 
     def publish_action(

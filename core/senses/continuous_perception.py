@@ -43,7 +43,8 @@ class ContinuousPerceptionEngine:
         try:
             from core.perception.perception_daemon import get_perception_daemon
             self.daemon = get_perception_daemon()
-        except Exception:
+        except (AttributeError, ImportError, LookupError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("ContinuousPerceptionEngine daemon lookup failed: %s", exc)
             self.daemon = None
 
         # Vision Delta Tracking

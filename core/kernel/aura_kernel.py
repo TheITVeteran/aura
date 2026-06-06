@@ -65,6 +65,17 @@ class KernelStatus(BaseModel):
 
 logger = logging.getLogger("Aura.Core.Kernel")
 
+_KERNEL_OPTIONAL_PERCEPTION_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 def _record_kernel_degradation(
     exc: BaseException,
@@ -505,7 +516,7 @@ class AuraKernel:
                 daemon = get_perception_daemon()
                 await daemon.start()
                 logger.info("📡 [PERCEPTION] PerceptionDaemon ONLINE")
-            except Exception as e:
+            except _KERNEL_OPTIONAL_PERCEPTION_ERRORS as e:
                 _record_kernel_degradation(
                     e,
                     action="continued kernel boot without active PerceptionDaemon",
@@ -1514,7 +1525,12 @@ class AuraKernel:
             daemon = get_perception_daemon()
             await daemon.stop()
             logger.info("📡 [PERCEPTION] PerceptionDaemon OFFLINE")
-        except Exception as e:
+        except _KERNEL_OPTIONAL_PERCEPTION_ERRORS as e:
+            _record_kernel_degradation(
+                e,
+                action="continued kernel shutdown after PerceptionDaemon stop failed",
+                severity="warning",
+            )
             logger.error("Failed to stop PerceptionDaemon: %s", e)
 
         # 1. Cancel background tasks

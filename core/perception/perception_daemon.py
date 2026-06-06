@@ -21,6 +21,17 @@ from core.event_bus import get_event_bus, EventPriority
 
 logger = logging.getLogger("Aura.PerceptionDaemon")
 
+_PERCEPTION_DAEMON_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 class PerceptionDaemon:
     """Always-on perception loop and rolling short/medium term memory."""
@@ -123,7 +134,8 @@ class PerceptionDaemon:
                 data=moment,
                 priority=EventPriority.AUTONOMIC,
             )
-        except Exception as e:
+        except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
+            record_degradation("perception_daemon.event_bus_publish", e)
             logger.debug("Daemon failed to publish sensory moment to EventBus: %s", e)
 
         return moment
@@ -174,7 +186,8 @@ class PerceptionDaemon:
                                 content=f"Active browser tabs: {tab_summary}",
                                 metadata={"tabs": tabs}
                             )
-                except Exception as e:
+                except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
+                    record_degradation("perception_daemon.browser_status", e)
                     logger.debug("Browser status check failed: %s", e)
 
                 # 4. Terminal / Process State Check
@@ -194,7 +207,8 @@ class PerceptionDaemon:
                                 content=f"Active terminal shell processes: {len(running_shells)} running",
                                 metadata={"shells": running_shells}
                             )
-                except Exception as e:
+                except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
+                    record_degradation("perception_daemon.terminal_process", e)
                     logger.debug("Terminal process check failed: %s", e)
 
                 # 5. File System Activity Watcher
@@ -212,15 +226,17 @@ class PerceptionDaemon:
                                     mtime = fp.stat().st_mtime
                                     if time.time() - mtime < self.check_interval:
                                         recent_files.append(str(fp))
-                                except Exception:
-                                    pass
+                                except OSError as e:
+                                    record_degradation("perception_daemon.file_stat", e)
+                                    logger.debug("File stat check failed for %s: %s", fp, e)
                     if recent_files:
                         self.register_moment(
                             source="file_system",
                             content=f"Detected local file mutations: {', '.join(recent_files[:3])}",
                             metadata={"modified_files": recent_files}
                         )
-                except Exception as e:
+                except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
+                    record_degradation("perception_daemon.file_system", e)
                     logger.debug("File system check failed: %s", e)
 
                 # 6. Ambient Screen OCR & Modal Detection
@@ -238,7 +254,8 @@ class PerceptionDaemon:
                                     content=f"Screen text: {snap.screen_text[:150]}",
                                     metadata={"full_text": snap.screen_text, "has_modal": snap.has_modal}
                                 )
-                except Exception as e:
+                except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
+                    record_degradation("perception_daemon.screen_ocr", e)
                     logger.debug("Screen OCR loop failed: %s", e)
 
                 # 7. Ambient Microphone Status Check
@@ -250,7 +267,8 @@ class PerceptionDaemon:
                             content="Microphone engine is active & listening",
                             metadata={"ears_configured": True}
                         )
-                except Exception as e:
+                except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
+                    record_degradation("perception_daemon.microphone_status", e)
                     logger.debug("Microphone loop failed: %s", e)
 
                 # 8. User Idle State Assessment
@@ -272,7 +290,7 @@ class PerceptionDaemon:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
                 record_degradation("perception_daemon.main_loop", e)
                 logger.debug("Error in PerceptionDaemon main loop: %s", e)
                 await asyncio.sleep(self.check_interval * 2)
@@ -298,7 +316,7 @@ class PerceptionDaemon:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
                 record_degradation("perception_daemon.attention_loop", e)
                 logger.debug("Error in PerceptionDaemon attention loop: %s", e)
                 await asyncio.sleep(15.0)
@@ -314,7 +332,8 @@ class PerceptionDaemon:
             if proc.returncode == 0:
                 return stdout.decode("utf-8", errors="ignore").strip()
             return None
-        except Exception:
+        except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
+            logger.debug("Clipboard check failed: %s", e)
             return None
 
     async def _check_active_window(self) -> Optional[str]:
@@ -329,7 +348,8 @@ class PerceptionDaemon:
             if proc.returncode == 0:
                 return stdout.decode("utf-8", errors="ignore").strip()
             return None
-        except Exception:
+        except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
+            logger.debug("Active window check failed: %s", e)
             return None
 
     # --- Public API surface ------------------------------------------------
@@ -379,7 +399,8 @@ class PerceptionDaemon:
                     desc = await vision.analyze_moment(prompt=query or "Describe current text contents.")
                     self.register_moment(source="active_ocr", content=desc)
                     return {"ok": True, "result": desc}
-                except Exception as e:
+                except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
+                    record_degradation("perception_daemon.active_ocr", e)
                     return {"ok": False, "error": str(e)}
             return {"ok": False, "error": "vision_engine_unavailable"}
             
