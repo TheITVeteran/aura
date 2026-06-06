@@ -10,8 +10,9 @@ Verifies that:
   7. All action paths are governed
 """
 import asyncio
+from types import SimpleNamespace
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 from core.governance_context import (
     GovernanceToken,
@@ -40,11 +41,12 @@ class TestGovernanceContext:
 
     def test_governed_scope_sync(self):
         """Sync scope should set and clear governance."""
-        decision = MagicMock()
-        decision.receipt_id = "test_receipt"
-        decision.domain = "test"
-        decision.source = "test"
-        decision.constraints = []
+        decision = SimpleNamespace(
+            receipt_id="test_receipt",
+            domain="test",
+            source="test",
+            constraints=[],
+        )
 
         with governed_scope_sync(decision) as token:
             assert is_governed()
@@ -56,11 +58,12 @@ class TestGovernanceContext:
     @pytest.mark.asyncio
     async def test_governed_scope_async(self):
         """Async scope should set and clear governance."""
-        decision = MagicMock()
-        decision.receipt_id = "async_receipt"
-        decision.domain = "test"
-        decision.source = "test"
-        decision.constraints = []
+        decision = SimpleNamespace(
+            receipt_id="async_receipt",
+            domain="test",
+            source="test",
+            constraints=[],
+        )
 
         async with governed_scope(decision) as token:
             assert is_governed()
@@ -217,29 +220,29 @@ class TestBypassInjection:
         )
         assert decision.outcome == WillOutcome.CRITICAL_PASS
 
-    def test_substrate_veto_blocks_through_will(self):
+    def test_substrate_veto_blocks_through_will(self, monkeypatch):
         """Low substrate coherence should block non-critical actions."""
         from core.will import UnifiedWill
         will = UnifiedWill()
-        with patch.object(will, "_consult_substrate", return_value=(0.1, -0.8, "")):
-            decision = will.decide(
-                content="explore new topic",
-                source="curiosity",
-                domain=ActionDomain.EXPLORATION,
-            )
-            assert not decision.is_approved()
+        monkeypatch.setattr(will, "_consult_substrate", lambda *_args, **_kwargs: (0.1, -0.8, ""))
+        decision = will.decide(
+            content="explore new topic",
+            source="curiosity",
+            domain=ActionDomain.EXPLORATION,
+        )
+        assert not decision.is_approved()
 
-    def test_negative_affect_blocks_exploration(self):
+    def test_negative_affect_blocks_exploration(self, monkeypatch):
         """Very negative affect should defer exploration."""
         from core.will import UnifiedWill
         will = UnifiedWill()
-        with patch.object(will, "_read_affect_valence", return_value=-0.9):
-            decision = will.decide(
-                content="explore something fun",
-                source="curiosity",
-                domain=ActionDomain.EXPLORATION,
-            )
-            assert decision.outcome == WillOutcome.DEFER
+        monkeypatch.setattr(will, "_read_affect_valence", lambda: -0.9)
+        decision = will.decide(
+            content="explore something fun",
+            source="curiosity",
+            domain=ActionDomain.EXPLORATION,
+        )
+        assert decision.outcome == WillOutcome.DEFER
 
 
 # ---------------------------------------------------------------------------

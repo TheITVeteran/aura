@@ -1,25 +1,52 @@
+import os
 import unittest
 import time
-from unittest.mock import AsyncMock, patch
 
 import core.security.permission_guard as permission_guard_module
 from core.security.permission_guard import PermissionGuard, PermissionType, get_permission_guard
+
+
+class ScreenProbeRecorder:
+    def __init__(self, result):
+        self.result = result
+        self.calls = 0
+
+    async def __call__(self):
+        self.calls += 1
+        return dict(self.result)
+
+
+class temporary_env:
+    def __init__(self, updates):
+        self.updates = updates
+        self.previous = {}
+
+    def __enter__(self):
+        for key, value in self.updates.items():
+            self.previous[key] = os.environ.get(key)
+            os.environ[key] = value
+
+    def __exit__(self, exc_type, exc, tb):
+        for key, value in self.previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
     async def test_force_refresh_reuses_fresh_cache(self):
         guard = PermissionGuard()
         guard._force_refresh_floor_s = 60.0
-        guard._check_screen_permission = AsyncMock(
-            return_value={"granted": True, "status": "active", "guidance": ""}
-        )
+        screen_probe = ScreenProbeRecorder({"granted": True, "status": "active", "guidance": ""})
+        guard._check_screen_permission = screen_probe
 
-        with patch.dict("os.environ", {"AURA_ASSUME_SCREEN_PERMISSION": "0"}, clear=False):
+        with temporary_env({"AURA_ASSUME_SCREEN_PERMISSION": "0"}):
             first = await guard.check_permission(PermissionType.SCREEN, force=True)
             second = await guard.check_permission(PermissionType.SCREEN, force=True)
 
         self.assertEqual(first, second)
-        guard._check_screen_permission.assert_awaited_once()
+        self.assertEqual(screen_probe.calls, 1)
 
     async def test_non_force_refreshes_stale_cache_after_ttl(self):
         guard = PermissionGuard()
@@ -30,15 +57,14 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
             "guidance": "stale",
         }
         guard._cache_ts[PermissionType.SCREEN] = time.monotonic() - 10.0
-        guard._check_screen_permission = AsyncMock(
-            return_value={"granted": True, "status": "active", "guidance": ""}
-        )
+        screen_probe = ScreenProbeRecorder({"granted": True, "status": "active", "guidance": ""})
+        guard._check_screen_permission = screen_probe
 
-        with patch.dict("os.environ", {"AURA_ASSUME_SCREEN_PERMISSION": "0"}, clear=False):
+        with temporary_env({"AURA_ASSUME_SCREEN_PERMISSION": "0"}):
             refreshed = await guard.check_permission(PermissionType.SCREEN, force=False)
 
         self.assertTrue(refreshed["granted"])
-        guard._check_screen_permission.assert_awaited_once()
+        self.assertEqual(screen_probe.calls, 1)
 
     def test_shared_permission_guard_accessor_reuses_singleton(self):
         original = permission_guard_module._SHARED_PERMISSION_GUARD

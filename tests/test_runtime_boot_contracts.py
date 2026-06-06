@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -137,28 +136,39 @@ def test_memory_provider_accepts_legacy_knowledge_graph_file(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_boot_identity_reuses_existing_fictional_engines():
+async def test_boot_identity_reuses_existing_fictional_engines(monkeypatch):
     from core.orchestrator.mixins.boot.boot_identity import BootIdentityMixin
+    import core.agency.latent_distiller as latent_distiller_module
+    import core.fictional_ai_synthesis as fictional_synthesis_module
+    import core.memory.snap_kv_evictor as snap_evictor_module
+    import core.self_modification.shadow_ast_healer as shadow_healer_module
 
     engines = {"jarvis": object()}
     harness = SimpleNamespace(fictional_engines=engines)
+    duplicate_registration_calls = 0
 
-    with patch(
-        "core.fictional_ai_synthesis.register_all_fictional_engines",
-        side_effect=AssertionError("duplicate fictional engine registration"),
-    ), patch(
-        "core.self_modification.shadow_ast_healer.ShadowASTHealer",
-        return_value=MagicMock(),
-    ), patch(
-        "core.memory.snap_kv_evictor.SnapKVEvictor",
-        return_value=MagicMock(),
-    ), patch(
-        "core.agency.latent_distiller.LatentSpaceDistiller",
-        return_value=MagicMock(),
-    ):
-        await BootIdentityMixin._init_fictional_synthesis(harness)
+    def record_duplicate_registration(*_args, **_kwargs):
+        nonlocal duplicate_registration_calls
+        duplicate_registration_calls += 1
+        return {}
+
+    monkeypatch.setattr(
+        fictional_synthesis_module,
+        "register_all_fictional_engines",
+        record_duplicate_registration,
+    )
+    monkeypatch.setattr(shadow_healer_module, "ShadowASTHealer", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(snap_evictor_module, "SnapKVEvictor", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        latent_distiller_module,
+        "LatentSpaceDistiller",
+        lambda *_args, **_kwargs: object(),
+    )
+
+    await BootIdentityMixin._init_fictional_synthesis(harness)
 
     assert harness.fictional_engines is engines
+    assert duplicate_registration_calls == 0
 
 
 def test_final_engines_create_persistence_dirs_without_generated_gateways(tmp_path):
@@ -213,24 +223,30 @@ async def test_performance_guard_start_uses_task_tracker():
 @pytest.mark.asyncio
 async def test_performance_guard_persists_reports_off_event_loop():
     from core.runtime.performance_guard import PerformanceGuard
+    import core.runtime.performance_guard as performance_guard_module
 
     guard = PerformanceGuard()
     release = asyncio.Event()
+    to_thread_calls = 0
 
     async def _fake_to_thread(func, row):
+        nonlocal to_thread_calls
+        to_thread_calls += 1
         assert row["kind"] == "report"
         release.set()
         return func(row)
 
-    with patch(
-        "core.runtime.performance_guard.asyncio.to_thread",
-        side_effect=_fake_to_thread,
-    ) as to_thread, patch.object(guard, "_persist", return_value=None):
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(performance_guard_module.asyncio, "to_thread", _fake_to_thread)
+        monkeypatch.setattr(guard, "_persist", lambda _row: None)
         await guard.start(interval=3600.0)
         await asyncio.wait_for(release.wait(), timeout=1.0)
         await guard.stop()
+    finally:
+        monkeypatch.undo()
 
-    assert to_thread.await_count == 1
+    assert to_thread_calls == 1
 
 
 def test_consciousness_augmentor_exposes_status():
