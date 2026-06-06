@@ -1,15 +1,26 @@
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
 from core.brain.llm.llm_router import IntelligentLLMRouter, LLMEndpoint, LLMTier
 
 
+class EndpointClientFixture:
+    def __init__(self):
+        self.calls = []
+
+    async def think(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return True, "7B response", {}
+
+
+class InferenceGateFixture:
+    def _background_local_deferral_reason(self):
+        return "cortex_startup_quiet"
+
+
 @pytest.mark.asyncio
-async def test_legacy_llm_router_defers_background_inference_when_gate_is_guarded():
+async def test_legacy_llm_router_defers_background_inference_when_gate_is_guarded(monkeypatch):
     router = IntelligentLLMRouter()
-    tertiary = MagicMock()
-    tertiary.think = AsyncMock(return_value=(True, "7B response", {}))
+    tertiary = EndpointClientFixture()
     router.register_endpoint(
         LLMEndpoint(
             name="Brainstem",
@@ -19,16 +30,17 @@ async def test_legacy_llm_router_defers_background_inference_when_gate_is_guarde
         )
     )
 
-    fake_gate = MagicMock()
-    fake_gate._background_local_deferral_reason.return_value = "cortex_startup_quiet"
-
-    with patch("core.container.ServiceContainer.get", side_effect=lambda name, default=None: fake_gate if name == "inference_gate" else default):
-        result = await router.think(
-            "Idle thought",
-            prefer_tier="tertiary",
-            origin="system",
-            is_background=True,
-        )
+    fake_gate = InferenceGateFixture()
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        lambda name, default=None: fake_gate if name == "inference_gate" else default,
+    )
+    result = await router.think(
+        "Idle thought",
+        prefer_tier="tertiary",
+        origin="system",
+        is_background=True,
+    )
 
     assert result == ""
-    tertiary.think.assert_not_called()
+    assert tertiary.calls == []

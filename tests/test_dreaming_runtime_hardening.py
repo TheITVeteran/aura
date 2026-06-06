@@ -1,11 +1,32 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
 from core.consciousness.dreaming import DreamingProcess
 from core.dream_processor import DreamProcessor
+
+
+class AsyncCallFixture:
+    def __init__(self, return_value=None, side_effect=None):
+        self.return_value = return_value
+        self.side_effect = side_effect
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        if self.side_effect is not None:
+            result = self.side_effect(*args, **kwargs)
+            if hasattr(result, "__await__"):
+                return await result
+            return result
+        return self.return_value
+
+    def assert_awaited_once(self):
+        assert len(self.calls) == 1
+
+    def assert_not_called(self):
+        assert self.calls == []
 
 
 def test_dream_reflection_is_lightweight_and_bounded():
@@ -79,7 +100,7 @@ async def test_dream_cycle_avoids_brain_think_on_event_loop(service_container):
 
     vector_memory = _VectorMemory()
     brain = SimpleNamespace(
-        think=AsyncMock(side_effect=AssertionError("dream cycle should not invoke brain.think"))
+        think=AsyncCallFixture(side_effect=AssertionError("dream cycle should not invoke brain.think"))
     )
 
     service_container.register_instance("vector_memory_engine", vector_memory, required=False)
@@ -178,13 +199,13 @@ async def test_legacy_dream_processor_uses_episodic_api_without_llm(monkeypatch)
         )
         for idx in range(12)
     ]
-    episodic = SimpleNamespace(recall_recent_async=AsyncMock(return_value=episodes))
-    memory = SimpleNamespace(episodic=episodic, add_memory=AsyncMock(return_value=True))
+    episodic = SimpleNamespace(recall_recent_async=AsyncCallFixture(return_value=episodes))
+    memory = SimpleNamespace(episodic=episodic, add_memory=AsyncCallFixture(return_value=True))
     brain = SimpleNamespace(
-        think=AsyncMock(side_effect=AssertionError("legacy dream should stay bounded by default"))
+        think=AsyncCallFixture(side_effect=AssertionError("legacy dream should stay bounded by default"))
     )
     processor = DreamProcessor(memory, brain)
-    processor._contract_graph = AsyncMock()
+    processor._contract_graph = AsyncCallFixture()
 
     monkeypatch.delenv("AURA_DREAM_PROCESSOR_USE_LLM", raising=False)
 
@@ -210,7 +231,7 @@ async def test_legacy_dream_processor_contract_graph_accepts_thought_objects(
     kg = _KG()
     service_container.register_instance("knowledge_graph", kg, required=False)
     brain = SimpleNamespace(
-        think=AsyncMock(
+        think=AsyncCallFixture(
             return_value=SimpleNamespace(
                 content="email | requires | content-aware reading\nreddit | records | blocked-login outcome"
             )
@@ -237,7 +258,7 @@ async def test_legacy_dream_processor_reports_blocked_graph_writes(service_conta
 
     kg = _BlockedKG()
     service_container.register_instance("knowledge_graph", kg, required=False)
-    brain = SimpleNamespace(think=AsyncMock())
+    brain = SimpleNamespace(think=AsyncCallFixture())
     processor = DreamProcessor(SimpleNamespace(), brain)
 
     monkeypatch.delenv("AURA_DREAM_PROCESSOR_USE_LLM", raising=False)

@@ -1,9 +1,21 @@
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
+
+
+class AsyncCallFixture:
+    def __init__(self, return_value=None):
+        self.return_value = return_value
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self.return_value
+
+    def assert_not_awaited(self):
+        assert self.calls == []
 
 
 @pytest.mark.asyncio
@@ -17,7 +29,7 @@ async def test_conversational_momentum_defers_during_proof_run(monkeypatch):
     orchestrator = SimpleNamespace(
         _last_user_interaction_time=0.0,
         status=SimpleNamespace(is_processing=False),
-        process_user_input=AsyncMock(),
+        process_user_input=AsyncCallFixture(),
     )
     engine = ConversationalMomentumEngine(orchestrator)
     engine.running = True

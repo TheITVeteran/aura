@@ -192,9 +192,12 @@ class DreamProcessor:
 
     @staticmethod
     async def _call_memory_writer(fn, *args, **kwargs):
-        if inspect.iscoroutinefunction(fn):
+        if inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(getattr(fn, "__call__", None)):
             return await fn(*args, **kwargs)
-        return await asyncio.to_thread(fn, *args, **kwargs)
+        result = await asyncio.to_thread(fn, *args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     async def _contract_graph(self, reflection: str) -> int:
         """Distill the fuzzy reflection into structured Graph nodes/edges."""

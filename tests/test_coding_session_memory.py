@@ -1,6 +1,5 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -8,6 +7,22 @@ from core.orchestrator.mixins.tool_execution import ToolExecutionMixin
 from core.runtime import conversation_support
 from core.runtime.coding_session_memory import CodingSessionMemory
 from core.state.aura_state import AuraState
+
+
+class AsyncCallFixture:
+    def __init__(self, return_value=None, side_effect=None):
+        self.return_value = return_value
+        self.side_effect = side_effect
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        if self.side_effect is not None:
+            result = self.side_effect(*args, **kwargs)
+            if hasattr(result, "__await__"):
+                return await result
+            return result
+        return self.return_value
 
 
 def test_coding_session_memory_builds_context_block_for_technical_thread(tmp_path):
@@ -218,7 +233,7 @@ async def test_tool_execution_records_coding_tool_events(monkeypatch, service_co
             self.status = DummyStatus()
             self.router = SimpleNamespace(
                 skills={"sovereign_terminal": object()},
-                execute=AsyncMock(
+                execute=AsyncCallFixture(
                     return_value={
                         "ok": False,
                         "summary": "pytest tests/test_runtime_service_access.py -q -> failed (AssertionError: expected coding block)",

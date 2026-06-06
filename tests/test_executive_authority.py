@@ -1,11 +1,37 @@
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
 from core.consciousness.executive_authority import ExecutiveAuthority
 from core.state.aura_state import AuraState
+
+
+class AsyncCallFixture:
+    def __init__(self, return_value=None, side_effect=None):
+        self.return_value = return_value
+        self.side_effect = side_effect
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        if self.side_effect is not None:
+            result = self.side_effect(*args, **kwargs)
+            if hasattr(result, "__await__"):
+                return await result
+            return result
+        return self.return_value
+
+    @property
+    def await_args(self):
+        return self.calls[-1] if self.calls else None
+
+    @property
+    def await_count(self):
+        return len(self.calls)
+
+    def assert_awaited_once(self):
+        assert len(self.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -14,13 +40,13 @@ async def test_executive_authority_queues_and_refreshes_initiatives(service_cont
 
     repo = SimpleNamespace()
     repo.current = state
-    repo.get_current = AsyncMock(side_effect=lambda: repo.current)
+    repo.get_current = AsyncCallFixture(side_effect=lambda: repo.current)
 
     async def _commit(new_state, _cause):
         repo.current = new_state
         return new_state
 
-    repo.commit = AsyncMock(side_effect=_commit)
+    repo.commit = AsyncCallFixture(side_effect=_commit)
     service_container.register_instance("state_repository", repo)
 
     authority = ExecutiveAuthority()
@@ -46,7 +72,7 @@ async def test_executive_authority_queues_and_refreshes_initiatives(service_cont
 
 @pytest.mark.asyncio
 async def test_executive_authority_reroutes_low_urgency_output_to_secondary(service_container):
-    gate = SimpleNamespace(emit=AsyncMock())
+    gate = SimpleNamespace(emit=AsyncCallFixture())
     orch = SimpleNamespace(
         output_gate=gate,
         _last_user_interaction_time=time.time() - 5.0,
@@ -85,7 +111,7 @@ async def test_executive_authority_reroutes_low_urgency_output_to_secondary(serv
 
 @pytest.mark.asyncio
 async def test_executive_authority_allows_high_urgency_primary_release(service_container):
-    gate = SimpleNamespace(emit=AsyncMock())
+    gate = SimpleNamespace(emit=AsyncCallFixture())
     orch = SimpleNamespace(
         output_gate=gate,
         _last_user_interaction_time=time.time() - 300.0,
@@ -126,7 +152,7 @@ async def test_executive_authority_allows_high_urgency_primary_release(service_c
 
 @pytest.mark.asyncio
 async def test_executive_authority_reroutes_visible_presence_when_user_was_recently_active(service_container):
-    gate = SimpleNamespace(emit=AsyncMock())
+    gate = SimpleNamespace(emit=AsyncCallFixture())
     orch = SimpleNamespace(
         output_gate=gate,
         _last_user_interaction_time=time.time() - 12.0,

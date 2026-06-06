@@ -2,7 +2,6 @@ import asyncio
 import json
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -34,9 +33,42 @@ class _OutputProbe(OutputFormatterMixin):
         self.cognitive_engine = SimpleNamespace(_emit_thought=emitter)
 
 
+class AsyncCallFixture:
+    def __init__(self, return_value=None, side_effect=None):
+        self.return_value = return_value
+        self.side_effect = side_effect
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        if self.side_effect is not None:
+            result = self.side_effect(*args, **kwargs)
+            if hasattr(result, "__await__"):
+                return await result
+            return result
+        return self.return_value
+
+    @property
+    def await_args(self):
+        return self.calls[-1] if self.calls else None
+
+    @property
+    def await_count(self):
+        return len(self.calls)
+
+    def assert_awaited_once(self):
+        assert len(self.calls) == 1
+
+    def assert_awaited_once_with(self, *args, **kwargs):
+        assert self.calls == [(args, kwargs)]
+
+    def assert_not_called(self):
+        assert self.calls == []
+
+
 @pytest.mark.asyncio
 async def test_init_cognitive_core_awaits_async_setup(monkeypatch):
-    setup = AsyncMock()
+    setup = AsyncCallFixture()
     cognitive_engine = SimpleNamespace(setup=setup)
     capability_engine = object()
 
@@ -59,7 +91,7 @@ async def test_init_cognitive_core_awaits_async_setup(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_emit_thought_stream_schedules_async_emitters():
-    emitter = AsyncMock()
+    emitter = AsyncCallFixture()
     probe = _OutputProbe(emitter)
 
     probe._emit_thought_stream("hello")
@@ -297,10 +329,10 @@ async def test_calculate_temporal_drift_routes_recovery_through_unified_will(tmp
     )
 
     probe = _ResilienceProbe()
-    probe.emit_spontaneous_message = AsyncMock(
+    probe.emit_spontaneous_message = AsyncCallFixture(
         return_value={"ok": True, "action": "released", "target": "secondary"}
     )
-    probe.output_gate = SimpleNamespace(emit=AsyncMock())
+    probe.output_gate = SimpleNamespace(emit=AsyncCallFixture())
 
     probe._calculate_temporal_drift()
     await asyncio.sleep(0)
@@ -347,13 +379,13 @@ async def test_orchestrator_shutdown_requests_graceful_state_vault_stop_before_b
     bus = _Bus()
     supervisor = _Supervisor()
     state_repo = SimpleNamespace(
-        get_current=AsyncMock(return_value=None),
-        close=AsyncMock(),
+        get_current=AsyncCallFixture(return_value=None),
+        close=AsyncCallFixture(),
         _transport_has_vault=lambda: True,
         is_vault_owner=False,
     )
-    service_shutdown = AsyncMock()
-    event_bus_shutdown = AsyncMock()
+    service_shutdown = AsyncCallFixture()
+    event_bus_shutdown = AsyncCallFixture()
 
     monkeypatch.setattr(
         "core.resilience.snapshot_manager.SnapshotManager",
@@ -445,8 +477,8 @@ async def test_orchestrator_shutdown_continues_when_final_state_commit_is_cancel
         cancelled_commits.append((_args, _kwargs))
         raise asyncio.CancelledError()
 
-    service_shutdown = AsyncMock()
-    event_bus_shutdown = AsyncMock()
+    service_shutdown = AsyncCallFixture()
+    event_bus_shutdown = AsyncCallFixture()
 
     monkeypatch.setattr(
         "core.resilience.snapshot_manager.SnapshotManager",
@@ -468,9 +500,9 @@ async def test_orchestrator_shutdown_continues_when_final_state_commit_is_cancel
     orch = SimpleNamespace(
         status=SimpleNamespace(running=True, is_processing=True),
         state_repo=SimpleNamespace(
-            get_current=AsyncMock(return_value=_State()),
+            get_current=AsyncCallFixture(return_value=_State()),
             commit=cancelled_commit,
-            close=AsyncMock(),
+            close=AsyncCallFixture(),
             _transport_has_vault=lambda: True,
             is_vault_owner=False,
         ),
