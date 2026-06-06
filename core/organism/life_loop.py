@@ -55,7 +55,7 @@ class LifeLoop:
             try:
                 await self._task
             except asyncio.CancelledError:
-                pass
+                logger.debug("Life loop task acknowledged cancellation.")
         logger.info("Aura Canonical Life Loop stopped.")
 
     async def _loop_run(self) -> None:

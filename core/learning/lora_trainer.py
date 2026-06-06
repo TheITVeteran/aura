@@ -1,13 +1,19 @@
 """core/learning/lora_trainer.py
 Coordinates fine-tuning of local models via MLX LoRA scripts.
 """
-import subprocess
 import os
 import logging
+import sys
+from subprocess import SubprocessError
 from typing import Dict, Any
+
 from core.config import get_config
+from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Learning.LoraTrainer")
+
+_LORA_TRAINING_ERRORS = (OSError, RuntimeError, SubprocessError, TimeoutError, TypeError, ValueError)
 
 
 class LoraTrainer:
@@ -24,7 +30,7 @@ class LoraTrainer:
 
         # MLX LoRA script invocation command
         cmd = [
-            "python", "-m", "mlx_lm.lora",
+            sys.executable, "-m", "mlx_lm.lora",
             "--model", model_path,
             "--data", dataset_path,
             "--train",
@@ -35,8 +41,13 @@ class LoraTrainer:
 
         logger.info("Initiating local model parameter adaptation: %s", " ".join(cmd))
         try:
-            # Run fine-tuning as background process using subprocess
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=600.0)
+            res = await get_subprocess_gateway().run_async(
+                cmd,
+                capture_output=True,
+                timeout=600.0,
+                offline_tooling=True,
+                source="training_tooling:lora_trainer",
+            )
             if res.returncode == 0:
                 return {
                     "status": "success",
@@ -44,6 +55,7 @@ class LoraTrainer:
                     "stdout": res.stdout[:1000]
                 }
             return {"status": "failed", "error": res.stderr}
-        except Exception as e:
+        except _LORA_TRAINING_ERRORS as e:
+            record_degradation("learning.lora_trainer", e)
             logger.error("LoRA fine-tuning invocation failed: %s", e)
             return {"status": "failed", "error": str(e)}

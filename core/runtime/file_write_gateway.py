@@ -78,6 +78,23 @@ class FileWriteGateway:
             )
         atomic_append_text(target, text, encoding=encoding)
 
+    def delete_file(self, path: PathLike, *, source: str = "unknown") -> bool:
+        """Delete a single file through the same governance lane as writes."""
+        target = _coerce_target(path)
+        if target.exists() and target.is_dir():
+            raise IsADirectoryError(f"target path is a directory: {target}")
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.delete_file:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        try:
+            target.unlink()
+            return True
+        except FileNotFoundError:
+            return False
+
     def drain_text(self, path: PathLike, *, encoding: str = "utf-8", source: str = "unknown") -> str:
         """Atomically drain a text queue file and return its previous contents.
 

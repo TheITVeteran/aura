@@ -1,12 +1,13 @@
-"""core/continuity/memory_backup.py
-Memory backup manager making periodic copies of memory.
-"""
-import shutil
-import os
 import logging
+from pathlib import Path
+
 from core.config import get_config
+from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Continuity.MemoryBackup")
+
+_MEMORY_BACKUP_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 
 
 class MemoryBackupManager:
@@ -16,16 +17,21 @@ class MemoryBackupManager:
         self.config = get_config()
 
     def backup_database(self) -> bool:
-        src = os.path.join(self.config.paths.memory_dir, "autobiography.jsonl")
-        dest = os.path.join(self.config.paths.memory_dir, "autobiography_backup.jsonl")
+        src = Path(self.config.paths.memory_dir) / "autobiography.jsonl"
+        dest = Path(self.config.paths.memory_dir) / "autobiography_backup.jsonl"
 
-        if not os.path.exists(src):
+        if not src.exists():
             return False
             
         try:
-            shutil.copyfile(src, dest)
+            get_file_write_gateway().write_bytes(
+                dest,
+                src.read_bytes(),
+                source="continuity.memory_backup",
+            )
             logger.info("Created memory database backup.")
             return True
-        except Exception as e:
+        except _MEMORY_BACKUP_ERRORS as e:
+            record_degradation("continuity.memory_backup", e)
             logger.error("Failed to copy database: %s", e)
             return False

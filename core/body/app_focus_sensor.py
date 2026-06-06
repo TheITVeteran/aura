@@ -46,7 +46,8 @@ class AppFocusSensor(BaseSensor):
             logger.debug("Failed to query active app via AppleScript: %s", e)
 
         return {
-            "active_app": "Terminal",
+            "active_app": None,
             "is_browser": False,
-            "error": "Failed to query macOS front window"
+            "status": "unavailable",
+            "error": "Failed to query macOS front window",
         }

@@ -1,13 +1,19 @@
 """core/security/audit_log.py
 Durable append-only audit logger for tracking agent executions.
 """
-import time
-import os
 import json
 import logging
+import time
+from pathlib import Path
+from typing import Any, Dict
+
 from core.config import get_config
+from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Security.AuditLogger")
+
+_AUDIT_LOG_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 
 
 class SecurityAuditLogger:
@@ -15,7 +21,7 @@ class SecurityAuditLogger:
 
     def __init__(self):
         self.config = get_config()
-        self.log_path = os.path.join(self.config.paths.log_dir, "security_audit.jsonl")
+        self.log_path = Path(self.config.paths.log_dir) / "security_audit.jsonl"
 
     def log_event(self, action: str, details: Dict[str, Any]) -> None:
         event = {
@@ -24,7 +30,11 @@ class SecurityAuditLogger:
             "details": details
         }
         try:
-            with open(self.log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(event) + "\n")
-        except Exception as e:
+            get_file_write_gateway().append_text(
+                self.log_path,
+                json.dumps(event, sort_keys=True) + "\n",
+                source="security.audit_log",
+            )
+        except _AUDIT_LOG_ERRORS as e:
+            record_degradation("security.audit_log", e)
             logger.error("Failed to append security audit event: %s", e)

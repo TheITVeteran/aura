@@ -42,8 +42,7 @@ class FileMotor(BaseMotor):
                     "bytes": len(content)
                 }
             elif action == "delete":
-                if path.exists():
-                    path.unlink()
+                if gateway.delete_file(path, source="life_loop.file_motor"):
                     return {"status": "success", "action": "delete", "path": str(path)}
                 return {"status": "ignored", "message": "File does not exist"}
         except _FILE_MOTOR_ERRORS as e:

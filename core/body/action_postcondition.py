@@ -14,8 +14,9 @@ class ActionPostconditionVerifier:
         channel = receipt.get("channel", "unknown")
         status = receipt.get("status", "failed")
 
-        # Classify outcomes
-        success = status in ["success", "simulated"]
+        # Classify only observed execution as success. Unavailable or dry-run
+        # fallbacks must remain non-success until a postcondition proves effect.
+        success = status == "success"
         
         # Determine side effects
         side_effects = []
