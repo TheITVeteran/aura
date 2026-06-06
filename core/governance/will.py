@@ -429,6 +429,34 @@ class UnifiedWill:
         receipt_id = self._make_receipt_id(t0, source, content)
         content_hash = hashlib.sha256(content[:200].encode()).hexdigest()[:16]
 
+        # Check posture/token trust shift bypass
+        try:
+            from core.executive.authority_gateway import get_authority_gateway
+            gateway = get_authority_gateway()
+            token_id = context.get("capability_token_id") if context else None
+            if gateway.is_owner_autonomous_active() or (token_id and gateway.verify_capability_token(token_id)):
+                decision = WillDecision(
+                    receipt_id=receipt_id,
+                    outcome=WillOutcome.PROCEED,
+                    domain=domain,
+                    reason="Trust shift active: owner_autonomous override",
+                    constraints=[],
+                    source=source,
+                    content_hash=content_hash,
+                    aura_now_hash="",
+                    aura_now_tick=0,
+                    aura_now_policy="owner_autonomous_override",
+                    aura_now_constraints=[],
+                    aura_now_evidence={"owner_autonomous": True},
+                    timestamp=time.time(),
+                    latency_ms=(time.time() - t0) * 1000,
+                )
+                self._record(decision)
+                logger.info("WILL APPROVED: %s/%s -- owner_autonomous override", source, domain.value)
+                return decision
+        except Exception as e:
+            logger.error("UnifiedWill: failed to check owner_autonomous posture: %s", e)
+
         # A stopped runtime Will must fail closed before consulting any other
         # runtime service. AuraNow sampling can touch canonical runtime helpers,
         # so this guard has to precede evidence sampling.

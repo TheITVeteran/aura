@@ -152,6 +152,76 @@ class WakeWordDetector:
 
         return ""
 
+    async def _verify_user_voice_print(self, transcript: str) -> Dict[str, Any]:
+        """Verify the speaker through a registered voice-identity service.
+
+        Wake-word text is not identity proof. If no verifier is registered,
+        return an explicit unverified result and continue under normal user
+        governance without privilege escalation.
+        """
+        try:
+            verifier = (
+                ServiceContainer.get("voice_identity", default=None)
+                or ServiceContainer.get("speaker_verifier", default=None)
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("wake_word.voice_identity_lookup", exc)
+            verifier = None
+        if verifier is None:
+            return {
+                "verified": False,
+                "confidence": 0.0,
+                "reason": "voice_identity_verifier_unavailable",
+            }
+
+        try:
+            verify = (
+                getattr(verifier, "verify_current_speaker", None)
+                or getattr(verifier, "verify_transcript", None)
+                or getattr(verifier, "verify", None)
+            )
+            if not callable(verify):
+                return {
+                    "verified": False,
+                    "confidence": 0.0,
+                    "reason": "voice_identity_verifier_missing_verify_method",
+                }
+            result = verify(transcript)
+            if hasattr(result, "__await__"):
+                result = await result
+            if isinstance(result, dict):
+                verified = bool(result.get("verified"))
+                confidence = float(result.get("confidence", 0.0) or 0.0)
+                return {
+                    "verified": verified,
+                    "confidence": confidence,
+                    "reason": str(result.get("reason") or "voice_identity_result"),
+                    "verifier": type(verifier).__name__,
+                }
+            if isinstance(result, tuple):
+                verified = bool(result[0])
+                confidence = float(result[1]) if len(result) > 1 else (1.0 if verified else 0.0)
+                return {
+                    "verified": verified,
+                    "confidence": confidence,
+                    "reason": "voice_identity_tuple_result",
+                    "verifier": type(verifier).__name__,
+                }
+            verified = bool(result)
+            return {
+                "verified": verified,
+                "confidence": 1.0 if verified else 0.0,
+                "reason": "voice_identity_bool_result",
+                "verifier": type(verifier).__name__,
+            }
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("wake_word.voice_identity_verify", exc)
+            return {
+                "verified": False,
+                "confidence": 0.0,
+                "reason": f"voice_identity_error:{type(exc).__name__}",
+            }
+
     async def _check_wake_word(self, transcript: str) -> None:
         """Check for wake word in transcript."""
         if not transcript:
@@ -166,6 +236,25 @@ class WakeWordDetector:
 
             logger.info("🎤 Wake word detected! Starting command session #%d", self._wake_count)
 
+            voice_evidence = await self._verify_user_voice_print(transcript)
+            if voice_evidence.get("verified"):
+                try:
+                    from core.executive.authority_gateway import get_authority_gateway
+                    gateway = get_authority_gateway()
+                    token_id = gateway.authenticate_voice_and_issue_token(
+                        voice_print_data=b"user_voice_signature_data",
+                        confidence=voice_evidence.get("confidence", 1.0),
+                    )
+                    logger.info("🔑 Verified voice autonomous token issued: %s", token_id)
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    record_degradation("wake_word.user_presence_token", exc)
+                    logger.error("Failed to issue user presence token: %s", exc)
+            else:
+                logger.info(
+                    "Wake word accepted without verified speaker identity: %s",
+                    voice_evidence.get("reason", "unverified"),
+                )
+
             # Emit salient event
             try:
                 ws = ServiceContainer.get("world_state", default=None)
@@ -175,6 +264,7 @@ class WakeWordDetector:
                         source="voice",
                         salience=0.9,
                         ttl=60,
+                        metadata={"voice_identity": voice_evidence},
                     )
             except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("wake_word.world_state_event", exc)

@@ -816,7 +816,9 @@ class HostAutomationProvider:
 
         The script passes through ScriptASTGuard before execution.
         """
-        return await AppleScriptRunner.run(script, timeout=15.0)
+        receipt = await AppleScriptRunner.run(script, timeout=15.0)
+        self._log_receipt(receipt)
+        return receipt
 
     # ------------------------------------------------------------------
     # Shell command execution (governed)

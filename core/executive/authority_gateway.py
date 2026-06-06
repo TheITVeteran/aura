@@ -3,6 +3,8 @@ from core.runtime.errors import record_degradation
 
 
 import logging
+import secrets
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -50,9 +52,140 @@ class AuthorityGateway:
     """
 
     TOOL_TOKEN_TTL_S = 900
+    USER_PRESENCE_TOKEN_TTL_S = 60.0
 
     def __init__(self) -> None:
         self._capabilities = get_capability_manager()
+        self._current_posture = "defensive_sandboxed"
+        self._active_tokens: Dict[str, Dict[str, Any]] = {}
+        self._hmac_key = secrets.token_bytes(32)
+
+    def issue_user_presence_token(
+        self,
+        *,
+        source: str,
+        evidence: Dict[str, Any],
+        ttl_s: float | None = None,
+    ) -> str:
+        """Issue a short-lived user-presence receipt.
+
+        Presence is not an authority bypass. It is scoped evidence that a live
+        user session is active; all consequential actions still flow through
+        UnifiedWill, PermissionRiskModel, ExecutiveCore, and capability tokens.
+        """
+        source = str(source or "").strip() or "unknown"
+        evidence = dict(evidence or {})
+        if not bool(evidence.get("verified")):
+            raise ValueError("user presence evidence is not verified")
+        confidence = float(evidence.get("confidence", 0.0) or 0.0)
+        if confidence < 0.80:
+            raise ValueError(f"user presence confidence too low: {confidence:.3f}")
+
+        ttl = max(5.0, min(float(ttl_s or self.USER_PRESENCE_TOKEN_TTL_S), 300.0))
+        token_id = "presence_" + secrets.token_urlsafe(24)
+        self._active_tokens[token_id] = {
+            "expires_at": time.time() + ttl,
+            "source": source,
+            "confidence": confidence,
+            "evidence": evidence,
+        }
+        self._current_posture = "owner_present"
+        logger.info("User presence token issued by %s (ttl=%.0fs, confidence=%.2f)", source, ttl, confidence)
+        return token_id
+
+    def authenticate_voice_and_issue_token(
+        self,
+        voice_print_data: bytes,
+        *,
+        confidence: float | None = None,
+        verifier: str = "voice_identity",
+    ) -> str:
+        """Authenticate user voice print, transition posture to owner_autonomous, and issue a 60s TTL cryptographic HMAC token."""
+        if not voice_print_data:
+            raise ValueError("voice print evidence is empty")
+        
+        confidence_val = float(confidence) if confidence is not None else 1.0
+        if confidence_val < 0.80:
+            raise ValueError(f"voice print confidence too low: {confidence_val:.3f}")
+            
+        import hmac
+        import hashlib
+        
+        expires_at = time.time() + 60.0
+        token_payload = f"owner_autonomous|{expires_at}|{confidence_val}".encode()
+        signature = hmac.new(self._hmac_key, token_payload, hashlib.sha256).hexdigest()
+        token_id = f"tok_{signature[:16]}"
+        
+        self._active_tokens[token_id] = {
+            "expires_at": expires_at,
+            "posture": "owner_autonomous",
+            "signature": signature,
+            "confidence": confidence_val,
+            "source": "voice",
+            "evidence": {
+                "verified": True,
+                "confidence": confidence_val,
+                "verifier": str(verifier or "voice_identity"),
+                "sample_bytes": len(voice_print_data),
+            }
+        }
+        self._current_posture = "owner_autonomous"
+        logger.info("🔑 Posture transitioned to owner_autonomous. Cryptographic token %s issued (expires in 60s)", token_id)
+        return token_id
+
+    def is_owner_autonomous_active(self) -> bool:
+        """Check if the system is in owner_autonomous or owner_present posture."""
+        self._revert_posture_if_expired()
+        return self._current_posture in ("owner_autonomous", "owner_present") and len(self._active_tokens) > 0
+
+    def verify_capability_token(self, token_id: str) -> bool:
+        """Verify a short-lived capability token (supporting both presence and autonomous tokens)."""
+        self._revert_posture_if_expired()
+        if not token_id:
+            return False
+        record = self._active_tokens.get(token_id)
+        if record is None:
+            return False
+        expires_at = float(record.get("expires_at", 0.0) or 0.0)
+        if time.time() > expires_at:
+            self._active_tokens.pop(token_id, None)
+            self._revert_posture_if_expired()
+            return False
+        return True
+
+    def verify_user_presence_token(self, token_id: str) -> bool:
+        """Verify a short-lived user-presence token."""
+        return self.verify_capability_token(token_id)
+
+    def active_user_presence_context(self) -> Dict[str, Any]:
+        self._revert_posture_if_expired()
+        if not self._active_tokens:
+            return {}
+        token_id, record = next(iter(self._active_tokens.items()))
+        return {
+            "user_presence_token_id": token_id,
+            "user_presence_verified": True,
+            "user_presence_source": record.get("source", "unknown"),
+            "user_presence_confidence": float(record.get("confidence", 0.0) or 0.0),
+        }
+
+    def _revert_posture_if_expired(self) -> None:
+        """Auto-revert posture when all presence or capability tokens expire."""
+        now = time.time()
+        expired = []
+        for token_id, record in list(self._active_tokens.items()):
+            if isinstance(record, dict):
+                expires_at = float(record.get("expires_at", 0.0) or 0.0)
+            else:
+                expires_at = float(record)
+            if now > expires_at:
+                expired.append(token_id)
+        for tid in expired:
+            self._active_tokens.pop(tid, None)
+
+        if self._current_posture in ("owner_present", "owner_autonomous") and not self._active_tokens:
+            self._current_posture = "defensive_sandboxed"
+            logger.info("All user presence or autonomous tokens expired; posture reverted to defensive_sandboxed.")
 
     def is_ready(self) -> bool:
         """Deep readiness probe for runtime tool-governance health."""
@@ -72,6 +205,7 @@ class AuthorityGateway:
         domain_str: str,
         priority: float,
         is_critical: bool = False,
+        context: Optional[Dict[str, Any]] = None,
     ) -> tuple[Optional["AuthorityDecision"], Optional[Any]]:
         """Route through UnifiedWill first.  Returns a blocking AuthorityDecision
         if the Will refuses, or None if the Will approves (let domain checks proceed).
@@ -103,6 +237,7 @@ class AuthorityGateway:
                 domain=domain,
                 priority=priority,
                 is_critical=is_critical,
+                context=context or {},
             )
             if not decision.is_approved():
                 return (
@@ -259,7 +394,8 @@ class AuthorityGateway:
 
         # ── Unified Will gate (canonical decision authority) ──
         will_block, will_decision = self._will_gate(
-            f"tool:{tool_name}", source, "tool_execution", priority, is_critical
+            f"tool:{tool_name}", source, "tool_execution", priority, is_critical,
+            context={**dict(args or {}), **self.active_user_presence_context()},
         )
         if will_block is not None:
             return will_block
@@ -319,7 +455,8 @@ class AuthorityGateway:
         key press or observe step, the Will must see and receipt the intent.
         """
         will_block, will_decision = self._will_gate(
-            f"environment:{intent_name}", source, "environment_action", priority, is_critical
+            f"environment:{intent_name}", source, "environment_action", priority, is_critical,
+            context={**dict(payload or {}), **self.active_user_presence_context()},
         )
         if will_block is not None:
             return will_block

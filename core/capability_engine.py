@@ -874,6 +874,7 @@ class CapabilityEngine(AuraBaseModule):
             "computer_use",
             "desktop_task",
             "os_manipulation",
+            "os_automation",
             # Agency & autonomy
             "curiosity",
             "deploy_ghost_probe",

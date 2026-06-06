@@ -305,6 +305,10 @@ class SovereignVoiceEngine:
         else:
             logger.debug("VoiceEngine: presence pulse deferred (no running loop)")
 
+        # Ingestion rate-limiting & loop-prevention state
+        self._last_transcript_time = 0.0
+        self._last_transcript_text = ""
+
     # ══════════════════════════════════════════════════════
     # MYCELIAL INTEGRATION
     # ══════════════════════════════════════════════════════
@@ -977,6 +981,43 @@ class SovereignVoiceEngine:
 
     def _dispatch_transcript(self, text: str):
         """Route transcript to the orchestrator via callback + EventBus."""
+        now = time.time()
+        
+        # 1. Rate-limiting (max 1 command per 2 seconds)
+        last_time = getattr(self, "_last_transcript_time", 0.0)
+        if now - last_time < 2.0:
+            logger.warning("VoiceEngine: transcript rate-limited (too frequent): %r", text)
+            return
+
+        # 2. Deduplication (prevent duplicate commands within 5 seconds)
+        normalized = text.strip().lower()
+        last_text = getattr(self, "_last_transcript_text", "")
+        if normalized == last_text and now - last_time < 5.0:
+            logger.warning("VoiceEngine: transcript deduplicated (duplicate command): %r", text)
+            return
+
+        # Record validation state
+        self._last_transcript_time = now
+        self._last_transcript_text = normalized
+
+        # 3. Direct recording of a user-sourced salient event in WorldState with salience=1.0
+        try:
+            from core.world_state import get_world_state
+            ws = get_world_state()
+            ws.last_voice_transcript = text
+            ws.voice_activity_detected = True
+            ws.record_event(
+                description=f"User voice command: {text}",
+                source="user",
+                salience=1.0,
+                ttl=600.0,
+                metadata={"transcript": text}
+            )
+            logger.info("🎙️ Recorded salient voice event in WorldState")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+            record_degradation("voice_engine.world_state_transcript_event", e)
+            logger.error("Failed to record transcript event in WorldState: %s", e)
+
         # Path 1: Direct callback (if registered by SovereignEars)
         loop = self.loop
         has_direct_callback = bool(

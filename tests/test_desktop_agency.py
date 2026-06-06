@@ -17,6 +17,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -460,6 +461,209 @@ class TestFullPipelineIntegration(unittest.TestCase):
         self.assertEqual(proof["completed"], 4)
 
 
+class TestOwnerAutonomyGating(unittest.TestCase):
+    """Integration tests for ambient grounding, trust shift, and OS automation compiler."""
+
+    def setUp(self):
+        from core.container import ServiceContainer
+        self.saved_services = dict(ServiceContainer._services)
+
+    def tearDown(self):
+        from core.container import ServiceContainer
+        ServiceContainer._services = self.saved_services
+
+    def test_voice_engine_grounding_and_rate_limiting(self):
+        """Test transcript injection, rate-limiting, and deduplication."""
+        from core.senses.voice_engine import SovereignVoiceEngine
+        from core.world_state import get_world_state
+        import time
+
+        ws = get_world_state()
+        ws._events.clear()
+        ws.last_voice_transcript = ""
+        ws.voice_activity_detected = False
+
+        engine = SovereignVoiceEngine()
+        # Mock callbacks so it doesn't fail on direct dispatch
+        engine._on_transcript = None
+        engine._transcript_callbacks = {}
+        engine._anonymous_transcript_callbacks = []
+
+        # 1. First dispatch: should succeed and record high salience event
+        now = time.time()
+        engine._dispatch_transcript("Hello Aura")
+        self.assertEqual(ws.last_voice_transcript, "Hello Aura")
+        self.assertTrue(ws.voice_activity_detected)
+        
+        events = ws.get_salient_events()
+        self.assertTrue(any(e["description"] == "User voice command: Hello Aura" and e["salience"] == 1.0 for e in events))
+
+        # Reset events to check duplicates/rate-limits easily
+        ws._events.clear()
+
+        # 2. Immediate duplicate dispatch: should be deduplicated
+        engine._dispatch_transcript("Hello Aura")
+        events = ws.get_salient_events()
+        self.assertEqual(len(events), 0, "Duplicate command should be deduplicated")
+
+        # 3. Immediate different dispatch: should be rate-limited
+        engine._dispatch_transcript("Open browser")
+        events = ws.get_salient_events()
+        self.assertEqual(len(events), 0, "Too frequent commands should be rate-limited")
+
+        # 4. Advance time past rate limit (2s) and deduplication (5s) windows
+        engine._last_transcript_time = now - 10.0
+        engine._dispatch_transcript("Open browser")
+        events = ws.get_salient_events()
+        self.assertEqual(len(events), 1, "Should succeed after time elapsed")
+
+    def test_wake_word_voice_print_shift(self):
+        """Wake words start sessions, but only real verifier evidence issues presence tokens."""
+        from core.voice.wake_word import WakeWordDetector
+        from core.executive.authority_gateway import get_authority_gateway
+
+        detector = WakeWordDetector()
+        gateway = get_authority_gateway()
+
+        # Reset posture
+        gateway._current_posture = "defensive_sandboxed"
+        gateway._active_tokens.clear()
+
+        def no_verifier(name, default=None):
+            return default
+
+        with patch("core.voice.wake_word.ServiceContainer.get", staticmethod(no_verifier)):
+            asyncio.run(detector._check_wake_word("Hey Aura, write a note"))
+
+        self.assertEqual(gateway._current_posture, "defensive_sandboxed")
+        self.assertEqual(len(gateway._active_tokens), 0)
+
+        class Verifier:
+            async def verify_current_speaker(self, transcript):
+                return {"verified": True, "confidence": 0.95, "reason": "unit_verified"}
+
+        detector = WakeWordDetector()
+        gateway._current_posture = "defensive_sandboxed"
+        gateway._active_tokens.clear()
+
+        def verified_service(name, default=None):
+            if name == "voice_identity":
+                return Verifier()
+            return default
+
+        with patch("core.voice.wake_word.ServiceContainer.get", staticmethod(verified_service)):
+            asyncio.run(detector._check_wake_word("Hey Aura, write a note"))
+
+        self.assertEqual(gateway._current_posture, "owner_present")
+        self.assertEqual(len(gateway._active_tokens), 1)
+        self.assertTrue(gateway.is_owner_autonomous_active())
+
+    def test_presence_token_does_not_bypass_permissions_or_will(self):
+        """Verified user presence cannot override blocked actions."""
+        from core.executive.authority_gateway import get_authority_gateway
+        from core.capabilities.permission_model import get_permission_model
+        from core.governance.will import get_will, WillOutcome, ActionDomain
+        from core.container import ServiceContainer
+
+        gateway = get_authority_gateway()
+        pm = get_permission_model()
+        will = get_will()
+
+        # Register permission_model in ServiceContainer so UnifiedWill can consult it
+        ServiceContainer.register_instance("permission_model", pm, required=False)
+
+        # 1. Without posture: a blocked command is rejected
+        gateway._current_posture = "defensive_sandboxed"
+        gateway._active_tokens.clear()
+
+        decision = pm.check_permission("rm -rf /")
+        self.assertFalse(decision.approved)
+
+        will_decision = will.decide("rm -rf /", "test", ActionDomain.TOOL_EXECUTION)
+        self.assertNotEqual(will_decision.outcome, WillOutcome.PROCEED)
+
+        # 2. Verified user presence is evidence, not authorization.
+        gateway.issue_user_presence_token(
+            source="voice",
+            evidence={"verified": True, "confidence": 0.95, "reason": "unit"},
+        )
+        self.assertTrue(gateway.is_owner_autonomous_active())
+        presence_context = gateway.active_user_presence_context()
+
+        decision = pm.check_permission("rm -rf /", context=presence_context)
+        self.assertFalse(decision.approved)
+
+        will_decision = will.decide(
+            "rm -rf /",
+            "test",
+            ActionDomain.TOOL_EXECUTION,
+            context=presence_context,
+        )
+        self.assertNotEqual(will_decision.outcome, WillOutcome.PROCEED)
+
+        low_risk = pm.check_permission("open app", "Notes", context=presence_context)
+        self.assertTrue(low_risk.approved)
+
+    def test_automatic_posture_reversion(self):
+        """Test that posture reverts to defensive_sandboxed on token expiration."""
+        from core.executive.authority_gateway import get_authority_gateway
+        import time
+
+        gateway = get_authority_gateway()
+        gateway.issue_user_presence_token(
+            source="voice",
+            evidence={"verified": True, "confidence": 0.95, "reason": "unit"},
+        )
+        self.assertTrue(gateway.is_owner_autonomous_active())
+
+        # Fast forward time manually in active tokens
+        token_id = next(iter(gateway._active_tokens.keys()))
+        gateway._active_tokens[token_id]["expires_at"] = time.time() - 10.0
+
+        self.assertFalse(gateway.is_owner_autonomous_active())
+        self.assertEqual(gateway._current_posture, "defensive_sandboxed")
+
+    def test_os_automation_compiler_skill(self):
+        """Test that OSAutomationCompilerSkill generates and executes safe scripts."""
+        from core.container import ServiceContainer
+        from core.skills.os_automation import OSAutomationCompilerSkill, OSAutomationInput
+        from unittest.mock import AsyncMock
+
+        # Mock cognitive engine and host automation
+        mock_cog = AsyncMock()
+        mock_cog.generate.return_value = "```applescript\ntell application \"Notes\" to activate\n```"
+        ServiceContainer.register_instance("cognitive_engine", mock_cog, required=False)
+
+        mock_host = AsyncMock()
+        mock_host.execute_applescript.return_value = MockAutomationReceipt("execute_applescript", "Notes", True, "ok")
+
+        skill = OSAutomationCompilerSkill()
+        auth = {
+            "approved": True,
+            "reason": "unit approved",
+            "decision": SimpleNamespace(receipt_id="will-os-auto", domain="environment_action", source="unit"),
+            "executive_intent_id": None,
+            "capability_token_id": None,
+            "will_receipt_id": "will-os-auto",
+        }
+        with patch.object(OSAutomationCompilerSkill, "_authorize", AsyncMock(return_value=auth)), \
+             patch.object(OSAutomationCompilerSkill, "_finalize", return_value=None), \
+             patch("core.skills.os_automation.get_host_automation", return_value=mock_host):
+            params = OSAutomationInput(goal="open Notes", script_type="applescript")
+            result = asyncio.run(skill.safe_execute(params, {"source": "unit", "user_requested_action": True}))
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["result"], "ok")
+            self.assertIn("script_hash", result)
+            self.assertEqual(result["receipt_id"], mock_host.execute_applescript.return_value.receipt_id)
+
+            # Test validation guard failure on unsafe script
+            mock_cog.generate.return_value = "```applescript\ndo shell script \"sudo rm -rf /\"\n```"
+            result_unsafe = asyncio.run(skill.safe_execute(params, {"source": "unit"}))
+            self.assertFalse(result_unsafe["ok"])
+            self.assertIn("safety guard", result_unsafe["error"])
+
+
 # ---------------------------------------------------------------------------
 # Test runner
 # ---------------------------------------------------------------------------
@@ -479,6 +683,7 @@ def run_eval_suite() -> Dict[str, Any]:
         TestWebAssetHandler,
         TestBehavioralProof,
         TestFullPipelineIntegration,
+        TestOwnerAutonomyGating,
     ]
 
     for cls in test_classes:
