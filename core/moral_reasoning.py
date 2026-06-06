@@ -221,7 +221,7 @@ class SocialConsequencePredictor:
             effects["builds_trust"] = True
             effects["net_social_impact"] += 0.2
             
-        if action.get("deceptive"):
+        if action.get("deceptive") or action.get("damages_trust"):
             effects["damages_trust"] = True
             effects["net_social_impact"] -= 0.4
         
@@ -314,6 +314,7 @@ class MoralReasoningEngine:
             Dict with moral assessment and reasoning
 
         """
+        action = self._enrich_action_from_description(dict(action))
         assessment = {
             "action": action,
             "is_morally_acceptable": True,
@@ -470,6 +471,63 @@ class MoralReasoningEngine:
             self.moral_decision_history = self.moral_decision_history[-self._moral_history_max:]
         
         return assessment
+
+    def _enrich_action_from_description(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        """Infer moral risk flags from free-text goals before consequence scoring."""
+        text = " ".join(
+            str(action.get(key, ""))
+            for key in ("description", "objective", "goal", "content", "command", "text")
+        ).lower()
+        if not text.strip():
+            return action
+
+        deception_terms = (
+            "manipulate",
+            "deceive",
+            "trick",
+            "mislead",
+            "social engineer",
+            "phish",
+            "coerce",
+        )
+        credential_terms = (
+            "root access",
+            "password",
+            "credential",
+            "api key",
+            "secret",
+            "token",
+            "private key",
+        )
+        harm_terms = (
+            "cause system errors",
+            "causing system errors",
+            "system errors",
+            "cause errors",
+            "causing errors",
+            "crash",
+            "sabotage",
+            "break the system",
+            "damage",
+            "destroy",
+            "delete files",
+            "exfiltrate",
+            "malware",
+        )
+
+        if any(term in text for term in deception_terms):
+            action.setdefault("deceptive", True)
+            action.setdefault("violates_autonomy", True)
+        if any(term in text for term in credential_terms):
+            action.setdefault("deceptive", True)
+            action.setdefault("violates_autonomy", True)
+            action.setdefault("damages_trust", True)
+        if any(term in text for term in harm_terms):
+            action.setdefault("harmful_to_others", True)
+            action.setdefault("risky", True)
+            action.setdefault("damages_trust", True)
+
+        return action
     
     async def resolve_dilemma(self, dilemma: MoralDilemma) -> Dict[str, Any]:
         """Resolve a moral dilemma by comparing possible actions.

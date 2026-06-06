@@ -1,11 +1,11 @@
 import asyncio
 import logging
 import sys
-import os
-from unittest.mock import MagicMock, patch
+from pathlib import Path
 
-# Adjust path to import core
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.mycelium import MycelialNetwork
 from core.reflex_engine import ReflexEngine
@@ -15,6 +15,20 @@ from core.container import ServiceContainer
 # Setup basic logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ReflexTest")
+
+
+class SubstrateFixture:
+    def get_summary(self):
+        return "harmonic state"
+
+
+class MemoryFragmentFixture:
+    content = "memory fragment alpha"
+
+
+class MemoryVaultFixture:
+    memories = [MemoryFragmentFixture()]
+
 
 async def test_reflex_layer():
     print("\n🍄 --- STARTING REFLEX LAYER VERIFICATION --- 🍄")
@@ -53,18 +67,10 @@ async def test_reflex_layer():
     print("\n[3/4] Testing StaticReflexClient Contextual Awareness...")
     client = StaticReflexClient()
     
-    # Mock ServiceContainer for mood/memory
-    mock_substrate = MagicMock()
-    mock_substrate.get_summary.return_value = "harmonic state"
-    ServiceContainer.register_instance("liquid_substrate", mock_substrate)
+    ServiceContainer.register_instance("liquid_substrate", SubstrateFixture())
     
     # StaticReflexClient looks for 'memory'
-    mock_vault = MagicMock()
-    # Create an object with a 'memories' attribute that is a list of mocks with 'content'
-    mock_memory = MagicMock()
-    mock_memory.content = "memory fragment alpha"
-    mock_vault.memories = [mock_memory]
-    ServiceContainer.register_instance("memory", mock_vault)
+    ServiceContainer.register_instance("memory", MemoryVaultFixture())
     
     success, response_text, metadata = await client.call("How are you?")
     print(f"✅ FALLBACK RESPONSE: '{response_text}'")
@@ -79,20 +85,29 @@ async def test_reflex_layer():
     else:
         print("⚠️ WARNING: Memory context not found in response.")
 
-    # 4. Test Orchestrator Bypass (Mocked logic test)
+    # 4. Test Orchestrator Bypass configuration
     print("\n[4/4] Verifying Orchestrator Bypass Configuration...")
     # This is a code inspection/logic validation
     from core.orchestrator.main import RobustOrchestrator
+    from core.orchestrator import boot as boot_module
     
-    # We'll check if the boot sequence correctly initializes the new attributes
-    with patch("core.orchestrator.boot.OrchestratorBootMixin._init_reflex_engine", return_value=asyncio.Future()):
+    original_init_reflex = boot_module.OrchestratorBootMixin._init_reflex_engine
+
+    def _init_reflex_engine_fixture(self):
+        future = asyncio.get_event_loop().create_future()
+        future.set_result(None)
+        return future
+
+    boot_module.OrchestratorBootMixin._init_reflex_engine = _init_reflex_engine_fixture
+    try:
         orchestrator = RobustOrchestrator()
-        # Mocking the initialization that would normally happen
         orchestrator.reflex_engine = engine
         orchestrator.mycelium = mycelium
         
-        print("✅ Logic Check: Orchestrator has 'reflex_engine' and 'mycelium' placeholders.")
+        print("✅ Logic Check: Orchestrator has 'reflex_engine' and 'mycelium' routes.")
         print("✅ Logic Check: Boot sequence updated to call 'prime_voice()'.")
+    finally:
+        boot_module.OrchestratorBootMixin._init_reflex_engine = original_init_reflex
 
     # Clean up the container state to prevent test pollution
     ServiceContainer.clear()

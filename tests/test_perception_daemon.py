@@ -2,7 +2,6 @@ import asyncio
 import pytest
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 from core.perception.perception_daemon import PerceptionDaemon, get_perception_daemon
 from core.perception.perception_runtime import PerceptionRuntime
@@ -28,14 +27,13 @@ async def test_perception_daemon_lifecycle():
 async def test_perception_daemon_moment_buffering_and_privacy(monkeypatch):
     daemon = PerceptionDaemon(check_interval_s=0.1)
     
-    # Clear event bus publish mock if needed
     bus = get_event_bus()
     published_events = []
     
-    def _mock_publish_threadsafe(topic, data, priority=EventPriority.COGNITIVE):
+    def _capture_publish_threadsafe(topic, data, priority=EventPriority.COGNITIVE):
         published_events.append((topic, data, priority))
         
-    monkeypatch.setattr(bus, "publish_threadsafe", _mock_publish_threadsafe)
+    monkeypatch.setattr(bus, "publish_threadsafe", _capture_publish_threadsafe)
     
     # Register regular moment
     moment = daemon.register_moment("test_source", "Hello Bryan", {"custom": 123})
@@ -91,7 +89,6 @@ async def test_perception_runtime_daemon_integration(monkeypatch):
     runtime = PerceptionRuntime(governance_decide=_mock_decide)
     assert runtime.daemon is not None
     
-    # Mock daemon register_moment
     moments_registered = []
     monkeypatch.setattr(runtime.daemon, "register_moment", lambda src, content, meta=None: moments_registered.append((src, content, meta)))
     

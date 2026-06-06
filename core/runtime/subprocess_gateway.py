@@ -213,6 +213,7 @@ class SubprocessGateway:
         self,
         argv: Sequence[str],
         *,
+        stdin: Any = None,
         stdout: IO[str] | None = None,
         stderr: IO[str] | None = None,
         stdout_path: str | os.PathLike[str] | None = None,
@@ -253,6 +254,7 @@ class SubprocessGateway:
 
             proc = subprocess.Popen(
                 command,
+                stdin=stdin,
                 stdout=stdout,
                 stderr=stderr,
                 cwd=_coerce_cwd(cwd),
