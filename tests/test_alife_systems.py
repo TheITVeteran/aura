@@ -210,8 +210,7 @@ class TestALifeIntegration:
 
     def test_integration_phase_has_alife_references(self):
         from core.phases.cognitive_integration_phase import CognitiveIntegrationPhase
-        from unittest.mock import MagicMock
-        phase = CognitiveIntegrationPhase(kernel=MagicMock())
+        phase = CognitiveIntegrationPhase(kernel=object())
         assert hasattr(phase, "_criticality_regulator")
         assert hasattr(phase, "_alife_dynamics")
         assert hasattr(phase, "_alife_extensions")

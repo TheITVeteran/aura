@@ -35,9 +35,9 @@ class TestSystemEntropy:
         """Rolling average should mitigate single-tick spikes."""
         import psutil
 
-        # Mock psutil to return stable values, then a spike
-        mock_cpu = 10.0
-        monkeypatch.setattr(psutil, "cpu_percent", lambda interval=0: mock_cpu)
+        # Return stable values first, then a spike.
+        cpu_sample = 10.0
+        monkeypatch.setattr(psutil, "cpu_percent", lambda interval=0: cpu_sample)
         monkeypatch.setattr(psutil, "virtual_memory", lambda: type('obj', (object,), {'percent': 50.0}))
 
         # Build stable history
@@ -45,7 +45,7 @@ class TestSystemEntropy:
             base_entropy = fe_engine._compute_system_entropy()
 
         # Inject a spike
-        mock_cpu = 95.0
+        cpu_sample = 95.0
         spike_entropy = fe_engine._compute_system_entropy()
 
         # The spike should not drastically alter the entropy in one tick due to the rolling average

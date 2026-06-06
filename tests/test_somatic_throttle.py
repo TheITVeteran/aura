@@ -4,8 +4,10 @@ Verifies parameter cuts occur under real or coupled hardware stress.
 """
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
+import psutil
+
+import core.brain.llm.somatic_throttle as throttle_module
 from core.brain.llm.somatic_throttle import SomaticComputeSentinel
 
 
@@ -13,103 +15,63 @@ def _governor(throttle: float = 1.0) -> SimpleNamespace:
     return SimpleNamespace(get_throttle_factor=lambda: throttle)
 
 
-def test_somatic_throttle_normal():
-    # Test normal/unstressed parameters remain unchanged
-    with (
-        patch("core.brain.llm.somatic_throttle.resolve_affect_engine") as mock_resolve,
-        patch("research.protocols.resource_quotas.get_compute_governor", return_value=_governor()),
-        patch("psutil.cpu_percent", return_value=15.0),
-        patch("psutil.virtual_memory") as mock_vm,
-    ):
-        mock_affect = MagicMock()
-        mock_affect.current = SimpleNamespace(arousal=0.2)
-        mock_resolve.return_value = mock_affect
-        
-        mock_vm_obj = MagicMock()
-        mock_vm_obj.percent = 40.0
-        mock_vm.return_value = mock_vm_obj
-        
-        sentinel = SomaticComputeSentinel()
-        opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_depth": 0.8}
-        adjusted = sentinel.adjust_generation_options(opts.copy())
-        
-        assert adjusted["max_tokens"] == 512
-        assert adjusted["temperature"] == 0.7
-        assert adjusted["recurrent_depth"] == 0.8
+def _install_probe_readings(monkeypatch, *, arousal: float, cpu_percent: float, memory_percent: float):
+    affect = SimpleNamespace(current=SimpleNamespace(arousal=arousal))
+    monkeypatch.setattr(throttle_module, "resolve_affect_engine", lambda: affect)
+    monkeypatch.setattr(
+        "research.protocols.resource_quotas.get_compute_governor",
+        lambda: _governor(),
+    )
+    monkeypatch.setattr(psutil, "cpu_percent", lambda interval=None: cpu_percent)
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(percent=memory_percent))
+    return affect
 
 
-def test_somatic_throttle_resource_stressed():
-    # Test stressed hardware caps max_tokens and adjusts temp/lane depth.
-    with (
-        patch("core.brain.llm.somatic_throttle.resolve_affect_engine") as mock_resolve,
-        patch("research.protocols.resource_quotas.get_compute_governor", return_value=_governor()),
-        patch("psutil.cpu_percent", return_value=50.0),
-        patch("psutil.virtual_memory") as mock_vm,
-    ):
-        mock_affect = MagicMock()
-        mock_affect.current = SimpleNamespace(arousal=0.2)
-        mock_resolve.return_value = mock_affect
+def test_somatic_throttle_normal(monkeypatch):
+    # Normal/unstressed parameters remain unchanged.
+    _install_probe_readings(monkeypatch, arousal=0.2, cpu_percent=15.0, memory_percent=40.0)
+    sentinel = SomaticComputeSentinel()
+    opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_depth": 0.8}
+    adjusted = sentinel.adjust_generation_options(opts.copy())
         
-        mock_vm_obj = MagicMock()
-        mock_vm_obj.percent = 89.0
-        mock_vm.return_value = mock_vm_obj
+    assert adjusted["max_tokens"] == 512
+    assert adjusted["temperature"] == 0.7
+    assert adjusted["recurrent_depth"] == 0.8
+
+
+def test_somatic_throttle_resource_stressed(monkeypatch):
+    # Stressed hardware caps max_tokens and adjusts temp/lane depth.
+    _install_probe_readings(monkeypatch, arousal=0.2, cpu_percent=50.0, memory_percent=89.0)
+    sentinel = SomaticComputeSentinel()
+    opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_depth": 0.8}
+    adjusted = sentinel.adjust_generation_options(opts.copy())
         
-        sentinel = SomaticComputeSentinel()
-        opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_depth": 0.8}
-        adjusted = sentinel.adjust_generation_options(opts.copy())
-        
-        assert adjusted["max_tokens"] == 256
-        assert adjusted["temperature"] == 0.3
-        assert adjusted["recurrent_depth"] == 0.4
+    assert adjusted["max_tokens"] == 256
+    assert adjusted["temperature"] == 0.3
+    assert adjusted["recurrent_depth"] == 0.4
 
 
-def test_somatic_throttle_critical():
-    # Test critical parameters restrict max_tokens to 128
-    with (
-        patch("core.brain.llm.somatic_throttle.resolve_affect_engine") as mock_resolve,
-        patch("research.protocols.resource_quotas.get_compute_governor", return_value=_governor()),
-        patch("psutil.cpu_percent", return_value=95.0),  # High CPU
-        patch("psutil.virtual_memory") as mock_vm,
-    ):
-        mock_affect = MagicMock()
-        mock_affect.current = SimpleNamespace(arousal=0.95)  # Critical arousal!
-        mock_resolve.return_value = mock_affect
-        
-        mock_vm_obj = MagicMock()
-        mock_vm_obj.percent = 95.0  # Critical RAM
-        mock_vm.return_value = mock_vm_obj
-        
-        sentinel = SomaticComputeSentinel()
-        opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_lane_depth": 0.8}
-        adjusted = sentinel.adjust_generation_options(opts.copy())
-        
-        assert adjusted["max_tokens"] == 128
-        assert adjusted["temperature"] == 0.15
-        assert adjusted["recurrent_lane_depth"] == 0.2
+def test_somatic_throttle_critical(monkeypatch):
+    # Critical parameters restrict max_tokens to 128.
+    _install_probe_readings(monkeypatch, arousal=0.95, cpu_percent=95.0, memory_percent=95.0)
+    sentinel = SomaticComputeSentinel()
+    opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_lane_depth": 0.8}
+    adjusted = sentinel.adjust_generation_options(opts.copy())
+
+    assert adjusted["max_tokens"] == 128
+    assert adjusted["temperature"] == 0.15
+    assert adjusted["recurrent_lane_depth"] == 0.2
 
 
-def test_somatic_throttle_high_arousal_without_resource_pressure_is_not_critical():
-    with (
-        patch("core.brain.llm.somatic_throttle.resolve_affect_engine") as mock_resolve,
-        patch("research.protocols.resource_quotas.get_compute_governor", return_value=_governor()),
-        patch("psutil.cpu_percent", return_value=12.0),
-        patch("psutil.virtual_memory") as mock_vm,
-    ):
-        mock_affect = MagicMock()
-        mock_affect.current = SimpleNamespace(arousal=0.97)
-        mock_resolve.return_value = mock_affect
+def test_somatic_throttle_high_arousal_without_resource_pressure_is_not_critical(monkeypatch):
+    _install_probe_readings(monkeypatch, arousal=0.97, cpu_percent=12.0, memory_percent=60.0)
+    sentinel = SomaticComputeSentinel()
+    opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_depth": 0.8}
+    adjusted = sentinel.adjust_generation_options(opts.copy())
 
-        mock_vm_obj = MagicMock()
-        mock_vm_obj.percent = 60.0
-        mock_vm.return_value = mock_vm_obj
-
-        sentinel = SomaticComputeSentinel()
-        opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_depth": 0.8}
-        adjusted = sentinel.adjust_generation_options(opts.copy())
-
-        assert adjusted["max_tokens"] == 512
-        assert adjusted["temperature"] == 0.7
-        assert adjusted["recurrent_depth"] == 0.8
+    assert adjusted["max_tokens"] == 512
+    assert adjusted["temperature"] == 0.7
+    assert adjusted["recurrent_depth"] == 0.8
 
 
 def test_somatic_throttle_does_not_swallow_generic_exceptions():
@@ -142,25 +104,30 @@ def test_mlx_generation_throttle_hook_uses_typed_boundary():
 def test_somatic_throttle_records_expected_probe_failures(monkeypatch):
     records = []
 
+    class FailingAffectResolver:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self):
+            self.calls += 1
+            raise RuntimeError("affect offline")
+
     monkeypatch.setattr(
         "core.brain.llm.somatic_throttle.record_degradation",
         lambda subsystem, exc, **metadata: records.append((subsystem, exc, metadata)),
     )
     monkeypatch.setattr(
         "core.brain.llm.somatic_throttle.resolve_affect_engine",
-        MagicMock(side_effect=RuntimeError("affect offline")),
+        FailingAffectResolver(),
     )
+    monkeypatch.setattr(
+        "research.protocols.resource_quotas.get_compute_governor",
+        lambda: _governor(),
+    )
+    monkeypatch.setattr(psutil, "cpu_percent", lambda interval=None: 5.0)
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(percent=20.0))
 
-    with (
-        patch("research.protocols.resource_quotas.get_compute_governor", return_value=_governor()),
-        patch("psutil.cpu_percent", return_value=5.0),
-        patch("psutil.virtual_memory") as mock_vm,
-    ):
-        mock_vm_obj = MagicMock()
-        mock_vm_obj.percent = 20.0
-        mock_vm.return_value = mock_vm_obj
-
-        adjusted = SomaticComputeSentinel().adjust_generation_options({"max_tokens": 512})
+    adjusted = SomaticComputeSentinel().adjust_generation_options({"max_tokens": 512})
 
     assert adjusted["max_tokens"] == 512
     assert records
