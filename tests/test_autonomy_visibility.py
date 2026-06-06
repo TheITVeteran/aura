@@ -4,7 +4,6 @@ import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -16,8 +15,83 @@ from core.self_modification.growth_ladder import GrowthLadder, ModificationLevel
 PROPOSAL_PATH = str(Path(tempfile.gettempdir()) / "evolution" / "proposal.md")
 
 
+class RecordedCall:
+    def __init__(self, args, kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    def __iter__(self):
+        yield self.args
+        yield self.kwargs
+
+
+class AsyncCallRecorder:
+    def __init__(self, result=None, *, side_effect=None):
+        self.result = result
+        self.side_effect = side_effect
+        self.await_args_list = []
+        self.await_args = None
+
+    @property
+    def await_count(self):
+        return len(self.await_args_list)
+
+    async def __call__(self, *args, **kwargs):
+        call = RecordedCall(args, kwargs)
+        self.await_args_list.append(call)
+        self.await_args = call
+        if isinstance(self.side_effect, list):
+            value = self.side_effect.pop(0)
+            if isinstance(value, BaseException):
+                raise value
+            return value
+        if isinstance(self.side_effect, BaseException):
+            raise self.side_effect
+        if callable(self.side_effect):
+            return self.side_effect(*args, **kwargs)
+        return self.result
+
+    def assert_awaited(self):
+        assert self.await_args_list
+
+    def assert_awaited_once(self):
+        assert len(self.await_args_list) == 1
+
+    def assert_not_called(self):
+        assert not self.await_args_list
+
+
+class CallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+        self.call_args = None
+
+    @property
+    def call_count(self):
+        return len(self.calls)
+
+    def __call__(self, *args, **kwargs):
+        call = RecordedCall(args, kwargs)
+        self.calls.append(call)
+        self.call_args = call
+        return self.result
+
+    def assert_called_once_with(self, *args, **kwargs):
+        assert len(self.calls) == 1
+        call = self.calls[0]
+        assert call.args == args
+        assert call.kwargs == kwargs
+
+    def assert_called_once(self):
+        assert len(self.calls) == 1
+
+    def assert_not_called(self):
+        assert not self.calls
+
+
 def test_emit_thought_stream_falls_back_to_thought_emitter(monkeypatch):
-    emitter = SimpleNamespace(emit=MagicMock())
+    emitter = SimpleNamespace(emit=CallRecorder())
     monkeypatch.setattr("core.thought_stream.get_emitter", lambda: emitter)
 
     formatter = OutputFormatterMixin()
@@ -112,7 +186,7 @@ async def test_email_initiative_reads_triages_drafts_and_remembers(monkeypatch):
                 }
             raise AssertionError((skill, payload))
 
-    memory = SimpleNamespace(store=AsyncMock())
+    memory = SimpleNamespace(store=AsyncCallRecorder())
     cap = CapabilityEngine()
     monkeypatch.setattr(
         "core.autonomous_initiative_loop.optional_service",
@@ -122,7 +196,7 @@ async def test_email_initiative_reads_triages_drafts_and_remembers(monkeypatch):
     loop = AutonomousInitiativeLoop(orchestrator=SimpleNamespace())
     emitted: list[tuple[str, str, str]] = []
     loop._emit_feed = lambda title, content, *, category: emitted.append((title, content, category))
-    loop._queue_visible_update = MagicMock(return_value=True)
+    loop._queue_visible_update = CallRecorder(result=True)
 
     await loop._check_email_initiative()
 
@@ -156,7 +230,7 @@ async def test_reddit_initiative_checks_inbox_browses_reads_and_remembers(monkey
                 return {"ok": True, "content": "Long discussion about robust live systems and failure modes."}
             raise AssertionError((skill, payload))
 
-    memory = SimpleNamespace(store=AsyncMock())
+    memory = SimpleNamespace(store=AsyncCallRecorder())
     cap = CapabilityEngine()
     monkeypatch.setattr("random.choice", lambda _items: "technology")
     monkeypatch.setattr(
@@ -180,7 +254,7 @@ async def test_reddit_initiative_checks_inbox_browses_reads_and_remembers(monkey
 @pytest.mark.asyncio
 async def test_self_development_cycle_runs_scan_tests_and_proposal(monkeypatch):
     capability_engine = SimpleNamespace(
-        execute=AsyncMock(
+        execute=AsyncCallRecorder(
             side_effect=[
                 {
                     "ok": True,
@@ -223,7 +297,7 @@ async def test_self_development_cycle_runs_scan_tests_and_proposal(monkeypatch):
 @pytest.mark.asyncio
 async def test_self_development_cycle_keeps_progress_off_visible_chat_by_default(monkeypatch):
     capability_engine = SimpleNamespace(
-        execute=AsyncMock(
+        execute=AsyncCallRecorder(
             side_effect=[
                 {
                     "ok": True,
@@ -240,7 +314,7 @@ async def test_self_development_cycle_keeps_progress_off_visible_chat_by_default
         lambda name, default=None: capability_engine if name == "capability_engine" else default,
     )
 
-    queue = MagicMock(return_value=True)
+    queue = CallRecorder(result=True)
     loop = AutonomousInitiativeLoop(
         orchestrator=SimpleNamespace(
             cognitive_engine=object(),
@@ -257,7 +331,7 @@ async def test_self_development_cycle_keeps_progress_off_visible_chat_by_default
 @pytest.mark.asyncio
 async def test_self_development_cycle_can_opt_in_visible_updates(monkeypatch):
     capability_engine = SimpleNamespace(
-        execute=AsyncMock(
+        execute=AsyncCallRecorder(
             side_effect=[
                 {
                     "ok": True,
@@ -274,7 +348,7 @@ async def test_self_development_cycle_can_opt_in_visible_updates(monkeypatch):
         lambda name, default=None: capability_engine if name == "capability_engine" else default,
     )
 
-    queue = MagicMock(return_value=True)
+    queue = CallRecorder(result=True)
     loop = AutonomousInitiativeLoop(
         orchestrator=SimpleNamespace(
             cognitive_engine=object(),
@@ -292,8 +366,8 @@ async def test_self_development_cycle_can_opt_in_visible_updates(monkeypatch):
 @pytest.mark.asyncio
 async def test_proactive_presence_prefers_visible_primary(monkeypatch):
     orchestrator = SimpleNamespace(
-        emit_spontaneous_message=AsyncMock(
-            return_value={
+        emit_spontaneous_message=AsyncCallRecorder(
+            {
                 "ok": True,
                 "action": "released",
                 "target": "primary",
@@ -301,8 +375,8 @@ async def test_proactive_presence_prefers_visible_primary(monkeypatch):
         ),
         _last_thought_time=0.0,
     )
-    emitter = SimpleNamespace(emit=MagicMock())
-    terminal = SimpleNamespace(queue_autonomous_message=MagicMock())
+    emitter = SimpleNamespace(emit=CallRecorder())
+    terminal = SimpleNamespace(queue_autonomous_message=CallRecorder())
     monkeypatch.setattr("core.thought_stream.get_emitter", lambda: emitter)
     monkeypatch.setattr("core.terminal_chat.get_terminal_fallback", lambda: terminal)
 
@@ -323,8 +397,8 @@ async def test_proactive_presence_prefers_visible_primary(monkeypatch):
 @pytest.mark.asyncio
 async def test_proactive_presence_requeues_visible_update_when_primary_is_temporarily_held(monkeypatch):
     orchestrator = SimpleNamespace(
-        emit_spontaneous_message=AsyncMock(
-            return_value={
+        emit_spontaneous_message=AsyncCallRecorder(
+            {
                 "ok": True,
                 "action": "released",
                 "target": "secondary",
@@ -333,8 +407,8 @@ async def test_proactive_presence_requeues_visible_update_when_primary_is_tempor
         ),
         _last_thought_time=0.0,
     )
-    emitter = SimpleNamespace(emit=MagicMock())
-    terminal = SimpleNamespace(queue_autonomous_message=MagicMock())
+    emitter = SimpleNamespace(emit=CallRecorder())
+    terminal = SimpleNamespace(queue_autonomous_message=CallRecorder())
     monkeypatch.setattr("core.thought_stream.get_emitter", lambda: emitter)
     monkeypatch.setattr("core.terminal_chat.get_terminal_fallback", lambda: terminal)
 
@@ -381,10 +455,10 @@ def test_proactive_presence_allows_queued_visible_updates_during_away_mode():
 @pytest.mark.asyncio
 async def test_growth_ladder_advancement_routes_through_unified_will(tmp_path):
     orchestrator = SimpleNamespace(
-        emit_spontaneous_message=AsyncMock(
-            return_value={"ok": True, "action": "released", "target": "secondary"}
+        emit_spontaneous_message=AsyncCallRecorder(
+            {"ok": True, "action": "released", "target": "secondary"}
         ),
-        output_gate=SimpleNamespace(emit=AsyncMock()),
+        output_gate=SimpleNamespace(emit=AsyncCallRecorder()),
     )
     ladder = GrowthLadder(orchestrator=orchestrator, state_path=tmp_path / "growth_ladder.json")
 

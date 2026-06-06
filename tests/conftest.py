@@ -8,7 +8,7 @@ import shutil
 import sys
 import warnings
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +18,94 @@ _CLEANUP_TIMEOUT_S = 2.0
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+
+class _RecordedCall:
+    def __init__(self, args, kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    def __iter__(self):
+        yield self.args
+        yield self.kwargs
+
+
+class _CallRecorder:
+    def __init__(self, result=None, *, side_effect=None):
+        self.return_value = result
+        self.side_effect = side_effect
+        self.calls = []
+        self.call_args = None
+
+    @property
+    def called(self):
+        return bool(self.calls)
+
+    @property
+    def call_count(self):
+        return len(self.calls)
+
+    def __call__(self, *args, **kwargs):
+        call = _RecordedCall(args, kwargs)
+        self.calls.append(call)
+        self.call_args = call
+        if isinstance(self.side_effect, BaseException):
+            raise self.side_effect
+        if callable(self.side_effect):
+            return self.side_effect(*args, **kwargs)
+        return self.return_value
+
+    def assert_called_once(self):
+        assert len(self.calls) == 1
+
+    def assert_called_once_with(self, *args, **kwargs):
+        self.assert_called_once()
+        call = self.calls[0]
+        assert call.args == args
+        assert call.kwargs == kwargs
+
+    def assert_not_called(self):
+        assert not self.calls
+
+
+class _AsyncCallRecorder:
+    def __init__(self, result=None, *, side_effect=None):
+        self.return_value = result
+        self.side_effect = side_effect
+        self.await_args_list = []
+        self.await_args = None
+
+    @property
+    def await_count(self):
+        return len(self.await_args_list)
+
+    @property
+    def called(self):
+        return bool(self.await_args_list)
+
+    def __call__(self, *args, **kwargs):
+        call = _RecordedCall(args, kwargs)
+        self.await_args_list.append(call)
+        self.await_args = call
+
+        async def _complete():
+            if isinstance(self.side_effect, BaseException):
+                raise self.side_effect
+            if callable(self.side_effect):
+                value = self.side_effect(*args, **kwargs)
+            else:
+                value = self.return_value
+            if inspect.isawaitable(value):
+                return await value
+            return value
+
+        return _complete()
+
+    def assert_awaited_once(self):
+        assert len(self.await_args_list) == 1
+
+    def assert_not_called(self):
+        assert not self.await_args_list
 
 
 class _TestStorageGateway:
@@ -249,110 +337,122 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
 @pytest.fixture
 def mock_container(service_container):
-    """Full architectural test-double registry for Aura tests."""
+    """Full architectural collaborator registry for Aura tests."""
 
     from core.container import ServiceContainer
     
-    # Patch AgencyBus to allow impulses to pass.
-    mock_bus = MagicMock()
-    mock_bus.submit.return_value = True
+    agency_bus = SimpleNamespace(submit=_CallRecorder(result=True))
     
-    with patch("core.agency_bus.AgencyBus.get", return_value=mock_bus):
+    from core.agency_bus import AgencyBus
+
+    original_get = AgencyBus.get
+    AgencyBus.get = classmethod(lambda cls: agency_bus)
+    try:
         # Brain / Cognitive Engine
-        mock_cognition = MagicMock()
-        mock_cognition.record_interaction = AsyncMock()
-        mock_cognition.process_turn = AsyncMock(return_value="Mocked response")
-        mock_cognition.think = AsyncMock(return_value=MagicMock(content="Mocked thought"))
-        mock_cognition.think_stream = AsyncMock()
-        
-        async def mock_stream(*args, **kwargs):
-            yield "Mocked "
+        async def recorded_stream(*args, **kwargs):
+            yield "Recorded "
             yield "stream"
-        mock_cognition.think_stream.side_effect = mock_stream
+
+        cognition = SimpleNamespace(
+            record_interaction=_AsyncCallRecorder(),
+            process_turn=_AsyncCallRecorder("Recorded response"),
+            think=_AsyncCallRecorder(SimpleNamespace(content="Recorded thought")),
+            think_stream=recorded_stream,
+        )
         
         # Memory
-        mock_memory = MagicMock()
-        mock_memory.retrieve_unified_context = AsyncMock(return_value="Memories")
-        mock_memory.commit_interaction = AsyncMock()
-        mock_memory.run_maintenance = AsyncMock()
-        mock_memory.get_hot_memory = AsyncMock(return_value={})
-        mock_memory.store = AsyncMock()
+        memory = SimpleNamespace(
+            retrieve_unified_context=_AsyncCallRecorder("Memories"),
+            commit_interaction=_AsyncCallRecorder(),
+            run_maintenance=_AsyncCallRecorder(),
+            get_hot_memory=_AsyncCallRecorder({}),
+            get_cold_memory_context=_AsyncCallRecorder(""),
+            store=_AsyncCallRecorder(),
+        )
         
         # Meta-Learning
-        mock_meta = MagicMock()
-        mock_meta.recall_strategy = AsyncMock(return_value={})
-        mock_meta.index_experience = AsyncMock()
-        mock_meta.run_maintenance = AsyncMock()
-
-        mock_personality = MagicMock()
-        mock_personality.update = MagicMock()
-        mock_personality.filter_response = MagicMock(side_effect=lambda text: text)
-        mock_personality.get_emotional_context_for_response = MagicMock(
-            return_value={"mood": "neutral", "tone": "balanced", "emotional_state": {}}
+        meta = SimpleNamespace(
+            recall_strategy=_AsyncCallRecorder({}),
+            index_experience=_AsyncCallRecorder(),
+            run_maintenance=_AsyncCallRecorder(),
         )
-        mock_personality.get_time_context = MagicMock(return_value={"formatted": "12:00 PM"})
-        mock_personality.get_sovereign_context = MagicMock(return_value="")
-        mock_personality.current_mood = "balanced"
 
-        mock_strategic_planner = MagicMock()
-        mock_strategic_planner.get_next_task.return_value = None
+        personality = SimpleNamespace(
+            update=_CallRecorder(),
+            filter_response=_CallRecorder(side_effect=lambda text: text),
+            get_emotional_context_for_response=_CallRecorder(
+                {"mood": "neutral", "tone": "balanced", "emotional_state": {}}
+            ),
+            get_time_context=_CallRecorder({"formatted": "12:00 PM"}),
+            get_sovereign_context=_CallRecorder(""),
+            current_mood="balanced",
+        )
 
-        mock_project_store = MagicMock()
-        mock_project_store.get_active_projects.return_value = []
-        mock_project_store.get_tasks_for_project.return_value = []
+        strategic_planner = SimpleNamespace(get_next_task=_CallRecorder())
 
-        mock_knowledge_graph = MagicMock()
-        mock_knowledge_graph.add_knowledge = MagicMock()
-        mock_knowledge_graph.remember_person = MagicMock()
-        mock_knowledge_graph.ask_question = MagicMock()
+        project_store = SimpleNamespace(
+            get_active_projects=_CallRecorder([]),
+            get_tasks_for_project=_CallRecorder([]),
+        )
+
+        knowledge_graph = SimpleNamespace(
+            add_knowledge=_CallRecorder(),
+            remember_person=_CallRecorder(),
+            ask_question=_CallRecorder(),
+        )
         
         # Senses & State
-        mock_ls = MagicMock()
-        mock_ls.update = AsyncMock()
-        mock_ls.get_status = MagicMock(return_value={"health": 1.0, "status": { "initialized": True, "running": True }})
-        mock_ls.current = MagicMock(curiosity=0.5, frustration=0.1, energy=0.8)
+        liquid_state = SimpleNamespace(
+            update=_AsyncCallRecorder(),
+            get_status=_CallRecorder({"health": 1.0, "status": {"initialized": True, "running": True}}),
+            current=SimpleNamespace(curiosity=0.5, frustration=0.1, energy=0.8),
+        )
         
-        mock_affect = MagicMock()
-        mock_affect.state = MagicMock(dominant_emotion="Joy")
-        mock_affect.get_current_state.return_value = {"valence": 0.5}
+        affect = SimpleNamespace(
+            state=SimpleNamespace(dominant_emotion="Joy"),
+            get_current_state=_CallRecorder({"valence": 0.5}),
+        )
         
         # Core Registry
-        ServiceContainer.register_instance("cognitive_engine", mock_cognition)
-        ServiceContainer.register_instance("cognition", mock_cognition)
-        ServiceContainer.register_instance("memory", mock_memory)
-        ServiceContainer.register_instance("memory_facade", mock_memory)
-        ServiceContainer.register_instance("metacognition", mock_meta)
-        ServiceContainer.register_instance("meta_learning", mock_meta)
-        ServiceContainer.register_instance("personality_engine", mock_personality)
-        ServiceContainer.register_instance("strategic_planner", mock_strategic_planner)
-        ServiceContainer.register_instance("project_store", mock_project_store)
-        ServiceContainer.register_instance("knowledge_graph", mock_knowledge_graph)
-        ServiceContainer.register_instance("affect_engine", mock_affect)
-        ServiceContainer.register_instance("liquid_state", mock_ls)
-        ServiceContainer.register_instance("conscious_substrate", mock_ls)
+        ServiceContainer.register_instance("cognitive_engine", cognition)
+        ServiceContainer.register_instance("cognition", cognition)
+        ServiceContainer.register_instance("memory", memory)
+        ServiceContainer.register_instance("memory_facade", memory)
+        ServiceContainer.register_instance("metacognition", meta)
+        ServiceContainer.register_instance("meta_learning", meta)
+        ServiceContainer.register_instance("personality_engine", personality)
+        ServiceContainer.register_instance("strategic_planner", strategic_planner)
+        ServiceContainer.register_instance("project_store", project_store)
+        ServiceContainer.register_instance("knowledge_graph", knowledge_graph)
+        ServiceContainer.register_instance("affect_engine", affect)
+        ServiceContainer.register_instance("liquid_state", liquid_state)
+        ServiceContainer.register_instance("conscious_substrate", liquid_state)
         
         # Infrastructure
-        mock_watchdog = MagicMock()
-        ServiceContainer.register_instance("watchdog", mock_watchdog)
-        ServiceContainer.register_instance("output_gate", MagicMock(emit=AsyncMock()))
-        ServiceContainer.register_instance("capability_engine", MagicMock(execute=AsyncMock(return_value={"ok": True})))
+        ServiceContainer.register_instance("watchdog", SimpleNamespace())
+        ServiceContainer.register_instance("output_gate", SimpleNamespace(emit=_AsyncCallRecorder()))
+        ServiceContainer.register_instance(
+            "capability_engine",
+            SimpleNamespace(execute=_AsyncCallRecorder({"ok": True})),
+        )
         
         # Fallbacks for missing services identified in audit
-        mock_drives = MagicMock()
-        mock_drives.satisfy = AsyncMock()
-        mock_alignment = MagicMock()
-        mock_alignment.filter_response = AsyncMock(side_effect=lambda x, *args, **kwargs: x)  # Returns the response unchanged
+        drives = SimpleNamespace(satisfy=_AsyncCallRecorder())
+        alignment = SimpleNamespace(
+            filter_response=_AsyncCallRecorder(side_effect=lambda x, *args, **kwargs: x)
+        )
         for svc in ["homeostasis", "subsystem_audit", "lnn", "mortality", "identity", "curiosity",
                     "intent_router", "cognitive_router", "world_model",
-                    "belief_graph", "output_gate"]:
-            ServiceContainer.register_instance(svc, AsyncMock())
-        # These need to be MagicMock because they have sync methods/properties used in pipeline
-        ServiceContainer.register_instance("mycelium", MagicMock())
-        ServiceContainer.register_instance("state_machine", MagicMock())
-        ServiceContainer.register_instance("drives", mock_drives)
-        ServiceContainer.register_instance("alignment_engine", mock_alignment)
+                    "belief_graph"]:
+            ServiceContainer.register_instance(svc, _AsyncCallRecorder())
+        ServiceContainer.register_instance("mycelium", SimpleNamespace())
+        ServiceContainer.register_instance("state_machine", SimpleNamespace())
+        ServiceContainer.register_instance("drives", drives)
+        ServiceContainer.register_instance("alignment_engine", alignment)
             
         yield ServiceContainer
+    finally:
+        AgencyBus.get = original_get
 
 @pytest.fixture
 def orchestrator(mock_container):
@@ -390,26 +490,24 @@ def orchestrator(mock_container):
         if component == "mycelium":
             # Mycelium has sync methods like match_hardwired and rooted_flow call
             from core.orchestrator.main import AsyncNullContext
-            svc = MagicMock()
-            svc.rooted_flow.return_value = AsyncNullContext()
-            svc.match_hardwired.return_value = None
+            svc = SimpleNamespace(
+                rooted_flow=_CallRecorder(AsyncNullContext()),
+                match_hardwired=_CallRecorder(),
+            )
         elif component == "state_machine":
-             svc = MagicMock()
-             svc.execute = AsyncMock()
+             svc = SimpleNamespace(execute=_AsyncCallRecorder())
         elif component == "intent_router":
-             svc = MagicMock()
-             svc.classify = AsyncMock(return_value="chitchat")
+             svc = SimpleNamespace(classify=_AsyncCallRecorder("chitchat"))
         elif component == "output_gate":
-             svc = AsyncMock()
+             svc = SimpleNamespace(emit=_AsyncCallRecorder())
         setattr(orch, component, svc)
         setattr(orch, f"_{component}", svc)
     
     # Provide async test doubles expected by existing orchestrator tests.
-    orch.hooks = MagicMock()
-    orch.hooks.trigger = AsyncMock()
+    orch.hooks = SimpleNamespace(trigger=_AsyncCallRecorder())
     
-    # Ensure _finalize_response and _handle_incoming_message remain UNMOCKED
-    # unless a specific test mocks them.
+    # Ensure _finalize_response and _handle_incoming_message remain real
+    # unless a specific test replaces them.
     
     try:
         yield orch
@@ -437,7 +535,7 @@ def orchestrator(mock_container):
             asyncio.run(_cleanup_tasks())
         except (RuntimeError, TimeoutError, ValueError) as exc:
             warnings.warn(
-                f"mock_orchestrator task cleanup did not complete cleanly: {type(exc).__name__}: {exc}",
+                f"orchestrator fixture task cleanup did not complete cleanly: {type(exc).__name__}: {exc}",
                 RuntimeWarning,
                 stacklevel=2,
             )
