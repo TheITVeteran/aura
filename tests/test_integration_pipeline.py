@@ -23,7 +23,6 @@ import pytest
 # ---------------------------------------------------------------------------
 from core.kernel.aura_kernel import AuraKernel, KernelConfig
 from core.state.state_repository import StateRepository
-from core.kernel import organs as kernel_organs
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +104,7 @@ async def _shutdown_and_assert_drained(kernel: AuraKernel) -> None:
 
 async def _boot_kernel(tmp_path: str) -> AuraKernel:
     """
-    Create, patch, and boot an AuraKernel with the DeterministicLLMOrgan.
+    Create, configure, and boot an AuraKernel with the DeterministicLLMOrgan.
 
     The trick is to boot() normally (which creates real kernel organ wrappers and
     runs the full phase setup), then hot-swap the LLM organ instance
@@ -131,13 +130,7 @@ async def _boot_kernel(tmp_path: str) -> AuraKernel:
         llm_wrapper.instance = llm
         llm_wrapper.ready.set()
     else:
-        # This path should not be reached after a normal boot; construct the
-        # expected kernel wrapper so the test fails later on behavior, not setup.
-        organ_wrapper_type = getattr(kernel_organs, "Organ" + "Stub")
-        wrapper = organ_wrapper_type(name="llm", kernel=kernel)
-        wrapper.instance = llm
-        wrapper.ready.set()
-        kernel.organs["llm"] = wrapper
+        raise AssertionError("Kernel boot did not register the llm organ")
 
     return kernel
 

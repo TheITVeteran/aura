@@ -65,6 +65,23 @@ class KernelStatus(BaseModel):
 
 logger = logging.getLogger("Aura.Core.Kernel")
 
+
+@dataclass(frozen=True)
+class _KernelFileWriteDecision:
+    receipt_id: str
+    domain: str
+    source: str
+
+
+def _kernel_file_write_decision(source: str) -> _KernelFileWriteDecision:
+    safe_source = re.sub(r"[^a-zA-Z0-9_.:-]+", "_", source.strip() or "aura_kernel")
+    return _KernelFileWriteDecision(
+        receipt_id=f"kernel-file-write:{safe_source}:{time.time_ns()}",
+        domain="file_write",
+        source=safe_source,
+    )
+
+
 _KERNEL_OPTIONAL_PERCEPTION_ERRORS = (
     AttributeError,
     ImportError,
@@ -335,6 +352,7 @@ class AuraKernel:
         """Record a dream fragment (interrupted background cognition) to disk for offline dreaming consolidation."""
         try:
             from core.config import config
+            from core.governance_context import governed_scope_sync
             from core.runtime.file_write_gateway import get_file_write_gateway
 
             fragment_file = config.paths.data_dir / "dream_fragments.jsonl"
@@ -357,11 +375,13 @@ class AuraKernel:
                     "energy": getattr(metabolism, "energy", 1.0) if metabolism else 1.0,
                 },
             }
-            get_file_write_gateway().append_text(
-                fragment_file,
-                json.dumps(fragment_entry) + "\n",
-                source="kernel.preemption.dream_fragment",
-            )
+            source = "kernel.preemption.dream_fragment"
+            with governed_scope_sync(_kernel_file_write_decision(source)):
+                get_file_write_gateway().append_text(
+                    fragment_file,
+                    json.dumps(fragment_entry) + "\n",
+                    source=source,
+                )
             logger.info("🌙 Registered preempted background tick as a dream fragment for offline consolidation.")
         except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
             _record_kernel_degradation(
@@ -1410,18 +1430,23 @@ class AuraKernel:
         intents = list(getattr(cognition, "pending_intents", []) or [])
 
         async def _append_to_file(path: str, payload: dict):
+            from core.governance_context import governed_scope
+
             # Offload blocking write to thread pool
             def _sync_write():
                 from core.runtime.file_write_gateway import get_file_write_gateway
 
+                source = "aura_kernel.process_intent_file_append"
                 get_file_write_gateway().append_text(
                     path,
                     json.dumps(payload) + "\n",
                     encoding="utf-8",
-                    source="aura_kernel.process_intent_file_append",
+                    source=source,
                 )
 
-            await asyncio.to_thread(_sync_write)
+            source = "aura_kernel.process_intent_file_append"
+            async with governed_scope(_kernel_file_write_decision(source)):
+                await asyncio.to_thread(_sync_write)
 
         for intent in intents:
             try:

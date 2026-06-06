@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import time
 import pytest
 import asyncio
-from unittest.mock import patch, MagicMock
 
 from core.affect.damasio_v2 import AffectEngineV2, DamasioMarkers
 from core.consciousness.qualia_synthesizer import QualiaSynthesizer, QualiaSnapshot

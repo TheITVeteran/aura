@@ -13,7 +13,6 @@ If ALL fail → the line is crossed.
 
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 
 
 # ═══════════════════════════════════════════════════════════════════════════
