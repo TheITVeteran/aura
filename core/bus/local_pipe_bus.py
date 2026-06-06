@@ -767,11 +767,17 @@ class LocalPipeBus:
                                 "trace_id": msg.get("trace_id"),
                             }
                             raw_resp = json.dumps(err_resp)
-                            await self._write_raw_message(
-                                raw_resp,
-                                timeout_s=self._response_write_timeout_s(),
-                                context="response:shm_resolution_failed",
-                            )
+                            try:
+                                await self._write_raw_message(
+                                    raw_resp,
+                                    timeout_s=self._response_write_timeout_s(),
+                                    context="response:shm_resolution_failed",
+                                )
+                            except _BUS_HANDLER_ERRORS as send_exc:
+                                self._mark_transport_degraded(
+                                    send_exc,
+                                    "failed to send SHM-resolution error response",
+                                )
                         continue
 
                 # Check if it's a response to a pending request
@@ -802,11 +808,17 @@ class LocalPipeBus:
                                 "trace_id": msg.get("trace_id"),
                             }
                             raw_resp = json.dumps(err_resp)
-                            await self._write_raw_message(
-                                raw_resp,
-                                timeout_s=self._response_write_timeout_s(),
-                                context="response:dispatch_queue_saturated",
-                            )
+                            try:
+                                await self._write_raw_message(
+                                    raw_resp,
+                                    timeout_s=self._response_write_timeout_s(),
+                                    context="response:dispatch_queue_saturated",
+                                )
+                            except _BUS_HANDLER_ERRORS as send_exc:
+                                self._mark_transport_degraded(
+                                    send_exc,
+                                    "failed to send dispatch-saturation error response",
+                                )
                 else:
                     logger.debug("❓ Unhandled bus message type: %s", msg_type)
 

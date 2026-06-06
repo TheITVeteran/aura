@@ -271,11 +271,14 @@ class ActorBus:
     async def _telemetry_broadcaster(self):
         """ZENITH: Non-blocking telemetry delivery with backpressure."""
         while self._is_running:
+            item_taken = False
             try:
                 if self._telemetry_queue is None:
                     await asyncio.sleep(0.05)
                     continue
-                topic, payload = await self._telemetry_queue.get()
+                item = await self._telemetry_queue.get()
+                item_taken = True
+                topic, payload = item
                 # Broadcast to all transports that handle telemetry
                 for _name, transport in self._transports.items():
                     try:
@@ -289,10 +292,17 @@ class ActorBus:
                             error=exc,
                         )
                         continue
-                self._telemetry_queue.task_done()
             except asyncio.CancelledError:
                 break
-            except (OSError, ConnectionError, TimeoutError) as e:
+            except (ValueError, TypeError) as e:
+                record_degradation(
+                    'actor_bus',
+                    e,
+                    action="dropped malformed telemetry queue item",
+                )
+                logger.warning("Malformed telemetry queue item dropped: %s", e)
+                await asyncio.sleep(0)
+            except (_ACTOR_BUS_SEND_ERRORS + (asyncio.QueueEmpty,)) as e:
                 try:
                     import psutil
                     if psutil.virtual_memory().percent < 90:
@@ -311,6 +321,16 @@ class ActorBus:
                     
                 logger.error("Telemetry broadcast error: %s", e)
                 await asyncio.sleep(0.1)
+            finally:
+                if item_taken and self._telemetry_queue is not None:
+                    try:
+                        self._telemetry_queue.task_done()
+                    except ValueError as exc:
+                        record_degradation(
+                            'actor_bus',
+                            exc,
+                            action="telemetry queue task accounting was already settled",
+                        )
 
     async def broadcast_telemetry(self, topic: str, payload: Any) -> bool:
         """Submit telemetry to the backpressured queue. Drops if full."""

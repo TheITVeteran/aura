@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -101,4 +103,33 @@ async def test_actor_bus_health_fails_when_telemetry_task_dies() -> None:
         assert status["telemetry_task"]["done"] is True
     finally:
         await bus.stop()
+        await ActorBus.reset_singleton()
+
+
+@pytest.mark.asyncio
+async def test_actor_bus_telemetry_task_done_survives_malformed_item(monkeypatch) -> None:
+    monkeypatch.setitem(
+        sys.modules,
+        "psutil",
+        SimpleNamespace(virtual_memory=lambda: SimpleNamespace(percent=95)),
+    )
+    await ActorBus.reset_singleton()
+    bus = ActorBus()
+    bus._is_running = True
+    bus._telemetry_queue = asyncio.Queue(maxsize=1)
+    await bus._telemetry_queue.put("malformed-telemetry-item")
+    task = asyncio.create_task(bus._telemetry_broadcaster())
+    try:
+        await asyncio.wait_for(bus._telemetry_queue.join(), timeout=1.0)
+
+        assert bus._telemetry_queue.qsize() == 0
+        await asyncio.sleep(0)
+        assert not task.done()
+    finally:
+        bus._is_running = False
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
         await ActorBus.reset_singleton()

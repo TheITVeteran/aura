@@ -1,22 +1,37 @@
 import asyncio
+import json
 import time
 
 from core.bus.local_pipe_bus import LocalPipeBus
 
 
 class _FakeConnection:
-    def __init__(self, *, delay_s: float = 0.0):
+    def __init__(self, *, delay_s: float = 0.0, fail_send: bool = False):
         self.closed = False
         self.delay_s = delay_s
+        self.fail_send = fail_send
         self.sent: list[str] = []
 
     def send(self, raw: str) -> None:
+        if self.fail_send:
+            raise OSError("pipe response write failed")
         if self.delay_s:
             time.sleep(self.delay_s)
         self.sent.append(raw)
 
     def close(self) -> None:
         self.closed = True
+
+
+class _ScriptedReadConnection(_FakeConnection):
+    def __init__(self, messages):
+        super().__init__()
+        self._messages = list(messages)
+
+    def recv(self):
+        if self._messages:
+            return self._messages.pop(0)
+        raise EOFError
 
 
 class _FakeTask:
@@ -208,6 +223,38 @@ def test_stop_records_shutdown_timeouts_as_degradation(monkeypatch):
             "reader task did not stop before shutdown timeout",
             "dispatcher task did not stop before shutdown timeout",
         ]
+
+    asyncio.run(scenario())
+
+
+def test_reader_survives_failed_dispatch_saturation_error_response():
+    async def scenario():
+        message = {
+            "type": "work",
+            "payload": {"value": 1},
+            "trace_id": "trace-1",
+            "request_id": "request-1",
+            "is_request": True,
+        }
+        read_conn = _ScriptedReadConnection([json.dumps(message)])
+        write_conn = _FakeConnection(fail_send=True)
+        bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=True)
+        bus._is_running = True
+        bus._loop = asyncio.get_running_loop()
+        bus._dispatch_queue = asyncio.Queue(maxsize=1)
+        await bus._dispatch_queue.put((lambda *_args: None, {"type": "queued"}))
+        bus.register_handler("work", lambda *_args: {"ok": True})
+
+        try:
+            await asyncio.wait_for(bus._read_loop(), timeout=2.0)
+
+            status = bus.get_status()
+            assert status["degraded"] is True
+            assert "pipe response write failed" in str(status["last_error"])
+            assert write_conn.sent == []
+            assert bus._dispatch_queue.qsize() == 1
+        finally:
+            bus._shutdown_executor()
 
     asyncio.run(scenario())
 
