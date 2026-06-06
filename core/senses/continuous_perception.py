@@ -39,6 +39,13 @@ class ContinuousPerceptionEngine:
         self.buffer = PerceptualBuffer(maxsize=100)
         ServiceContainer.register_instance("perceptual_buffer", self.buffer)
 
+        # Wire to PerceptionDaemon
+        try:
+            from core.perception.perception_daemon import get_perception_daemon
+            self.daemon = get_perception_daemon()
+        except Exception:
+            self.daemon = None
+
         # Vision Delta Tracking
         self._last_image: Optional[Image.Image] = None
         self.vision_check_interval = 5.0 # seconds
@@ -107,13 +114,19 @@ class ContinuousPerceptionEngine:
             if any(w in text for w in self.wake_words):
                 logger.info("🎧 Wake word detected in ambient audio: '%s'", text)
                 self.buffer.append("audio", f"Wake word detected: {text}")
+                if getattr(self, "daemon", None):
+                    self.daemon.register_moment("audio", f"Wake word detected: {text}")
                 self._dispatch_spontaneous_intent(text, source="audio_wake")
             elif "turn on" in text or "watch this" in text:
                 logger.info("🎧 Implicit direct command detected: '%s'", text)
                 self.buffer.append("audio", f"Implicit command: {text}")
+                if getattr(self, "daemon", None):
+                    self.daemon.register_moment("audio", f"Implicit command: {text}")
                 self._dispatch_spontaneous_intent(text, source="audio_implicit")
             else:
                 self.buffer.append("audio", text[:50])
+                if getattr(self, "daemon", None):
+                    self.daemon.register_moment("audio", text[:50])
 
         # Register callback ONCE (Issue 12)
         if getattr(ears, "_engine", None) and hasattr(ears._engine, "on_transcript"):
@@ -189,6 +202,8 @@ class ContinuousPerceptionEngine:
                             
                             if description and len(description) > 10:
                                 self.buffer.append("vision", description)
+                                if getattr(self, "daemon", None):
+                                    self.daemon.register_moment("vision", description)
                                 self._dispatch_spontaneous_intent(
                                     f"I am actively watching the screen and just saw this change: {description}", 
                                     source="vision_delta"
@@ -232,6 +247,8 @@ class ContinuousPerceptionEngine:
                             
                             self.current_ambient_context = summary
                             logger.info("📡 Ambient Context Updated: %s", summary)
+                            if getattr(self, "daemon", None):
+                                self.daemon.register_moment("ambient_context", summary)
                             
                             # Publish to Agency Core
                             agency = getattr(self.orchestrator, '_agency_core', None)

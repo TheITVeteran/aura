@@ -1,6 +1,5 @@
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -386,20 +385,28 @@ async def test_memory_ops_remember_alias_uses_archival_insert(tmp_path, monkeypa
     monkeypatch.setattr("core.config.config.paths", SimpleNamespace(base_dir=str(tmp_path), home_dir=tmp_path, data_dir=tmp_path))
     gateway = install_memory_gateway_fixture(monkeypatch)
     skill = MemoryOpsSkill()
+    facade = MemoryFacade()
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            approve_memory_write=AsyncCallFixture(return_value=(True, "ok"))
+        ),
+    )
 
     result = await skill.execute(
         {
             "action": "remember",
             "content": "Remember for future sessions that my verification codename is glass orchard.",
         },
-        {"memory_facade": SimpleNamespace()},
+        {"memory_facade": facade},
     )
 
     assert result["ok"] is True
     assert result["summary"] == "Committed to archival storage."
     assert len(gateway.requests) == 1
     assert gateway.requests[0].content == "Remember for future sessions that my verification codename is glass orchard."
-    assert gateway.requests[0].metadata == {"source": "archival_insert"}
+    assert gateway.requests[0].metadata["source"] == "archival_insert"
+    assert "provenance" in gateway.requests[0].metadata
 
 
 @pytest.mark.asyncio
@@ -518,7 +525,13 @@ async def test_memory_facade_add_memory_defaults_to_gateway(monkeypatch):
 async def test_memory_ops_archival_insert_calls_gateway(monkeypatch):
     gateway = install_memory_gateway_fixture(monkeypatch)
     skill = MemoryOpsSkill.__new__(MemoryOpsSkill)
-    memory_facade = SimpleNamespace()
+    memory_facade = MemoryFacade()
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            approve_memory_write=AsyncCallFixture(return_value=(True, "ok"))
+        ),
+    )
 
     result = await skill.execute(
         {
@@ -532,4 +545,5 @@ async def test_memory_ops_archival_insert_calls_gateway(monkeypatch):
     assert result["summary"] == "Committed to archival storage."
     assert len(gateway.requests) == 1
     assert gateway.requests[0].content == "My verification codename is glass orchard."
-    assert gateway.requests[0].metadata == {"source": "archival_insert"}
+    assert gateway.requests[0].metadata["source"] == "archival_insert"
+    assert "provenance" in gateway.requests[0].metadata

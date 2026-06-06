@@ -11,7 +11,6 @@ import logging
 import os
 import time
 import uuid
-import dataclasses
 from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -21,8 +20,6 @@ from core.runtime.errors import record_degradation
 from core.event_bus import get_event_bus, EventPriority
 
 logger = logging.getLogger("Aura.PerceptionDaemon")
-
-
 
 
 class PerceptionDaemon:
@@ -55,6 +52,7 @@ class PerceptionDaemon:
         self.last_user_activity = time.time()
         self.last_clipboard_hash = ""
         self.last_active_window = ""
+        self._last_screen_hash = ""
 
         # Privacy configs
         self.privacy_mode = False
@@ -131,12 +129,12 @@ class PerceptionDaemon:
         return moment
 
     async def _main_perceptual_loop(self) -> None:
-        """Poll clipboard, active window, and file changes continuously."""
+        """Poll clipboard, active window, terminal, browser, and file changes continuously."""
         while self.running:
             try:
                 await asyncio.sleep(self.check_interval)
 
-                # 1. Active Window Focus Check
+                # 1. Active Window Focus Check (macOS)
                 window = await self._check_active_window()
                 if window and window != self.last_active_window:
                     self.last_active_window = window
@@ -148,16 +146,13 @@ class PerceptionDaemon:
                     self.last_user_activity = time.time()
                     self.user_active = True
 
-                # 2. Clipboard Change Check
+                # 2. Clipboard Change Check (macOS)
                 clipboard = await self._check_clipboard()
                 if clipboard:
                     clip_hash = hashlib.sha256(clipboard.encode("utf-8")).hexdigest()
                     if clip_hash != self.last_clipboard_hash:
                         self.last_clipboard_hash = clip_hash
-                        # Only store short snippet for safety
-                        snippet = clipboard[:200]
-                        if len(clipboard) > 200:
-                            snippet += "..."
+                        snippet = clipboard[:200] + ("..." if len(clipboard) > 200 else "")
                         self.register_moment(
                             source="clipboard",
                             content=f"Clipboard changed: {snippet}",
@@ -166,7 +161,99 @@ class PerceptionDaemon:
                         self.last_user_activity = time.time()
                         self.user_active = True
 
-                # 3. User Idle State Assessment
+                # 3. Browser Tab State Check
+                try:
+                    from core.capabilities.browser_controller import get_browser_controller
+                    bc = get_browser_controller()
+                    if bc and getattr(bc, "_started", False):
+                        tabs = await bc.get_open_tabs()
+                        if tabs:
+                            tab_summary = ", ".join(f"{t.get('title')} ({t.get('url')})" for t in tabs[:3])
+                            self.register_moment(
+                                source="browser",
+                                content=f"Active browser tabs: {tab_summary}",
+                                metadata={"tabs": tabs}
+                            )
+                except Exception as e:
+                    logger.debug("Browser status check failed: %s", e)
+
+                # 4. Terminal / Process State Check
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "ps", "-A", "-o", "comm",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1.0)
+                    if proc.returncode == 0:
+                        lines = stdout.decode("utf-8", errors="ignore").splitlines()
+                        running_shells = [l for l in lines if any(s in l for s in ("zsh", "bash", "sh"))]
+                        if running_shells:
+                            self.register_moment(
+                                source="terminal",
+                                content=f"Active terminal shell processes: {len(running_shells)} running",
+                                metadata={"shells": running_shells}
+                            )
+                except Exception as e:
+                    logger.debug("Terminal process check failed: %s", e)
+
+                # 5. File System Activity Watcher
+                try:
+                    recent_files = []
+                    workspace = Path.home() / ".aura"
+                    if workspace.exists():
+                        for root, dirs, files in os.walk(workspace):
+                            dirs[:] = [d for d in dirs if not d.startswith(".")]
+                            for file in files:
+                                if file.startswith("."):
+                                    continue
+                                fp = Path(root) / file
+                                try:
+                                    mtime = fp.stat().st_mtime
+                                    if time.time() - mtime < self.check_interval:
+                                        recent_files.append(str(fp))
+                                except Exception:
+                                    pass
+                    if recent_files:
+                        self.register_moment(
+                            source="file_system",
+                            content=f"Detected local file mutations: {', '.join(recent_files[:3])}",
+                            metadata={"modified_files": recent_files}
+                        )
+                except Exception as e:
+                    logger.debug("File system check failed: %s", e)
+
+                # 6. Ambient Screen OCR & Modal Detection
+                try:
+                    from core.perception.screen_perception import get_screen_perception
+                    sp = get_screen_perception()
+                    if sp and getattr(sp, "_started", False):
+                        snap = await sp.capture(save_screenshot=False)
+                        if snap.screen_text and len(snap.screen_text) > 10:
+                            scr_hash = hashlib.sha256(snap.screen_text.encode("utf-8")).hexdigest()[:16]
+                            if scr_hash != self._last_screen_hash:
+                                self._last_screen_hash = scr_hash
+                                self.register_moment(
+                                    source="screen_ocr",
+                                    content=f"Screen text: {snap.screen_text[:150]}",
+                                    metadata={"full_text": snap.screen_text, "has_modal": snap.has_modal}
+                                )
+                except Exception as e:
+                    logger.debug("Screen OCR loop failed: %s", e)
+
+                # 7. Ambient Microphone Status Check
+                try:
+                    ears = ServiceContainer.get("ears", default=None)
+                    if ears:
+                        self.register_moment(
+                            source="microphone",
+                            content="Microphone engine is active & listening",
+                            metadata={"ears_configured": True}
+                        )
+                except Exception as e:
+                    logger.debug("Microphone loop failed: %s", e)
+
+                # 8. User Idle State Assessment
                 idle_time = time.time() - self.last_user_activity
                 if idle_time > 120.0 and self.user_active:
                     self.user_active = False
@@ -201,7 +288,7 @@ class PerceptionDaemon:
                 async with self.attention_lock:
                     if recent:
                         sources = {m["source"] for m in recent}
-                        if "window_focus" in sources or "clipboard" in sources:
+                        if any(s in sources for s in ("window_focus", "clipboard", "screen_ocr")):
                             self.user_focus = self.last_active_window or "desktop"
                             self.joint_attention_score = min(1.0, self.joint_attention_score + 0.1)
                         else:
@@ -218,7 +305,6 @@ class PerceptionDaemon:
 
     async def _check_clipboard(self) -> Optional[str]:
         try:
-            # Safe non-blocking execution of pbpaste (macOS standard clipboard grabber)
             proc = await asyncio.create_subprocess_exec(
                 "pbpaste",
                 stdout=asyncio.subprocess.PIPE,
@@ -233,7 +319,6 @@ class PerceptionDaemon:
 
     async def _check_active_window(self) -> Optional[str]:
         try:
-            # Safe non-blocking check of active window process on macOS via osascript
             cmd = ["osascript", "-e", 'tell application "System Events" to get name of first application process whose frontmost is true']
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -252,10 +337,8 @@ class PerceptionDaemon:
     def get_recent_moments(self, source: Optional[str] = None, duration_seconds: float = 300.0) -> List[Dict[str, Any]]:
         now = time.time()
         cutoff = now - duration_seconds
-        # Search short term first
         res = [m for m in self._short_term_buffer if m["timestamp"] >= cutoff]
         if not res and duration_seconds > 300.0:
-            # Fallback to medium term
             res = [m for m in self._medium_term_buffer if m["timestamp"] >= cutoff]
         
         if source:
@@ -290,7 +373,6 @@ class PerceptionDaemon:
         logger.info("🔍 Active perception triggered: probe_type=%s, query=%s", probe_type, query)
         
         if probe_type == "screen_ocr":
-            # Delegate to computer use or vision engine
             vision = ServiceContainer.get("vision_engine", default=None)
             if vision and hasattr(vision, "analyze_moment"):
                 try:
