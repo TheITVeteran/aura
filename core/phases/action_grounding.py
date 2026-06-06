@@ -67,6 +67,8 @@ DEFAULT_SKILL_PARAMS: dict[str, dict[str, Any]] = {
     "os_manipulation": {"action": "noop"},
 }
 
+_CAPABILITY_ENGINE_UNSET = object()
+
 
 @dataclass
 class GroundingResult:
@@ -99,7 +101,7 @@ async def ground_response(
     response: str,
     *,
     context: dict[str, Any] | None = None,
-    capability_engine: Any = None,
+    capability_engine: Any = _CAPABILITY_ENGINE_UNSET,
     skill_receipts: Iterable[dict[str, Any]] | None = None,
     audit_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> GroundingResult:
@@ -116,7 +118,7 @@ async def ground_response(
     text = str(response or "")
     result = GroundingResult(grounded_text=text)
 
-    if capability_engine is None:
+    if capability_engine is _CAPABILITY_ENGINE_UNSET:
         try:
             from core.container import ServiceContainer
 

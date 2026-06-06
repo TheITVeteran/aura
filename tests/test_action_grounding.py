@@ -77,6 +77,27 @@ async def test_marker_without_engine_marks_unverified():
 
 
 @pytest.mark.asyncio
+async def test_marker_with_omitted_engine_resolves_container_engine(monkeypatch):
+    from core.container import ServiceContainer
+
+    engine = _StubCapabilityEngine(ok=True, summary="Container engine opened Notes.")
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: engine if name == "capability_engine" else default),
+    )
+
+    text = "[SKILL:computer_use] I opened Notes."
+    result = await ground_response(text)
+
+    assert result.had_markers is True
+    assert result.dispatched == 1
+    assert result.dispatched_ok == 1
+    assert engine.calls[0]["name"] == "computer_use"
+    assert "Container engine opened Notes." in result.grounded_text
+
+
+@pytest.mark.asyncio
 async def test_multiple_markers_all_processed():
     engine = _StubCapabilityEngine(ok=True, summary="done")
     text = (

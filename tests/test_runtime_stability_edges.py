@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 import inspect
+import json
 import os
 import tempfile
 import time
@@ -1139,6 +1140,27 @@ class TestSelfModificationBackgroundSafety(unittest.IsolatedAsyncioTestCase):
                 new=_AsyncCallRecorder(side_effect=asyncio.CancelledError),
             ):
                 await logger_system._append_to_log(Path(temp_dir) / "error_events.jsonl", {"ok": True})
+
+    async def test_error_logger_append_is_governed_under_strict_runtime(self):
+        from core.governance_context import get_violations
+        from core.self_modification.error_intelligence import StructuredErrorLogger
+
+        with tempfile.TemporaryDirectory() as temp_dir, swap.dict(
+            os.environ,
+            {"AURA_GOVERNANCE_MODE": "strict"},
+        ):
+            target = Path(temp_dir) / "execution_log.jsonl"
+            logger_system = StructuredErrorLogger(log_dir=temp_dir)
+            before = len(get_violations(200))
+
+            await logger_system._append_to_log(target, {"ok": True, "source": "test"})
+
+            after = len(get_violations(200))
+            lines = target.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(after, before)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0])["source"], "test")
 
     async def test_self_modification_diagnosis_uses_static_path_by_default(self):
         from core.self_modification.error_intelligence import (

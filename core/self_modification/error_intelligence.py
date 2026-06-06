@@ -12,8 +12,10 @@ import traceback as tb
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
+from core.governance_context import governed_scope_sync
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.utils.task_tracker import get_task_tracker
 
@@ -187,11 +189,21 @@ class StructuredErrorLogger:
 
     def _append_to_log_sync(self, path: Path, data: Dict[str, Any]) -> None:
         line = json.dumps(data) + '\n'
-        get_file_write_gateway().append_text(
-            path,
-            line,
-            source="self_modification.error_intelligence.execution_log",
+        decision = SimpleNamespace(
+            receipt_id=f"self_mod_error_log:{time.time_ns()}",
+            domain="self_modification",
+            source="self_modification.error_intelligence",
+            constraints={
+                "operation": "append_error_intelligence_log",
+                "path": str(path),
+            },
         )
+        with governed_scope_sync(decision):
+            get_file_write_gateway().append_text(
+                path,
+                line,
+                source="self_modification.error_intelligence.execution_log",
+            )
 
     async def _append_to_log(self, path: Path, data: Dict[str, Any]) -> None:
         """Append JSON line to log file without blocking the event loop."""

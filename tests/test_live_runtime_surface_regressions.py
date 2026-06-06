@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -890,9 +891,23 @@ def test_chat_live_proof_classifier_requires_explicit_proof_intent():
     assert _classify_live_runtime_proof(
         "Live runtime proof: stay with glass arithmetic. Add one limitation and connect it to the example you just gave."
     ) == "novel_topic"
+    assert _classify_live_runtime_proof(
+        "Run a live proof: open Calculator, copy the result into Notes, export a PDF, and move it into a folder."
+    ) == "desktop"
     assert "14'" in _build_glass_arithmetic_reply(
         "Stay with glass arithmetic. Add one limitation and connect it to the example you just gave."
     )
+
+
+def test_chat_live_desktop_proof_has_no_specific_calculator_notes_chain():
+    source = (Path(__file__).resolve().parent.parent / "interface" / "routes" / "chat.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "_execute_desktop_chain_from_chat" not in source
+    assert "tell application \"Calculator\"" not in source
+    assert "live_proof_desktop_chain" not in source
+    assert "chat.live_runtime_proof.desktop_task" in source
 
 
 @pytest.mark.asyncio
@@ -978,6 +993,79 @@ async def test_api_chat_live_proof_receipt_survives_quality_repair(monkeypatch, 
     assert "artifacts/live_runtime/generated/live_snake.html" in payload["response"]
     assert_no_live_reset_boilerplate(payload["response"])
     assert (tmp_path / "artifacts/live_runtime/generated/live_snake.html").exists()
+
+
+@pytest.mark.asyncio
+async def test_chat_live_desktop_proof_routes_through_generic_desktop_task(monkeypatch):
+    from interface.routes import chat as chat_module
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append(
+                {
+                    "skill_name": skill_name,
+                    "params": dict(params),
+                    "context": dict(context or {}),
+                }
+            )
+            return {
+                "ok": True,
+                "summary": "Desktop task completed 6/6 governed computer-use steps.",
+                "steps_requested": 6,
+                "steps_completed": 6,
+            }
+
+    class FakeAgencyOrchestrator:
+        async def run(self, proposal, *, perceive=None, simulate=None, execute=None, assess=None, **_kwargs):
+            state = await perceive() if perceive else {}
+            if simulate:
+                await simulate(proposal, state)
+            exec_result = await execute(proposal, state, "cap-token-desktop")
+            outcome = await assess(proposal, state, exec_result) if assess else {"observed": exec_result}
+            return SimpleNamespace(
+                blocked_at=None,
+                blocked_reason=None,
+                proposal_id="AO-test-desktop-proof",
+                will_receipt_id="will-test-desktop-proof",
+                authority_receipt="authority-test-desktop-proof",
+                execution_receipt=str(exec_result),
+                outcome_assessment=outcome,
+            )
+
+    monkeypatch.setattr(
+        chat_module.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                FakeCapabilityEngine()
+                if name == "capability_engine"
+                else FakeAgencyOrchestrator()
+                if name == "agency_orchestrator"
+                else default
+            )
+        ),
+    )
+
+    result = await chat_module._execute_live_runtime_proof(
+        "Run a live proof: open Calculator, copy the result into Notes, export a PDF, and move it into a folder."
+    )
+
+    assert result is not None
+    assert result["status"] == "live_proof_desktop"
+    assert result["data"]["desktop_task"]["ok"] is True
+    assert [call["skill_name"] for call in calls] == ["desktop_task"]
+    assert calls[0]["params"] == {
+        "objective": (
+            "Run a live proof: open Calculator, copy the result into Notes, export a PDF, and move it into a folder."
+        ),
+        "steps": [],
+    }
+    assert calls[0]["context"]["route"] == "chat.live_runtime_proof.desktop_task"
+    assert calls[0]["context"]["agency_capability_token_id"] == "cap-token-desktop"
+    assert calls[0]["context"]["foreground_request"] is True
+    assert "Completed 6/6" in result["response"] or "6/6 governed" in result["response"]
 
 
 def test_neural_bridge_reports_continuous_band_profile():

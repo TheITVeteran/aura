@@ -178,12 +178,16 @@ async def test_computer_use_run_command_intercepts(monkeypatch, tmp_path):
     # 3. Test find command auto-constraining depth
     run_args = None
 
-    def mock_run(args, capture_output, text, timeout):
-        nonlocal run_args
-        run_args = args
-        return SimpleNamespace(returncode=0, stdout="find output", stderr="")
+    class FakeSubprocessGateway:
+        def run(self, args, **kwargs):
+            nonlocal run_args
+            run_args = args
+            return SimpleNamespace(returncode=0, stdout="find output", stderr="")
 
-    monkeypatch.setattr("core.skills.computer_use.subprocess.run", mock_run)
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
 
     result = await skill.execute({"action": "run_command", "target": "find . -name '*.py'"}, {})
     assert result["ok"] is True
@@ -269,26 +273,30 @@ async def test_computer_use_clock_falls_back_when_permission_probe_times_out(mon
     tracker.reset()
 
 
-def test_computer_use_applescript_runner_uses_bounded_subprocess_by_default(monkeypatch):
+def test_computer_use_applescript_runner_uses_bounded_desktop_gateway_by_default(monkeypatch):
     skill = ComputerUseSkill()
     run_call = {}
 
-    def fake_run(args, capture_output, text, timeout):
-        run_call.update(
-            {
-                "args": args,
-                "capture_output": capture_output,
-                "text": text,
-                "timeout": timeout,
-            }
-        )
-        return SimpleNamespace(returncode=0, stdout="menu clock", stderr="")
+    class FakeDesktopActionGateway:
+        def run_applescript(self, script, *, source, timeout):
+            run_call.update(
+                {
+                    "script": script,
+                    "source": source,
+                    "timeout": timeout,
+                }
+            )
+            return {"ok": True, "stdout": "menu clock", "stderr": "", "exit_code": 0}
 
     monkeypatch.delenv("AURA_COMPUTER_USE_NATIVE_APPLESCRIPT", raising=False)
-    monkeypatch.setattr("core.skills.computer_use.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_desktop_action_gateway",
+        lambda: FakeDesktopActionGateway(),
+    )
 
     assert skill._run_applescript('return "menu clock"', timeout=6) == "menu clock"
-    assert run_call["args"][0] == "osascript"
+    assert run_call["script"] == 'return "menu clock"'
+    assert run_call["source"] == "computer_use"
     assert run_call["timeout"] == 6
 
 
