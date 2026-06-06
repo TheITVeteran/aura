@@ -3336,17 +3336,15 @@ class UnitaryResponsePhase(Phase):
             getattr(getattr(state, "cognition", None), "current_objective", "") or "",
             96,
         )
-        mood = cls._normalize_text(
-            getattr(getattr(state, "affect", None), "dominant_emotion", "") or "",
-            32,
-        )
         if focus:
-            if mood and mood.lower() not in {"fear", "anger", "sadness", "disgust"}:
-                prefix = f"I'm {mood} enough to stay with"
-            else:
-                prefix = "I'm still with"
-            return f"{prefix} {focus}, and I do not want to hand you a broken fragment."
-        return "I'm still with the live thread, and I do not want to hand you a broken fragment."
+            return (
+                f"The live answer path failed before I could produce a verified reply for {focus}. "
+                "I am preserving the request instead of inventing a result."
+            )
+        return (
+            "The live answer path failed before I could produce a verified reply. "
+            "I am preserving the request instead of inventing a result."
+        )
 
     @classmethod
     def _build_governed_user_recovery_reply(
@@ -4973,7 +4971,7 @@ class UnitaryResponsePhase(Phase):
                     ) from timeout_exc
                 if is_user_facing:
                     logger.warning(
-                        "🚨 [STABILITY] LLM generation hard-timed-out. Using sovereign minimal fallback."
+                        "🚨 [STABILITY] LLM generation hard-timed-out. Using operational failure floor."
                     )
                     raw = self._build_minimal_live_voice_reply(new_state, objective)
                 else:
@@ -5016,7 +5014,7 @@ class UnitaryResponsePhase(Phase):
                         raw = rescued
                     else:
                         logger.warning(
-                            "🚨 [STABILITY] Foreground conversation lane returned no valid text. Using sovereign minimal fallback."
+                            "🚨 [STABILITY] Foreground conversation lane returned no valid text. Using operational failure floor."
                         )
                         raw = self._build_minimal_live_voice_reply(new_state, objective)
                 else:

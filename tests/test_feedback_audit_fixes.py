@@ -1866,6 +1866,8 @@ def test_unitary_response_minimal_live_voice_reply_contains_runtime_grounding():
     # Minimal reply should use natural language, not raw metric values
     assert "free energy" not in lowered
     assert "0.42" not in reply
+    assert "live answer path failed" in lowered
+    assert "preserving the request" in lowered
     # Should still have a meaningful response
     assert len(reply) > 5
 

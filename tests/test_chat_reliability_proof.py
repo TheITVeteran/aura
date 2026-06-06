@@ -335,12 +335,16 @@ def test_friendly_failure_floors_do_not_count_as_successful_answers():
     assert "friendly_failure_floor" in assessment.reasons
 
 
-def test_still_with_prompt_echo_is_treated_as_failed_repair_floor():
+def test_operational_answer_path_failure_is_treated_as_failed_repair_floor():
     from core.conversation.response_reliability import assess_user_facing_reply
 
     assessment = assess_user_facing_reply(
         "When you check email or Reddit autonomously, what should actually happen after the trigger fires?",
-        "I'm still with When you check email or Reddit autonomously, and I do not want to hand you a broken fragment.",
+        (
+            "The live answer path failed before I could produce a verified reply for "
+            "checking email or Reddit autonomously. I am preserving the request instead "
+            "of inventing a result."
+        ),
     )
 
     assert assessment.retryable
