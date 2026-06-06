@@ -11,7 +11,7 @@ from core.world.object_permanence import ObjectPermanenceTracker
 @pytest.mark.anyio
 async def test_belief_revision_flow():
     state = LifeState()
-    # Mock some observations
+    # Provide a deterministic observation snapshot.
     state.world_model["last_observations"] = {
         "environment_snapshot": {"cpu_percent": 25.0, "memory_percent": 60.0}
     }

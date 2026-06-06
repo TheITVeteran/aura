@@ -1,5 +1,3 @@
-from unittest.mock import MagicMock
-
 from core.brain.llm.context_assembler import ContextAssembler
 from core.container import ServiceContainer
 from core.state.aura_state import AuraState
@@ -23,12 +21,22 @@ def test_build_messages_updates_attention_focus():
     assert state.cognition.attention_focus == "Let's debug the retrieval pipeline."
 
 
+class ToolAffordanceRecorder:
+    def __init__(self):
+        self.calls = 0
+        self.kwargs = []
+
+    def build_tool_affordance_block(self, **kwargs):
+        self.calls += 1
+        self.kwargs.append(kwargs)
+        return "## LIVE TOOL OPTIONS\n- clock: Check time and date."
+
+
 def test_build_system_prompt_uses_compact_turn_specific_tool_affordances(monkeypatch):
     state = AuraState.default()
     state.cognition.current_objective = "What time is it right now?"
 
-    engine = MagicMock()
-    engine.build_tool_affordance_block.return_value = "## LIVE TOOL OPTIONS\n- clock: Check time and date."
+    engine = ToolAffordanceRecorder()
 
     original_get = ServiceContainer.get
 
@@ -43,4 +51,5 @@ def test_build_system_prompt_uses_compact_turn_specific_tool_affordances(monkeyp
 
     assert "## LIVE TOOL OPTIONS" in prompt
     assert "If you need facts, USE web_search/search_web/free_search." not in prompt
-    engine.build_tool_affordance_block.assert_called_once()
+    assert engine.calls == 1
+    assert engine.kwargs[0]["objective"] == "What time is it right now?"

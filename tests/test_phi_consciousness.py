@@ -1,5 +1,4 @@
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
@@ -123,7 +122,7 @@ async def test_phi_phase_publishes_policy_from_richer_state_channels():
 
 
 @pytest.mark.asyncio
-async def test_phi_phase_uses_phi_core_phi_s_field():
+async def test_phi_phase_uses_phi_core_phi_s_field(monkeypatch):
     kernel = SimpleNamespace(organs={})
     phase = PhiConsciousnessPhase(kernel)
 
@@ -132,7 +131,7 @@ async def test_phi_phase_uses_phi_core_phi_s_field():
         compute_surrogate_phi=lambda: 0.0,
     )
 
-    with patch.object(phase, "_get_phi_core", return_value=fake_phi_core):
-        phi = await phase._compute_phi(AuraState.default())
+    monkeypatch.setattr(phase, "_get_phi_core", lambda: fake_phi_core)
+    phi = await phase._compute_phi(AuraState.default())
 
     assert phi == pytest.approx(0.3471, rel=0.0, abs=1e-4)

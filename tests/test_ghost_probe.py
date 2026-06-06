@@ -8,17 +8,24 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
 from core.collective.probe_manager import ProbeManager
 from core.skills.ghost_probe import GhostProbeParams, GhostProbeSkill
 from core.container import ServiceContainer
 
+
+class OrchestratorHarness:
+    def __init__(self):
+        self.loop = asyncio.get_running_loop()
+        self.messages = []
+
+    def enqueue_message(self, message):
+        self.messages.append(message)
+
+
 class TestGhostProbe(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         ServiceContainer.clear()
-        self.orchestrator = MagicMock()
-        # Mock loop for run_in_executor
-        self.orchestrator.loop = asyncio.get_running_loop()
+        self.orchestrator = OrchestratorHarness()
         self.manager = ProbeManager(self.orchestrator)
         ServiceContainer.register_instance("probe_manager", self.manager)
         self.skill = GhostProbeSkill(self.orchestrator)
@@ -53,7 +60,7 @@ class TestGhostProbe(unittest.IsolatedAsyncioTestCase):
             self.assertIn("unit_probe", self.manager.probes)
             self.assertIn("unit_probe", self.manager.probe_metadata)
             await asyncio.sleep(0.2)
-            self.assertTrue(self.orchestrator.enqueue_message.called)
+            self.assertTrue(self.orchestrator.messages)
         finally:
             ok = await self.manager.cleanup_probe("unit_probe")
             target.unlink(missing_ok=True)
