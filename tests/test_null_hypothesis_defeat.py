@@ -76,8 +76,8 @@ import copy
 import math
 import time
 from collections import Counter, defaultdict
+from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
-from unittest.mock import MagicMock, AsyncMock, patch
 
 import numpy as np
 import pytest
@@ -1205,8 +1205,8 @@ class TestSelfPrediction:
     @pytest.mark.asyncio
     async def test_prediction_error_increases_on_surprise(self):
         """When reality differs from prediction, error must increase."""
-        mock_orch = MagicMock()
-        sp = SelfPredictionLoop(orchestrator=mock_orch)
+        orchestrator = SimpleNamespace()
+        sp = SelfPredictionLoop(orchestrator=orchestrator)
 
         # Feed predictable data (same drive, same focus, slowly changing valence)
         for i in range(20):
@@ -1234,8 +1234,8 @@ class TestSelfPrediction:
     @pytest.mark.asyncio
     async def test_prediction_accuracy_improves_on_stable_input(self):
         """On repetitive input, the prediction loop should reduce error over time."""
-        mock_orch = MagicMock()
-        sp = SelfPredictionLoop(orchestrator=mock_orch)
+        orchestrator = SimpleNamespace()
+        sp = SelfPredictionLoop(orchestrator=orchestrator)
 
         # Feed identical input for many ticks
         errors = []
@@ -1258,8 +1258,8 @@ class TestSelfPrediction:
     @pytest.mark.asyncio
     async def test_most_unpredictable_dimension_is_meaningful(self):
         """The system must correctly identify which dimension is hardest to predict."""
-        mock_orch = MagicMock()
-        sp = SelfPredictionLoop(orchestrator=mock_orch)
+        orchestrator = SimpleNamespace()
+        sp = SelfPredictionLoop(orchestrator=orchestrator)
 
         # Feed data where focus changes a lot but valence is stable
         for i in range(30):
@@ -2384,8 +2384,8 @@ class TestClosedLoopAdaptation:
 
     def test_self_prediction_improves_over_stable_sequence(self):
         """The self-prediction loop must get better at predicting stable patterns."""
-        mock_orch = MagicMock()
-        sp = SelfPredictionLoop(orchestrator=mock_orch)
+        orchestrator = SimpleNamespace()
+        sp = SelfPredictionLoop(orchestrator=orchestrator)
 
         errors = []
         for i in range(60):
@@ -3015,8 +3015,8 @@ class TestPhenomenalProbes:
     def test_metacognitive_access_via_self_prediction(self):
         """The system must have access to its own prediction accuracy
         (metacognitive monitoring)."""
-        mock_orch = MagicMock()
-        sp = SelfPredictionLoop(orchestrator=mock_orch)
+        orchestrator = SimpleNamespace()
+        sp = SelfPredictionLoop(orchestrator=orchestrator)
 
         # Build history
         for i in range(30):
@@ -3239,8 +3239,8 @@ def _score_system(sub: LiquidSubstrate, ncs: NeurochemicalSystem,
     coherence = 1.0 - np.clip(np.std(moods) * 2, 0, 1)
 
     # ── 3. Calibration: self-prediction accuracy ─────────────────────
-    mock_orch = MagicMock()
-    sp = SelfPredictionLoop(orchestrator=mock_orch)
+    orchestrator = SimpleNamespace()
+    sp = SelfPredictionLoop(orchestrator=orchestrator)
     for t in range(min(40, n_ticks)):
         asyncio.run(
             sp.tick(actual_valence=moods[t] if t < len(moods) else 0.0,
@@ -3720,10 +3720,10 @@ class TestInternalStateBlindness:
 
     def test_self_model_blindness_degrades_calibration(self):
         """Without self-prediction, calibration metric must drop."""
-        mock_orch = MagicMock()
+        orchestrator = SimpleNamespace()
 
         # With self-model: normal prediction loop
-        sp = SelfPredictionLoop(orchestrator=mock_orch)
+        sp = SelfPredictionLoop(orchestrator=orchestrator)
         for i in range(30):
             asyncio.run(
                 sp.tick(actual_valence=0.5, actual_drive="curiosity",
@@ -3731,7 +3731,7 @@ class TestInternalStateBlindness:
         calibration_with = 1.0 - sp.get_surprise_signal()
 
         # Without self-model: prediction loop with random inputs (blind)
-        sp_blind = SelfPredictionLoop(orchestrator=mock_orch)
+        sp_blind = SelfPredictionLoop(orchestrator=orchestrator)
         rng = np.random.default_rng(42)
         for i in range(30):
             asyncio.run(
@@ -3793,10 +3793,10 @@ class TestSelfModelFalseInjection:
     def test_false_self_model_changes_behavior(self):
         """Injecting a false self-model (wrong prediction) must change
         the prediction loop's behavior."""
-        mock_orch = MagicMock()
+        orchestrator = SimpleNamespace()
 
         # Accurate self-model: predict what actually happens
-        sp_acc = SelfPredictionLoop(orchestrator=mock_orch)
+        sp_acc = SelfPredictionLoop(orchestrator=orchestrator)
         for _ in range(20):
             asyncio.run(
                 sp_acc.tick(actual_valence=0.5, actual_drive="curiosity",
@@ -3805,7 +3805,7 @@ class TestSelfModelFalseInjection:
         error_accurate = sp_acc.get_surprise_signal()
 
         # False self-model: reality is stable but prediction history is noisy
-        sp_false = SelfPredictionLoop(orchestrator=mock_orch)
+        sp_false = SelfPredictionLoop(orchestrator=orchestrator)
         rng = np.random.default_rng(42)
         # Build false history then switch to stable
         for _ in range(10):
@@ -3830,17 +3830,17 @@ class TestSelfModelFalseInjection:
     def test_accurate_self_model_outperforms_false(self):
         """Self-prediction with accurate history must achieve lower error
         than self-prediction initialized from a false/noisy history."""
-        mock_orch = MagicMock()
+        orchestrator = SimpleNamespace()
 
         # Accurate: trained on same stable signal it will predict
-        sp_acc = SelfPredictionLoop(orchestrator=mock_orch)
+        sp_acc = SelfPredictionLoop(orchestrator=orchestrator)
         for _ in range(40):
             asyncio.run(
                 sp_acc.tick(actual_valence=0.3, actual_drive="curiosity",
                             actual_focus_source="drive_curiosity"))
 
         # False: trained on chaotic signal, then tested on stable
-        sp_false = SelfPredictionLoop(orchestrator=mock_orch)
+        sp_false = SelfPredictionLoop(orchestrator=orchestrator)
         rng = np.random.default_rng(99)
         for _ in range(30):
             asyncio.run(
@@ -3870,10 +3870,10 @@ class TestOnlineAdaptation:
     def test_online_adaptation_beats_zero_shot(self):
         """A system with experience on stable input must have lower surprise
         than a fresh system that just saw its first chaotic input."""
-        mock_orch = MagicMock()
+        orchestrator = SimpleNamespace()
 
         # Zero-shot on chaotic: fresh system sees random inputs
-        sp_zero = SelfPredictionLoop(orchestrator=mock_orch)
+        sp_zero = SelfPredictionLoop(orchestrator=orchestrator)
         rng = np.random.default_rng(42)
         for _ in range(10):
             asyncio.run(
@@ -3884,7 +3884,7 @@ class TestOnlineAdaptation:
         error_zero = sp_zero.get_surprise_signal()
 
         # Trained: 100 ticks of a consistent pattern
-        sp_trained = SelfPredictionLoop(orchestrator=mock_orch)
+        sp_trained = SelfPredictionLoop(orchestrator=orchestrator)
         for _ in range(100):
             asyncio.run(
                 sp_trained.tick(actual_valence=0.5, actual_drive="curiosity",
@@ -4822,8 +4822,8 @@ class TestRobustness:
 
     def test_distribution_shift_detected_by_self_prediction(self):
         """Abrupt change in input statistics must trigger surprise spike."""
-        mock_orch = MagicMock()
-        sp = SelfPredictionLoop(orchestrator=mock_orch)
+        orchestrator = SimpleNamespace()
+        sp = SelfPredictionLoop(orchestrator=orchestrator)
 
         # Stable phase
         for _ in range(30):
@@ -4859,10 +4859,10 @@ class TestSelfMonitoring:
         """When inputs are variable, self-prediction error should be high.
         When inputs are stable, error should be low. This correlation
         proves the self-model is informative, not decorative."""
-        mock_orch = MagicMock()
+        orchestrator = SimpleNamespace()
 
         # Phase 1: stable inputs → low error expected
-        sp_stable = SelfPredictionLoop(orchestrator=mock_orch)
+        sp_stable = SelfPredictionLoop(orchestrator=orchestrator)
         for _ in range(30):
             asyncio.run(
                 sp_stable.tick(actual_valence=0.5, actual_drive="curiosity",
@@ -4870,7 +4870,7 @@ class TestSelfMonitoring:
         error_stable = sp_stable.get_surprise_signal()
 
         # Phase 2: highly variable inputs → high error expected
-        sp_variable = SelfPredictionLoop(orchestrator=mock_orch)
+        sp_variable = SelfPredictionLoop(orchestrator=orchestrator)
         rng = np.random.default_rng(42)
         for _ in range(30):
             asyncio.run(
@@ -4904,8 +4904,8 @@ class TestSelfMonitoring:
     def test_metacognitive_accuracy_identifies_worst_dimension(self):
         """The system must correctly identify which internal dimension
         it's worst at predicting — not just report a generic error."""
-        mock_orch = MagicMock()
-        sp = SelfPredictionLoop(orchestrator=mock_orch)
+        orchestrator = SimpleNamespace()
+        sp = SelfPredictionLoop(orchestrator=orchestrator)
 
         # Feed: valence stable, drive stable, focus CHAOTIC
         for i in range(50):
@@ -4922,8 +4922,8 @@ class TestSelfMonitoring:
 
     def test_self_model_snapshot_is_accurate(self):
         """Self-prediction snapshot must contain accurate metadata."""
-        mock_orch = MagicMock()
-        sp = SelfPredictionLoop(orchestrator=mock_orch)
+        orchestrator = SimpleNamespace()
+        sp = SelfPredictionLoop(orchestrator=orchestrator)
 
         for _ in range(20):
             asyncio.run(
