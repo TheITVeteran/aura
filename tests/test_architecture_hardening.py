@@ -1,9 +1,9 @@
 import asyncio
+import inspect
 import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import networkx as nx
 import pytest
@@ -64,6 +64,49 @@ class _FakeBeliefGraph:
 
     def _save(self):
         return None
+
+
+class _RecordedCall:
+    def __init__(self, args, kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    def __iter__(self):
+        yield self.args
+        yield self.kwargs
+
+
+class _AsyncCallRecorder:
+    def __init__(self, result=None, *, return_value=None, side_effect=None):
+        self.return_value = result if return_value is None else return_value
+        self.side_effect = side_effect
+        self.await_args_list = []
+        self.await_args = None
+
+    @property
+    def await_count(self):
+        return len(self.await_args_list)
+
+    def __call__(self, *args, **kwargs):
+        call = _RecordedCall(args, kwargs)
+        self.await_args_list.append(call)
+        self.await_args = call
+
+        async def _complete():
+            if isinstance(self.side_effect, BaseException):
+                raise self.side_effect
+            if callable(self.side_effect):
+                value = self.side_effect(*args, **kwargs)
+            else:
+                value = self.return_value
+            if inspect.isawaitable(value):
+                return await value
+            return value
+
+        return _complete()
+
+    def assert_not_awaited(self):
+        assert not self.await_args_list
 
 
 @pytest.mark.asyncio
@@ -576,14 +619,14 @@ async def test_proactive_manager_suppresses_legacy_fallback_when_constitutional_
     )
     service_container.lock_registration()
 
-    callback = AsyncMock()
+    callback = _AsyncCallRecorder()
     manager = ProactiveCommunicationManager(notification_callback=callback)
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(
             "core.consciousness.executive_authority.get_executive_authority",
             lambda _orch=None: SimpleNamespace(
-                release_expression=AsyncMock(side_effect=RuntimeError("authority down"))
+                release_expression=_AsyncCallRecorder(side_effect=RuntimeError("authority down"))
             ),
         )
         await manager._send_msg(
@@ -605,8 +648,8 @@ async def test_continuous_perception_blocks_unapproved_autonomous_injection(monk
 
     orchestrator = SimpleNamespace(
         _agency_core=None,
-        process_user_input=AsyncMock(),
-        _handle_incoming_message=AsyncMock(),
+        process_user_input=_AsyncCallRecorder(),
+        _handle_incoming_message=_AsyncCallRecorder(),
     )
     engine = ContinuousPerceptionEngine(orchestrator)
     ServiceContainer.register_instance(
@@ -617,7 +660,7 @@ async def test_continuous_perception_blocks_unapproved_autonomous_injection(monk
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_initiative=AsyncMock(return_value=(False, "blocked", None))
+            approve_initiative=_AsyncCallRecorder(return_value=(False, "blocked", None))
         ),
     )
 
@@ -640,12 +683,12 @@ async def test_process_unprompted_stimulus_blocks_when_constitution_rejects(
     orchestrator, monkeypatch
 ):
     clear_degraded_events()
-    orchestrator.process_user_input_priority = AsyncMock()
+    orchestrator.process_user_input_priority = _AsyncCallRecorder()
 
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_initiative=AsyncMock(return_value=(False, "blocked", None))
+            approve_initiative=_AsyncCallRecorder(return_value=(False, "blocked", None))
         ),
     )
 
@@ -662,12 +705,12 @@ async def test_process_unprompted_stimulus_blocks_when_constitution_rejects(
 @pytest.mark.asyncio
 async def test_handle_impulse_blocks_when_constitution_rejects(orchestrator, monkeypatch):
     clear_degraded_events()
-    orchestrator.process_user_input_priority = AsyncMock()
+    orchestrator.process_user_input_priority = _AsyncCallRecorder()
 
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_initiative=AsyncMock(return_value=(False, "blocked", None))
+            approve_initiative=_AsyncCallRecorder(return_value=(False, "blocked", None))
         ),
     )
 
@@ -712,16 +755,16 @@ async def test_autonomous_initiative_loop_blocks_unapproved_browser_research(mon
     ServiceContainer.clear()
     clear_degraded_events()
 
-    sensory_motor = SimpleNamespace(actuate_browser=AsyncMock(return_value="researched"))
+    sensory_motor = SimpleNamespace(actuate_browser=_AsyncCallRecorder(return_value="researched"))
     ServiceContainer.register_instance("sensory_motor_cortex", sensory_motor, required=False)
     fake_core = SimpleNamespace(
-        begin_tool_execution=AsyncMock(
+        begin_tool_execution=_AsyncCallRecorder(
             return_value=SimpleNamespace(
                 approved=False,
                 decision=SimpleNamespace(reason="blocked"),
             )
         ),
-        finish_tool_execution=AsyncMock(),
+        finish_tool_execution=_AsyncCallRecorder(),
     )
 
     monkeypatch.setattr(
@@ -1046,7 +1089,7 @@ async def test_orchestrator_execute_tool_blocks_when_will_gate_unavailable(
     ServiceContainer.lock_registration()
     orchestrator.router = SimpleNamespace(
         skills={"notify_user": object()},
-        execute=AsyncMock(return_value={"ok": True}),
+        execute=_AsyncCallRecorder(return_value={"ok": True}),
     )
 
     monkeypatch.setattr(
@@ -1066,10 +1109,15 @@ async def test_orchestrator_execute_tool_blocks_when_capability_token_missing(
     orchestrator, monkeypatch
 ):
     ServiceContainer.register_instance("executive_core", object(), required=False)
+    ServiceContainer.register_instance(
+        "affect_engine",
+        SimpleNamespace(apply_stimulus=_AsyncCallRecorder(return_value=None)),
+        required=False,
+    )
     ServiceContainer.lock_registration()
 
     constitution = SimpleNamespace(
-        begin_tool_execution=AsyncMock(
+        begin_tool_execution=_AsyncCallRecorder(
             return_value=SimpleNamespace(
                 approved=True,
                 capability_token_id=None,
@@ -1078,12 +1126,12 @@ async def test_orchestrator_execute_tool_blocks_when_capability_token_missing(
                 executive_intent_id="intent-1",
             )
         ),
-        finish_tool_execution=AsyncMock(),
+        finish_tool_execution=_AsyncCallRecorder(),
     )
 
     orchestrator.router = SimpleNamespace(
         skills={"notify_user": object()},
-        execute=AsyncMock(return_value={"ok": True}),
+        execute=_AsyncCallRecorder(return_value={"ok": True}),
     )
 
     monkeypatch.setattr(
@@ -1104,10 +1152,15 @@ async def test_orchestrator_execute_tool_infers_user_origin_from_current_state(
     orchestrator, monkeypatch
 ):
     ServiceContainer.register_instance("executive_core", object(), required=False)
+    ServiceContainer.register_instance(
+        "affect_engine",
+        SimpleNamespace(apply_stimulus=_AsyncCallRecorder(return_value=None)),
+        required=False,
+    )
     ServiceContainer.lock_registration()
 
     constitution = SimpleNamespace(
-        begin_tool_execution=AsyncMock(
+        begin_tool_execution=_AsyncCallRecorder(
             return_value=SimpleNamespace(
                 approved=True,
                 capability_token_id="token-1",
@@ -1116,12 +1169,12 @@ async def test_orchestrator_execute_tool_infers_user_origin_from_current_state(
                 executive_intent_id="intent-1",
             )
         ),
-        finish_tool_execution=AsyncMock(),
+        finish_tool_execution=_AsyncCallRecorder(),
     )
 
     orchestrator.router = SimpleNamespace(
         skills={"notify_user": object()},
-        execute=AsyncMock(return_value={"ok": True}),
+        execute=_AsyncCallRecorder(return_value={"ok": True}),
     )
     orchestrator._current_origin = "user"
 
@@ -1164,12 +1217,12 @@ async def test_memory_facade_commit_interaction_blocks_when_constitutional_gate_
     monkeypatch,
 ):
     facade = MemoryFacade()
-    facade._episodic = SimpleNamespace(record_episode_async=AsyncMock(return_value="episode-1"))
+    facade._episodic = SimpleNamespace(record_episode_async=_AsyncCallRecorder(return_value="episode-1"))
 
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_memory_write=AsyncMock(return_value=(False, "blocked_by_test"))
+            approve_memory_write=_AsyncCallRecorder(return_value=(False, "blocked_by_test"))
         ),
     )
 
@@ -1190,7 +1243,7 @@ async def test_memory_facade_blocks_severe_welfare_risk_before_backend(
     monkeypatch,
 ):
     facade = MemoryFacade()
-    facade._episodic = SimpleNamespace(record_episode_async=AsyncMock(return_value="episode-1"))
+    facade._episodic = SimpleNamespace(record_episode_async=_AsyncCallRecorder(return_value="episode-1"))
 
     def stamp_welfare(_self, metadata):
         payload = dict(metadata or {})
@@ -1245,7 +1298,7 @@ async def test_long_term_memory_store_blocks_when_constitutional_gate_rejects(
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_memory_write=AsyncMock(return_value=(False, "blocked_by_test"))
+            approve_memory_write=_AsyncCallRecorder(return_value=(False, "blocked_by_test"))
         ),
     )
 
@@ -1281,7 +1334,7 @@ async def test_agency_pulse_blocks_unapproved_autonomous_action(orchestrator, mo
             last_observation_comment=0.0,
             unshared_observations=[],
         ),
-        pulse=AsyncMock(
+        pulse=_AsyncCallRecorder(
             return_value={
                 "type": "autonomous_action",
                 "skill": "clock",
@@ -1295,7 +1348,7 @@ async def test_agency_pulse_blocks_unapproved_autonomous_action(orchestrator, mo
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_initiative=AsyncMock(return_value=(False, "blocked", None))
+            approve_initiative=_AsyncCallRecorder(return_value=(False, "blocked", None))
         ),
     )
 
@@ -1376,10 +1429,10 @@ async def test_kernel_clears_completed_foreground_turn_state():
         ),
         end_tick=lambda *_args, **_kwargs: None,
     )
-    kernel._process_storage_intents = AsyncMock()
-    kernel._commit_vault = AsyncMock()
-    kernel._pulse_mirror = AsyncMock()
-    kernel.state.derive_async = AsyncMock(return_value=kernel.state)
+    kernel._process_storage_intents = _AsyncCallRecorder()
+    kernel._commit_vault = _AsyncCallRecorder()
+    kernel._pulse_mirror = _AsyncCallRecorder()
+    kernel.state.derive_async = _AsyncCallRecorder(return_value=kernel.state)
 
     async def _execute_phase(self, current_state, objective=None, **_kwargs):
         current_state.cognition.current_objective = objective
