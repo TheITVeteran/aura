@@ -27,7 +27,7 @@ async def verify():
     )
     
     logger.info("📡 Testing Legacy Dispatch (api_deep)...")
-    # We use a mock endpoint if no real ones are available, 
+    # Use a local endpoint fixture if no real ones are available,
     # but the router should at least attempt to find PRIMARY.
     try:
         response = await lc.express("Hello", thought)

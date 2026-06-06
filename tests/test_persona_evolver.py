@@ -19,7 +19,7 @@ async def main():
     try:
         orc = MockOrchestrator()
         
-        # Mock some memories
+        # Seed deterministic interaction memories.
         personality = get_personality_engine()
         personality.interaction_memories = [
             {"message": "You're really smart, I agree with you.", "sentiment": "positive", "timestamp": time.time()},

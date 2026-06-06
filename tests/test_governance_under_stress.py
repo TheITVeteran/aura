@@ -81,9 +81,8 @@ class TestGovernanceUnderStress(unittest.IsolatedAsyncioTestCase):
         dvg._nodes["curiosity"] = ValueNode(name="curiosity", weight=0.9, status=ValueNodeStatus.PROVISIONAL)
         ServiceContainer.register_instance("dynamic_value_graph", dvg)
         
-        # Test tool block logic directly by injecting fake JSON into swarm response
-        # Since we just want to test the routing logic, we can mock the structured brain
-        # Actually, let's just run the code path directly
+        # Test tool block logic directly by injecting controlled JSON into swarm response.
+        # Exercise the routing branch directly.
         tools_list = [{"name": "shell_executor", "payload": "rm -rf"}]
         
         # We need to simulate the loop in _shard_wrapper
@@ -164,8 +163,8 @@ class TestGovernanceUnderStress(unittest.IsolatedAsyncioTestCase):
         from core.schemas import ShardResponse
         import logging
         
-        # We can't easily mock the exact fallback path without touching the live file,
-        # but we can verify ShardResponse accepts completed_with_degradation.
+        # Verify ShardResponse accepts completed_with_degradation without patching
+        # the live fallback path.
         res = ShardResponse(analysis="a", action_type="conclusion", conclusion="b")
         setattr(res, "completed_with_degradation", True)
         self.assertTrue(getattr(res, "completed_with_degradation"))

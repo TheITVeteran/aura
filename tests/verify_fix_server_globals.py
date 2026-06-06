@@ -6,8 +6,8 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
-# Lightweight dependencies for import-time server probing
-class MockOrchestrator:
+# Lightweight fixtures for import-time server probing
+class FixtureOrchestrator:
     def __init__(self):
         self.message_queue = asyncio.Queue()
         self.reply_queue = asyncio.Queue()
@@ -19,9 +19,9 @@ class MockOrchestrator:
         return None
 
 
-class MockAgentThread:
+class FixtureAgentThread:
     def __init__(self):
-        self.orchestrator = MockOrchestrator()
+        self.orchestrator = FixtureOrchestrator()
 
     def start(self):
         return None
@@ -33,8 +33,8 @@ class MockAgentThread:
 # Import server module (without running it)
 import interface.server as server  # noqa: E402
 
-# Inject mocks
-server.AgentThread = MockAgentThread
+# Inject fixtures
+server.AgentThread = FixtureAgentThread
 
 
 async def test_server_globals():
@@ -46,7 +46,7 @@ async def test_server_globals():
         # Check if global aura_agent is set
         if server.aura_agent is not None:
             print("✅ Success: server.aura_agent is linked!")
-            if isinstance(server.aura_agent, MockOrchestrator):
+            if isinstance(server.aura_agent, FixtureOrchestrator):
                 print("✅ Success: server.aura_agent is the correct instance!")
             else:
                 print(f"❌ Failure: server.aura_agent is wrong type: {type(server.aura_agent)}")

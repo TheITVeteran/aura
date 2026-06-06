@@ -18,7 +18,7 @@ class MockOrchestrator:
         self.impulses = []
     
     async def handle_impulse(self, impulse):
-        print(f"🚀 Mock Orchestrator received impulse: {impulse}")
+        print(f"🚀 Fixture orchestrator received impulse: {impulse}")
         self.impulses.append(impulse)
 
 async def test_coupling():

@@ -48,7 +48,7 @@ async def audit_aura():
         from core.brain.cognitive_engine import CognitiveEngine
         
         engine = CognitiveEngine()
-        # Mock autonomous brain to track turns
+        # Instrumented autonomous brain fixture to track turns
         class MockBrain:
             async def think(self, objective, context=None, system_prompt=None, max_turns=5):
                 self.last_max_turns = max_turns

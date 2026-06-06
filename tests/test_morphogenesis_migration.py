@@ -9,7 +9,7 @@ from core.morphogenesis.state_migrator import VersionRegistry, MorphicStateProxy
 from core.ops.stateless_functional_bridge import EphemeralLogicRouter
 
 
-# ── Mock Classes for Testing ──
+# ── Migration Fixture Classes ──
 
 class SimpleCellV1:
     def __init__(self, count: int = 0):

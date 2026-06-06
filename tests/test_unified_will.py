@@ -508,6 +508,7 @@ class TestActionCoverage:
         assert d.is_approved()
 
     def test_state_mutation_path(self, will):
+        from core.container import ServiceContainer
         unity = SimpleNamespace(
             level="coherent",
             unity_score=1.0,
@@ -515,7 +516,14 @@ class TestActionCoverage:
             repair_needed=False,
             metadata={},
         )
-        with patch("core.will.ServiceContainer.get", return_value=unity):
+        original_get = ServiceContainer.get
+
+        def side_effect(name, default=None):
+            if name in ("unity_state", "unity_fragmentation_report"):
+                return unity
+            return original_get(name, default)
+
+        with patch("core.will.ServiceContainer.get", side_effect=side_effect):
             d = will.decide(content="update belief graph", source="cognition",
                             domain=ActionDomain.STATE_MUTATION)
         assert d.is_approved()

@@ -14,6 +14,47 @@ from interface.routes.memory import (
 )
 
 
+class AsyncCallFixture:
+    def __init__(self, return_value=None):
+        self.return_value = return_value
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self.return_value
+
+
+class MemoryWriteGatewayFixture:
+    def __init__(self):
+        self.requests = []
+        self.quarantines = []
+
+    async def write(self, request):
+        self.requests.append(request)
+        return SimpleNamespace(
+            record_id=f"record-{len(self.requests)}",
+            receipt_id=f"receipt-{len(self.requests)}",
+            bytes_written=len(request.content.encode("utf-8")),
+            schema_version=1,
+        )
+
+    async def quarantine(self, record_id, reason):
+        self.quarantines.append((record_id, reason))
+
+
+def install_memory_gateway_fixture(monkeypatch):
+    gateway = MemoryWriteGatewayFixture()
+    monkeypatch.setattr(
+        "core.memory.memory_write_gateway.get_memory_write_gateway",
+        lambda: gateway,
+    )
+    monkeypatch.setattr(
+        "core.runtime.action_executor.get_memory_write_gateway",
+        lambda: gateway,
+    )
+    return gateway
+
+
 @pytest.mark.asyncio
 async def test_memory_facade_search_supports_sync_vector_and_graph():
     facade = MemoryFacade()
@@ -36,8 +77,9 @@ async def test_memory_facade_search_supports_sync_vector_and_graph():
 
 @pytest.mark.asyncio
 async def test_memory_facade_commit_interaction_supports_sync_vector_and_ledger(monkeypatch):
+    monkeypatch.setenv("AURA_STRICT_RUNTIME", "0")
     facade = MemoryFacade()
-    facade._episodic = SimpleNamespace(record_episode_async=AsyncMock(return_value="episode-1"))
+    facade._episodic = SimpleNamespace(record_episode_async=AsyncCallFixture(return_value="episode-1"))
     vector_calls = []
     ledger_calls = []
     facade._vector = SimpleNamespace(add_memory=lambda **kwargs: vector_calls.append(kwargs) or True)
@@ -46,7 +88,7 @@ async def test_memory_facade_commit_interaction_supports_sync_vector_and_ledger(
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_memory_write=AsyncMock(return_value=(True, "ok"))
+            approve_memory_write=AsyncCallFixture(return_value=(True, "ok"))
         ),
     )
 
@@ -65,8 +107,9 @@ async def test_memory_facade_commit_interaction_supports_sync_vector_and_ledger(
 
 @pytest.mark.asyncio
 async def test_memory_facade_commit_interaction_writes_semantic_for_user_facing_turn(monkeypatch):
+    monkeypatch.setenv("AURA_STRICT_RUNTIME", "0")
     facade = MemoryFacade()
-    facade._episodic = SimpleNamespace(record_episode_async=AsyncMock(return_value="episode-7"))
+    facade._episodic = SimpleNamespace(record_episode_async=AsyncCallFixture(return_value="episode-7"))
     semantic_calls = []
     facade._semantic = SimpleNamespace(
         add_memory=lambda text, metadata=None: semantic_calls.append({"text": text, "metadata": metadata}) or True
@@ -75,7 +118,7 @@ async def test_memory_facade_commit_interaction_writes_semantic_for_user_facing_
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_memory_write=AsyncMock(return_value=(True, "ok"))
+            approve_memory_write=AsyncCallFixture(return_value=(True, "ok"))
         ),
     )
 
@@ -92,6 +135,35 @@ async def test_memory_facade_commit_interaction_writes_semantic_for_user_facing_
     assert semantic_calls
     assert "Bryan" in semantic_calls[0]["text"]
     assert semantic_calls[0]["metadata"]["episode_id"] == "episode-7"
+
+
+@pytest.mark.asyncio
+async def test_memory_facade_commit_interaction_defaults_to_gateway(monkeypatch):
+    gateway = install_memory_gateway_fixture(monkeypatch)
+    facade = MemoryFacade()
+    vector_calls = []
+    facade._vector = SimpleNamespace(add_memory=lambda **kwargs: vector_calls.append(kwargs) or True)
+
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            approve_memory_write=AsyncCallFixture(return_value=(True, "ok"))
+        ),
+    )
+
+    result = await facade.commit_interaction(
+        context="Bryan asked about canonical runtime memory",
+        action="conversation_reply",
+        outcome="Aura routed memory through the gateway",
+        success=True,
+        importance=0.9,
+    )
+
+    assert result == "gateway-receipt"
+    assert len(gateway.requests) == 1
+    assert gateway.requests[0].cause == "memory_facade.commit_interaction"
+    assert "canonical runtime memory" in gateway.requests[0].content
+    assert vector_calls == []
 
 
 @pytest.mark.asyncio
@@ -275,7 +347,7 @@ def test_black_hole_vault_delete_memories_supports_episode_metadata(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_memory_ops_core_append_writes_to_block(tmp_path, monkeypatch):
-    monkeypatch.setattr("core.config.config.paths", SimpleNamespace(base_dir=str(tmp_path)))
+    monkeypatch.setattr("core.config.config.paths", SimpleNamespace(base_dir=str(tmp_path), home_dir=tmp_path, data_dir=tmp_path))
     skill = MemoryOpsSkill()
 
     result = await skill.execute(
@@ -292,10 +364,11 @@ async def test_memory_ops_core_append_writes_to_block(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_memory_ops_archival_search_uses_facade():
     skill = MemoryOpsSkill.__new__(MemoryOpsSkill)
+    search_memories = AsyncCallFixture(return_value=[
+        {"score": 0.95, "content": "glass orchard"},
+    ])
     memory_facade = SimpleNamespace(
-        search_memories=AsyncMock(return_value=[
-            {"score": 0.95, "content": "glass orchard"},
-        ])
+        search_memories=search_memories
     )
 
     result = await skill.execute(
@@ -305,47 +378,46 @@ async def test_memory_ops_archival_search_uses_facade():
 
     assert result["ok"] is True
     assert any("glass orchard" in r for r in result["results"])
-    memory_facade.search_memories.assert_awaited_once_with("verification codename", limit=5)
+    assert search_memories.calls == [(("verification codename",), {"limit": 5})]
 
 
 @pytest.mark.asyncio
 async def test_memory_ops_remember_alias_uses_archival_insert(tmp_path, monkeypatch):
-    monkeypatch.setattr("core.config.config.paths", SimpleNamespace(base_dir=str(tmp_path)))
+    monkeypatch.setattr("core.config.config.paths", SimpleNamespace(base_dir=str(tmp_path), home_dir=tmp_path, data_dir=tmp_path))
+    gateway = install_memory_gateway_fixture(monkeypatch)
     skill = MemoryOpsSkill()
-    add_mock = AsyncMock(return_value=True)
 
     result = await skill.execute(
         {
             "action": "remember",
             "content": "Remember for future sessions that my verification codename is glass orchard.",
         },
-        {"memory_facade": SimpleNamespace(add_memory=add_mock)},
+        {"memory_facade": SimpleNamespace()},
     )
 
     assert result["ok"] is True
     assert result["summary"] == "Committed to archival storage."
-    add_mock.assert_awaited_once_with(
-        "Remember for future sessions that my verification codename is glass orchard.",
-        metadata={"source": "archival_insert"},
-    )
+    assert len(gateway.requests) == 1
+    assert gateway.requests[0].content == "Remember for future sessions that my verification codename is glass orchard."
+    assert gateway.requests[0].metadata == {"source": "archival_insert"}
 
 
 @pytest.mark.asyncio
 async def test_memory_ops_recall_alias_uses_facade_search(tmp_path, monkeypatch):
-    monkeypatch.setattr("core.config.config.paths", SimpleNamespace(base_dir=str(tmp_path)))
+    monkeypatch.setattr("core.config.config.paths", SimpleNamespace(base_dir=str(tmp_path), home_dir=tmp_path, data_dir=tmp_path))
     skill = MemoryOpsSkill()
-    search_mock = AsyncMock(return_value=[
+    search = AsyncCallFixture(return_value=[
         {"score": 0.95, "content": "glass orchard"},
     ])
 
     result = await skill.execute(
         {"action": "recall", "query": "verification codename"},
-        {"memory_facade": SimpleNamespace(search=search_mock)},
+        {"memory_facade": SimpleNamespace(search=search)},
     )
 
     assert result["ok"] is True
     assert any("glass orchard" in item for item in result["results"])
-    search_mock.assert_awaited_once_with("verification codename", limit=5)
+    assert search.calls == [(("verification codename",), {"limit": 5})]
 
 
 @pytest.mark.asyncio
@@ -355,7 +427,7 @@ async def test_memory_facade_add_memory_records_rejection_reason(monkeypatch):
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_memory_write=AsyncMock(return_value=(False, "substrate_blocked:neurochemical_cortisol_crisis"))
+            approve_memory_write=AsyncCallFixture(return_value=(False, "substrate_blocked:neurochemical_cortisol_crisis"))
         ),
     )
 
@@ -370,6 +442,7 @@ async def test_memory_facade_add_memory_records_rejection_reason(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_memory_facade_add_memory_treats_none_returning_vector_backend_as_success(monkeypatch):
+    monkeypatch.setenv("AURA_STRICT_RUNTIME", "0")
     facade = MemoryFacade()
     vector_calls = []
     facade._vector = SimpleNamespace(add_memory=lambda text, metadata=None: vector_calls.append((text, metadata)))
@@ -377,7 +450,7 @@ async def test_memory_facade_add_memory_treats_none_returning_vector_backend_as_
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_memory_write=AsyncMock(return_value=(True, "ok"))
+            approve_memory_write=AsyncCallFixture(return_value=(True, "ok"))
         ),
     )
 
@@ -393,6 +466,7 @@ async def test_memory_facade_add_memory_treats_none_returning_vector_backend_as_
 
 @pytest.mark.asyncio
 async def test_memory_facade_add_memory_degrades_open_for_legacy_non_user_writes(monkeypatch):
+    monkeypatch.setenv("AURA_STRICT_RUNTIME", "0")
     facade = MemoryFacade()
     vector_calls = []
     facade._vector = SimpleNamespace(add_memory=lambda text, metadata=None: vector_calls.append((text, metadata)) or True)
@@ -400,7 +474,7 @@ async def test_memory_facade_add_memory_degrades_open_for_legacy_non_user_writes
     monkeypatch.setattr(
         "core.constitution.get_constitutional_core",
         lambda *_args, **_kwargs: SimpleNamespace(
-            approve_memory_write=AsyncMock(return_value=(False, "self_model_required"))
+            approve_memory_write=AsyncCallFixture(return_value=(False, "self_model_required"))
         ),
     )
 
@@ -415,10 +489,36 @@ async def test_memory_facade_add_memory_degrades_open_for_legacy_non_user_writes
 
 
 @pytest.mark.asyncio
-async def test_memory_ops_archival_insert_calls_facade_add_memory():
+async def test_memory_facade_add_memory_defaults_to_gateway(monkeypatch):
+    gateway = install_memory_gateway_fixture(monkeypatch)
+    facade = MemoryFacade()
+    vector_calls = []
+    facade._vector = SimpleNamespace(add_memory=lambda text, metadata=None: vector_calls.append((text, metadata)) or True)
+
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            approve_memory_write=AsyncCallFixture(return_value=(True, "ok"))
+        ),
+    )
+
+    ok = await facade.add_memory(
+        "Remember that my verification codename is glass orchard.",
+        metadata={"origin": "user", "explicit_memory_request": True},
+    )
+
+    assert ok is True
+    assert facade._last_add_memory_status["reason"] == "stored_via_gateway"
+    assert len(gateway.requests) == 1
+    assert gateway.requests[0].cause == "memory_facade.add_memory"
+    assert vector_calls == []
+
+
+@pytest.mark.asyncio
+async def test_memory_ops_archival_insert_calls_gateway(monkeypatch):
+    gateway = install_memory_gateway_fixture(monkeypatch)
     skill = MemoryOpsSkill.__new__(MemoryOpsSkill)
-    add_mock = AsyncMock(return_value=True)
-    memory_facade = SimpleNamespace(add_memory=add_mock)
+    memory_facade = SimpleNamespace()
 
     result = await skill.execute(
         {
@@ -430,7 +530,6 @@ async def test_memory_ops_archival_insert_calls_facade_add_memory():
 
     assert result["ok"] is True
     assert result["summary"] == "Committed to archival storage."
-    add_mock.assert_awaited_once_with(
-        "My verification codename is glass orchard.",
-        metadata={"source": "archival_insert"},
-    )
+    assert len(gateway.requests) == 1
+    assert gateway.requests[0].content == "My verification codename is glass orchard."
+    assert gateway.requests[0].metadata == {"source": "archival_insert"}

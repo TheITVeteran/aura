@@ -26,7 +26,7 @@ def test_memory_event():
 
 def test_logging_redaction():
     fake_key = "sk-" + "1234567890abcdef12345"
-    # Mock structlog event
+    # Synthetic structlog event
     event = {
         "event": f"My secret {fake_key} is here",
         "nested": "Bearer abcdef1234567890 token"

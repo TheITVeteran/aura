@@ -499,6 +499,20 @@ class AuraKernel:
             # 8. [RUBICON] Boot Motor Cortex, Pre-Linguistic Engine, Feedback Processor
             await self._boot_rubicon_layers()
 
+            # 9. Boot PerceptionDaemon
+            try:
+                from core.perception.perception_daemon import get_perception_daemon
+                daemon = get_perception_daemon()
+                await daemon.start()
+                logger.info("📡 [PERCEPTION] PerceptionDaemon ONLINE")
+            except Exception as e:
+                _record_kernel_degradation(
+                    e,
+                    action="continued kernel boot without active PerceptionDaemon",
+                    severity="error"
+                )
+                logger.error("Failed to start PerceptionDaemon: %s", e)
+
             self._running = True
             self.status.running = True
 
@@ -1493,6 +1507,15 @@ class AuraKernel:
         logger.info("🛑 [KERNEL] Initiating graceful shutdown...")
         self._running = False
         self.status.running = False
+
+        # Stop PerceptionDaemon
+        try:
+            from core.perception.perception_daemon import get_perception_daemon
+            daemon = get_perception_daemon()
+            await daemon.stop()
+            logger.info("📡 [PERCEPTION] PerceptionDaemon OFFLINE")
+        except Exception as e:
+            logger.error("Failed to stop PerceptionDaemon: %s", e)
 
         # 1. Cancel background tasks
         for task in self._background_tasks:

@@ -138,6 +138,18 @@ class SharedAttentionState:
             self.aura_focus = aura
         if confidence is not None:
             self.confidence = max(0.0, min(1.0, confidence))
+        try:
+            from core.perception.perception_daemon import get_perception_daemon
+            daemon = get_perception_daemon()
+            if daemon:
+                if user is not None:
+                    daemon.user_focus = user
+                if aura is not None:
+                    daemon.aura_focus = aura
+                if confidence is not None:
+                    daemon.joint_attention_score = confidence
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +186,11 @@ class PerceptionRuntime:
         self.movie_session: Optional[MovieSessionMemory] = None
         self.silence_policy = SilencePolicy()
         self.shared_attention = SharedAttentionState()
+        try:
+            from core.perception.perception_daemon import get_perception_daemon
+            self.daemon = get_perception_daemon()
+        except Exception:
+            self.daemon = None
 
     # --- Sensor registration ----------------------------------------------
 
@@ -242,6 +259,8 @@ class PerceptionRuntime:
 
     def open_movie_session(self, *, title: str, privacy_mode: bool = False) -> MovieSessionMemory:
         self.movie_session = MovieSessionMemory(title=title, privacy_mode=privacy_mode)
+        if getattr(self, "daemon", None):
+            self.daemon.register_moment("movie_session", f"Started watching: {title}", {"privacy_mode": privacy_mode})
         return self.movie_session
 
     def close_movie_session(self) -> Optional[MovieSessionMemory]:
@@ -249,6 +268,8 @@ class PerceptionRuntime:
             return None
         self.movie_session.close_session()
         session = self.movie_session
+        if getattr(self, "daemon", None):
+            self.daemon.register_moment("movie_session", f"Finished watching: {session.title}")
         self.movie_session = None
         return session
 
@@ -262,4 +283,6 @@ class PerceptionRuntime:
             raise CapabilityDenied(
                 f"capability '{capability}' has no valid token; call request_capability first"
             )
+        if getattr(self, "daemon", None):
+            self.daemon.register_moment("perception_runtime", f"Sensor started: {capability}")
         await sensor(self._tokens[capability])

@@ -25,7 +25,7 @@ class TestTreeLoRAEdgeCases(unittest.TestCase):
         nan_array = np.full(16, np.nan)
         sig_nan = TaskGradientSignature("task_nan", nan_array, 0.5)
         # We expect a fallback or safe handling, not a crash
-        # For our mock, cosine_similarity handles NaNs by returning NaN, which might fail > comparisons.
+        # The local cosine fixture handles NaNs by returning NaN, which might fail > comparisons.
         # We just test it doesn't throw a fatal exception.
         node_id_nan = self.manager.route_and_adapt(sig_nan, layer_idx=0)
         self.assertIsNotNone(node_id_nan)
@@ -93,16 +93,16 @@ class TestMCTSPlannerEdgeCases(unittest.TestCase):
             self.world_model, self.action_space, self.scorer, num_simulations=20, max_depth=3
         )
         # Manually inflate uncertainty on one branch to guarantee it gets explored more
-        # We will mock the _expand method to test PUCT logic directly.
+        # Replace _expand with an instrumented wrapper to test PUCT logic directly.
         original_expand = planner._expand
         
-        def mock_expand(node, ablate=False):
+        def instrumented_expand(node, ablate=False):
             original_expand(node, ablate)
             # Make action 0 highly uncertain
             if 0 in node.children:
                 node.children[0].uncertainty = 1000.0 
                 
-        planner._expand = mock_expand
+        planner._expand = instrumented_expand
         
         obs = np.zeros(4)
         action, info = planner.plan(obs)

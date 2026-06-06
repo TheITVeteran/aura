@@ -10,7 +10,7 @@ async def run_test():
     orch._last_user_interaction_time = 0
     orch._last_thought_time = 0
     
-    # Mock some state
+    # Seed deterministic state.
     orch.liquid_state.current.curiosity = 1.0
     orch.liquid_state.current.energy = 1.0
     

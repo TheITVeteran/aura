@@ -1188,7 +1188,7 @@ class UnifiedWill:
         )
         try:
             runtime = ServiceContainer.get("being_runtime", default=None)
-            if runtime is None:
+            if runtime is None or not hasattr(runtime, "sample"):
                 from core.being.runtime import get_being_runtime
 
                 runtime = get_being_runtime()
@@ -1585,6 +1585,8 @@ class UnifiedWill:
             self._state.defers += 1
         elif decision.outcome == WillOutcome.REFUSE:
             self._state.refuses += 1
+            # Decrease assertiveness based on refuse rate, ensuring it adapts down on repeated refusals
+            self._state.assertiveness = max(0.15, self._state.assertiveness - 0.02)
         elif decision.outcome == WillOutcome.CRITICAL_PASS:
             self._state.critical_passes += 1
 

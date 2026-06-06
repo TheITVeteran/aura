@@ -51,6 +51,7 @@ EXPECTED_REGISTERED_SKILLS = {
     "memory_sync",
     "native_chat",
     "notify_user",
+    "os_automation",
     "os_manipulation",
     "personality",
     "plan_mode",
@@ -145,7 +146,7 @@ def _params_for_skill(skill_name: str, tmp_path: Path) -> dict[str, Any]:
         "free_search": {"query": ""},
         "grounded_search": {"objective": ""},
         "image_gen": {
-            "prompt": "contract sweep placeholder",
+            "prompt": "contract sweep fixture",
             "source_image_path": str(tmp_path / "missing-source.png"),
         },
         "install_package": {"package_name": "bad package!"},
@@ -155,6 +156,11 @@ def _params_for_skill(skill_name: str, tmp_path: Path) -> dict[str, Any]:
         "manifest_to_device": {"url": "notaurl"},
         "memory_ops": {"action": "unknown"},
         "notify_user": {"message": "Skill contract sweep complete."},
+        "os_automation": {
+            "goal": "Open a visible app and prepare a short note.",
+            "script_type": "applescript",
+            "execute": False,
+        },
         "os_manipulation": {"action": "click", "x": 1, "y": 1},
         "personality": {"action": "list"},
         "plan_mode": {"objective": "enter"},
@@ -266,7 +272,7 @@ def _redirect_runtime_memory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 def test_registered_skill_surface_matches_expected_catalog(skill_registry):
     assert set(skill_registry) == EXPECTED_REGISTERED_SKILLS
-    assert len(skill_registry) == 65
+    assert len(skill_registry) == 66
 
 
 @pytest.mark.asyncio

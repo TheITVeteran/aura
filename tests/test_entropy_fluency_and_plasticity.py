@@ -221,7 +221,7 @@ class TestPlasticityMonitor(unittest.TestCase):
         on a multi-second computation in the substrate tick."""
         mon = PlasticityMonitor()
         n = MAX_MATRIX_DIM + 1
-        # Use a dummy zero matrix — we never compute SVD on it
+        # Use a zero matrix that should be rejected before SVD is attempted.
         W = np.zeros((n, n), dtype=np.float32)
         self.assertIsNone(mon.measure(W))
 

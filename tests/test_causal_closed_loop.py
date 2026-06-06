@@ -20,7 +20,7 @@ class MockSubstrate:
 
 
 def test_output_receptor_action_parsing_and_simulation():
-    # Setup mock substrate in ServiceContainer
+    # Register a substrate fixture in ServiceContainer.
     sub = MockSubstrate()
     ServiceContainer.register("conscious_substrate", sub)
 

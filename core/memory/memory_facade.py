@@ -768,7 +768,7 @@ class MemoryFacade:
         self._last_commit_time = datetime.now()
 
         async def _commit_interaction_effects() -> Optional[Any]:
-            if os.environ.get("AURA_STRICT_RUNTIME") == "1":
+            if os.environ.get("AURA_STRICT_RUNTIME", "1") == "1":
                 from core.memory.memory_write_gateway import get_memory_write_gateway
                 from core.runtime.gateways import MemoryWriteRequest
                 try:
@@ -1084,7 +1084,7 @@ class MemoryFacade:
                 return False
 
         async def _perform_add_memory() -> bool:
-            if os.environ.get("AURA_STRICT_RUNTIME") == "1":
+            if os.environ.get("AURA_STRICT_RUNTIME", "1") == "1":
                 from core.memory.memory_write_gateway import get_memory_write_gateway
                 from core.runtime.gateways import MemoryWriteRequest
                 try:

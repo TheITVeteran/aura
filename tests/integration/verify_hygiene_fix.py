@@ -17,9 +17,9 @@ async def test_hygiene_fix():
     print("Testing MemoryConsolidationPhase Hygiene Fix...")
     print("="*50)
     
-    # 1. Setup mock services
-    mock_memory = type('MockMemory', (), {'consolidate': lambda self, x: print(f"Consolidated: {len(x)} items")})()
-    ServiceContainer.register_instance("memory_synthesizer", mock_memory)
+    # 1. Setup controlled services
+    memory_fixture = type('MemoryFixture', (), {'consolidate': lambda self, x: print(f"Consolidated: {len(x)} items")})()
+    ServiceContainer.register_instance("memory_synthesizer", memory_fixture)
     
     # 2. Setup phase
     phase = MemoryConsolidationPhase(container=ServiceContainer)
@@ -36,15 +36,15 @@ async def test_hygiene_fix():
     
     # 4. Structure state correctly
     # state.cognition.working_memory
-    class MockCognition:
+    class CognitionFixture:
         def __init__(self, wm):
             self.working_memory = wm
             
-    class MockState:
+    class StateFixture:
         def __init__(self, wm):
-            self.cognition = MockCognition(wm)
+            self.cognition = CognitionFixture(wm)
     
-    state = MockState(dirty_memory)
+    state = StateFixture(dirty_memory)
     
     print(f"Memory before execution (length {len(dirty_memory)}): {dirty_memory}")
     

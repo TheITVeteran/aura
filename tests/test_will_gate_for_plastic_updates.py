@@ -16,7 +16,7 @@ from core.runtime.receipts import (
 
 
 def _make_will_decider(outcome: str, reason: str = "", receipt_id: str = "will-001"):
-    """Return a stub will_decide_fn that always returns the given outcome
+    """Return a deterministic will_decide_fn with the given outcome
     plus a list capturing every call (for assertion)."""
     calls: List[Dict[str, Any]] = []
 

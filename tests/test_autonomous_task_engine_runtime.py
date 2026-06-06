@@ -722,7 +722,7 @@ async def test_task_engine_resilience_integration(monkeypatch):
     mock_resilience.effort = 0.5  # strain reduces steps to 50%
     engine.MAX_STEPS = 10
 
-    # Let's mock llm.think to return 10 steps
+    # Drive llm.think with ten deterministic planning steps.
     ten_steps = [{"description": f"Step {i}", "tool": "think"} for i in range(10)]
     llm = SimpleNamespace(think=AsyncCallRecorder(return_value=json.dumps(ten_steps)))
     kernel.organs["llm"] = SimpleNamespace(get_instance=lambda: llm)
@@ -823,5 +823,4 @@ async def test_task_engine_universal_fallbacks():
     assert len(plan_social.steps) == 1
     assert plan_social.steps[0].tool == "social_post"
     assert "neuroscience" in plan_social.steps[0].args["content"]
-
 

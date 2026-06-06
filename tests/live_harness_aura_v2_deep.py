@@ -456,7 +456,7 @@ async def section_K_volition_agency() -> Section:
         failures == 0,
         f"failures={failures}/12",
     ))
-    # Strict check: under idle + high curiosity (stub has 0.7), the engine
+    # Strict check: under idle + high curiosity (fixture has 0.7), the engine
     # must produce at least one autonomous proposal in 12 ticks. Zero means
     # the autonomy path is theater.
     sec.add(CheckResult(

@@ -62,7 +62,7 @@ def _build_test_app() -> FastAPI:
         # Simulate a small amount of processing
         await asyncio.sleep(0.005)
         return {
-            "response": f"Mock response #{app.state.message_count} to: {body.message[:50]}"
+            "response": f"Synthetic response #{app.state.message_count} to: {body.message[:50]}"
         }
 
     @app.websocket("/ws")

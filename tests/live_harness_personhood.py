@@ -137,7 +137,7 @@ async def probe_causal_autonomy_state_sensitivity() -> tuple[bool, str]:
         source="personhood_harness",
         domain=ActionDomain.EXPLORATION,
     )
-    # Clean up so the affect stub doesn't leak into later probes.
+    # Clean up so the affect fixture doesn't leak into later probes.
     ServiceContainer._services.pop("affect_engine", None)  # type: ignore[attr-defined]
 
     changed = baseline.outcome != perturbed.outcome

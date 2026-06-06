@@ -118,7 +118,7 @@ async def test_end_to_end_kernel_mission():
     # We will create a temporary python file in our workspace to act as the target weakness module
     temp_dir = tempfile.mkdtemp()
     weakness_file = Path(temp_dir) / "weakness_module.py"
-    weakness_file.write_text("# Weakness Module placeholder\n", encoding="utf-8")
+    weakness_file.write_text("# Weakness Module target\n", encoding="utf-8")
 
     try:
         # 2. Execute the mission targeting this temporary directory/file!

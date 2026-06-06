@@ -19,8 +19,8 @@ def test_vector_memory():
     # Clear previous
     mem.clear()
     
-    print("Generative Dummy Data...")
-    # Mocking the embedding generation to avoid calling Ollama/OpenAI for speed
+    print("Generative Synthetic Data...")
+    # Use deterministic vectors to avoid calling Ollama/OpenAI for speed.
     # We will manually inject vectors
     
     # 3 Distinct concepts

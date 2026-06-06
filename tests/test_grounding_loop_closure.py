@@ -296,6 +296,6 @@ def test_strict_kernel_still_handles_text():
 
 def test_supported_modalities_currently_text_only():
     assert "text" in SUPPORTED_MODALITIES
-    # vision/audio remain placeholder until real encoders land.
+    # Vision/audio are intentionally absent from the current text-only encoder contract.
     assert "vision" not in SUPPORTED_MODALITIES
     assert "audio" not in SUPPORTED_MODALITIES

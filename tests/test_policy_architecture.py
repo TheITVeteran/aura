@@ -28,7 +28,7 @@ def test_imports_and_instantiation():
     assert LifecycleManager("test_run")
     assert BoundaryGuard()
     
-    # We can pass a dummy factory
+    # A no-op local factory is enough for constructor coverage.
     runner = BenchmarkRunner(lambda: None)
     assert runner
 

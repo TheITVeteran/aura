@@ -28,11 +28,10 @@ async def test_swarm_gossip():
     assert swarm.running is True
     assert swarm.node_id is not None
     
-    # Mock broadcast
+    # Peerless broadcast fixture
     msg = {"type": "test_gossip", "data": "hello"}
     # This just tests it doesn't crash without peers
     await swarm.broadcast(msg)
     
     await swarm.stop()
     assert swarm.running is False
-

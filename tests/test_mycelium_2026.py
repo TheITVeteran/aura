@@ -62,7 +62,7 @@ def test_dormant_hyphae_are_not_monitored_until_they_carry_traffic(network):
     assert network._should_monitor_hypha(h) is True
 
 def test_infrastructure_mapping(network):
-    # Mock some mapped files
+    # Seed mapped files for deterministic routing.
     network.mapped_files = {"core.logic": {"path": "/path/to/logic.py"}}
     network.infrastructure_mapped = True
     

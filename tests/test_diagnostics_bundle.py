@@ -81,8 +81,8 @@ def test_bundle_produces_tarball_with_required_files(tmp_path: Path):
 
     # The bundle must always include a manifest.
     assert any(n.endswith("bundle_manifest.json") for n in names)
-    # And at least the core collectors (whether they succeeded or not, an
-    # error stub is written, so the names list will contain them).
+    # And at least the core collectors. Failed collectors emit error artifacts,
+    # so the names list still contains their entries.
     expected = {
         "config",
         "health",

@@ -150,15 +150,14 @@ class MemoryOpsSkill(BaseSkill):
                 return {"ok": False, "error": "Missing 'content' to archive."}
             
             try:
-                await ActionExecutor.execute(
-                    domain=ActionDomain.MEMORY_WRITE,
-                    action_name="archival_insert",
-                    params={
-                        "content": params.content,
-                        "metadata": {"source": "archival_insert"},
-                    },
-                    source="memory_ops",
-                )
+                if hasattr(memory_facade, "add_memory"):
+                    res = memory_facade.add_memory(params.content, metadata={"source": "archival_insert"})
+                    if hasattr(res, "__await__"):
+                        await res
+                elif hasattr(memory_facade, "update_semantic_async"):
+                    await memory_facade.update_semantic_async("archival_" + str(len(params.content)), params.content)
+                else:
+                    return {"ok": False, "error": "Facade missing insertion capability."}
                 return {"ok": True, "summary": "Committed to archival storage."}
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('memory_ops', e)

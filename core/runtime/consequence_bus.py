@@ -116,6 +116,19 @@ class ConsequenceBus:
                 )
                 logger.warning("ConsequenceBus subscriber error: %s", exc)
 
+        # Automatically route to the central AuraEventBus
+        try:
+            from core.event_bus import get_event_bus, EventPriority
+            import dataclasses
+            event_dict = dataclasses.asdict(event)
+            get_event_bus().publish_threadsafe(
+                topic="aura/events/consequences",
+                data=event_dict,
+                priority=EventPriority.AUTONOMIC,
+            )
+        except Exception as eb_err:
+            logger.debug("Failed to publish consequence to central EventBus: %s", eb_err)
+
     def publish_action(
         self,
         *,

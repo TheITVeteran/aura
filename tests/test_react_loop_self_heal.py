@@ -8,8 +8,8 @@ problem:
     recall the lesson and apply it directly.
 
 These tests wire together the real ReActLoop, real EpisodicMemory, real
-sandbox, and a real `EnhancedWebSearchSkill` stub that short-circuits DDGS
-with a deterministic response — we never monkey-patch the ReActLoop itself.
+sandbox, and a deterministic `EnhancedWebSearchSkill` adapter that short-circuits
+DDGS with a controlled response — we never monkey-patch the ReActLoop itself.
 """
 from __future__ import annotations
 
