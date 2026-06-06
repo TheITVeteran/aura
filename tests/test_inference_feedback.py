@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+import threading
 
 import numpy as np
 import pytest
@@ -7,6 +7,41 @@ import pytest
 from core.brain.homeostatic_modulator import InferenceModulation
 from core.brain.inference_feedback import InferenceFeedbackLoop
 from core.container import ServiceContainer
+
+
+class LiquidSubstrateFixture:
+    idx_valence = 0
+    idx_arousal = 1
+
+    def __init__(self, values):
+        self.x = np.array(values, dtype=np.float32)
+        self.sync_lock = threading.RLock()
+        self.feedback_events = []
+
+    def accept_inference_feedback(self, **kwargs):
+        self.feedback_events.append(kwargs)
+
+
+class FeedbackEngineFixture:
+    def __init__(self, *, fail=False):
+        self.fail = fail
+        self.calls = []
+
+    def accept_surprise_signal(self, *args, **kwargs):
+        if self.fail:
+            raise AssertionError("feedback invariant broken")
+        self.calls.append((args, kwargs))
+
+    def accept_inference_feedback(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+
+
+class ProjectionFixture:
+    def __init__(self):
+        self.learn_calls = []
+
+    def learn_step(self, *args, **kwargs):
+        self.learn_calls.append((args, kwargs))
 
 
 def test_inference_feedback_source_uses_typed_recoverable_errors():
@@ -78,63 +113,79 @@ def test_surprise_calculation_lexical_fallback(base_modulation):
     assert metrics_rep["surprise"] > metrics_uniq["surprise"]
 
 
-def test_coherence_calculation_valence_alignment(base_modulation):
+def test_coherence_calculation_valence_alignment(base_modulation, monkeypatch):
     loop = InferenceFeedbackLoop(substrate_dim=5)
 
-    # Mock substrate with positive valence (idx_valence = 0, state[0] = 0.8)
-    mock_substrate = MagicMock()
-    mock_substrate.idx_valence = 0
-    mock_substrate.idx_arousal = 1
-    mock_substrate.x = np.array([0.8, 0.5, 0.0, 0.0, 0.0], dtype=np.float32)
+    substrate = LiquidSubstrateFixture([0.8, 0.5, 0.0, 0.0, 0.0])
 
     def service_lookup(name, default=None):
         if name == "liquid_substrate":
-            return mock_substrate
+            return substrate
         return default
 
-    with patch.object(ServiceContainer, "get", side_effect=service_lookup):
-        # 1. Output text with positive valence words (should align -> high coherence)
-        metrics_pos = loop.process_output(
-            output_text="completed success stable resolved",
-            token_ids=[1, 2],
-            logprobs=None,
-            modulation=base_modulation,
-            modulator_projection=None,
-        )
-        assert metrics_pos["coherence"] > 0.0
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(service_lookup))
+    # 1. Output text with positive valence words (should align -> high coherence)
+    metrics_pos = loop.process_output(
+        output_text="completed success stable resolved",
+        token_ids=[1, 2],
+        logprobs=None,
+        modulation=base_modulation,
+        modulator_projection=None,
+    )
+    assert metrics_pos["coherence"] > 0.0
 
-        # 2. Output text with negative valence words (should conflict -> low coherence)
-        metrics_neg = loop.process_output(
-            output_text="failed error danger hazard broken",
-            token_ids=[3, 4],
-            logprobs=None,
-            modulation=base_modulation,
-            modulator_projection=None,
-        )
-        assert metrics_neg["coherence"] < 0.0
+    # 2. Output text with negative valence words (should conflict -> low coherence)
+    metrics_neg = loop.process_output(
+        output_text="failed error danger hazard broken",
+        token_ids=[3, 4],
+        logprobs=None,
+        modulation=base_modulation,
+        modulator_projection=None,
+    )
+    assert metrics_neg["coherence"] < 0.0
 
 
-def test_engine_feedback_injection(base_modulation):
+def test_engine_feedback_injection(base_modulation, monkeypatch):
     loop = InferenceFeedbackLoop(substrate_dim=5)
 
-    mock_substrate = MagicMock()
-    mock_substrate.idx_valence = 0
-    mock_substrate.idx_arousal = 1
-    mock_substrate.x = np.array([0.5, 0.5, 0.0, 0.0, 0.0], dtype=np.float32)
-
-    mock_free_energy = MagicMock()
-    mock_precision = MagicMock()
+    substrate = LiquidSubstrateFixture([0.5, 0.5, 0.0, 0.0, 0.0])
+    free_energy = FeedbackEngineFixture()
+    precision = FeedbackEngineFixture()
 
     def service_lookup(name, default=None):
         if name == "liquid_substrate":
-            return mock_substrate
+            return substrate
         if name == "free_energy_engine":
-            return mock_free_energy
+            return free_energy
         if name == "precision_engine":
-            return mock_precision
+            return precision
         return default
 
-    with patch.object(ServiceContainer, "get", side_effect=service_lookup):
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(service_lookup))
+    loop.process_output(
+        output_text="success resolved",
+        token_ids=[1, 2],
+        logprobs=[-0.1, -0.1],
+        modulation=base_modulation,
+        modulator_projection=None,
+    )
+
+    assert len(free_energy.calls) == 1
+    assert len(substrate.feedback_events) == 1
+    assert len(precision.calls) == 1
+
+
+def test_feedback_injection_surfaces_invariant_failures(base_modulation, monkeypatch):
+    loop = InferenceFeedbackLoop(substrate_dim=5)
+    free_energy = FeedbackEngineFixture(fail=True)
+
+    def service_lookup(name, default=None):
+        if name == "free_energy_engine":
+            return free_energy
+        return default
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(service_lookup))
+    with pytest.raises(AssertionError, match="feedback invariant broken"):
         loop.process_output(
             output_text="success resolved",
             token_ids=[1, 2],
@@ -143,57 +194,26 @@ def test_engine_feedback_injection(base_modulation):
             modulator_projection=None,
         )
 
-        # Verify free energy received surprise signal
-        mock_free_energy.accept_surprise_signal.assert_called_once()
-        # Verify liquid substrate received feedback
-        mock_substrate.accept_inference_feedback.assert_called_once()
-        # Verify precision engine received feedback
-        mock_precision.accept_inference_feedback.assert_called_once()
 
-
-def test_feedback_injection_surfaces_invariant_failures(base_modulation):
-    loop = InferenceFeedbackLoop(substrate_dim=5)
-    mock_free_energy = MagicMock()
-    mock_free_energy.accept_surprise_signal.side_effect = AssertionError("feedback invariant broken")
-
-    def service_lookup(name, default=None):
-        if name == "free_energy_engine":
-            return mock_free_energy
-        return default
-
-    with patch.object(ServiceContainer, "get", side_effect=service_lookup):
-        with pytest.raises(AssertionError, match="feedback invariant broken"):
-            loop.process_output(
-                output_text="success resolved",
-                token_ids=[1, 2],
-                logprobs=[-0.1, -0.1],
-                modulation=base_modulation,
-                modulator_projection=None,
-            )
-
-
-def test_hebbian_projection_updates(base_modulation):
+def test_hebbian_projection_updates(base_modulation, monkeypatch):
     loop = InferenceFeedbackLoop(substrate_dim=5)
 
-    mock_substrate = MagicMock()
-    mock_substrate.idx_valence = 0
-    mock_substrate.idx_arousal = 1
     # arousal = substrate.x[1] = 0.5
-    mock_substrate.x = np.array([0.5, 0.5, 0.0, 0.0, 0.0], dtype=np.float32)
+    substrate = LiquidSubstrateFixture([0.5, 0.5, 0.0, 0.0, 0.0])
 
-    mock_projection = MagicMock()
+    projection = ProjectionFixture()
 
-    with patch.object(ServiceContainer, "get", return_value=mock_substrate):
-        loop.process_output(
-            output_text="test resolved",
-            token_ids=[42, 43],
-            logprobs=[-0.05, -0.05],
-            modulation=base_modulation,
-            modulator_projection=mock_projection,
-        )
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(lambda name, default=None: substrate))
+    loop.process_output(
+        output_text="test resolved",
+        token_ids=[42, 43],
+        logprobs=[-0.05, -0.05],
+        modulation=base_modulation,
+        modulator_projection=projection,
+    )
 
-        # learning_rate = 0.002 * (1.0 + arousal) = 0.002 * 1.5 = 0.003
-        mock_projection.learn_step.assert_called_once()
-        args, kwargs = mock_projection.learn_step.call_args
-        assert kwargs["lr"] == 0.003
-        assert kwargs["token_ids"] == [42, 43]
+    # learning_rate = 0.002 * (1.0 + arousal) = 0.002 * 1.5 = 0.003
+    assert len(projection.learn_calls) == 1
+    _args, kwargs = projection.learn_calls[0]
+    assert kwargs["lr"] == 0.003
+    assert kwargs["token_ids"] == [42, 43]

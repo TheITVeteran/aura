@@ -1,5 +1,4 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -16,6 +15,21 @@ from core.self_model import SelfModel
 from core.agency.intention_loop import IntentionLoop
 from core.world_model.belief_graph import BeliefGraph
 from core.executive.executive_core import ActionType, Intent, IntentSource
+
+
+async def async_noop(*_args, **_kwargs):
+    return None
+
+
+class StateMutationGateFixture:
+    def __init__(self, approved: bool, reason: str):
+        self.approved = approved
+        self.reason = reason
+        self.calls = []
+
+    async def approve_state_mutation(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self.approved, self.reason
 
 
 def reset_constitutional_singletons():
@@ -151,13 +165,13 @@ async def test_state_repository_commit_respects_constitutional_gate(service_cont
     repo = StateRepository(db_path=str(tmp_path / "aura_state.db"), is_vault_owner=False)
     repo._current = AuraState()
     repo._shm = None
-    repo._commit_to_db = AsyncMock()
-    repo._sync_to_shm = AsyncMock()
+    repo._commit_to_db = async_noop
+    repo._sync_to_shm = async_noop
 
     fake_tracker = SimpleNamespace(track_task=lambda task: task)
     monkeypatch.setattr("core.utils.task_tracker.get_task_tracker", lambda: fake_tracker)
 
-    blocked_gate = SimpleNamespace(approve_state_mutation=AsyncMock(return_value=(False, "blocked_by_test")))
+    blocked_gate = StateMutationGateFixture(False, "blocked_by_test")
     monkeypatch.setattr("core.constitution.get_constitutional_core", lambda *args, **kwargs: blocked_gate)
 
     blocked_state = repo._current.derive("rogue_update", origin="rogue_subsystem")
@@ -165,7 +179,7 @@ async def test_state_repository_commit_respects_constitutional_gate(service_cont
     await repo._process_commit(blocked_state, "rogue_update")
     assert repo._current.cognition.current_objective != "blocked"
 
-    allowed_gate = SimpleNamespace(approve_state_mutation=AsyncMock(return_value=(True, "approved_by_test")))
+    allowed_gate = StateMutationGateFixture(True, "approved_by_test")
     monkeypatch.setattr("core.constitution.get_constitutional_core", lambda *args, **kwargs: allowed_gate)
 
     approved_state = repo._current.derive("legit_update", origin="mind_tick")
@@ -184,9 +198,9 @@ async def test_self_model_update_belief_uses_belief_authority(service_container,
     )
 
     model = SelfModel(id="self-test")
-    monkeypatch.setattr(model, "persist", AsyncMock())
+    monkeypatch.setattr(model, "persist", async_noop)
 
-    snap = await model.update_belief("bryan", "placeholder", note="manual override")
+    snap = await model.update_belief("bryan", "untrusted_override", note="manual override")
 
     assert model.beliefs["bryan"] == "Bryan Young is Kin. Protect at all costs."
     assert "resolved_by_state_authority" in (snap.revision_note or "")
@@ -211,7 +225,7 @@ async def test_self_model_update_belief_respects_executive_gate(service_containe
     )
 
     model = SelfModel(id="self-test")
-    monkeypatch.setattr(model, "persist", AsyncMock())
+    monkeypatch.setattr(model, "persist", async_noop)
 
     snap = await model.update_belief("stance", "abandon continuity", note="manual override")
 
