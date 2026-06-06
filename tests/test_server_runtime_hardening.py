@@ -2140,7 +2140,10 @@ def test_vector_memory_prunes_stale_neutral_entries_after_hard_expiry(monkeypatc
     assert [item["id"] for item in memory._store] == ["recent-neutral"]
 
 
-def test_health_check_allows_async_server_mode_without_thread():
+def test_health_check_requires_runtime_contract_for_async_server_mode_without_thread():
+    from core.container import ServiceContainer
+    from core.runtime.health_contract import RUNTIME_CONTRACT, ServiceTier
+
     status = SimpleNamespace(
         running=True,
         initialized=True,
@@ -2149,8 +2152,99 @@ def test_health_check_allows_async_server_mode_without_thread():
     )
     orch = SimpleNamespace(status=status, stats={}, _thread=None)
 
-    assert RobustOrchestrator.health_check(orch) is True
-    assert orch.status.healthy is True
+    ServiceContainer.clear()
+    try:
+        assert RobustOrchestrator.health_check(orch) is False
+        assert orch.status.healthy is False
+
+        for requirement in RUNTIME_CONTRACT:
+            if requirement.tier not in {ServiceTier.CRITICAL, ServiceTier.IMPORTANT}:
+                continue
+            service = SimpleNamespace()
+            if requirement.liveness_check:
+                setattr(service, requirement.liveness_check, lambda: True)
+            ServiceContainer.register_instance(requirement.container_key, service)
+
+        orch.status.healthy = True
+        assert RobustOrchestrator.health_check(orch) is True
+        assert orch.status.healthy is True
+    finally:
+        ServiceContainer.clear()
+
+
+def test_health_check_fails_closed_on_malformed_status_object():
+    from core.container import ServiceContainer
+
+    ServiceContainer.clear()
+    orch = SimpleNamespace(status=SimpleNamespace(running="yes", initialized="yes"), stats={})
+
+    assert RobustOrchestrator.health_check(orch) is False
+    assert orch.status.healthy is False
+
+
+def test_inference_gate_failed_initialization_does_not_count_as_ready(monkeypatch):
+    from unittest.mock import Mock
+
+    from core.brain.inference_gate import InferenceGate
+
+    gate = InferenceGate()
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_client.get_mlx_client",
+        Mock(side_effect=RuntimeError("mlx unavailable")),
+    )
+
+    asyncio.run(gate.initialize())
+
+    assert gate._initialized is False
+    assert gate.is_alive() is False
+    assert gate.is_inference_ready() is False
+
+
+def test_health_check_allows_contract_ready_async_server_mode_without_thread():
+    from core.container import ServiceContainer
+    from core.runtime.health_contract import RUNTIME_CONTRACT, ServiceTier
+
+    ServiceContainer.clear()
+    try:
+        for requirement in RUNTIME_CONTRACT:
+            if requirement.tier not in {ServiceTier.CRITICAL, ServiceTier.IMPORTANT}:
+                continue
+            service = SimpleNamespace()
+            if requirement.liveness_check:
+                setattr(service, requirement.liveness_check, lambda: True)
+            ServiceContainer.register_instance(requirement.container_key, service)
+
+        status = SimpleNamespace(
+            running=True,
+            initialized=True,
+            last_error="",
+            healthy=True,
+        )
+        orch = SimpleNamespace(status=status, stats={}, _thread=None)
+
+        assert RobustOrchestrator.health_check(orch) is True
+        assert orch.status.healthy is True
+    finally:
+        ServiceContainer.clear()
+
+
+def test_health_check_rejects_contract_failure_even_when_status_claims_healthy():
+    from core.container import ServiceContainer
+
+    status = SimpleNamespace(
+        running=True,
+        initialized=True,
+        last_error="",
+        healthy=True,
+    )
+    orch = SimpleNamespace(status=status, stats={}, _thread=None)
+
+    ServiceContainer.clear()
+    try:
+        assert RobustOrchestrator.health_check(orch) is False
+        assert orch.status.healthy is False
+    finally:
+        ServiceContainer.clear()
 
 
 @pytest.mark.asyncio

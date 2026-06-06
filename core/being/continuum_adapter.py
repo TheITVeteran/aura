@@ -15,6 +15,15 @@ import uuid
 
 
 JobFunc = Callable[[], Any | Awaitable[Any]]
+_CONTINUITY_JOB_ERRORS = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 @dataclass
@@ -81,7 +90,7 @@ class ContinuumAdapter:
                 budget -= job.budget_cost
                 ran.append(job.name)
                 self.event_log.append({"event": "job_ran", "job": job.name, "result": str(result)[:300], "timestamp": now})
-            except Exception as exc:
+            except _CONTINUITY_JOB_ERRORS as exc:
                 job.failure_count += 1
                 self.event_log.append({"event": "job_failed", "job": job.name, "error": f"{type(exc).__name__}: {exc}", "timestamp": now})
         return ran

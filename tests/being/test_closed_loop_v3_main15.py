@@ -74,6 +74,16 @@ def test_policy_coupler_treats_self_tension_as_causal_not_decorative():
     assert any("functional-I" in r or "caution" in r or "verification" in r for r in policy.reasons)
 
 
+def test_causal_self_vector_treats_malformed_blind_report_as_verification_pressure():
+    reset_being_runtime_for_test()
+    controller = build_main15_closed_loop(d_model=32, production_mode=True)
+    now = controller.being_runtime.sample(fake_state(contradictions=0, working=4), objective="simple task")
+
+    vector = vector_from_aura_now(now, blind_report=SimpleNamespace(urgency="not-a-number"))
+
+    assert vector.value("verification_need") >= 0.65
+
+
 def test_activation_coupler_is_inert_without_calibrated_directions():
     reset_being_runtime_for_test()
     controller = build_main15_closed_loop(d_model=16, layers=(1, 2), direction_bank=DirectionBank.zeros(16))
@@ -113,3 +123,22 @@ def test_continuum_adapter_defers_idle_jobs_during_external_io():
     assert first == []
     assert second == ["consolidate"]
     assert ran["count"] == 1
+
+
+def test_continuum_adapter_records_recoverable_job_failure_without_stopping_tick():
+    adapter = ContinuumAdapter(production_mode=True)
+    calls = {"count": 0}
+
+    def failing_job():
+        calls["count"] += 1
+        raise RuntimeError("continuity job failed")
+
+    adapter.add_job(ContinuityJob("recoverable_failure", 0, 0.1, 10, failing_job, requires_idle=False, permission_level="maintenance"))
+
+    ran = asyncio.run(adapter.tick())
+
+    assert ran == []
+    assert calls["count"] == 1
+    assert adapter.jobs[0].failure_count == 1
+    assert adapter.event_log[-1]["event"] == "job_failed"
+    assert "RuntimeError: continuity job failed" in adapter.event_log[-1]["error"]

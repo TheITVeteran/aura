@@ -18,7 +18,7 @@ import time
 
 try:
     from core.being.aura_now import AuraNow
-except Exception:  # pragma: no cover - for isolated audit imports
+except ImportError:  # pragma: no cover - for isolated audit imports
     AuraNow = Any  # type: ignore
 
 
@@ -166,7 +166,7 @@ def vector_from_aura_now(
         try:
             verification_need = max(verification_need, float(getattr(blind_report, "urgency", 0.0) or 0.0))
         except (TypeError, ValueError):
-            pass
+            verification_need = max(verification_need, 0.65)
 
     signals = {
         "metabolic_budget": _sig("metabolic_budget", 1.0 - resource_pressure, "BeingRuntime.body+welfare", 0.86),

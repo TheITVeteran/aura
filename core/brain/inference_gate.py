@@ -2481,8 +2481,11 @@ class InferenceGate:
                 action="continued initialization with degraded warmup path",
             )
             self._init_error = str(e)
-            logger.error("❌ InferenceGate init failed: %s. Cloud fallback will be used.", e)
-            self._initialized = True  # Mark as initialized so callers don't block forever
+            self._initialized = False
+            logger.error(
+                "❌ InferenceGate init failed: %s. Gate remains unhealthy until explicit recovery succeeds.",
+                e,
+            )
 
     def _build_system_prompt(self, brief: str = "") -> str:
         """Build Aura's full identity system prompt.

@@ -2807,15 +2807,25 @@ class RobustOrchestrator(
         return results
 
     def health_check(self) -> bool:
-        """Perform health check"""
-        checks = []
+        """Perform the orchestrator health check using the canonical runtime contract."""
+        status = getattr(self, "status", None)
+        if status is None:
+            return False
 
-        # Check if ready or running (Ready = Initialized and No Errors)
-        is_ready = self.status.running or (self.status.initialized and not self.status.last_error)
+        checks: list[tuple[str, bool]] = []
+
+        # Check if ready or running (Ready = Initialized and No Errors).
+        is_ready = bool(
+            (getattr(status, "running", False) is True)
+            or (
+                getattr(status, "initialized", False) is True
+                and not str(getattr(status, "last_error", "") or "")
+            )
+        )
         checks.append(("ready", is_ready))
 
         # Check thread only when running to avoid test-double failures.
-        if self.status.running:
+        if getattr(status, "running", False) is True:
             is_alive = True
             if hasattr(self, "_thread") and self._thread:
                 if hasattr(self._thread, "is_alive"):
@@ -2829,14 +2839,42 @@ class RobustOrchestrator(
         err_count = self.stats.get("errors_encountered", 0) if isinstance(self.stats, dict) else 0
         checks.append(("error_rate", err_count < 100))
 
-        # All checks must succeed.
-        self.status.healthy = all(check[1] for check in checks)
+        try:
+            from core.runtime.health_contract import (
+                required_probe_groups_pass,
+                required_probe_status,
+                runtime_health_report,
+            )
 
-        # v10.0 Parity: If status lacks expected attributes, return True conservatively
-        if not hasattr(self.status, "healthy"):
-            return True
+            contract = runtime_health_report()
+            contract_ready = (
+                contract.get("healthy") is True
+                and contract.get("operational") is True
+                and required_probe_groups_pass(required_probe_status(contract))
+            )
+            checks.append(("runtime_contract", contract_ready))
+        except _ORCHESTRATOR_RECOVERABLE_ERRORS as exc:
+            _record_main_degradation(
+                exc,
+                action="marked orchestrator unhealthy because runtime health contract failed",
+                severity="critical",
+            )
+            checks.append(("runtime_contract", False))
 
-        return self.status.healthy
+        # All checks must explicitly succeed. Malformed truthy values do not
+        # count as healthy because this value gates live desktop readiness.
+        healthy = all(result is True for _name, result in checks)
+        try:
+            status.healthy = healthy
+        except _ORCHESTRATOR_RECOVERABLE_ERRORS as exc:
+            _record_main_degradation(
+                exc,
+                action="failed to persist orchestrator health status after contract evaluation",
+                severity="error",
+            )
+            return False
+
+        return healthy
 
     async def _setup_event_listeners(self):
         """Subscribe to inter-process events."""
