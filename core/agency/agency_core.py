@@ -78,21 +78,49 @@ def _close_if_possible(awaitable: Any) -> None:
         _record_agency_degradation(exc, action="unscheduled agency awaitable close failed")
 
 
-def _schedule_agency_task(awaitable: Any, *, name: str, tracker: Any = None) -> asyncio.Task | None:
+def _schedule_agency_task(
+    awaitable: Any,
+    *,
+    name: str,
+    tracker: Any = None,
+    on_unscheduled: Callable[[], None] | None = None,
+) -> asyncio.Task | None:
     """Track a background awaitable and close it if scheduling is impossible."""
+    def _mark_unscheduled() -> None:
+        if on_unscheduled is None:
+            return
+        try:
+            on_unscheduled()
+        except _AGENCY_BOUNDARY_ERRORS as exc:
+            _record_agency_degradation(
+                exc,
+                action=f"background task {name} unscheduled callback failed",
+            )
+
     try:
         task_owner = tracker if tracker is not None else get_task_tracker()
         try:
             schedule = task_owner.create_task
         except AttributeError:
             schedule = task_owner.track
-        return schedule(awaitable, name=name)
+        task = schedule(awaitable, name=name)
+        if task is None:
+            _close_if_possible(awaitable)
+            _mark_unscheduled()
+            _record_agency_degradation(
+                RuntimeError(f"background task {name} scheduler returned None"),
+                action=f"background task {name} was not scheduled",
+            )
+            return None
+        return task
     except RuntimeError as exc:
         _close_if_possible(awaitable)
+        _mark_unscheduled()
         logger.debug("Agency background task %s deferred outside an event loop: %s", name, exc)
         return None
     except _AGENCY_BOUNDARY_ERRORS as exc:
         _close_if_possible(awaitable)
+        _mark_unscheduled()
         _record_agency_degradation(exc, action=f"background task {name} was not scheduled")
         logger.debug("Agency background task %s scheduling failed: %s", name, exc)
         return None
@@ -143,6 +171,7 @@ class SovereignSwarm:
                 registry_task = _schedule_agency_task(
                     _run_shards_update(),
                     name="agency.registry.active_shards",
+                    on_unscheduled=lambda: setattr(self, "_registry_shards_update_pending", False),
                 )
                 if registry_task is None:
                     self._registry_shards_update_pending = False
@@ -224,7 +253,7 @@ class SovereignSwarm:
                 elif mem.percent > 85:
                     await asyncio.sleep(1.0)
             except ImportError as _e:
-                logger.debug('Ignored ImportError in agency_core.py: %s', _e)
+                logger.debug("psutil unavailable; swarm RAM throttle skipped: %s", _e)
 
             await self.spawn_shard(
                 goal=f"Debate Perspective - {p}",
@@ -463,13 +492,25 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
                     output_text = f"{output_text}\n\n[Tool Blocked - {name}]:\nAction blocked. High-risk tool prohibited while provisional values are steering behavior."
 
             if tool_name or len(output_text.split()) > 80:
-                _schedule_agency_task(
-                    self.orch.agency_core.abstraction_engine.abstract_from_success(
-                        context=goal,
-                        successful_resolution=output_text
-                    ),
-                    name=f"agency.abstraction.{shard_id}",
+                owner_core = self.agency_core
+                orch_core = (
+                    getattr(self.orch, "_agency_core", None)
+                    or getattr(self.orch, "agency_core", None)
+                    if self.orch is not None
+                    else None
                 )
+                abstractor = (
+                    getattr(owner_core, "abstraction_engine", None)
+                    or getattr(orch_core, "abstraction_engine", None)
+                )
+                if abstractor is not None:
+                    _schedule_agency_task(
+                        abstractor.abstract_from_success(
+                            context=goal,
+                            successful_resolution=output_text,
+                        ),
+                        name=f"agency.abstraction.{shard_id}",
+                    )
 
             if output_text:
                 try:
@@ -736,6 +777,7 @@ class AgencyCore:
             _schedule_agency_task(
                 _run_self_play(),
                 name="agency.self_play.initial_cycle",
+                on_unscheduled=lambda: setattr(self, "_self_play_pulse_pending", False),
             )
         _schedule_agency_task(
             self._setup_spatial_empathy_watcher(),
@@ -1043,6 +1085,7 @@ class AgencyCore:
                     _schedule_agency_task(
                         _run_registry_update(),
                         name="agency.registry.state",
+                        on_unscheduled=lambda: setattr(self, "_registry_update_pending", False),
                     )
             except _AGENCY_BOUNDARY_ERRORS as e:
                 self._registry_update_pending = False
@@ -1062,6 +1105,7 @@ class AgencyCore:
                 _schedule_agency_task(
                     _run_self_play(),
                     name="agency.self_play.pulse_cycle",
+                    on_unscheduled=lambda: setattr(self, "_self_play_pulse_pending", False),
                 )
 
             self._trigger_phenomenological_pulse()
@@ -1124,6 +1168,7 @@ class AgencyCore:
             _schedule_agency_task(
                 _run_phenomenal_pulse(),
                 name="agency.phenomenal.pulse",
+                on_unscheduled=lambda: setattr(self, "_phenomenal_pulse_pending", False),
             )
 
         except _AGENCY_BOUNDARY_ERRORS as e:
@@ -1142,15 +1187,15 @@ class AgencyCore:
             )
             return state
         except _AGENCY_BOUNDARY_ERRORS as e:
+            _record_agency_degradation(e, action="blocking phenomenal pulse failed")
             logger.debug("Blocking phenomenal pulse failed: %s", e)
             return None
 
     def heartbeat(self) -> None:
         """Alias for heartbeat monitor / watchdog (Sync wrapper)."""
-        try:
-            _schedule_agency_task(self.pulse(), name="agency.heartbeat.pulse")
-        except RuntimeError as _e:
-            logger.debug('Ignored RuntimeError in agency_core.py: %s', _e)
+        task = _schedule_agency_task(self.pulse(), name="agency.heartbeat.pulse")
+        if task is None:
+            logger.debug("Agency heartbeat pulse deferred because no event loop is available.")
 
     # ── State Sync ────────────────────────────────────────────
     def _sync_from_orchestrator(self):

@@ -33,6 +33,12 @@ class FailingTracker:
         raise RuntimeError(f"{name}: loop unavailable")
 
 
+class NoneReturningTracker:
+    def create_task(self, _awaitable, *, name=None):
+        self.last_name = name
+        return None
+
+
 class ViabilityBehavior:
     initiative_budget_per_min = 10.0
 
@@ -91,6 +97,38 @@ def test_agency_scheduler_closes_unscheduled_awaitable():
     assert awaitable.closed is True
 
 
+def test_agency_scheduler_resets_owner_state_when_tracker_returns_none():
+    awaitable = ClosingAwaitable()
+    owner = SimpleNamespace(pending=True)
+
+    task = _schedule_agency_task(
+        awaitable,
+        name="agency.none-returning-tracker",
+        tracker=NoneReturningTracker(),
+        on_unscheduled=lambda: setattr(owner, "pending", False),
+    )
+
+    assert task is None
+    assert awaitable.closed is True
+    assert owner.pending is False
+
+
+def test_agency_scheduler_resets_owner_state_when_loop_unavailable():
+    awaitable = ClosingAwaitable()
+    owner = SimpleNamespace(pending=True)
+
+    task = _schedule_agency_task(
+        awaitable,
+        name="agency.loop-unavailable",
+        tracker=FailingTracker(),
+        on_unscheduled=lambda: setattr(owner, "pending", False),
+    )
+
+    assert task is None
+    assert awaitable.closed is True
+    assert owner.pending is False
+
+
 @pytest.mark.asyncio
 async def test_swarm_spawn_does_not_keep_untracked_shards(monkeypatch):
     monkeypatch.setattr(agency_module, "get_task_tracker", lambda: FailingTracker())
@@ -124,6 +162,41 @@ async def test_swarm_registry_guard_exists_and_resets_when_update_unscheduled(mo
         for error in degradations
         if isinstance(error, AttributeError) and "_registry_shards_update_pending" in str(error)
     ]
+
+
+@pytest.mark.asyncio
+async def test_agency_initialize_resets_self_play_pending_when_schedule_deferred(monkeypatch):
+    async def _fake_consciousness_coordinator():
+        return object()
+
+    monkeypatch.setattr(
+        "core.consciousness.coordinator.get_consciousness_coordinator",
+        _fake_consciousness_coordinator,
+    )
+    monkeypatch.setattr(agency_module, "get_task_tracker", lambda: FailingTracker())
+
+    agency = AgencyCore(orchestrator=None)
+    agency.meta_cognition = None
+
+    await agency.initialize()
+
+    assert agency._self_play_pulse_pending is False
+
+
+def test_phenomenal_pulse_resets_pending_when_schedule_deferred(monkeypatch):
+    async def _fake_phenomenal_integrator():
+        return object()
+
+    monkeypatch.setattr(
+        "core.affect.phenomenal_integration.get_phenomenal_integrator",
+        _fake_phenomenal_integrator,
+    )
+    monkeypatch.setattr(agency_module, "get_task_tracker", lambda: FailingTracker())
+
+    agency = AgencyCore(orchestrator=None)
+    agency._trigger_phenomenological_pulse()
+
+    assert agency._phenomenal_pulse_pending is False
 
 
 @pytest.mark.asyncio
