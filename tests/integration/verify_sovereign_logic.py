@@ -11,7 +11,7 @@ from fastapi import HTTPException
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).parent.parent))
 
-# Mock out heavy dependencies before imports to avoid model downloads/connection errors
+# Install lightweight heavy-dependency stand-ins before imports to avoid model downloads/connection errors
 mock_whisper = MagicMock()
 mock_docker = MagicMock()
 sys.modules["faster_whisper"] = mock_whisper

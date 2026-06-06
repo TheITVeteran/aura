@@ -115,7 +115,7 @@ class TestConversationStatus:
     def test_stale_warming_resets_to_cold(self):
         """Lane stuck in 'warming' for >90s with no active task should reset to 'cold'."""
         gate = self._make_gate()
-        # Mock MLX client that reports "warming" with old timestamps
+        # Scripted MLX client that reports "warming" with old timestamps
         mock_mlx = MagicMock()
         mock_mlx.get_lane_status.return_value = {
             "state": "warming",

@@ -1,5 +1,4 @@
 import asyncio
-import subprocess
 import tempfile
 import threading
 from collections import deque
@@ -127,19 +126,14 @@ async def test_message_payload_sanitization_drops_non_json_metadata():
 
     captured = {}
 
-    class _FakeHttpClient:
-        async def post(self, _url, json=None, **kwargs):
-            captured["json"] = json
-            captured["timeout"] = kwargs.get("timeout")
-            return httpx.Response(
-                200,
-                json={"choices": [{"message": {"content": "Hello from Cortex."}}]},
-            )
+    async def request_json(method, url, *, payload=None, timeout=30.0):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = payload
+        captured["timeout"] = timeout
+        return 200, {"choices": [{"message": {"content": "Hello from Cortex."}}]}, ""
 
-    async def _fake_client():
-        return _FakeHttpClient()
-
-    client._client = _fake_client
+    client._request_json = request_json
     client._ensure_runtime_ready = AsyncMock(return_value=True)
 
     result = await client.generate_text_async(
@@ -208,14 +202,11 @@ async def test_response_parser_handles_part_arrays_and_reasoning_fallback():
         ]
     )
 
-    class _FakeHttpClient:
-        async def post(self, _url, json=None, **_kwargs):
-            return responses.popleft()
+    async def request_json(_method, _url, *, payload=None, timeout=30.0):
+        response = responses.popleft()
+        return response.status_code, response.json(), response.text
 
-    async def _fake_client():
-        return _FakeHttpClient()
-
-    client._client = _fake_client
+    client._request_json = request_json
 
     first = await client.generate_text_async("hello", foreground_request=False)
     second = await client.generate_text_async("hello", foreground_request=False)
@@ -370,21 +361,16 @@ async def test_generate_text_records_latent_bridge_fallback(monkeypatch):
 async def test_server_health_detects_wrong_model_on_reserved_lane_port():
     client = LocalServerClient(QWEN32_GGUF)
 
-    class _FakeHttpClient:
-        async def get(self, url, **_kwargs):
-            if url.endswith("/health"):
-                return httpx.Response(200, json={"status": "ok"})
-            if url.endswith("/v1/models"):
-                return httpx.Response(
-                    200,
-                    json={"data": [{"id": "qwen2.5-72b-instruct-q3_k_m-00001-of-00009.gguf"}]},
-                )
-            raise AssertionError(f"unexpected url: {url}")
+    async def request_json(_method, url, *, payload=None, timeout=30.0):
+        if url.endswith("/health"):
+            return 200, {"status": "ok"}, ""
+        if url.endswith("/v1/models"):
+            return 200, {
+                "data": [{"id": "qwen2.5-72b-instruct-q3_k_m-00001-of-00009.gguf"}]
+            }, ""
+        raise AssertionError(f"unexpected url: {url}")
 
-    async def _fake_client():
-        return _FakeHttpClient()
-
-    client._client = _fake_client
+    client._request_json = request_json
 
     healthy, mismatch = await client._server_healthy()
 
@@ -399,7 +385,7 @@ async def test_server_health_detects_wrong_model_on_reserved_lane_port():
 
 def test_spawn_server_uses_single_slot_and_disables_prompt_cache_by_default(tmp_path, monkeypatch):
     model_path = tmp_path / "qwen2.5-32b-instruct-q5_k_m.gguf"
-    model_path.write_text("stub", encoding="utf-8")
+    model_path.write_text("local model fixture", encoding="utf-8")
 
     client = LocalServerClient(str(model_path))
     client._resolve_llama_server_bin = lambda: "/opt/homebrew/bin/llama-server"
@@ -411,17 +397,21 @@ def test_spawn_server_uses_single_slot_and_disables_prompt_cache_by_default(tmp_
 
     captured = {}
 
-    def _fake_popen(cmd, stdout=None, stderr=None, cwd=None):
-        captured["cmd"] = list(cmd)
-        captured["cwd"] = cwd
-        return MagicMock(spec=subprocess.Popen)
+    class LocalProcessHandle:
+        def poll(self):
+            return None
 
-    original = subprocess.Popen
-    subprocess.Popen = _fake_popen
+    def _capture_popen(cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        captured["cwd"] = kwargs.get("cwd")
+        return LocalProcessHandle()
+
+    original = local_server_client.subprocess.Popen
+    local_server_client.subprocess.Popen = _capture_popen
     try:
         client._spawn_server_blocking()
     finally:
-        subprocess.Popen = original
+        local_server_client.subprocess.Popen = original
 
     assert "--parallel" in captured["cmd"]
     assert captured["cmd"][captured["cmd"].index("--parallel") + 1] == "1"

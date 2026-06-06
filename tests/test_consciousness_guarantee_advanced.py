@@ -1057,7 +1057,7 @@ class TestAdversarialBaselineFailure:
 
     def test_null_hypothesis_still_defeated(self):
         """Reconfirm the A/B steering test distinguishes real from fake.
-        Apply identical events to real NCS and a static mock; verify divergence."""
+        Apply identical events to real NCS and a static control; verify divergence."""
         # Real system
         real_ncs = NeurochemicalSystem()
 

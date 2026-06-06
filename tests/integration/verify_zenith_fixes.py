@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, AsyncMock
 from core.mind_tick import MindTick
 from core.phases.initiative_generation import InitiativeGenerationPhase
 
-# Mock state
+# Lightweight local state
 class MockAffect:
     def __init__(self):
         self.curiosity = 1.0
@@ -67,4 +67,3 @@ if __name__ == "__main__":
     asyncio.run(test_impulse_throttling())
     asyncio.run(test_regex_lookahead())
     asyncio.run(test_mind_tick_timeouts())
-

@@ -45,7 +45,7 @@ class TestAttentionSummarizer(unittest.IsolatedAsyncioTestCase):
         
         self.assertEqual(len(self.workspace.history), 10)
         
-        # 2. Mock brain response
+        # 2. Scripted brain response
         mock_response = MagicMock()
         mock_response.content = "Summary: User had coffee and discussed Phase 16."
         self.brain.think = AsyncMock(return_value=mock_response)

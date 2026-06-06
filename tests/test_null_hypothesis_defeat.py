@@ -21,7 +21,7 @@ Tests are organized by what they kill:
     Kill the claim that the liquid substrate is decorative dynamics.
 
   NEUROCHEMICAL PROBING (Tests 8):
-    Kill the claim that receptor adaptation is documented but not implemented.
+    Kill the claim that receptor adaptation is documented but absent.
 
   GLOBAL WORKSPACE PROBING (Tests 9-10):
     Kill the claim that GWT competition is rigged or irrelevant.

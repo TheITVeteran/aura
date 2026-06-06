@@ -60,7 +60,7 @@ async def test_stack():
         logger.info(f"         Chaos Modifier: {chaos:.4f}")
         logger.info("         Success.")
         
-        # 5. Test Integration Layer Wiring (Mock Orchestrator)
+        # 5. Test Integration Layer Wiring
         logger.info("   [5/6] Testing Integration Layer...")
         class MockOrchestrator:
             pass

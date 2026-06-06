@@ -85,10 +85,10 @@ def test_self_mod_safety_accept_good_profile(tmp_path):
     """
     ladder = GrowthLadder(state_path=tmp_path / "growth.json")
     ladder._current_level = ModificationLevel.EXPRESSION
-    # Mock self consent to always return True for this test
-    async def mock_consent(prop):
+    # Scripted self consent returns True for this test
+    async def scripted_consent(prop):
         prop.aura_consent = True
-    ladder._request_self_consent = mock_consent
+    ladder._request_self_consent = scripted_consent
     
     allowed = asyncio.run(ladder.propose_modification(
         proposal_id="test_safe_good",

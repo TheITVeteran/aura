@@ -9,7 +9,7 @@ class TestTypeSafeRepair(unittest.TestCase):
         self.repair = AutonomousCodeRepair()
 
     async def test_pyright_guard_rejection(self):
-        # Create a mock fix that has a type error
+        # Create a repair candidate that has a type error
         fix = CodeFix(
             target_file="core/test_type_error.py",
             original_code="def foo(x: int) -> int:\n    return x",

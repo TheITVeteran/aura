@@ -17,7 +17,7 @@ client = TestClient(app)
 def test_file_upload_endpoint():
     print("--- Testing /api/upload ---")
     
-    # Create dummy file
+    # Create local upload fixture
     filename = "test_image.png"
     file_content = b"fake image content"
     

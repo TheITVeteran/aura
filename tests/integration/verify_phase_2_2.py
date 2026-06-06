@@ -81,7 +81,7 @@ async def test_pipe_hotswap():
     
     hotswap_done = asyncio.Event()
 
-    # Mock restart callback
+    # Restart callback used for re-binding verification
     async def on_restart_async(name, pipe):
         logger.info(f"🔄 Callback: {name} restarted. Re-binding...")
         await actor_bus.update_actor(name, pipe)

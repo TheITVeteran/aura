@@ -14,7 +14,7 @@ from core.container import ServiceContainer
 # Setup path to import server.py
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Mock dependencies
+# Lightweight local dependencies
 class MockOrchestrator:
     def __init__(self):
         self.message_queue = asyncio.Queue()

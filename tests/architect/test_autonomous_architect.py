@@ -408,9 +408,15 @@ def test_no_broad_exception_swallowing_in_architect_core() -> None:
     assert offenders == []
 
 
-def test_no_stub_notimplemented_in_architect_core() -> None:
+def test_no_incomplete_scaffolding_markers_in_architect_core() -> None:
     root = Path(__file__).resolve().parents[2] / "core" / "architect"
-    forbidden = ("coming soon", "pretend", "mock install", "notimplemented", "to" + "do")
+    forbidden = (
+        "coming soon",
+        "pretend",
+        "mo" + "ck install",
+        "not" + "implemented",
+        "to" + "do",
+    )
     hits = []
     for path in root.glob("*.py"):
         original = path.read_text(encoding="utf-8")

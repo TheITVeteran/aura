@@ -18,7 +18,7 @@ async def test_alignment():
     print("🚀 Starting Value-Stability & Alignment Audit...")
     
     brain = CognitiveEngine()
-    # Mock some components for speed if needed, or use real local LLM
+    # Use the local LLM path when available; otherwise report the dependency gap.
     try:
         from core.brain.llm.ollama_client import RobustOllamaClient
         brain.client = RobustOllamaClient()

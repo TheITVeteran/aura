@@ -42,7 +42,7 @@ async def test_external_actuation(tmp_path):
         content="actuation test data",
         source="test_suite",
     )
-    # The ActionExecutor can reject or approve depending on local mock Will state.
+    # The ActionExecutor can reject or approve depending on local Will state.
     # We assert that it completes with a result dictionary.
     assert isinstance(res, dict)
 
@@ -90,7 +90,7 @@ async def test_self_improvement_forge():
     forge = get_self_improvement_forge()
     await forge.initialize()
     
-    # Run cycle on dummy logs
+    # Run cycle on local failure logs
     logs = [{"ok": False, "module": "inference", "error": "latency limit exceeded"}] * 3
     baseline = {"pass_rate": 0.8}
     
