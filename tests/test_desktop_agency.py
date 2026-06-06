@@ -4,7 +4,7 @@ End-to-end tests for the full agency pipeline:
   objective → decomposition → execution → verification → proof
 
 Tests are designed to run WITHOUT requiring actual UI interaction
-(mocked adapters), but also have a live_mode flag for real execution.
+using deterministic in-memory adapters, but also have a live_mode flag for real execution.
 
 Each test produces a structured report with pass/fail, receipts,
 and timing data.
@@ -19,82 +19,82 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
 # Test fixtures
 # ---------------------------------------------------------------------------
 
-class MockAutomationReceipt:
-    """Mock receipt for testing."""
+class DeterministicAutomationReceipt:
+    """In-memory receipt matching the host automation provider contract."""
+
     def __init__(self, action="", target="", success=True, result="", error=""):
         self.action = action
         self.target = target
-        self.adapter = "mock"
+        self.adapter = "deterministic_test"
         self.success = success
         self.result = result
         self.error = error
-        self.receipt_id = f"mock_{int(time.time())}"
+        self.receipt_id = f"deterministic_test_{int(time.time())}"
         self.duration_ms = 1.0
         self.script_hash = ""
 
 
-class MockHostAutomation:
-    """Mock HostAutomationProvider for testing without real OS interaction."""
+class DeterministicHostAutomation:
+    """HostAutomationProvider-compatible adapter with no real OS interaction."""
 
     async def launch_app(self, name):
-        return MockAutomationReceipt("launch_app", name, True, f"{name} launched")
+        return DeterministicAutomationReceipt("launch_app", name, True, f"{name} launched")
 
     async def focus_app(self, name):
-        return MockAutomationReceipt("focus_app", name, True)
+        return DeterministicAutomationReceipt("focus_app", name, True)
 
     async def close_app(self, name):
-        return MockAutomationReceipt("close_app", name, True)
+        return DeterministicAutomationReceipt("close_app", name, True)
 
     async def get_frontmost_app(self):
-        return MockAutomationReceipt("get_frontmost_app", "", True, "Notes")
+        return DeterministicAutomationReceipt("get_frontmost_app", "", True, "Notes")
 
     async def get_running_apps(self):
-        r = MockAutomationReceipt("get_running_apps", "", True)
+        r = DeterministicAutomationReceipt("get_running_apps", "", True)
         r.result = ["Finder", "Notes", "Google Chrome"]
         return r
 
     async def get_window_title(self, app=""):
-        return MockAutomationReceipt("get_window_title", app, True, "Test Window")
+        return DeterministicAutomationReceipt("get_window_title", app, True, "Test Window")
 
     async def type_text(self, text, use_clipboard=True):
-        return MockAutomationReceipt("type_text", f"[{len(text)} chars]", True)
+        return DeterministicAutomationReceipt("type_text", f"[{len(text)} chars]", True)
 
     async def hotkey(self, *keys):
-        return MockAutomationReceipt("hotkey", "+".join(keys), True)
+        return DeterministicAutomationReceipt("hotkey", "+".join(keys), True)
 
     async def menu_select(self, app, path):
-        return MockAutomationReceipt("menu_select", f"{app}: {' > '.join(path)}", True)
+        return DeterministicAutomationReceipt("menu_select", f"{app}: {' > '.join(path)}", True)
 
     async def take_screenshot(self, save_path="", region=None):
         path = save_path or str(Path(tempfile.gettempdir()) / "aura_test_screenshot.png")
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)  # Minimal PNG
-        return MockAutomationReceipt("take_screenshot", path, True, path)
+        return DeterministicAutomationReceipt("take_screenshot", path, True, path)
 
     async def get_screen_text(self, region=None):
-        return MockAutomationReceipt("get_screen_text", "", True, "Mock screen text for testing")
+        return DeterministicAutomationReceipt("get_screen_text", "", True, "Deterministic screen text for testing")
 
     async def run_command(self, command, timeout=15.0):
-        return MockAutomationReceipt("run_command", command[:100], True, "command output")
+        return DeterministicAutomationReceipt("run_command", command[:100], True, "command output")
 
     async def execute_applescript(self, script):
-        return MockAutomationReceipt("execute_applescript", script[:100], True, "ok")
+        return DeterministicAutomationReceipt("execute_applescript", script[:100], True, "ok")
 
     async def click_at(self, x, y, button="left"):
-        return MockAutomationReceipt("click", f"{x},{y}", True)
+        return DeterministicAutomationReceipt("click", f"{x},{y}", True)
 
     async def scroll(self, dx=0, dy=0):
-        return MockAutomationReceipt("scroll", f"dx={dx},dy={dy}", True)
+        return DeterministicAutomationReceipt("scroll", f"dx={dx},dy={dy}", True)
 
     async def wait_for_condition(self, pred, args, timeout=10, poll_interval=0.5):
-        return MockAutomationReceipt("wait_for_condition", pred, True, "condition met")
+        return DeterministicAutomationReceipt("wait_for_condition", pred, True, "condition met")
 
     def get_recent_receipts(self, limit=20):
         return []
@@ -395,11 +395,11 @@ class TestBehavioralProof(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Integration test (mock-based, no real OS interaction)
+# Integration test (deterministic adapter, no real OS interaction)
 # ---------------------------------------------------------------------------
 
 class TestFullPipelineIntegration(unittest.TestCase):
-    """End-to-end pipeline test with mocked OS interaction."""
+    """End-to-end pipeline test with in-memory OS interaction."""
 
     def test_decompose_and_execute_wallpaper(self):
         """Test: objective → decompose → graph → execute → verify."""
@@ -447,10 +447,10 @@ class TestFullPipelineIntegration(unittest.TestCase):
         self.assertEqual(len(ready), 1)
         self.assertEqual(ready[0].task_id, "t1")
 
-        # Simulate execution
+        # Simulate the receipt-confirmed execution path.
         for step_id in ["t1", "t2", "t3", "t4"]:
             graph.mark_running(step_id)
-            graph.mark_succeeded(step_id, result={"mock": True})
+            graph.mark_succeeded(step_id, result={"deterministic_execution": True})
 
         self.assertTrue(graph.is_complete)
         self.assertTrue(graph.is_successful)
@@ -484,7 +484,7 @@ class TestOwnerAutonomyGating(unittest.TestCase):
         ws.voice_activity_detected = False
 
         engine = SovereignVoiceEngine()
-        # Mock callbacks so it doesn't fail on direct dispatch
+        # Disable callbacks so this unit path isolates grounding and rate-limit behavior.
         engine._on_transcript = None
         engine._transcript_callbacks = {}
         engine._anonymous_transcript_callbacks = []
@@ -532,8 +532,14 @@ class TestOwnerAutonomyGating(unittest.TestCase):
         def no_verifier(name, default=None):
             return default
 
-        with patch("core.voice.wake_word.ServiceContainer.get", staticmethod(no_verifier)):
+        from core.voice import wake_word as wake_word_module
+
+        original_service_get = wake_word_module.ServiceContainer.get
+        wake_word_module.ServiceContainer.get = staticmethod(no_verifier)
+        try:
             asyncio.run(detector._check_wake_word("Hey Aura, write a note"))
+        finally:
+            wake_word_module.ServiceContainer.get = original_service_get
 
         self.assertEqual(gateway._current_posture, "defensive_sandboxed")
         self.assertEqual(len(gateway._active_tokens), 0)
@@ -551,8 +557,12 @@ class TestOwnerAutonomyGating(unittest.TestCase):
                 return Verifier()
             return default
 
-        with patch("core.voice.wake_word.ServiceContainer.get", staticmethod(verified_service)):
+        original_service_get = wake_word_module.ServiceContainer.get
+        wake_word_module.ServiceContainer.get = staticmethod(verified_service)
+        try:
             asyncio.run(detector._check_wake_word("Hey Aura, write a note"))
+        finally:
+            wake_word_module.ServiceContainer.get = original_service_get
 
         self.assertEqual(gateway._current_posture, "owner_present")
         self.assertEqual(len(gateway._active_tokens), 1)
@@ -626,16 +636,31 @@ class TestOwnerAutonomyGating(unittest.TestCase):
     def test_os_automation_compiler_skill(self):
         """Test that OSAutomationCompilerSkill generates and executes safe scripts."""
         from core.container import ServiceContainer
+        from core.skills import os_automation as os_automation_module
         from core.skills.os_automation import OSAutomationCompilerSkill, OSAutomationInput
-        from unittest.mock import AsyncMock
 
-        # Mock cognitive engine and host automation
-        mock_cog = AsyncMock()
-        mock_cog.generate.return_value = "```applescript\ntell application \"Notes\" to activate\n```"
-        ServiceContainer.register_instance("cognitive_engine", mock_cog, required=False)
+        class DeterministicCognitiveEngine:
+            def __init__(self):
+                self.response = "```applescript\ntell application \"Notes\" to activate\n```"
+                self.calls: list[dict[str, Any]] = []
 
-        mock_host = AsyncMock()
-        mock_host.execute_applescript.return_value = MockAutomationReceipt("execute_applescript", "Notes", True, "ok")
+            async def generate(self, prompt, purpose=None, origin=None):
+                self.calls.append({"prompt": prompt, "purpose": purpose, "origin": origin})
+                return self.response
+
+        class RecordingHostAutomation(DeterministicHostAutomation):
+            def __init__(self):
+                self.executed_scripts: list[str] = []
+                self.last_receipt = DeterministicAutomationReceipt("execute_applescript", "Notes", True, "ok")
+
+            async def execute_applescript(self, script):
+                self.executed_scripts.append(script)
+                return self.last_receipt
+
+        cog = DeterministicCognitiveEngine()
+        ServiceContainer.register_instance("cognitive_engine", cog, required=False)
+
+        host = RecordingHostAutomation()
 
         skill = OSAutomationCompilerSkill()
         auth = {
@@ -646,22 +671,38 @@ class TestOwnerAutonomyGating(unittest.TestCase):
             "capability_token_id": None,
             "will_receipt_id": "will-os-auto",
         }
-        with patch.object(OSAutomationCompilerSkill, "_authorize", AsyncMock(return_value=auth)), \
-             patch.object(OSAutomationCompilerSkill, "_finalize", return_value=None), \
-             patch("core.skills.os_automation.get_host_automation", return_value=mock_host):
+
+        async def authorize_for_test(script_type, goal, script, script_hash, context):
+            return auth
+
+        def finalize_for_test(auth_payload, *, success):
+            auth_payload["finalized_success"] = success
+
+        original_authorize = OSAutomationCompilerSkill._authorize
+        original_finalize = OSAutomationCompilerSkill._finalize
+        original_get_host = os_automation_module.get_host_automation
+        OSAutomationCompilerSkill._authorize = staticmethod(authorize_for_test)
+        OSAutomationCompilerSkill._finalize = staticmethod(finalize_for_test)
+        os_automation_module.get_host_automation = lambda: host
+        try:
             params = OSAutomationInput(goal="open Notes", script_type="applescript")
             result = asyncio.run(skill.safe_execute(params, {"source": "unit", "user_requested_action": True}))
 
             self.assertTrue(result["ok"])
             self.assertEqual(result["result"], "ok")
             self.assertIn("script_hash", result)
-            self.assertEqual(result["receipt_id"], mock_host.execute_applescript.return_value.receipt_id)
+            self.assertEqual(result["receipt_id"], host.last_receipt.receipt_id)
+            self.assertEqual(len(host.executed_scripts), 1)
 
             # Test validation guard failure on unsafe script
-            mock_cog.generate.return_value = "```applescript\ndo shell script \"sudo rm -rf /\"\n```"
+            cog.response = "```applescript\ndo shell script \"sudo rm -rf /\"\n```"
             result_unsafe = asyncio.run(skill.safe_execute(params, {"source": "unit"}))
             self.assertFalse(result_unsafe["ok"])
             self.assertIn("safety guard", result_unsafe["error"])
+        finally:
+            OSAutomationCompilerSkill._authorize = original_authorize
+            OSAutomationCompilerSkill._finalize = original_finalize
+            os_automation_module.get_host_automation = original_get_host
 
 
 # ---------------------------------------------------------------------------

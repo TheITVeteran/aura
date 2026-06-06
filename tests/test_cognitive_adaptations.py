@@ -13,7 +13,7 @@ from core.governance.will import WillState, get_will
 
 
 @dataclass
-class MockWelfareTransactionRecord:
+class WelfareTransactionRecordFixture:
     outcome: str = "success"
     welfare_delta: dict[str, float] = field(default_factory=dict)
     body_delta: dict[str, float] = field(default_factory=dict)
@@ -28,7 +28,7 @@ async def test_learnable_assertiveness():
     will._state = WillState(assertiveness=0.5)
     try:
         # 1. Negative outcome: distress spike and integrity compromise
-        bad_record = MockWelfareTransactionRecord(
+        bad_record = WelfareTransactionRecordFixture(
             outcome="failure",
             welfare_delta={"distress": 0.15},
             body_delta={"fatigue": 0.1},
@@ -44,7 +44,7 @@ async def test_learnable_assertiveness():
         lowered_assertiveness = will._state.assertiveness
 
         # 2. Positive outcome: clean success with relief
-        good_record = MockWelfareTransactionRecord(
+        good_record = WelfareTransactionRecordFixture(
             outcome="success",
             welfare_delta={"relief": 0.1},
             body_delta={},
@@ -66,8 +66,8 @@ async def test_dream_fragments(tmp_path):
     Paths._runtime_home_cache = tmp_path
     try:
         from core.container import ServiceContainer
-        # Resolve dependencies or mock them
-        class MockOrchestrator:
+        # Resolve dependencies through deterministic in-memory fixtures.
+        class TestOrchestrator:
             def __init__(self):
                 self._last_user_interaction_time = 0
                 self.state_repo = None
@@ -76,32 +76,32 @@ async def test_dream_fragments(tmp_path):
             def enqueue_message(self, msg):
                 self.messages.append(msg)
 
-        class MockPhase:
+        class TestPhase:
             pass
 
-        mock_orch = MockOrchestrator()
+        test_orchestrator = TestOrchestrator()
 
         # Test fragment writing
         from core.kernel.aura_kernel import AuraKernel
         # Since kernel initialization requires database, let's create a minimal test setup
-        # or directly test the _record_dream_fragment function on a mock class
+        # and exercise the _record_dream_fragment function on a narrow test subclass.
         @dataclass
-        class DummyStatus:
+        class TestStatus:
             cycle_count: int = 1
 
-        class DummyKernel(AuraKernel):
+        class TestKernel(AuraKernel):
             def __init__(self):
-                self._phases = [MockPhase()]
+                self._phases = [TestPhase()]
                 self.state = None
-                self.status = DummyStatus(cycle_count=12)
+                self.status = TestStatus(cycle_count=12)
 
-        kernel = DummyKernel()
+        kernel = TestKernel()
 
         fragment_file = tmp_path / "data" / "dream_fragments.jsonl"
         assert not fragment_file.exists()
 
         # Call record_dream_fragment
-        kernel._record_dream_fragment("Optimize swarms", kernel._phases[0], "MockPhase")
+        kernel._record_dream_fragment("Optimize swarms", kernel._phases[0], "TestPhase")
 
         assert fragment_file.exists()
         fragment_text = await asyncio.to_thread(fragment_file.read_text, encoding="utf-8")
@@ -109,27 +109,27 @@ async def test_dream_fragments(tmp_path):
         assert len(lines) == 1
         data = json.loads(lines[0])
         assert data["objective"] == "Optimize swarms"
-        assert data["preempted_at_phase"] == "MockPhase"
-        assert "MockPhase" in data["completed_phases"]
+        assert data["preempted_at_phase"] == "TestPhase"
+        assert "TestPhase" in data["completed_phases"]
 
-        # Register mock identity/narrator for DreamingProcess
-        class MockIdentity:
+        # Register deterministic identity/narrator services for DreamingProcess.
+        class TestIdentity:
             def __init__(self):
                 self.evolutions = []
 
             def record_evolution(self, source, reflection):
                 self.evolutions.append((source, reflection))
 
-        ServiceContainer.register_instance("identity_service", MockIdentity(), required=False)
+        ServiceContainer.register_instance("identity_service", TestIdentity(), required=False)
         ServiceContainer.register_instance("narrator", object(), required=False)
 
         # Test dream process ingestion
-        dp = DreamingProcess(mock_orch, interval=300.0)
+        dp = DreamingProcess(test_orchestrator, interval=300.0)
         summary = await dp._get_recent_summary()
 
         assert "[Dream Fragment]" in summary
         assert "Optimize swarms" in summary
-        assert "MockPhase" in summary
+        assert "TestPhase" in summary
 
         # After get_recent_summary runs, it should clear/empty the fragment file
         remaining = (

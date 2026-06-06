@@ -11,27 +11,27 @@ from core.config import config
 
 @pytest.mark.asyncio
 async def test_minimal_boot_profile(monkeypatch):
-    """Assert that minimal profile boot disables heavy devices/subsystems and forces mock LLM."""
+    """Assert that minimal profile boot disables heavy devices/subsystems and forces deterministic LLM."""
     # Patch bootstrap_lock to skip locking when running tests
     monkeypatch.setattr(aura_main, "bootstrap_lock", lambda skip_lock=False: None)
 
-    # Mock _boot_runtime_orchestrator to return a mock orchestrator immediately and register a mock LLM router
-    class MockRouter:
+    # Replace orchestration with deterministic lightweight services for this boot contract.
+    class DeterministicRouter:
         async def think(self, prompt: str) -> str:
-            return "mock thinking response"
+            return "deterministic thinking response"
 
-    class MockOrchestrator:
+    class DeterministicOrchestrator:
         def stop(self):
             return None
 
-    async def mock_boot_orchestrator(*args, **kwargs):
+    async def boot_deterministic_orchestrator(*args, **kwargs):
         from core.container import ServiceContainer
-        # Unlock registry if locked to allow registering mock llm_router
+        # Unlock registry if locked to allow registering the lightweight llm_router.
         ServiceContainer._locked = False
-        ServiceContainer.register_instance("llm_router", MockRouter())
-        return MockOrchestrator()
+        ServiceContainer.register_instance("llm_router", DeterministicRouter())
+        return DeterministicOrchestrator()
 
-    monkeypatch.setattr(aura_main, "_boot_runtime_orchestrator", mock_boot_orchestrator)
+    monkeypatch.setattr(aura_main, "_boot_runtime_orchestrator", boot_deterministic_orchestrator)
 
     # Run the boot routine with minimal profile
     orchestrator = await boot_aura_runtime(profile="minimal")
@@ -51,7 +51,7 @@ async def test_minimal_boot_profile(monkeypatch):
         assert config.features.voice_enabled is False
         assert config.security.allow_network_access is False
         
-        # Assert mock LLM response is returned rather than executing heavy model routes
+        # Assert deterministic LLM response is returned rather than executing heavy model routes.
         from core.container import ServiceContainer
         router = ServiceContainer.get("llm_router")
         assert router is not None
