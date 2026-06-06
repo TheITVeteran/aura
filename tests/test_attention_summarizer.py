@@ -4,20 +4,30 @@
 Unit test for AttentionSummarizer context compression.
 """
 import asyncio
-import json
+from types import SimpleNamespace
 import unittest
-from unittest.mock import MagicMock, AsyncMock, patch
 from core.memory.attention import AttentionSummarizer
 from core.consciousness.global_workspace import GlobalWorkspace, BroadcastRecord, CognitiveCandidate
 from core.world_model.belief_graph import BeliefGraph
 from core.container import ServiceContainer
 
+
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.result
+
+
 class TestAttentionSummarizer(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         ServiceContainer.clear()
         
-        self.orchestrator = MagicMock()
-        self.brain = AsyncMock()
+        self.brain = SimpleNamespace()
+        self.orchestrator = SimpleNamespace(cognitive_engine=self.brain)
         self.orchestrator.cognitive_engine = self.brain
         
         self.workspace = GlobalWorkspace()
@@ -46,9 +56,8 @@ class TestAttentionSummarizer(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.workspace.history), 10)
         
         # 2. Scripted brain response
-        mock_response = MagicMock()
-        mock_response.content = "Summary: User had coffee and discussed Phase 16."
-        self.brain.think = AsyncMock(return_value=mock_response)
+        response = SimpleNamespace(content="Summary: User had coffee and discussed Phase 16.")
+        self.brain.think = AsyncCallRecorder(result=response)
         
         # 3. Start summarizer and let it run
         print("\nStarting summarizer...")

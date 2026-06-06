@@ -1,9 +1,9 @@
 """tests/test_autonomy_pipeline.py
 ────────────────────────────────────
 Comprehensive unit tests for the new autonomy pipeline. Uses stdlib
-unittest only — no pytest dependency. Mocks all external services (LLM,
-network, executive_core, memory_facade) so the suite runs entirely
-offline and without RAM pressure.
+unittest only — no pytest dependency. Uses local in-memory collaborators for
+LLM, network, executive_core, and memory_facade seams so the suite runs
+entirely offline and without RAM pressure.
 
 Coverage:
   • research_triggers: emit/drain/mark_consumed/ring truncation
@@ -15,7 +15,7 @@ Coverage:
   • content_method_router: per-priority-level planning, capability detect
   • curiosity_scheduler: selection strategies, scoring, defensive defaults
   • memory_persister: commit, dedup, queue, intent construction
-  • content_fetcher: execute() with mocked attempts, cache hit/miss
+  • content_fetcher: execute() with scripted attempts, cache hit/miss
   • comprehension_loop: chunking, reasoning trace, JSON extraction
   • reflection_loop: verification parse, belief update parse
   • orchestrator: run_once with all mocks, error paths, session save
@@ -40,7 +40,6 @@ import unittest
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from unittest.mock import patch
 
 # Make `core.*` imports work regardless of cwd
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,6 +92,7 @@ from core.autonomy.comprehension_loop import (
     _safe_json_object,
 )
 from core.autonomy.reflection_loop import ReflectionLoop, ReflectionRecord
+from core.autonomy import autonomous_research_orchestrator as research_orchestrator_module
 from core.autonomy.autonomous_research_orchestrator import (
     AutonomousResearchOrchestrator,
 )
@@ -105,9 +105,15 @@ def _temp_path(suffix: str = ".jsonl") -> Path:
     fd, path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
     p = Path(path)
-    if p.exists():
-        get_task_tracker().create_task(get_storage_gateway().delete(p, cause='_temp_path'))
+    _delete_temp_file(p)
     return p
+
+
+def _delete_temp_file(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
 
 
 class _AsyncTestCase(unittest.TestCase):
@@ -141,7 +147,7 @@ class TestResearchTriggers(unittest.TestCase):
             self.assertEqual(triggers[0].contested_count, 3)
         finally:
             if path.exists():
-                get_task_tracker().create_task(get_storage_gateway().delete(path, cause='TestResearchTriggers.test_emit_and_drain'))
+                _delete_temp_file(path)
 
     def test_mark_consumed_filters_out(self):
         path = _temp_path(".jsonl")
@@ -155,7 +161,7 @@ class TestResearchTriggers(unittest.TestCase):
             self.assertEqual(remaining[0].source_intent_id, "i2")
         finally:
             if path.exists():
-                get_task_tracker().create_task(get_storage_gateway().delete(path, cause='TestResearchTriggers.test_mark_consumed_filters_out'))
+                _delete_temp_file(path)
 
     def test_drain_missing_file_returns_empty(self):
         triggers = research_triggers.drain_pending_triggers(path=Path("/nonexistent/file.jsonl"))
@@ -239,7 +245,7 @@ class TestCuratedMediaLoader(unittest.TestCase):
             self.assertEqual(items[1].title, "Title Two")
             self.assertEqual(items[1].url, "https://example.com/two")
         finally:
-            get_task_tracker().create_task(get_storage_gateway().delete(tmp_path, cause='TestCuratedMediaLoader.test_parse_minimal_doc'))
+            _delete_temp_file(tmp_path)
 
     def test_skips_malformed_bullets(self):
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
@@ -250,7 +256,7 @@ class TestCuratedMediaLoader(unittest.TestCase):
             self.assertEqual(len(items), 1)
             self.assertEqual(items[0].title, "OK Title")
         finally:
-            get_task_tracker().create_task(get_storage_gateway().delete(tmp, cause='TestCuratedMediaLoader.test_skips_malformed_bullets'))
+            _delete_temp_file(tmp)
 
 
 # ── content_progress_tracker ─────────────────────────────────────────────
@@ -281,7 +287,7 @@ class TestProgressTracker(unittest.TestCase):
             self.assertEqual(loaded.entries[0].title, "Sample")
         finally:
             if path.exists():
-                get_task_tracker().create_task(get_storage_gateway().delete(path, cause='TestProgressTracker.test_save_and_load_roundtrip'))
+                _delete_temp_file(path)
 
     def test_atomic_save(self):
         path = _temp_path(".json")
@@ -297,7 +303,7 @@ class TestProgressTracker(unittest.TestCase):
             self.assertFalse(tmp.exists())
         finally:
             if path.exists():
-                get_task_tracker().create_task(get_storage_gateway().delete(path, cause='TestProgressTracker.test_atomic_save'))
+                _delete_temp_file(path)
 
     def test_days_since_empty_returns_none(self):
         log = ProgressLog()
@@ -538,7 +544,7 @@ class TestMemoryPersister(unittest.TestCase):
     def tearDown(self):
         for p in (self.queue_path, self.dedup_path):
             if p.exists():
-                get_task_tracker().create_task(get_storage_gateway().delete(p, cause='TestMemoryPersister.tearDown'))
+                _delete_temp_file(p)
 
     def test_commit_engagement_routes_through_autonomous_research(self):
         executive_gate = _ExecutiveGate(approve=True)
@@ -907,21 +913,23 @@ class TestOrchestrator(_AsyncTestCase):
 
         progress = _MemoryProgressLog()
 
-        with tempfile.TemporaryDirectory() as tmpdir, patch(
-            "core.autonomy.autonomous_research_orchestrator.load_progress",
-            return_value=progress,
-        ):
-            orch = AutonomousResearchOrchestrator(
-                scheduler=_Sched(),
-                router=_Router(),
-                fetcher=_Fetcher(),
-                comprehension=_Comprehension(),
-                reflection=_Reflection(),
-                gate=_Gate(),
-                persister=_Persister(),
-                sessions_dir=Path(tmpdir),
-            )
-            result = self.run_async(orch.run_once())
+        original_load_progress = research_orchestrator_module.load_progress
+        research_orchestrator_module.load_progress = lambda *args, **kwargs: progress
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                orch = AutonomousResearchOrchestrator(
+                    scheduler=_Sched(),
+                    router=_Router(),
+                    fetcher=_Fetcher(),
+                    comprehension=_Comprehension(),
+                    reflection=_Reflection(),
+                    gate=_Gate(),
+                    persister=_Persister(),
+                    sessions_dir=Path(tmpdir),
+                )
+                result = self.run_async(orch.run_once())
+        finally:
+            research_orchestrator_module.load_progress = original_load_progress
 
         self.assertIsNotNone(result.completed_at)
         self.assertEqual(outcomes, ["completed"])
