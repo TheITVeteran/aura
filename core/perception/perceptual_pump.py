@@ -152,23 +152,23 @@ def _collect_screen_state(prev_hash: str) -> ScreenState:
         gw = get_subprocess_gateway()
 
         # Active app name
-        result = gw.run_sync(
+        result = gw.run(
             ["osascript", "-e",
              'tell application "System Events" to get name of first application process whose frontmost is true'],
-            capture_output=True, timeout=2, source="perceptual_pump.screen.app",
+            capture_output=True, timeout=2.0, read_only=True, source="perceptual_pump.screen.app",
         )
         if result.returncode == 0 and result.stdout:
-            state.active_app = result.stdout.decode("utf-8", errors="replace").strip()
+            state.active_app = result.stdout.strip()
 
         # Window title
         if state.active_app:
-            result = gw.run_sync(
+            result = gw.run(
                 ["osascript", "-e",
                  f'tell application "System Events" to get name of front window of process "{state.active_app}"'],
-                capture_output=True, timeout=2, source="perceptual_pump.screen.title",
+                capture_output=True, timeout=2.0, read_only=True, source="perceptual_pump.screen.title",
             )
             if result.returncode == 0 and result.stdout:
-                state.window_title = result.stdout.decode("utf-8", errors="replace").strip()[:200]
+                state.window_title = result.stdout.strip()[:200]
     except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
         record_degradation("perceptual_pump.screen", e)
         logger.debug("Screen state AppleScript probe failed: %s", e)

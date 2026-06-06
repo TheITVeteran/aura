@@ -413,6 +413,7 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "runtime_heartbeat_payload(\"ping\")" in websocket_manager
     assert "payloadRuntimeHealthy(payload)" in aura_js
     assert "requiredRuntimeProbesPass(requiredProbes)" in aura_js
+    assert "memory: ['state_repository', 'memory_facade', 'memory_write_gateway']" in aura_js
     assert "runtimeHealthBlockers(payload).length > 0" in aura_js
     assert "runtime_health_unverified" in aura_js
     assert "applyRuntimeHeartbeat(data)" in aura_js
@@ -427,8 +428,29 @@ def test_native_shell_waits_for_readiness_heartbeat():
     assert 'client.get("http://localhost:7400/api/health").send().await' not in native_shell
     assert "resp.status().is_success()" in native_shell
     assert "readiness_heartbeat_is_healthy" in native_shell
+    assert '"memory", vec!["state_repository", "memory_facade", "memory_write_gateway"]' in native_shell
     assert "tool_governance" in native_shell
     assert "payload.get(\"blockers\")" in native_shell
+
+
+def test_aletheia_live_runner_waits_on_readiness_heartbeat():
+    runner = (PROJECT_ROOT / "tools" / "run_aletheia_live_proof.py").read_text(encoding="utf-8")
+
+    assert "/api/health/heartbeat" in runner
+    assert "/api/health/boot" not in runner
+    assert 'data.get("ready")' not in runner
+    assert 'data.get("healthy") is True' in runner
+    assert 'data.get("runtime_probe_healthy") is True' in runner
+    assert 'blockers = data.get("blockers")' in runner
+
+
+def test_live_runtime_probe_treats_readiness_heartbeat_as_health_authority():
+    probe = (PROJECT_ROOT / "tools" / "live_runtime_probe.py").read_text(encoding="utf-8")
+
+    assert 'heartbeat = await self._get("/api/health/heartbeat")' in probe
+    assert 'heartbeat.get("healthy") is not True' in probe
+    assert 'heartbeat.get("runtime_probe_healthy") is not True' in probe
+    assert 'required.get("all_passed") is not True' in probe
 
 
 def test_input_bus_normalizes_external_priority_values():

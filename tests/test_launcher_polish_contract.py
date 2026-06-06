@@ -103,7 +103,9 @@ def test_watchdog_mode_remains_supervision_only():
     assert "await orchestrator.start()" not in watchdog_slice
     assert 'logger.info("🛡️ Watchdog supervisor active (supervision-only mode).")' in watchdog_slice
     assert "_watchdog_child_args(args)" in watchdog_slice
-    assert "create_subprocess_exec(_launcher_python_executable(), __file__, *child_args)" in watchdog_slice
+    assert "get_subprocess_gateway().spawn_async(" in watchdog_slice
+    assert "[_launcher_python_executable(), __file__, *child_args]" in watchdog_slice
+    assert "asyncio.create_subprocess_exec" not in watchdog_slice
 
 
 def test_watchdog_preserves_requested_restart_mode_and_port_cleanup_is_pattern_limited():
@@ -154,17 +156,21 @@ def test_aura_main_uses_shared_runtime_boot_helper_across_cli_server_and_desktop
     assert main_py.count("await bootstrap_aura(orchestrator)") == 1
     assert main_py.count("ServiceContainer.lock_registration()") == 1
     assert main_py.count("boot_aura_runtime(") >= 4
-    assert 'orchestrator = await boot_aura_runtime(profile="cli", ready_label="CLI")' in main_py
+    assert 'orchestrator = await boot_aura_runtime(profile=profile, ready_label="CLI")' in main_py
     assert 'ready_label="Desktop"' in main_py
     assert 'ready_label="Server"' in main_py
 
 
-def test_3d_launcher_uses_runtime_lock_instead_of_stale_state_timestamp():
-    launcher = (PROJECT_ROOT / "scripts" / "one_off" / "launch_aura_3d.py").read_text(encoding="utf-8")
+def test_retired_3d_launcher_is_not_referenced_by_runtime_paths():
+    retired_launcher = PROJECT_ROOT / "scripts" / "one_off" / "launch_aura_3d.py"
 
-    assert 'Path.home() / ".aura" / "locks" / "orchestrator.lock"' in launcher
-    assert "_primary_runtime_is_active()" in launcher
-    assert "latest.updated_at" not in launcher
+    assert not retired_launcher.exists()
+    for path in (
+        PROJECT_ROOT / "aura_main.py",
+        PROJECT_ROOT / "launch_aura.sh",
+        PROJECT_ROOT / "scripts" / "AuraLauncher.swift",
+    ):
+        assert "launch_aura_3d.py" not in path.read_text(encoding="utf-8")
 
 
 def test_bundle_script_builds_regular_dock_app_and_embeds_version_metadata():

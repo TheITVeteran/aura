@@ -63,10 +63,16 @@ async def wait_for_server(url: str, timeout_s: float = 30.0) -> bool:
     while time.time() - start < timeout_s:
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(f"{url}/api/health/boot", timeout=2.0)
+                resp = await client.get(f"{url}/api/health/heartbeat", timeout=2.0)
                 if resp.status_code == 200:
                     data = resp.json()
-                    if data.get("ready") or data.get("status") in ("online", "operational", "healthy"):
+                    blockers = data.get("blockers")
+                    if (
+                        data.get("healthy") is True
+                        and data.get("runtime_probe_healthy") is True
+                        and isinstance(blockers, list)
+                        and not blockers
+                    ):
                         return True
         except _SERVER_POLL_RECOVERABLE_ERRORS as exc:
             last_error = f"{type(exc).__name__}: {exc}"

@@ -6,7 +6,12 @@ import pytest
 from core.container import ServiceContainer
 from core.health.boot_status import build_boot_health_snapshot
 from core.runtime.errors import get_degradation_tracker
-from core.runtime.health_contract import RUNTIME_CONTRACT, ServiceRequirement, ServiceTier
+from core.runtime.health_contract import (
+    RUNTIME_CONTRACT,
+    ServiceRequirement,
+    ServiceTier,
+    evaluate_health,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -132,9 +137,10 @@ def test_boot_health_separates_system_ready_from_conversation_ready():
         conversation_lane={"conversation_ready": False, "state": "warming"},
     )
 
-    assert status_code == 200
+    assert status_code == 503
     assert payload["status"] == "warming"
-    assert payload["ready"] is True
+    assert payload["ready"] is False
+    assert payload["launcher_ready"] is False
     assert payload["system_ready"] is True
     assert payload["conversation_ready"] is False
     assert payload["boot_phase"] == "conversation_warming"
@@ -200,9 +206,11 @@ def test_boot_health_reports_hard_conversation_failure():
         },
     )
 
-    assert status_code == 200
+    assert status_code == 503
     assert payload["status"] == "degraded"
-    assert payload["ready"] is True
+    assert payload["ready"] is False
+    assert payload["launcher_ready"] is False
+    assert payload["system_ready"] is True
     assert payload["conversation_ready"] is False
     assert payload["boot_phase"] == "conversation_failed"
     assert payload["status_message"] == "Local Cortex (32B) is unavailable: Aura's managed backend failed during startup."
@@ -306,3 +314,41 @@ def test_boot_health_records_health_check_failure_as_structured_degradation():
     assert records[-1].severity == "degraded"
     assert "failed closed" in records[-1].action
     assert failing_health_check.calls == 1
+
+
+def test_runtime_health_contract_rejects_async_liveness_coroutine():
+    _register_runtime_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+
+    async def async_ready() -> bool:
+        return True
+
+    ServiceContainer.register_instance(
+        "inference_gate",
+        SimpleNamespace(is_inference_ready=lambda: async_ready()),
+    )
+
+    report = evaluate_health().to_report()
+
+    assert report["status_code"] == 503
+    assert report["healthy"] is False
+    assert report["required_probes"]["inference"]["ok"] is False
+    failures = report["failures"]["critical"]
+    inference_failure = next(item for item in failures if item["container_key"] == "inference_gate")
+    assert "awaitable" in inference_failure["error"]
+
+
+def test_runtime_health_contract_rejects_truthy_non_bool_liveness():
+    _register_runtime_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+    ServiceContainer.register_instance(
+        "scheduler",
+        SimpleNamespace(is_alive=lambda: "ready"),
+    )
+
+    report = evaluate_health().to_report()
+
+    assert report["status_code"] == 503
+    assert report["healthy"] is False
+    assert report["required_probes"]["scheduler"]["ok"] is False
+    failures = report["failures"]["critical"]
+    scheduler_failure = next(item for item in failures if item["container_key"] == "scheduler")
+    assert "unsupported liveness result type: str" in scheduler_failure["error"]

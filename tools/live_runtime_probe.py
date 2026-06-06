@@ -141,13 +141,28 @@ class LiveRuntimeProbe:
 
     async def _health(self) -> tuple[str, dict[str, Any]]:
         boot = await self._get("/api/health/boot")
+        heartbeat = await self._get("/api/health/heartbeat")
         health = await self._get("/api/health")
         bootstrap = await self._get("/api/ui/bootstrap")
-        if not isinstance(boot, dict) or not isinstance(health, dict):
+        if not isinstance(boot, dict) or not isinstance(heartbeat, dict) or not isinstance(health, dict):
             raise AssertionError("health endpoints did not return JSON objects")
+        if heartbeat.get("healthy") is not True:
+            raise AssertionError(f"readiness heartbeat is not healthy: {heartbeat}")
+        if heartbeat.get("runtime_probe_healthy") is not True:
+            raise AssertionError(f"readiness heartbeat probes failed: {heartbeat}")
+        blockers = heartbeat.get("blockers")
+        if not isinstance(blockers, list) or blockers:
+            raise AssertionError(f"readiness heartbeat has blockers: {heartbeat}")
+        required = heartbeat.get("required_probes")
+        if not isinstance(required, dict) or required.get("all_passed") is not True:
+            raise AssertionError(f"readiness heartbeat missing complete required probes: {heartbeat}")
         if "conversation" not in bootstrap:
             raise AssertionError("ui bootstrap missing conversation payload")
-        return "health, boot, and UI bootstrap responded", {"boot": boot, "health": health}
+        return "health, readiness heartbeat, boot, and UI bootstrap responded", {
+            "boot": boot,
+            "heartbeat": heartbeat,
+            "health": health,
+        }
 
     async def _voice_runtime_ready(self) -> tuple[str, dict[str, Any]]:
         bootstrap = await self._get("/api/ui/bootstrap")

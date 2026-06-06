@@ -12,6 +12,7 @@ a typed HealthVerdict with clear pass/fail semantics.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from dataclasses import dataclass, field
@@ -479,6 +480,29 @@ def _service_status_payload(status: ServiceStatus) -> dict[str, Any]:
     }
 
 
+def _coerce_liveness_result(result: Any) -> tuple[bool, str | None]:
+    """Accept only explicit liveness success values.
+
+    Health probes are a runtime launch contract, not a generic truthiness check.
+    A coroutine object, non-empty string, list, or arbitrary object must never
+    make Aura look healthy.
+    """
+    if inspect.isawaitable(result):
+        close = getattr(result, "close", None)
+        if callable(close):
+            close()
+        return False, "liveness check returned awaitable; sync health contract cannot count it as ready"
+    if isinstance(result, bool):
+        return result, None if result else "liveness check returned False"
+    if isinstance(result, dict):
+        for key in ("ok", "ready", "healthy", "alive", "operational"):
+            if key in result:
+                return bool(result.get(key) is True), None if result.get(key) is True else f"{key} was not True"
+    if result is None:
+        return False, "liveness check returned None"
+    return False, f"unsupported liveness result type: {type(result).__name__}"
+
+
 def _tier_summary(services: list[ServiceStatus], tier: ServiceTier) -> dict[str, int]:
     tier_services = [status for status in services if status.requirement.tier == tier]
     failed = [
@@ -514,9 +538,12 @@ def evaluate_health() -> HealthVerdict:
                     check_fn = getattr(svc, req.liveness_check, None)
                     if callable(check_fn):
                         result = check_fn()
-                        liveness_ok = bool(result)
+                        liveness_ok, result_error = _coerce_liveness_result(result)
                         if not liveness_ok:
-                            error = f"{req.liveness_check}() returned False"
+                            if result_error == "liveness check returned False":
+                                error = f"{req.liveness_check}() returned False"
+                            else:
+                                error = result_error or f"{req.liveness_check}() did not return explicit True"
                     else:
                         liveness_ok = False
                         error = f"missing liveness check: {req.liveness_check}()"

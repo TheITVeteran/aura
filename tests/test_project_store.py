@@ -4,9 +4,12 @@
 Verification for Phase 17.1: ProjectStore persistence and task retrieval.
 """
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+
+import pytest
 
 from core.data.project_store import ProjectStore
 
@@ -66,6 +69,23 @@ class TestProjectStore(unittest.TestCase):
         tasks = new_store.get_tasks_for_project(proj.id)
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0].description, "Task 1")
+
+    def test_invalid_statuses_are_rejected(self):
+        proj = self.store.create_project("Strict Proj", "Goal")
+        task = self.store.add_task(proj.id, "Task 1")
+
+        with pytest.raises(ValueError):
+            self.store.update_project_status(proj.id, "maybe")
+        with pytest.raises(ValueError):
+            self.store.update_task_status(task.id, "maybe")
+
+    def test_missing_updates_report_false(self):
+        self.assertFalse(self.store.update_project_status("missing-project", "completed"))
+        self.assertFalse(self.store.update_task_status("missing-task", "completed"))
+
+    def test_orphan_task_is_rejected_by_foreign_key(self):
+        with pytest.raises(sqlite3.IntegrityError):
+            self.store.add_task("missing-project", "cannot be orphaned")
 
 if __name__ == '__main__':
     unittest.main()

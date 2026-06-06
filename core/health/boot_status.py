@@ -237,6 +237,8 @@ def build_boot_health_snapshot(
         boot_phase = "proxy_ready" if system_ready else "proxy_transport_only"
         status_text = "ready" if system_ready else "not_ready"
         http_status = 200 if system_ready else 503
+        user_ready = bool(system_ready)
+        launcher_ready = bool(system_ready)
     else:
         blockers = []
         if orchestrator is None:
@@ -285,12 +287,17 @@ def build_boot_health_snapshot(
             and runtime_required_probes_ok
             and (running or runtime_fresh or cycle_count > 0)
         )
+        user_ready = bool(system_ready)
+        launcher_ready = bool(system_ready)
         status_text = "ready" if system_ready else "booting"
         http_status = 200 if system_ready else 503
 
         if system_ready and conversation_ready:
             boot_phase = "kernel_ready"
             status_text = "ready"
+            user_ready = True
+            launcher_ready = True
+            http_status = 200
         elif system_ready and not conversation_ready:
             lane_is_standby = (
                 conversation_state in {"cold", "closed", ""}
@@ -300,8 +307,14 @@ def build_boot_health_snapshot(
             if lane_is_standby:
                 boot_phase = "kernel_ready"
                 status_text = "ready"
+                user_ready = True
+                launcher_ready = True
+                http_status = 200
             else:
                 blockers.append("conversation_ready")
+                user_ready = False
+                launcher_ready = False
+                http_status = 503
                 if conversation_state == "failed":
                     blockers.append("conversation_failed")
                     boot_phase = "conversation_failed"
@@ -312,9 +325,13 @@ def build_boot_health_snapshot(
         elif initialized or running or runtime_fresh or cycle_count > 0:
             boot_phase = "kernel_warming"
             status_text = "booting"
+            user_ready = False
+            launcher_ready = False
         else:
             boot_phase = "kernel_bootstrap"
             status_text = "booting"
+            user_ready = False
+            launcher_ready = False
 
     progress = _boot_progress_for_phase(boot_phase)
     status_message = _boot_status_message(
@@ -328,8 +345,8 @@ def build_boot_health_snapshot(
         "semver": VERSION,
         "status": status_text,
         "status_message": status_message,
-        "ready": system_ready,
-        "launcher_ready": system_ready,
+        "ready": user_ready,
+        "launcher_ready": launcher_ready,
         "system_ready": system_ready,
         "conversation_ready": conversation_ready,
         "boot_phase": boot_phase,

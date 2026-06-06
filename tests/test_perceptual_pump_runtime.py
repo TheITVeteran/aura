@@ -8,9 +8,44 @@ from core.perception.perceptual_pump import (
     ScreenState,
     SystemState,
     UserState,
+    _collect_screen_state,
     frame_to_runtime_body,
 )
 from core.world_state import WorldState
+
+
+class _CompletedProcess:
+    def __init__(self, stdout: str):
+        self.returncode = 0
+        self.stdout = stdout
+
+
+def test_screen_state_probe_uses_read_only_subprocess_gateway(monkeypatch) -> None:
+    calls = []
+
+    class Gateway:
+        def run(self, argv, **kwargs):
+            calls.append((argv, kwargs))
+            if "frontmost" in argv[-1]:
+                return _CompletedProcess("Notes\n")
+            return _CompletedProcess("Aura Journal\n")
+
+    monkeypatch.setattr(
+        "core.runtime.subprocess_gateway.get_subprocess_gateway",
+        lambda: Gateway(),
+    )
+
+    state = _collect_screen_state("")
+
+    assert state.active_app == "Notes"
+    assert state.window_title == "Aura Journal"
+    assert state.screen_changed is True
+    assert state.change_magnitude == 0.3
+    assert [call[1]["source"] for call in calls] == [
+        "perceptual_pump.screen.app",
+        "perceptual_pump.screen.title",
+    ]
+    assert all(call[1]["read_only"] is True for call in calls)
 
 
 def test_perceptual_frame_maps_into_runtime_body_observed_vector() -> None:

@@ -1,6 +1,10 @@
 import json
 
-from core.data.simulation_well import SimulationDataset, SimulationWellRegistry
+from core.data.simulation_well import (
+    SimulationDataset,
+    SimulationWellRegistry,
+    default_simulation_well,
+)
 from core.media.temporal_atlas import TemporalAtlas
 from core.runtime.activation_audit import DEFAULT_SPECS, ActivationAuditor
 from core.runtime.capability_tokens import get_capability_token_store, reset_capability_token_store
@@ -155,6 +159,18 @@ def test_simulation_well_plans_and_streams_local_records(tmp_path):
     assert shards[0].uri.endswith("train")
     assert records == [{"step": 1, "value": 0.1}]
     assert registry.list(domain="biophysics")[0].name == "active_matter"
+
+
+def test_simulation_well_preserves_corrupt_manifest_without_default_overwrite(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    original = "{not-json"
+    manifest.write_text(original, encoding="utf-8")
+
+    registry = default_simulation_well(manifest)
+
+    assert registry.list() == []
+    assert registry._load_error
+    assert manifest.read_text(encoding="utf-8") == original
 
 
 def test_agent_workspace_is_architecture_manifest_role():

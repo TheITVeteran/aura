@@ -45,12 +45,27 @@ fn readiness_heartbeat_is_healthy(payload: &Value) -> bool {
     if probes.get("all_passed").and_then(Value::as_bool) != Some(true) {
         return false;
     }
-    for group in ["kernel", "inference", "memory", "scheduler", "tool_governance"] {
+    let required_components = [
+        ("kernel", vec!["kernel_interface"]),
+        ("inference", vec!["inference_gate", "llm_router"]),
+        ("memory", vec!["state_repository", "memory_facade", "memory_write_gateway"]),
+        ("scheduler", vec!["scheduler"]),
+        ("tool_governance", vec!["unified_will", "authority_gateway", "capability_engine"]),
+    ];
+    for (group, components) in required_components {
         let Some(probe) = probes.get(group).and_then(Value::as_object) else {
             return false;
         };
         if probe.get("ok").and_then(Value::as_bool) != Some(true) {
             return false;
+        }
+        let Some(component_statuses) = probe.get("components").and_then(Value::as_object) else {
+            return false;
+        };
+        for component in components {
+            if component_statuses.get(component).and_then(Value::as_bool) != Some(true) {
+                return false;
+            }
         }
     }
     true

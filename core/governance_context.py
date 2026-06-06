@@ -111,11 +111,19 @@ def governance_runtime_active() -> bool:
     try:
         from core.container import ServiceContainer
 
-        return (
+        runtime_services_present = (
             ServiceContainer.has("executive_core")
             or ServiceContainer.has("aura_kernel")
             or ServiceContainer.has("kernel_interface")
-            or bool(getattr(ServiceContainer, "_registration_locked", False))
+        )
+        if not getattr(ServiceContainer, "_registration_locked", False):
+            # Early boot can use degraded governance only before canonical
+            # runtime services exist. Once kernel/executive/interface is
+            # registered, consequential sinks must fail closed even if the
+            # container has not finished locking registration.
+            return runtime_services_present
+        return runtime_services_present or bool(
+            getattr(ServiceContainer, "_registration_locked", False)
         )
     except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("governance_context", exc)

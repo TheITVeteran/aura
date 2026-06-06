@@ -2825,7 +2825,7 @@ const REQUIRED_RUNTIME_PROBES = ['kernel', 'inference', 'memory', 'scheduler', '
 const REQUIRED_RUNTIME_PROBE_COMPONENTS = {
     kernel: ['kernel_interface'],
     inference: ['inference_gate', 'llm_router'],
-    memory: ['state_repository', 'memory_facade'],
+    memory: ['state_repository', 'memory_facade', 'memory_write_gateway'],
     scheduler: ['scheduler'],
     tool_governance: ['unified_will', 'authority_gateway', 'capability_engine']
 };
