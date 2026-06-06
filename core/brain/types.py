@@ -51,6 +51,7 @@ class OrchestratorService(Service, Protocol):
 class ThinkingMode(Enum):
     """Aura's primary gears of thought."""
     FAST = auto()        # Direct response, no CoT
+    QUICK = FAST         # Backward-compatible alias for older fast-lane callers
     SLOW = auto()        # Short CoT (3-5 steps)
     DEEP = auto()        # Long CoT (10-20 steps)
     REFLECTIVE = auto()  # Metacognitive review/alignment

@@ -11,11 +11,20 @@ import importlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
 from core.capability_engine import CapabilityEngine, SkillMetadata, SkillRequirements
+
+
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.result
 
 
 def test_capability_engine_registered_skill_classes_are_importable():
@@ -236,7 +245,7 @@ async def test_computer_use_open_url_uses_default_browser_without_accessibility(
 
 
 @pytest.mark.asyncio
-async def test_computer_use_read_screen_text_reports_accessibility_placeholder_as_failure(monkeypatch):
+async def test_computer_use_read_screen_text_reports_accessibility_marker_as_failure(monkeypatch):
     import core.skills.computer_use as computer_use
 
     async def _allow_permissions(self, capability, *permission_names):
@@ -309,7 +318,8 @@ async def test_capability_engine_uses_skill_timeout_budget_for_cognitive_governo
     }
     engine.instances = {}
     engine._cognitive_governor = _Governor()
-    engine._execute_with_retry = AsyncMock(return_value={"ok": True})
+    execute_with_retry = AsyncCallRecorder(result={"ok": True})
+    engine._execute_with_retry = execute_with_retry
 
     monkeypatch.setattr(
         "core.capability_engine.ServiceContainer.has",
@@ -323,6 +333,7 @@ async def test_capability_engine_uses_skill_timeout_budget_for_cognitive_governo
 
     assert result["ok"] is True
     assert captured == {"task_name": "slow_skill", "timeout_seconds": 57.0}
+    assert len(execute_with_retry.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -355,7 +366,8 @@ async def test_capability_engine_blocks_when_permission_model_check_fails(monkey
     }
     engine.instances = {}
     engine._cognitive_governor = _Governor()
-    engine._execute_with_retry = AsyncMock(return_value={"ok": True})
+    execute_with_retry = AsyncCallRecorder(result={"ok": True})
+    engine._execute_with_retry = execute_with_retry
 
     def _get_service(name, default=None):
         if name == "permission_model":
@@ -378,7 +390,7 @@ async def test_capability_engine_blocks_when_permission_model_check_fails(monkey
 
     assert result["ok"] is False
     assert result["status"] == "blocked_by_permission_model_failure"
-    engine._execute_with_retry.assert_not_called()
+    assert execute_with_retry.calls == []
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -6,10 +6,20 @@ from core.inner_monologue import ThoughtPacket
 from core.language_center import LanguageCenter
 
 
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.result
+
+
 @pytest.mark.asyncio
 async def test_language_center_dispatches_expression_as_messages():
-    router = MagicMock()
-    router.generate = AsyncMock(return_value="Sharp answer.")
+    generate = AsyncCallRecorder(result="Sharp answer.")
+    router = SimpleNamespace(generate=generate)
 
     center = LanguageCenter()
     center._router = router
@@ -33,8 +43,8 @@ async def test_language_center_dispatches_expression_as_messages():
     )
 
     assert result == "Sharp answer."
-    router.generate.assert_awaited_once()
-    kwargs = router.generate.await_args.kwargs
+    assert len(generate.calls) == 1
+    kwargs = generate.calls[0].kwargs
     assert kwargs["messages"] == [
         {"role": "system", "content": "SYSTEM BRIEF"},
         {"role": "user", "content": "Earlier question"},
@@ -49,8 +59,8 @@ async def test_language_center_dispatches_expression_as_messages():
 
 @pytest.mark.asyncio
 async def test_language_center_can_mark_autonomous_expression_as_background():
-    router = MagicMock()
-    router.generate = AsyncMock(return_value="Quiet reflection.")
+    generate = AsyncCallRecorder(result="Quiet reflection.")
+    router = SimpleNamespace(generate=generate)
 
     center = LanguageCenter()
     center._router = router
@@ -71,6 +81,7 @@ async def test_language_center_can_mark_autonomous_expression_as_background():
     )
 
     assert result == "Quiet reflection."
-    kwargs = router.generate.await_args.kwargs
+    assert len(generate.calls) == 1
+    kwargs = generate.calls[0].kwargs
     assert kwargs["origin"] == "autonomous"
     assert kwargs["is_background"] is True

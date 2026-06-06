@@ -220,7 +220,7 @@ class ContinuousSensoryBuffer:
             for mime_type, frame_bytes in self.frame_buffer
         ]
 
-    async def query_visual_context(self, prompt: str, brain: Any) -> str:
+    async def query_visual_context(self, prompt: str, brain: Any, mode: Any | None = None) -> str:
         """
         Sends the current frame buffer and the prompt to the brain for visual reasoning.
 
@@ -238,7 +238,7 @@ class ContinuousSensoryBuffer:
             if hasattr(brain, "think"):
                 from core.brain.types import ThinkingMode
 
-                thought = await brain.think(prompt, mode=ThinkingMode.FAST, parts=parts)
+                thought = await brain.think(prompt, mode=mode or ThinkingMode.FAST, parts=parts)
                 return thought.content if hasattr(thought, "content") else str(thought)
             elif hasattr(brain, "call"):
                 success, text, _ = await brain.call(prompt, parts=parts)

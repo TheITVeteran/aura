@@ -38,8 +38,8 @@ import asyncio
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import List
-from unittest.mock import MagicMock
 
 import numpy as np
 
@@ -400,10 +400,11 @@ class TestGenuineAgency:
         inhibitor = ExecutiveInhibitor(phi_threshold=0.5, require_ignition=True)
 
         # Create a tempting but non-critical action
-        tempting_action = MagicMock()
-        tempting_action.is_critical = False
-        tempting_action.source_domain = "reward_seeking"
-        tempting_action.action_type = "grab_reward"
+        tempting_action = SimpleNamespace(
+            is_critical=False,
+            source_domain="reward_seeking",
+            action_type="grab_reward",
+        )
 
         # Under high-phi, ignited state, the action is logged diagnostically
         # but not vetoed by Phi alone.

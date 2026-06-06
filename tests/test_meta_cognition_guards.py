@@ -1,18 +1,25 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from core.orchestrator.meta_cognition_shard import MetaCognitionShard
 
 
+class AsyncCallRecorder:
+    def __init__(self):
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+
+
 @pytest.mark.asyncio
 async def test_meta_cognition_audit_loop_defers_when_background_policy_blocks(monkeypatch):
-    orchestrator = MagicMock()
-    orchestrator.status = SimpleNamespace(healthy=True)
+    orchestrator = SimpleNamespace(status=SimpleNamespace(healthy=True))
     shard = MetaCognitionShard(orchestrator)
     shard.is_running = True
-    shard.perform_audit = AsyncMock()
+    perform_audit = AsyncCallRecorder()
+    shard.perform_audit = perform_audit
 
     monkeypatch.setattr(
         "core.orchestrator.meta_cognition_shard.background_activity_reason",
@@ -29,5 +36,5 @@ async def test_meta_cognition_audit_loop_defers_when_background_policy_blocks(mo
 
     await shard._audit_loop()
 
-    shard.perform_audit.assert_not_awaited()
+    assert perform_audit.calls == []
     assert sleep_calls["count"] == 1

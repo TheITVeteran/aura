@@ -219,8 +219,15 @@ def _record_capability_degradation(
     *,
     action: str,
     severity: str = "warning",
+    enforce_failure_policy: bool = True,
 ) -> None:
-    record_degradation("capability_engine", exc, severity=severity, action=action)
+    record_degradation(
+        "capability_engine",
+        exc,
+        severity=severity,
+        action=action,
+        enforce_failure_policy=enforce_failure_policy,
+    )
 
 
 _FIELD_DEFAULT_FACTORY_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
@@ -2831,6 +2838,7 @@ class CapabilityEngine(AuraBaseModule):
                     pm_err,
                     action="blocked tool execution because permission model check failed",
                     severity="degraded",
+                    enforce_failure_policy=False,
                 )
                 return {
                     "ok": False,
