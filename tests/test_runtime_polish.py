@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -291,6 +292,107 @@ def test_websocket_runtime_heartbeat_rejects_forged_all_passed(monkeypatch):
     assert payload["healthy"] is False
     assert "runtime_required_probes" in payload["blockers"]
     assert "probe:memory" in payload["blockers"]
+
+
+def _complete_required_probe_payload() -> dict[str, object]:
+    return {
+        "all_passed": True,
+        "kernel": {"ok": True, "components": {"kernel_interface": True}},
+        "inference": {
+            "ok": True,
+            "components": {"inference_gate": True, "llm_router": True},
+        },
+        "memory": {
+            "ok": True,
+            "components": {"state_repository": True, "memory_facade": True},
+        },
+        "scheduler": {"ok": True, "components": {"scheduler": True}},
+        "tool_governance": {
+            "ok": True,
+            "components": {
+                "unified_will": True,
+                "authority_gateway": True,
+                "capability_engine": True,
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_api_heartbeat_rejects_boot_payload_without_required_probe_components(monkeypatch):
+    from interface.routes import system as system_routes
+
+    forged_probes = _complete_required_probe_payload()
+    forged_probes["memory"] = {"ok": True, "components": {"state_repository": True}}
+
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+    monkeypatch.setattr(system_routes, "_get_runtime_state_safe", lambda: {})
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_conversation_lane_status_resilient",
+        lambda: {"conversation_ready": True, "state": "ready"},
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "build_boot_health_snapshot",
+        lambda *_args, **_kwargs: (
+            {
+                "ready": True,
+                "system_ready": True,
+                "required_probes": forged_probes,
+                "blockers": [],
+                "boot_phase": "kernel_ready",
+                "conversation_ready": True,
+            },
+            200,
+        ),
+    )
+
+    response = await system_routes.api_heartbeat()
+    payload = json.loads(response.body)
+
+    assert response.status_code == 503
+    assert payload["healthy"] is False
+    assert payload["runtime_probe_healthy"] is False
+    assert "runtime_required_probes" in payload["blockers"]
+    assert "probe:memory" in payload["blockers"]
+
+
+@pytest.mark.asyncio
+async def test_api_heartbeat_reports_healthy_only_with_all_required_probe_components(monkeypatch):
+    from interface.routes import system as system_routes
+
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+    monkeypatch.setattr(system_routes, "_get_runtime_state_safe", lambda: {})
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_conversation_lane_status_resilient",
+        lambda: {"conversation_ready": True, "state": "ready"},
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "build_boot_health_snapshot",
+        lambda *_args, **_kwargs: (
+            {
+                "ready": True,
+                "system_ready": True,
+                "required_probes": _complete_required_probe_payload(),
+                "blockers": [],
+                "boot_phase": "kernel_ready",
+                "conversation_ready": True,
+            },
+            200,
+        ),
+    )
+
+    response = await system_routes.api_heartbeat()
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload["status"] == "healthy"
+    assert payload["healthy"] is True
+    assert payload["runtime_probe_healthy"] is True
+    assert payload["blockers"] == []
 
 
 def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
