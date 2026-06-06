@@ -1087,21 +1087,58 @@ class MLXLocalClient:
         worker_alive = self.is_alive()
         lane_state = self._lane_state
         lane_error = self._lane_error
+        now = time.time()
+        progress_anchor = max(
+            self._last_heartbeat,
+            self._last_progress_at,
+            self._last_ready_at,
+            self._last_token_progress_at,
+            self._last_generation_completed_at,
+        )
+        progress_age_s = max(0.0, now - progress_anchor) if progress_anchor > 0.0 else None
+        heartbeat_age_s = (
+            max(0.0, now - self._last_heartbeat) if self._last_heartbeat > 0.0 else None
+        )
+        readiness_blockers: list[str] = []
+        if _runtime_shutdown_requested():
+            readiness_blockers.append("runtime_shutdown")
+        if not worker_alive:
+            readiness_blockers.append("worker_not_alive")
+        if not self._init_done:
+            readiness_blockers.append("init_not_complete")
+        if lane_state != "ready":
+            readiness_blockers.append(f"lane_{lane_state}")
+        if progress_anchor <= 0.0:
+            readiness_blockers.append("no_worker_progress")
+        elif progress_age_s is not None and progress_age_s > self._stale_after():
+            readiness_blockers.append("worker_progress_stale")
         if lane_state == "ready" and not worker_alive:
             lane_state = "cold"
             lane_error = "worker_not_alive"
             self._set_lane_state(lane_state, lane_error)
-        conversation_ready = worker_alive and lane_state == "ready"
+        elif lane_state == "ready" and any(
+            blocker in {"no_worker_progress", "worker_progress_stale"}
+            for blocker in readiness_blockers
+        ):
+            lane_state = "recovering"
+            lane_error = "worker_progress_stale"
+            self._set_lane_state(lane_state, lane_error)
+            if f"lane_{lane_state}" not in readiness_blockers:
+                readiness_blockers.append(f"lane_{lane_state}")
+        conversation_ready = not readiness_blockers
         return {
             "model_path": self.model_path,
             "state": lane_state,
             "last_error": lane_error,
             "conversation_ready": conversation_ready,
+            "readiness_blockers": readiness_blockers,
             "foreground_owned": _foreground_owner_active(),
             "foreground_owner": _FOREGROUND_OWNER_NAME,
             "foreground_owned_at": _FOREGROUND_OWNER_ACQUIRED_AT,
             "last_heartbeat": self._last_heartbeat,
+            "heartbeat_age_s": heartbeat_age_s,
             "last_progress_at": self._last_progress_at,
+            "progress_age_s": progress_age_s,
             "last_token_progress_at": self._last_token_progress_at,
             "last_ready_at": self._last_ready_at,
             "last_generation_completed_at": self._last_generation_completed_at,
@@ -1400,7 +1437,9 @@ class MLXLocalClient:
             return True
         stale_after = float(stale_after or self._stale_after())
         last_progress = max(self._last_heartbeat, self._last_progress_at, self._last_ready_at)
-        return bool(last_progress and (time.time() - last_progress) > stale_after)
+        if last_progress <= 0.0:
+            return True
+        return bool((time.time() - last_progress) > stale_after)
 
     def _check_lane_state_staleness(self) -> None:
         """[STABILITY v51] Auto-reset stuck non-terminal lane states.

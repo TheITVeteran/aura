@@ -1291,6 +1291,9 @@ def test_strict_answer_contract_is_deterministic_and_cache_isolated():
     assert '"strict_answer_contract": bool(kwargs.get("strict_answer_contract", False))' in client_source
     assert '"strict_value_contract": bool(kwargs.get("strict_value_contract", False))' in client_source
     assert 'def get_lane_status(self) -> dict[str, Any]:' in gate_source
+    assert '"readiness_blockers": readiness_blockers' in client_source
+    assert '"worker_progress_stale"' in client_source
+    assert 'progress_anchor <= 0.0' in client_source
     assert '"recurrent_depth",' in gate_source
     assert 'and foreground_request and not strict_answer_contract' in client_source
     assert 'disable_prompt_cache = bool(job.get("disable_prompt_cache", False)) or strict_answer_contract' in worker_source

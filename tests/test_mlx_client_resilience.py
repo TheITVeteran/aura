@@ -249,6 +249,39 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(hasattr(client._substrate_mem, "get_lock"))
         self.assertFalse(hasattr(client._steering_active, "get_lock"))
 
+    def test_ready_lane_without_progress_is_not_conversation_ready(self):
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        client._process = ProcessProbe(alive=True)
+        client._init_done = True
+        client._set_lane_state("ready")
+
+        with replace_dotted("core.brain.llm.mlx_client.time.time", lambda: 1000.0):
+            lane = client.get_lane_status()
+
+        self.assertEqual(lane["state"], "recovering")
+        self.assertFalse(lane["conversation_ready"])
+        self.assertEqual(lane["last_error"], "worker_progress_stale")
+        self.assertIn("no_worker_progress", lane["readiness_blockers"])
+        self.assertIn("lane_recovering", lane["readiness_blockers"])
+
+    def test_ready_lane_with_stale_progress_is_not_conversation_ready(self):
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        client._process = ProcessProbe(alive=True)
+        client._init_done = True
+        client._set_lane_state("ready")
+        client._last_heartbeat = 900.0
+        client._last_progress_at = 900.0
+        client._last_ready_at = 900.0
+
+        with replace_dotted("core.brain.llm.mlx_client.time.time", lambda: 1000.0):
+            lane = client.get_lane_status()
+
+        self.assertEqual(lane["state"], "recovering")
+        self.assertFalse(lane["conversation_ready"])
+        self.assertEqual(lane["last_error"], "worker_progress_stale")
+        self.assertIn("worker_progress_stale", lane["readiness_blockers"])
+        self.assertGreaterEqual(lane["heartbeat_age_s"], 100.0)
+
     def test_replace_ipc_queues_closes_previous_queues_before_recreation(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
         old_req_q = self._FakeQueue()
