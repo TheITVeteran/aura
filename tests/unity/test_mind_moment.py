@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from core.container import ServiceContainer
 from core.state.aura_state import AuraState
 from core.unity.runtime import UnityRuntime
@@ -68,32 +66,32 @@ def test_mind_moment_lesion_specific_degradation():
     assert "memory" in lesion_moment["lesion_expectations"]
 
 
-def test_will_blocks_external_action_when_mind_moment_closure_collapses():
+def test_will_blocks_external_action_when_mind_moment_closure_collapses(monkeypatch):
     ServiceContainer.clear()
     will = UnifiedWill()
-    with patch.object(will, "_consult_substrate", return_value=(0.9, 0.0, "receipt")):
-        with patch.object(will, "_read_affect_valence", return_value=0.0):
-            with patch.object(
-                will,
-                "_read_unity_context",
-                return_value={
-                    "level": "coherent",
-                    "unity_score": 0.9,
-                    "fragmentation_score": 0.0,
-                    "safe_to_act": True,
-                    "memory_commit_mode": "clean",
-                    "ownership_confidence": 1.0,
-                    "mind_moment_id": "mind_collapsed",
-                    "causal_closure_score": 0.2,
-                    "closure_missing": ["world", "memory", "will"],
-                },
-            ):
-                decision = will.decide(
-                    content="push this update to github",
-                    source="tool_runner",
-                    domain=ActionDomain.TOOL_EXECUTION,
-                    context={"external_action": True},
-                )
+    monkeypatch.setattr(will, "_consult_substrate", lambda *args, **kwargs: (0.9, 0.0, "receipt"))
+    monkeypatch.setattr(will, "_read_affect_valence", lambda: 0.0)
+    monkeypatch.setattr(
+        will,
+        "_read_unity_context",
+        lambda: {
+            "level": "coherent",
+            "unity_score": 0.9,
+            "fragmentation_score": 0.0,
+            "safe_to_act": True,
+            "memory_commit_mode": "clean",
+            "ownership_confidence": 1.0,
+            "mind_moment_id": "mind_collapsed",
+            "causal_closure_score": 0.2,
+            "closure_missing": ["world", "memory", "will"],
+        },
+    )
+    decision = will.decide(
+        content="push this update to github",
+        source="tool_runner",
+        domain=ActionDomain.TOOL_EXECUTION,
+        context={"external_action": True},
+    )
 
     assert decision.outcome == WillOutcome.REFUSE
     assert decision.mind_moment_id == "mind_collapsed"

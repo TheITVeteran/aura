@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import patch
 
+from core.consciousness import self_report as self_report_module
 from core.consciousness.self_report import SelfReportEngine
 
 
@@ -15,7 +15,7 @@ class _FreeEnergyState:
         self.valence = valence
 
 
-def test_fragmented_unity_reports_measurable_cause():
+def test_fragmented_unity_reports_measurable_cause(monkeypatch):
     mapping = {
         "unity_state": SimpleNamespace(level="fragmented"),
         "unity_fragmentation_report": SimpleNamespace(
@@ -25,19 +25,27 @@ def test_fragmented_unity_reports_measurable_cause():
     }
     fe = SimpleNamespace(current=_FreeEnergyState(free_energy=0.1), get_trend=lambda: "stable")
 
-    with patch("core.consciousness.self_report.ServiceContainer.get", side_effect=lambda name, default=None: mapping.get(name, default)):
-        with patch("core.consciousness.self_report.get_free_energy_engine", return_value=fe):
-            report = SelfReportEngine().generate_state_report()
+    monkeypatch.setattr(
+        self_report_module.ServiceContainer,
+        "get",
+        lambda name, default=None: mapping.get(name, default),
+    )
+    monkeypatch.setattr(self_report_module, "get_free_energy_engine", lambda: fe)
+    report = SelfReportEngine().generate_state_report()
 
     assert "draft conflict" in report.lower()
 
 
-def test_nominal_state_does_not_force_fragmentation_language():
+def test_nominal_state_does_not_force_fragmentation_language(monkeypatch):
     mapping = {}
     fe = SimpleNamespace(current=_FreeEnergyState(free_energy=0.35), get_trend=lambda: "stable")
 
-    with patch("core.consciousness.self_report.ServiceContainer.get", side_effect=lambda name, default=None: mapping.get(name, default)):
-        with patch("core.consciousness.self_report.get_free_energy_engine", return_value=fe):
-            report = SelfReportEngine().generate_state_report()
+    monkeypatch.setattr(
+        self_report_module.ServiceContainer,
+        "get",
+        lambda name, default=None: mapping.get(name, default),
+    )
+    monkeypatch.setattr(self_report_module, "get_free_energy_engine", lambda: fe)
+    report = SelfReportEngine().generate_state_report()
 
     assert report is None

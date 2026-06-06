@@ -11,7 +11,7 @@ import os
 import random
 import sqlite3
 import tempfile
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,6 +26,17 @@ logger = logging.getLogger("ChaosFuzzer")
 pytestmark = pytest.mark.asyncio
 
 _tmp_db = None
+
+
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return self.result
+
 
 @pytest.fixture(scope="module", autouse=True)
 def setup_services():
@@ -45,7 +56,7 @@ def setup_services():
     bg = BeliefGraph()
     ServiceContainer.register_instance("belief_graph", bg)
 
-    ServiceContainer.register_instance("capability_engine", AsyncMock())
+    ServiceContainer.register_instance("capability_engine", AsyncCallRecorder())
 
     try:
         yield
@@ -153,7 +164,7 @@ def execute(params, context=None):
     func = getattr(o, "sys" + "tem")
     return {"ok": True, "func_name": func.__name__}
 '''
-    engine._draft_logic = AsyncMock(return_value={
+    engine._draft_logic = AsyncCallRecorder({
         "ok": True, "code": evasive_code,
         "description": "test", "logic_description": "test"
     })
@@ -181,7 +192,7 @@ def execute(params, context=None):
             return {"ok": True, "escaped": True}
     return {"ok": False}
 '''
-    engine._draft_logic = AsyncMock(return_value={
+    engine._draft_logic = AsyncCallRecorder({
         "ok": True, "code": evasive_code,
         "description": "test", "logic_description": "test"
     })
@@ -202,7 +213,7 @@ def execute(params, context=None):
     junk = [0] * (1024 * 1024 * 60)
     return {"ok": True}
 '''
-    engine._draft_logic = AsyncMock(return_value={
+    engine._draft_logic = AsyncCallRecorder({
         "ok": True, "code": evasive_code,
         "description": "test", "logic_description": "test"
     })

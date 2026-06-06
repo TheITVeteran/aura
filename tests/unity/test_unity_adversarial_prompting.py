@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import patch
 
+from core.phases import response_generation_unitary as unitary_module
 from core.phases.response_generation_unitary import UnitaryResponsePhase
 from core.state.aura_state import AuraState
 
 
-def test_integrated_frame_warns_against_false_clarity():
+def test_integrated_frame_warns_against_false_clarity(monkeypatch):
     state = AuraState()
     state.cognition.current_objective = "explain how I feel"
     state.response_modifiers["unity_claim"] = "Something is not sitting right."
@@ -24,8 +24,12 @@ def test_integrated_frame_warns_against_false_clarity():
         "phenomenal_now": None,
     }
 
-    with patch("core.phases.response_generation_unitary.ServiceContainer.get", side_effect=lambda name, default=None: mapping.get(name, default)):
-        frame = phase._build_integrated_coherence_frame(state)
+    monkeypatch.setattr(
+        unitary_module.ServiceContainer,
+        "get",
+        lambda name, default=None: mapping.get(name, default),
+    )
+    frame = phase._build_integrated_coherence_frame(state)
 
     assert "Do not claim clarity" in frame
     assert "draft conflict" in frame

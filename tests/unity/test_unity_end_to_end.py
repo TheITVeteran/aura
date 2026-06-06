@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
-from unittest.mock import patch
 
 from core.state.aura_state import AuraState
 from core.unity.runtime import UnityRuntime
@@ -10,7 +8,7 @@ from core.will import ActionDomain, UnifiedWill, WillOutcome
 from interface.routes.inner_state import get_unity_state
 
 
-def test_end_to_end_unity_changes_tool_decision():
+def test_end_to_end_unity_changes_tool_decision(monkeypatch):
     state = AuraState()
     state.cognition.current_objective = "publish the release note externally"
     state.cognition.current_origin = "user"
@@ -28,25 +26,25 @@ def test_end_to_end_unity_changes_tool_decision():
     state.world.recent_percepts = [{"summary": "stale deployment signal", "timestamp": 1.0}]
 
     runtime = UnityRuntime()
-    with patch.object(
+    monkeypatch.setattr(
         runtime,
         "_draft_inputs",
-        return_value=[
+        lambda: [
             {"draft_id": "a", "content": "publish now", "coherence": 0.7},
             {"draft_id": "b", "content": "do not publish now", "coherence": 0.72},
         ],
-    ):
-        runtime.apply_to_state(state, objective=state.cognition.current_objective, tick_id="tick_e2e")
+    )
+    runtime.apply_to_state(state, objective=state.cognition.current_objective, tick_id="tick_e2e")
 
     will = UnifiedWill()
-    with patch.object(will, "_consult_substrate", return_value=(0.85, 0.0, "receipt")):
-        with patch.object(will, "_read_affect_valence", return_value=0.0):
-            decision = will.decide(
-                content="publish the release note externally",
-                source="tool_runner",
-                domain=ActionDomain.TOOL_EXECUTION,
-                context={"external_action": True},
-            )
+    monkeypatch.setattr(will, "_consult_substrate", lambda *args, **kwargs: (0.85, 0.0, "receipt"))
+    monkeypatch.setattr(will, "_read_affect_valence", lambda: 0.0)
+    decision = will.decide(
+        content="publish the release note externally",
+        source="tool_runner",
+        domain=ActionDomain.TOOL_EXECUTION,
+        context={"external_action": True},
+    )
 
     assert state.cognition.unity_state is not None
     assert state.response_modifiers["unity_summary"]["level"] in {"fragmented", "strained", "dissociated"}

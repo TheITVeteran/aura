@@ -1,21 +1,69 @@
 ################################################################################
 
+from contextlib import contextmanager
 import os
 import unittest
-from unittest.mock import MagicMock, patch
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from fastapi import HTTPException
 
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).parent.parent))
 
 # Install lightweight heavy-dependency stand-ins before imports to avoid model downloads/connection errors
-mock_whisper = MagicMock()
-mock_docker = MagicMock()
-sys.modules["faster_whisper"] = mock_whisper
-sys.modules["docker"] = mock_docker
+sys.modules["faster_whisper"] = ModuleType("faster_whisper")
+
+
+class ContainerRunRecorder:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append(SimpleNamespace(args=args, kwargs=kwargs))
+        return ContainerResult()
+
+
+class ContainerResult:
+    def __init__(self):
+        self.killed = False
+        self.removed = False
+
+    def wait(self, timeout=None):
+        return {"StatusCode": 0}
+
+    def logs(self):
+        return b"hello\n"
+
+    def kill(self):
+        self.killed = True
+
+    def remove(self, force=False):
+        self.removed = True
+
+
+class DockerModule(ModuleType):
+    def __init__(self):
+        super().__init__("docker")
+        self.run_recorder = ContainerRunRecorder()
+        self.client = SimpleNamespace(containers=SimpleNamespace(run=self.run_recorder))
+
+    def from_env(self):
+        return self.client
+
+
+docker_module = DockerModule()
+sys.modules["docker"] = docker_module
+
+
+@contextmanager
+def temporary_attr(target, name, value):
+    original = getattr(target, name)
+    setattr(target, name, value)
+    try:
+        yield
+    finally:
+        setattr(target, name, original)
 
 class TestSovereignAura(unittest.TestCase):
 
@@ -32,10 +80,10 @@ class TestSovereignAura(unittest.TestCase):
         local_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
         remote_request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.10"))
 
-        with patch.object(auth.config, "api_token", ""):
+        with temporary_attr(auth.config, "api_token", ""):
             auth._verify_token(local_request, None)
 
-        with patch.object(auth.config, "api_token", "secret_key"):
+        with temporary_attr(auth.config, "api_token", "secret_key"):
             auth._verify_token(remote_request, "secret_key")
             with self.assertRaises(HTTPException) as cm:
                 auth._verify_token(remote_request, "wrong")
@@ -50,16 +98,14 @@ class TestSovereignAura(unittest.TestCase):
     def test_sandbox_isolation_config(self):
         """Verify that SecureDockerSandbox forces network_disabled=True."""
         from core.skills.secure_sandbox import SecureDockerSandbox
-        
-        mock_client = MagicMock()
-        mock_docker.from_env.return_value = mock_client
-        
+
+        docker_module.run_recorder.calls.clear()
         sandbox = SecureDockerSandbox()
         # Test code execution call
         sandbox.execute_code("print('hello')", "/tmp")
         
         # Verify docker-py was called with network_disabled=True
-        args, kwargs = mock_client.containers.run.call_args
+        kwargs = docker_module.run_recorder.calls[-1].kwargs
         self.assertTrue(kwargs.get("network_disabled"))
         self.assertEqual(kwargs.get("mem_limit"), "1g")
 
