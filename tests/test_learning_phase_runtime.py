@@ -1,11 +1,20 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
 from core.phases.learning_phase import LearningPhase
 from core.state.aura_state import AuraState
+
+
+class AsyncCallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return self.result
 
 
 @pytest.mark.asyncio
@@ -27,8 +36,10 @@ async def test_learning_phase_schedules_enrichment_and_flags_distillation(monkey
         "tool_evidence_available": False,
     }
 
-    enricher = SimpleNamespace(enrich_from_conversation=AsyncMock(return_value={"facts": 1}))
-    distill = SimpleNamespace(flag_for_distillation=AsyncMock())
+    enrich_from_conversation = AsyncCallRecorder({"facts": 1})
+    flag_for_distillation = AsyncCallRecorder()
+    enricher = SimpleNamespace(enrich_from_conversation=enrich_from_conversation)
+    distill = SimpleNamespace(flag_for_distillation=flag_for_distillation)
     tasks = []
     original_create_task = asyncio.create_task
 
@@ -51,9 +62,9 @@ async def test_learning_phase_schedules_enrichment_and_flags_distillation(monkey
     if tasks:
         await asyncio.gather(*tasks)
 
-    enricher.enrich_from_conversation.assert_awaited_once()
-    distill.flag_for_distillation.assert_awaited_once()
-    _, kwargs = distill.flag_for_distillation.await_args
+    assert len(enrich_from_conversation.calls) == 1
+    assert len(flag_for_distillation.calls) == 1
+    _, kwargs = flag_for_distillation.calls[0]
     assert "affect_signature" in kwargs["context"]
 
 
@@ -77,8 +88,10 @@ async def test_learning_phase_flags_prompt_fishing_dialogue_failures(monkeypatch
         "avoid_question_fishing": True,
     }
 
-    enricher = SimpleNamespace(enrich_from_conversation=AsyncMock(return_value={"facts": 1}))
-    distill = SimpleNamespace(flag_for_distillation=AsyncMock())
+    enrich_from_conversation = AsyncCallRecorder({"facts": 1})
+    flag_for_distillation = AsyncCallRecorder()
+    enricher = SimpleNamespace(enrich_from_conversation=enrich_from_conversation)
+    distill = SimpleNamespace(flag_for_distillation=flag_for_distillation)
     tasks = []
     original_create_task = asyncio.create_task
 
@@ -100,7 +113,7 @@ async def test_learning_phase_flags_prompt_fishing_dialogue_failures(monkeypatch
     if tasks:
         await asyncio.gather(*tasks)
 
-    distill.flag_for_distillation.assert_awaited_once()
-    _, kwargs = distill.flag_for_distillation.await_args
+    assert len(flag_for_distillation.calls) == 1
+    _, kwargs = flag_for_distillation.calls[0]
     assert "dialogue_validation" in kwargs["context"]
     assert "affect_signature" in kwargs["context"]

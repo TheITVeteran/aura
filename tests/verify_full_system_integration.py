@@ -1,5 +1,4 @@
 import logging
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -10,16 +9,23 @@ logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(mes
 logger = logging.getLogger("IntegrationTest")
 
 
+class InferenceGateRecorder:
+    def __init__(self, response: str):
+        self.response = response
+        self.generate_calls = []
+
+    async def generate(self, *args, **kwargs):
+        self.generate_calls.append((args, kwargs))
+        return self.response
+
+
 @pytest.mark.asyncio
 async def test_full_system_loop(monkeypatch):
     """User input should flow through the current InferenceGate entry point."""
     logger.info("🚀 Starting Full Mind/Body/Language Integration Test...")
 
     orchestrator = RobustOrchestrator()
-    orchestrator._inference_gate = AsyncMock()
-    orchestrator._inference_gate.generate = AsyncMock(
-        return_value="I am fully operational."
-    )
+    orchestrator._inference_gate = InferenceGateRecorder("I am fully operational.")
 
     class _Kernel:
         def is_ready(self) -> bool:
@@ -41,10 +47,10 @@ async def test_full_system_loop(monkeypatch):
     response = await orchestrator.process_user_input(user_input)
 
     assert response == "I am fully operational."
-    orchestrator._inference_gate.generate.assert_awaited_once()
-    gate_call = orchestrator._inference_gate.generate.await_args
-    assert gate_call.args[0] == user_input
-    context = gate_call.kwargs["context"]
+    assert len(orchestrator._inference_gate.generate_calls) == 1
+    args, kwargs = orchestrator._inference_gate.generate_calls[0]
+    assert args[0] == user_input
+    context = kwargs["context"]
     assert context["origin"] == "user"
     assert context["is_background"] is False
     assert isinstance(context["history"], list)
