@@ -11,6 +11,7 @@ from core.organism.life_tick import LifeTickProcessor
 from core.organism.cycle_clock import CycleClock
 from core.event_bus import get_event_bus, EventPriority
 from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Organism.LifeLoop")
 
@@ -42,7 +43,10 @@ class LifeLoop:
         if self._running:
             return
         self._running = True
-        self._task = asyncio.create_task(self._loop_run())
+        self._task = get_task_tracker().create_task(
+            self._loop_run(),
+            name="organism.life_loop",
+        )
         logger.info("Aura Canonical Life Loop started.")
 
     async def stop(self) -> None:

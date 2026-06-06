@@ -23,10 +23,13 @@ class DeliberationEngine:
         for g in state.cognition.current_goals:
             if g.get("status") in ["pending", "resumed", "unblocked"]:
                 g["status"] = "in_progress"
-                # Queue a placeholder gesture or checkup command representing task work
                 state.cognition.pending_actions.append({
                     "channel": "gesture",
-                    "params": {"gesture": f"process_goal_{g.get('id')}"}
+                    "params": {
+                        "gesture": "goal_progress_signal",
+                        "goal_id": g.get("id"),
+                        "event_type": "executive_goal_started",
+                    },
                 })
 
 

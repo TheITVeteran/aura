@@ -2,6 +2,7 @@
 Sensor registry and registration system for Aura's perceptual body.
 """
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from core.runtime.errors import record_degradation
@@ -24,7 +25,12 @@ class BaseSensor:
 
     @property
     def name(self) -> str:
-        raise NotImplementedError
+        configured_name = getattr(self, "sensor_name", None)
+        if isinstance(configured_name, str) and configured_name:
+            return configured_name
+        class_name = self.__class__.__name__
+        normalized = re.sub(r"(?<!^)(?=[A-Z])", "_", class_name).lower()
+        return normalized.removesuffix("_sensor")
 
     async def initialize(self) -> None:
         return None

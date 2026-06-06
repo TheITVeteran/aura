@@ -1,7 +1,7 @@
 """core/sleep/sleep_cycle.py
 Coordinates offline sleep consolidation states and offline processing routines.
 """
-from typing import Dict, Any, Optional
+from typing import Any
 import logging
 
 from core.sleep.dream_simulator import DreamSimulator
@@ -10,8 +10,11 @@ from core.sleep.value_consolidation import ValueConsolidator
 from core.sleep.world_model_training import WorldModelTrainer
 from core.sleep.identity_consolidation import IdentityConsolidator
 from core.sleep.nightly_report import NightlyReportCompiler
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Sleep.SleepCycle")
+
+_SLEEP_CYCLE_ERRORS = (AttributeError, ImportError, LookupError, RuntimeError, TimeoutError, TypeError, ValueError)
 
 
 class SleepManager:
@@ -63,7 +66,8 @@ class SleepManager:
             state.welfare.sleep_debt = 0.0
             logger.info("Sleep cycle complete. Energy fully restored.")
 
-        except Exception as e:
+        except _SLEEP_CYCLE_ERRORS as e:
+            record_degradation("sleep.cycle", e)
             logger.error("Error during sleep cycle execution: %s", e, exc_info=True)
         finally:
             state.body.is_sleeping = False

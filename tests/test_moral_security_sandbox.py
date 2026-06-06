@@ -20,7 +20,7 @@ def test_deception_guard():
 def test_consent_kernel_network_audit():
     kernel = ConsentKernel()
     
-    # Egress block test (mocking config values)
+    # Egress block test using direct config control.
     params = {"host": "malicious.hack.com", "port": 80}
     
     # Force allow_network_access false temporarily for the check

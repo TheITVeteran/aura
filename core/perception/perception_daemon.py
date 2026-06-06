@@ -17,7 +17,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.event_bus import get_event_bus, EventPriority
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.PerceptionDaemon")
 
@@ -90,9 +92,18 @@ class PerceptionDaemon:
         self.running = True
         logger.info("📡 PerceptionDaemon starting background sensory loops...")
 
-        # Spawn background loops
-        self._tasks.append(asyncio.create_task(self._main_perceptual_loop(), name="perception_daemon.main"))
-        self._tasks.append(asyncio.create_task(self._attention_alignment_loop(), name="perception_daemon.attention"))
+        self._tasks.append(
+            get_task_tracker().create_task(
+                self._main_perceptual_loop(),
+                name="perception_daemon.main",
+            )
+        )
+        self._tasks.append(
+            get_task_tracker().create_task(
+                self._attention_alignment_loop(),
+                name="perception_daemon.attention",
+            )
+        )
 
         logger.info("📡 PerceptionDaemon is ONLINE.")
 
@@ -192,14 +203,14 @@ class PerceptionDaemon:
 
                 # 4. Terminal / Process State Check
                 try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "ps", "-A", "-o", "comm",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
+                    proc = await get_subprocess_gateway().run_async(
+                        ["ps", "-A", "-o", "comm"],
+                        read_only=True,
+                        timeout=1.0,
+                        source="perception_daemon.terminal_process",
                     )
-                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1.0)
                     if proc.returncode == 0:
-                        lines = stdout.decode("utf-8", errors="ignore").splitlines()
+                        lines = proc.stdout.splitlines()
                         running_shells = [l for l in lines if any(s in l for s in ("zsh", "bash", "sh"))]
                         if running_shells:
                             self.register_moment(
@@ -323,14 +334,14 @@ class PerceptionDaemon:
 
     async def _check_clipboard(self) -> Optional[str]:
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "pbpaste",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+            proc = await get_subprocess_gateway().run_async(
+                ["pbpaste"],
+                read_only=True,
+                timeout=1.0,
+                source="perception_daemon.clipboard",
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1.0)
             if proc.returncode == 0:
-                return stdout.decode("utf-8", errors="ignore").strip()
+                return proc.stdout.strip()
             return None
         except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
             logger.debug("Clipboard check failed: %s", e)
@@ -339,14 +350,14 @@ class PerceptionDaemon:
     async def _check_active_window(self) -> Optional[str]:
         try:
             cmd = ["osascript", "-e", 'tell application "System Events" to get name of first application process whose frontmost is true']
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+            proc = await get_subprocess_gateway().run_async(
+                cmd,
+                read_only=True,
+                timeout=1.5,
+                source="perception_daemon.active_window",
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1.5)
             if proc.returncode == 0:
-                return stdout.decode("utf-8", errors="ignore").strip()
+                return proc.stdout.strip()
             return None
         except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
             logger.debug("Active window check failed: %s", e)

@@ -1,10 +1,15 @@
 """core/learning/experience_collector.py
 Collects event traces and compiles training datasets for LLM weight adaptation.
 """
-from typing import Dict, List, Any
 import json
-import os
+from pathlib import Path
+from typing import Any, Dict, List
+
 from core.config import get_config
+from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+
+_EXPERIENCE_COLLECTOR_ERRORS = (OSError, RuntimeError, TypeError, ValueError)
 
 
 class ExperienceCollector:
@@ -12,7 +17,7 @@ class ExperienceCollector:
 
     def __init__(self):
         cfg = get_config()
-        self.data_path = os.path.join(cfg.paths.data_dir, "training_experiences.json")
+        self.data_path = Path(cfg.paths.data_dir) / "training_experiences.json"
 
     def collect_and_save(self, events: List[Dict[str, Any]]) -> int:
         samples = []
@@ -27,7 +32,14 @@ class ExperienceCollector:
                 })
 
         if samples:
-            with open(self.data_path, "w", encoding="utf-8") as f:
-                json.dump(samples, f, indent=4)
+            try:
+                get_file_write_gateway().write_text(
+                    self.data_path,
+                    json.dumps(samples, indent=4, sort_keys=True),
+                    source="learning.experience_collector",
+                )
+            except _EXPERIENCE_COLLECTOR_ERRORS as exc:
+                record_degradation("learning.experience_collector", exc)
+                return 0
                 
         return len(samples)
