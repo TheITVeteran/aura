@@ -25,7 +25,7 @@ class CognitiveBackendProbe:
 
 
 class PhaseProbe:
-    pass
+    marker = "phase-probe"
 
 
 class RecoveryRepositoryProbe:
