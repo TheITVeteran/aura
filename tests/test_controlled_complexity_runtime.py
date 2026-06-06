@@ -1,9 +1,9 @@
 import asyncio
+import inspect
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,6 +15,67 @@ from core.orchestrator.main import RobustOrchestrator
 from core.tagged_reply_queue import TaggedReplyQueue
 
 TMP_ROOT = Path(tempfile.gettempdir())
+
+
+class RecordedCall:
+    def __init__(self, args, kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    def __iter__(self):
+        yield self.args
+        yield self.kwargs
+
+
+class AsyncCallRecorder:
+    def __init__(self, result=None, *, side_effect=None):
+        self.result = result
+        self.side_effect = side_effect
+        self.await_args_list = []
+        self.await_args = None
+
+    def __call__(self, *args, **kwargs):
+        call = RecordedCall(args, kwargs)
+        self.await_args_list.append(call)
+        self.await_args = call
+
+        async def _complete():
+            if isinstance(self.side_effect, BaseException):
+                raise self.side_effect
+            if callable(self.side_effect):
+                value = self.side_effect(*args, **kwargs)
+            else:
+                value = self.result
+            if inspect.isawaitable(value):
+                return await value
+            return value
+
+        return _complete()
+
+    def assert_awaited_once(self):
+        assert len(self.await_args_list) == 1
+
+    def assert_not_awaited(self):
+        assert not self.await_args_list
+
+
+class CallRecorder:
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append(RecordedCall(args, kwargs))
+        return self.result
+
+    def assert_called_once_with(self, *args, **kwargs):
+        assert len(self.calls) == 1
+        call = self.calls[0]
+        assert call.args == args
+        assert call.kwargs == kwargs
+
+    def assert_not_called(self):
+        assert not self.calls
 
 
 @pytest.mark.asyncio
@@ -51,7 +112,7 @@ async def test_process_message_ignores_stray_system_reply(orchestrator):
         await orchestrator.reply_queue.put("final user reply")
         return None
 
-    orchestrator._handle_incoming_message = AsyncMock(side_effect=fake_handle)
+    orchestrator._handle_incoming_message = AsyncCallRecorder(side_effect=fake_handle)
 
     result = await orchestrator._process_message("hello")
 
@@ -61,8 +122,8 @@ async def test_process_message_ignores_stray_system_reply(orchestrator):
 
 def test_enqueue_message_dispatches_user_origin_once(orchestrator):
     orchestrator._flow_controller = None
-    orchestrator.message_queue = MagicMock()
-    orchestrator._dispatch_message = MagicMock()
+    orchestrator.message_queue = SimpleNamespace(put_nowait=CallRecorder())
+    orchestrator._dispatch_message = CallRecorder()
 
     orchestrator.enqueue_message("Ping", origin="websocket")
 
@@ -189,7 +250,7 @@ async def test_inference_gate_arbitrates_local_tertiary_lane(monkeypatch):
         return "ok"
 
     gate._resource_context = fake_resource_context
-    gate._generate_with_client = AsyncMock(side_effect=fake_generate_with_client)
+    gate._generate_with_client = AsyncCallRecorder(side_effect=fake_generate_with_client)
     gate._build_system_prompt = lambda brief="": "system"
     gate._build_compact_messages = lambda prompt, system_prompt, history: [
         {"role": "system", "content": system_prompt},
@@ -237,7 +298,7 @@ async def test_inference_gate_arbitrates_local_tertiary_lane(monkeypatch):
 async def test_emit_spontaneous_message_routes_autonomous_output_through_authority(service_container):
     orchestrator = RobustOrchestrator.__new__(RobustOrchestrator)
     orchestrator._last_self_initiated_contact = 0.0
-    orchestrator.output_gate = SimpleNamespace(emit=AsyncMock())
+    orchestrator.output_gate = SimpleNamespace(emit=AsyncCallRecorder())
     orchestrator._flow_controller = SimpleNamespace(
         snapshot=lambda _orch: SimpleNamespace(
             overloaded=False,
@@ -248,8 +309,8 @@ async def test_emit_spontaneous_message_routes_autonomous_output_through_authori
     )
 
     authority = SimpleNamespace(
-        release_expression=AsyncMock(
-            return_value={
+        release_expression=AsyncCallRecorder(
+            {
                 "ok": True,
                 "action": "released",
                 "target": "secondary",
@@ -280,7 +341,7 @@ async def test_emit_spontaneous_message_routes_autonomous_output_through_authori
 async def test_emit_spontaneous_message_defers_visible_presence_temporal_block_to_authority(service_container):
     orchestrator = RobustOrchestrator.__new__(RobustOrchestrator)
     orchestrator._last_self_initiated_contact = 0.0
-    orchestrator.output_gate = SimpleNamespace(emit=AsyncMock())
+    orchestrator.output_gate = SimpleNamespace(emit=AsyncCallRecorder())
     orchestrator._flow_controller = SimpleNamespace(
         snapshot=lambda _orch: SimpleNamespace(
             overloaded=False,
@@ -291,8 +352,8 @@ async def test_emit_spontaneous_message_defers_visible_presence_temporal_block_t
     )
 
     authority = SimpleNamespace(
-        release_expression=AsyncMock(
-            return_value={
+        release_expression=AsyncCallRecorder(
+            {
                 "ok": True,
                 "action": "released",
                 "target": "primary",
@@ -300,8 +361,8 @@ async def test_emit_spontaneous_message_defers_visible_presence_temporal_block_t
         )
     )
     constitution = SimpleNamespace(
-        approve_expression=AsyncMock(
-            return_value=(False, "temporal_obligation_active:Protect continuity", None)
+        approve_expression=AsyncCallRecorder(
+            (False, "temporal_obligation_active:Protect continuity", None)
         )
     )
 

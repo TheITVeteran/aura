@@ -10,7 +10,6 @@ Verifies:
   7. The Will is the SINGLE decision authority
 """
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -34,13 +33,16 @@ def will():
 
 
 @pytest.fixture
-def started_will(will):
-    """A will that has been started (but with mocked services)."""
-    with patch("core.will.ServiceContainer") as mock_sc:
-        mock_sc.get.return_value = None
-        mock_sc.register_instance = MagicMock()
-        import asyncio
-        asyncio.run(will.start())
+def started_will(will, monkeypatch):
+    """A will that has been started with isolated services."""
+    service_container = SimpleNamespace(
+        get=lambda *args, **kwargs: None,
+        register_instance=lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr("core.will.ServiceContainer", service_container)
+    import asyncio
+
+    asyncio.run(will.start())
     return will
 
 
@@ -83,7 +85,7 @@ class TestAllDomains:
         )
         assert decision.outcome == WillOutcome.DEFER
 
-    def test_permission_model_failure_refuses_consequential_decision(self, will):
+    def test_permission_model_failure_refuses_consequential_decision(self, will, monkeypatch):
         """Permission model failures must fail closed before action."""
 
         class FailingPermissionModel:
@@ -95,19 +97,18 @@ class TestAllDomains:
                     raise RuntimeError("permission model unavailable")
                 return SimpleNamespace(approved=True)
 
-        with patch("core.will.ServiceContainer.get") as mock_get:
-            mock_get.side_effect = (
-                lambda name, default=None: FailingPermissionModel()
-                if name == "permission_model"
-                else default
-            )
-
-            decision = will.decide(
-                content="type text into desktop app",
-                source="user",
-                domain=ActionDomain.TOOL_EXECUTION,
-                priority=0.9,
-            )
+        monkeypatch.setattr(
+            "core.will.ServiceContainer.get",
+            lambda name, default=None: FailingPermissionModel()
+            if name == "permission_model"
+            else default,
+        )
+        decision = will.decide(
+            content="type text into desktop app",
+            source="user",
+            domain=ActionDomain.TOOL_EXECUTION,
+            priority=0.9,
+        )
 
         assert decision.outcome == WillOutcome.REFUSE
         assert decision.reason == "permission_model_check_failed"
@@ -185,26 +186,26 @@ class TestIdentityIntegration:
 class TestAffectIntegration:
     """Affect state should influence decisions."""
 
-    def test_negative_affect_blocks_exploration(self, will):
+    def test_negative_affect_blocks_exploration(self, will, monkeypatch):
         """Very negative affect should defer exploration."""
-        with patch.object(will, "_read_affect_valence", return_value=-0.8):
-            decision = will.decide(
-                content="let's explore a new topic",
-                source="curiosity",
-                domain=ActionDomain.EXPLORATION,
-            )
-            assert decision.outcome == WillOutcome.DEFER
-            assert decision.affect_valence == -0.8
+        monkeypatch.setattr(will, "_read_affect_valence", lambda: -0.8)
+        decision = will.decide(
+            content="let's explore a new topic",
+            source="curiosity",
+            domain=ActionDomain.EXPLORATION,
+        )
+        assert decision.outcome == WillOutcome.DEFER
+        assert decision.affect_valence == -0.8
 
-    def test_positive_affect_allows_exploration(self, will):
+    def test_positive_affect_allows_exploration(self, will, monkeypatch):
         """Positive affect should allow exploration."""
-        with patch.object(will, "_read_affect_valence", return_value=0.7):
-            decision = will.decide(
-                content="let's explore a new topic",
-                source="curiosity",
-                domain=ActionDomain.EXPLORATION,
-            )
-            assert decision.is_approved()
+        monkeypatch.setattr(will, "_read_affect_valence", lambda: 0.7)
+        decision = will.decide(
+            content="let's explore a new topic",
+            source="curiosity",
+            domain=ActionDomain.EXPLORATION,
+        )
+        assert decision.is_approved()
 
 
 # ---------------------------------------------------------------------------
@@ -214,37 +215,37 @@ class TestAffectIntegration:
 class TestSubstrateIntegration:
     """Substrate authority should feed into Will decisions."""
 
-    def test_low_coherence_blocks_non_critical(self, will):
+    def test_low_coherence_blocks_non_critical(self, will, monkeypatch):
         """Low field coherence should block non-stabilization actions."""
-        with patch.object(will, "_consult_substrate", return_value=(0.15, 0.0, "receipt_123")):
-            decision = will.decide(
-                content="explore new topic",
-                source="curiosity",
-                domain=ActionDomain.EXPLORATION,
-            )
-            assert decision.outcome == WillOutcome.REFUSE
-            assert "field_crisis" in decision.reason
+        monkeypatch.setattr(will, "_consult_substrate", lambda *args, **kwargs: (0.15, 0.0, "receipt_123"))
+        decision = will.decide(
+            content="explore new topic",
+            source="curiosity",
+            domain=ActionDomain.EXPLORATION,
+        )
+        assert decision.outcome == WillOutcome.REFUSE
+        assert "field_crisis" in decision.reason
 
-    def test_low_coherence_allows_stabilization(self, will):
+    def test_low_coherence_allows_stabilization(self, will, monkeypatch):
         """Low coherence should still allow stabilization actions."""
-        with patch.object(will, "_consult_substrate", return_value=(0.15, 0.0, "receipt_123")):
-            decision = will.decide(
-                content="stabilize systems",
-                source="homeostasis",
-                domain=ActionDomain.STABILIZATION,
-            )
-            assert decision.is_approved()
+        monkeypatch.setattr(will, "_consult_substrate", lambda *args, **kwargs: (0.15, 0.0, "receipt_123"))
+        decision = will.decide(
+            content="stabilize systems",
+            source="homeostasis",
+            domain=ActionDomain.STABILIZATION,
+        )
+        assert decision.is_approved()
 
-    def test_somatic_veto_blocks(self, will):
+    def test_somatic_veto_blocks(self, will, monkeypatch):
         """Strong somatic avoidance should block non-response actions."""
-        with patch.object(will, "_consult_substrate", return_value=(0.6, -0.7, "receipt_123")):
-            decision = will.decide(
-                content="do risky thing",
-                source="initiative",
-                domain=ActionDomain.TOOL_EXECUTION,
-            )
-            assert decision.outcome == WillOutcome.REFUSE
-            assert "somatic_veto" in decision.reason
+        monkeypatch.setattr(will, "_consult_substrate", lambda *args, **kwargs: (0.6, -0.7, "receipt_123"))
+        decision = will.decide(
+            content="do risky thing",
+            source="initiative",
+            domain=ActionDomain.TOOL_EXECUTION,
+        )
+        assert decision.outcome == WillOutcome.REFUSE
+        assert "somatic_veto" in decision.reason
 
 
 # ---------------------------------------------------------------------------
@@ -254,19 +255,19 @@ class TestSubstrateIntegration:
 class TestCriticalOverride:
     """Safety-critical actions must ALWAYS pass."""
 
-    def test_critical_always_passes(self, will):
+    def test_critical_always_passes(self, will, monkeypatch):
         """Critical flag should bypass all gates."""
         # Even with everything against it
-        with patch.object(will, "_consult_substrate", return_value=(0.05, -0.9, "")):
-            with patch.object(will, "_read_affect_valence", return_value=-1.0):
-                decision = will.decide(
-                    content="emergency shutdown required",
-                    source="safety_system",
-                    domain=ActionDomain.RESPONSE,
-                    is_critical=True,
-                )
-                assert decision.outcome == WillOutcome.CRITICAL_PASS
-                assert decision.is_approved()
+        monkeypatch.setattr(will, "_consult_substrate", lambda *args, **kwargs: (0.05, -0.9, ""))
+        monkeypatch.setattr(will, "_read_affect_valence", lambda: -1.0)
+        decision = will.decide(
+            content="emergency shutdown required",
+            source="safety_system",
+            domain=ActionDomain.RESPONSE,
+            is_critical=True,
+        )
+        assert decision.outcome == WillOutcome.CRITICAL_PASS
+        assert decision.is_approved()
 
     def test_critical_counted_separately(self, will):
         will.decide(content="emergency", source="safety", domain=ActionDomain.RESPONSE, is_critical=True)
@@ -295,15 +296,15 @@ class TestConstitutionalAmendments:
         assert decision.source == "test"
         assert decision in will._audit_trail
 
-    def test_stable_amendment_enters_reflection_window(self, will):
+    def test_stable_amendment_enters_reflection_window(self, will, monkeypatch):
         will._last_coherence = 0.95
 
-        with patch.object(will, "_read_affect_valence", return_value=0.0):
-            decision = will.propose_constitutional_amendment(
-                {"values": ["evidence"]},
-                proposer="test",
-                rationale="probe approval path",
-            )
+        monkeypatch.setattr(will, "_read_affect_valence", lambda: 0.0)
+        decision = will.propose_constitutional_amendment(
+            {"values": ["evidence"]},
+            proposer="test",
+            rationale="probe approval path",
+        )
 
         assert decision.outcome == WillOutcome.CONSTRAIN
         assert "reflection_window_required" in decision.constraints
@@ -356,16 +357,16 @@ class TestAuditTrail:
 class TestDegradation:
     """When subsystems are unavailable, the Will should degrade gracefully."""
 
-    def test_no_services_still_works(self, will):
+    def test_no_services_still_works(self, will, monkeypatch):
         """With zero services available, Will should still make decisions."""
-        with patch("core.will.ServiceContainer") as mock_sc:
-            mock_sc.get.return_value = None
-            decision = will.decide(
-                content="test without services",
-                source="user",
-                domain=ActionDomain.RESPONSE,
-            )
-            assert decision.is_approved()
+        service_container = SimpleNamespace(get=lambda *args, **kwargs: None)
+        monkeypatch.setattr("core.will.ServiceContainer", service_container)
+        decision = will.decide(
+            content="test without services",
+            source="user",
+            domain=ActionDomain.RESPONSE,
+        )
+        assert decision.is_approved()
 
     def test_status_always_available(self, will):
         status = will.get_status()
@@ -507,7 +508,7 @@ class TestActionCoverage:
                         domain=ActionDomain.INITIATIVE, priority=0.6)
         assert d.is_approved()
 
-    def test_state_mutation_path(self, will):
+    def test_state_mutation_path(self, will, monkeypatch):
         from core.container import ServiceContainer
         unity = SimpleNamespace(
             level="coherent",
@@ -523,9 +524,9 @@ class TestActionCoverage:
                 return unity
             return original_get(name, default)
 
-        with patch("core.will.ServiceContainer.get", side_effect=side_effect):
-            d = will.decide(content="update belief graph", source="cognition",
-                            domain=ActionDomain.STATE_MUTATION)
+        monkeypatch.setattr("core.will.ServiceContainer.get", side_effect)
+        d = will.decide(content="update belief graph", source="cognition",
+                        domain=ActionDomain.STATE_MUTATION)
         assert d.is_approved()
 
     def test_expression_path(self, will):
