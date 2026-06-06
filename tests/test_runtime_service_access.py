@@ -1,11 +1,20 @@
 from types import ModuleType, SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
 from core.autonomy.personhood_engine import PersonhoodEngine
 from core.runtime import conversation_support, service_access
 from core.state.aura_state import AuraState
+
+
+class LLMRouterFixture:
+    def __init__(self, content):
+        self.content = content
+        self.calls = []
+
+    async def think(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return SimpleNamespace(content=self.content)
 
 
 def test_resolve_state_repository_prefers_orchestrator_alias(service_container):
@@ -171,9 +180,7 @@ def test_build_conversational_context_blocks_includes_goal_engine_state(monkeypa
 
 @pytest.mark.asyncio
 async def test_personhood_engine_uses_shared_router_resolution(monkeypatch):
-    llm = SimpleNamespace(
-        think=AsyncMock(return_value=SimpleNamespace(content="Shared route response."))
-    )
+    llm = LLMRouterFixture("Shared route response.")
     monkeypatch.setattr(
         "core.runtime.service_access.resolve_llm_router",
         lambda default=None: llm,
@@ -184,4 +191,4 @@ async def test_personhood_engine_uses_shared_router_resolution(monkeypatch):
     result = await engine._generate_thought(AuraState.default(), "Check continuity.")
 
     assert result == "Shared route response."
-    llm.think.assert_awaited_once()
+    assert len(llm.calls) == 1

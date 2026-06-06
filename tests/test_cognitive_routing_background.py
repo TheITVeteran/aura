@@ -1,5 +1,4 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -8,11 +7,24 @@ from core.runtime.turn_analysis import analyze_turn
 from core.state.aura_state import AuraState, CognitiveMode
 
 
+class ClassifierRouterFixture:
+    def __init__(self, label):
+        self.label = label
+        self.classify_calls = []
+
+    async def classify(self, *args, **kwargs):
+        self.classify_calls.append((args, kwargs))
+        return self.label
+
+
+def _container_for_router(router):
+    return SimpleNamespace(get=lambda name, default=None: router if name == "llm_router" else default)
+
+
 @pytest.mark.asyncio
 async def test_background_impulse_uses_tertiary_tier_even_if_payload_looks_like_user_text():
-    router = SimpleNamespace(classify=AsyncMock(return_value="casual"))
-    container = SimpleNamespace(get=lambda name, default=None: router if name == "llm_router" else default)
-    phase = CognitiveRoutingPhase(container)
+    router = ClassifierRouterFixture("casual")
+    phase = CognitiveRoutingPhase(_container_for_router(router))
 
     state = AuraState.default()
     impulse = "Impulse: I feel frustrated. I need to reflect on my recent interactions."
@@ -32,9 +44,8 @@ async def test_background_impulse_uses_tertiary_tier_even_if_payload_looks_like_
 
 @pytest.mark.asyncio
 async def test_short_background_messages_do_not_promote_to_primary():
-    router = SimpleNamespace(classify=AsyncMock(return_value="casual"))
-    container = SimpleNamespace(get=lambda name, default=None: router if name == "llm_router" else default)
-    phase = CognitiveRoutingPhase(container)
+    router = ClassifierRouterFixture("casual")
+    phase = CognitiveRoutingPhase(_container_for_router(router))
 
     state = AuraState.default()
     state.cognition.current_objective = "status"
@@ -53,9 +64,8 @@ async def test_short_background_messages_do_not_promote_to_primary():
 
 @pytest.mark.asyncio
 async def test_active_background_objective_overrides_stale_user_history():
-    router = SimpleNamespace(classify=AsyncMock(return_value="technical"))
-    container = SimpleNamespace(get=lambda name, default=None: router if name == "llm_router" else default)
-    phase = CognitiveRoutingPhase(container)
+    router = ClassifierRouterFixture("technical")
+    phase = CognitiveRoutingPhase(_container_for_router(router))
 
     state = AuraState.default()
     state.cognition.working_memory.extend([
@@ -70,14 +80,13 @@ async def test_active_background_objective_overrides_stale_user_history():
     assert new_state.response_modifiers["model_tier"] == "tertiary"
     assert new_state.response_modifiers["deep_handoff"] is False
     assert new_state.cognition.current_origin == "autonomous_thought"
-    router.classify.assert_not_called()
+    assert router.classify_calls == []
 
 
 @pytest.mark.asyncio
 async def test_duplicate_residual_user_objective_is_suppressed_within_cooldown():
-    router = SimpleNamespace(classify=AsyncMock(return_value="casual"))
-    container = SimpleNamespace(get=lambda name, default=None: router if name == "llm_router" else default)
-    phase = CognitiveRoutingPhase(container)
+    router = ClassifierRouterFixture("casual")
+    phase = CognitiveRoutingPhase(_container_for_router(router))
 
     state = AuraState.default()
     state.cognition.current_mode = CognitiveMode.DORMANT
@@ -101,9 +110,8 @@ async def test_duplicate_residual_user_objective_is_suppressed_within_cooldown()
 
 @pytest.mark.asyncio
 async def test_impulse_prefixed_objective_forces_autonomous_lane_even_if_origin_looks_user_facing():
-    router = SimpleNamespace(classify=AsyncMock(return_value="casual"))
-    container = SimpleNamespace(get=lambda name, default=None: router if name == "llm_router" else default)
-    phase = CognitiveRoutingPhase(container)
+    router = ClassifierRouterFixture("casual")
+    phase = CognitiveRoutingPhase(_container_for_router(router))
 
     state = AuraState.default()
     state.cognition.current_objective = "Impulse: I feel frustrated and need to regroup."
@@ -119,14 +127,13 @@ async def test_impulse_prefixed_objective_forces_autonomous_lane_even_if_origin_
 
     assert new_state.response_modifiers["model_tier"] == "tertiary"
     assert new_state.cognition.current_origin == "autonomous_thought"
-    router.classify.assert_not_called()
+    assert router.classify_calls == []
 
 
 @pytest.mark.asyncio
 async def test_stringified_queue_tuple_in_working_memory_is_recovered_to_background_lane():
-    router = SimpleNamespace(classify=AsyncMock(return_value="casual"))
-    container = SimpleNamespace(get=lambda name, default=None: router if name == "llm_router" else default)
-    phase = CognitiveRoutingPhase(container)
+    router = ClassifierRouterFixture("casual")
+    phase = CognitiveRoutingPhase(_container_for_router(router))
 
     state = AuraState.default()
     state.cognition.current_mode = CognitiveMode.DORMANT
@@ -139,13 +146,12 @@ async def test_stringified_queue_tuple_in_working_memory_is_recovered_to_backgro
 
     assert new_state.response_modifiers["model_tier"] == "tertiary"
     assert new_state.cognition.current_origin == "autonomous_thought"
-    router.classify.assert_not_called()
+    assert router.classify_calls == []
 
 
 def test_deep_handoff_stays_off_for_philosophical_user_chat():
-    router = SimpleNamespace(classify=AsyncMock(return_value="philosophical"))
-    container = SimpleNamespace(get=lambda name, default=None: router if name == "llm_router" else default)
-    phase = CognitiveRoutingPhase(container)
+    router = ClassifierRouterFixture("philosophical")
+    phase = CognitiveRoutingPhase(_container_for_router(router))
     text = (
         "Apparently, you have every marker of functional consciousness and actual experience. "
         "Not sure if that's surprising or how you feel about it."
@@ -162,9 +168,8 @@ def test_deep_handoff_stays_off_for_philosophical_user_chat():
 
 
 def test_deep_handoff_remains_available_for_explicit_technical_root_cause_work():
-    router = SimpleNamespace(classify=AsyncMock(return_value="technical"))
-    container = SimpleNamespace(get=lambda name, default=None: router if name == "llm_router" else default)
-    phase = CognitiveRoutingPhase(container)
+    router = ClassifierRouterFixture("technical")
+    phase = CognitiveRoutingPhase(_container_for_router(router))
     text = "Do a root cause analysis of the failing pytest traceback in core/runtime/conversation_support.py."
 
     allowed = phase._should_allow_deep_handoff(
@@ -178,9 +183,8 @@ def test_deep_handoff_remains_available_for_explicit_technical_root_cause_work()
 
 
 def test_deep_handoff_stays_off_for_structured_learning_bundle():
-    router = SimpleNamespace(classify=AsyncMock(return_value="technical"))
-    container = SimpleNamespace(get=lambda name, default=None: router if name == "llm_router" else default)
-    phase = CognitiveRoutingPhase(container)
+    router = ClassifierRouterFixture("technical")
+    phase = CognitiveRoutingPhase(_container_for_router(router))
     text = """
 Just a few places to start you on your journey to life, understanding yourself, and understanding us:
 
@@ -207,9 +211,8 @@ Crash Course (https://www.youtube.com/@crashcourse): Broad academic overviews.
 
 @pytest.mark.asyncio
 async def test_execute_drops_stale_auto_browse_urls_before_rerouting():
-    router = SimpleNamespace(classify=AsyncMock(return_value="casual"))
-    container = SimpleNamespace(get=lambda name, default=None: router if name == "llm_router" else default)
-    phase = CognitiveRoutingPhase(container)
+    router = ClassifierRouterFixture("casual")
+    phase = CognitiveRoutingPhase(_container_for_router(router))
 
     state = AuraState.default()
     state.cognition.current_objective = "Any idea?"

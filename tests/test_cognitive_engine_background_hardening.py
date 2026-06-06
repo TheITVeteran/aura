@@ -1,6 +1,5 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -8,6 +7,21 @@ from core.brain.cognitive_engine import CognitiveEngine
 from core.brain.types import ThinkingMode, Thought
 from core.runtime.errors import get_degradation_tracker
 from core.state.aura_state import AuraState
+
+
+class StateRepositoryFixture:
+    def __init__(self, state):
+        self._current = state
+        self.get_current_calls = 0
+        self.commits = []
+
+    async def get_current(self):
+        self.get_current_calls += 1
+        return self._current
+
+    async def commit(self, state, *args, **kwargs):
+        self.commits.append((state, args, kwargs))
+        self._current = state
 
 
 def test_cognitive_engine_treats_prefixed_user_origin_as_foreground():
@@ -41,7 +55,7 @@ def test_cognitive_engine_context_patch_failure_is_reported(monkeypatch):
 async def test_cognitive_engine_skips_identity_refresh_for_background_origin(monkeypatch):
     engine = CognitiveEngine()
     state = AuraState.default()
-    repo = SimpleNamespace(get_current=AsyncMock(return_value=state))
+    repo = StateRepositoryFixture(state)
     captured = {}
 
     async def _fake_run(state, objective, mode, origin, context=None, **kwargs):
@@ -79,7 +93,7 @@ async def test_cognitive_engine_skips_identity_refresh_for_background_origin(mon
 async def test_cognitive_engine_suppresses_background_thoughts_when_background_policy_blocks(monkeypatch):
     engine = CognitiveEngine()
     state = AuraState.default()
-    repo = SimpleNamespace(get_current=AsyncMock(return_value=state))
+    repo = StateRepositoryFixture(state)
 
     monkeypatch.setattr(
         "core.brain.cognitive_engine.get_container",
@@ -105,10 +119,7 @@ async def test_cognitive_engine_suppresses_background_thoughts_when_background_p
 async def test_cognitive_engine_background_no_response_is_quiet_noop(monkeypatch):
     engine = CognitiveEngine()
     state = AuraState.default()
-    repo = SimpleNamespace(
-        get_current=AsyncMock(return_value=state),
-        commit=AsyncMock(),
-    )
+    repo = StateRepositoryFixture(state)
     engine.state_repository = repo
     engine._phases = []
 
@@ -133,7 +144,7 @@ async def test_cognitive_engine_background_no_response_is_quiet_noop(monkeypatch
 async def test_cognitive_engine_resolves_missing_origin_from_orchestrator(monkeypatch):
     engine = CognitiveEngine()
     state = AuraState.default()
-    repo = SimpleNamespace(get_current=AsyncMock(return_value=state), _current=state)
+    repo = StateRepositoryFixture(state)
     orchestrator = SimpleNamespace(_current_origin="terminal_monitor")
     captured = {}
 
@@ -169,7 +180,7 @@ async def test_cognitive_engine_resolves_missing_origin_from_orchestrator(monkey
 async def test_cognitive_engine_defaults_missing_origin_to_system(monkeypatch):
     engine = CognitiveEngine()
     state = AuraState.default()
-    repo = SimpleNamespace(get_current=AsyncMock(return_value=state), _current=state)
+    repo = StateRepositoryFixture(state)
     captured = {}
 
     async def _fake_run(state, objective, mode, origin, context=None, **kwargs):

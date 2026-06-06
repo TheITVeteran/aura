@@ -2,9 +2,34 @@ import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
+
+
+class AsyncCallFixture:
+    def __init__(self, return_value=None, side_effect=None):
+        self.return_value = return_value
+        self.side_effect = side_effect
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        if self.side_effect is not None:
+            result = self.side_effect(*args, **kwargs)
+            if hasattr(result, "__await__"):
+                return await result
+            return result
+        return self.return_value
+
+    @property
+    def await_args(self):
+        return self.calls[-1] if self.calls else None
+
+    def assert_awaited_once(self):
+        assert len(self.calls) == 1
+
+    def assert_not_awaited(self):
+        assert self.calls == []
 
 
 @pytest.fixture(autouse=True)
@@ -49,7 +74,7 @@ def _mock_orch(**kwargs):
     """Build a SimpleNamespace orchestrator with the minimum interface api_chat expects."""
     ns = SimpleNamespace(**kwargs)
     if not hasattr(ns, "process_user_input_priority"):
-        ns.process_user_input_priority = AsyncMock(return_value="ok")
+        ns.process_user_input_priority = AsyncCallFixture(return_value="ok")
     return ns
 
 
@@ -1379,7 +1404,7 @@ async def test_api_chat_benchmark_header_uses_kernel_not_fastpath_or_direct_gate
     from interface.routes import chat as chat_routes
 
     kernel_calls = []
-    experience_recorder = AsyncMock()
+    experience_recorder = AsyncCallFixture()
 
     class _ForbiddenGate:
         async def generate(self, *_args, **_kwargs):
@@ -1399,7 +1424,7 @@ async def test_api_chat_benchmark_header_uses_kernel_not_fastpath_or_direct_gate
 
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncMock())
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncCallFixture())
     monkeypatch.setattr(conversation_support, "record_conversation_experience", experience_recorder)
     monkeypatch.setattr(
         chat_routes,
@@ -1471,11 +1496,11 @@ async def test_api_chat_uses_protected_foreground_lane_when_kernel_lock_is_held(
     gate = _FakeGate()
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(chat_routes, "_log_exchange", AsyncMock())
+    monkeypatch.setattr(chat_routes, "_log_exchange", AsyncCallFixture())
     monkeypatch.setattr(
         chat_routes,
         "_stabilize_user_facing_reply",
-        AsyncMock(side_effect=lambda _message, reply: reply),
+        AsyncCallFixture(side_effect=lambda _message, reply: reply),
     )
     monkeypatch.setattr(
         chat_routes,
@@ -1528,8 +1553,8 @@ async def test_api_chat_uses_social_presence_before_protected_foreground_for_liv
 
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(chat_routes, "_log_exchange", AsyncMock())
-    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncMock(return_value=[]))
+    monkeypatch.setattr(chat_routes, "_log_exchange", AsyncCallFixture())
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(chat_routes, "_is_stale_repeated_response", lambda _text: False)
     monkeypatch.setattr(chat_routes, "_is_same_answer_different_prompt", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(chat_routes, "_evaluate_reply_topicality", lambda *_args, **_kwargs: (False, ""))
@@ -1595,11 +1620,11 @@ async def test_api_chat_keeps_protected_foreground_deep_prompts_on_primary_lane(
     gate = _FakeGate()
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(chat_routes, "_log_exchange", AsyncMock())
+    monkeypatch.setattr(chat_routes, "_log_exchange", AsyncCallFixture())
     monkeypatch.setattr(
         chat_routes,
         "_stabilize_user_facing_reply",
-        AsyncMock(side_effect=lambda _message, reply: reply),
+        AsyncCallFixture(side_effect=lambda _message, reply: reply),
     )
     monkeypatch.setattr(
         chat_routes,
@@ -1742,7 +1767,7 @@ async def test_protected_foreground_messages_include_continuity_summary(monkeypa
     monkeypatch.setattr(
         chat_routes,
         "_build_protected_foreground_history",
-        AsyncMock(return_value=[{"role": "assistant", "content": "I'm tracing the autonomy lane."}]),
+        AsyncCallFixture(return_value=[{"role": "assistant", "content": "I'm tracing the autonomy lane."}]),
     )
 
     messages = await chat_routes._build_protected_foreground_messages(
