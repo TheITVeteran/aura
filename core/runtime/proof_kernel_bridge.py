@@ -107,14 +107,14 @@ class ProofKernelBridge:
     @staticmethod
     def _load_kernel() -> Any:
         try:
-            import aura_consciousness_proof as kernel  # type: ignore
+            import aura_operational_cognition as kernel  # type: ignore
 
             return kernel
         except (ImportError, AttributeError, RuntimeError):
             root = Path(__file__).resolve().parents[2] / "proof_kernel" / "src"
             if root.exists() and str(root) not in sys.path:
                 sys.path.insert(0, str(root))
-            import aura_consciousness_proof as kernel  # type: ignore
+            import aura_operational_cognition as kernel  # type: ignore
 
             return kernel
 

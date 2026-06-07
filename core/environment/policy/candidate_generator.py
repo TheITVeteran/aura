@@ -279,8 +279,8 @@ class CandidateGenerator:
         # ── 1. Steps taken consecutively in the current context ──────────────
         steps_on_context = 0
         for frame in reversed(recent_frames):
-            parsed = frame.post_parsed_state or frame.parsed_state
-            if parsed and parsed.context_id == context_id:
+            parsed = getattr(frame, "post_parsed_state", None) or getattr(frame, "parsed_state", None)
+            if parsed and getattr(parsed, "context_id", None) == context_id:
                 steps_on_context += 1
             else:
                 break
@@ -290,8 +290,8 @@ class CandidateGenerator:
         # proven it can transition; apply a tighter step cap to force it to try.
         distinct_contexts: set = set()
         for frame in recent_frames:
-            parsed = frame.post_parsed_state or frame.parsed_state
-            if parsed and parsed.context_id:
+            parsed = getattr(frame, "post_parsed_state", None) or getattr(frame, "parsed_state", None)
+            if parsed and getattr(parsed, "context_id", None):
                 distinct_contexts.add(parsed.context_id)
         context_step_limit = 120 if len(distinct_contexts) <= 1 else 300
         context_steps_excessive = steps_on_context > context_step_limit
@@ -303,22 +303,26 @@ class CandidateGenerator:
         coords: list = []
 
         for frame in recent_frames[-40:]:
-            if frame.action_intent:
-                name = frame.action_intent.name
+            action_intent = getattr(frame, "action_intent", None)
+            outcome_assessment = getattr(frame, "outcome_assessment", None)
+            if action_intent:
+                name = action_intent.name
                 recent_names.append(name)
                 recent_counts[name] = recent_counts.get(name, 0) + 1
 
-            if frame.outcome_assessment and frame.outcome_assessment.success_score < 0.3:
-                if frame.action_intent:
-                    key = f"{frame.action_intent.name}:{context_id}"
+            if outcome_assessment and getattr(outcome_assessment, "success_score", 1.0) < 0.3:
+                if action_intent:
+                    key = f"{action_intent.name}:{context_id}"
                     recent_failures[key] = recent_failures.get(key, 0) + 1
 
             # Coordinates — only sampled when no modal is blocking the view
-            parsed = frame.post_parsed_state or frame.parsed_state
-            if parsed and not parsed.modal_state:
-                pos = parsed.self_state.get("local_coordinates")
-                if pos:
-                    coords.append(pos)
+            parsed = getattr(frame, "post_parsed_state", None) or getattr(frame, "parsed_state", None)
+            if parsed and not getattr(parsed, "modal_state", None):
+                self_state = getattr(parsed, "self_state", None)
+                if self_state and isinstance(self_state, dict):
+                    pos = self_state.get("local_coordinates")
+                    if pos:
+                        coords.append(pos)
 
         # ── 4. Position static ────────────────────────────────────────────────
         # True when the last 10 non-modal coordinate readings are identical,

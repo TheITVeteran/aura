@@ -269,22 +269,24 @@ def test_candidate_generator_suppresses_information_loops_without_domain_rules()
         def __init__(self, name: str, score: float = 0.8) -> None:
             self.action_intent = ActionIntent(name=name)
             self.outcome_assessment = _outcome(score)
+            # Structural suppression needs parsed state with coordinates
+            self.parsed_state = ParsedState(
+                environment_id="env",
+                context_id="ctx",
+                self_state={"local_coordinates": (3, 3)},
+            )
+            self.post_parsed_state = self.parsed_state
 
     parsed = ParsedState(environment_id="env", context_id="ctx")
-    recent = [
-        Frame("inventory"),
-        Frame("resolve_modal"),
-        Frame("inventory"),
-        Frame("resolve_modal"),
-        Frame("inventory"),
-        Frame("resolve_modal"),
-    ]
+    # 12+ frames of a two-action cycle at static coordinates triggers oscillation
+    recent = [Frame("inventory"), Frame("resolve_modal")] * 6
 
     candidates = CandidateGenerator().generate(parsed, belief=EnvironmentBeliefGraph(), recent_frames=recent)
     names = {candidate.name for candidate in candidates}
 
     assert "inventory" not in names
     assert "move" in names or "explore_frontier" in names
+
 
 
 def test_recent_threat_pressure_creates_general_retreat_candidate():
