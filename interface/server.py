@@ -904,6 +904,48 @@ async def websocket_endpoint(ws: WebSocket):
                                     source="desktop_websocket",
                                     require_engine=True,
                                 )
+                                
+                                # [FIX] WebSocket path fallback if CognitiveEngine fails
+                                if not reply:
+                                    logger.warning(
+                                        "🔧 [FALLBACK] WebSocket CognitiveEngine produced no reply. Attempting graceful fallback.",
+                                    )
+                                    from core.kernel.kernel_interface import KernelInterface
+                                    ki = KernelInterface.get_instance()
+                                    if ki.is_ready():
+                                        logger.info("[FALLBACK] Trying KernelInterface as fallback for WebSocket...")
+                                        try:
+                                            reply = await asyncio.wait_for(
+                                                ki.process(user_content, origin="desktop-ui", priority=True),
+                                                timeout=120.0,
+                                            )
+                                            if reply:
+                                                logger.info("[FALLBACK] KernelInterface recovered WebSocket reply (len=%d).", len(reply))
+                                        except TimeoutError:
+                                            logger.warning("[FALLBACK] KernelInterface fallback timed out for WebSocket.")
+                                        except _SERVER_BOUNDARY_ERRORS as e:
+                                            record_degradation('server', e)
+                                            logger.warning("[FALLBACK] KernelInterface fallback failed for WebSocket: %s", e)
+                                    
+                                    # If still no reply, try orchestrator
+                                    if not reply:
+                                        logger.info("[FALLBACK] Trying orchestrator as final fallback for WebSocket...")
+                                        try:
+                                            from core.container import ServiceContainer
+                                            orch = ServiceContainer.get("orchestrator", default=None)
+                                            if orch:
+                                                reply = await asyncio.wait_for(
+                                                    orch.process_user_input_priority(user_content, origin="desktop-ui", timeout_sec=120.0),
+                                                    timeout=120.0,
+                                                )
+                                                if reply:
+                                                    logger.info("[FALLBACK] Orchestrator recovered WebSocket reply (len=%d).", len(reply))
+                                        except TimeoutError:
+                                            logger.warning("[FALLBACK] Orchestrator fallback timed out for WebSocket.")
+                                        except _SERVER_BOUNDARY_ERRORS as e:
+                                            record_degradation('server', e)
+                                            logger.warning("[FALLBACK] Orchestrator fallback failed for WebSocket: %s", e)
+                                
                                 if not reply:
                                     await ws_ref.send_text(json.dumps({
                                         "type": "aura_message",
