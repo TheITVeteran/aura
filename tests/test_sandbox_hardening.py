@@ -111,6 +111,29 @@ def process(data: Dict[str, Any]) -> str:
         assert self._has_dangerous_node("def broken(:", self.FORBIDDEN)
 
 
+class TestWorkerSandboxExecution:
+    """Worker sandbox must delegate dynamic execution to the canonical runner."""
+
+    def test_worker_sandbox_returns_result_from_shared_runner(self, tmp_path):
+        from core.swarm.worker_sandbox import WorkerSandbox
+
+        sandbox = WorkerSandbox(str(tmp_path))
+        result = sandbox.execute_code_sandboxed("result = seed + 2", {"seed": 40})
+
+        assert result["ok"] is True
+        assert result["result"] == 42
+
+    def test_worker_sandbox_blocks_dangerous_imports(self, tmp_path):
+        from core.swarm.worker_sandbox import WorkerSandbox
+
+        sandbox = WorkerSandbox(str(tmp_path))
+        result = sandbox.execute_code_sandboxed("import os\nresult = 1", {})
+
+        assert result["ok"] is False
+        assert result["details"]["status"] == "error"
+        assert "__import__" in result["details"].get("traceback", "")
+
+
 # ════════════════════════════════════════════════════════════════════════
 # 2. SHADOW AST HEALER — Governance Gating
 # ════════════════════════════════════════════════════════════════════════

@@ -57,12 +57,14 @@ class MindModel(AuraBaseModule):
     def save(self):
         try:
             from core.runtime.file_write_gateway import get_file_write_gateway
+            from core.governance_context import local_internal_governed_scope
 
-            get_file_write_gateway().write_text(
-                self.data_path,
-                json.dumps(self.user_state.to_dict(), indent=2),
-                source="mind_model.save",
-            )
+            with local_internal_governed_scope("mind_model.save", domain="file_write"):
+                get_file_write_gateway().write_text(
+                    self.data_path,
+                    json.dumps(self.user_state.to_dict(), indent=2),
+                    source="mind_model.save",
+                )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('mind_model', e)
             self.logger.error("Failed to save mind model: %s", e)

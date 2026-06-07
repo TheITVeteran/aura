@@ -4,6 +4,7 @@ Orchestrates the complete self-improvement system.
 
 import asyncio
 import logging
+import os
 import random
 import threading
 import time

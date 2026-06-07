@@ -210,13 +210,15 @@ class AppleScriptRunner:
 
         # Execute
         try:
-            proc = await get_subprocess_gateway().spawn_async(
-                ["osascript", "-e", script],
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                read_only=read_only,
-                source=source,
-            )
+            from core.governance_context import local_internal_governed_scope
+            with local_internal_governed_scope(source, domain="tool_execution"):
+                proc = await get_subprocess_gateway().spawn_async(
+                    ["osascript", "-e", script],
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    read_only=read_only,
+                    source=source,
+                )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
             )

@@ -95,12 +95,14 @@ class TheoryOfMindEngine:
                 d["interaction_history"] = d["interaction_history"][-20:]  # Keep it lean
                 data[uid] = d
             from core.runtime.file_write_gateway import get_file_write_gateway
+            from core.governance_context import local_internal_governed_scope
 
-            get_file_write_gateway().write_text(
-                self._data_path,
-                json.dumps(data, indent=2),
-                source="theory_of_mind.save",
-            )
+            with local_internal_governed_scope("theory_of_mind.save", domain="file_write"):
+                get_file_write_gateway().write_text(
+                    self._data_path,
+                    json.dumps(data, indent=2),
+                    source="theory_of_mind.save",
+                )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('theory_of_mind', e)
             logger.debug("ToM: save failed: %s", e)
