@@ -82,6 +82,12 @@ class DesktopTaskSkill(BaseSkill):
     metabolic_cost = 2
     effect_scope = "foreground_desktop_control"
     timeout_seconds = 180.0
+    _DOCUMENT_BODY_TOKENS = (
+        "{{document_body}}",
+        "${document_body}",
+        "__document_body__",
+        "<document_body>",
+    )
 
     @staticmethod
     def _json_target(payload: dict[str, Any]) -> str:
@@ -197,8 +203,64 @@ class DesktopTaskSkill(BaseSkill):
         return apps[:4]
 
     @staticmethod
-    def _document_body(objective: str, context: dict[str, Any] | None) -> str:
+    def _json_candidates_from_text(text: str) -> list[str]:
+        source = str(text or "").strip()
+        if not source:
+            return []
+        candidates: list[str] = []
+        candidates.extend(
+            match.group(1).strip()
+            for match in re.finditer(r"```(?:json)?\s*(.*?)```", source, flags=re.IGNORECASE | re.DOTALL)
+        )
+        for open_char, close_char in (("{", "}"), ("[", "]")):
+            start = source.find(open_char)
+            end = source.rfind(close_char)
+            if start >= 0 and end > start:
+                candidates.append(source[start : end + 1])
+        return candidates
+
+    @classmethod
+    def _structured_payload_from_text(cls, text: str) -> dict[str, Any]:
+        for candidate in cls._json_candidates_from_text(text):
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list):
+                return {"steps": parsed}
+        return {}
+
+    @classmethod
+    def _structured_payload_from_context(cls, context: dict[str, Any] | None) -> dict[str, Any]:
         context = context or {}
+        for key in ("desktop_task_plan", "desktop_task_steps", "desktop_task_document_body", "cognitive_reply", "draft_response", "response"):
+            value = context.get(key)
+            if isinstance(value, dict):
+                return dict(value)
+            if isinstance(value, list):
+                return {"steps": value}
+            payload = cls._structured_payload_from_text(str(value or ""))
+            if payload:
+                return payload
+        return {}
+
+    @classmethod
+    def _document_body(cls, objective: str, context: dict[str, Any] | None) -> str:
+        context = context or {}
+        for context_key in ("desktop_task_document_body", "draft_response", "cognitive_reply", "response", "desktop_task_plan"):
+            raw_value = context.get(context_key)
+            payload = {}
+            if isinstance(raw_value, dict):
+                payload = dict(raw_value)
+            elif isinstance(raw_value, str):
+                payload = cls._structured_payload_from_text(raw_value)
+            if payload:
+                for key in ("document_body", "body", "content", "draft"):
+                    value = str(payload.get(key) or "").strip()
+                    if value:
+                        return value[:9000]
         for key in ("desktop_task_document_body", "draft_response", "cognitive_reply", "response"):
             value = str(context.get(key) or "").strip()
             if value:
@@ -252,24 +314,8 @@ class DesktopTaskSkill(BaseSkill):
 
     @classmethod
     def _steps_from_plan_text(cls, text: str) -> list[DesktopTaskStep]:
-        source = str(text or "").strip()
-        if not source:
-            return []
-        candidates: list[str] = []
-        candidates.extend(
-            match.group(1).strip()
-            for match in re.finditer(r"```(?:json)?\s*(.*?)```", source, flags=re.IGNORECASE | re.DOTALL)
-        )
-        for open_char, close_char in (("{", "}"), ("[", "]")):
-            start = source.find(open_char)
-            end = source.rfind(close_char)
-            if start >= 0 and end > start:
-                candidates.append(source[start : end + 1])
-        for candidate in candidates:
-            try:
-                parsed = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
+        for candidate in cls._json_candidates_from_text(text):
+            parsed = cls._structured_payload_from_text(candidate)
             steps = cls._steps_from_payload(parsed)
             if steps:
                 return steps
@@ -303,6 +349,39 @@ class DesktopTaskSkill(BaseSkill):
             if isinstance(parsed, dict):
                 return parsed
         return {}
+
+    @classmethod
+    def _replace_document_body_tokens(cls, value: Any, document_body: str) -> Any:
+        if not document_body:
+            return value
+        if isinstance(value, str):
+            updated = value
+            for body_token in cls._DOCUMENT_BODY_TOKENS:
+                updated = updated.replace(body_token, document_body)
+            return updated
+        if isinstance(value, dict):
+            return {
+                key: cls._replace_document_body_tokens(item, document_body)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [cls._replace_document_body_tokens(item, document_body) for item in value]
+        return value
+
+    @classmethod
+    def _resolve_document_body_tokens(
+        cls,
+        steps: list[DesktopTaskStep],
+        document_body: str,
+    ) -> list[DesktopTaskStep]:
+        resolved: list[DesktopTaskStep] = []
+        for step in steps:
+            target = cls._replace_document_body_tokens(step.target, document_body)
+            if target == step.target:
+                resolved.append(step)
+            else:
+                resolved.append(step.model_copy(update={"target": target}))
+        return resolved
 
     @classmethod
     def _verify_step_effect(cls, step: DesktopTaskStep, result: dict[str, Any]) -> tuple[bool, str]:
@@ -753,6 +832,11 @@ class DesktopTaskSkill(BaseSkill):
             steps = self._steps_from_context(task_context)
         if not steps:
             steps = self._derive_steps_from_objective(objective, task_context)
+        else:
+            steps = self._resolve_document_body_tokens(
+                steps,
+                self._document_body(objective, task_context),
+            )
 
         if self._should_escalate_to_os_automation(objective, steps, task_context):
             return await self._execute_os_automation_escalation(

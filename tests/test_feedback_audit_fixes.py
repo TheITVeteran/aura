@@ -2234,6 +2234,69 @@ def test_session_memory_pin_round_trip():
     assert remembered["content"] == "ember-vault-93"
 
 
+def test_session_memory_pin_writes_durable_memory(monkeypatch):
+    from interface.routes import chat as chat_route
+
+    writes = []
+
+    class MemoryFacade:
+        async def add_memory(self, text, metadata=None):
+            writes.append((text, dict(metadata or {})))
+            return True
+
+    monkeypatch.setattr(
+        chat_route.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: MemoryFacade() if name == "memory_facade" else default),
+    )
+
+    async def run():
+        chat_route._session_memory_pins.clear()
+        await chat_route._store_session_memory_pin("ember-vault-93", "remember this phrase")
+
+    asyncio.run(run())
+
+    assert writes
+    assert writes[0][0] == "Session memory pin: ember-vault-93"
+    assert writes[0][1]["source"] == "session_memory_pin"
+    assert writes[0][1]["explicit_memory_request"] is True
+    assert writes[0][1]["session_memory_pin_content"] == "ember-vault-93"
+
+
+def test_session_memory_pin_recalls_from_durable_memory_when_cache_empty(monkeypatch):
+    from interface.routes import chat as chat_route
+
+    class MemoryFacade:
+        async def search(self, query, limit=5):
+            assert "session memory pin" in query
+            return [
+                {
+                    "content": "Session memory pin: ember-vault-93",
+                    "metadata": {
+                        "source": "session_memory_pin",
+                        "session_memory_pin": True,
+                        "timestamp": "2026-06-07T12:00:00+00:00",
+                    },
+                }
+            ]
+
+    monkeypatch.setattr(
+        chat_route.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: MemoryFacade() if name == "memory_facade" else default),
+    )
+
+    async def run():
+        chat_route._session_memory_pins.clear()
+        return await chat_route._recall_session_memory_pin()
+
+    remembered = asyncio.run(run())
+
+    assert remembered is not None
+    assert remembered["content"] == "ember-vault-93"
+    assert remembered["storage"] == "durable"
+
+
 def test_session_memory_recall_request_matches_common_typo():
     from interface.routes.chat import _is_session_memory_recall_request
 

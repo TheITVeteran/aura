@@ -266,6 +266,55 @@ async def test_desktop_task_uses_cognitive_engine_structured_plan_before_heurist
     assert json.loads(calls[1][1]["target"])["content"] == "planned body"
 
 
+@pytest.mark.asyncio
+async def test_desktop_task_structured_plan_uses_document_body_token(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    cognitive_plan = {
+        "document_body": "Timestamped Aura note body from CognitiveEngine.",
+        "steps": [
+            {"action": "open_app", "target": "Notes", "reason": "Use the requested app."},
+            {
+                "action": "set_clipboard",
+                "target": "{{document_body}}",
+                "reason": "Stage the composed body.",
+            },
+            {"action": "hotkey", "target": "command+v", "reason": "Paste the composed body."},
+        ],
+    }
+
+    skill = DesktopTaskSkill()
+    result = await skill.execute(
+        {
+            "objective": "Open a writing app and create a note from a planned document body.",
+            "steps": [],
+        },
+        {
+            "origin": "desktop_ui",
+            "cognitive_reply": f"```json\n{json.dumps(cognitive_plan)}\n```",
+        },
+    )
+
+    assert result["ok"] is True
+    assert [call[1]["action"] for call in calls] == ["open_app", "set_clipboard", "hotkey"]
+    assert calls[1][1]["target"] == "Timestamped Aura note body from CognitiveEngine."
+    assert "{{document_body}}" not in calls[1][1]["target"]
+    assert '"steps"' not in calls[1][1]["target"]
+
+
 def test_desktop_task_extracts_generic_named_app_mentions():
     assert DesktopTaskSkill._generic_open_app_mentions("Open TextEdit application and create a draft.") == [
         "TextEdit"

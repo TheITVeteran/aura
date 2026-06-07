@@ -42,6 +42,15 @@ def test_websocket_chat_uses_desktop_cognitive_engine_trace_metadata():
     assert "desktop WebSocket chat path requires CognitiveEngine" in source
 
 
+def test_websocket_desktop_path_has_no_legacy_kernel_or_orchestrator_fallback():
+    source = inspect.getsource(server.websocket_endpoint)
+
+    assert "KernelInterface" not in source
+    assert "process_user_input_priority" not in source
+    assert "recovered WebSocket reply" not in source
+    assert "refusing legacy fallback" in source
+
+
 def test_cognitive_engine_turn_required_contract_has_no_kernel_fallback_language():
     from interface.routes import chat
 
@@ -52,3 +61,17 @@ def test_cognitive_engine_turn_required_contract_has_no_kernel_fallback_language
     assert "cognitive_engine_required" in source
     assert "required caller must fail closed" in source
     assert "falling back to kernel lane" not in source
+
+
+def test_desktop_cognitive_turn_carries_generic_execution_planning_contract():
+    from interface.routes import chat
+    from core.phases.response_generation import ResponseGenerationPhase
+
+    chat_source = inspect.getsource(chat._run_cognitive_engine_chat_turn)
+    response_source = inspect.getsource(ResponseGenerationPhase.execute)
+
+    assert "desktop_execution_contract" in chat_source
+    assert "desktop_task_planning_schema" in chat_source
+    assert "{{document_body}}" in chat_source
+    assert "LIVE DESKTOP EXECUTION PLANNING CONTRACT" in response_source
+    assert "Do not claim completion inside this draft" in response_source

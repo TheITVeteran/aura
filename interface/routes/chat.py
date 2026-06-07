@@ -370,28 +370,98 @@ async def _store_session_memory_pin(content: str, source: str) -> None:
     pinned = str(content or "").strip()
     if not pinned:
         return
+    timestamp = datetime.now(tz=UTC).isoformat()
     async with _get_convo_lock():
         _session_memory_pins.append(
             {
                 "content": pinned[:240],
                 "source": str(source or "").strip()[:512],
-                "timestamp": datetime.now(tz=UTC).isoformat(),
+                "timestamp": timestamp,
             }
         )
         if len(_session_memory_pins) > 100:
             _session_memory_pins.pop(0)
+    try:
+        memory_facade = ServiceContainer.get("memory_facade", default=None)
+        if memory_facade is None or not hasattr(memory_facade, "add_memory"):
+            return
+        result = memory_facade.add_memory(
+            f"Session memory pin: {pinned[:240]}",
+            metadata={
+                "source": "session_memory_pin",
+                "family": "episodic",
+                "kind": "explicit_user_memory_pin",
+                "session_memory_pin": True,
+                "session_memory_pin_content": pinned[:240],
+                "source_utterance": str(source or "").strip()[:512],
+                "timestamp": timestamp,
+                "importance": 0.9,
+                "identity_relevant": True,
+                "explicit_memory_request": True,
+                "provenance_source": "user_explicit",
+                "confidence": 1.0,
+            },
+        )
+        if hasattr(result, "__await__"):
+            await result
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.session_memory_pin", exc)
+        logger.debug("Durable session memory pin write skipped: %s", exc)
+
+
+def _session_memory_pin_from_record(item: Any) -> dict[str, str] | None:
+    if not isinstance(item, dict):
+        return None
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    content = str(metadata.get("session_memory_pin_content") or "").strip()
+    raw = str(item.get("content") or item.get("text") or "").strip()
+    if not content:
+        match = re.search(r"\bSession memory pin:\s*(.+)$", raw, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            content = match.group(1).strip().strip("\"'“”").rstrip(" .!?")
+    if not content:
+        return None
+    return {
+        "content": content[:240],
+        "source": str(metadata.get("source_utterance") or metadata.get("source") or "durable_memory")[:512],
+        "timestamp": str(metadata.get("timestamp") or ""),
+        "storage": "durable",
+    }
+
+
+async def _recall_durable_session_memory_pin() -> dict[str, str] | None:
+    try:
+        memory_facade = ServiceContainer.get("memory_facade", default=None)
+        if memory_facade is None:
+            return None
+        search = getattr(memory_facade, "search", None) or getattr(memory_facade, "query_memory", None)
+        if not callable(search):
+            return None
+        result = search("session memory pin explicit user remember", limit=5)
+        records = await result if hasattr(result, "__await__") else result
+        for item in list(records or []):
+            recalled = _session_memory_pin_from_record(item)
+            if recalled:
+                return recalled
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.session_memory_pin", exc)
+        logger.debug("Durable session memory pin recall skipped: %s", exc)
+    return None
 
 
 async def _recall_session_memory_pin() -> dict[str, str] | None:
     async with _get_convo_lock():
-        if not _session_memory_pins:
-            return None
-        latest = _session_memory_pins[-1]
-        return {
-            "content": str(latest.get("content") or ""),
-            "source": str(latest.get("source") or ""),
-            "timestamp": str(latest.get("timestamp") or ""),
-        }
+        if _session_memory_pins:
+            latest = _session_memory_pins[-1]
+            return {
+                "content": str(latest.get("content") or ""),
+                "source": str(latest.get("source") or ""),
+                "timestamp": str(latest.get("timestamp") or ""),
+                "storage": "session",
+            }
+    return await _recall_durable_session_memory_pin()
 
 
 def _extract_repo_probe_request(user_message: str) -> dict[str, str] | None:
@@ -1331,6 +1401,7 @@ async def _run_cognitive_engine_chat_turn(
         preflight_context = ""
     mode = _select_cognitive_chat_mode(visible, effective_user_message)
     shape = analyze_prompt_shape(visible)
+    desktop_execution_contract = _looks_like_desktop_objective(visible)
     context = {
         "route": "desktop_chat",
         "source": source,
@@ -1348,6 +1419,36 @@ async def _run_cognitive_engine_chat_turn(
             ),
         },
     }
+    if desktop_execution_contract:
+        context.update(
+            {
+                "desktop_execution_contract": True,
+                "desktop_task_planning_schema": {
+                    "document_body": "optional prose to type/write/export",
+                    "steps": [
+                        {
+                            "action": "open_app|open_url|set_clipboard|hotkey|wait|read_screen_text|create_folder|write_text_file|render_text_pdf|move_file|run_applescript",
+                            "target": "string or JSON payload; use {{document_body}} to reference the prose body",
+                            "reason": "why this step is needed",
+                            "expect": "observable effect evidence required after the step",
+                        }
+                    ],
+                },
+                "desktop_task_allowed_actions": (
+                    "open_app",
+                    "open_url",
+                    "set_clipboard",
+                    "hotkey",
+                    "wait",
+                    "read_screen_text",
+                    "create_folder",
+                    "write_text_file",
+                    "render_text_pdf",
+                    "move_file",
+                    "run_applescript",
+                ),
+            }
+        )
     timeout_s = max(2.0, float(timeout_s if timeout_s is not None else 120.0))
     no_reply_action = (
         "required caller must fail closed"
@@ -6572,8 +6673,14 @@ async def api_chat(
             if _is_session_memory_recall_request(_semantic_user_message):
                 remembered = await _recall_session_memory_pin()
                 if remembered and remembered.get("content"):
+                    storage = str(remembered.get("storage") or "session")
+                    source_label = (
+                        "from durable memory"
+                        if storage == "durable"
+                        else "in this session"
+                    )
                     return await _finalize_fastpath(
-                        f"The phrase you asked me to remember in this session was \"{remembered['content']}\".",
+                        f"The phrase you asked me to remember {source_label} was \"{remembered['content']}\".",
                         status="session_memory_recall",
                     )
                 return await _finalize_fastpath(

@@ -9,6 +9,7 @@ from core.utils.task_tracker import get_task_tracker
 import logging
 import asyncio
 import inspect
+import json
 import os
 import re
 from pathlib import Path
@@ -453,7 +454,7 @@ class MemoryFacade:
             return True
         meta_blob = " ".join(
             str(metadata.get(key) or "")
-            for key in ("type", "source", "category", "domain", "kind", "memory_type")
+            for key in ("type", "category", "domain", "kind", "memory_type")
         )
         combined = f"{meta_blob} {content or ''}".lower()
         return any(hint in combined for hint in self.TECHNICAL_HINTS)
@@ -513,6 +514,90 @@ class MemoryFacade:
         if key in {"type", "tag", "source"} and value:
             return key, value, ""
         return "", None, raw
+
+    async def _search_gateway_records(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Search strict-runtime MemoryWriteGateway records.
+
+        Strict runtime persists facade writes through ``MemoryWriteGateway`` for
+        governance and receipts. Vector/graph backends do not necessarily mirror
+        those records, so recall has to include the gateway store directly.
+        """
+
+        query_text = str(query or "").strip()
+        if not query_text:
+            return []
+
+        def _scan() -> List[Dict[str, Any]]:
+            try:
+                from core.memory.memory_write_gateway import get_memory_write_gateway
+
+                root = Path(get_memory_write_gateway().root)
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+                root = Path.home() / ".aura" / "memory"
+            if not root.exists():
+                return []
+
+            def _mtime(path: Path) -> float:
+                try:
+                    return float(path.stat().st_mtime)
+                except OSError:
+                    return 0.0
+
+            terms = [
+                term
+                for term in re.findall(r"[a-z0-9_'-]{3,}", query_text.lower())
+                if term not in {"what", "that", "this", "with", "from", "about", "memory", "remember"}
+            ][:12]
+            candidates: list[tuple[float, float, Dict[str, Any]]] = []
+            paths = sorted(
+                (path for path in root.glob("*/*.json") if path.is_file()),
+                key=_mtime,
+                reverse=True,
+            )[:2000]
+            for path in paths:
+                try:
+                    mtime = _mtime(path)
+                    envelope = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                payload = envelope.get("payload") if isinstance(envelope, dict) else {}
+                if not isinstance(payload, dict):
+                    continue
+                content = str(payload.get("content") or "").strip()
+                metadata = self._safe_metadata(payload.get("metadata"))
+                if not content:
+                    continue
+                haystack = f"{content}\n{json.dumps(metadata, sort_keys=True, default=str)}".lower()
+                if terms:
+                    hits = sum(1 for term in terms if term in haystack)
+                    if hits <= 0:
+                        continue
+                    score = hits / max(1, len(terms))
+                else:
+                    score = 0.1
+                if metadata.get("session_memory_pin") or metadata.get("explicit_memory_request"):
+                    score += 0.25
+                candidates.append(
+                    (
+                        min(1.0, score),
+                        float(payload.get("written_at") or mtime),
+                        self._normalize_memory_result(
+                            content=content,
+                            metadata=metadata,
+                            memory_id=path.stem,
+                            score=min(1.0, score),
+                        ),
+                    )
+                )
+            candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            return [item[2] for item in candidates[:limit]]
+
+        try:
+            return await asyncio.to_thread(_scan)
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            record_degradation("memory_facade", exc)
+            logger.debug("MemoryWriteGateway search failed: %s", exc)
+            return []
 
     def _filter_vector_records(
         self,
@@ -1025,6 +1110,10 @@ class MemoryFacade:
             except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation('memory_facade', e)
                 logger.debug("Graph search failed: %s", e)
+
+        # 3. Strict-runtime gateway records
+        for item in await self._search_gateway_records(query, limit=limit):
+            _append(item)
 
         verified_results: List[Dict[str, Any]] = []
         for order, item in enumerate(results):

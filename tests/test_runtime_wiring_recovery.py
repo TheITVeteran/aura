@@ -109,3 +109,20 @@ def test_build_agentic_tool_map_records_capability_registry_failure(monkeypatch)
 
     last = get_degradation_tracker().recent(subsystem="runtime_wiring")[-1]
     assert last.action == "returned no agentic tool map after capability registry lookup failed"
+
+
+def test_build_agentic_tool_map_skips_capability_inventory_questions(monkeypatch):
+    def _should_not_read_registry(name, default=None):
+        if name == "capability_engine":
+            raise AssertionError("capability inventory questions must not build tool maps")
+        return default
+
+    monkeypatch.setattr("core.container.ServiceContainer.get", staticmethod(_should_not_read_registry))
+
+    assert (
+        build_agentic_tool_map(
+            objective="What tools can you hypothetically use externally on my computer?",
+            max_tools=8,
+        )
+        is None
+    )

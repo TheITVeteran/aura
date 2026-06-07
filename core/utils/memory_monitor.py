@@ -30,11 +30,33 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def _process_tree_rss_gb() -> float:
+    """Return RSS for Aura plus child workers such as MLX inference processes."""
+
+    def _rss_bytes(process: psutil.Process) -> int:
+        try:
+            return int(getattr(process.memory_info(), "rss", 0) or 0)
+        except _MEMORY_MONITOR_RECOVERABLE_ERRORS:
+            return 0
+
+    process = psutil.Process(os.getpid())
+    total_bytes = _rss_bytes(process)
+    try:
+        children = list(process.children(recursive=True))
+    except _MEMORY_MONITOR_RECOVERABLE_ERRORS:
+        children = []
+    for child in children:
+        total_bytes += _rss_bytes(child)
+    return float(total_bytes) / float(1024**3)
+
+
 @dataclass(frozen=True)
 class MemoryPressureSnapshot:
     pressure_pct: float
     available_gb: float
     total_gb: float
+    process_rss_gb: float
+    process_rss_limit_gb: float
     warning_pct: float
     high_pct: float
     critical_pct: float
@@ -77,7 +99,11 @@ class MemoryPressureSnapshot:
 
     @property
     def refuse_heavy_local_generation(self) -> bool:
-        return self.emergency or self.available_gb < self.min_available_gb
+        return (
+            self.emergency
+            or self.available_gb < self.min_available_gb
+            or self.process_rss_gb >= self.process_rss_limit_gb
+        )
 
     def to_dict(self) -> dict[str, float | int | str | bool | None]:
         payload = asdict(self)
@@ -123,30 +149,64 @@ def get_memory_pressure_snapshot() -> MemoryPressureSnapshot:
     critical_pct = _env_float("AURA_MEMORY_CRITICAL_PCT", critical_default)
     emergency_pct = _env_float("AURA_MEMORY_EMERGENCY_PCT", emergency_default)
     min_available_gb = _env_float("AURA_MEMORY_MIN_AVAILABLE_GB", min_available_default)
-
-    if pressure_pct >= emergency_pct or available_gb < max(1.0, min_available_gb / 2.0):
-        level = "emergency"
-    elif pressure_pct >= critical_pct or available_gb < min_available_gb:
-        level = "critical"
-    elif pressure_pct >= high_pct:
-        level = "high"
-    elif pressure_pct >= warning_pct:
-        level = "warning"
+    if total_gb >= 60.0:
+        process_rss_limit_default = min(48.0, max(32.0, total_gb * 0.68))
+    elif total_gb > 0.0:
+        process_rss_limit_default = min(24.0, max(10.0, total_gb * 0.70))
     else:
-        level = "normal"
+        process_rss_limit_default = 24.0
+    process_rss_limit_gb = max(
+        1.0,
+        _env_float("AURA_PROCESS_RSS_LIMIT_GB", process_rss_limit_default),
+    )
+    try:
+        process_rss_gb = _process_tree_rss_gb()
+    except _MEMORY_MONITOR_RECOVERABLE_ERRORS:
+        process_rss_gb = 0.0
 
-    reason = ""
-    if level != "normal":
-        reason = (
+    system_level = "normal"
+    if pressure_pct >= emergency_pct or available_gb < max(1.0, min_available_gb / 2.0):
+        system_level = "emergency"
+    elif pressure_pct >= critical_pct or available_gb < min_available_gb:
+        system_level = "critical"
+    elif pressure_pct >= high_pct:
+        system_level = "high"
+    elif pressure_pct >= warning_pct:
+        system_level = "warning"
+
+    process_level = "normal"
+    if process_rss_gb >= process_rss_limit_gb * 1.12:
+        process_level = "emergency"
+    elif process_rss_gb >= process_rss_limit_gb:
+        process_level = "critical"
+    elif process_rss_gb >= process_rss_limit_gb * 0.90:
+        process_level = "high"
+    elif process_rss_gb >= process_rss_limit_gb * 0.75:
+        process_level = "warning"
+
+    level_rank = {"normal": 0, "warning": 1, "high": 2, "critical": 3, "emergency": 4}
+    level = max((system_level, process_level), key=lambda item: level_rank[item])
+
+    reason_parts: list[str] = []
+    if system_level != "normal":
+        reason_parts.append(
             f"memory_pressure:{pressure_pct:.1f}%/{available_gb:.1f}GB "
-            f"(level={level}, critical>={critical_pct:.1f}%, emergency>={emergency_pct:.1f}%, "
+            f"(level={system_level}, critical>={critical_pct:.1f}%, emergency>={emergency_pct:.1f}%, "
             f"min_available={min_available_gb:.1f}GB)"
         )
+    if process_level != "normal":
+        reason_parts.append(
+            f"process_tree_rss:{process_rss_gb:.1f}GB/{process_rss_limit_gb:.1f}GB "
+            f"(level={process_level})"
+        )
+    reason = "; ".join(reason_parts)
 
     return MemoryPressureSnapshot(
         pressure_pct=pressure_pct,
         available_gb=available_gb,
         total_gb=total_gb,
+        process_rss_gb=process_rss_gb,
+        process_rss_limit_gb=process_rss_limit_gb,
         warning_pct=warning_pct,
         high_pct=high_pct,
         critical_pct=critical_pct,

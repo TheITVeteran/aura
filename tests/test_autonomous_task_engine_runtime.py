@@ -132,6 +132,55 @@ async def test_task_engine_grounded_goal_fallback_avoids_think_only_plan():
     )
 
 
+def test_task_engine_planning_specs_do_not_materialize_full_tool_catalog_for_desktop(monkeypatch):
+    kernel = SimpleNamespace(organs={})
+    engine = AutonomousTaskEngine(kernel)
+    full_catalog_calls = 0
+
+    class _CapabilityEngine:
+        def select_tool_definitions(self, **_kwargs):
+            return []
+
+        def get_tool_definitions(self):
+            nonlocal full_catalog_calls
+            full_catalog_calls += 1
+            return []
+
+        def _tool_definition_for_skill(self, name):
+            if name != "computer_use":
+                return None
+            return {
+                "type": "function",
+                "function": {
+                    "name": "computer_use",
+                    "description": "Control the visible desktop through governed actions.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string"},
+                            "target": {"type": "string"},
+                        },
+                    },
+                },
+            }
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: _CapabilityEngine()
+            if name == "capability_engine"
+            else default
+        ),
+    )
+
+    specs = engine._build_planning_tool_specs(
+        "Open Notes on my computer and type a timestamped summary."
+    )
+
+    assert full_catalog_calls == 0
+    assert any(spec["name"] == "computer_use" for spec in specs)
+
+
 @pytest.mark.asyncio
 async def test_task_engine_learning_bundle_uses_deterministic_remember_plan():
     llm = SimpleNamespace(think=AsyncCallRecorder(return_value="[]"))
@@ -823,4 +872,3 @@ async def test_task_engine_universal_fallbacks():
     assert len(plan_social.steps) == 1
     assert plan_social.steps[0].tool == "social_post"
     assert "neuroscience" in plan_social.steps[0].args["content"]
-

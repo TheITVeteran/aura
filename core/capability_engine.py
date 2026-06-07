@@ -1563,25 +1563,24 @@ class CapabilityEngine(AuraBaseModule):
         tool-using models do not waste context, latency, and reasoning budget on
         the full skill catalog.
         """
-        available = self.get_tool_definitions() or []
-        if not available:
-            return []
-
         max_tools = max(1, min(int(max_tools or 8), 12))
-        by_name = {
-            str(entry.get("function", {}).get("name") or ""): entry
-            for entry in available
-            if isinstance(entry, dict) and entry.get("function", {}).get("name")
-        }
-        if not by_name:
-            return []
-
         ordered = self._rank_tool_candidates(
             objective=objective,
             required_skill=required_skill,
             max_tools=max_tools,
         )
-        return [by_name[name] for name in ordered[:max_tools] if name in by_name]
+        if not ordered:
+            return []
+
+        allowed_max_cost = self._allowed_max_tool_cost()
+        selected: list[dict[str, Any]] = []
+        for name in ordered:
+            if len(selected) >= max_tools:
+                break
+            tool = self._tool_definition_for_skill(name, allowed_max_cost=allowed_max_cost)
+            if tool:
+                selected.append(tool)
+        return selected
 
     def _load_dependencies(self) -> None:
         """Loads optional dependencies for adaptation and security."""
@@ -2229,13 +2228,7 @@ class CapabilityEngine(AuraBaseModule):
         skill_name = self.resolve_skill_name(skill_name)
         return self.skills.get(skill_name)
 
-    def get_tool_definitions(self) -> list[dict[str, Any]]:
-        """Generates OpenAI-compatible tool definitions for LLM function calling.
-
-        Returns:
-            List[Dict[str, Any]]: List of tool definitions.
-        """
-        # Phase 22: Metabolic Throttling
+    def _allowed_max_tool_cost(self) -> int:
         metabolism = resolve_metabolic_monitor(default=None)
         homeostasis = resolve_homeostatic_coupling(default=None)
 
@@ -2267,30 +2260,59 @@ class CapabilityEngine(AuraBaseModule):
         if urgency and health_score > 0.6:
             allowed_max_cost = min(allowed_max_cost, 2)
 
+        return allowed_max_cost
+
+    def _tool_definition_for_skill(
+        self,
+        skill_name: str,
+        *,
+        allowed_max_cost: int | None = None,
+    ) -> dict[str, Any] | None:
+        meta = self.skills.get(skill_name)
+        if meta is None:
+            return None
+        if not bool(getattr(meta, "enabled", True)):
+            return None
+
+        active_skills = getattr(self, "active_skills", set(self.skills))
+        if skill_name not in active_skills:
+            return None
+
+        cost = int(getattr(meta, "metabolic_cost", 1) or 1)
+        is_core = bool(getattr(meta, "is_core_personality", False))
+        if allowed_max_cost is None:
+            allowed_max_cost = self._allowed_max_tool_cost()
+        if cost > allowed_max_cost and not is_core:
+            return None
+
+        return {
+            "type": "function",
+            "function": {
+                "name": skill_name,
+                "description": str(getattr(meta, "description", "") or ""),
+                "parameters": getattr(meta, "schema_def", None) or {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        }
+
+    def get_tool_definitions(self) -> list[dict[str, Any]]:
+        """Generates OpenAI-compatible tool definitions for LLM function calling.
+
+        Returns:
+            List[Dict[str, Any]]: List of tool definitions.
+        """
+        # Phase 22: Metabolic Throttling
+        allowed_max_cost = self._allowed_max_tool_cost()
         tools = []
         for skill_name, meta in self.skills.items():
-            if not meta.enabled:
+            tool = self._tool_definition_for_skill(
+                skill_name,
+                allowed_max_cost=allowed_max_cost,
+            )
+            if not tool:
                 continue
-
-            # 1. Check if explicitly active
-            if skill_name not in self.active_skills:
-                continue
-
-            # 2. Check Metabolic Limit (Immune if core_personality)
-            cost = meta.metabolic_cost
-            is_core = meta.is_core_personality
-
-            if cost > allowed_max_cost and not is_core:
-                continue
-
-            tool = {
-                "type": "function",
-                "function": {
-                    "name": skill_name,
-                    "description": meta.description,
-                    "parameters": meta.schema_def,
-                },
-            }
             tools.append(tool)
         return tools
 

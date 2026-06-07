@@ -43,6 +43,20 @@ _SEARCH_WITH_TARGET_RE = re.compile(
     re.IGNORECASE,
 )
 
+_CAPABILITY_INVENTORY_RE = re.compile(
+    r"\b(?:what|which|list|tell me|describe|explain|show)\b.{0,80}"
+    r"\b(?:tools?|skills?|capabilit(?:y|ies)|things? you can do|what you can do)\b|"
+    r"\b(?:can|could|do|does|are|is|have|has)\b.{0,80}\b(?:you|aura)\b.{0,80}"
+    r"\b(?:tools?|skills?|capabilit(?:y|ies)|external(?:ly)?|desktop|computer|browser|files?|apps?|notes?|pdf|search|web|terminal)\b",
+    re.IGNORECASE,
+)
+
+_CAPABILITY_EXECUTION_RE = re.compile(
+    r"^\s*(?:please\s+|can you\s+|could you\s+|would you\s+|i need you to\s+|aura[,:\s]+)?"
+    r"(?:use|run|execute|open|search|browse|click|type|create|write|save|download|install|move|copy|delete)\b",
+    re.IGNORECASE,
+)
+
 _FACTUAL_LOOKUP_PATTERNS = tuple(
     re.compile(p, re.IGNORECASE) for p in (
         r"\blyrics?\b",
@@ -403,6 +417,7 @@ class ResponseContract:
     requires_identity_defense: bool = False
     requires_self_preservation: bool = False
     requires_recent_specific_grounding: bool = False
+    requires_capability_inventory: bool = False
     tool_evidence_available: bool = False
     memory_evidence_available: bool = False
     continuity_evidence_available: bool = False
@@ -551,6 +566,13 @@ class ResponseContract:
                 "or live trace evidence when possible. If you do not have a grounded specific instance, say that plainly."
             )
 
+        if self.requires_capability_inventory:
+            directives.append(
+                "- This is a capability inventory/status question, not a request to execute tools. "
+                "Answer from the active governed capability catalog at a bounded, category-level summary. "
+                "Do not start browser, desktop, terminal, file, network, or self-modification actions unless the user explicitly asks for execution."
+            )
+
         if self.requires_aura_question:
             directives.append(
                 "- The user explicitly invited your questions. Offer at least one concrete thing you genuinely want to know "
@@ -580,10 +602,10 @@ class ResponseContract:
             )
 
         directives.append(
-            f"- Tool/function-call budget for this reply: at most {max(1, int(self.max_tool_turns or 1))} tool turns."
+            f"- Tool/function-call budget for this reply: at most {max(0, int(self.max_tool_turns or 0))} tool turns."
         )
         directives.append(
-            f"- Keep the active tool catalog narrow: prefer {max(1, int(self.max_tools or 1))} relevant tools or fewer."
+            f"- Keep the active tool catalog narrow: prefer {max(0, int(self.max_tools or 0))} relevant tools or fewer."
         )
 
         if self.avoid_question_fishing:
@@ -660,6 +682,18 @@ def _looks_like_search_capability_question(text: str) -> bool:
     if "search the internet for" in lowered or "search the web for" in lowered:
         return False
     return bool(_SEARCH_CAPABILITY_QUESTION_RE.search(raw))
+
+
+def looks_like_capability_inventory_request(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if _CAPABILITY_EXECUTION_RE.match(raw):
+        return False
+    lowered = raw.lower()
+    if re.search(r"\b(?:do it|go ahead|actually do|perform|execute this|start now)\b", lowered):
+        return False
+    return bool(_CAPABILITY_INVENTORY_RE.search(raw))
 
 
 def has_tool_evidence(state: AuraState) -> bool:
@@ -887,6 +921,9 @@ def build_response_contract(
     time_utility_lookup = _matches_any(lower, _TIME_UTILITY_PATTERNS)
     search_negated = bool(_SEARCH_NEGATION_RE.search(lower))
     search_capability_question = _looks_like_search_capability_question(text)
+    capability_inventory_question = bool(
+        is_user_facing and looks_like_capability_inventory_request(text)
+    )
     biographical_grounding = bool(is_user_facing and _matches_any(lower, _BIOGRAPHICAL_HISTORY_PATTERNS))
 
     requires_memory = bool(is_user_facing and _matches_any(lower, _MEMORY_PATTERNS))
@@ -939,7 +976,7 @@ def build_response_contract(
         factual_lookup = False
         factual_followup = False
         temporal_live_lookup = False
-    if search_capability_question:
+    if search_capability_question or capability_inventory_question:
         explicit_search = False
         factual_lookup = False
         factual_followup = False
@@ -992,7 +1029,10 @@ def build_response_contract(
 
     max_tool_turns = 1
     max_tools = 4
-    if turn_analysis.suggests_deliberate_mode or turn_analysis.intent_type in {"TASK", "SKILL"}:
+    if capability_inventory_question:
+        max_tool_turns = 0
+        max_tools = 0
+    elif turn_analysis.suggests_deliberate_mode or turn_analysis.intent_type in {"TASK", "SKILL"}:
         max_tool_turns = 4 if requires_search else 3
         max_tools = 8 if requires_search else 6
     elif requires_search:
@@ -1029,6 +1069,8 @@ def build_response_contract(
         reasons.append("sensitive_process_description")
     if requires_recent_specific_grounding:
         reasons.append("recent_specific_grounding")
+    if capability_inventory_question:
+        reasons.append("capability_inventory")
     if requires_aura_stance and not requires_state:
         reasons.append("aura_perspective")
     if requires_aura_question:
@@ -1056,6 +1098,7 @@ def build_response_contract(
         requires_identity_defense=requires_identity_defense,
         requires_self_preservation=requires_self_preservation,
         requires_recent_specific_grounding=requires_recent_specific_grounding,
+        requires_capability_inventory=capability_inventory_question,
         tool_evidence_available=tool_evidence,
         memory_evidence_available=memory_evidence,
         continuity_evidence_available=continuity_evidence,

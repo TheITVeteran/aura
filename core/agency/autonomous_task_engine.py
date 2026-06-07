@@ -1185,22 +1185,19 @@ Respond ONLY with a JSON array, no other text:
                 logger.debug("TaskEngine: planning tool selection skipped: %s", exc)
                 selected_defs = []
 
-            by_name: dict[str, dict[str, Any]] = {}
-            try:
-                for entry in list(cap.get_tool_definitions() or []):
-                    if not isinstance(entry, dict):
-                        continue
-                    fn = entry.get("function", {}) or {}
-                    name = str(fn.get("name", "") or "").strip()
-                    if name:
-                        by_name[name] = entry
-            except (OSError, ConnectionError, TimeoutError) as exc:
-                record_degradation("autonomous_task_engine", exc)
-                logger.debug("TaskEngine: planning tool catalog skipped: %s", exc)
-
             if self._looks_like_desktop_goal(goal):
                 for preferred in self.DESKTOP_TOOL_PREFERENCES:
-                    entry = by_name.get(preferred)
+                    entry = None
+                    if hasattr(cap, "_tool_definition_for_skill"):
+                        try:
+                            entry = cap._tool_definition_for_skill(preferred)
+                        except (RuntimeError, AttributeError, TypeError) as exc:
+                            record_degradation("autonomous_task_engine", exc)
+                            logger.debug(
+                                "TaskEngine: desktop tool definition lookup skipped for %s: %s",
+                                preferred,
+                                exc,
+                            )
                     if entry and entry not in selected_defs:
                         selected_defs.append(entry)
 

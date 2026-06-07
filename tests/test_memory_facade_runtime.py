@@ -6,6 +6,7 @@ import pytest
 from core.container import ServiceContainer
 from core.memory.black_hole_vault import BlackHoleVault
 from core.memory.memory_facade import MemoryFacade
+from core.runtime.atomic_writer import atomic_write_json
 from core.skills.memory_ops import MemoryOpsInput, MemoryOpsSkill
 from interface.routes.memory import (
     _build_episodic_memory_response,
@@ -115,6 +116,37 @@ async def test_memory_facade_search_supports_sync_vector_and_graph():
 
     assert any("vector memory about Bryan" == item["content"] for item in results)
     assert any("graph memory about Bryan" == item["content"] for item in results)
+
+
+@pytest.mark.asyncio
+async def test_memory_facade_search_reads_strict_gateway_records(monkeypatch, tmp_path):
+    record_path = tmp_path / "episodic" / "session-pin.json"
+    atomic_write_json(
+        record_path,
+        {
+            "content": "Bryan explicitly asked Aura to remember the blue lantern phrase.",
+            "metadata": {
+                "source": "chat_api",
+                "session_memory_pin": True,
+                "explicit_memory_request": True,
+            },
+            "cause": "memory_facade.add_memory",
+            "written_at": 12345.0,
+        },
+        schema_version=1,
+        schema_name="memory.episodic",
+    )
+    monkeypatch.setattr(
+        "core.memory.memory_write_gateway.get_memory_write_gateway",
+        lambda: SimpleNamespace(root=tmp_path),
+    )
+
+    results = await MemoryFacade().search("blue lantern phrase", limit=5)
+
+    assert any("blue lantern phrase" in item["content"] for item in results)
+    matched = next(item for item in results if "blue lantern phrase" in item["content"])
+    assert matched["metadata"]["session_memory_pin"] is True
+    assert matched["metadata"]["verification_state"] == "not_applicable"
 
 
 @pytest.mark.asyncio

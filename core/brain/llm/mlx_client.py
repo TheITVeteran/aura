@@ -2403,6 +2403,36 @@ class MLXLocalClient:
                 if future.done():
                     return future.result()
 
+                try:
+                    memory_snapshot = get_memory_pressure_snapshot()
+                    if memory_snapshot.should_gc:
+                        gc.collect()
+                    allow_critical_memory = str(
+                        os.environ.get("AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION", "")
+                    ).strip().lower() in {"1", "true", "yes", "on"}
+                    if (
+                        memory_snapshot.refuse_heavy_local_generation
+                        and self._is_primary_or_deep_lane()
+                        and not allow_critical_memory
+                    ):
+                        logger.error(
+                            "🛑 [MLX] Aborting generation for %s under live memory pressure: %s",
+                            os.path.basename(self.model_path),
+                            memory_snapshot.reason,
+                        )
+                        self._pending_generations.pop(req_id, None)
+                        self._record_degraded_event(
+                            "generation_aborted_memory_pressure",
+                            detail=f"{os.path.basename(self.model_path)}:{memory_snapshot.reason}",
+                            severity="critical",
+                            foreground_request=foreground_request,
+                        )
+                        self.force_abort_active_generation("memory_pressure_during_generation")
+                        _cancel_shared_future(future)
+                        return None
+                except (OSError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    logger.debug("MLX live memory pressure probe unavailable: %s", exc)
+
                 if self._process is not None and not self._process.is_alive():
                     logger.error(
                         "🛑 [MLX] Worker died during generation. Deferring reboot until lock released."

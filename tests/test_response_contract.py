@@ -53,6 +53,40 @@ def test_response_contract_does_not_search_for_search_capability_question():
     assert contract.required_skill is None
 
 
+def test_response_contract_treats_external_tool_inventory_as_bounded_self_report():
+    state = AuraState.default()
+
+    contract = build_response_contract(
+        state,
+        "What tools can you hypothetically use externally on my computer?",
+        is_user_facing=True,
+    )
+
+    assert contract.requires_search is False
+    assert contract.required_skill is None
+    assert contract.requires_capability_inventory is True
+    assert contract.max_tool_turns == 0
+    assert contract.max_tools == 0
+    assert "capability_inventory" in contract.reason
+    prompt_block = contract.to_prompt_block()
+    assert "capability inventory/status question" in prompt_block
+    assert "at most 0 tool turns" in prompt_block
+
+
+def test_response_contract_does_not_treat_desktop_execution_as_tool_inventory():
+    state = AuraState.default()
+
+    contract = build_response_contract(
+        state,
+        "Can you open Notes, type a timestamped summary, and export it as a PDF?",
+        is_user_facing=True,
+    )
+
+    assert contract.requires_capability_inventory is False
+    assert contract.max_tool_turns > 0
+    assert "capability_inventory" not in contract.reason
+
+
 def test_response_contract_searches_when_capability_question_has_target():
     state = AuraState.default()
 

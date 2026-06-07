@@ -273,6 +273,25 @@ class ResponseGenerationPhase(BasePhase):
                         )
                     else:
                         messages.insert(0, {"role": "system", "content": repair_block})
+                if bool(runtime_context.get("desktop_execution_contract")):
+                    desktop_block = (
+                        "## LIVE DESKTOP EXECUTION PLANNING CONTRACT\n"
+                        "The user's request is a live desktop/computer objective. Produce a compact "
+                        "execution draft that can drive the governed desktop_task lane. Prefer a JSON "
+                        "object with optional `document_body` and a bounded `steps` array. Allowed step "
+                        "actions are open_app, open_url, set_clipboard, hotkey, wait, read_screen_text, "
+                        "create_folder, write_text_file, render_text_pdf, move_file, and run_applescript. "
+                        "Use `{{document_body}}` inside a step target when a long composed body should be "
+                        "typed, pasted, written, or exported. Each step needs a reason and an expected "
+                        "observable effect. Do not claim completion inside this draft; completion is only "
+                        "true after the downstream desktop_task receipts verify effects. Keep the plan "
+                        "general to the named apps/surfaces and requested artifacts; do not use a "
+                        "hardcoded demo shortcut."
+                    )
+                    if messages and messages[0].get("role") == "system":
+                        messages[0]["content"] = f"{messages[0]['content']}\n\n{desktop_block}"
+                    else:
+                        messages.insert(0, {"role": "system", "content": desktop_block})
 
             # Causal World Model Context Injection
             causal_model = None if proof_answer_run else self.container.get("causal_world_model", default=None)

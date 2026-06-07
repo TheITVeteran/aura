@@ -6,7 +6,11 @@ import logging
 import os
 from typing import Any
 
-from core.phases.response_contract import ResponseContract, build_response_contract
+from core.phases.response_contract import (
+    ResponseContract,
+    build_response_contract,
+    looks_like_capability_inventory_request,
+)
 from core.runtime import service_access
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
@@ -420,6 +424,8 @@ def build_agentic_tool_map(
     max_tools: int = 8,
 ) -> dict[str, Any] | None:
     try:
+        if required_skill is None and looks_like_capability_inventory_request(str(objective or "")):
+            return None
         from core.container import ServiceContainer
 
         cap = ServiceContainer.get("capability_engine", default=None)
@@ -465,6 +471,8 @@ def build_agentic_tool_map(
 
 def should_force_tool_handoff(contract: ResponseContract | None, *, is_background: bool) -> bool:
     if os.environ.get("AURA_EMBODIED_CHALLENGE"):
+        return False
+    if contract and getattr(contract, "requires_capability_inventory", False):
         return False
     return bool(
         contract

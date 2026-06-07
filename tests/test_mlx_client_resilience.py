@@ -931,6 +931,53 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         self.assertEqual(client._deferred_reboot_reason, "first_token_sla_exceeded")
 
+    async def test_generation_waiter_aborts_when_process_rss_crosses_limit(self):
+        class Snapshot:
+            should_gc = False
+            refuse_heavy_local_generation = True
+            reason = "process_tree_rss:45.0GB/42.0GB (level=critical)"
+
+        async def await_timeout(*_args, **_kwargs):
+            await asyncio.sleep(0)
+            raise TimeoutError
+
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        client._process = ProcessProbe(alive=True)
+        client._init_done = True
+        client._set_lane_state("ready")
+        req_id = "req-memory-pressure"
+        future = asyncio.get_running_loop().create_future()
+        client._pending_generations[req_id] = future
+        client._current_gen_future = future
+        client._current_request_id = req_id
+        abort_calls = []
+
+        def abort(reason):
+            abort_calls.append(reason)
+            return True
+
+        client.force_abort_active_generation = abort
+
+        with replace_dotted(
+            "core.brain.llm.mlx_client._await_shared_future",
+            await_timeout,
+        ):
+            with replace_dotted(
+                "core.brain.llm.mlx_client.get_memory_pressure_snapshot",
+                lambda: Snapshot(),
+            ):
+                result = await client._wait_for_generation_result(
+                    req_id,
+                    future,
+                    get_deadline(30.0),
+                    foreground_request=True,
+                )
+
+        self.assertIsNone(result)
+        self.assertEqual(abort_calls, ["memory_pressure_during_generation"])
+        self.assertTrue(future.cancelled())
+        self.assertNotIn(req_id, client._pending_generations)
+
     async def test_long_prompt_extends_first_token_sla_for_heavy_lane(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
         cold_sla = client._first_token_sla(foreground_request=True)
