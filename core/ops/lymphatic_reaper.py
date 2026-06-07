@@ -21,6 +21,7 @@ import psutil
 from core.observability.metrics import get_metrics
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.task_ownership import create_tracked_task
+from core.utils.task_tracker import mark_task_protected
 
 logger = logging.getLogger("Aura.Reaper")
 metrics = get_metrics()
@@ -86,6 +87,7 @@ class LymphaticReaper:
             self._run_loop(),
             name="lymphatic_reaper.loop",
         )
+        mark_task_protected(self._task, owner="lymphatic_reaper")
         logger.info("Lymphatic Reaper active (interval %.1fs)", self._interval)
 
     async def stop(self) -> None:

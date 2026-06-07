@@ -609,7 +609,7 @@ export default function App() {
                 {bootstrap.state.phenomenal_state ? (
                   <div className="summary-card">
                     <div className="feed-meta">
-                      <span>Phenomenal field</span>
+                      <span>Operational field</span>
                       <span>{formatScore(bootstrap.state.coherence_score || 0)} coherence</span>
                     </div>
                     <div className="feed-content">{bootstrap.state.phenomenal_state}</div>

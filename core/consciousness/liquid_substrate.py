@@ -21,7 +21,7 @@ import torch
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.exceptions import capture_and_log
-from core.utils.task_tracker import get_task_tracker
+from core.utils.task_tracker import get_task_tracker, mark_task_protected
 
 # 🔒 [M5 64GB] Allow more threads for M5's wider core layout
 torch.set_num_threads(6)
@@ -302,6 +302,7 @@ class LiquidSubstrate:
             self.thread = get_task_tracker().create_task(
                 self._run_loop(), name="LiquidConsciousness"
             )
+            mark_task_protected(self.thread, owner="liquid_substrate")
             logger.info("Liquid Substrate STARTED (Unified Cycle)")
         except RuntimeError:
             logger.error("Failed to start Liquid Substrate: No running asyncio loop.")

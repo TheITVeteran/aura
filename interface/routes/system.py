@@ -421,13 +421,16 @@ def _collect_liquid_state_payload(
         elif key == "curiosity":
             runtime_fallback = runtime_affect.get("curiosity", homeostasis_data.get("curiosity"))
         elif key == "confidence":
-            runtime_fallback = runtime_affect.get("confidence", homeostasis_data.get("will_to_live"))
+            runtime_fallback = runtime_affect.get(
+                "confidence",
+                _homeostasis_vitality_value(homeostasis_data),
+            )
         normalized = _pick_metric(key, runtime_fallback=runtime_fallback)
         if normalized is not None:
             payload[key] = round(normalized, 1)
 
     if "confidence" not in payload:
-        normalized = _normalize_percentish(homeostasis_data.get("will_to_live"))
+        normalized = _normalize_percentish(_homeostasis_vitality_value(homeostasis_data))
         if normalized is not None:
             payload["confidence"] = round(normalized, 1)
 
@@ -439,6 +442,39 @@ def _collect_liquid_state_payload(
     if isinstance(ls_data.get("vad"), dict):
         payload["vad"] = ls_data["vad"]
 
+    return payload
+
+
+def _homeostasis_vitality_value(homeostasis_data: dict[str, Any]) -> Any:
+    """Return the public vitality/confidence source from homeostasis data.
+
+    ``will_to_live`` is retained as an internal legacy key in the homeostasis
+    subsystem. Public health payloads should prefer operational labels so UI and
+    API consumers do not treat a homeostatic scalar as proof of subjectivity.
+    """
+    for key in ("operational_confidence", "vitality", "will_to_live"):
+        value = homeostasis_data.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _collect_homeostasis_public_payload(homeostasis_data: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(homeostasis_data or {})
+    legacy_vitality = payload.pop("will_to_live", None)
+    vitality_source = None
+    for key in ("vitality", "operational_confidence"):
+        value = payload.get(key)
+        if value is not None:
+            vitality_source = value
+            break
+    if vitality_source is None:
+        vitality_source = legacy_vitality
+    normalized = _normalize_percentish(vitality_source)
+    if normalized is not None:
+        value = round(normalized / 100.0, 4)
+        payload.setdefault("vitality", value)
+        payload.setdefault("operational_confidence", value)
     return payload
 
 
@@ -1172,10 +1208,13 @@ async def api_health(request: Request):
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation("system", e)
         logger.debug("Homeostasis health collection failed: %s", e)
+    homeostasis_payload = _collect_homeostasis_public_payload(
+        homeo_data if isinstance(homeo_data, dict) else {}
+    )
     liquid_state_payload = _collect_liquid_state_payload(
         cast(dict[str, Any], ls_data if isinstance(ls_data, dict) else {}),
         runtime_state=runtime_payload if isinstance(runtime_payload, dict) else {},
-        homeostasis_data=homeo_data if isinstance(homeo_data, dict) else {},
+        homeostasis_data=homeostasis_payload,
     )
     soma_data = await _collect_soma_payload()
 
@@ -1564,7 +1603,7 @@ async def api_health(request: Request):
             "liquid_state": liquid_state_payload,
             "soma":        soma_data,
             "moral":       moral_data,
-            "homeostasis": homeo_data,
+            "homeostasis": homeostasis_payload,
             "social":      social_data,
             "swarm":       swarm_data,
             "resilience":  resilience_data,

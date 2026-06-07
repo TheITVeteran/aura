@@ -45,6 +45,31 @@ async def test_task_tracker_loop_hygiene_observes_raw_asyncio_tasks():
 
 
 @pytest.mark.asyncio
+async def test_task_tracker_shutdown_cancels_protected_tasks():
+    tracker = TaskTracker(name="ProtectedShutdownTest")
+    cancelled: list[str] = []
+
+    async def _hold(label: str):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append(label)
+
+    ordinary = tracker.create_task(_hold("ordinary"), name="ordinary")
+    protected = tracker.create_task(_hold("protected"), name="protected")
+    protected._aura_protected = True
+    await asyncio.sleep(0)
+
+    await tracker.shutdown(timeout=0.2)
+    await asyncio.sleep(0)
+
+    assert ordinary.cancelled()
+    assert protected.cancelled()
+    assert set(cancelled) == {"ordinary", "protected"}
+    assert tracker.active_count == 0
+
+
+@pytest.mark.asyncio
 async def test_runtime_hygiene_tracks_non_daemon_threads():
     hygiene = RuntimeHygieneManager()
     hygiene.stale_thread_age_s = 0.0

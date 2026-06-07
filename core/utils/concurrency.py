@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
+from core.utils.task_tracker import get_task_tracker, mark_task_protected
 
 # Use the centralized enhanced logger
 try:
@@ -474,6 +474,7 @@ class EventLoopMonitor:
         self._stop_event.clear()
         self._started_at = time.perf_counter()
         self._task = get_task_tracker().create_task(self._run())
+        mark_task_protected(self._task, owner="event_loop_monitor")
         logger.info(
             "🕒 EventLoopMonitor started (threshold=%.2fs, interval=%.1fs)",
             self.threshold,

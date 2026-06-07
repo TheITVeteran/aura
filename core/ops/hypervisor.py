@@ -10,7 +10,7 @@ import time
 
 from core.observability.metrics import get_metrics
 from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
+from core.utils.task_tracker import get_task_tracker, mark_task_protected
 
 logger = logging.getLogger("Aura.Hypervisor")
 metrics = get_metrics()
@@ -43,6 +43,7 @@ class Hypervisor:
         self._running = True
         self._start_time = time.time()
         self._task = get_task_tracker().create_task(self._watchdog_loop())
+        mark_task_protected(self._task, owner="hypervisor")
         logger.info("👁️ Hypervisor Watchdog active (Threshold: %.2fs)", self._lag_threshold)
 
     async def stop(self):

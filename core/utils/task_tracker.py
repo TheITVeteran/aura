@@ -15,6 +15,16 @@ logger = logging.getLogger(__name__)
 _SKIP_FACTORY_TRACK = contextvars.ContextVar("aura_skip_factory_track", default=False)
 
 
+def mark_task_protected(task: asyncio.Task[Any], *, owner: str = "task_tracker") -> asyncio.Task[Any]:
+    """Mark a task as shutdown-critical without exempting it from cancellation."""
+    try:
+        task._aura_protected = True
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(owner, exc)
+        logger.debug("Task protection annotation failed for %s: %s", owner, exc)
+    return task
+
+
 @dataclass
 class TaskRecord:
     task_id: int
@@ -341,7 +351,13 @@ class TaskTracker:
         return len(self.tasks)
 
     async def shutdown(self, timeout: float = 5.0):
-        """Cancel and wait for all tracked tasks."""
+        """Cancel and wait for all tracked tasks.
+
+        Tasks marked ``_aura_protected`` are cancelled after ordinary tracked
+        work so shutdown can drain short-lived background jobs first. Protection
+        never means "leave this task alive"; a clean runtime shutdown must not
+        strand scheduler, substrate, or watchdog loops behind the caller.
+        """
         pending = {
             task
             for task in self.tasks
@@ -350,18 +366,33 @@ class TaskTracker:
         if not pending:
             return
 
-        logger.info("TaskTracker[%s]: cancelling %s tracked task(s) during shutdown.", self.name, len(pending))
+        ordinary = {task for task in pending if not getattr(task, "_aura_protected", False)}
+        protected = pending - ordinary
+        remaining: list[asyncio.Task[Any]] = []
 
-        for task in pending:
-            task.cancel()
+        async def _cancel_group(group: set[asyncio.Task[Any]], label: str) -> None:
+            if not group:
+                return
+            logger.info(
+                "TaskTracker[%s]: cancelling %s %s task(s) during shutdown.",
+                self.name,
+                len(group),
+                label,
+            )
 
-        try:
-            await asyncio.wait(pending, timeout=timeout)
-        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
-            record_degradation('task_tracker', e)
-            logger.error("Error during TaskTracker shutdown: %s", e)
+            for task in group:
+                task.cancel()
 
-        remaining = [task for task in pending if not task.done()]
+            try:
+                await asyncio.wait(group, timeout=timeout)
+            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
+                record_degradation('task_tracker', e)
+                logger.error("Error during TaskTracker shutdown: %s", e)
+            remaining.extend(task for task in group if not task.done())
+
+        await _cancel_group(ordinary, "ordinary")
+        await _cancel_group(protected, "protected")
+
         if remaining:
             logger.warning("%d tasks still pending after timeout. Forcing abandonment.", len(remaining))
         for task in remaining:

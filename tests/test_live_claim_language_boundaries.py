@@ -75,3 +75,32 @@ def test_live_chat_route_uses_operational_self_context_name() -> None:
     assert "[End operational self context]" in preflight_text
     assert "not proof of private qualia, literal personhood, or proven consciousness" in preflight_text
     assert "[End consciousness context]" not in preflight_text
+
+
+def test_live_ui_uses_operational_telemetry_language() -> None:
+    ui_text = "\n".join(
+        [
+            (ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8"),
+            (ROOT / "interface" / "static" / "index.html").read_text(encoding="utf-8"),
+            (ROOT / "interface" / "static" / "shell" / "src" / "App.jsx").read_text(
+                encoding="utf-8"
+            ),
+        ]
+    ).lower()
+
+    forbidden_visible_claims = {
+        "homeostasis.will_to_live * 100",
+        "phenomenal field",
+        "first-person style description",
+        "what the moment feels like from inside her runtime",
+        "phenomenological weight",
+        "felt organization of the moment",
+        "subjectivity evidence",
+        "qualia engine",
+    }
+    for phrase in forbidden_visible_claims:
+        assert phrase not in ui_text
+
+    assert "operational field" in ui_text
+    assert "state-coupling evidence" in ui_text
+    assert "homeostatic vitality or operational confidence" in ui_text

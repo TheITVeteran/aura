@@ -9,7 +9,7 @@ from typing import Callable, Dict, Optional, Any, List
 
 from core.container import ServiceContainer
 from core.runtime.shutdown_coordinator import is_shutdown_requested
-from core.utils.task_tracker import get_task_tracker
+from core.utils.task_tracker import get_task_tracker, mark_task_protected
 
 logger = logging.getLogger("Aura.Scheduler")
 
@@ -95,6 +95,7 @@ class Scheduler:
             self._main_loop(),
             name="aura.scheduler.main_loop",
         )
+        mark_task_protected(self._main_loop_task, owner="scheduler")
         logger.info("🚀 Scheduler started.")
 
     async def _main_loop(self):

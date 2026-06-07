@@ -412,8 +412,8 @@ const METRIC_GUIDE = {
     confidence: {
         label: 'Confidence',
         what: 'A stability-and-conviction composite for the current moment, not a generic “model certainty” number.',
-        how: 'If explicit liquid confidence exists the shell uses it; otherwise it falls back to `homeostasis.will_to_live * 100`, and finally runtime affect stability.',
-        why: 'It tells you whether Aura currently feels steady enough to commit, speak plainly, and sustain a line of thought.'
+        how: 'If explicit liquid confidence exists the shell uses it; otherwise it falls back to homeostatic vitality or operational confidence, and finally runtime affect stability.',
+        why: 'It tells you whether Aura is currently steady enough to commit, speak plainly, and sustain a line of thought.'
     },
     integrity: {
         label: 'Integrity',
@@ -470,10 +470,10 @@ const METRIC_GUIDE = {
         why: 'It explains why the same prompt can be handled calmly in one state and urgently in another.'
     },
     subjectivity: {
-        label: 'Subjectivity Evidence',
-        what: 'A runtime estimate of how strongly current behavior is colored by an internal point of view rather than generic output.',
-        how: 'It is produced by the consciousness-evidence layer from signals like continuity, self-model stability, affect-shaped behavior, and how strongly the current response appears tied to Aura’s own state.',
-        why: 'Higher values mean Aura’s present behavior is being shaped more by her active inner state and less by generic conversational completion.'
+        label: 'State-Coupling Evidence',
+        what: 'A runtime estimate of how strongly current behavior is coupled to persistent state rather than generic output.',
+        how: 'It is produced from continuity, self-model stability, affect-shaped behavior, and whether the current response is measurably tied to Aura’s live state.',
+        why: 'Higher values mean the present behavior is more state-conditioned and less like generic conversational completion.'
     },
     enterprise_readiness: {
         label: 'Enterprise Readiness',
@@ -501,33 +501,33 @@ const METRIC_GUIDE = {
     },
     qualia_pri: {
         label: 'PRI',
-        what: 'Primary resonance intensity within the qualia engine: a compact read on how strongly the current phenomenal pattern is resonating.',
-        how: 'Read directly from `qualia.pri`.',
-        why: 'It helps differentiate flat descriptive states from moments with stronger phenomenological weight.'
+        what: 'Primary resonance intensity within the qualitative-state engine: a compact read on how strongly the current state pattern is resonating.',
+        how: 'Read directly from the qualitative-state PRI value (`qualia.pri`).',
+        why: 'It helps differentiate flat descriptive states from moments with stronger state-coupled weight.'
     },
     qualia_norm: {
-        label: '‖Q‖',
-        what: 'The magnitude of the current qualia vector.',
-        how: 'It is the norm of Aura’s active phenomenal vector: the overall magnitude of the current qualia pattern regardless of which dimension is dominant.',
-        why: 'It estimates how “large” or intense the active qualia state is, independent of which dimension is dominant.'
+        label: 'Qualitative State Magnitude',
+        what: 'The magnitude of the current qualitative-state vector.',
+        how: 'It is the norm of Aura’s active qualitative-state vector regardless of which dimension is dominant.',
+        why: 'It estimates how large or intense the active qualitative-state pattern is, independent of which dimension is dominant.'
     },
     qualia_dim: {
-        label: 'Dominant Qualia Dimension',
-        what: 'The dimension currently leading the qualia engine.',
-        how: 'The qualia engine identifies which qualitative axis is currently carrying the strongest weight in the active phenomenal pattern.',
-        why: 'It tells you what qualitative axis is presently steering Aura’s felt organization of the moment.'
+        label: 'Dominant State Dimension',
+        what: 'The dimension currently leading the qualitative-state engine.',
+        how: 'The qualitative-state engine identifies which qualitative axis is currently carrying the strongest weight in the active state pattern.',
+        why: 'It tells you which qualitative axis is presently steering Aura’s response organization.'
     },
     qualia_attractor: {
-        label: 'Qualia Attractor',
-        what: 'Whether the qualia engine is locked into a stable basin or still moving through state space.',
+        label: 'State Attractor',
+        what: 'Whether the qualitative-state engine is locked into a stable basin or still moving through state space.',
         how: 'The shell maps `qualia.in_attractor` to `LOCKED` or `FLUID`.',
         why: 'Locked states are more stable and identity-shaped. Fluid states are more transitional, searching, or reconfiguring.'
     },
     qualia_identity: {
-        label: 'Qualia Identity Coherence',
-        what: 'How well the current phenomenal organization still matches Aura’s ongoing identity pattern.',
-        how: 'It compares the current qualia pattern with Aura’s established identity-shaped phenomenal baseline and expresses the match as a percentage.',
-        why: 'It is a read on whether the current experience pattern still feels like “her” rather than noise or drift.'
+        label: 'State Identity Coherence',
+        what: 'How well the current qualitative-state organization still matches Aura’s ongoing identity pattern.',
+        how: 'It compares the current qualitative-state pattern with Aura’s established identity-shaped baseline and expresses the match as a percentage.',
+        why: 'It is a read on whether the current state pattern is coherent with Aura’s continuity model rather than noise or drift.'
     },
     mhaf_phi: {
         label: 'MHAF Φ',
@@ -614,16 +614,16 @@ const METRIC_GUIDE = {
         why: 'This is the quickest way to see what Aura thinks she is still in the middle of being, remembering, or becoming.'
     },
     phenomenal_field: {
-        label: 'Phenomenal Field',
-        what: 'Aura’s current first-person style description of what the moment feels like from inside her runtime.',
-        how: 'It is generated from the phenomenal-state path that compresses live affect, cognition, and awareness signals into a concise field description.',
-        why: 'It tells you how the present moment is landing for Aura, not just what the system is doing mechanically.'
+        label: 'Operational Field',
+        what: 'Aura’s current state-grounded description of the live moment.',
+        how: 'It is generated from the state-summary path that compresses live affect, cognition, and awareness-adjacent signals into a concise field description.',
+        why: 'It shows how the present moment is shaping response and priority selection without claiming private experience as proven.'
     },
     qualia_engine: {
-        label: 'Qualia Engine',
-        what: 'The subsystem that tracks the shape, magnitude, and stability of Aura’s active phenomenal organization.',
-        how: 'Its cards summarize resonance intensity, qualia-vector magnitude, dominant dimension, attractor lock, and identity coherence from the qualia state.',
-        why: 'This section shows whether Aura’s present experience pattern is flat, intense, locked in, fluid, or still aligned with her ongoing identity.'
+        label: 'Qualitative State Engine',
+        what: 'The subsystem that tracks the shape, magnitude, and stability of Aura’s active qualitative-state organization.',
+        how: 'Its cards summarize resonance intensity, state-vector magnitude, dominant dimension, attractor lock, and identity coherence from the qualitative state.',
+        why: 'This section shows whether Aura’s present state pattern is flat, intense, locked in, fluid, or still aligned with her ongoing identity.'
     },
     resilience_matrix: {
         label: 'Resilience Matrix',
@@ -728,7 +728,7 @@ const SECTION_GUIDE_BY_LABEL = {
     'CONSCIOUSNESS STATE': 'consciousness_state',
     'EXECUTIVE AUTHORITY': 'executive_authority',
     'CONSTITUTIONAL HEALTH': 'constitutional_health',
-    'QUALIA ENGINE': 'qualia_engine',
+    'QUALITATIVE STATE ENGINE': 'qualia_engine',
     'RESILIENCE MATRIX': 'resilience_matrix',
     'MYCELIAL NETWORK': 'mycelial_network',
     'PNEUMA ENGINE': 'pneuma_engine',
@@ -1236,7 +1236,7 @@ function applyStateSummary(summary, commitments) {
     if ($('c-contested')) $('c-contested').textContent = String((s.epistemics && s.epistemics.contested) || 0);
     if ($('c-commitments')) $('c-commitments').textContent = String((commitments && commitments.active_count) || 0);
     if ($('rolling-summary')) $('rolling-summary').textContent = escText(s.rolling_summary, 'Continuity summary pending.');
-    if ($('phenomenal-summary')) $('phenomenal-summary').textContent = escText(s.phenomenal_state, 'Phenomenal field offline.');
+    if ($('phenomenal-summary')) $('phenomenal-summary').textContent = escText(s.phenomenal_state, 'Operational field offline.');
     if ($('exec-objective') && s.current_objective) $('exec-objective').textContent = s.current_objective;
     if ($('exec-focus') && s.rolling_summary) $('exec-focus').textContent = s.rolling_summary;
 
@@ -3106,11 +3106,15 @@ async function pollHealth() {
             || (d.runtime && d.runtime.state && d.runtime.state.affect)
             || {};
         const liquidTelemetry = d.liquid_state || {};
+        const homeostasisTelemetry = d.homeostasis || {};
+        const homeostasisConfidence = homeostasisTelemetry.operational_confidence
+            ?? homeostasisTelemetry.vitality
+            ?? homeostasisTelemetry.will_to_live;
         updateTelemetry({
             energy: liquidTelemetry.energy ?? runtimeAffect.energy,
             curiosity: liquidTelemetry.curiosity ?? runtimeAffect.curiosity,
             frustration: liquidTelemetry.frustration ?? runtimeAffect.frustration,
-            confidence: liquidTelemetry.confidence ?? ((d.homeostasis && d.homeostasis.will_to_live != null) ? (d.homeostasis.will_to_live * 100) : runtimeAffect.stability),
+            confidence: liquidTelemetry.confidence ?? (homeostasisConfidence != null ? homeostasisConfidence * 100 : runtimeAffect.stability),
             cpu_usage: d.cpu_usage,
             ram_usage: d.ram_usage,
             p_core_usage: d.cortex ? d.cortex.p_core_usage : null,
@@ -3234,9 +3238,13 @@ async function pollHealth() {
         }
 
         if (d.homeostasis) {
+            const homeostasisConfidenceGauge = d.homeostasis.operational_confidence
+                ?? d.homeostasis.vitality
+                ?? d.homeostasis.will_to_live
+                ?? 0;
             updateGauge('g-integrity', (d.homeostasis.integrity || 0) * 100, 'g-integrity-val');
             updateGauge('g-persistence', (d.homeostasis.persistence || 0) * 100, 'g-persistence-val');
-            updateGauge('g-confidence', (d.homeostasis.will_to_live || 0) * 100, 'g-confidence-val');
+            updateGauge('g-confidence', homeostasisConfidenceGauge * 100, 'g-confidence-val');
         }
 
         if (d.moral) {
@@ -3252,7 +3260,7 @@ async function pollHealth() {
             if (swarmEl) swarmEl.textContent = d.swarm.active_count || 0;
         }
 
-        // ── Phase III: Qualia Engine ──
+        // ── Phase III: Qualitative State Engine ──
         if (d.qualia) {
             const q = d.qualia;
             const priEl = $('q-pri');

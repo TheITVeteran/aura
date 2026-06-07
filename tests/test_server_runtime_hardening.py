@@ -334,6 +334,9 @@ async def test_api_health_exposes_liquid_state_and_soma_payloads(service_contain
     assert payload["liquid_state"]["curiosity"] == 23.0
     assert payload["liquid_state"]["frustration"] == 9.0
     assert payload["liquid_state"]["confidence"] == 91.0
+    assert payload["homeostasis"]["vitality"] == 0.91
+    assert payload["homeostasis"]["operational_confidence"] == 0.91
+    assert "will_to_live" not in payload["homeostasis"]
     assert payload["soma"]["thermal_load"] == 0.31
     assert payload["soma"]["resource_anxiety"] == 0.62
     assert payload["soma"]["vitality"] == 0.84
