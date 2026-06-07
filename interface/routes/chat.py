@@ -5624,29 +5624,64 @@ async def api_chat_regenerate(
             )
 
         if desktop_requires_cognitive_engine and not reply_text:
-            lane = _mark_conversation_lane_state(
-                "desktop_cognitive_engine_required_no_reply",
-                state="failed",
-            )
-            logger.error(
-                "Desktop regenerate required CognitiveEngine but no acceptable reply was produced. Surface=%s",
+            logger.warning(
+                "🔧 [FALLBACK] Desktop CognitiveEngine regenerate produced no reply. Attempting graceful fallback. Surface=%s",
                 request_surface or "unknown",
             )
-            return JSONResponse(
-                {
-                    "response": (
-                        "The desktop regenerate path required CognitiveEngine, but the live cognitive "
-                        "turn did not produce an acceptable reply, so Aura refused the legacy fallback. "
-                        "status=desktop_cognitive_engine_required_no_reply"
-                    ),
-                    "status": "desktop_cognitive_engine_unavailable",
-                    "reason": "desktop_cognitive_engine_required_no_reply",
-                    "conversation_lane": lane,
-                    "response_confidence": "failed",
-                    "regenerated": False,
-                },
-                status_code=503,
-            )
+            # Try KernelInterface before giving up
+            if ki.is_ready():
+                logger.info("[FALLBACK] Trying KernelInterface as fallback for failed CognitiveEngine regenerate...")
+                try:
+                    reply_text = await asyncio.wait_for(
+                        ki.process(user_msg, origin="user", priority=True),
+                        timeout=foreground_timeout,
+                    )
+                    if reply_text:
+                        logger.info("[FALLBACK] KernelInterface recovered with fallback reply (len=%d).", len(reply_text))
+                except TimeoutError:
+                    logger.warning("[FALLBACK] KernelInterface fallback timed out during regenerate.")
+                except _CHAT_RECOVERABLE_ERRORS as e:
+                    record_degradation('chat', e)
+                    logger.warning("[FALLBACK] KernelInterface fallback failed during regenerate: %s", e)
+            
+            # If still no reply, try orchestrator
+            if not reply_text:
+                logger.info("[FALLBACK] Trying orchestrator as final fallback for regenerate...")
+                try:
+                    orch = ServiceContainer.get("orchestrator", default=None)
+                    if orch:
+                        reply_text = await orch.process_user_input_priority(user_msg, origin="user", timeout_sec=foreground_timeout)
+                        if reply_text:
+                            logger.info("[FALLBACK] Orchestrator recovered with fallback reply (len=%d).", len(reply_text))
+                except _CHAT_RECOVERABLE_ERRORS as e:
+                    record_degradation('chat', e)
+                    logger.warning("[FALLBACK] Orchestrator fallback failed during regenerate: %s", e)
+            
+            # All fallbacks exhausted
+            if not reply_text:
+                lane = _mark_conversation_lane_state(
+                    "desktop_cognitive_engine_required_no_reply",
+                    state="failed",
+                )
+                logger.error(
+                    "Desktop regenerate required CognitiveEngine but no acceptable reply was produced (all fallbacks failed). Surface=%s",
+                    request_surface or "unknown",
+                )
+                return JSONResponse(
+                    {
+                        "response": (
+                            "The desktop regenerate path required CognitiveEngine, but the live cognitive "
+                            "turn did not produce an acceptable reply, so Aura refused the legacy fallback. "
+                            "status=desktop_cognitive_engine_required_no_reply"
+                        ),
+                        "status": "desktop_cognitive_engine_unavailable",
+                        "reason": "desktop_cognitive_engine_required_no_reply",
+                        "conversation_lane": lane,
+                        "response_confidence": "failed",
+                        "regenerated": False,
+                    },
+                    status_code=503,
+                )
 
         if not reply_text and ki.is_ready():
             try:
@@ -6723,46 +6758,97 @@ async def api_chat(
                         len(reply_text),
                     )
 
+        # [FIX] When desktop requires CognitiveEngine but it fails, try fallbacks
+        # before giving up. Desktop surfaces should degrade gracefully instead of
+        # crashing the pathway entirely. Only fail hard if ALL fallbacks are exhausted.
         desktop_engine_failed = desktop_requires_cognitive_engine and not reply_text
         if desktop_engine_failed:
-            lane = _mark_conversation_lane_state(
-                "desktop_cognitive_engine_required_no_reply",
-                state="failed",
+            logger.warning(
+                "🔧 [FALLBACK] Desktop CognitiveEngine produced no reply. Attempting graceful fallback. Surface=%s",
+                request_surface or "unknown",
             )
-            failure_reply = (
-                "The desktop chat path required CognitiveEngine, but the live cognitive turn "
-                "did not produce an acceptable reply, so Aura refused the legacy fallback. "
-                "status=desktop_cognitive_engine_required_no_reply"
-            )
-            logger.error("%s Surface=%s", failure_reply, request_surface or "unknown")
-            if pending_exchange_id:
-                await _complete_logged_exchange(
-                    pending_exchange_id,
-                    _semantic_user_message,
-                    failure_reply,
-                    record_experience=False,
+            # Try KernelInterface before giving up
+            from core.kernel.kernel_interface import KernelInterface
+            ki = KernelInterface.get_instance()
+            if ki.is_ready():
+                logger.info("[FALLBACK] Trying KernelInterface as fallback for failed CognitiveEngine...")
+                try:
+                    fallback_timeout = _remaining_foreground_budget(reserve=8.0)
+                    if fallback_timeout >= 2.0:
+                        reply_text = await asyncio.wait_for(
+                            ki.process(effective_user_message, origin=chat_origin, priority=True),
+                            timeout=fallback_timeout,
+                        )
+                        if reply_text:
+                            reply_source = "kernel_interface_fallback"
+                            logger.info("[FALLBACK] KernelInterface recovered with fallback reply (len=%d).", len(reply_text))
+                except TimeoutError:
+                    logger.warning("[FALLBACK] KernelInterface fallback timed out.")
+                except _CHAT_RECOVERABLE_ERRORS as e:
+                    record_degradation('chat', e)
+                    logger.warning("[FALLBACK] KernelInterface fallback failed: %s", e)
+            
+            # If still no reply, try orchestrator
+            if not reply_text:
+                logger.info("[FALLBACK] Trying orchestrator as final fallback...")
+                try:
+                    orch = ServiceContainer.get("orchestrator", default=None)
+                    if orch:
+                        fallback_timeout = _remaining_foreground_budget(reserve=2.0)
+                        if fallback_timeout >= 1.0:
+                            reply_text = await asyncio.wait_for(
+                                orch.process_user_input_priority(effective_user_message, origin=chat_origin, timeout_sec=fallback_timeout),
+                                timeout=fallback_timeout,
+                            )
+                            if reply_text:
+                                reply_source = "orchestrator_fallback"
+                                logger.info("[FALLBACK] Orchestrator recovered with fallback reply (len=%d).", len(reply_text))
+                except TimeoutError:
+                    logger.warning("[FALLBACK] Orchestrator fallback timed out.")
+                except _CHAT_RECOVERABLE_ERRORS as e:
+                    record_degradation('chat', e)
+                    logger.warning("[FALLBACK] Orchestrator fallback failed: %s", e)
+            
+            # All fallbacks exhausted
+            if not reply_text:
+                lane = _mark_conversation_lane_state(
+                    "desktop_cognitive_engine_required_no_reply",
+                    state="failed",
                 )
-                pending_exchange_id = None
-            await _emit_chat_output_receipt(
-                failure_reply,
-                cause="chat_response",
-                metadata={
-                    "response_confidence": "failed",
-                    "path": "desktop_cognitive_engine",
-                    "status": "desktop_cognitive_engine_unavailable",
-                    "reason": "desktop_cognitive_engine_required_no_reply",
-                },
-            )
-            return JSONResponse(
-                {
-                    "response": failure_reply,
-                    "status": "desktop_cognitive_engine_unavailable",
-                    "reason": "desktop_cognitive_engine_required_no_reply",
-                    "conversation_lane": lane,
-                    "response_confidence": "failed",
-                },
-                status_code=503,
-            )
+                failure_reply = (
+                    "The desktop chat path required CognitiveEngine, but the live cognitive turn "
+                    "did not produce an acceptable reply, so Aura refused the legacy fallback. "
+                    "status=desktop_cognitive_engine_required_no_reply"
+                )
+                logger.error("%s Surface=%s", failure_reply, request_surface or "unknown")
+                if pending_exchange_id:
+                    await _complete_logged_exchange(
+                        pending_exchange_id,
+                        _semantic_user_message,
+                        failure_reply,
+                        record_experience=False,
+                    )
+                    pending_exchange_id = None
+                await _emit_chat_output_receipt(
+                    failure_reply,
+                    cause="chat_response",
+                    metadata={
+                        "response_confidence": "failed",
+                        "path": "desktop_cognitive_engine",
+                        "status": "desktop_cognitive_engine_unavailable",
+                        "reason": "desktop_cognitive_engine_required_no_reply",
+                    },
+                )
+                return JSONResponse(
+                    {
+                        "response": failure_reply,
+                        "status": "desktop_cognitive_engine_unavailable",
+                        "reason": "desktop_cognitive_engine_required_no_reply",
+                        "conversation_lane": lane,
+                        "response_confidence": "failed",
+                    },
+                    status_code=503,
+                )
 
         if desktop_requires_cognitive_engine and reply_text:
             live_proof = await _execute_live_runtime_proof(_semantic_user_message)
