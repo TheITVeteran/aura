@@ -89,8 +89,8 @@ def _darwin_thermal_level() -> int:
                 capture_output=True,
                 timeout=1.0,
                 read_only=True,
-                source="maintenance_tooling:substrate_monitor",
-                offline_tooling=True,
+                source="substrate_monitor",
+                offline_tooling=False,
             )
             if result.returncode == 0 and result.stdout.strip():
                 return max(0, min(3, int(result.stdout.strip())))
@@ -141,8 +141,8 @@ def _windows_thermal() -> tuple[int, float]:
             capture_output=True,
             timeout=2.0,
             read_only=True,
-            source="maintenance_tooling:substrate_monitor",
-            offline_tooling=True,
+            source="substrate_monitor",
+            offline_tooling=False,
         )
         if result.returncode != 0 or not result.stdout.strip():
             return 0, 0.0

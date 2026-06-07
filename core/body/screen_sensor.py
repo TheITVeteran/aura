@@ -25,6 +25,20 @@ class ScreenSensor(BaseSensor):
 
     async def read(self) -> Dict[str, Any]:
         """Capture screen layout with macOS screencapture when available."""
+        try:
+            from core.security.permission_guard import get_permission_guard, PermissionType
+            guard = get_permission_guard()
+            perm = await guard.check_permission(PermissionType.SCREEN)
+            if not perm.get("granted", False):
+                return {
+                    "available": False,
+                    "error": "Screen recording permission not granted",
+                    "resolution": "1920x1080",
+                    "ocr_status": "not_available",
+                }
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation("body.screen_sensor.permission_check", exc)
+
         screenshot_path = os.path.join(tempfile.gettempdir(), "aura_perception_screen.png")
         try:
             if os.path.exists("/usr/sbin/screencapture"):

@@ -176,21 +176,13 @@ class CapabilityDiscovery:
             record_degradation("capability_discovery.accessibility_probe", exc)
             report.has_accessibility = False
 
-        # Screen recording — heuristic: try screencapture
+        # Screen recording
         try:
-            test_path = Path(tempfile.gettempdir()) / f"aura_screen_test_{int(time.time())}.png"
-            proc = await get_subprocess_gateway().spawn_async(
-                ["screencapture", "-x", str(test_path)],
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                read_only=True,
-                source="capability_discovery.screen_recording_probe",
-            )
-            await asyncio.wait_for(proc.communicate(), timeout=5.0)
-            report.has_screen_recording = proc.returncode == 0 and test_path.exists()
-            if test_path.exists():
-                test_path.unlink()
-        except (OSError, asyncio.TimeoutError, RuntimeError) as exc:
+            from core.security.permission_guard import get_permission_guard, PermissionType
+            guard = get_permission_guard()
+            res = await guard.check_permission(PermissionType.SCREEN)
+            report.has_screen_recording = res.get("granted", False)
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("capability_discovery.screen_recording_probe", exc)
             report.has_screen_recording = False
 

@@ -161,11 +161,13 @@ class PerformanceGuard:
     @staticmethod
     def _persist(row: Dict[str, Any]) -> None:
         try:
-            get_file_write_gateway().append_text(
-                _SAMPLES_PATH,
-                json.dumps(row, default=str) + "\n",
-                source="runtime.performance_guard.samples",
-            )
+            from core.governance_context import local_internal_governed_scope
+            with local_internal_governed_scope("runtime.performance_guard.samples", domain="file_write"):
+                get_file_write_gateway().append_text(
+                    _SAMPLES_PATH,
+                    json.dumps(row, default=str) + "\n",
+                    source="runtime.performance_guard.samples",
+                )
         except (json.JSONDecodeError, TypeError, ValueError):
             pass  # no-op: intentional
 

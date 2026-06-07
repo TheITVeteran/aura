@@ -22,10 +22,11 @@ any stage blocks the mutation and records a forensic envelope.
                          that would be restored on failure are recorded.
   8. APPROVAL          — Will + Conscience evaluate the proposal; if
                          either refuses, the proposal is blocked.
-  9. STAGED_DEPLOY     — the patch is rolled out to the live runtime
-                         under post-deploy monitoring; an incident in
-                         the next 60 seconds triggers automatic rollback
-                         to the stem-cell snapshot.
+  9. STAGED_DEPLOY     — by default, the patch is staged as an operator
+                         promotion artifact. Live source deployment requires
+                         fresh owner approval plus a supervised operator
+                         environment switch and then runs post-deploy
+                         monitoring/rollback.
 
 All ten phases produce auditable receipts in the same JSONL ledger as
 agency receipts so external reviewers can reconstruct the lineage of

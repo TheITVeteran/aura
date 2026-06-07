@@ -28,6 +28,7 @@ def _screen_capture_preflight() -> bool:
     except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('screen_vision', exc)
         logger.debug("Quartz screen preflight unavailable in LocalVision: %s", exc)
+        return True
     return os.getenv("AURA_ASSUME_SCREEN_PERMISSION", "0") == "1"
 
 def _process_image_for_vlm(img):

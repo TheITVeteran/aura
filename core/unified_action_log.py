@@ -101,12 +101,14 @@ class UnifiedActionLog:
         # Async-safe file append
         if self._persist_path:
             try:
-                get_file_write_gateway().append_text(
-                    self._persist_path,
-                    json.dumps(entry) + "\n",
-                    encoding="utf-8",
-                    source="unified_action_log.record",
-                )
+                from core.governance_context import local_internal_governed_scope
+                with local_internal_governed_scope("unified_action_log.record", domain="file_write"):
+                    get_file_write_gateway().append_text(
+                        self._persist_path,
+                        json.dumps(entry) + "\n",
+                        encoding="utf-8",
+                        source="unified_action_log.record",
+                    )
             except (json.JSONDecodeError, TypeError, ValueError) as _exc:
                 record_degradation('unified_action_log', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)

@@ -115,6 +115,12 @@ def test_runtime_patch_promotion_requires_repair_lab_profile(monkeypatch):
     assert sm_mod._runtime_patch_promotion_enabled() is True
 
 
+def _enable_repair_lab_profile(monkeypatch):
+    monkeypatch.setenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", "1")
+    monkeypatch.setenv("AURA_ALLOW_AUTONOMOUS_PATCH_PROMOTION", "1")
+    monkeypatch.setenv("AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION", "1")
+
+
 @pytest.mark.asyncio
 async def test_apply_fix_refuses_unsupervised_promotion_without_opt_in(monkeypatch, tmp_path):
     monkeypatch.delenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", raising=False)
@@ -353,7 +359,7 @@ def test_safe_modification_stats_expose_report_fields():
 async def test_safe_modification_commits_after_repair_lab_quarantine_promotion(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION", "1")
+    _enable_repair_lab_profile(monkeypatch)
     target = tmp_path / "core" / "example.py"
     target.parent.mkdir(parents=True)
     target.write_text("value = 1\n", encoding="utf-8")
@@ -516,7 +522,9 @@ async def test_safe_modification_blocks_branch_promotion_outside_repair_lab(tmp_
     )
 
     assert success is False
-    assert "AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION=1" in message
+    assert "AURA_ALLOW_RUNTIME_SELF_MODIFICATION" in message
+    assert "AURA_ALLOW_AUTONOMOUS_PATCH_PROMOTION" in message
+    assert "AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION" in message
     assert events == []
     assert target.read_text(encoding="utf-8") == "value = 1\n"
 
@@ -582,7 +590,7 @@ async def test_safe_modification_refuses_preview_or_bare_success_evidence(tmp_pa
 async def test_safe_modification_blocks_no_branch_promotion_without_supervision(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION", "1")
+    _enable_repair_lab_profile(monkeypatch)
     target = tmp_path / "core" / "example.py"
     target.parent.mkdir(parents=True)
     target.write_text("value = 1\n", encoding="utf-8")

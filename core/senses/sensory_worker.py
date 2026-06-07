@@ -23,6 +23,7 @@ def _screen_capture_preflight_allowed() -> bool:
     except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('sensory_worker', exc)
         logger.debug("Sensory worker Quartz preflight unavailable: %s", exc)
+        return True
     return os.getenv("AURA_ASSUME_SCREEN_PERMISSION", "0") == "1"
 
 def sensory_worker_loop(request_queue, response_queue):

@@ -20,7 +20,9 @@ async def verify_health():
     """
     logger.info("🚀 STARTING TOTAL SYSTEM HEALTH CHECK (Phase 14)...")
     
-    orchestrator = RobustOrchestrator()
+    from core.orchestrator.main import create_orchestrator
+    orchestrator = create_orchestrator()
+    orchestrator.setup()
     
     try:
         # 1. Boot Subsystems (No full loop)
@@ -55,13 +57,12 @@ async def verify_health():
             logger.error("❌ Immune System Offline!")
 
         # 2. Check Service Container
-        container = ServiceContainer()
-        report = container.get_report()
+        report = ServiceContainer.get_health_report()
         logger.info("\nService Container Report:")
         logger.info(report)
 
         # 3. Cleanup Test cleanup
-        await ServiceContainer.cleanup()
+        await ServiceContainer.shutdown()
         logger.info("\n🏆 TOTAL SYSTEM SYNTHESIS VERIFIED.")
         return True
 

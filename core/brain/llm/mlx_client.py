@@ -747,6 +747,7 @@ def _probe_mlx_runtime(force: bool = False) -> tuple[bool, str]:
     env = os.environ.copy()
     env.setdefault("PYTHONNOUSERSITE", "1")
     env["AURA_MLX_RUNTIME_PROBE"] = "1"
+    env["AURA_TEST_MODE"] = "1"
 
     # [STABILITY v57] One-shot retry for probe on failure (except timeout)
     for probe_attempt in range(2):

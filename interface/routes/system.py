@@ -690,9 +690,11 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
             from core.skills.computer_use import ComputerUseSkill
 
             def _probe_menu_clock() -> dict[str, Any]:
+                from core.governance_context import local_internal_governed_scope
                 skill = ComputerUseSkill()
                 try:
-                    text = skill._read_menu_clock_macos()
+                    with local_internal_governed_scope("system.probe_menu_clock", domain="tool_execution"):
+                        text = skill._read_menu_clock_macos()
                     return {"ready": True, "text": text[:240]}
                 except _SYSTEM_RECOVERABLE_ERRORS as exc:
                     record_degradation('system', exc)

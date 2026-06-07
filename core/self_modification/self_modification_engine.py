@@ -4,7 +4,6 @@ Orchestrates the complete self-improvement system.
 
 import asyncio
 import logging
-import os
 import random
 import threading
 import time
@@ -21,6 +20,15 @@ from .code_repair import AutonomousCodeRepair
 from .error_intelligence import ErrorIntelligenceSystem
 from .kernel_refiner import KernelRefiner
 from .learning_system import MetaLearning, SelfImprovementLearning
+from .promotion_policy import (
+    AUTONOMOUS_PATCH_PROMOTION_ENV as _AUTONOMOUS_PATCH_PROMOTION_ENV,
+)
+from .promotion_policy import (
+    REPAIR_LAB_SOURCE_PROMOTION_ENV as _REPAIR_LAB_SOURCE_PROMOTION_ENV,
+)
+from .promotion_policy import RUNTIME_SELF_MODIFICATION_ENV as _RUNTIME_SELF_MODIFICATION_ENV
+from .promotion_policy import SUPERVISED_SELF_MODIFICATION_ENV as _SUPERVISED_SELF_MODIFICATION_ENV
+from .promotion_policy import autonomous_source_promotion_decision, env_flag
 from .repair_registry import append_repair_entry
 from .safe_modification import LogicTransplant, SafeSelfModification
 from .shadow_ast_healer import ShadowASTHealer
@@ -39,19 +47,6 @@ SELF_MOD_RECOVERABLE_ERRORS = (
     IndexError,
 )
 
-_RUNTIME_SELF_MODIFICATION_ENV = "AURA_ALLOW_RUNTIME_SELF_MODIFICATION"
-_AUTONOMOUS_PATCH_PROMOTION_ENV = "AURA_ALLOW_AUTONOMOUS_PATCH_PROMOTION"
-_REPAIR_LAB_SOURCE_PROMOTION_ENV = "AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION"
-_SUPERVISED_SELF_MODIFICATION_ENV = "AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _runtime_patch_promotion_enabled() -> bool:
     """Autonomous source promotion requires an isolated repair-lab opt-in.
 
@@ -60,16 +55,12 @@ def _runtime_patch_promotion_enabled() -> bool:
     running process. Source promotion is reserved for an explicit repair-lab
     profile where the operator has intentionally enabled all three switches.
     """
-    return (
-        _env_flag(_RUNTIME_SELF_MODIFICATION_ENV, False)
-        and _env_flag(_AUTONOMOUS_PATCH_PROMOTION_ENV, False)
-        and _env_flag(_REPAIR_LAB_SOURCE_PROMOTION_ENV, False)
-    )
+    return autonomous_source_promotion_decision().allowed
 
 
 def _supervised_patch_promotion_enabled() -> bool:
     """Manual force=True promotion requires a separate supervised override."""
-    return _env_flag(_SUPERVISED_SELF_MODIFICATION_ENV, False)
+    return env_flag(_SUPERVISED_SELF_MODIFICATION_ENV, False)
 
 
 def _record_self_modification_degradation(

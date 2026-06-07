@@ -26,11 +26,12 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 from .boot_validator import GhostBootValidator
 from .mutation_tiers import MutationTier, classify_mutation_path
+from .promotion_policy import (
+    SUPERVISED_SELF_MODIFICATION_ENV as _SUPERVISED_SELF_MODIFICATION_ENV,
+)
+from .promotion_policy import env_flag, source_promotion_decision
 
 logger = logging.getLogger("SelfModification.SafeModification")
-
-_SUPERVISED_SELF_MODIFICATION_ENV = "AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"
-_REPAIR_LAB_SOURCE_PROMOTION_ENV = "AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION"
 
 
 @dataclass
@@ -740,8 +741,7 @@ class SafeSelfModification:
         """
         if not supervised:
             return False
-        raw = os.getenv(_SUPERVISED_SELF_MODIFICATION_ENV, "")
-        return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return env_flag(_SUPERVISED_SELF_MODIFICATION_ENV, False)
 
     @staticmethod
     def _source_promotion_allowed(supervised: bool) -> tuple[bool, str]:
@@ -754,22 +754,8 @@ class SafeSelfModification:
         desktop/server sessions from rewriting code under the interpreter that
         is currently serving the user.
         """
-        if supervised:
-            raw = os.getenv(_SUPERVISED_SELF_MODIFICATION_ENV, "")
-            if raw.strip().lower() in {"1", "true", "yes", "on"}:
-                return True, "supervised source promotion enabled"
-            return (
-                False,
-                f"{_SUPERVISED_SELF_MODIFICATION_ENV}=1 is required for supervised source promotion",
-            )
-
-        raw = os.getenv(_REPAIR_LAB_SOURCE_PROMOTION_ENV, "")
-        if raw.strip().lower() in {"1", "true", "yes", "on"}:
-            return True, "repair-lab source promotion enabled"
-        return (
-            False,
-            f"{_REPAIR_LAB_SOURCE_PROMOTION_ENV}=1 is required for autonomous source promotion",
-        )
+        decision = source_promotion_decision(supervised=supervised)
+        return decision.allowed, decision.reason
 
     @staticmethod
     def _file_hash(path: Path) -> str:

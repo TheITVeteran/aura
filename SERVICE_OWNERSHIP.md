@@ -75,7 +75,7 @@ This file outlines every registered service, its source code location, registrat
 | `code_refiner` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
 | `cognition` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | optional features | `degrade_with_receipt` |
 | `cognitive_engine` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
-| `cognitive_integration` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
+| `cognitive_integration` | `core/orchestrator/mixins/boot/boot_cognitive.py` | `core/orchestrator/mixins/boot/boot_cognitive.py` | boot | `fail-closed` |
 | `cognitive_kernel` | `core/cognitive_integration_layer.py` | `core/cognitive_integration_layer.py` | boot | `fail-closed` |
 | `cognitive_ledger` | `core/kernel/aura_kernel.py` | `core/kernel/aura_kernel.py` | boot | `fail-closed` |
 | `cognitive_loop` | `core/orchestrator/boot.py` | `core/orchestrator/boot.py` | boot | `fail-closed` |
@@ -198,7 +198,7 @@ This file outlines every registered service, its source code location, registrat
 | `keep_awake_controller` | `core/runtime/keep_awake.py` | `core/runtime/keep_awake.py` | optional features | `degrade_with_receipt` |
 | `kernel_interface` | `core/kernel/kernel_interface.py` | `core/kernel/kernel_interface.py` | boot | `fail-closed` |
 | `knowledge_graph` | `core/providers/memory_provider.py` | `core/providers/memory_provider.py` | optional features | `degrade_with_receipt` |
-| `language_center` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
+| `language_center` | `core/cognitive_integration_layer.py` | `core/cognitive_integration_layer.py` | boot | `fail-closed` |
 | `lazarus` | `core/orchestrator/mixins/boot/boot_resilience.py` | `core/orchestrator/mixins/boot/boot_resilience.py` | boot | `fail-closed` |
 | `life_trace` | `core/service_registration.py` | `core/service_registration.py` | optional features | `degrade_with_receipt` |
 | `lineage_manager` | `core/service_registration.py` | `core/service_registration.py` | optional features | `degrade_with_receipt` |
@@ -270,6 +270,7 @@ This file outlines every registered service, its source code location, registrat
 | `output_gate` | `core/orchestrator/boot.py` | `core/orchestrator/boot.py` | boot | `fail-closed` |
 | `paraconsistent_engine` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | optional features | `degrade_with_receipt` |
 | `perceptual_pump` | `core/perception/perceptual_pump.py` | `core/perception/perceptual_pump.py` | optional features | `degrade_with_receipt` |
+| `permission_guard` | `core/security/permission_guard.py` | `core/security/permission_guard.py` | optional features | `degrade_with_receipt` |
 | `permission_model` | `core/capabilities/permission_model.py` | `core/capabilities/permission_model.py` | optional features | `degrade_with_receipt` |
 | `permission_setup` | `core/service_registration.py` | `core/service_registration.py` | optional features | `degrade_with_receipt` |
 | `persistence` | `core/orchestrator/initializers/core_baseline.py` | `core/orchestrator/initializers/core_baseline.py` | boot | `fail-closed` |
@@ -324,6 +325,7 @@ This file outlines every registered service, its source code location, registrat
 | `sensory_motor_cortex` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | boot | `fail-closed` |
 | `sensory_system` | `core/sensory_integration.py` | `core/sensory_integration.py` | boot | `fail-closed` |
 | `sentience_engine` | `core/providers/consciousness_provider.py` | `core/providers/consciousness_provider.py` | optional features | `degrade_with_receipt` |
+| `server` | `core/orchestrator/mixins/boot/boot_cognitive.py` | `core/orchestrator/mixins/boot/boot_cognitive.py` | boot | `fail-closed` |
 | `session_guardian` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | boot | `fail-closed` |
 | `shadow_ast_healer` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | boot | `fail-closed` |
 | `shared_ground` | `core/presence_integration.py` | `core/presence_integration.py` | boot | `fail-closed` |
