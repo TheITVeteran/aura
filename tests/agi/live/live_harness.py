@@ -94,6 +94,11 @@ class LiveAuraHarness:
             args[0] = sys.executable
 
         run_env = os.environ.copy()
+        # Strip PYTEST_CURRENT_TEST so the subprocess does NOT enter
+        # lightweight-pytest-boot mode.  The battery subprocess must do a
+        # full Aura runtime boot (InferenceGate warmup, background services,
+        # etc.) even when launched from within a pytest session.
+        run_env.pop("PYTEST_CURRENT_TEST", None)
         run_env.update(env or {})
         run_env["AURA_ARTIFACTS_DIR"] = str(artifacts)
         run_env["AURA_STRICT_RUNTIME"] = "1"
