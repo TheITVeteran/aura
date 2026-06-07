@@ -93,11 +93,14 @@ class SnapshotManager:
 
             # Write through the canonical durable gateway.
             self.snapshot_dir.mkdir(parents=True, exist_ok=True)
-            get_file_write_gateway().write_text(
-                self.snapshot_file,
-                json.dumps(state, indent=2),
-                source="resilience.snapshot_manager.snapshot",
-            )
+            from core.governance_context import local_internal_governed_scope
+
+            with local_internal_governed_scope("resilience.snapshot_manager.snapshot", domain="file_write"):
+                get_file_write_gateway().write_text(
+                    self.snapshot_file,
+                    json.dumps(state, indent=2),
+                    source="resilience.snapshot_manager.snapshot",
+                )
             
             logger.info("✅ Cognitive state frozen to disk: %s", self.snapshot_file)
             return True
