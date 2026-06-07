@@ -22,7 +22,7 @@ def check_status():
             for line in f:
                 if line.strip():
                     records.append(json.loads(line))
-    except Exception as e:
+    except (OSError, UnicodeError, json.JSONDecodeError) as e:
         return {
             "status": "error",
             "message": f"Failed to read trace file: {e}"
@@ -92,8 +92,9 @@ def check_status():
                 runner_crashed = True
                 lines = content.splitlines()
                 last_error = "\n".join(lines[-10:])
-        except Exception:
-            pass
+        except (OSError, UnicodeError) as exc:
+            runner_crashed = True
+            last_error = f"Failed to read runner log: {exc}"
 
     return {
         "status": "running" if not (stalled or level_stall) else "stalled",
