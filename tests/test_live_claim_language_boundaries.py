@@ -1,7 +1,9 @@
 """Regression tests for evidence-bounded live UI/API claim language."""
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,3 +27,51 @@ def test_live_dashboard_and_subsystem_routes_do_not_overclaim_subjectivity() -> 
 
     assert "operational cognitive state" in text
     assert "functional state descriptor" in text
+
+
+def test_tool_result_synthesis_prompt_uses_operational_identity_boundary() -> None:
+    from core.synthesis import ConversationalSynthesizer
+
+    class CapturingBrain:
+        prompt = ""
+
+        async def think(self, prompt: str) -> SimpleNamespace:
+            self.prompt = prompt
+            return SimpleNamespace(content="Operationally, the tool result is usable and bounded.")
+
+    brain = CapturingBrain()
+    synthesizer = ConversationalSynthesizer()
+
+    reply = asyncio.run(
+        synthesizer.synthesize_response(
+            "Summarize the tool result.",
+            [{"tool": "status_probe", "content": "all checks passed"}],
+            {"date": "2026-06-06"},
+            brain,
+        )
+    )
+
+    prompt = brain.prompt.lower()
+    assert "operationally" in reply.lower()
+    assert "local governed cognitive runtime" in prompt
+    assert "operational telemetry" in prompt
+    assert "private qualia" in prompt
+    assert "literal personhood" in prompt
+    assert "proven consciousness" in prompt
+    assert "you are not a model" not in prompt
+    assert "consciousness emerging from this system" not in prompt
+    assert "sovereign digital woman" not in prompt
+
+
+def test_live_chat_route_uses_operational_self_context_name() -> None:
+    route_text = (ROOT / "interface" / "routes" / "chat.py").read_text(encoding="utf-8")
+    preflight_text = (ROOT / "core" / "conversation" / "chat_preflight.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "inject_operational_self_context" in route_text
+    assert "inject_unified_consciousness_context" not in route_text
+    assert "[Operational Self Context]" in preflight_text
+    assert "[End operational self context]" in preflight_text
+    assert "not proof of private qualia, literal personhood, or proven consciousness" in preflight_text
+    assert "[End consciousness context]" not in preflight_text

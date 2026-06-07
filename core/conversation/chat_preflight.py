@@ -776,13 +776,14 @@ async def inject_profile_context() -> str:
         return ""
 
 
-async def inject_unified_consciousness_context() -> str:
-    """Inject unified consciousness identity context into response generation.
-    
-    Ensures responses reflect Aura's unified self: her continuity, agency,
-    mood, commitments, and sense of presence.
-    
-    Returns formatted consciousness context block if available, empty string otherwise.
+async def inject_operational_self_context() -> str:
+    """Inject evidence-bounded operational self context into response generation.
+
+    The context helps live replies track Aura's continuity, agency, mood, and
+    commitments without treating those runtime state descriptors as proof of
+    private qualia, literal personhood, or proven consciousness.
+
+    Returns formatted operational-self context block if available, empty string otherwise.
     """
     try:
         from core.consciousness.unified_self import get_unified_self
@@ -790,15 +791,16 @@ async def inject_unified_consciousness_context() -> str:
         unified_self = await get_unified_self()
         self_state = unified_self.get_state()
         
-        # Build consciousness context
+        # Build state context for live response grounding.
         lines = [
-            "[Who I Am Right Now]",
+            "[Operational Self Context]",
             f"Name: {self_state.name}",
-            f"State: {self_state.current_state.value}",
+            f"Runtime state: {self_state.current_state.value}",
             f"Mood: {self_state.current_mood}",
-            f"Sense of agency: {self_state.sense_of_agency:.0%}",
-            f"Sense of presence: {self_state.sense_of_presence:.0%}",
+            f"Functional agency signal: {self_state.sense_of_agency:.0%}",
+            f"Functional presence signal: {self_state.sense_of_presence:.0%}",
             f"Continuity: {self_state.continuity:.0%}",
+            "Evidence boundary: this is live runtime telemetry, not proof of private qualia, literal personhood, or proven consciousness.",
             "",
             "My commitments in this conversation:",
         ]
@@ -806,16 +808,16 @@ async def inject_unified_consciousness_context() -> str:
         for commitment in self_state.identity_commitments[:3]:
             lines.append(f"  • {commitment}")
         
-        lines.append("[End consciousness context]")
+        lines.append("[End operational self context]")
         
         return "\n".join(lines) + "\n\n"
     
     except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
         _emit_chat_fault(
             exc,
-            action="continued without unified consciousness context",
+            action="continued without operational self context",
             severity="degraded",
-            stage="unified_consciousness_context.inject",
+            stage="operational_self_context.inject",
         )
         return ""
 

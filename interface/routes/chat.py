@@ -5390,17 +5390,17 @@ async def api_chat(
                 record_degradation('chat', _profile_exc)
                 logger.debug("Chat profile context preflight skipped: %s", _profile_exc)
             
-            # Inject unified consciousness identity context
+            # Inject evidence-bounded operational self context
             try:
-                from core.conversation.chat_preflight import inject_unified_consciousness_context
+                from core.conversation.chat_preflight import inject_operational_self_context
                 
-                _consciousness_context = await inject_unified_consciousness_context()
-                if _consciousness_context:
-                    body.message = f"{_consciousness_context}{body.message}"
-                    logger.info("Chat preflight: injected unified consciousness context.")
-            except _CHAT_RECOVERABLE_ERRORS as _consciousness_exc:
-                record_degradation('chat', _consciousness_exc)
-                logger.debug("Chat consciousness preflight skipped: %s", _consciousness_exc)
+                _self_context = await inject_operational_self_context()
+                if _self_context:
+                    body.message = f"{_self_context}{body.message}"
+                    logger.info("Chat preflight: injected operational self context.")
+            except _CHAT_RECOVERABLE_ERRORS as _self_context_exc:
+                record_degradation('chat', _self_context_exc)
+                logger.debug("Chat operational self preflight skipped: %s", _self_context_exc)
     except _CHAT_RECOVERABLE_ERRORS as _preflight_outer:
         record_degradation('chat', _preflight_outer)
         logger.debug("Chat preflight (outer) skipped: %s", _preflight_outer)
