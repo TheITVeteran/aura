@@ -6087,7 +6087,7 @@ async def api_chat(
                 logger.debug("Animal cognition tracking skipped: %s", _ac_exc)
 
         allow_chat_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
-        allow_governed_action_fastpaths = not is_benchmark
+        allow_governed_action_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
 
         async def _finalize_fastpath(reply_text: str, status: str = "ok"):
             nonlocal pending_exchange_id
@@ -6770,6 +6770,13 @@ async def api_chat(
                 return await _finalize_fastpath(
                     _apply_aura_voice_shaping(str(live_proof.get("response") or "")),
                     status=str(live_proof.get("status") or "live_proof"),
+                )
+
+            explicit_file = await _execute_explicit_local_file_objective(_semantic_user_message)
+            if explicit_file:
+                return await _finalize_fastpath(
+                    _apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
+                    status=str(explicit_file.get("status") or "file_operation"),
                 )
 
             desktop_objective = await _execute_desktop_objective_from_chat(

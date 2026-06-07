@@ -929,7 +929,7 @@ async def test_api_chat_desktop_live_proof_executes_after_cognitive_engine(monke
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_explicit_file_objective_uses_governed_file_fastpath(tmp_path, monkeypatch):
+async def test_api_chat_desktop_explicit_file_objective_runs_after_cognitive_engine(tmp_path, monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
@@ -945,9 +945,9 @@ async def test_api_chat_desktop_explicit_file_objective_uses_governed_file_fastp
         target.write_text(params["content"], encoding="utf-8")
         return {"ok": True, "path": params["path"], "summary": "wrote file"}
 
-    async def _forbidden_cognitive_turn(*args, **kwargs):
+    async def _fake_cognitive_turn(*args, **kwargs):
         cognitive_calls.append((args, kwargs))
-        raise AssertionError("explicit local file objectives should not spend a foreground model turn")
+        return "Plan: create the requested file through governed file_operation after this cognitive turn."
 
     async def _fake_log_exchange(*_args, **_kwargs):
         return None
@@ -960,7 +960,7 @@ async def test_api_chat_desktop_explicit_file_objective_uses_governed_file_fastp
     monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_governed_skill)
-    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _forbidden_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(
         chat_routes,
@@ -1002,7 +1002,9 @@ async def test_api_chat_desktop_explicit_file_objective_uses_governed_file_fastp
     assert payload["conversation_lane"]["governed_action_result"] is True
     assert payload["conversation_lane"]["governed_action_status"] == "file_operation"
     assert governed_calls
-    assert cognitive_calls == []
+    assert len(cognitive_calls) == 1
+    assert cognitive_calls[0][1]["source"] == "desktop_ui"
+    assert cognitive_calls[0][1]["require_engine"] is True
     assert target.exists()
     html = target.read_text(encoding="utf-8")
     assert "<button" in html
@@ -1010,15 +1012,18 @@ async def test_api_chat_desktop_explicit_file_objective_uses_governed_file_fastp
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_runtime_status_uses_metadata_fastpath(monkeypatch):
+async def test_api_chat_desktop_runtime_status_routes_through_cognitive_engine(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
     cognitive_calls = []
 
-    async def _forbidden_cognitive_turn(*args, **kwargs):
+    async def _fake_cognitive_turn(*args, **kwargs):
         cognitive_calls.append((args, kwargs))
-        raise AssertionError("runtime status probes should not occupy foreground inference")
+        return (
+            "Cortex (32B) is the active foreground lane, CognitiveEngine handled this turn: yes, "
+            "governed tools available: yes, recurrent depth: active."
+        )
 
     async def _fake_log_exchange(*_args, **_kwargs):
         return None
@@ -1030,7 +1035,7 @@ async def test_api_chat_desktop_runtime_status_uses_metadata_fastpath(monkeypatc
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
-    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _forbidden_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
     monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
@@ -1070,13 +1075,14 @@ async def test_api_chat_desktop_runtime_status_uses_metadata_fastpath(monkeypatc
 
     payload = json.loads(response.body)
     assert response.status_code == 200
-    assert payload["status"] == "runtime_fact_status"
+    assert payload["status"] == "cognitive_engine"
     assert "Cortex (32B) is the active foreground lane" in payload["response"]
-    assert "CognitiveEngine available for normal desktop turns: yes" in payload["response"]
-    assert "runtime metadata instead of occupying foreground inference" in payload["response"]
+    assert "CognitiveEngine handled this turn: yes" in payload["response"]
     assert "governed tools available: yes" in payload["response"]
     assert "recurrent depth: active" in payload["response"]
-    assert cognitive_calls == []
+    assert len(cognitive_calls) == 1
+    assert cognitive_calls[0][1]["source"] == "desktop_ui"
+    assert cognitive_calls[0][1]["require_engine"] is True
 
 
 @pytest.mark.asyncio
