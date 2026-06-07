@@ -221,7 +221,7 @@ async def test_desktop_task_derives_general_plan_from_desktop_objective(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_desktop_task_uses_cognitive_engine_structured_plan_before_fallback(monkeypatch):
+async def test_desktop_task_uses_cognitive_engine_structured_plan_before_heuristic_plan(monkeypatch):
     from core.container import ServiceContainer
 
     calls = []
@@ -359,7 +359,7 @@ async def test_desktop_task_escalates_unrepresented_desktop_workflow_to_os_autom
     )
 
     assert result["ok"] is True
-    assert result["planner"] == "os_automation_fallback"
+    assert result["planner"] == "os_automation_escalation"
     assert result["steps_requested"] == 1
     assert result["steps_completed"] == 1
     assert calls == [

@@ -620,7 +620,7 @@ class DesktopTaskSkill(BaseSkill):
         context: dict[str, Any] | None,
     ) -> bool:
         context = context or {}
-        if bool(context.get("disable_os_automation_fallback")):
+        if bool(context.get("disable_os_automation_escalation")):
             return False
         if cls._objective_requests_observation_only(objective):
             return False
@@ -647,7 +647,7 @@ class DesktopTaskSkill(BaseSkill):
             return True, f"adapter={adapter}"
         return False, "missing os automation effect evidence"
 
-    async def _execute_os_automation_fallback(
+    async def _execute_os_automation_escalation(
         self,
         *,
         capability_engine: Any,
@@ -680,7 +680,7 @@ class DesktopTaskSkill(BaseSkill):
             record_degradation(
                 "desktop_task",
                 exc,
-                action="blocked desktop task because OS automation fallback failed closed",
+                action="blocked desktop task because governed OS automation escalation failed closed",
                 severity="degraded",
             )
             result = {
@@ -711,7 +711,7 @@ class DesktopTaskSkill(BaseSkill):
             "steps_completed": 1 if ok else 0,
             "receipts": [receipt],
             "failures": [] if ok else [receipt],
-            "planner": "os_automation_fallback",
+            "planner": "os_automation_escalation",
             "summary": (
                 "Desktop task completed 1/1 governed OS automation step."
                 if ok
@@ -755,7 +755,7 @@ class DesktopTaskSkill(BaseSkill):
             steps = self._derive_steps_from_objective(objective, task_context)
 
         if self._should_escalate_to_os_automation(objective, steps, task_context):
-            return await self._execute_os_automation_fallback(
+            return await self._execute_os_automation_escalation(
                 capability_engine=capability_engine,
                 objective=objective,
                 context=task_context,
