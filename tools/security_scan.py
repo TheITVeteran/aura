@@ -19,6 +19,43 @@ SECRET_PATTERNS = (
     re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
     re.compile(r"AIza[0-9A-Za-z_-]{20,}"),
 )
+REGEX_LITERAL_MARKERS = ("(?P<", "\\b", "\\s", "\\d", "[", "]", "|", "*", "+", "{", "}")
+CREDENTIAL_NAME_WORDS = {
+    "apikey",
+    "api_key",
+    "auth",
+    "bearer",
+    "credential",
+    "credentials",
+    "jwt",
+    "key",
+    "password",
+    "secret",
+    "token",
+}
+NON_SECRET_TOKEN_NAME_WORDS = {
+    "count",
+    "format",
+    "lexer",
+    "parser",
+    "pattern",
+    "regex",
+    "re",
+    "tokenizer",
+    "tokens",
+}
+PLACEHOLDER_MARKERS = (
+    "change_me",
+    "changeme",
+    "dummy",
+    "example",
+    "fake",
+    "not_set",
+    "placeholder",
+    "sample",
+    "test",
+    "your_",
+)
 
 
 def scan() -> dict:
@@ -91,17 +128,71 @@ def _scan_assignment(node: ast.Assign | ast.AnnAssign, rel: str) -> list[dict]:
         value = node.value
     if not names or not isinstance(value, ast.Constant) or not isinstance(value.value, str):
         return []
-    lowered = " ".join(names).lower()
-    if not any(key in lowered for key in ("api_key", "apikey", "secret", "password", "token")):
-        return []
-    if lowered.isupper() or "enum" in lowered:
-        return []
     literal = value.value.strip()
-    if len(literal) < 20 or literal.startswith("$") or literal.startswith("<") or _looks_like_identifier(literal):
+    if _is_parser_regex_constant(names, literal):
+        return []
+    if not _has_credential_name(names):
+        return []
+    if _is_enum_symbol_literal(names, literal):
+        return []
+    if _is_placeholder_literal(literal):
+        return []
+    if len(literal) < 20 or literal.startswith("$") or literal.startswith("<"):
         return []
     if _entropy(literal) < 3.0:
         return []
     return [{"kind": "secret_like_literal", "file": rel, "line": getattr(node, "lineno", 1)}]
+
+
+def _has_credential_name(names: list[str]) -> bool:
+    for name in names:
+        normalized = name.strip("_").lower()
+        if not normalized or "enum" in normalized:
+            continue
+        if normalized in CREDENTIAL_NAME_WORDS:
+            return True
+        if "api_key" in normalized or "apikey" in normalized:
+            return True
+        words = [part for part in re.split(r"[^a-z0-9]+|_", normalized) if part]
+        word_set = set(words)
+        if word_set & {"secret", "password", "credential", "credentials", "jwt", "bearer", "auth"}:
+            return True
+        if "token" in word_set and not (word_set & NON_SECRET_TOKEN_NAME_WORDS):
+            return True
+        if "key" in word_set and (word_set & {"api", "private", "secret", "client", "access"}):
+            return True
+    return False
+
+
+def _is_parser_regex_constant(names: list[str], literal: str) -> bool:
+    if not any(marker in literal for marker in REGEX_LITERAL_MARKERS):
+        return False
+    for name in names:
+        lowered = name.lower()
+        if lowered.endswith("_re") or lowered.endswith("_regex") or "pattern" in lowered:
+            return True
+        words = {part for part in re.split(r"[^a-z0-9]+|_", lowered) if part}
+        if "regex" in words or "parser" in words or "tokenizer" in words:
+            return True
+        if "token" in words and words & NON_SECRET_TOKEN_NAME_WORDS:
+            return True
+    return False
+
+
+def _is_placeholder_literal(literal: str) -> bool:
+    lowered = literal.lower()
+    return any(marker in lowered for marker in PLACEHOLDER_MARKERS)
+
+
+def _is_enum_symbol_literal(names: list[str], literal: str) -> bool:
+    if not literal or not re.fullmatch(r"[a-z][a-z0-9_:-]{2,}", literal):
+        return False
+    normalized_literal = literal.replace("-", "_").replace(":", "_").upper()
+    for name in names:
+        normalized_name = name.strip("_").upper()
+        if normalized_name and normalized_name == normalized_literal:
+            return True
+    return False
 
 
 def _scan_call(node: ast.Call, rel: str) -> dict | None:
@@ -137,10 +228,6 @@ def _call_name(node: ast.AST) -> str:
         base = _call_name(node.value)
         return f"{base}.{node.attr}" if base else node.attr
     return ""
-
-
-def _looks_like_identifier(value: str) -> bool:
-    return bool(re.fullmatch(r"[A-Za-z0-9_.:-]+", value)) and any(ch.isalpha() for ch in value)
 
 
 def _entropy(value: str) -> float:

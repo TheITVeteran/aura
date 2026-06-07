@@ -359,28 +359,35 @@ closeout-rubric:
 	@echo ""
 	@echo "Checking all 20 closeout criteria..."
 	@echo ""
-	@echo "  1. Clean install (make setup)..........." && make setup-prod 2>/dev/null && echo "✅" || echo "❌"
-	@echo "  2. Canonical boot path (boot_aura_runtime)..." && $(PYTHON) -c "from aura_main import boot_aura_runtime; print('  ✅')" || echo "  ❌"
-	@echo "  3. Mode separation (AURA_MODE)..." && $(PYTHON) -c "from core.runtime.mode import get_mode; print(f'  ✅ {get_mode().value}')" || echo "  ❌"
-	@echo "  4. Will/Authority governance..." && $(PYTHON) -c "from core.will import UnifiedWill; print('  ✅')" || echo "  ❌"
-	@echo "  5. State gateway..." && $(PYTHON) -c "from core.state.state_gateway import StateGateway; print('  ✅')" || echo "  ❌"
-	@echo "  6. Compilation..." && make compile 2>/dev/null 1>/dev/null && echo "  ✅" || echo "  ❌"
-	@echo "  7. Lint..." && make lint 2>/dev/null 1>/dev/null && echo "  ✅" || echo "  ❌"
-	@echo "  8. SBOM/provenance..." && test -f tools/build_provenance.py && echo "  ✅" || echo "  ❌"
-	@echo "  9. Security scan..." && make security 2>/dev/null 1>/dev/null && echo "  ✅" || echo "  ❌"
-	@echo " 10. OWASP ASVS mapping..." && test -f security/OWASP_ASVS_MAPPING.md && echo "  ✅" || echo "  ❌"
-	@echo " 11. OWASP LLM mapping..." && test -f security/OWASP_LLM_MAPPING.md && echo "  ✅" || echo "  ❌"
-	@echo " 12. Threat model..." && test -f security/threat_model.md && echo "  ✅" || echo "  ❌"
-	@echo " 13. SLO docs..." && test -f docs/SLO.md && echo "  ✅" || echo "  ❌"
-	@echo " 14. Operator guide..." && test -f docs/OPERATOR_GUIDE.md && echo "  ✅" || echo "  ❌"
-	@echo " 15. Backup/restore..." && test -f KNOWN_FAILURE_MODES.md && echo "  ✅" || echo "  ❌"
-	@echo " 16. Privacy controls..." && test -f DATA_CARD.md && echo "  ✅" || echo "  ❌"
-	@echo " 17. AI System Card..." && test -f AI_SYSTEM_CARD.md && echo "  ✅" || echo "  ❌"
-	@echo " 18. Permission matrix..." && test -f security/permission_matrix.md && echo "  ✅" || echo "  ❌"
-	@echo " 19. Human override..." && test -f HUMAN_OVERRIDE_POLICY.md && echo "  ✅" || echo "  ❌"
-	@echo " 20. Known failure modes..." && test -f KNOWN_FAILURE_MODES.md && echo "  ✅" || echo "  ❌"
-	@echo ""
-	@echo "══════════════════════════════════════════════════════════════"
+	@fail=0; \
+	check() { \
+	  label="$$1"; shift; \
+	  printf "%s" "$$label"; \
+	  if "$$@" >/dev/null 2>/dev/null; then echo "  ✅"; else echo "  ❌"; fail=1; fi; \
+	}; \
+	check "  1. Clean install (make setup)..........." make setup-prod; \
+	check "  2. Canonical boot path (boot_aura_runtime)..." $(PYTHON) -c "from aura_main import boot_aura_runtime"; \
+	check "  3. Mode separation (AURA_MODE)..." $(PYTHON) -c "from core.runtime.mode import get_mode; get_mode()"; \
+	check "  4. Will/Authority governance..." $(PYTHON) -c "from core.will import UnifiedWill"; \
+	check "  5. State gateway..." $(PYTHON) -c "from core.state.state_gateway import StateGateway"; \
+	check "  6. Compilation..." make compile; \
+	check "  7. Lint..." make lint; \
+	check "  8. SBOM/provenance..." test -f tools/build_provenance.py; \
+	check "  9. Security scan..." make security; \
+	check " 10. OWASP ASVS mapping..." test -f security/OWASP_ASVS_MAPPING.md; \
+	check " 11. OWASP LLM mapping..." test -f security/OWASP_LLM_MAPPING.md; \
+	check " 12. Threat model..." test -f security/threat_model.md; \
+	check " 13. SLO docs..." test -f docs/SLO.md; \
+	check " 14. Operator guide..." test -f docs/OPERATOR_GUIDE.md; \
+	check " 15. Backup/restore..." test -f KNOWN_FAILURE_MODES.md; \
+	check " 16. Privacy controls..." test -f DATA_CARD.md; \
+	check " 17. AI System Card..." test -f AI_SYSTEM_CARD.md; \
+	check " 18. Permission matrix..." test -f security/permission_matrix.md; \
+	check " 19. Human override..." test -f HUMAN_OVERRIDE_POLICY.md; \
+	check " 20. Known failure modes..." test -f KNOWN_FAILURE_MODES.md; \
+	echo ""; \
+	echo "══════════════════════════════════════════════════════════════"; \
+	exit $$fail
 
 # ─── Gold Master Seal ─────────────────────────────────────────────────────
 # Single-command verification that Aura is sealed for indefinite operation.
