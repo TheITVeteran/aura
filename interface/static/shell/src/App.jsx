@@ -39,6 +39,21 @@ function desktopChatHeaders() {
   };
 }
 
+async function readApiPayload(response) {
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
+}
+
+function apiFailureMessage(payload, fallback) {
+  if (payload && typeof payload === "object") {
+    return payload.response || payload.message || payload.error || payload.detail || fallback;
+  }
+  return fallback;
+}
+
 function formatPercent(value) {
   const numeric = Number(value || 0);
   return `${numeric.toFixed(numeric >= 10 ? 0 : 1)}%`;
@@ -367,8 +382,18 @@ export default function App() {
         headers: desktopChatHeaders(),
         body: JSON.stringify({ message: content }),
       });
-      if (!response.ok) throw new Error(`Chat failed (${response.status})`);
-      const payload = await response.json();
+      const payload = await readApiPayload(response);
+      if (!response.ok) {
+        const message = apiFailureMessage(payload, `Chat failed (${response.status})`);
+        appendMessage({
+          id: crypto.randomUUID(),
+          role: payload.response ? "assistant" : "system",
+          content: message,
+          createdAt: Date.now(),
+        });
+        setToast(message);
+        return;
+      }
       if (payload.response) {
         appendMessage({
           id: crypto.randomUUID(),
@@ -397,8 +422,10 @@ export default function App() {
         method: "POST",
         headers: desktopChatHeaders(),
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.message || payload.error || "Regenerate failed");
+      const payload = await readApiPayload(response);
+      if (!response.ok) {
+        throw new Error(apiFailureMessage(payload, "Regenerate failed"));
+      }
       if (payload.response) {
         appendMessage({
           id: crypto.randomUUID(),
