@@ -125,7 +125,7 @@ async def _start_supervisor(
         _fail_required_component(name, exc)
         return False
 
-    ServiceContainer.register_instance(container_key, component)
+    ServiceContainer.register_instance(container_key, component, failure_policy="degrade_with_receipt")
     status[name] = {
         "state": "online",
         "registered": True,
@@ -201,7 +201,7 @@ async def init_hardening_layer(orchestrator: Any):
         monitor.start()
         if not _component_is_alive(monitor):
             raise RuntimeError("EventLoopMonitor start returned without a live task")
-        ServiceContainer.register_instance("event_loop_monitor", monitor)
+        ServiceContainer.register_instance("event_loop_monitor", monitor, failure_policy="degrade_with_receipt")
         hardening_status["event_loop_monitor"] = {
             "state": "online",
             "registered": True,

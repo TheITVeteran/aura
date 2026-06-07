@@ -47,7 +47,7 @@ class RobustLock:
         name: str = "UnnamedLock",
         *,
         watchdog_threshold_s: float | None = None,
-        force_release_on_stall: bool = True,
+        force_release_on_stall: bool = False,
         timeout_s: float | None = None,
     ):
         import uuid
@@ -190,7 +190,9 @@ class RobustLock:
             watchdog.report_release(self.id)
             return False
 
-        self.force_release()
+        if not self.force_release():
+            watchdog.report_release(self.id)
+            return False
         watchdog.report_release(self.id)
 
         self._watchdog_report_acquire_start(
@@ -230,12 +232,26 @@ class RobustLock:
             record_degradation("concurrency", e)
             logger.debug("RobustLock.release() error for '%s': %s", self.name, e)
 
-    def force_release(self):
+    def force_release(self) -> bool:
         """CRITICAL: Force release the lock to break a detected deadlock.
 
         Replaces the lock entirely so that the blocked thread can proceed.
         The thread holding the old lock will release the old lock safely.
         """
+        if not self.force_release_on_stall:
+            exc = RuntimeError(f"force release disabled for lock '{self.name}'")
+            record_degradation(
+                "concurrency",
+                exc,
+                severity="critical",
+                action="blocked_lock_force_release_without_explicit_opt_in",
+                extra={"lock_id": self.id, "lock_name": self.name},
+            )
+            logger.error(
+                "Force release blocked for lock '%s'; lock was configured fail-closed.",
+                self.name,
+            )
+            return False
         logger.critical("⚠️ FORCE RELEASING LOCK '%s' due to deadlock watchdog!", self.name)
         try:
             self._lock = threading.Lock()
@@ -245,6 +261,8 @@ class RobustLock:
         except (AttributeError, TypeError, ValueError) as _exc:
             record_degradation("concurrency", _exc)
             logger.debug("Suppressed Exception: %s", _exc)
+            return False
+        return True
 
     def locked(self) -> bool:
         return self._lock.locked()
@@ -261,7 +279,9 @@ class RobustLock:
         return time.monotonic() - self.last_acquire_start
 
     async def __aenter__(self):
-        await self.acquire()
+        acquired = await self.acquire()
+        if not acquired:
+            raise TimeoutError(f"failed to acquire robust lock '{self.name}'")
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):

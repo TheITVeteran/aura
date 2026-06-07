@@ -107,6 +107,54 @@ async def test_actor_bus_health_fails_when_telemetry_task_dies() -> None:
 
 
 @pytest.mark.asyncio
+async def test_actor_bus_start_repairs_dead_telemetry_task(monkeypatch) -> None:
+    from core.bus import actor_bus as module
+
+    records = []
+    created = []
+
+    class _Tracker:
+        def create_task(self, coro, name=None):
+            task = asyncio.create_task(coro, name=name)
+            created.append((name, task))
+            return task
+
+    async def _dead():
+        await asyncio.sleep(0)
+        raise RuntimeError("telemetry crashed")
+
+    monkeypatch.setattr(module, "get_task_tracker", lambda: _Tracker())
+    monkeypatch.setattr(
+        module,
+        "record_degradation",
+        lambda *args, **kwargs: records.append((args, kwargs)),
+    )
+
+    await ActorBus.reset_singleton()
+    bus = ActorBus()
+    bus._is_running = True
+    bus._telemetry_queue = asyncio.Queue(maxsize=1)
+    dead_task = asyncio.create_task(_dead(), name="dead-telemetry")
+    bus._telemetry_broadcaster_task = dead_task
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    try:
+        bus.start()
+
+        assert bus._telemetry_broadcaster_task is not dead_task
+        assert [name for name, _task in created] == ["actor_bus.telemetry_broadcaster"]
+        assert records
+        assert records[-1][0][0] == "actor_bus"
+        assert records[-1][1]["action"] == "restarting_dead_telemetry_broadcaster"
+        assert records[-1][1]["extra"]["telemetry_task"]["failed"] is True
+        assert bus.is_alive() is True
+    finally:
+        await bus.stop()
+        await ActorBus.reset_singleton()
+
+
+@pytest.mark.asyncio
 async def test_actor_bus_telemetry_task_done_survives_malformed_item(monkeypatch) -> None:
     monkeypatch.setitem(
         sys.modules,

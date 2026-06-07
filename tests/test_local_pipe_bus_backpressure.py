@@ -139,6 +139,63 @@ def test_local_pipe_bus_reader_mode_health_requires_background_tasks():
         bus._shutdown_executor()
 
 
+def test_local_pipe_bus_start_repairs_dead_background_worker(monkeypatch):
+    async def scenario():
+        from core.bus import local_pipe_bus as module
+
+        records = []
+        created = []
+
+        class _Tracker:
+            def create_task(self, coro, name=None):
+                task = asyncio.create_task(coro, name=name)
+                created.append((name, task))
+                return task
+
+        async def _alive():
+            await asyncio.sleep(10)
+
+        async def _dead():
+            await asyncio.sleep(0)
+            raise RuntimeError("dispatcher crashed")
+
+        monkeypatch.setattr(module, "get_task_tracker", lambda: _Tracker())
+        monkeypatch.setattr(
+            module,
+            "record_degradation",
+            lambda *args, **kwargs: records.append((args, kwargs)),
+        )
+
+        read_conn = _FakeConnection()
+        write_conn = _FakeConnection()
+        bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=True)
+        bus._is_running = True
+        bus._loop = asyncio.get_running_loop()
+        bus._dispatch_queue = asyncio.Queue(maxsize=1)
+        reader_task = asyncio.create_task(_alive(), name="existing-reader")
+        dispatcher_task = asyncio.create_task(_dead(), name="dead-dispatcher")
+        bus._reader_task = reader_task
+        bus._dispatcher_task = dispatcher_task
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        try:
+            bus.start()
+
+            assert bus._reader_task is reader_task
+            assert bus._dispatcher_task is not dispatcher_task
+            assert [name for name, _task in created] == ["local_pipe_bus.dispatch"]
+            assert records
+            assert records[-1][0][0] == "local_pipe_bus"
+            assert records[-1][1]["action"] == "restarting_dead_background_workers"
+            assert records[-1][1]["extra"]["dispatcher_task"]["failed"] is True
+            assert bus.is_alive() is True
+        finally:
+            await bus.stop()
+
+    asyncio.run(scenario())
+
+
 def test_local_pipe_bus_health_fails_on_saturated_pending_requests():
     read_conn = _FakeConnection()
     write_conn = _FakeConnection()

@@ -95,6 +95,7 @@ class ActorBus:
                 severity="warning",
                 action=f"{kind}_drop_visible:{reason}",
                 extra={k: v for k, v in self._last_drop.items() if v is not None},
+                enforce_failure_policy=False,
             )
 
     def get_status(self) -> dict[str, Any]:
@@ -259,7 +260,16 @@ class ActorBus:
             self._telemetry_queue = asyncio.Queue(maxsize=100)
         self.start_transports()
         
-        # Start Telemetry Broadcaster
+        # Start or repair Telemetry Broadcaster
+        if self._telemetry_broadcaster_task is not None and not self._telemetry_task_alive():
+            record_degradation(
+                "actor_bus",
+                RuntimeError("ActorBus telemetry broadcaster restart required"),
+                severity="warning",
+                action="restarting_dead_telemetry_broadcaster",
+                extra={"telemetry_task": self._task_status(self._telemetry_broadcaster_task)},
+            )
+            self._telemetry_broadcaster_task = None
         if self._telemetry_broadcaster_task is None:
             self._telemetry_broadcaster_task = get_task_tracker().create_task(
                 self._telemetry_broadcaster(),

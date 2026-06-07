@@ -2661,14 +2661,20 @@ class RobustOrchestrator(
                             "🚨 [WATCHDOG] Deadlock detected (held for %.1fs)! Force-releasing StateLock...",
                             elapsed,
                         )
-                        self._lock.force_release()
-                        self.status.is_processing = False
-                        # Notify UI of recovery
-                        await self.output_gate.emit(
-                            "I've recovered from a cognitive stall. Reprioritizing...",
-                            origin="system",
-                            target="primary",
-                        )
+                        if self._lock.force_release():
+                            self.status.is_processing = False
+                            # Notify UI of recovery
+                            await self.output_gate.emit(
+                                "I've recovered from a cognitive stall. Reprioritizing...",
+                                origin="system",
+                                target="primary",
+                            )
+                        else:
+                            _record_main_degradation(
+                                RuntimeError("deadlock watchdog blocked unsafe lock force release"),
+                                action="deadlock watchdog refused unsafe lock force release",
+                                severity="critical",
+                            )
             except _ORCHESTRATOR_RECOVERABLE_ERRORS as e:
                 _record_main_degradation(
                     e,

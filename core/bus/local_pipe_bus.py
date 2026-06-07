@@ -387,23 +387,42 @@ class LocalPipeBus:
 
     def start(self):
         """Start the background reader task."""
-        if self._is_running and self._reader_task and not self._reader_task.done():
+        if self._is_running and not self.start_reader:
+            return
+        if self._is_running and self._background_tasks_alive():
             return
         
         loop = asyncio.get_running_loop()
         self._loop = loop
         self._is_running = True
         if self.start_reader:
-            self._dispatch_queue = asyncio.Queue(maxsize=256)
+            reader_alive = self._task_alive(self._reader_task)
+            dispatcher_alive = self._task_alive(self._dispatcher_task)
+            if self._reader_task is not None or self._dispatcher_task is not None:
+                record_degradation(
+                    "local_pipe_bus",
+                    RuntimeError("LocalPipeBus background worker restart required"),
+                    severity="warning",
+                    action="restarting_dead_background_workers",
+                    enforce_failure_policy=False,
+                    extra={
+                        "reader_task": self._task_status(self._reader_task),
+                        "dispatcher_task": self._task_status(self._dispatcher_task),
+                    },
+                )
+            if self._dispatch_queue is None:
+                self._dispatch_queue = asyncio.Queue(maxsize=256)
             tracker = get_task_tracker()
-            self._dispatcher_task = tracker.create_task(
-                self._dispatch_loop(),
-                name="local_pipe_bus.dispatch",
-            )
-            self._reader_task = tracker.create_task(
-                self._read_loop(),
-                name="local_pipe_bus.read",
-            )
+            if not dispatcher_alive:
+                self._dispatcher_task = tracker.create_task(
+                    self._dispatch_loop(),
+                    name="local_pipe_bus.dispatch",
+                )
+            if not reader_alive:
+                self._reader_task = tracker.create_task(
+                    self._read_loop(),
+                    name="local_pipe_bus.read",
+                )
             logger.info("📡 LocalPipeBus reader ACTIVE (Child: %s)", self.is_child)
         else:
             logger.info("📡 LocalPipeBus ACTIVE (Manual Polling mode)")
