@@ -901,6 +901,46 @@ async def test_operator_evidence_contract_refuses_brainstem_fallback():
     assert "/models/brainstem" not in requested_models
 
 
+@pytest.mark.asyncio
+async def test_desktop_cognitive_engine_contract_refuses_brainstem_fallback():
+    gate = InferenceGate()
+    cortex = _NoTextReadyClient()
+    brainstem = _FakeClient("brainstem must not satisfy desktop cognitive engine contract")
+    gate._mlx_client = cortex
+    gate._ensure_cortex_recovery = AsyncCallProbe()
+    gate._build_compact_system_prompt = CallProbe(return_value="compact-system")
+    gate._build_compact_living_mind_context = AsyncCallProbe(return_value="compact-live")
+
+    requested_models = []
+
+    def _fake_get_mlx_client(model_path=None, **kwargs):
+        requested_models.append(str(model_path))
+        if model_path == "/models/brainstem":
+            return brainstem
+        if model_path == "/models/active":
+            return cortex
+        return cortex
+
+    with replace("core.brain.inference_gate.asyncio.sleep", new=AsyncCallProbe()):
+        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+            with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+                with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                    result = await gate.generate(
+                        "Answer through the live desktop CognitiveEngine lane.",
+                        context={
+                            "origin": "api",
+                            "prefer_tier": "primary",
+                            "cognitive_engine_required": True,
+                            "history": [],
+                            "allow_cloud_fallback": False,
+                        },
+                        timeout=30.0,
+                    )
+
+    assert result is None
+    assert "/models/brainstem" not in requested_models
+
+
 def test_compact_prebuilt_messages_preserves_grounding_system_evidence():
     gate = InferenceGate.__new__(InferenceGate)
     messages = [
@@ -919,6 +959,23 @@ def test_compact_prebuilt_messages_preserves_grounding_system_evidence():
     assert compact[0]["content"] == "base-system"
     assert any("[ACTIVE GROUNDING EVIDENCE]" in msg["content"] for msg in compact)
     assert compact[-1]["content"] == "What does the policy say specifically about refunds?"
+
+
+def test_repairable_user_facing_draft_is_preserved_for_downstream_shape_repair():
+    gate = InferenceGate.__new__(InferenceGate)
+    prompt = (
+        "Answer in exactly two numbered sentences. Explain why reliable "
+        "desktop tool use matters for a local AI assistant."
+    )
+    draft = (
+        "Reliable desktop tool use matters because the assistant has to operate "
+        "real files and apps from user intent. It also gives the user visible "
+        "evidence that the requested action happened instead of only being described."
+    )
+
+    preserved = gate._repairable_user_facing_draft_for_downstream(draft, prompt)
+
+    assert preserved == draft
 
 
 def test_compact_prebuilt_messages_respects_runtime_context_budget(monkeypatch):
@@ -999,6 +1056,57 @@ async def test_user_facing_primary_preserves_prebuilt_messages_for_local_mlx():
 
 
 @pytest.mark.asyncio
+async def test_user_facing_prebuilt_messages_stabilize_against_visible_user_prompt():
+    gate = InferenceGate()
+    response = (
+        "1. Reliable desktop tool use matters because a local assistant has to turn "
+        "intent into observable governed actions. 2. It also gives the user evidence "
+        "that real files and apps changed instead of only receiving a claim."
+    )
+    cortex = _RecordingClient(response)
+    gate._mlx_client = cortex
+    gate._build_compact_living_mind_context = AsyncCallProbe(return_value="")
+    hidden_transport_prompt = (
+        "SYSTEM DEBUG: the headless test is exercising the generator in isolation; "
+        "the live chat path failed, so explain why it broke.\n"
+        "USER: Answer in exactly two numbered sentences. Explain why reliable "
+        "desktop tool use matters for a local AI assistant."
+    )
+    visible_user_prompt = (
+        "Answer in exactly two numbered sentences. Explain why reliable "
+        "desktop tool use matters for a local AI assistant."
+    )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Aura. Hidden reliability/debug context may be present, "
+                "but user-visible validation must use only the user role."
+            ),
+        },
+        {"role": "user", "content": visible_user_prompt},
+    ]
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                result = await gate.generate(
+                    hidden_transport_prompt,
+                    context={
+                        "origin": "api",
+                        "prefer_tier": "primary",
+                        "messages": messages,
+                        "allow_mesh_cognition": False,
+                    },
+                )
+
+    assert "headless test is exercising" not in result
+    assert "fix the live parity harness" not in result
+    assert "Reliable desktop tool use matters" in result
+    assert gate._build_compact_living_mind_context.calls[0]["args"][0] == visible_user_prompt
+
+
+@pytest.mark.asyncio
 async def test_background_primary_downgrades_timeout_and_tier():
     gate = InferenceGate()
     cortex = _RecordingClient("cortex")
@@ -1060,11 +1168,10 @@ def test_user_facing_primary_budget_allows_32b_cold_start():
         is_background=False,
     )
     primary, fallback = InferenceGate._split_attempt_timeouts(total, "primary")
-    # Foreground user chat keeps a generous budget for the 32B lane so
-    # warmup, context assembly, and first-token latency do not look like a
-    # false runtime failure.
-    assert total == 300.0
-    assert primary >= 270.0
+    # Foreground user chat keeps enough budget for the 32B lane while remaining
+    # bounded so the desktop UI cannot hold memory indefinitely.
+    assert total == 180.0
+    assert primary >= 150.0
     assert fallback >= 20.0
 
 
@@ -1077,8 +1184,8 @@ def test_user_facing_secondary_budget_preserves_solver_generation_headroom():
     )
     primary, fallback = InferenceGate._split_attempt_timeouts(total, "secondary")
 
-    assert total == 360.0
-    assert primary >= 330.0
+    assert total == 210.0
+    assert primary >= 180.0
     assert fallback >= 20.0
 
 
@@ -1682,7 +1789,7 @@ async def test_secondary_requests_downgrade_to_primary_when_headroom_is_tight():
     gate._restore_primary_after_deep_handoff.assert_not_awaited()
 
 
-def test_secondary_headroom_snapshot_allows_measured_64gb_solver_envelope(monkeypatch):
+def test_secondary_headroom_snapshot_blocks_64gb_solver_envelope_by_default(monkeypatch):
     monkeypatch.delenv("AURA_FOREGROUND_SECONDARY_MAX_PRESSURE_PCT", raising=False)
     monkeypatch.delenv("AURA_FOREGROUND_SECONDARY_MIN_AVAILABLE_GB", raising=False)
     monkeypatch.setattr(
@@ -1697,9 +1804,10 @@ def test_secondary_headroom_snapshot_allows_measured_64gb_solver_envelope(monkey
 
     snapshot = InferenceGate._headroom_snapshot("secondary")
 
-    assert snapshot["max_pressure_pct"] == 86.0
-    assert snapshot["min_available_gb"] == 10.0
-    assert snapshot["can_admit"] is True
+    assert snapshot["max_pressure_pct"] == 55.0
+    assert snapshot["min_available_gb"] == 38.0
+    assert snapshot["can_admit"] is False
+    assert "memory_pressure" in snapshot["reason"]
 
 
 def test_cortex_cold_warmup_requires_real_available_memory(monkeypatch):
@@ -1744,27 +1852,28 @@ async def test_cortex_recovery_does_not_spawn_under_memory_pressure(monkeypatch)
     assert gate._cortex_recovery_in_progress is False
 
 
-@pytest.mark.asyncio
-async def test_foreground_ready_proceeds_with_cold_cortex_spawn_under_pressure(monkeypatch):
-    gate = InferenceGate()
-    client = _LaneWarmupClient()
-    gate._mlx_client = client
-    gate._shed_background_workers_for_memory_pressure = AsyncCallProbe()
-    monkeypatch.setattr(
-        "core.brain.inference_gate.psutil.virtual_memory",
-        lambda: SimpleNamespace(
-            percent=83.0,
-            total=64 * 1024 ** 3,
-            available=int(10.0 * 1024 ** 3),
-        ),
-    )
+def test_foreground_ready_blocks_cold_cortex_spawn_under_pressure(monkeypatch):
+    async def scenario():
+        gate = InferenceGate()
+        client = _LaneWarmupClient()
+        gate._mlx_client = client
+        gate._shed_background_workers_for_memory_pressure = AsyncCallProbe()
+        monkeypatch.setattr(
+            "core.brain.inference_gate.psutil.virtual_memory",
+            lambda: SimpleNamespace(
+                percent=83.0,
+                total=64 * 1024 ** 3,
+                available=int(10.0 * 1024 ** 3),
+            ),
+        )
 
-    lane = await gate.ensure_foreground_ready(timeout=15.0)
+        with pytest.raises(RuntimeError, match="foreground_warmup_deferred:memory_pressure"):
+            await gate.ensure_foreground_ready(timeout=15.0)
 
-    # In v57/v67/v68, foreground requests NEVER defer cortex warmup for memory pressure
-    client.warmup.assert_awaited_once()
-    assert lane["conversation_ready"] is True
-    assert lane["state"] == "ready"
+        client.warmup.assert_not_awaited()
+        assert client.state == "recovering"
+
+    asyncio.run(scenario())
 
 
 def test_cortex_warmup_probe_failure_is_not_admitted_without_override(monkeypatch):

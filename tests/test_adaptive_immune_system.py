@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -220,6 +221,72 @@ def test_successful_lineage_clones_and_persists_as_memory(tmp_path):
 
     reloaded = AdaptiveImmuneSystem(config=cfg, state_dir=tmp_path, rng_seed=2)
     assert any(cell.kind == CellKind.MEMORY for cell in reloaded._cells)
+
+
+def test_auto_dream_consolidation_defers_under_background_policy(tmp_path, monkeypatch):
+    import core.adaptation.adaptive_immunity as adaptive_immunity
+
+    cfg = AdaptiveImmuneConfig(
+        population_size=1,
+        max_population=8,
+        dream_every_observations=1,
+    )
+    immune = AdaptiveImmuneSystem(config=cfg, state_dir=tmp_path, rng_seed=11)
+    monkeypatch.setattr(
+        adaptive_immunity,
+        "_maintenance_background_deferral_reason",
+        lambda: f"boot_grace_{42 + immune._observation_count}s",
+    )
+    antigen = immune.present_antigen(
+        {
+            "type": "error_signature",
+            "text": "transient startup noise",
+            "subsystem": "runtime",
+            "source": "startup",
+            "danger": 0.5,
+        }
+    )
+
+    response, _ = immune._observe_core(antigen)
+
+    assert response.dream_consolidated is False
+    assert immune._last_dream_at == 0
+
+
+def test_auto_dream_deferral_log_is_rate_limited(tmp_path, monkeypatch, caplog):
+    import core.adaptation.adaptive_immunity as adaptive_immunity
+
+    cfg = AdaptiveImmuneConfig(
+        population_size=1,
+        max_population=8,
+        dream_every_observations=1,
+    )
+    immune = AdaptiveImmuneSystem(config=cfg, state_dir=tmp_path, rng_seed=12)
+    monkeypatch.setattr(
+        adaptive_immunity,
+        "_maintenance_background_deferral_reason",
+        lambda: "boot_grace_42s",
+    )
+    antigen = immune.present_antigen(
+        {
+            "type": "error_signature",
+            "text": "transient startup noise",
+            "subsystem": "runtime",
+            "source": "startup",
+            "danger": 0.5,
+        }
+    )
+
+    with caplog.at_level(logging.INFO, logger="Aura.AdaptiveImmunity"):
+        immune._observe_core(antigen)
+        immune._observe_core(antigen)
+
+    messages = [
+        record.message
+        for record in caplog.records
+        if "dream consolidation deferred" in record.message
+    ]
+    assert len(messages) == 1
 
 
 def test_species_assignment_preserves_multiple_niches(tmp_path):

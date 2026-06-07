@@ -37,9 +37,9 @@ def compute_mlx_cache_limit(total_ram_bytes: int, env: Mapping[str, str] | None 
     total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
 
     if desktop_safe_boot_enabled(env):
-        ratio = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_RATIO", "0.56"))
-        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", "36"))
-        floor_gb = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_FLOOR_GB", "16"))
+        ratio = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_RATIO", "0.30"))
+        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", "18"))
+        floor_gb = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_FLOOR_GB", "8"))
         limit = int(total_ram_bytes * ratio)
         limit = min(limit, int(hard_cap_gb * _GIB))
         return max(int(floor_gb * _GIB), limit)

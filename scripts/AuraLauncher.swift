@@ -1104,8 +1104,8 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         env["AURA_SAFE_BOOT_DESKTOP"] = "1"
         env["AURA_EAGER_CORTEX_WARMUP"] = "0"
         env["AURA_DEFERRED_CORTEX_PREWARM"] = "0"
-        env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] = "0.56"
-        env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] = "36"
+        env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] = "0.30"
+        env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] = "18"
         env["AURA_EXTERNAL_GUI_OWNER"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
         env["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
@@ -1159,8 +1159,8 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         export AURA_EXTERNAL_GUI_OWNER=1
         export AURA_EAGER_CORTEX_WARMUP=0
         export AURA_DEFERRED_CORTEX_PREWARM=0
-        export AURA_SAFE_BOOT_METAL_CACHE_RATIO=0.56
-        export AURA_SAFE_BOOT_METAL_CACHE_CAP_GB=36
+        export AURA_SAFE_BOOT_METAL_CACHE_RATIO=0.30
+        export AURA_SAFE_BOOT_METAL_CACHE_CAP_GB=18
         \(pieces.joined(separator: " "))
         """
         let helperURL = terminalLaunchScriptURL()

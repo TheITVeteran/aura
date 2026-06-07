@@ -120,7 +120,8 @@ _CORRUPTED_SOCIAL_FRAGMENT_RE = re.compile(r"\bm'?lol\b", re.IGNORECASE)
 _PSEUDO_INTERNAL_JARGON_RE = re.compile(
     r"\b(?:traumacognitive|psycho[- ]?cognitive|neuro[- ]?cognitive field|"
     r"memory decay rate|temperature in my memory|cognitive field|substrate aura|"
-    r"quantum mood|neural mist|semantic pressure field)\b",
+    r"liquid substrate|substrate is humming|humming with activity|"
+    r"neural network does|quantum mood|neural mist|semantic pressure field)\b",
     re.IGNORECASE,
 )
 _SELF_REFLECTION_STATUS_PAGE_RE = re.compile(
@@ -190,6 +191,43 @@ _LOW_SIGNAL_REASSURANCE_RE = re.compile(
     r"it'?ll pass|almost|yes|no|okay|ok|sure|yeah)\s*[.!?]*\s*$",
     re.IGNORECASE,
 )
+_ACKNOWLEDGEMENT_PLACEHOLDER_RE = re.compile(
+    r"\b(?:i heard you|i hear you|my thinking is running deeper than my words|"
+    r"thinking is running deeper than (?:my|the) words|"
+    r"my words are still catching up|words are still catching up|"
+    r"i am still thinking|i'?m still thinking)\b",
+    re.IGNORECASE,
+)
+_SUBSTANTIVE_OVERLAP_STOPWORDS = {
+    "about",
+    "after",
+    "again",
+    "answer",
+    "because",
+    "before",
+    "being",
+    "could",
+    "explain",
+    "local",
+    "matters",
+    "should",
+    "that",
+    "their",
+    "there",
+    "these",
+    "thing",
+    "this",
+    "those",
+    "through",
+    "user",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "without",
+    "would",
+}
 _GENERIC_ASSISTANT_RE = re.compile(
     r"\b(?:how can i (?:help|assist)|i(?:'d| would) be happy to help|"
     r"i can help with that|as an ai|as a language model|let me know if|"
@@ -450,6 +488,21 @@ _STATUS_SUBSTANCE_MARKERS = (
     "better",
     "stable",
 )
+_OPERATIONAL_STATUS_SUBSTANCE_MARKERS = (
+    "active",
+    "available",
+    "cognitiveengine",
+    "conversation lane",
+    "cortex",
+    "governed",
+    "handling",
+    "lane",
+    "model",
+    "ready",
+    "recurrent depth",
+    "tool",
+    "tools",
+)
 _SELF_REFLECTION_SUBSTANCE_MARKERS = (
     "mind",
     "attention",
@@ -576,6 +629,19 @@ _PRACTICAL_DIAGNOSTIC_MARKERS = (
     "test",
     "checks",
 )
+_OPERATIONAL_STATUS_REQUEST_MARKERS = (
+    "active model",
+    "cognitiveengine",
+    "conversation lane",
+    "desktop path validation",
+    "governed tool",
+    "governed tools",
+    "live desktop path",
+    "model lane",
+    "recurrent depth",
+    "tool availability",
+    "tools are available",
+)
 _EXACT_REPLY_RE = re.compile(
     r"(?:say|reply|respond|answer|return|print)\s+exactly\s*:?\s*[\"'“”‘’]*(?P<target>.+?)\s*[\"'“”‘’]*\s*$",
     re.IGNORECASE,
@@ -615,6 +681,44 @@ _NON_CODE_FENCE_LANGS = {"", "md", "markdown", "text", "txt"}
 _INCOMPLETE_CODE_TAIL_RE = re.compile(
     r"(?:[=+\-*/%&|^.,\\[(<{]|(?:\b(?:return|yield|raise|if|elif|else|for|while|with|try|except|finally)\b.*:))$"
 )
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+_COUNT_TOKEN_RE = r"(?P<count>\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
+_PARAGRAPH_REQUEST_RE = re.compile(
+    rf"\b{_COUNT_TOKEN_RE}\s+(?:concise\s+|short\s+|brief\s+|clear\s+)?paragraphs?\b",
+    re.IGNORECASE,
+)
+_BULLET_REQUEST_RE = re.compile(
+    rf"\b{_COUNT_TOKEN_RE}\s+(?:bullet(?:\s+points?)?|bullets?|items?)\b",
+    re.IGNORECASE,
+)
+_NUMBERED_LIST_REQUEST_RE = re.compile(
+    rf"\b(?:numbered\s+list|list)\s+(?:of\s+)?{_COUNT_TOKEN_RE}\b",
+    re.IGNORECASE,
+)
+_NUMBERED_SENTENCE_REQUEST_RE = re.compile(
+    rf"\b{_COUNT_TOKEN_RE}\s+(?:concise\s+|short\s+|brief\s+|clear\s+)?numbered\s+sentences?\b",
+    re.IGNORECASE,
+)
+_FOLLOWUP_QUESTION_REQUEST_RE = re.compile(
+    r"\b(?:ask|include|end\s+with|finish\s+with)\b.{0,80}\b"
+    r"(?:follow[- ]?up|grounded|clarifying|next)\b.{0,80}\bquestions?\b"
+    r"|\bfollow[- ]?up\s+questions?\b",
+    re.IGNORECASE,
+)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_JAMMED_NUMBERED_MARKER_RE = re.compile(r"(?<=[.!?])(?=\d+[.)]\s*)")
+_LIST_LINE_RE = re.compile(r"^\s*(?P<marker>(?:[-*+]|\d+[.)]))\s*(?P<body>.*)$")
 
 
 @dataclass(frozen=True)
@@ -636,6 +740,308 @@ def _normalize(text: Any) -> str:
 
 def _word_count(text: Any) -> int:
     return len(_WORD_RE.findall(str(text or "")))
+
+
+def _count_token_to_int(value: str | None) -> int | None:
+    token = str(value or "").strip().lower()
+    if not token:
+        return None
+    if token.isdigit():
+        count = int(token)
+    else:
+        count = _NUMBER_WORDS.get(token)
+    if count is None or count < 1 or count > 20:
+        return None
+    return count
+
+
+def _requested_count(pattern: re.Pattern[str], user_message: Any) -> int | None:
+    match = pattern.search(str(user_message or ""))
+    if not match:
+        return None
+    return _count_token_to_int(match.groupdict().get("count"))
+
+
+def _requested_list_item_count(user_message: Any) -> int:
+    requested_bullets = _requested_count(_BULLET_REQUEST_RE, user_message)
+    requested_numbered = _requested_count(_NUMBERED_LIST_REQUEST_RE, user_message)
+    requested_numbered_sentences = _requested_count(_NUMBERED_SENTENCE_REQUEST_RE, user_message)
+    return max(requested_bullets or 0, requested_numbered or 0, requested_numbered_sentences or 0)
+
+
+def normalize_user_facing_format(reply_text: Any) -> str:
+    """Apply safe whitespace-only repairs to user-facing prose.
+
+    This is deliberately conservative: it does not create new content, but it
+    fixes common local-model formatting defects such as ``sentence.2. next``.
+    """
+    text = str(reply_text or "").strip()
+    if not text:
+        return text
+    text = _JAMMED_NUMBERED_MARKER_RE.sub("\n", text)
+    text = re.sub(r"(?m)^(\s*\d+[.)])(?=\S)", r"\1 ", text)
+    return text.strip()
+
+
+def _list_item_bodies(reply_text: Any) -> list[str]:
+    normalized = normalize_user_facing_format(reply_text)
+    bodies: list[str] = []
+    for line in normalized.splitlines():
+        match = _LIST_LINE_RE.match(line)
+        if match:
+            bodies.append(str(match.group("body") or "").strip())
+    return bodies
+
+
+def _nonempty_list_item_count(reply_text: Any) -> int:
+    return sum(1 for body in _list_item_bodies(reply_text) if _word_count(body) > 0)
+
+
+def _has_empty_requested_list_item(reply_text: Any, requested_count: int) -> bool:
+    if requested_count <= 1:
+        return False
+    bodies = _list_item_bodies(reply_text)
+    if not bodies:
+        return False
+    return any(_word_count(body) == 0 for body in bodies[:requested_count])
+
+
+def _paragraph_count(reply_text: Any) -> int:
+    blocks = [
+        block.strip()
+        for block in re.split(r"(?:\r?\n\s*){2,}", str(reply_text or "").strip())
+        if _word_count(block) > 0
+    ]
+    return len(blocks)
+
+
+def _bullet_count(reply_text: Any) -> int:
+    return _nonempty_list_item_count(reply_text)
+
+
+def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[str]:
+    user = str(user_message or "")
+    reply = str(reply_text or "").strip()
+    if not user or not reply:
+        return []
+
+    reasons: list[str] = []
+    requested_paragraphs = _requested_count(_PARAGRAPH_REQUEST_RE, user)
+    if requested_paragraphs and requested_paragraphs > 1:
+        if _paragraph_count(reply) < requested_paragraphs:
+            reasons.append("missing_requested_paragraph_count")
+
+    requested_list_items = _requested_list_item_count(user)
+    if requested_list_items > 1:
+        if _has_empty_requested_list_item(reply, requested_list_items):
+            reasons.append("empty_requested_list_item")
+        if _bullet_count(reply) < requested_list_items:
+            reasons.append("missing_requested_list_count")
+
+    if _FOLLOWUP_QUESTION_REQUEST_RE.search(user) and "?" not in reply:
+        reasons.append("missing_requested_followup_question")
+    return reasons
+
+
+def _split_sentences(text: str) -> list[str]:
+    text = normalize_user_facing_format(text)
+    lines: list[str] = []
+    for line in text.splitlines():
+        match = _LIST_LINE_RE.match(line)
+        if match:
+            body = str(match.group("body") or "").strip()
+            if body:
+                lines.append(body)
+            continue
+        if line.strip():
+            lines.append(line.strip())
+    if lines:
+        text = " ".join(lines)
+    sentences = [part.strip() for part in _SENTENCE_SPLIT_RE.split(text)]
+    return [sentence for sentence in sentences if sentence]
+
+
+def _finish_sentence_fragment(fragment: str) -> str:
+    cleaned = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s*)", "", str(fragment or "")).strip()
+    cleaned = cleaned.strip(" \t\r\n,;:")
+    if not cleaned:
+        return ""
+    lower = cleaned.lower()
+    replacements = (
+        ("ensuring that ", "That ensures that "),
+        ("which ", "That "),
+        ("and ", ""),
+        ("but ", "But "),
+        ("so ", "So "),
+        ("because ", "That matters because "),
+    )
+    for prefix, replacement in replacements:
+        if lower.startswith(prefix):
+            cleaned = f"{replacement}{cleaned[len(prefix):]}".strip()
+            break
+    if cleaned:
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    if cleaned and cleaned[-1] not in ".!?":
+        cleaned = f"{cleaned}."
+    return cleaned
+
+
+def _split_long_sentence_once(sentence: str) -> list[str]:
+    cleaned = _finish_sentence_fragment(sentence)
+    if _word_count(cleaned) < 14:
+        return [cleaned] if cleaned else []
+    split_specs = (
+        (r",\s+ensuring that\s+", "ensuring that "),
+        (r",\s+which\s+", "which "),
+        (r";\s+", ""),
+        (r":\s+", ""),
+        (r"\s+so that\s+", "so that "),
+        (r"\s+because\s+", "because "),
+    )
+    for pattern, right_prefix in split_specs:
+        matches = list(re.finditer(pattern, cleaned, re.IGNORECASE))
+        for match in reversed(matches):
+            left = cleaned[: match.start()]
+            right = f"{right_prefix}{cleaned[match.end():]}"
+            left_done = _finish_sentence_fragment(left)
+            right_done = _finish_sentence_fragment(right)
+            if _word_count(left_done) >= 5 and _word_count(right_done) >= 4:
+                return [left_done, right_done]
+    marker = ", and "
+    idx = cleaned.lower().rfind(marker)
+    if idx > 0:
+        left_done = _finish_sentence_fragment(cleaned[:idx])
+        right_done = _finish_sentence_fragment(cleaned[idx + len(marker):])
+        if _word_count(left_done) >= 7 and _word_count(right_done) >= 5:
+            return [left_done, right_done]
+    return [cleaned]
+
+
+def _expand_sentence_candidates(sentences: list[str], count: int) -> list[str]:
+    expanded = [_finish_sentence_fragment(sentence) for sentence in sentences]
+    expanded = [sentence for sentence in expanded if sentence]
+    while len(expanded) < count:
+        split_index = max(
+            range(len(expanded)),
+            key=lambda idx: _word_count(expanded[idx]),
+            default=-1,
+        )
+        if split_index < 0 or _word_count(expanded[split_index]) < 14:
+            break
+        split = _split_long_sentence_once(expanded[split_index])
+        if len(split) <= 1:
+            break
+        expanded = expanded[:split_index] + split + expanded[split_index + 1 :]
+    return expanded
+
+
+def _paragraphize_sentences(sentences: list[str], count: int) -> str:
+    if count <= 1 or len(sentences) < count:
+        return " ".join(sentences).strip()
+    paragraphs: list[str] = []
+    for idx in range(count):
+        start = round(idx * len(sentences) / count)
+        end = round((idx + 1) * len(sentences) / count)
+        block = " ".join(sentences[start:end]).strip()
+        if block:
+            paragraphs.append(block)
+    return "\n\n".join(paragraphs)
+
+
+def _listify_sentences(sentences: list[str], count: int) -> str:
+    if count <= 1 or len(sentences) < count:
+        return " ".join(sentences).strip()
+    return "\n".join(f"- {sentence}" for sentence in sentences[:count])
+
+
+def _number_sentences(sentences: list[str], count: int) -> str:
+    sentences = _expand_sentence_candidates(sentences, count)
+    if count <= 1 or len(sentences) < count:
+        return " ".join(sentences).strip()
+    numbered: list[str] = []
+    for idx, sentence in enumerate(sentences[:count], start=1):
+        cleaned = _finish_sentence_fragment(sentence)
+        if not cleaned:
+            continue
+        numbered.append(f"{idx}. {cleaned}")
+    return "\n".join(numbered)
+
+
+def _default_followup_question(user_message: Any) -> str:
+    user_norm = _normalize(user_message)
+    if any(marker in user_norm for marker in ("live path", "desktop path", "validate", "probe", "runtime")):
+        return "What should I validate next on this same live path?"
+    if any(marker in user_norm for marker in ("project", "next hour", "focus", "work on", "spend")):
+        return "Which outcome would make the next hour feel most useful?"
+    if any(marker in user_norm for marker in ("demo", "show me", "open", "write", "search")):
+        return "Which part should I do first so the whole chain stays visible and verifiable?"
+    return "What outcome would make this most useful for you right now?"
+
+
+def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
+    """Deterministically repair explicit structure misses without another model call."""
+    user = str(user_message or "")
+    original = str(reply_text or "").strip()
+    if not user or not original:
+        return original
+    normalized_original = normalize_user_facing_format(original)
+    if not set(_instruction_coverage_reasons(user, original)):
+        return normalized_original
+
+    repaired = normalized_original
+    sentences = _split_sentences(repaired)
+
+    requested_bullets = _requested_count(_BULLET_REQUEST_RE, user)
+    requested_numbered = _requested_count(_NUMBERED_LIST_REQUEST_RE, user)
+    requested_numbered_sentences = _requested_count(_NUMBERED_SENTENCE_REQUEST_RE, user)
+    requested_list_items = _requested_list_item_count(user)
+    if requested_list_items > 1 and _bullet_count(repaired) < requested_list_items:
+        if requested_numbered or requested_numbered_sentences:
+            list_repaired = _number_sentences(sentences, requested_list_items)
+        else:
+            list_repaired = _listify_sentences(sentences, requested_list_items)
+        if list_repaired:
+            repaired = list_repaired
+
+    requested_paragraphs = _requested_count(_PARAGRAPH_REQUEST_RE, user)
+    if requested_paragraphs and requested_paragraphs > 1:
+        if _paragraph_count(repaired) < requested_paragraphs:
+            paragraph_repaired = _paragraphize_sentences(_split_sentences(repaired), requested_paragraphs)
+            if paragraph_repaired:
+                repaired = paragraph_repaired
+
+    if _FOLLOWUP_QUESTION_REQUEST_RE.search(user) and "?" not in repaired:
+        followup = _default_followup_question(user)
+        if requested_paragraphs and requested_paragraphs > 1 and _paragraph_count(repaired) >= requested_paragraphs:
+            parts = [
+                block.strip()
+                for block in re.split(r"(?:\r?\n\s*){2,}", repaired)
+                if block.strip()
+            ]
+            parts[-1] = f"{parts[-1]} {followup}"
+            repaired = "\n\n".join(parts)
+        else:
+            repaired = f"{repaired}\n\n{followup}"
+    return repaired.strip()
+
+
+def repair_generic_assistant_language(user_message: Any, reply_text: Any) -> str:
+    """Remove known assistant-boilerplate sentences without lowering the quality gate."""
+    del user_message  # reserved for future context-aware live-voice repair
+    original = str(reply_text or "").strip()
+    if not original or not _GENERIC_ASSISTANT_RE.search(original) or _is_code_response(original):
+        return original
+
+    sentences = _split_sentences(original)
+    if not sentences:
+        return original
+    kept = [sentence for sentence in sentences if not _GENERIC_ASSISTANT_RE.search(sentence)]
+    if not kept:
+        return original
+    repaired = " ".join(kept).strip()
+    if len(repaired.split()) < 8:
+        return original
+    return repaired
 
 
 def is_reliability_floor_reply(reply_text: Any) -> bool:
@@ -739,6 +1145,16 @@ def is_practical_diagnostic_turn(user_message: Any) -> bool:
     if not text:
         return False
     return any(marker in text for marker in _PRACTICAL_DIAGNOSTIC_MARKERS)
+
+
+def is_operational_status_turn(user_message: Any) -> bool:
+    text = _normalize(user_message)
+    if not text:
+        return False
+    return bool(
+        is_practical_diagnostic_turn(user_message)
+        or _contains_any_marker(text, _OPERATIONAL_STATUS_REQUEST_MARKERS)
+    )
 
 
 def _is_live_surface_diagnostic_prompt(user_message: Any) -> bool:
@@ -903,6 +1319,31 @@ def _requires_substantive_reply(user_message: Any) -> bool:
     return any(marker in text for marker in _OPEN_ENDED_MARKERS)
 
 
+def _substantive_prompt_terms(user_message: Any) -> set[str]:
+    terms: set[str] = set()
+    for word in _WORD_RE.findall(str(user_message or "").lower()):
+        if len(word) < 5:
+            continue
+        if word in _SUBSTANTIVE_OVERLAP_STOPWORDS:
+            continue
+        terms.add(word)
+    return terms
+
+
+def _has_low_signal_acknowledgement_placeholder(user_message: Any, reply_text: Any) -> bool:
+    if not _requires_substantive_reply(user_message):
+        return False
+    reply = str(reply_text or "").strip()
+    if not reply or not _ACKNOWLEDGEMENT_PLACEHOLDER_RE.search(reply):
+        return False
+    prompt_terms = _substantive_prompt_terms(user_message)
+    if not prompt_terms:
+        return _word_count(reply) < 20
+    reply_terms = set(_WORD_RE.findall(reply.lower()))
+    overlap = prompt_terms & reply_terms
+    return len(overlap) < min(2, len(prompt_terms))
+
+
 def _unexpected_short_foreign_name(user_message: Any, reply_text: Any) -> bool:
     reply = str(reply_text or "")
     if _word_count(reply) > 14:
@@ -993,7 +1434,20 @@ def _has_status_substance(reply_text: Any) -> bool:
         return False
     if not re.search(r"\b(?:i|i'm|i am|my|me)\b", reply):
         return False
+    if _reply_has_pseudo_internal_jargon(reply_text):
+        return False
     return any(marker in reply for marker in _STATUS_SUBSTANCE_MARKERS)
+
+
+def _has_operational_status_substance(user_message: Any, reply_text: Any) -> bool:
+    reply = _normalize(reply_text)
+    if _word_count(reply) < 10:
+        return False
+    if not is_operational_status_turn(user_message):
+        return False
+    if _reply_has_pseudo_internal_jargon(reply_text):
+        return False
+    return any(marker in reply for marker in _OPERATIONAL_STATUS_SUBSTANCE_MARKERS)
 
 
 def _reply_has_pseudo_internal_jargon(reply_text: Any) -> bool:
@@ -1148,6 +1602,7 @@ def _has_camelcase_internal_jargon(user_message: Any, reply_text: Any) -> bool:
     if any(marker in prompt for marker in ("architecture", "system", "kernel", "runtime", "code", "debug", "log")):
         return False
     allowed = {"OpenAI", "ChatGPT", "YouTube", "GitHub", "JavaScript"}
+    allowed.update(match.group(0) for match in _CAMELCASE_INTERNAL_JARGON_RE.finditer(str(user_message or "")))
     return any(match.group(0) not in allowed for match in _CAMELCASE_INTERNAL_JARGON_RE.finditer(raw))
 
 
@@ -1552,6 +2007,8 @@ def assess_user_facing_reply(
         reasons.append("corrupted_social_fragment")
     if is_confusion_repair_turn(user_message) and _unexpected_short_foreign_name(user_message, raw):
         reasons.append("foreign_name_intrusion")
+    if _has_low_signal_acknowledgement_placeholder(user_message, raw):
+        reasons.append("low_signal_acknowledgement_placeholder")
 
     reliability_turn = is_reliability_concern(user_message)
     reliability_diagnostic_turn = _requires_reliability_diagnostic(user_message)
@@ -1572,7 +2029,10 @@ def assess_user_facing_reply(
     elif is_status_check_turn(user_message):
         if _LOW_SIGNAL_REASSURANCE_RE.match(raw):
             reasons.append("low_signal_status_reply")
-        elif not _has_status_substance(raw):
+        elif not (
+            _has_status_substance(raw)
+            or _has_operational_status_substance(user_message, raw)
+        ):
             reasons.append("too_thin_for_status_turn")
     elif not exact_reply and not strict_answer_tag_reply and _requires_substantive_reply(user_message):
         words = _word_count(raw)
@@ -1587,6 +2047,8 @@ def assess_user_facing_reply(
 
     if is_confusion_repair_turn(user_message) and _word_count(raw) < 8:
         reasons.append("too_thin_for_confusion_repair")
+
+    reasons.extend(_instruction_coverage_reasons(user_message, raw))
 
     hard_reasons = {
         "empty_reply",
@@ -1621,6 +2083,7 @@ def assess_user_facing_reply(
         "unexpected_cjk_intrusion",
         "surface_nonsense_drift",
         "format_meta_artifact",
+        "low_signal_acknowledgement_placeholder",
     }
     retryable_reasons = hard_reasons | {
         "low_signal_reliability_reply",
@@ -1633,6 +2096,10 @@ def assess_user_facing_reply(
         "off_topic_self_reflection_reply",
         "low_signal_status_reply",
         "too_thin_for_status_turn",
+        "empty_requested_list_item",
+        "missing_requested_paragraph_count",
+        "missing_requested_list_count",
+        "missing_requested_followup_question",
     }
     unique = tuple(dict.fromkeys(reasons))
     return ConversationReplyAssessment(
@@ -1663,6 +2130,21 @@ def conversation_reliability_system_block(user_message: Any = "") -> str:
             "Give a brief but substantive first-person answer with what feels steady or strained, "
             "then continue the conversation naturally."
         )
+    instruction_notes: list[str] = []
+    requested_paragraphs = _requested_count(_PARAGRAPH_REQUEST_RE, user_message)
+    if requested_paragraphs and requested_paragraphs > 1:
+        instruction_notes.append(
+            f"Use at least {requested_paragraphs} separate paragraphs because the user explicitly requested that structure."
+        )
+    requested_list_items = _requested_list_item_count(user_message)
+    if requested_list_items > 1:
+        instruction_notes.append(
+            f"Use at least {requested_list_items} explicit list items because the user requested that structure."
+        )
+    if _FOLLOWUP_QUESTION_REQUEST_RE.search(str(user_message or "")):
+        instruction_notes.append("End with a real follow-up question because the user requested one.")
+    if instruction_notes:
+        extra = f"{extra}\n- " + "\n- ".join(instruction_notes)
     return (
         "## USER-FACING CONVERSATION RELIABILITY CONTRACT\n"
         "- A completed chat turn must be coherent, complete, on-topic ordinary English.\n"

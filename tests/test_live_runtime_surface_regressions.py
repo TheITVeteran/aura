@@ -172,6 +172,59 @@ def test_background_policy_defers_work_during_boot_grace(monkeypatch):
     assert background_activity_reason(orch) == "boot_grace_42s"
 
 
+def test_research_background_policy_requires_long_desktop_quiet_window(monkeypatch):
+    from core.runtime import background_policy, foreground_guard
+
+    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
+    monkeypatch.delenv("AURA_TESTING", raising=False)
+    monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "0")
+    foreground_guard._reset_for_tests()
+    monkeypatch.setattr("core.container.ServiceContainer.get", lambda _name, default=None: default)
+
+    orch = SimpleNamespace(
+        is_busy=False,
+        status=SimpleNamespace(start_time=time.time() - 3600),
+        _suppress_unsolicited_proactivity_until=0.0,
+        _foreground_user_quiet_until=0.0,
+        _last_user_interaction_time=time.time() - 120,
+    )
+
+    reason = background_policy.background_activity_reason(
+        orch,
+        profile=background_policy.RESEARCH_BACKGROUND_POLICY,
+    )
+
+    assert reason == "recent_user_120"
+
+
+def test_maintenance_background_policy_requires_user_anchor(monkeypatch):
+    from core.runtime import background_policy, foreground_guard
+
+    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
+    monkeypatch.delenv("AURA_TESTING", raising=False)
+    monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "0")
+    foreground_guard._reset_for_tests()
+    monkeypatch.setattr("core.container.ServiceContainer.get", lambda _name, default=None: default)
+
+    orch = SimpleNamespace(
+        is_busy=False,
+        status=SimpleNamespace(start_time=time.time() - 3600),
+        _suppress_unsolicited_proactivity_until=0.0,
+        _foreground_user_quiet_until=0.0,
+        _last_user_interaction_time=0.0,
+    )
+
+    reason = background_policy.background_activity_reason(
+        orch,
+        profile=background_policy.MAINTENANCE_BACKGROUND_POLICY,
+        allow_no_user_anchor=False,
+    )
+
+    assert reason == "no_user_anchor"
+
+
 def test_background_policy_defers_work_during_proof_runs(monkeypatch):
     from core.runtime.background_policy import background_activity_reason
 
@@ -222,6 +275,53 @@ def test_health_pulse_cannot_claim_healthy_from_required_probes_alone(monkeypatc
     assert "Required probes: PASS" in pulse
     assert "Subsystem audit: FAIL" in pulse
     assert "Runtime: HEALTHY" not in pulse
+
+
+def test_health_pulse_cannot_claim_healthy_when_conversation_lane_failed(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+    from core.subsystem_audit import SubsystemAudit
+
+    required_probes = {
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = True
+    monkeypatch.setattr(
+        "core.runtime.health_contract.runtime_health_report",
+        lambda: {
+            "healthy": True,
+            "status": "healthy",
+            "required_probes": required_probes,
+            "failures": {"critical": [], "important": [], "optional": []},
+        },
+    )
+
+    class FailedConversationGate:
+        @staticmethod
+        def get_conversation_status():
+            return {
+                "conversation_ready": False,
+                "state": "failed",
+                "last_failure_reason": "desktop_cognitive_engine_required_no_reply",
+            }
+
+    ServiceContainer.register_instance("inference_gate", FailedConversationGate())
+    try:
+        audit = SubsystemAudit()
+        for name in audit.SUBSYSTEMS:
+            audit.heartbeat(name)
+
+        pulse = audit.emit_pulse()
+    finally:
+        ServiceContainer.clear()
+
+    assert "Required probes: PASS" in pulse
+    assert "Subsystem audit: PASS" in pulse
+    assert "Conversation: FAIL" in pulse
+    assert "Runtime: DEGRADED" in pulse
+    assert "Runtime: HEALTHY" not in pulse
+    assert "desktop_cognitive_engine_required_no_reply" in pulse
 
 
 def test_joy_social_background_tick_does_not_start_during_proof(monkeypatch):
@@ -309,6 +409,36 @@ def test_dream_coordinator_defers_dream_work_during_proof_runs(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_dream_coordinator_defers_dream_work_during_boot_grace(monkeypatch):
+    from core.container import ServiceContainer
+    from core.maintenance.dream_coordinator import DreamCoordinator
+
+    async def scenario():
+        ran = False
+
+        async def dream_job():
+            nonlocal ran
+            ran = True
+
+        monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+        monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+        monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "300")
+        orch = SimpleNamespace(status=SimpleNamespace(start_time=time.time() - 42))
+        monkeypatch.setattr(
+            ServiceContainer,
+            "get",
+            staticmethod(lambda name, default=None: orch if name == "orchestrator" else default),
+        )
+        coordinator = DreamCoordinator()
+
+        result = await coordinator.run_if_due("biological_sleep", dream_job, 0)
+
+        assert result is False
+        assert ran is False
+
+    asyncio.run(scenario())
+
+
 def test_hypervisor_uses_active_runtime_lag_budget_during_proof(monkeypatch):
     from core.ops.hypervisor import Hypervisor
 
@@ -321,7 +451,7 @@ def test_hypervisor_uses_active_runtime_lag_budget_during_proof(monkeypatch):
     assert reason == "proof_run_active"
 
 
-def test_hypervisor_recovers_only_after_healthy_lag_samples():
+def test_hypervisor_recovers_only_after_healthy_samples_and_stability_window():
     from core.ops.hypervisor import Hypervisor
 
     class _RunningTask:
@@ -329,16 +459,35 @@ def test_hypervisor_recovers_only_after_healthy_lag_samples():
             return False
 
     hypervisor = Hypervisor(lag_threshold_s=0.5)
+    hypervisor._failure_recovery_window_s = 60.0
     hypervisor._running = True
     hypervisor._task = _RunningTask()
-    hypervisor._last_severe_lag_at = 1.0
+    hypervisor._last_severe_lag_at = time.time()
     hypervisor._healthy_lag_samples_after_failure = 0
 
     assert hypervisor.is_alive() is False
 
     hypervisor._healthy_lag_samples_after_failure = hypervisor._required_recovery_samples
 
+    assert hypervisor.is_alive() is False
+
+    hypervisor._last_severe_lag_at = time.time() - 61.0
+
     assert hypervisor.is_alive() is True
+
+
+def test_hypervisor_requires_confirmed_severe_lag_before_failure(monkeypatch):
+    from core.ops.hypervisor import Hypervisor
+
+    monkeypatch.setenv("AURA_HYPERVISOR_SEVERE_LAG_SAMPLES", "2")
+    hypervisor = Hypervisor(lag_threshold_s=0.5)
+
+    assert hypervisor._confirm_severe_lag_failure(6.0, uptime=240.0) is False
+    assert hypervisor._severe_lag_streak == 1
+    assert hypervisor._confirm_severe_lag_failure(6.1, uptime=241.0) is True
+    assert hypervisor._severe_lag_streak == 2
+    assert hypervisor._confirm_severe_lag_failure(0.1, uptime=242.0) is False
+    assert hypervisor._severe_lag_streak == 0
 
 
 def test_event_loop_monitor_uses_active_runtime_lag_budget_during_proof(monkeypatch):
@@ -353,7 +502,37 @@ def test_event_loop_monitor_uses_active_runtime_lag_budget_during_proof(monkeypa
     assert reason == "proof_run_active"
 
 
-def test_event_loop_monitor_recovers_only_after_healthy_lag_samples():
+def test_event_loop_monitor_treats_dict_lane_generation_as_active(monkeypatch):
+    from core.container import ServiceContainer
+    from core.utils.concurrency import EventLoopMonitor
+
+    class _Gate:
+        @staticmethod
+        def get_conversation_status():
+            return {
+                "state": "ready",
+                "foreground_owned": True,
+                "foreground_owner": "chat",
+                "active_generations": 1,
+                "warmup_in_flight": False,
+                "current_request_started_at": time.time(),
+            }
+
+    monkeypatch.setenv("AURA_EVENT_LOOP_MONITOR_ACTIVE_THRESHOLD_S", "6.0")
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: _Gate() if name == "inference_gate" else default),
+    )
+    monitor = EventLoopMonitor(threshold=0.5)
+
+    threshold, reason = monitor._lag_threshold_for_context()
+
+    assert threshold >= 6.0
+    assert reason == "foreground_generation"
+
+
+def test_event_loop_monitor_recovers_only_after_healthy_samples_and_stability_window():
     from core.utils.concurrency import EventLoopMonitor
 
     class _RunningTask:
@@ -361,15 +540,34 @@ def test_event_loop_monitor_recovers_only_after_healthy_lag_samples():
             return False
 
     monitor = EventLoopMonitor(threshold=0.5)
+    monitor.failure_recovery_window_s = 60.0
     monitor._task = _RunningTask()
-    monitor._last_failure_at = 1.0
+    monitor._last_failure_at = time.time()
     monitor._healthy_lag_samples_after_failure = 0
 
     assert monitor.is_alive() is False
 
     monitor._healthy_lag_samples_after_failure = monitor.failure_recovery_samples
 
+    assert monitor.is_alive() is False
+
+    monitor._last_failure_at = time.time() - 61.0
+
     assert monitor.is_alive() is True
+
+
+def test_stall_watchdog_traceback_dump_uses_internal_governance(monkeypatch, tmp_path):
+    from core.resilience.stall_watchdog import StallWatchdog
+
+    monkeypatch.setenv("AURA_GOVERNANCE_MODE", "strict")
+    monkeypatch.chdir(tmp_path)
+
+    watchdog = StallWatchdog(loop=SimpleNamespace(is_closed=lambda: False))
+    watchdog._report_stall(5.5)
+
+    dumps = sorted((tmp_path / "data" / "error_logs" / "stalls").glob("stall_*.txt"))
+    assert dumps
+    assert "STALL DETECTED: 5.5s" in dumps[-1].read_text(encoding="utf-8")
 
 
 def test_closed_loop_defers_heavy_phi_refreshes_during_proof(monkeypatch):
@@ -654,6 +852,98 @@ def test_background_enqueue_defers_stale_autonomy_during_boot(monkeypatch):
         priority=20,
         origin="agency_core_environmental_explorer",
     ) is False
+
+
+def test_engine_connection_pool_treats_timeout_as_total_budget():
+    from core.providers.engine_connection_pool import CognitiveEngineConnectionPool
+
+    async def scenario():
+        pool = CognitiveEngineConnectionPool()
+        pool.retry_config.max_retries = 3
+        pool.retry_config.initial_backoff_seconds = 0.01
+        pool.retry_config.max_backoff_seconds = 0.01
+
+        async def no_recovery(_connection_id):
+            return None
+
+        pool._trigger_recovery = no_recovery
+        calls = 0
+
+        async def operation():
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0.5)
+            return "late"
+
+        started = time.perf_counter()
+        result = await pool.execute_with_retry(
+            "desktop_chat",
+            operation,
+            connection_id="desktop_chat",
+            timeout=0.11,
+        )
+        elapsed = time.perf_counter() - started
+
+        assert result is None
+        assert calls == 1
+        assert elapsed < 0.25
+
+    asyncio.run(scenario())
+
+
+def test_foreground_cortex_warmup_defers_under_memory_pressure(monkeypatch):
+    from core.brain.inference_gate import InferenceGate
+
+    monkeypatch.delenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", raising=False)
+    monkeypatch.setattr(
+        "core.brain.inference_gate.psutil.virtual_memory",
+        lambda: SimpleNamespace(
+            total=64 * 1024**3,
+            available=6 * 1024**3,
+            percent=91.0,
+        ),
+    )
+
+    reason = InferenceGate.__new__(InferenceGate)._cortex_warmup_deferral_reason("foreground")
+
+    assert reason is not None
+    assert reason.startswith("memory_pressure")
+
+
+def test_local_deep_solver_is_blocked_by_default_on_64gb_desktop(monkeypatch):
+    from core.brain.inference_gate import InferenceGate
+
+    gate = InferenceGate.__new__(InferenceGate)
+    gate.get_conversation_status = lambda: {
+        "conversation_ready": False,
+        "warmup_in_flight": False,
+        "state": "cold",
+    }
+    monkeypatch.delenv("AURA_ENABLE_LOCAL_DEEP_SOLVER", raising=False)
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.AppleSiliconMemoryMonitor",
+        lambda: SimpleNamespace(_get_pressure_sysctl=lambda: 20.0),
+    )
+    monkeypatch.setattr(
+        "core.brain.inference_gate.psutil.virtual_memory",
+        lambda: SimpleNamespace(
+            total=64 * 1024**3,
+            available=48 * 1024**3,
+            percent=20.0,
+        ),
+    )
+
+    reason = gate._local_deep_solver_block_reason()
+
+    assert reason == "local_deep_solver_disabled_on_current_memory_class:64.0GB"
+
+
+def test_primary_foreground_timeout_is_bounded_for_live_desktop_path():
+    from interface.routes.chat import _foreground_timeout_for_lane
+
+    assert _foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 150.0
+    assert _foreground_timeout_for_lane({"conversation_ready": False, "state": "warming"}) == 210.0
+    assert _foreground_timeout_for_lane({"conversation_ready": False, "state": "unknown"}) == 150.0
 
 
 def test_continuity_generic_reentry_goal_is_not_restored_as_work(monkeypatch):
@@ -1140,6 +1430,37 @@ async def test_intent_router_route_execution_drives_capability_engine():
             },
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_intent_router_route_execution_merges_live_context_without_downgrading_foreground():
+    from core.cognitive.router import IntentRouter
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context))
+            return {"ok": True, "skill": skill_name, "params": params, "context": context}
+
+    result = await IntentRouter().route_execution(
+        "file_operation",
+        {"action": "write", "path": "artifacts/live_runtime/generated/probe.txt", "content": "ok"},
+        FakeCapabilityEngine(),
+        context={
+            "route": "desktop-ui.live_probe",
+            "origin": "desktop_ui",
+            "foreground_request": False,
+            "user_requested_action": False,
+        },
+    )
+
+    assert result["ok"] is True
+    assert calls[0][2]["route"] == "desktop-ui.live_probe"
+    assert calls[0][2]["origin"] == "desktop_ui"
+    assert calls[0][2]["foreground_request"] is True
+    assert calls[0][2]["user_explicitly_authorized"] is True
+    assert calls[0][2]["user_requested_action"] is True
 
 
 def test_legacy_interface_router_delegates_to_canonical_capability_path():

@@ -2186,20 +2186,28 @@ def test_health_check_fails_closed_on_malformed_status_object():
 
 
 def test_inference_gate_failed_initialization_does_not_count_as_ready(monkeypatch):
-    from unittest.mock import Mock
-
     from core.brain.inference_gate import InferenceGate
 
+    class FailingMlxClientFactory:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self):
+            self.calls += 1
+            raise RuntimeError("mlx unavailable")
+
+    failing_factory = FailingMlxClientFactory()
     gate = InferenceGate()
     monkeypatch.setattr(
         "core.brain.llm.mlx_client.get_mlx_client",
-        Mock(side_effect=RuntimeError("mlx unavailable")),
+        failing_factory,
     )
 
     asyncio.run(gate.initialize())
 
     assert gate._initialized is False
     assert gate.is_alive() is False
+    assert failing_factory.calls == 1
     assert gate.is_inference_ready() is False
 
 
@@ -4288,6 +4296,7 @@ def test_service_manifest_lists_all_critical_runtime_roles():
         "runtime",
         "model",
         "memory_writer",
+        "memory_interface",
         "state_writer",
         "event_bus",
         "actor_bus",
@@ -4339,10 +4348,10 @@ def test_service_manifest_flags_duplicate_owner_for_critical_role():
     )
 
     snapshot = {role.canonical_owner: object() for role in SERVICE_MANIFEST.values()}
-    # Duplicate owner for memory_writer alias points to a *different* instance
-    snapshot["memory_facade"] = object()
+    # Duplicate owner for runtime alias points to a *different* instance
+    snapshot["aura_runtime"] = object()
     crit = critical_violations(verify_manifest(snapshot))
-    assert any(v.role == "memory_writer" for v in crit)
+    assert any(v.role == "runtime" for v in crit)
 
 
 def test_aura_main_invokes_service_manifest_after_lock_registration():
@@ -5042,10 +5051,10 @@ def test_conformance_service_graph_flags_duplicate_aliases():
     from core.runtime.conformance import proof_service_graph
 
     snapshot = _clean_registered_snapshot()
-    snapshot["memory_facade"] = object()  # duplicate alias for memory_writer
+    snapshot["aura_runtime"] = object()  # duplicate alias for runtime
     result = proof_service_graph(snapshot)
     assert result.ok is False
-    assert "memory_facade" in result.detail
+    assert "aura_runtime" in result.detail
 
 
 def test_conformance_boot_readiness_rejects_lying_ready():

@@ -18,6 +18,7 @@ from core.executive.executive_core import (
     ActionType,
     DecisionOutcome,
     Intent,
+    IntentSource,
     _coerce_intent_source,
 )
 from core.runtime.organism_status import get_organism_status
@@ -267,6 +268,105 @@ class AuthorityGateway:
             )
         return None, locals().get("decision")
 
+    @staticmethod
+    def _memory_write_context(
+        memory_type: str,
+        source: str,
+        metadata: Optional[Dict[str, Any]],
+        content: str,
+    ) -> Dict[str, Any]:
+        payload = dict(metadata or {})
+        memory_type_l = str(memory_type or "").strip().lower()
+        source_l = str(source or "").strip().lower().replace("-", "_")
+        origin_l = str(
+            payload.get("origin")
+            or payload.get("request_origin")
+            or payload.get("intent_source")
+            or ""
+        ).strip().lower().replace("-", "_")
+        user_facing_tokens = {
+            "api",
+            "chat",
+            "chat_api",
+            "desktop",
+            "desktop_task",
+            "desktop_ui",
+            "direct",
+            "external",
+            "frontend",
+            "gui",
+            "interface",
+            "live_chat",
+            "ui",
+            "user",
+            "voice",
+            "voice_bridge",
+            "voice_input",
+            "web_ui",
+            "websocket",
+            "ws",
+        }
+        source_tokens = {token for token in source_l.split("_") if token}
+        origin_tokens = {token for token in origin_l.split("_") if token}
+        user_facing = bool(
+            _coerce_intent_source(source_l) == IntentSource.USER
+            or _coerce_intent_source(origin_l) == IntentSource.USER
+            or source_l in user_facing_tokens
+            or origin_l in user_facing_tokens
+            or source_tokens & user_facing_tokens
+            or origin_tokens & user_facing_tokens
+        )
+        high_risk_markers = (
+            "belief",
+            "identity",
+            "self_model",
+            "constitution",
+            "preference_change",
+            "policy",
+            "governance",
+        )
+        high_risk = memory_type_l == "belief_update" or any(marker in memory_type_l for marker in high_risk_markers)
+        continuity_write = memory_type_l == "interaction_commit" and user_facing and not high_risk
+        return {
+            "memory_type": memory_type_l,
+            "memory_source": source_l,
+            "memory_metadata": payload,
+            "conversation_continuity": continuity_write,
+            "user_facing_memory_write": user_facing,
+            "high_risk_memory_write": high_risk,
+            "objective": str(payload.get("objective") or payload.get("message") or content or "")[:400],
+        }
+
+    @staticmethod
+    def _memory_preflight_domain(memory_type: str, metadata: Optional[Dict[str, Any]]) -> str:
+        memory_type_l = str(memory_type or "").strip().lower()
+        payload = {str(k).lower(): v for k, v in dict(metadata or {}).items()}
+        high_risk = (
+            memory_type_l == "belief_update"
+            or any(
+                marker in memory_type_l
+                for marker in ("belief", "identity", "self_model", "constitution", "preference_change", "policy")
+            )
+            or bool(payload.get("belief_update") or payload.get("identity_rewrite") or payload.get("self_model_write"))
+        )
+        return "belief_update" if high_risk else "memory_write"
+
+    @staticmethod
+    def _state_mutation_context(origin: str, cause: str) -> Dict[str, Any]:
+        origin_l = str(origin or "").strip().lower().replace("-", "_")
+        cause_l = str(cause or "").strip().lower()
+        user_facing = _coerce_intent_source(origin_l) == IntentSource.USER
+        foreground_continuity = (
+            user_facing
+            and cause_l == "cognitive_cycle"
+        )
+        return {
+            "state_origin": origin_l,
+            "state_cause": cause_l,
+            "user_facing_state_mutation": user_facing,
+            "foreground_continuity_state": foreground_continuity,
+        }
+
     def _social_governance_gate(
         self, tool_name: str, args: Dict[str, Any], source: str
     ) -> Optional[AuthorityDecision]:
@@ -375,9 +475,23 @@ class AuthorityGateway:
             return social_block
 
         # ── Unified Will gate (canonical decision authority) ──
+        read_only_tools = {
+            "clock",
+            "environment_info",
+            "system_proprioception",
+            "query_beliefs",
+        }
+        will_context = {
+            **dict(args or {}),
+            **self.active_user_presence_context(),
+            "tool": tool_name,
+            "skill": tool_name,
+            "effect_scope": "read_only" if tool_name in read_only_tools else "",
+            "read_only": tool_name in read_only_tools or bool(dict(args or {}).get("read_only")),
+        }
         will_block, will_decision = self._will_gate(
             f"tool:{tool_name}", source, "tool_execution", priority, is_critical,
-            context={**dict(args or {}), **self.active_user_presence_context()},
+            context=will_context,
         )
         if will_block is not None:
             return will_block
@@ -511,7 +625,13 @@ class AuthorityGateway:
         *,
         priority: float = 0.5,
     ) -> AuthorityDecision:
-        will_block, will_decision = self._will_gate(f"state_mutation:{cause}", origin, "state_mutation", priority)
+        will_block, will_decision = self._will_gate(
+            f"state_mutation:{cause}",
+            origin,
+            "state_mutation",
+            priority,
+            context=self._state_mutation_context(origin, cause),
+        )
         if will_block is not None:
             return will_block
 
@@ -555,7 +675,13 @@ class AuthorityGateway:
         *,
         priority: float = 0.5,
     ) -> AuthorityDecision:
-        will_block, will_decision = self._will_gate(f"state_mutation:{cause}", origin, "state_mutation", priority)
+        will_block, will_decision = self._will_gate(
+            f"state_mutation:{cause}",
+            origin,
+            "state_mutation",
+            priority,
+            context=self._state_mutation_context(origin, cause),
+        )
         if will_block is not None:
             return will_block
 
@@ -601,12 +727,18 @@ class AuthorityGateway:
         importance: float = 0.5,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> AuthorityDecision:
+        will_context = self._memory_write_context(memory_type, source, metadata, content)
         will_block, will_decision = self._will_gate(
-            f"memory:{memory_type}:{str(content)[:80]}", source, "memory_write", importance
+            f"memory:{memory_type}:{str(content)[:80]}",
+            source,
+            "memory_write",
+            importance,
+            context=will_context,
         )
         if will_block is not None:
             return will_block
 
+        preflight_domain = self._memory_preflight_domain(memory_type, metadata)
         blocked, substrate_constraints, receipt_id = self._substrate_preflight(
             content=f"memory:{memory_type}:{str(content)[:80]}",
             source=source or "system",
@@ -614,7 +746,7 @@ class AuthorityGateway:
             priority=max(0.0, min(1.0, float(importance or 0.0))),
             require_substrate=False,
             will_receipt_id=getattr(will_decision, "receipt_id", None),
-            domain="belief_update",
+            domain=preflight_domain,
         )
         if blocked is not None:
             return blocked
@@ -655,12 +787,18 @@ class AuthorityGateway:
         importance: float = 0.5,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> AuthorityDecision:
+        will_context = self._memory_write_context(memory_type, source, metadata, content)
         will_block, will_decision = self._will_gate(
-            f"memory:{memory_type}:{str(content)[:80]}", source, "memory_write", importance
+            f"memory:{memory_type}:{str(content)[:80]}",
+            source,
+            "memory_write",
+            importance,
+            context=will_context,
         )
         if will_block is not None:
             return will_block
 
+        preflight_domain = self._memory_preflight_domain(memory_type, metadata)
         blocked, substrate_constraints, receipt_id = self._substrate_preflight(
             content=f"memory:{memory_type}:{str(content)[:80]}",
             source=source or "system",
@@ -668,7 +806,7 @@ class AuthorityGateway:
             priority=max(0.0, min(1.0, float(importance or 0.0))),
             require_substrate=False,
             will_receipt_id=getattr(will_decision, "receipt_id", None),
-            domain="memory_write",
+            domain=preflight_domain,
         )
         if blocked is not None:
             return blocked

@@ -55,30 +55,38 @@ class SensorRegistry:
 
     def _initialize_default_sensors(self) -> None:
         """Registers canonical physical sensors matching our World Model entities."""
-        self.register(PhysicalSensor("port_east_load", "East Port Cargo Queue Load", "containers"))
-        self.register(PhysicalSensor("port_west_load", "West Port Cargo Queue Load", "containers"))
+        self.register(PhysicalSensor("port_east_load", "East Port Cargo Queue Load", "containers"), log=False)
+        self.register(PhysicalSensor("port_west_load", "West Port Cargo Queue Load", "containers"), log=False)
         self.register(
-            PhysicalSensor("port_east_latency", "East Port Bottleneck Waiting Delay", "hours")
+            PhysicalSensor("port_east_latency", "East Port Bottleneck Waiting Delay", "hours"),
+            log=False,
         )
         self.register(
-            PhysicalSensor("port_west_latency", "West Port Bottleneck Waiting Delay", "hours")
+            PhysicalSensor("port_west_latency", "West Port Bottleneck Waiting Delay", "hours"),
+            log=False,
         )
         self.register(
-            PhysicalSensor("vessel_alpha_speed", "Vessel Alpha Current Flow Velocity", "knots")
+            PhysicalSensor("vessel_alpha_speed", "Vessel Alpha Current Flow Velocity", "knots"),
+            log=False,
         )
         self.register(
-            PhysicalSensor("warehouse_load", "Central Warehouse Inventory Level", "units")
+            PhysicalSensor("warehouse_load", "Central Warehouse Inventory Level", "units"),
+            log=False,
         )
         self.register(
-            PhysicalSensor("warehouse_latency", "Central Warehouse Delivery Wait Time", "hours")
+            PhysicalSensor("warehouse_latency", "Central Warehouse Delivery Wait Time", "hours"),
+            log=False,
         )
         self.register(
-            PhysicalSensor("system_cpu_usage", "System Core CPU Load Percentage", "percent")
+            PhysicalSensor("system_cpu_usage", "System Core CPU Load Percentage", "percent"),
+            log=False,
         )
+        logger.debug("Initialized %d default sensors.", len(self.sensors))
 
-    def register(self, sensor: PhysicalSensor) -> None:
+    def register(self, sensor: PhysicalSensor, *, log: bool = True) -> None:
         self.sensors[sensor.sensor_id] = sensor
-        logger.info("Registered sensor: %s (%s)", sensor.sensor_id, sensor.description)
+        if log:
+            logger.info("Registered sensor: %s (%s)", sensor.sensor_id, sensor.description)
 
     def get_sensor(self, sensor_id: str) -> PhysicalSensor | None:
         return self.sensors.get(sensor_id)

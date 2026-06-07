@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.shutdown_coordinator import is_shutdown_requested
@@ -86,6 +87,7 @@ class SelfHealing:
     def __init__(self) -> None:
         self._watches: dict[str, WatchEntry] = {}
         self._deep_repairs: dict[str, asyncio.Task] = {}
+        self._module_path_cache: dict[str, str | None] = {}
         self._task: asyncio.Task | None = None
         self._running = False
         try:
@@ -168,6 +170,37 @@ class SelfHealing:
 
     def _foreground_runtime_busy(self) -> bool:
         try:
+            from core.runtime.foreground_guard import foreground_activity_reason
+
+            if foreground_activity_reason():
+                return True
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation("self_healing", exc)
+            return True
+
+        try:
+            from core.container import ServiceContainer
+
+            gate = ServiceContainer.get("inference_gate", default=None)
+            status_getter = getattr(gate, "get_conversation_status", None)
+            if callable(status_getter):
+                status = status_getter() or {}
+                if isinstance(status, dict):
+                    return bool(
+                        status.get("active")
+                        or status.get("foreground_owned")
+                        or int(status.get("active_generations", 0) or 0) > 0
+                        or status.get("kernel_lock_held")
+                        or str(status.get("state", "")).lower()
+                        in {"spawning", "handshaking", "warming", "recovering"}
+                    )
+                if bool(getattr(status, "active", False)):
+                    return True
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("self_healing", exc)
+            return True
+
+        try:
             from core.container import ServiceContainer
 
             orch = ServiceContainer.get("orchestrator", default=None) or ServiceContainer.get("aura_runtime", default=None)
@@ -190,7 +223,7 @@ class SelfHealing:
         }
         try:
             if w.restarts >= 3:
-                module_path = self._module_path_for_watch(w)
+                module_path = await asyncio.to_thread(self._module_path_for_watch, w)
                 block_reason = _deep_repair_block_reason("self_healing_watchdog_deep_repair")
                 if module_path and not block_reason:
                     logger.warning("Deep repair triggered for %s (%s)", w.name, module_path)
@@ -238,6 +271,9 @@ class SelfHealing:
     def _module_path_for_watch(self, w: WatchEntry) -> str | None:
         if not w.container_key:
             return None
+        cached = self._module_path_cache.get(w.container_key)
+        if w.container_key in self._module_path_cache:
+            return cached
             
         fallbacks = {
             "orchestrator": "core/orchestrator/main.py",
@@ -246,6 +282,7 @@ class SelfHealing:
             "morphogenetic_runtime": "core/morphogenesis/runtime.py",
             "motor_cortex": "core/somatic/motor_cortex.py"
         }
+        fallback = fallbacks.get(w.container_key)
         
         try:
             from core.config import config
@@ -253,7 +290,8 @@ class SelfHealing:
 
             instance = ServiceContainer.get(w.container_key, default=None)
             if instance is None:
-                return fallbacks.get(w.container_key)
+                self._module_path_cache[w.container_key] = fallback
+                return fallback
                 
             # Unpack proxies if present
             if hasattr(instance, "__wrapped__"):
@@ -263,22 +301,28 @@ class SelfHealing:
 
             source_file = inspect.getsourcefile(type(instance)) or inspect.getfile(type(instance))
             if source_file:
-                source_path = Path(source_file).resolve()
+                source_path = Path(source_file)
                 try:
-                    return str(source_path.relative_to(config.paths.base_dir))
+                    base_dir = Path(config.paths.base_dir)
+                    resolved = str(source_path.relative_to(base_dir))
+                    self._module_path_cache[w.container_key] = resolved
+                    return resolved
                 except ValueError as _exc:
                     logger.debug("Suppressed %s in core.runtime.self_healing: %s", type(_exc).__name__, _exc)
 
             module_name = type(instance).__module__
             candidate = module_name.replace(".", "/") + ".py"
             if (config.paths.base_dir / candidate).exists():
+                self._module_path_cache[w.container_key] = candidate
                 return candidate
                 
-            return fallbacks.get(w.container_key)
+            self._module_path_cache[w.container_key] = fallback
+            return fallback
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('self_healing', exc)
             logger.debug("Could not resolve watched module path for %s: %s", w.name, exc)
-            return fallbacks.get(w.container_key)
+            self._module_path_cache[w.container_key] = fallback
+            return fallback
 
     def schedule_deep_repair(
         self,
@@ -411,11 +455,15 @@ class SelfHealing:
 
     def _append_record(self, record: dict[str, Any]) -> None:
         try:
-            get_file_write_gateway().append_text(
-                _LEDGER,
-                json.dumps(record, default=str) + "\n",
-                source="runtime.self_healing.ledger",
-            )
+            with local_internal_governed_scope(
+                "runtime.self_healing.ledger",
+                domain="file_write",
+            ):
+                get_file_write_gateway().append_text(
+                    _LEDGER,
+                    json.dumps(record, default=str) + "\n",
+                    source="runtime.self_healing.ledger",
+                )
         except (OSError, TypeError, ValueError) as exc:
             logger.debug("SelfHealing ledger append failed: %s", exc)
 

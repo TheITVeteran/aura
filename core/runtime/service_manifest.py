@@ -65,7 +65,13 @@ SERVICE_MANIFEST: dict[str, ServiceRole] = {
         description="Single MemoryWriteGateway / memory authority",
         critical=True,
         canonical_owner="memory_write_gateway",
-        aliases=frozenset({"memory_write_gateway", "memory_facade"}),
+        aliases=frozenset({"memory_write_gateway"}),
+    ),
+    "memory_interface": ServiceRole(
+        name="memory_interface",
+        description="Single MemoryFacade interface for retrieval and governed memory commits",
+        critical=True,
+        canonical_owner="memory_facade",
     ),
     "state_writer": ServiceRole(
         name="state_writer",

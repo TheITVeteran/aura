@@ -97,6 +97,20 @@ class TestGovernanceContext:
 
         assert not is_governed()
 
+    def test_local_internal_scope_supports_internal_environment_actions(self):
+        """Runtime-owned process supervision stays under the environment-action domain."""
+        with local_internal_governed_scope(
+            "environment_action:unit.launch_supervisor",
+            domain="environment_action",
+        ) as token:
+            assert is_governed()
+            assert token.domain == "environment_action"
+            assert token.source == "environment_action:unit.launch_supervisor"
+            assert ("governance_origin", "local_internal") in token.constraints
+            assert ("runtime_generated", True) in token.constraints
+
+        assert not is_governed()
+
     def test_local_internal_decision_rejects_unowned_domains(self):
         """Local maintenance scopes must not authorize arbitrary surfaces."""
         with pytest.raises(ValueError, match="unsupported local internal governance domain"):

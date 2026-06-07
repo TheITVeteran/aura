@@ -34,6 +34,8 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "AURA_DEFERRED_CORTEX_PREWARM" in swift
     assert "AURA_SAFE_BOOT_METAL_CACHE_RATIO" in swift
     assert "AURA_SAFE_BOOT_METAL_CACHE_CAP_GB" in swift
+    assert 'env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] = "0.30"' in swift
+    assert 'env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] = "18"' in swift
     assert "AURA_EXTERNAL_GUI_OWNER" in swift
     assert "export AURA_EXTERNAL_GUI_OWNER=1" in swift
     assert "spawnDetachedViaShell" in swift
@@ -58,8 +60,8 @@ def test_launch_script_supports_gui_window_mode():
     assert "AURA_DEFERRED_CORTEX_PREWARM" in shell
     assert "AURA_ENABLE_PERMANENT_SWARM:=0" in shell
     assert "AURA_EXTERNAL_GUI_OWNER:=1" in shell
-    assert "AURA_SAFE_BOOT_METAL_CACHE_RATIO:=0.56" in shell
-    assert "AURA_SAFE_BOOT_METAL_CACHE_CAP_GB:=36" in shell
+    assert "AURA_SAFE_BOOT_METAL_CACHE_RATIO:=0.30" in shell
+    assert "AURA_SAFE_BOOT_METAL_CACHE_CAP_GB:=18" in shell
     assert "resolve_launch_log()" in shell
     assert "ACTIVE_LAUNCH_LOG" in shell
     assert "aura-desktop-launch.log" in shell
@@ -104,8 +106,23 @@ def test_watchdog_mode_remains_supervision_only():
     assert 'logger.info("🛡️ Watchdog supervisor active (supervision-only mode).")' in watchdog_slice
     assert "_watchdog_child_args(args)" in watchdog_slice
     assert "get_subprocess_gateway().spawn_async(" in watchdog_slice
+    assert 'local_internal_governed_scope(' in watchdog_slice
+    assert '"environment_action:watchdog_supervisor"' in watchdog_slice
     assert "[_launcher_python_executable(), __file__, *child_args]" in watchdog_slice
     assert "asyncio.create_subprocess_exec" not in watchdog_slice
+
+
+def test_gui_reaper_spawn_is_governed_environment_action():
+    main_py = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
+    gui_slice = main_py.split("async def _gui_reaper_loop():", 1)[1].split(
+        "logger.info(\"🎨 GUI Process Started",
+        1,
+    )[0]
+
+    assert "get_subprocess_gateway().spawn_async(" in gui_slice
+    assert "local_internal_governed_scope(" in gui_slice
+    assert '"environment_action:gui_actor_reaper"' in gui_slice
+    assert 'domain="environment_action"' in gui_slice
 
 
 def test_watchdog_preserves_requested_restart_mode_and_port_cleanup_is_pattern_limited():

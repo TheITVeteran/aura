@@ -444,6 +444,29 @@ async def test_executive_defers_background_task_when_temporal_obligation_is_acti
 
 
 @pytest.mark.asyncio
+async def test_executive_treats_desktop_ui_tool_as_user_under_temporal_obligation(service_container):
+    reset_constitutional_singletons()
+    clear_degraded_events()
+    ServiceContainer.register_instance("self_model", object(), required=False)
+    state = AuraState()
+    state.cognition.current_objective = "Protect continuity"
+    state.cognition.pending_initiatives = [{"goal": "Investigate anomaly"}]
+    ServiceContainer.register_instance("state_repository", SimpleNamespace(_current=state), required=False)
+    ServiceContainer.lock_registration()
+
+    executive = executive_core_module.get_executive_core()
+    intent, record = await executive.prepare_tool_intent(
+        "file_operation",
+        {"action": "write", "path": "artifacts/live_runtime/generated/probe.html"},
+        source="desktop_ui",
+    )
+
+    assert intent.source == executive_core_module.IntentSource.USER
+    assert record.outcome == executive_core_module.DecisionOutcome.APPROVED
+    assert record.reason == "user_facing"
+
+
+@pytest.mark.asyncio
 async def test_executive_allows_safe_autonomous_tools_under_temporal_obligation(service_container):
     reset_constitutional_singletons()
     clear_degraded_events()

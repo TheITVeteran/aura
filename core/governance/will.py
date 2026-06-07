@@ -565,6 +565,8 @@ class UnifiedWill:
             domain=domain,
             policy=aura_now_packet,
             catatonia_relief=catatonia_relief,
+            context=context,
+            content=content,
         )
 
         # ── 9b. Inject scar constraints (learned caution from experience) ─
@@ -1132,6 +1134,36 @@ class UnifiedWill:
         }
 
     @staticmethod
+    def _is_observation_only_tool_context(content: str, context: dict[str, Any]) -> bool:
+        ctx = dict(context or {})
+        tool_name = str(ctx.get("tool") or ctx.get("skill") or "").strip().lower()
+        payload = str(content or "").strip().lower()
+        if not tool_name and payload.startswith("tool:"):
+            tool_name = payload.split(":", 1)[1].split()[0].strip()
+
+        effect_scope = str(ctx.get("effect_scope") or "").strip().lower()
+        read_only = bool(ctx.get("read_only")) or effect_scope == "read_only"
+        observation_tools = {
+            "clock",
+            "environment_info",
+            "system_proprioception",
+            "query_beliefs",
+        }
+        prohibited_markers = {
+            "external_action",
+            "public_action",
+            "social_action",
+            "world_affecting",
+            "file_write",
+            "network_call",
+            "desktop_control",
+            "self_modification",
+        }
+        if any(bool(ctx.get(marker)) for marker in prohibited_markers):
+            return False
+        return bool(read_only or tool_name in observation_tools)
+
+    @staticmethod
     def _state_from_repository(repo: Any) -> Any | None:
         if repo is None:
             return None
@@ -1207,7 +1239,10 @@ class UnifiedWill:
                 tool_failed=bool(context.get("tool_failed", False)),
                 external_override=bool(context.get("external_override", False)),
             )
-            policy = runtime.action_policy(now, domain=domain.value, priority=priority)
+            try:
+                policy = runtime.action_policy(now, domain=domain.value, priority=priority, context=context)
+            except TypeError:
+                policy = runtime.action_policy(now, domain=domain.value, priority=priority)
             policy.setdefault("outcome", "proceed")
             policy.setdefault("constraints", [])
             evidence = dict(policy.get("evidence") or {})
@@ -1246,6 +1281,8 @@ class UnifiedWill:
         domain: ActionDomain,
         policy: dict[str, Any],
         catatonia_relief: bool,
+        context: dict[str, Any] | None = None,
+        content: str = "",
     ) -> tuple[WillOutcome, str, list[str]]:
         policy_constraints = [
             str(item)
@@ -1265,6 +1302,16 @@ class UnifiedWill:
                 constraints.append(f"aura_now_repair_lane:{policy_outcome}")
             if outcome == WillOutcome.PROCEED:
                 return WillOutcome.CONSTRAIN, "aura_now_repair_lane", constraints
+            return outcome, reason, constraints
+
+        if (
+            policy_outcome == "defer"
+            and domain == ActionDomain.TOOL_EXECUTION
+            and self._is_observation_only_tool_context(content, dict(context or {}))
+        ):
+            constraints.append("aura_now_observation_lane:read_only")
+            if outcome == WillOutcome.PROCEED:
+                return WillOutcome.CONSTRAIN, "aura_now_observation_lane", constraints
             return outcome, reason, constraints
 
         if policy_outcome == "refuse" and self._is_consequential_domain(domain):

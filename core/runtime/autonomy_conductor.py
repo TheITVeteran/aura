@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
@@ -254,11 +255,15 @@ class AutonomyConductor:
     def _record(self, job: ConductedJob) -> None:
         entry = {"when": time.time(), "job": job.to_dict()}
         try:
-            get_file_write_gateway().append_text(
-                self.ledger_path,
-                json.dumps(entry, sort_keys=True, default=str) + "\n",
-                source="runtime.autonomy_conductor.ledger",
-            )
+            with local_internal_governed_scope(
+                "runtime.autonomy_conductor.ledger",
+                domain="file_write",
+            ):
+                get_file_write_gateway().append_text(
+                    self.ledger_path,
+                    json.dumps(entry, sort_keys=True, default=str) + "\n",
+                    source="runtime.autonomy_conductor.ledger",
+                )
         except _AUTONOMY_RECOVERABLE_ERRORS as exc:
             _record_autonomy_degradation(
                 exc,

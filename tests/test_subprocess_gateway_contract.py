@@ -3,10 +3,13 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
 from core.runtime import subprocess_gateway
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_offline_tooling_run_requires_named_source(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -163,6 +166,88 @@ def test_offline_tooling_run_allowed_for_approved_source(monkeypatch: pytest.Mon
 
     assert result.returncode == 0
     assert result.stdout.strip() == "ok"
+
+
+def test_desktop_safe_run_blocks_proof_scale_environment_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    monkeypatch.delenv("AURA_ALLOW_DESKTOP_LONGRUNS", raising=False)
+
+    with pytest.raises(subprocess_gateway.GovernanceViolation, match="desktop-safe long-run"):
+        subprocess_gateway.SubprocessGateway().run(
+            [sys.executable, "-c", "print('nethack_challenge.py should-not-run')"],
+            timeout=5,
+            read_only=True,
+            source="test.subprocess_gateway.desktop_guard",
+        )
+
+
+def test_desktop_safe_run_allows_explicit_operator_longrun_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    monkeypatch.setenv("AURA_ALLOW_DESKTOP_LONGRUNS", "1")
+
+    result = subprocess_gateway.SubprocessGateway().run(
+        [sys.executable, "-c", "print('nethack_challenge.py override-ok')"],
+        timeout=5,
+        read_only=True,
+        source="test.subprocess_gateway.desktop_guard_override",
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "nethack_challenge.py override-ok"
+
+
+def test_desktop_safe_shell_spawn_blocks_proof_batteries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    monkeypatch.delenv("AURA_ALLOW_DESKTOP_LONGRUNS", raising=False)
+
+    async def _attempt() -> None:
+        await subprocess_gateway.SubprocessGateway().spawn_shell_async(
+            f"{sys.executable} -c \"print('run_dnu_agi_proof_battery.py should-not-run')\"",
+            source="test.subprocess_gateway.desktop_shell_guard",
+        )
+
+    with pytest.raises(subprocess_gateway.GovernanceViolation, match="desktop-safe long-run"):
+        asyncio.run(_attempt())
+
+
+def test_nethack_runner_rejects_env_only_longrun_bypass(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    env = os.environ.copy()
+    env.update(
+        {
+            "AURA_ALLOW_DESKTOP_NETHACK": "1",
+            "AURA_ALLOW_DESKTOP_LONGRUNS": "1",
+            "AURA_ALLOW_LONG_NETHACK_RUN": "1",
+            "AURA_NETHACK_STEPS": "100000",
+            "AURA_NETHACK_LONG_RUN_CONFIRM_FILE": str(tmp_path / "missing-confirmation"),
+        }
+    )
+    env.pop("AURA_NETHACK_UNSAFE_RAM_CONFIRM", None)
+
+    result = subprocess_gateway.SubprocessGateway().run(
+        ["bash", "scripts/nethack_runner.sh"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        timeout=5,
+        capture_output=True,
+        source="test.subprocess_gateway.nethack_runner_guard",
+    )
+
+    assert result.returncode == 64
+    runner_log = Path.home() / ".aura/logs/nethack/runner.log"
+    assert "without one-shot confirmation file" in runner_log.read_text(encoding="utf-8")
 
 
 def test_offline_tooling_spawn_denied_when_live_governance_active(monkeypatch: pytest.MonkeyPatch) -> None:

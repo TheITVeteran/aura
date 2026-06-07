@@ -72,6 +72,18 @@ class MLXVisionClient:
                 name="MLX-Vision-Worker"
             )
             self._process.start()
+            try:
+                from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+                get_runtime_hygiene().register_process_handle(
+                    self._process,
+                    kind="multiprocessing",
+                    name=self._process.name,
+                    source="mlx_vision_client.worker_owner",
+                    command=f"MLX vision worker for {self.model_path}",
+                )
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                logger.debug("Vision worker runtime hygiene registration failed: %s", exc)
             
             self._listener_thread = threading.Thread(target=self._listener_loop, daemon=True)
             self._listener_thread.start()

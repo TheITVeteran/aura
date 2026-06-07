@@ -8,6 +8,54 @@ from typing import Any, Dict, List
 logger = logging.getLogger("Aura.SubsystemAudit")
 
 
+def _conversation_lane_is_standby(lane: dict[str, Any] | None) -> bool:
+    lane = dict(lane or {})
+    state = str(lane.get("state", "") or "").strip().lower()
+    return (
+        not bool(lane.get("conversation_ready", False))
+        and state in {"cold", "closed", ""}
+        and not bool(lane.get("warmup_attempted", False))
+        and not bool(lane.get("warmup_in_flight", False))
+    )
+
+
+def _collect_conversation_lane_status() -> dict[str, Any]:
+    """Collect the foreground conversation lane without depending on routes.
+
+    SubsystemAudit runs in core runtime code, so importing interface routes here
+    would create fragile boot-time coupling. The inference gate owns the live
+    lane status; if it cannot provide that status, the health pulse fails
+    closed rather than calling the process healthy from background heartbeats.
+    """
+    try:
+        from core.container import ServiceContainer
+
+        gate = ServiceContainer.get("inference_gate", default=None)
+        if gate is not None and hasattr(gate, "get_conversation_status"):
+            lane = gate.get_conversation_status()
+            if isinstance(lane, dict):
+                return lane
+            raise TypeError(f"inference_gate.get_conversation_status returned {type(lane).__name__}")
+        return {
+            "conversation_ready": False,
+            "state": "unknown",
+            "last_failure_reason": "conversation_lane_probe_missing",
+        }
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "subsystem_audit",
+            exc,
+            severity="critical",
+            action="health pulse failed closed: conversation lane status unavailable",
+            enforce_failure_policy=False,
+        )
+        return {
+            "conversation_ready": False,
+            "state": "unknown",
+            "last_failure_reason": str(exc)[:240],
+        }
+
+
 class SubsystemAudit:
     """Tracks and verifies that all cognitive subsystems are actively running."""
     
@@ -211,9 +259,17 @@ class SubsystemAudit:
             required_ok = False
         contract_healthy = bool(contract.get("healthy", False)) if isinstance(contract, dict) else False
         subsystem_ok = bool(health.get("all_ok", False))
+        conversation_lane = _collect_conversation_lane_status()
+        conversation_ready = bool(conversation_lane.get("conversation_ready", False))
+        conversation_standby = _conversation_lane_is_standby(conversation_lane)
+        conversation_ok = bool(conversation_ready or conversation_standby)
+        conversation_state = str(conversation_lane.get("state", "unknown") or "unknown").lower()
         contract_status = str(contract.get("status", "unknown") if isinstance(contract, dict) else "unknown")
         probe_status = "PASS" if required_ok else "FAIL"
-        if contract_healthy and required_ok and subsystem_ok:
+        conversation_status = (
+            "PASS" if conversation_ready else "STANDBY" if conversation_standby else "FAIL"
+        )
+        if contract_healthy and required_ok and subsystem_ok and conversation_ok:
             runtime_status = contract_status.upper()
             subsystem_status = "PASS"
         elif not required_ok:
@@ -227,7 +283,7 @@ class SubsystemAudit:
             subsystem_status = "FAIL" if not subsystem_ok else "PASS"
         summary = (
             f"Runtime: {runtime_status} | Required probes: {probe_status} | "
-            f"Subsystem audit: {subsystem_status} | "
+            f"Subsystem audit: {subsystem_status} | Conversation: {conversation_status} | "
             f"Heartbeats: {active_count}/{len(self.SUBSYSTEMS)} ACTIVE"
         )
         if not contract_healthy or not required_ok:
@@ -247,6 +303,11 @@ class SubsystemAudit:
         if required_ok and contract_healthy and not subsystem_ok:
             lines.append(
                 "  ❌ subsystem_audit: required subsystem heartbeat contract not satisfied"
+            )
+        if not conversation_ok:
+            reason = str(conversation_lane.get("last_failure_reason", "") or "conversation lane unavailable")
+            lines.append(
+                f"  ❌ conversation_lane: {conversation_state} ({reason})"
             )
         if stale_count:
             summary += f" | ⚠️ {stale_count} STALE"

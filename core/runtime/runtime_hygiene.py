@@ -516,17 +516,51 @@ class RuntimeHygieneManager:
         )
         self._process_refs[key] = proc
 
-    def _register_multiprocessing_process(self, proc: mp.Process) -> None:
+    def register_process_handle(
+        self,
+        proc: Any,
+        *,
+        kind: str = "multiprocessing",
+        name: str | None = None,
+        source: str = "explicit_process_owner",
+        command: str | None = None,
+    ) -> None:
+        """Register a child process from the subsystem that owns its lifecycle.
+
+        Runtime hygiene patches process creation, but production model workers
+        can be spawned from alternate multiprocessing contexts or after patches
+        are temporarily restored during shutdown/restart edges. The owner still
+        has the strongest provenance, so explicit registration is the canonical
+        path for long-lived worker children.
+        """
+
+        pid = getattr(proc, "pid", None)
+        for record in self._process_records.values():
+            if pid is not None and record.finished_at is None and record.pid == pid:
+                record.kind = kind or record.kind
+                record.name = str(name or record.name or getattr(proc, "name", kind))
+                record.source = str(source or record.source)
+                record.command = str(command or record.command or record.name)[:240]
+                return
         key = id(proc)
         self._process_records[key] = ProcessRecord(
             key=key,
+            kind=str(kind or "multiprocessing"),
+            name=str(name or getattr(proc, "name", kind) or kind),
+            source=str(source or "explicit_process_owner"),
+            command=str(command or name or getattr(proc, "name", kind) or kind)[:240],
+            pid=pid,
+        )
+        self._process_refs[key] = proc
+
+    def _register_multiprocessing_process(self, proc: mp.Process) -> None:
+        self.register_process_handle(
+            proc,
             kind="multiprocessing",
             name=getattr(proc, "name", "multiprocessing"),
             source="multiprocessing.Process.start",
             command=getattr(proc, "name", "multiprocessing"),
-            pid=getattr(proc, "pid", None),
         )
-        self._process_refs[key] = proc
 
     def _refresh_thread_records(self) -> None:
         now = time.monotonic()

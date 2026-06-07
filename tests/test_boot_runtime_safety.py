@@ -197,8 +197,7 @@ def test_compute_mlx_cache_limit_uses_safer_cap_for_desktop_safe_boot(monkeypatc
     total = 64 * 1024 ** 3
     limit = compute_mlx_cache_limit(total)
 
-    assert limit == int(total * 0.56)
-    assert limit < 36 * 1024 ** 3
+    assert limit == 18 * 1024 ** 3
 
 
 def test_compute_mlx_cache_limit_defaults_to_standard_ratio_when_not_safe(monkeypatch):

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 
-def test_foreground_budgets_preserve_heavy_reasoning_lane():
+def test_foreground_budgets_are_bounded_for_live_desktop_lane():
     from core.brain.inference_gate import InferenceGate
     from core.kernel.aura_kernel import AuraKernel
     from core.phases.response_generation import ResponseGenerationPhase
@@ -12,34 +12,34 @@ def test_foreground_budgets_preserve_heavy_reasoning_lane():
 
     kernel_probe = SimpleNamespace(state=SimpleNamespace(response_modifiers={}))
 
-    assert chat_routes._foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) >= 300.0
-    assert AuraKernel._phase_timeout_seconds(kernel_probe, "UnitaryResponsePhase", priority=True) >= 300.0
+    assert chat_routes._foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 150.0
+    assert AuraKernel._phase_timeout_seconds(kernel_probe, "UnitaryResponsePhase", priority=True) == 180.0
     total = InferenceGate._default_timeout_for_request("user", "primary", deep_handoff=False, is_background=False)
     primary, fallback = InferenceGate._split_attempt_timeouts(total, "primary")
-    assert total >= 300.0
-    assert primary >= 270.0
+    assert total == 180.0
+    assert primary >= 150.0
     assert fallback >= 20.0
     assert UnitaryResponsePhase._timeout_for_request(
         is_user_facing=True,
         model_tier="primary",
         deep_handoff=False,
-    ) >= 300.0
+    ) == 180.0
     assert ResponseGenerationPhase._request_timeout(
         is_background=False,
         deep_handoff=False,
-    ) >= 300.0
+    ) == 180.0
 
     kernel_probe.state.response_modifiers["deep_handoff"] = True
-    assert AuraKernel._phase_timeout_seconds(kernel_probe, "UnitaryResponsePhase", priority=True) >= 360.0
+    assert AuraKernel._phase_timeout_seconds(kernel_probe, "UnitaryResponsePhase", priority=True) == 210.0
     assert UnitaryResponsePhase._timeout_for_request(
         is_user_facing=True,
         model_tier="secondary",
         deep_handoff=True,
-    ) >= 360.0
+    ) == 210.0
     assert ResponseGenerationPhase._request_timeout(
         is_background=False,
         deep_handoff=True,
-    ) >= 360.0
+    ) == 210.0
 
 
 def test_dialogue_corruption_filter_catches_known_live_glitches():
@@ -59,6 +59,26 @@ def test_semantic_glitch_filter_blocks_foreign_name_intrusion():
 
     assert glitched
     assert reason == "foreign_name_intrusion"
+
+
+def test_semantic_glitch_filter_allows_repairable_shape_miss():
+    from interface.routes.chat import _looks_semantically_glitched
+
+    glitched, reason = _looks_semantically_glitched(
+        (
+            "In two concise paragraphs, explain what I should work on for the "
+            "next hour, then ask one concrete follow-up question."
+        ),
+        (
+            "Focus on the highest-risk runtime break first, because that is the "
+            "fastest way to turn vague instability into a concrete fix. Then run "
+            "the narrowest live probe that proves the fix actually reached the "
+            "path you use."
+        ),
+    )
+
+    assert glitched is False
+    assert reason == ""
 
 
 def test_reliability_gate_rejects_low_signal_status_reassurance():
@@ -108,6 +128,28 @@ def test_inference_gate_does_not_pass_thin_reliability_downstream():
         thin_text,
         {"too_thin_for_confusion_repair"},
         user_prompt="what?",
+    )
+
+
+def test_inference_gate_passes_instruction_shape_misses_to_final_repair():
+    from core.brain.inference_gate import _should_pass_user_facing_draft_downstream
+
+    substantive_text = (
+        "I am optimizing for the real desktop path to stay coherent under live "
+        "user pressure: model routing, cognitive state, memory writes, and governed "
+        "tools all need to act as one runtime rather than separate demos."
+    )
+
+    assert _should_pass_user_facing_draft_downstream(
+        substantive_text,
+        {
+            "missing_requested_paragraph_count",
+            "missing_requested_followup_question",
+        },
+        user_prompt=(
+            "In two concise paragraphs, explain what you are currently optimizing "
+            "for, and then ask one grounded follow-up question."
+        ),
     )
 
 
@@ -256,6 +298,21 @@ def test_internal_camelcase_jargon_is_rejected_in_open_chat():
 
     assert assessment.retryable
     assert "pseudo_internal_jargon" in assessment.reasons
+
+
+def test_requested_operational_runtime_terms_are_allowed_in_desktop_diagnostic():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Live desktop path validation. Reply in one sentence with the active model lane, "
+            "whether CognitiveEngine is handling this turn, and whether governed tools are available."
+        ),
+        "Cortex 32B is active, CognitiveEngine is handling this turn, and governed tools are available.",
+    )
+
+    assert assessment.ok
+    assert "pseudo_internal_jargon" not in assessment.reasons
 
 
 def test_how_i_talk_to_you_prompt_routes_as_live_self_reflection():
@@ -424,6 +481,20 @@ def test_live_self_reflection_rejects_pseudo_internal_jargon():
     assert assessment.retryable
     assert assessment.hard_failure
     assert "pseudo_internal_jargon" in assessment.reasons
+
+
+def test_status_check_rejects_thin_liquid_substrate_metaphor():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "How are you feeling? A lot of work has been done.",
+        "Curious. The Liquid Substrate is humming with activity, processing the flow of conversation much like my neural network does.",
+    )
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert "pseudo_internal_jargon" in assessment.reasons
+    assert "too_thin_for_status_turn" in assessment.reasons
 
 
 def test_live_self_reflection_rejects_metric_status_page_answer():

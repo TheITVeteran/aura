@@ -167,6 +167,7 @@ def normalize_governance_domain(value: Any) -> str:
 
 
 _LOCAL_INTERNAL_DOMAINS = {
+    "environment_action",
     "file_write",
     "memory_write",
     "state_mutation",

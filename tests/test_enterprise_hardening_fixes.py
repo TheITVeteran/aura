@@ -103,6 +103,50 @@ def test_flagship_doctor_defers_lag_only_healing_during_proof(monkeypatch, tmp_p
     assert ram_pressure is False
 
 
+def test_flagship_doctor_never_heals_lag_only_without_ram_pressure(monkeypatch, tmp_path: Path):
+    from core.runtime.flagship_doctor import FlagshipDoctorDaemon
+
+    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    daemon = FlagshipDoctorDaemon(root_dir=tmp_path, lag_threshold=1.0, ram_threshold=80.0)
+
+    should_heal, context, ram_pressure = daemon._should_self_heal(
+        lag=120.0,
+        ram_percent=50.0,
+        now=time.time(),
+    )
+
+    assert should_heal is False
+    assert context == "idle"
+    assert ram_pressure is False
+
+
+def test_flagship_doctor_detects_dict_foreground_generation(service_container, tmp_path: Path):
+    from core.runtime.flagship_doctor import FlagshipDoctorDaemon
+
+    service_container.register_instance(
+        "inference_gate",
+        SimpleNamespace(
+            get_conversation_status=lambda: {
+                "foreground_owned": True,
+                "active_generations": 1,
+                "state": "ready",
+            }
+        ),
+    )
+
+    daemon = FlagshipDoctorDaemon(root_dir=tmp_path, lag_threshold=1.0)
+
+    assert daemon._active_runtime_reason() == "foreground_generation"
+    should_heal, context, ram_pressure = daemon._should_self_heal(
+        lag=daemon.active_lag_threshold + 60.0,
+        ram_percent=50.0,
+        now=time.time(),
+    )
+    assert should_heal is False
+    assert context == "foreground_generation"
+    assert ram_pressure is False
+
+
 def test_flagship_doctor_still_heals_ram_pressure_during_proof(monkeypatch, tmp_path: Path):
     from core.runtime.flagship_doctor import FlagshipDoctorDaemon
 
@@ -118,6 +162,31 @@ def test_flagship_doctor_still_heals_ram_pressure_during_proof(monkeypatch, tmp_
     assert should_heal is True
     assert context == "proof_run_active"
     assert ram_pressure is True
+
+
+def test_flagship_doctor_ram_pressure_healing_is_bounded(monkeypatch, tmp_path: Path):
+    import gc
+    from core.runtime import flagship_doctor
+    from core.runtime.flagship_doctor import FlagshipDoctorDaemon
+
+    calls: list[int] = []
+    monkeypatch.delenv("AURA_FLAGSHIP_DOCTOR_DB_MAINTENANCE", raising=False)
+    monkeypatch.setattr(gc, "collect", lambda generation=2: calls.append(generation))
+    monkeypatch.setattr(
+        flagship_doctor.sqlite3,
+        "connect",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("DB maintenance must be opt-in")),
+    )
+
+    daemon = FlagshipDoctorDaemon(root_dir=tmp_path, lag_threshold=1.0, ram_threshold=80.0)
+    daemon._execute_self_healing(
+        lag=0.1,
+        ram_percent=91.0,
+        lag_context="foreground_generation",
+        ram_pressure=True,
+    )
+
+    assert calls == [0]
 
 
 def test_flagship_doctor_self_healing_has_cooldown(monkeypatch, tmp_path: Path):

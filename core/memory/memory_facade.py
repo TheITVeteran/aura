@@ -52,7 +52,26 @@ class MemoryFacade:
         "stale": 4,
     }
     USER_FACING_SOURCES = frozenset({
-        "user", "voice", "admin", "api", "gui", "ws", "websocket", "direct", "external",
+        "admin",
+        "api",
+        "chat",
+        "chat_api",
+        "desktop",
+        "desktop_task",
+        "desktop_ui",
+        "direct",
+        "external",
+        "frontend",
+        "gui",
+        "interface",
+        "live_chat",
+        "ui",
+        "user",
+        "voice",
+        "voice_bridge",
+        "voice_input",
+        "websocket",
+        "ws",
     })
     
     # Significance markers for bonding/relational conversations

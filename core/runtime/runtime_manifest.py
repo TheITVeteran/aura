@@ -113,6 +113,7 @@ def _role_snapshot() -> dict[str, dict[str, Any]]:
             in {
                 "governance",
                 "memory_writer",
+                "memory_interface",
                 "state_writer",
                 "model",
                 "runtime",

@@ -57,6 +57,7 @@ class NetworkGateway:
         source: str = "unknown",
         read_only: bool = False,
         operational_telemetry: bool = False,
+        suppress_degradation: bool = False,
     ) -> dict[str, Any]:
         """Perform a synchronous HTTP request."""
         method_text = _coerce_method(method)
@@ -107,12 +108,20 @@ class NetworkGateway:
                 "error": str(exc),
             }
         except _NETWORK_RECOVERABLE_ERRORS as exc:
-            record_degradation(
-                "network_gateway",
-                exc,
-                action="returned failed network action receipt",
-            )
-            logger.warning("Network gateway request failed: %s", exc)
+            if suppress_degradation:
+                logger.debug(
+                    "Network gateway request failed without degradation emission "
+                    "(source=%s): %s",
+                    source,
+                    exc,
+                )
+            else:
+                record_degradation(
+                    "network_gateway",
+                    exc,
+                    action="returned failed network action receipt",
+                )
+                logger.warning("Network gateway request failed: %s", exc)
             return {
                 "status_code": 0,
                 "headers": {},
@@ -133,6 +142,7 @@ class NetworkGateway:
         source: str = "unknown",
         read_only: bool = False,
         operational_telemetry: bool = False,
+        suppress_degradation: bool = False,
     ) -> dict[str, Any]:
         return await asyncio.to_thread(
             self.request,
@@ -145,6 +155,7 @@ class NetworkGateway:
             source=source,
             read_only=read_only,
             operational_telemetry=operational_telemetry,
+            suppress_degradation=suppress_degradation,
         )
 
 

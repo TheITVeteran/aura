@@ -29,6 +29,7 @@ if sys.version_info < (3, 12):  # noqa: UP036 - boot contract asserts a clear ru
 import httpx
 
 from core.runtime.errors import record_degradation
+from core.governance_context import local_internal_governed_scope
 from core.runtime.shutdown_coordinator import is_shutdown_requested, request_shutdown
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.singleton import (
@@ -804,7 +805,7 @@ async def _boot_runtime_orchestrator(
             daemon = get_flagship_doctor_daemon(root_dir=PROJECT_ROOT)
             daemon.start(asyncio.get_running_loop())
             ServiceContainer.register_instance("flagship_doctor_daemon", daemon, required=False)
-            
+
             from core.runtime.shutdown_coordinator import get_shutdown_coordinator
             get_shutdown_coordinator().register(
                 daemon.stop,
@@ -1287,6 +1288,7 @@ async def _wait_for_server_http(url: str, timeout_s: float = 60.0) -> bool:
                 timeout=5.0,
                 source="maintenance_tooling:server_health_wait",
                 read_only=True,
+                suppress_degradation=True,
             )
             if response.get("status_code") == 200:
                 data = json.loads((response.get("content") or b"{}").decode("utf-8"))
@@ -1318,6 +1320,7 @@ def _native_launcher_owns_gui() -> bool:
 async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str = "desktop"):
     """GUI Mode (Managed Actor Process)"""
     from core.container import ServiceContainer
+    from core.graceful_shutdown import GracefulShutdown
     from core.supervisor.tree import ActorSpec
     from interface.gui_actor import gui_actor_entry
     
@@ -1380,161 +1383,280 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
         logger.info("📡 API Server task starting (offloading to thread for Apple Silicon stability)...")
         await asyncio.to_thread(_serve_api_sync)
 
-    async def _main_loop():
-        
-        # 1. Initialize Orchestrator and wait for boot
-        logger.info("🧠 Orchestrator boot beginning...")
-        orchestrator = await boot_aura_runtime(
-            profile=profile,
-            ready_label="Desktop",
-            readiness_context="server_boot",
-        )
-        tracker.create_task(orchestrator.run(), name="OrchestratorMainLoop")
-
-        # 2. Start API Server (v21: Server now runs in Kernel)
-        # [STABILITY] Start API after brain is ready to ensure correct ServiceContainer lookups.
-        logger.info("🎬 [DEBUG] Pre-starting API server mission...")
-        api_task = tracker.create_task(_run_api_server(), name="api_server")
-        logger.info("🎬 [DEBUG] API server task created successfully.")
-        
-        # Wait for API server to be TRULY ready (HTTP 200)
-        # This prevents the GUI from launching too early and hitting "Connection Refused".
-        health_url = f"http://127.0.0.1:{port}/api/health/boot"
-        logger.info("⏳ Waiting for API health check on port %s...", port)
-        if await _wait_for_server_http(health_url, 30.0):
-            logger.info("✅ API Server is HEALTHY. Proceeding to GUI launch.")
-        else:
-            logger.warning("⚠️ API Server health check timed out after 30s. GUI launch may be degraded.")
-        
-        # 3. Start GUI Actor (WebView Only). When the native launcher owns
-        # the visible GUI, the runtime stays headless here so one click does
-        # not create two Dock-visible Python/WebView processes.
-        if not launch_gui:
-            pipe = None
-            logger.info("🎨 Desktop runtime launched without child GUI; external launcher owns the window.")
-        elif sys.platform == "darwin":
-            logger.info("🎨 Launching GUI via SUBPROCESS for macOS stability...")
-            
-            async def _gui_reaper_loop():
-                """Re-implements supervision for the subprocess-based macOS GUI."""
-                max_restarts = 5
-                restart_count = 0
-                while restart_count < max_restarts:
-                    proc = await get_subprocess_gateway().spawn_async(
-                        [_launcher_python_executable(), "interface/gui_actor.py", str(port)],
-                        cwd=str(PROJECT_ROOT),
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        start_new_session=True,
-                        source="environment_action:gui_actor_reaper",
-                    )
-                    logger.info("🎨 GUI Process Started (PID: %s)", proc.pid)
-                    
-                    async def _stream_logger(stream, level):
-                        content = []
-                        while line := await stream.readline():
-                            decoded = line.decode('utf-8', errors='replace').rstrip()
-                            if decoded:
-                                if level == "ERROR":
-                                    logger.error("[GUI] %s", decoded)
-                                else:
-                                    logger.debug("[GUI] %s", decoded)
-                                content.append(decoded)
-                        return "\n".join(content)
-
-                    out_task = tracker.create_task(
-                        _stream_logger(proc.stdout, "DEBUG"),
-                        name="gui.stdout_stream",
-                    )
-                    err_task = tracker.create_task(
-                        _stream_logger(proc.stderr, "ERROR"),
-                        name="gui.stderr_stream",
-                    )
-                    
-                    # Watch for exit
-                    while proc.returncode is None:
-                        # Check for system-wide shutdown
-                        if not getattr(supervisor, "_is_running", True):
-                            try:
-                                proc.terminate()
-                            except ProcessLookupError:
-                                logger.debug("GUI process already exited before termination.")
-                            return
-                        
-                        try:
-                            # Wait with timeout to allow checking shutdown flag
-                            await asyncio.wait_for(proc.wait(), timeout=2.0)
-                        except TimeoutError:
-                            continue
-                    
-                    # Ensure stream reading completes
-                    await out_task
-                    stderr_output = await err_task
-                    
-                    if proc.returncode == 0:
-                        # User closed the window cleanly — treat this as "quit
-                        # Aura", not "restart the GUI in the background".
-                        # Otherwise the orchestrator stays alive pinned to
-                        # MLX workers while the user believes they've quit,
-                        # which is how "multiple versions in the background"
-                        # happens.
-                        logger.info("🎨 GUI closed by user — initiating full shutdown.")
-                        try:
-                            supervisor._is_running = False
-                        except AttributeError as exc:
-                            record_degradation("aura_main", exc)
-                            logger.debug("GUI supervisor did not expose running flag: %s", exc)
-                        # Signal the main process so the outer event loop
-                        # cancels its pending tasks and runs shutdown hooks.
-                        try:
-                            os.kill(os.getpid(), signal.SIGTERM)
-                        except OSError as exc:
-                            record_degradation("aura_main", exc)
-                            logger.warning("Failed to signal Aura shutdown after GUI close: %s", exc)
-                        return
-
-                    if is_shutdown_requested() or proc.returncode in {-signal.SIGTERM, -signal.SIGINT}:
-                        logger.info(
-                            "🎨 GUI process ended during runtime shutdown (code=%s); not restarting.",
-                            proc.returncode,
-                        )
-                        return
-
-                    restart_count += 1
-                    logger.critical("🛑 GUI Process crashed (code: %s). Reason:\n%s", proc.returncode, stderr_output)
-                    logger.warning("🎨 Restarting GUI in 5s... (Attempt %s/%s)", restart_count, max_restarts)
-                    await asyncio.sleep(5.0)
-
-            tracker.create_task(_gui_reaper_loop(), name="gui_reaper")
-            pipe = None # Subprocess doesn't use the actor pipe
-        else:
-            # Linux/Others can still use the supervised actor
-            spec = ActorSpec(
-                name="desktop_gui",
-                entry_point=gui_actor_entry,
-                args=(port,),
-                restart_policy="always"
+    async def _wait_for_task_exit(task: asyncio.Task | None, *, name: str, timeout_s: float) -> None:
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.wait_for(task, timeout=timeout_s)
+        except TimeoutError as exc:
+            record_degradation(
+                "aura_main",
+                exc,
+                action=f"cancelled {name} after bounded desktop shutdown wait timed out",
+                severity="degraded",
             )
-            supervisor.add_actor(spec)
-            pipe = supervisor.start_actor("desktop_gui")
+            logger.warning("%s did not exit within %.1fs; cancelling.", name, timeout_s)
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError, RuntimeError) as cancel_exc:
+                record_degradation(
+                    "aura_main",
+                    cancel_exc,
+                    action=f"continued desktop shutdown after {name} cancellation wait ended",
+                    severity="warning",
+                )
+        except asyncio.CancelledError:
+            raise
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+            record_degradation(
+                "aura_main",
+                exc,
+                action=f"continued desktop shutdown after {name} wait failed",
+                severity="warning",
+            )
+
+    async def _desktop_final_shutdown(
+        *,
+        orchestrator: Any | None,
+        api_task: asyncio.Task | None,
+        reason: str,
+    ) -> None:
+        request_shutdown(reason)
+        try:
+            supervisor._is_running = False
+            supervisor._shutting_down = True
+        except AttributeError as exc:
+            record_degradation("aura_main", exc)
+
+        await _wait_for_task_exit(api_task, name="api_server", timeout_s=8.0)
+        await _stop_orchestrator_once(orchestrator, reason=reason, timeout_s=20.0)
+        try:
+            await asyncio.wait_for(GracefulShutdown.trigger_shutdown(reason), timeout=20.0)
+        except TimeoutError as exc:
+            record_degradation(
+                "aura_main",
+                exc,
+                action="continued desktop shutdown after graceful shutdown timed out",
+                severity="degraded",
+            )
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+            record_degradation(
+                "aura_main",
+                exc,
+                action="continued desktop shutdown after graceful shutdown failed",
+                severity="degraded",
+            )
+
+        try:
+            await asyncio.wait_for(get_task_tracker().shutdown(timeout=3.0), timeout=5.0)
+        except TimeoutError as exc:
+            record_degradation(
+                "aura_main",
+                exc,
+                action="continued desktop shutdown after task tracker drain timed out",
+                severity="degraded",
+            )
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+            record_degradation(
+                "aura_main",
+                exc,
+                action="continued desktop shutdown after task tracker drain failed",
+                severity="warning",
+            )
+
+    async def _main_loop():
+        loop = asyncio.get_running_loop()
+        installed_signal_handlers: list[signal.Signals] = []
+        orchestrator = None
+        api_task: asyncio.Task | None = None
+
+        def _request_desktop_shutdown(sig: signal.Signals) -> None:
+            request_shutdown(f"desktop_signal:{sig.name}")
+            try:
+                supervisor._is_running = False
+                supervisor._shutting_down = True
+            except AttributeError as exc:
+                record_degradation("aura_main", exc)
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _request_desktop_shutdown, sig)
+                installed_signal_handlers.append(sig)
+            except (RuntimeError, AttributeError, NotImplementedError, ValueError) as exc:
+                logger.debug("Desktop signal handler registration skipped for %s: %s", sig, exc)
+
+        shutdown_reason = "desktop_exit"
+        try:
         
-        # 4. Register GUI in ActorBus
-        actor_bus = ServiceContainer.get("actor_bus", default=None)
-        if actor_bus and launch_gui:
-            actor_bus.add_actor("desktop_gui", pipe, is_child=True)
+            # 1. Initialize Orchestrator and wait for boot
+            logger.info("🧠 Orchestrator boot beginning...")
+            orchestrator = await boot_aura_runtime(
+                profile=profile,
+                ready_label="Desktop",
+                readiness_context="server_boot",
+            )
+            tracker.create_task(orchestrator.run(), name="OrchestratorMainLoop")
+
+            # 2. Start API Server (v21: Server now runs in Kernel)
+            # [STABILITY] Start API after brain is ready to ensure correct ServiceContainer lookups.
+            logger.info("🎬 [DEBUG] Pre-starting API server mission...")
+            api_task = tracker.create_task(_run_api_server(), name="api_server")
+            logger.info("🎬 [DEBUG] API server task created successfully.")
+
+            # Wait for API server to be TRULY ready (HTTP 200)
+            # This prevents the GUI from launching too early and hitting "Connection Refused".
+            health_url = f"http://127.0.0.1:{port}/api/health/boot"
+            logger.info("⏳ Waiting for API health check on port %s...", port)
+            try:
+                desktop_health_wait_s = float(os.environ.get("AURA_DESKTOP_HEALTH_WAIT_SECONDS", "90"))
+            except ValueError:
+                desktop_health_wait_s = 90.0
+            if await _wait_for_server_http(health_url, desktop_health_wait_s):
+                logger.info("✅ API Server is HEALTHY. Proceeding to GUI launch.")
+            else:
+                logger.warning(
+                    "⚠️ API Server did not report full readiness after %.0fs; launching GUI with readiness heartbeat gating.",
+                    desktop_health_wait_s,
+                )
             
-        if launch_gui:
-            logger.info("🎨 Desktop GUI Actor launched and supervised (WebView-only mode).")
-        
-        # Wait on long-lived tasks to prevent premature exit
-        # We also wait on the orchestrator's main loop if we created one
-        orchestrator_loop_task = [t for t in asyncio.all_tasks() if t.get_name() == "OrchestratorMainLoop"]
-        tasks_to_wait = [api_task]
-        if orchestrator_loop_task:
-            tasks_to_wait.append(orchestrator_loop_task[0])
-        
-        # Actually wait forever for the supervisor
-        await supervisor.wait_forever()
+            # 3. Start GUI Actor (WebView Only). When the native launcher owns
+            # the visible GUI, the runtime stays headless here so one click does
+            # not create two Dock-visible Python/WebView processes.
+            if not launch_gui:
+                pipe = None
+                logger.info("🎨 Desktop runtime launched without child GUI; external launcher owns the window.")
+            elif sys.platform == "darwin":
+                logger.info("🎨 Launching GUI via SUBPROCESS for macOS stability...")
+
+                async def _gui_reaper_loop():
+                    """Re-implements supervision for the subprocess-based macOS GUI."""
+                    max_restarts = 5
+                    restart_count = 0
+                    while restart_count < max_restarts:
+                        with local_internal_governed_scope(
+                            "environment_action:gui_actor_reaper",
+                            domain="environment_action",
+                        ):
+                            proc = await get_subprocess_gateway().spawn_async(
+                                [_launcher_python_executable(), "interface/gui_actor.py", str(port)],
+                                cwd=str(PROJECT_ROOT),
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                                start_new_session=True,
+                                source="environment_action:gui_actor_reaper",
+                            )
+                        logger.info("🎨 GUI Process Started (PID: %s)", proc.pid)
+
+                        async def _stream_logger(stream, level):
+                            content = []
+                            while line := await stream.readline():
+                                decoded = line.decode('utf-8', errors='replace').rstrip()
+                                if decoded:
+                                    if level == "ERROR":
+                                        logger.error("[GUI] %s", decoded)
+                                    else:
+                                        logger.debug("[GUI] %s", decoded)
+                                    content.append(decoded)
+                            return "\n".join(content)
+
+                        out_task = tracker.create_task(
+                            _stream_logger(proc.stdout, "DEBUG"),
+                            name="gui.stdout_stream",
+                        )
+                        err_task = tracker.create_task(
+                            _stream_logger(proc.stderr, "ERROR"),
+                            name="gui.stderr_stream",
+                        )
+
+                        # Watch for exit
+                        while proc.returncode is None:
+                            # Check for system-wide shutdown
+                            if not getattr(supervisor, "_is_running", True):
+                                try:
+                                    proc.terminate()
+                                except ProcessLookupError:
+                                    logger.debug("GUI process already exited before termination.")
+                                return
+
+                            try:
+                                # Wait with timeout to allow checking shutdown flag
+                                await asyncio.wait_for(proc.wait(), timeout=2.0)
+                            except TimeoutError:
+                                continue
+
+                        # Ensure stream reading completes
+                        await out_task
+                        stderr_output = await err_task
+                        
+                        if proc.returncode == 0:
+                            # User closed the window cleanly — treat this as "quit
+                            # Aura", not "restart the GUI in the background".
+                            # Otherwise the orchestrator stays alive pinned to
+                            # MLX workers while the user believes they've quit,
+                            # which is how "multiple versions in the background"
+                            # happens.
+                            logger.info("🎨 GUI closed by user — initiating full shutdown.")
+                            shutdown_reason = "gui_closed"
+                            try:
+                                supervisor._is_running = False
+                            except AttributeError as exc:
+                                record_degradation("aura_main", exc)
+                                logger.debug("GUI supervisor did not expose running flag: %s", exc)
+                            request_shutdown(shutdown_reason)
+                            return
+
+                        if is_shutdown_requested() or proc.returncode in {-signal.SIGTERM, -signal.SIGINT}:
+                            logger.info(
+                                "🎨 GUI process ended during runtime shutdown (code=%s); not restarting.",
+                                proc.returncode,
+                            )
+                            return
+
+                        restart_count += 1
+                        logger.critical("🛑 GUI Process crashed (code: %s). Reason:\n%s", proc.returncode, stderr_output)
+                        logger.warning("🎨 Restarting GUI in 5s... (Attempt %s/%s)", restart_count, max_restarts)
+                        await asyncio.sleep(5.0)
+
+                tracker.create_task(_gui_reaper_loop(), name="gui_reaper")
+                pipe = None # Subprocess doesn't use the actor pipe
+            else:
+                # Linux/Others can still use the supervised actor
+                spec = ActorSpec(
+                    name="desktop_gui",
+                    entry_point=gui_actor_entry,
+                    args=(port,),
+                    restart_policy="always"
+                )
+                supervisor.add_actor(spec)
+                pipe = supervisor.start_actor("desktop_gui")
+            
+            # 4. Register GUI in ActorBus
+            actor_bus = ServiceContainer.get("actor_bus", default=None)
+            if actor_bus and launch_gui:
+                actor_bus.add_actor("desktop_gui", pipe, is_child=True)
+
+            if launch_gui:
+                logger.info("🎨 Desktop GUI Actor launched and supervised (WebView-only mode).")
+
+            # Wait until the supervisor sees shutdown. The explicit finalizer
+            # below owns teardown so SIGTERM cannot leave API/model/GUI workers
+            # alive behind the desktop process.
+            await supervisor.wait_forever()
+        except asyncio.CancelledError:
+            shutdown_reason = "desktop_cancelled"
+            raise
+        finally:
+            for sig in installed_signal_handlers:
+                try:
+                    loop.remove_signal_handler(sig)
+                except (RuntimeError, AttributeError, NotImplementedError, ValueError) as exc:
+                    logger.debug("Desktop signal handler cleanup skipped for %s: %s", sig, exc)
+            await _desktop_final_shutdown(
+                orchestrator=orchestrator,
+                api_task=api_task,
+                reason=shutdown_reason if is_shutdown_requested() else "desktop_exit",
+            )
 
     await _main_loop()
 
@@ -1585,10 +1707,14 @@ async def run_watchdog(args: argparse.Namespace | None = None):
             start_time = time.time()
             
             # Use the canonical gateway for non-blocking child supervision.
-            proc = await get_subprocess_gateway().spawn_async(
-                [_launcher_python_executable(), __file__, *child_args],
-                source="environment_action:watchdog_supervisor",
-            )
+            with local_internal_governed_scope(
+                "environment_action:watchdog_supervisor",
+                domain="environment_action",
+            ):
+                proc = await get_subprocess_gateway().spawn_async(
+                    [_launcher_python_executable(), __file__, *child_args],
+                    source="environment_action:watchdog_supervisor",
+                )
             await proc.wait()
             
             # Perplexity Audit Fix: Detect deterministic config errors (Exit 1)

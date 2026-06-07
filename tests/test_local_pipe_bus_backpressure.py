@@ -44,6 +44,11 @@ class _FakeTask:
 
 def test_fire_and_forget_pipe_send_drops_during_backpressure():
     async def scenario():
+        from core.bus import local_pipe_bus as module
+
+        records = []
+        original_record = module.record_degradation
+        module.record_degradation = lambda *args, **kwargs: records.append((args, kwargs))
         read_conn = _FakeConnection()
         write_conn = _FakeConnection()
         bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=False)
@@ -56,17 +61,39 @@ def test_fire_and_forget_pipe_send_drops_during_backpressure():
         finally:
             lock.release()
             bus._shutdown_executor()
+            module.record_degradation = original_record
 
         assert write_conn.sent == []
         assert bus._write_backpressure_drops == 1
-        assert bus.is_alive() is False
-        assert bus.get_status()["degraded"] is True
+        assert records == []
+        assert bus.is_alive() is True
+        status = bus.get_status()
+        assert status["alive"] is True
+        assert status["degraded"] is False
+        assert status["write_backpressure_drops"] == 1
+        assert "fire-and-forget pipe write blocked" in str(status["last_error"])
 
     asyncio.run(scenario())
 
 
+def test_fire_and_forget_pipe_default_timeout_is_subsecond(monkeypatch):
+    read_conn = _FakeConnection()
+    write_conn = _FakeConnection()
+    bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=False)
+    monkeypatch.delenv("AURA_PIPE_FF_WRITE_TIMEOUT_S", raising=False)
+
+    try:
+        assert 0.05 <= bus._fire_and_forget_write_timeout_s() <= 0.5
+    finally:
+        bus._shutdown_executor()
+
+
 def test_fire_and_forget_pipe_timeout_suppresses_future_writes(monkeypatch):
     async def scenario():
+        from core.bus import local_pipe_bus as module
+
+        records = []
+        monkeypatch.setattr(module, "record_degradation", lambda *args, **kwargs: records.append((args, kwargs)))
         read_conn = _FakeConnection()
         write_conn = _FakeConnection(delay_s=0.5)
         bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=False)
@@ -80,10 +107,11 @@ def test_fire_and_forget_pipe_timeout_suppresses_future_writes(monkeypatch):
         try:
             assert bus._write_timeout_count == 1
             assert bus._write_suppressed_until > started_at
-            assert bus.is_alive() is False
+            assert records == []
+            assert bus.is_alive() is True
             status = bus.get_status()
-            assert status["degraded"] is True
-            assert status["alive"] is False
+            assert status["degraded"] is False
+            assert status["alive"] is True
             assert status["write_suppressed_for_s"] > 0
             assert "TimeoutError" in str(status["last_error"])
             await bus._send_local("telemetry", {"value": 2})

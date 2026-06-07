@@ -299,8 +299,8 @@ class AuraKernel:
         if phase_name in {"UnitaryResponsePhase", "ResponseGenerationPhase"}:
             response_modifiers = getattr(self.state, "response_modifiers", {}) if self.state else {}
             if bool(response_modifiers.get("deep_handoff", False)):
-                return 360.0
-            return 300.0
+                return 210.0
+            return 180.0
         if phase_name == "GodModeToolPhase":
             return 20.0
         if phase_name in {
@@ -1109,8 +1109,6 @@ class AuraKernel:
                         ),
                         name=f"AuraKernel.{phase_name}",
                     )
-                    # Shield the task: TimeoutError aborts our wait but keeps the
-                    # task alive so the worker is not disturbed mid-generation.
                     try:
                         phase_timeout = self._phase_timeout_seconds(phase_name, priority=priority)
 
@@ -1125,10 +1123,7 @@ class AuraKernel:
                             else:
                                 phase_timeout = min(phase_timeout, 8.0)
 
-                        result = await asyncio.wait_for(
-                            asyncio.shield(phase_task),
-                            timeout=phase_timeout,
-                        )
+                        result = await asyncio.wait_for(phase_task, timeout=phase_timeout)
                         self.state = result
                     except TimeoutError:
                         logger.error(
@@ -1136,6 +1131,15 @@ class AuraKernel:
                             phase_name,
                             phase_timeout,
                         )
+                        try:
+                            if "phase_task" in locals() and not phase_task.done():
+                                phase_task.cancel()
+                        except (AttributeError, RuntimeError) as _exc:
+                            logger.debug(
+                                "Suppressed %s while cancelling timed-out phase task: %s",
+                                type(_exc).__name__,
+                                _exc,
+                            )
                         if not priority and phase_name in {
                             "UnitaryResponsePhase",
                             "ResponseGenerationPhase",
@@ -1153,7 +1157,6 @@ class AuraKernel:
                             )
                             self._record_dream_fragment(objective, phase, phase_name)
                             break
-                        # Let the shielded task finish in the background; do not cancel it.
                         continue
                 except asyncio.CancelledError as phase_err:
                     if priority or is_shutdown_requested():

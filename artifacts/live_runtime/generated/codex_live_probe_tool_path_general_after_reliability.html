@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aura Generated Page</title>
+  <style>
+    :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: #f6f7fb; color: #18202f; }
+    main { width: min(92vw, 560px); padding: 32px; border: 1px solid #d8deea; border-radius: 8px; background: #fff; }
+    button { min-height: 44px; padding: 0 18px; border: 0; border-radius: 6px; background: #1f6feb; color: #fff; font-weight: 650; cursor: pointer; }
+    p { line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Aura Generated Page</h1>
+    <p id="status">Generated through Aura's governed local file action lane at 2026-06-07T04:57:30.151108+00:00.</p>
+    <button id="action" type="button">Activate</button>
+  </main>
+  <script>
+    const status = document.getElementById("status");
+    document.getElementById("action").addEventListener("click", () => {
+      status.textContent = "Button clicked. The page script is active.";
+    });
+  </script>
+</body>
+</html>

@@ -33,11 +33,39 @@ _OMNI_LOCK = threading.Lock()
 logger = logging.getLogger("Aura.OmniTracer")
 
 
-def _classify_forwarded_log(source: str, message: str, severity: str) -> tuple[str, str]:
+def _classify_forwarded_log(
+    source: str,
+    message: str,
+    severity: str,
+    error_type: str = "",
+) -> tuple[str, str]:
     lowered_source = str(source or "").lower()
     lowered_message = str(message or "").lower()
-    final_severity = severity or "critical"
+    lowered_error_type = str(error_type or "").lower()
+    final_severity = str(severity or "critical").lower()
     classification = "system_crash" if final_severity == "critical" else "background_degraded"
+
+    if lowered_source.startswith(("log_error", "log_critical")) and (
+        " - info - " in lowered_message
+        or " | info " in lowered_message
+        or "level=info" in lowered_message
+    ):
+        return "info", "non_critical_fallback"
+
+    if (
+        "aura.healthcontract" in lowered_error_type
+        or "aura.healthcontract" in lowered_message
+        or "health contract:" in lowered_message
+    ):
+        if "health contract: dead" in lowered_message:
+            return "critical", "foreground_blocking"
+        if "health contract: critical" in lowered_message:
+            return "error", "background_degraded"
+        if "health:" in lowered_message:
+            return "error", "background_degraded"
+        if "health contract: degraded" in lowered_message:
+            return "warning", "background_degraded"
+        return "error", "background_degraded"
 
     if "brain.gemini" in lowered_source and any(
         marker in lowered_message
@@ -162,7 +190,12 @@ def write_trace(source: str, error_type: str, message: str, trace: str = "", sev
                     final_severity = "warning"
                 else:
                     final_severity = "critical"
-            final_severity, classification = _classify_forwarded_log(source, message, final_severity)
+            final_severity, classification = _classify_forwarded_log(
+                source,
+                message,
+                final_severity,
+                error_type=error_type,
+            )
 
             record_degraded_event(
                 subsystem=f"omni_{source}",
@@ -187,7 +220,13 @@ class OmniLogHandler(logging.Handler):
                 trace = ""
                 if record.exc_info:
                     trace = "".join(traceback.format_exception(*record.exc_info))
-                write_trace(f"log_{record.levelname.lower()}", record.name, msg, trace)
+                write_trace(
+                    f"log_{record.levelname.lower()}",
+                    record.name,
+                    msg,
+                    trace,
+                    severity=record.levelname.lower(),
+                )
             except OSError as _exc:
                 logging.getLogger("Aura.OmniTracer").debug(
                     "Suppressed %s in core.resilience.omni_tracer: %s",

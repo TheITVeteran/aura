@@ -30,6 +30,75 @@ def test_error_intelligence_demotes_omni_log_warning(caplog, tmp_path, skill_nam
     assert f"Error logged: RuntimeError in {skill_name}" not in caplog.text
 
 
+def test_omni_tracer_does_not_turn_forwarded_info_logs_into_failure_pressure():
+    from core.resilience.omni_tracer import _classify_forwarded_log
+
+    severity, classification = _classify_forwarded_log(
+        "log_error",
+        "[GUI] 2026-06-06 20:50:57,487 - Aura.Core - INFO - Webhook alerting disabled.",
+        "error",
+    )
+
+    assert (severity, classification) == ("info", "non_critical_fallback")
+
+
+def test_omni_tracer_demotes_recoverable_boot_health_contract_logs():
+    from core.resilience.omni_tracer import _classify_forwarded_log
+
+    severity, classification = _classify_forwarded_log(
+        "log_critical",
+        "Aura.HealthContract | HEALTH CONTRACT: CRITICAL - some critical services missing",
+        "critical",
+    )
+
+    assert (severity, classification) == ("error", "background_degraded")
+
+
+def test_omni_tracer_demotes_health_contract_service_summary_lines():
+    from core.resilience.omni_tracer import _classify_forwarded_log
+
+    severity, classification = _classify_forwarded_log(
+        "log_critical",
+        "  [✓] [O] Metrics Exporter: alive",
+        "critical",
+        error_type="Aura.HealthContract",
+    )
+
+    assert (severity, classification) == ("error", "background_degraded")
+
+
+def test_dream_journal_thread_save_uses_local_file_write_governance(monkeypatch, tmp_path):
+    from core.adaptation import dream_journal
+    from core.governance_context import require_governance
+
+    calls = []
+
+    class Gateway:
+        def append_text(self, path, text, *, source):
+            token = require_governance(
+                f"file_write_gateway.append_text:{source}",
+                strict=True,
+                allowed_domains=("file_write",),
+            )
+            calls.append((Path(path).name, source, token.domain, "dream body" in text))
+
+    journal = dream_journal.DreamJournal.__new__(dream_journal.DreamJournal)
+    journal.journal_file = tmp_path / "dream_journal.txt"
+
+    monkeypatch.setattr(dream_journal, "get_file_write_gateway", lambda: Gateway())
+
+    journal._save_dream("dream body", [SimpleNamespace(description="seed memory")])
+
+    assert calls == [
+        (
+            "dream_journal.txt",
+            "adaptation.dream_journal.journal",
+            "file_write",
+            True,
+        )
+    ]
+
+
 @pytest.mark.parametrize("skill_kind", ["core", "legacy"])
 def test_train_self_collects_paired_user_context(tmp_path, skill_kind):
     if skill_kind == "core":
@@ -2017,6 +2086,38 @@ def test_dialogue_policy_rejects_generic_boilerplate_for_ordinary_user_facing_tu
 
     assert validation.ok is False
     assert "generic_assistant_language" in validation.violations
+
+
+def test_dialogue_policy_repairs_generic_boilerplate_without_model_retry():
+    from core.phases.dialogue_policy import enforce_dialogue_contract
+    from core.phases.response_contract import build_response_contract
+    from core.state.aura_state import AuraState
+
+    prompt = (
+        "In two concise paragraphs, explain what you are currently optimizing "
+        "for in this desktop session, and then ask one grounded follow-up question."
+    )
+    draft = (
+        "I can help with that. I am optimizing for live desktop coherence under "
+        "real user pressure. The important part is keeping Cortex, memory, state, "
+        "and governed tools on the same path."
+    )
+    contract = build_response_contract(AuraState(), prompt, is_user_facing=True)
+    called = False
+
+    async def retry_generate(_repair_block: str) -> str:
+        nonlocal called
+        called = True
+        return "retry should not be needed"
+
+    repaired, validation, retried = asyncio.run(
+        enforce_dialogue_contract(draft, contract, retry_generate=retry_generate)
+    )
+
+    assert called is False
+    assert retried is False
+    assert validation.ok
+    assert "I can help with that" not in repaired
 
 
 def test_grounded_introspection_does_not_trigger_on_casual_checkins():

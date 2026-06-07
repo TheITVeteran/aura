@@ -66,6 +66,27 @@ async def test_prune_keeps_recent_and_high_arousal_entries(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_private_phenomenology_writes_are_governed_under_strict_runtime(monkeypatch, tmp_path):
+    _register_quiet_runtime()
+    monkeypatch.setenv("AURA_GOVERNANCE_MODE", "strict")
+    manager = PrivatePhenomenology(
+        storage_path=str(tmp_path / "monologue.jsonl"),
+        max_storage_bytes=20,
+        keep_recent=1,
+        high_arousal_threshold=0.7,
+    )
+
+    reflection = await manager.reflect({"P": 0.1, "A": 0.2, "D": 0.3}, [{"event": "test"}])
+    pruned = await manager._prune_if_needed()
+
+    assert reflection
+    assert pruned is True
+    rows = [json.loads(line) for line in (tmp_path / "monologue.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert rows
+    assert rows[-1]["reflection"] == reflection
+
+
+@pytest.mark.asyncio
 async def test_llm_timeout_records_local_reflection(monkeypatch, tmp_path):
     class HangingEngine:
         async def think(self, **_kwargs):

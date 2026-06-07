@@ -71,6 +71,9 @@ class PerceptionDaemon:
         # Privacy configs
         self.privacy_mode = False
         self.redacted_patterns = ["password", "token", "key", "secret", "private"]
+        self._file_scan_root = Path(
+            os.getenv("AURA_PERCEPTION_FILE_SCAN_ROOT", str(Path.home() / ".aura"))
+        )
 
         logger.info("📡 PerceptionDaemon initialized.")
 
@@ -226,25 +229,11 @@ class PerceptionDaemon:
 
                 # 5. File System Activity Watcher
                 try:
-                    recent_files = []
-                    workspace = Path.home() / ".aura"
-                    if workspace.exists():
-                        for root, dirs, files in os.walk(workspace):
-                            dirs[:] = [d for d in dirs if not d.startswith(".")]
-                            for file in files:
-                                if file.startswith("."):
-                                    continue
-                                fp = Path(root) / file
-                                try:
-                                    mtime = fp.stat(follow_symlinks=False).st_mtime
-                                    if time.time() - mtime < self.check_interval:
-                                        recent_files.append(str(fp))
-                                except FileNotFoundError:
-                                    # Expected if a file is deleted or is a broken symlink
-                                    pass
-                                except OSError as e:
-                                    record_degradation("perception_daemon.file_stat", e)
-                                    logger.debug("File stat check failed for %s: %s", fp, e)
+                    recent_files = await asyncio.to_thread(
+                        self._scan_recent_file_mutations,
+                        self._file_scan_root,
+                        self.check_interval,
+                    )
                     if recent_files:
                         self.register_moment(
                             source="file_system",
@@ -336,6 +325,84 @@ class PerceptionDaemon:
                 record_degradation("perception_daemon.attention_loop", e)
                 logger.debug("Error in PerceptionDaemon attention loop: %s", e)
                 await asyncio.sleep(15.0)
+
+    def _scan_recent_file_mutations(self, workspace: Path, interval_s: float) -> list[str]:
+        """Return recent file mutations without blocking the asyncio loop.
+
+        The live desktop daemon used to run an unbounded ``os.walk`` directly
+        on the event loop. On a real Aura install, ``~/.aura`` can contain the
+        source tree, virtualenvs, artifacts, caches, and model metadata. This
+        scanner is intentionally bounded so perception stays useful without
+        becoming a foreground latency source.
+        """
+        try:
+            max_files = max(50, int(os.getenv("AURA_PERCEPTION_FILE_SCAN_MAX_FILES", "1500") or 1500))
+        except (TypeError, ValueError):
+            max_files = 1500
+        try:
+            max_seconds = max(0.05, float(os.getenv("AURA_PERCEPTION_FILE_SCAN_MAX_SECONDS", "0.5") or 0.5))
+        except (TypeError, ValueError):
+            max_seconds = 0.5
+
+        excluded_dirs = {
+            ".cache",
+            ".git",
+            ".hg",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".tox",
+            ".venv",
+            "__pycache__",
+            "cache",
+            "Caches",
+            "dist",
+            "logs",
+            "model_cache",
+            "models",
+            "node_modules",
+            "venv",
+        }
+        if os.getenv("AURA_PERCEPTION_SCAN_ARTIFACTS", "").strip().lower() not in {"1", "true", "yes"}:
+            excluded_dirs.add("artifacts")
+
+        workspace = Path(workspace).expanduser()
+        if not workspace.exists():
+            return []
+
+        started = time.monotonic()
+        now = time.time()
+        cutoff = now - max(float(interval_s or self.check_interval), 0.1)
+        scanned = 0
+        recent_files: list[str] = []
+
+        for root, dirs, files in os.walk(workspace, topdown=True, followlinks=False):
+            dirs[:] = [
+                d
+                for d in dirs
+                if not d.startswith(".") and d not in excluded_dirs
+            ]
+            for file in files:
+                if file.startswith("."):
+                    continue
+                scanned += 1
+                if scanned > max_files or (time.monotonic() - started) > max_seconds:
+                    return recent_files
+
+                fp = Path(root) / file
+                try:
+                    mtime = fp.stat(follow_symlinks=False).st_mtime
+                except FileNotFoundError:
+                    continue
+                except OSError as e:
+                    record_degradation("perception_daemon.file_stat", e)
+                    logger.debug("File stat check failed for %s: %s", fp, e)
+                    continue
+
+                if mtime >= cutoff:
+                    recent_files.append(str(fp))
+
+        return recent_files
 
     async def _check_clipboard(self) -> Optional[str]:
         try:

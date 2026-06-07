@@ -747,7 +747,6 @@ def _probe_mlx_runtime(force: bool = False) -> tuple[bool, str]:
     env = os.environ.copy()
     env.setdefault("PYTHONNOUSERSITE", "1")
     env["AURA_MLX_RUNTIME_PROBE"] = "1"
-    env["AURA_TEST_MODE"] = "1"
 
     # [STABILITY v57] One-shot retry for probe on failure (except timeout)
     for probe_attempt in range(2):
@@ -760,8 +759,8 @@ def _probe_mlx_runtime(force: bool = False) -> tuple[bool, str]:
                 env=env,
                 capture_output=True,
                 timeout=25.0,  # [STABILITY v57] Raised from 12.0s for high-load scenarios
-                source="certification_tooling:mlx_runtime_probe",
-                offline_tooling=True,
+                read_only=True,
+                source="runtime_probe:mlx_runtime_probe",
             )
             ok = completed.returncode == 0
             detail = _normalize_probe_detail(
@@ -1741,6 +1740,22 @@ class MLXLocalClient:
                     name=f"MLXWorker-{os.path.basename(self.model_path)}",
                 )
                 p.start()
+                try:
+                    from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+                    get_runtime_hygiene().register_process_handle(
+                        p,
+                        kind="multiprocessing",
+                        name=p.name,
+                        source="mlx_local_client.worker_owner",
+                        command=f"MLX worker for {os.path.basename(self.model_path)}",
+                    )
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    _record_mlx_degradation(
+                        exc,
+                        action="continued worker spawn after runtime hygiene registration failed",
+                        severity="warning",
+                    )
                 return p
 
             finally:
@@ -2373,7 +2388,7 @@ class MLXLocalClient:
         wait_started = time.monotonic()
         hard_cap = max(
             30.0,
-            float(os.environ.get("AURA_MLX_GENERATION_HARD_CAP_SECONDS", "600")),
+            float(os.environ.get("AURA_MLX_GENERATION_HARD_CAP_SECONDS", "240")),
         )
         while (time.monotonic() - wait_started) <= hard_cap:
             remaining = deadline.remaining

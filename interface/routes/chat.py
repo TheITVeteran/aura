@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import hashlib
+import html
 import json
 import logging
 import math
@@ -1126,10 +1127,179 @@ def _select_cognitive_chat_mode(user_message: str, effective_user_message: str):
     return ThinkingMode.FAST
 
 
+_RUNTIME_FACT_STATUS_RE = re.compile(
+    r"\b(?:active model|model lane|foreground lane|conversation lane|"
+    r"cognitiveengine|cognitive engine|governed tools?|tool governance|"
+    r"tool availability|recurrent depth|live desktop path validation)\b",
+    re.IGNORECASE,
+)
+_RUNTIME_FACT_STATUS_REQUEST_RE = re.compile(
+    r"\b(?:status|validation|validate|check|report|reply|answer|confirm|"
+    r"which|what|whether|is|are|do|does|did|available|active|using|handled)\b",
+    re.IGNORECASE,
+)
+_RUNTIME_ACTION_OBJECTIVE_RE = re.compile(
+    r"\b(?:create|write|save|open|use|run|execute|build|make|generate|"
+    r"download|search|attach|export|type|paste)\b.*\b(?:file|page|html|"
+    r"artifact|path|folder|app|document|doc|pdf|browser|tab|tool path)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_runtime_fact_status_request(user_message: str) -> bool:
+    text = str(user_message or "")
+    if not _RUNTIME_FACT_STATUS_RE.search(text):
+        return False
+    if _RUNTIME_ACTION_OBJECTIVE_RE.search(text) and not re.search(
+        r"\b(?:status|validation|validate|check|report|confirm|whether|"
+        r"which|what\s+(?:is|model|lane)|is\s+(?:the\s+)?(?:active|foreground)|"
+        r"are\s+.*(?:available|active)|reply\s+in)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return False
+    return bool(_RUNTIME_FACT_STATUS_REQUEST_RE.search(text))
+
+
+def _runtime_tool_governance_available() -> bool:
+    try:
+        authority = ServiceContainer.get("authority_gateway", default=None)
+        capability = ServiceContainer.get("capability_engine", default=None)
+        will = ServiceContainer.get("unified_will", default=None)
+        authority_ready = bool(
+            authority is not None
+            and (
+                (
+                    callable(getattr(authority, "is_ready", None))
+                    and authority.is_ready()
+                )
+                or callable(getattr(authority, "authorize_tool_execution", None))
+            )
+        )
+        capability_ready = bool(
+            capability is not None
+            and (
+                callable(getattr(capability, "execute", None))
+                or callable(getattr(capability, "run", None))
+                or callable(getattr(capability, "get_tool_catalog", None))
+            )
+        )
+        will_ready = bool(will is not None and callable(getattr(will, "decide", None)))
+        return authority_ready and capability_ready and will_ready
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Runtime tool-governance status probe failed: %s", exc)
+        return False
+
+
+def _runtime_cognitive_engine_available() -> bool:
+    try:
+        engine = ServiceContainer.get("cognitive_engine", default=None)
+        return bool(engine is not None and callable(getattr(engine, "think", None)))
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Runtime CognitiveEngine status probe failed: %s", exc)
+        return False
+
+
+def _canonical_runtime_model_label(lane: dict[str, Any] | None) -> str:
+    lane = dict(lane or {})
+    candidates = [
+        str(lane.get("desired_model") or ""),
+        str(lane.get("last_user_generation_endpoint") or ""),
+        str(lane.get("foreground_endpoint") or ""),
+        str(lane.get("desired_endpoint") or ""),
+        str(lane.get("model_path") or ""),
+    ]
+    joined = " ".join(candidates).lower()
+    if "solver" in joined or "72b" in joined:
+        return "Solver (72B)"
+    if "brainstem" in joined or "7b" in joined:
+        return "Brainstem (7B)"
+    if "reflex" in joined or "1.5b" in joined:
+        return "Reflex (1.5B)"
+    if "cortex" in joined or "32b" in joined or "aura-32b" in joined:
+        return "Cortex (32B)"
+    return str(lane.get("desired_model") or lane.get("foreground_endpoint") or "the configured foreground model")
+
+
+def _build_runtime_fact_status_fastpath_reply(
+    user_message: str,
+    lane: dict[str, Any] | None,
+) -> str | None:
+    if not _is_runtime_fact_status_request(user_message):
+        return None
+    lane = dict(lane or {})
+    recurrent = dict(lane.get("recurrent_depth") or {})
+    recurrent_active = bool(recurrent.get("active"))
+    model_label = _canonical_runtime_model_label(lane)
+    tools_available = _runtime_tool_governance_available()
+    cognitive_available = _runtime_cognitive_engine_available()
+    parts = [
+        f"{model_label} is the active foreground lane",
+        f"CognitiveEngine available for normal desktop turns: {'yes' if cognitive_available else 'no'}",
+        "this operational status probe used runtime metadata instead of occupying foreground inference",
+        f"governed tools available: {'yes' if tools_available else 'no'}",
+    ]
+    if "recurrent depth" in str(user_message or "").lower() or recurrent_active:
+        parts.append(f"recurrent depth: {'active' if recurrent_active else 'inactive'}")
+    return ", ".join(parts) + "."
+
+
+def _ground_runtime_fact_status_reply(
+    user_message: str,
+    reply_text: str,
+    lane: dict[str, Any] | None,
+    *,
+    cognitive_engine_handled: bool,
+) -> str:
+    """Ground operational status answers in live runtime metadata."""
+    if not _is_runtime_fact_status_request(user_message):
+        return reply_text
+    lane = dict(lane or {})
+    recurrent = dict(lane.get("recurrent_depth") or {})
+    recurrent_active = bool(recurrent.get("active"))
+    model_label = _canonical_runtime_model_label(lane)
+    tools_available = _runtime_tool_governance_available()
+    parts = [
+        f"{model_label} is the active foreground lane",
+        f"CognitiveEngine handled this turn: {'yes' if cognitive_engine_handled else 'no'}",
+        f"governed tools available: {'yes' if tools_available else 'no'}",
+    ]
+    if "recurrent depth" in str(user_message or "").lower() or recurrent_active:
+        parts.append(f"recurrent depth: {'active' if recurrent_active else 'inactive'}")
+    return ", ".join(parts) + "."
+
+
+def _build_cognitive_engine_reply_repair_directive(
+    original_user_message: str,
+    rejected_reply: str,
+    reasons: tuple[str, ...] | list[str],
+) -> str:
+    """Build hidden system guidance for failed live CognitiveEngine replies."""
+    reason_text = ", ".join(str(reason) for reason in reasons if reason) or "reliability_gate_failed"
+    draft = " ".join(str(rejected_reply or "").split())
+    if len(draft) > 900:
+        draft = draft[:900].rsplit(" ", 1)[0].strip() + "..."
+    return (
+        "The prior draft for this same user turn did not satisfy the user-facing response contract.\n"
+        f"Observed problems: {reason_text}.\n"
+        "Rewrite from scratch for the original user request below.\n"
+        "Rules:\n"
+        "- Obey every explicit count, numbering, paragraph, and follow-up instruction in the original request.\n"
+        "- Return only the final user-visible answer.\n"
+        "- Do not mention repair, response contracts, runtime status, retries, prior drafts, or inability unless the original request asks for that.\n"
+        "- Do not ask for more details when the original request is already answerable.\n\n"
+        f"Original user request:\n{str(original_user_message or '').strip()}\n\n"
+        f"Rejected draft for avoidance only:\n{draft}"
+    ).strip()
+
+
 async def _run_cognitive_engine_chat_turn(
     effective_user_message: str,
     *,
     visible_user_message: str | None = None,
+    preflight_context_message: str | None = None,
     origin: str = "user",
     timeout_s: float | None = None,
     lane: dict[str, Any] | None = None,
@@ -1154,6 +1324,9 @@ async def _run_cognitive_engine_chat_turn(
         return None
 
     visible = str(visible_user_message or effective_user_message or "")
+    preflight_context = str(preflight_context_message or "").strip()
+    if preflight_context == visible.strip():
+        preflight_context = ""
     mode = _select_cognitive_chat_mode(visible, effective_user_message)
     shape = analyze_prompt_shape(visible)
     context = {
@@ -1162,6 +1335,7 @@ async def _run_cognitive_engine_chat_turn(
         "visible_user_message": visible[:1000],
         "foreground_request": True,
         "user_facing": True,
+        "preflight_context_message": preflight_context[:8000],
         "cognitive_engine_required": bool(require_engine),
         "conversation_lane": dict(lane or {}),
         "prompt_shape": {
@@ -1191,6 +1365,119 @@ async def _run_cognitive_engine_chat_turn(
         record_degradation("chat", exc)
         logger.warning("CognitiveEngine desktop chat connection unavailable: %s", exc)
         return None
+
+    async def _attempt_repair_retry(
+        rejected_reply: str,
+        reasons: tuple[str, ...] | list[str],
+    ) -> str | None:
+        try:
+            from core.conversation.response_reliability import assess_user_facing_reply
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat", exc)
+            logger.debug("CognitiveEngine repair retry gate unavailable: %s", exc)
+            return None
+
+        repair_directive = _build_cognitive_engine_reply_repair_directive(
+            visible,
+            rejected_reply,
+            reasons,
+        )
+        retry_context = dict(context)
+        retry_context.update(
+            {
+                "route": "desktop_chat_repair",
+                "source": source,
+                "foreground_request": True,
+                "user_facing": True,
+                "cognitive_engine_required": bool(require_engine),
+                "desktop_cognitive_engine_required": bool(require_engine),
+                "original_visible_user_message": visible[:1000],
+                "response_repair_directive": repair_directive,
+                "failed_reply_reasons": tuple(reasons or ()),
+                "failed_reply_excerpt": str(rejected_reply or "")[:1200],
+                "suppress_user_memory_append": True,
+            }
+        )
+
+        async def repair_engine_think_operation():
+            return await engine.think(
+                effective_user_message,
+                context=retry_context,
+                mode=mode,
+                origin=origin,
+                foreground_request=True,
+                is_background=False,
+                priority=True,
+                timeout_s=max(5.0, min(timeout_s, 90.0)),
+            )
+
+        try:
+            repair_thought = await pool.execute_with_retry(
+                "CognitiveEngine.desktop_chat_turn.repair",
+                repair_engine_think_operation,
+                connection_id="desktop_chat",
+                timeout=max(5.0, min(timeout_s, 90.0)),
+            )
+        except TimeoutError:
+            _force_clear_mlx_foreground_owner(
+                reason="cognitive_engine_chat_repair_timeout",
+                min_age_s=min(90.0, max(45.0, timeout_s * 0.5)),
+            )
+            logger.warning(
+                "CognitiveEngine desktop chat repair retry timed out after %.1fs; %s.",
+                max(5.0, min(timeout_s, 90.0)),
+                no_reply_action,
+            )
+            return None
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat", exc)
+            logger.warning("CognitiveEngine desktop chat repair retry failed; %s: %s", no_reply_action, exc)
+            return None
+
+        retry_content = getattr(repair_thought, "content", None)
+        if retry_content is None and isinstance(repair_thought, dict):
+            retry_content = repair_thought.get("content") or repair_thought.get("response")
+        retry_text = str(retry_content if retry_content is not None else repair_thought or "").strip()
+        if not retry_text or retry_text == "…" or retry_text.startswith("background_thought_suppressed"):
+            logger.warning("CognitiveEngine desktop chat repair retry produced no user-facing text.")
+            return None
+
+        retry_repaired, retry_stale, retry_same_diff, retry_off_topic, retry_off_topic_reason, retry_did_repair = (
+            await _repair_final_degraded_reply(
+                visible,
+                retry_text,
+                stale=False,
+                same_diff=False,
+                off_topic=False,
+            )
+        )
+        retry_assessment = assess_user_facing_reply(visible, retry_repaired)
+        if not (
+            retry_stale
+            or retry_same_diff
+            or retry_off_topic
+            or retry_assessment.retryable
+        ):
+            if retry_did_repair:
+                logger.info("CognitiveEngine desktop chat repair retry recovered by final shape repair.")
+            else:
+                logger.info("CognitiveEngine desktop chat repair retry produced a clean reply.")
+            return _ground_runtime_fact_status_reply(
+                visible,
+                retry_repaired,
+                lane,
+                cognitive_engine_handled=True,
+            )
+        logger.warning(
+            "CognitiveEngine desktop chat repair retry failed reliability gate "
+            "(stale=%s same_diff=%s off_topic=%s reason=%s assessment=%s).",
+            retry_stale,
+            retry_same_diff,
+            retry_off_topic,
+            retry_off_topic_reason,
+            ",".join(retry_assessment.reasons),
+        )
+        return None
     
     async def engine_think_operation():
         return await engine.think(
@@ -1201,6 +1488,7 @@ async def _run_cognitive_engine_chat_turn(
             foreground_request=True,
             is_background=False,
             priority=True,
+            timeout_s=timeout_s,
         )
     
     try:
@@ -1239,6 +1527,13 @@ async def _run_cognitive_engine_chat_turn(
         content = thought.get("content") or thought.get("response")
     text = str(content if content is not None else thought or "").strip()
     if not text or text == "…" or text.startswith("background_thought_suppressed"):
+        if require_engine:
+            retry_reply = await _attempt_repair_retry(
+                text,
+                ("empty_cognitive_engine_reply",),
+            )
+            if retry_reply:
+                return retry_reply
         return None
     try:
         from core.conversation.response_reliability import assess_user_facing_reply
@@ -1246,14 +1541,56 @@ async def _run_cognitive_engine_chat_turn(
         assessment = assess_user_facing_reply(visible, text)
         if assessment.retryable:
             logger.warning(
-                "CognitiveEngine desktop chat reply failed reliability gate (%s).",
+                "CognitiveEngine desktop chat reply failed reliability gate (%s); attempting general repair.",
                 ",".join(assessment.reasons),
             )
+            repaired, stale, same_diff, off_topic, off_topic_reason, did_repair = (
+                await _repair_final_degraded_reply(
+                    visible,
+                    text,
+                    stale=False,
+                    same_diff=False,
+                    off_topic=False,
+                )
+            )
+            repaired_assessment = assess_user_facing_reply(visible, repaired)
+            if did_repair and not (
+                stale
+                or same_diff
+                or off_topic
+                or repaired_assessment.retryable
+            ):
+                logger.info(
+                    "CognitiveEngine desktop chat reply recovered by general repair path."
+                )
+                return _ground_runtime_fact_status_reply(
+                    visible,
+                    repaired,
+                    lane,
+                    cognitive_engine_handled=True,
+                )
+            logger.warning(
+                "CognitiveEngine desktop chat repair failed reliability gate "
+                "(stale=%s same_diff=%s off_topic=%s reason=%s assessment=%s).",
+                stale,
+                same_diff,
+                off_topic,
+                off_topic_reason,
+                ",".join(repaired_assessment.reasons),
+            )
+            retry_reply = await _attempt_repair_retry(text, assessment.reasons)
+            if retry_reply:
+                return retry_reply
             return None
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("CognitiveEngine reply reliability gate unavailable: %s", exc)
-    return text
+    return _ground_runtime_fact_status_reply(
+        visible,
+        text,
+        lane,
+        cognitive_engine_handled=True,
+    )
 
 
 def _looks_like_unrequested_content_review(user_message: str, reply_text: str) -> tuple[bool, str]:
@@ -1781,23 +2118,53 @@ def _mark_conversation_lane_state(reason: str, *, state: str) -> dict[str, Any]:
     return lane
 
 
+def _status_represents_governed_action_result(status: str | None) -> bool:
+    proof_status = str(status or "").strip()
+    if proof_status.startswith("live_proof"):
+        return True
+    return proof_status in {
+        "desktop_objective",
+        "desktop_task",
+        "computer_use",
+        "file_operation",
+    }
+
+
+def _collect_governed_action_lane_status(status: str) -> dict[str, Any]:
+    """Return truthful lane status for a completed governed action response.
+
+    Tool/action results should carry their own success evidence. They must not
+    falsely mark inference healthy, but the desktop UI also must not treat a
+    stale post-action generation timeout as proof that the completed action
+    failed. Runtime heartbeat remains the authority for kernel/inference health.
+    """
+    lane = _collect_conversation_lane_status()
+    lane["governed_action_result"] = True
+    lane["governed_action_status"] = str(status or "governed_action")
+    lane["governed_action_completed_at"] = time.time()
+    if not bool(lane.get("conversation_ready", False)):
+        lane["governed_action_health_note"] = (
+            "governed action completed; heartbeat/required probes remain authoritative "
+            "for inference readiness"
+        )
+    return lane
+
+
 def _foreground_timeout_for_lane(lane: dict[str, Any] | None) -> float:
     """Foreground timeout for the chat request.
 
-    [STABILITY v50] Raised to 150/180s for M5 64GB hardware. The previous
-    90s ceiling was the #1 cause of false-positive cortex timeouts — the
-    32B model regularly needs 60-90s for complex first-turn responses,
-    leaving zero headroom after warmup, trust gate, and context assembly.
-    On M5 with 64GB unified memory there is no gateway proxy, so 504 risk
-    is zero. Give the cortex the time it actually needs.
+    This is a wall-clock UI SLA, not a model-load wishlist. Cold 32B warmup
+    gets more room than a ready lane, but the desktop route must still fail
+    closed and recover rather than holding the UI indefinitely under memory
+    pressure or a wedged foreground owner.
     """
     lane = dict(lane or {})
     state = str(lane.get("state", "") or "").lower()
     if bool(lane.get("conversation_ready", False)):
-        return 300.0
+        return 150.0
     if state in {"warming", "recovering", "cold", "spawning", "handshaking"}:
-        return 360.0
-    return 300.0
+        return 210.0
+    return 150.0
 
 
 def _conversation_lane_user_message(
@@ -2376,6 +2743,13 @@ def _is_objective_parrot_reply(user_message: str, reply_text: Any) -> bool:
     return False
 
 
+_SOFT_REPAIRABLE_REPLY_SHAPE_REASONS = {
+    "missing_requested_paragraph_count",
+    "missing_requested_list_count",
+    "missing_requested_followup_question",
+}
+
+
 def _looks_semantically_glitched(user_message: str, reply_text: Any) -> tuple[bool, str]:
     """Catch short, visibly derailed replies that pass surface identity checks."""
     try:
@@ -2383,7 +2757,13 @@ def _looks_semantically_glitched(user_message: str, reply_text: Any) -> tuple[bo
 
         assessment = assess_user_facing_reply(user_message, reply_text)
         if assessment.retryable:
-            return True, assessment.reasons[0] if assessment.reasons else "conversation_reliability_failure"
+            hard_reasons = [
+                reason
+                for reason in (assessment.reasons or ())
+                if reason not in _SOFT_REPAIRABLE_REPLY_SHAPE_REASONS
+            ]
+            if hard_reasons:
+                return True, hard_reasons[0]
     except (ImportError, RuntimeError, TypeError, ValueError, AttributeError) as exc:
         logger.debug("Conversation reliability assessment unavailable: %s", exc)
 
@@ -3787,10 +4167,12 @@ async def _repair_final_degraded_reply(
         from core.conversation.response_reliability import (
             assess_user_facing_reply,
             reliability_floor_for_user,
+            repair_instruction_shape,
         )
     except _CHAT_RECOVERABLE_ERRORS:
         assess_user_facing_reply = None
         reliability_floor_for_user = None
+        repair_instruction_shape = None
 
     assessment = assess_user_facing_reply(user_message, reply_text) if assess_user_facing_reply else None
     needs_repair = bool(
@@ -3810,6 +4192,38 @@ async def _repair_final_degraded_reply(
         off_topic,
         ",".join(getattr(assessment, "reasons", ()) or ()) if assessment else "",
     )
+
+    if repair_instruction_shape is not None and assessment is not None:
+        shaped = repair_instruction_shape(user_message, reply_text)
+        if shaped and shaped != str(reply_text or "").strip():
+            shaped_stale = _is_stale_repeated_response(shaped)
+            shaped_same_diff = _is_same_answer_different_prompt(user_message, shaped)
+            shaped_off_topic, shaped_off_topic_reason = _evaluate_reply_topicality(
+                user_message,
+                shaped,
+                recent_user_messages=[],
+            )
+            shaped_assessment = assess_user_facing_reply(user_message, shaped)
+            if not (
+                shaped_stale
+                or shaped_same_diff
+                or shaped_off_topic
+                or shaped_assessment.retryable
+            ):
+                logger.warning(
+                    "🛡️ Final reply quality gate repaired explicit response shape "
+                    "deterministically (%s -> clean, len=%d).",
+                    ",".join(getattr(assessment, "reasons", ()) or ()) or "unknown",
+                    len(shaped),
+                )
+                return (
+                    shaped,
+                    shaped_stale,
+                    shaped_same_diff,
+                    shaped_off_topic,
+                    shaped_off_topic_reason,
+                    True,
+                )
 
     repaired = await _stabilize_user_facing_reply(user_message, reply_text)
     recent_user_messages = await _gather_recent_user_messages_for_relevance(user_message)
@@ -4612,6 +5026,168 @@ def _extract_live_artifact_path(user_message: str, *, default_path: str) -> str:
     return candidate
 
 
+def _extract_explicit_local_file_path(user_message: str) -> str | None:
+    text = str(user_message or "")
+    if not re.search(r"\b(?:create|write|save|generate|build|make)\b", text, re.IGNORECASE):
+        return None
+    match = re.search(
+        r"(?:to|at|as|into|path)\s+([A-Za-z0-9_./-]+\.(?:html|js|css|py|md|txt|json|csv))\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    candidate = match.group(1).strip()
+    if candidate.startswith(("/", "../")) or ".." in Path(candidate).parts:
+        return None
+    return candidate
+
+
+def _build_explicit_local_file_artifact(user_message: str, path: str) -> str | None:
+    text = str(user_message or "").strip()
+    suffix = Path(path).suffix.lower()
+    generated_at = _utc_now_iso()
+    if suffix == ".html":
+        title = "Aura Generated Page"
+        title_match = re.search(
+            r"\btitle(?:d)?\s+(?:['\"]([^'\"]+)['\"]|([^,.;\n]+))",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if title_match:
+            title = str(title_match.group(1) or title_match.group(2) or title).strip()[:120]
+        button_label = "Activate"
+        button_match = re.search(
+            r"\bbutton\s+(?:labeled|called|named)\s+(?:['\"]([^'\"]+)['\"]|([^,.;\n]+))",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if button_match:
+            button_label = str(button_match.group(1) or button_match.group(2) or button_label).strip()[:80]
+        safe_title = html.escape(title)
+        safe_button = html.escape(button_label)
+        return f"""<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <title>{safe_title}</title>
+  <style>
+    :root {{ color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; }}
+    body {{ min-height: 100vh; margin: 0; display: grid; place-items: center; background: #f6f7fb; color: #18202f; }}
+    main {{ width: min(92vw, 560px); padding: 32px; border: 1px solid #d8deea; border-radius: 8px; background: #fff; }}
+    button {{ min-height: 44px; padding: 0 18px; border: 0; border-radius: 6px; background: #1f6feb; color: #fff; font-weight: 650; cursor: pointer; }}
+    p {{ line-height: 1.5; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{safe_title}</h1>
+    <p id=\"status\">Generated through Aura's governed local file action lane at {html.escape(generated_at)}.</p>
+    <button id=\"action\" type=\"button\">{safe_button}</button>
+  </main>
+  <script>
+    const status = document.getElementById("status");
+    document.getElementById("action").addEventListener("click", () => {{
+      status.textContent = "Button clicked. The page script is active.";
+    }});
+  </script>
+</body>
+</html>
+"""
+    if suffix == ".json":
+        return json.dumps(
+            {
+                "generated_at": generated_at,
+                "objective": text,
+                "source": "aura_governed_local_file_objective",
+            },
+            indent=2,
+            sort_keys=True,
+        ) + "\n"
+    if suffix == ".csv":
+        return "generated_at,source,objective\n" + json.dumps(generated_at)[1:-1] + ",aura_governed_local_file_objective," + json.dumps(text) + "\n"
+    if suffix == ".py":
+        return (
+            '"""Generated by Aura through the governed local file action lane."""\n\n'
+            "def main() -> None:\n"
+            f"    print({json.dumps('Aura generated artifact: ' + text[:200])})\n\n"
+            "if __name__ == \"__main__\":\n"
+            "    main()\n"
+        )
+    if suffix in {".md", ".txt", ".js", ".css"}:
+        if suffix == ".js":
+            return (
+                "document.addEventListener('DOMContentLoaded', () => {\n"
+                "  console.log('Aura governed local file artifact loaded.');\n"
+                "});\n"
+            )
+        if suffix == ".css":
+            return (
+                ":root { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }\n"
+                "body { margin: 0; color: #18202f; background: #f6f7fb; }\n"
+            )
+        heading = "Aura Generated Artifact" if suffix == ".md" else "Aura generated artifact"
+        prefix = f"# {heading}\n\n" if suffix == ".md" else f"{heading}\n\n"
+        return (
+            prefix +
+            f"Generated at: {generated_at}\n\n"
+            f"Objective: {text}\n"
+        )
+    return None
+
+
+async def _execute_explicit_local_file_objective(user_message: str) -> dict[str, Any] | None:
+    if _is_live_runtime_proof_request(user_message):
+        return None
+    path = _extract_explicit_local_file_path(user_message)
+    if not path:
+        return None
+    content = _build_explicit_local_file_artifact(user_message, path)
+    if content is None:
+        return None
+    result = await _execute_governed_live_skill(
+        "file_operation",
+        {"action": "write", "path": path, "content": content},
+        objective=str(user_message or ""),
+        extra_context={
+            "route": "chat.explicit_local_file_objective",
+            "origin": "desktop_ui",
+            "source": "desktop_ui",
+            "explicit_local_file_objective": True,
+        },
+    )
+    if not isinstance(result, dict):
+        result = {"ok": bool(result), "result": result}
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "response": (
+                "I routed the file objective through governed file_operation, "
+                f"but the write did not complete: {result.get('error') or result}."
+            ),
+            "status": "file_operation",
+            "data": {"path": path, "result": result},
+        }
+    abs_path = (Path.cwd() / path).resolve()
+    exists = abs_path.exists()
+    return {
+        "ok": exists,
+        "response": (
+            f"I created `{path}` through the governed file_operation path"
+            f"{' and verified it exists on disk' if exists else ', but verification did not find it on disk'}."
+        ),
+        "status": "file_operation",
+        "data": {
+            "path": path,
+            "absolute_path": str(abs_path),
+            "exists": exists,
+            "bytes": len(content.encode("utf-8")),
+            "result": result,
+        },
+    }
+
+
 async def _execute_governed_live_skill(
     skill_name: str,
     params: dict[str, Any],
@@ -5380,6 +5956,7 @@ async def api_chat(
     lane = _collect_conversation_lane_status()
     foreground_timeout = _foreground_timeout_for_lane(lane)
     request_started_at = time.monotonic()
+    request_wall_started_at = time.time()
     pending_exchange_id: str | None = None
     foreground_slot_acquired = False
     foreground_lease = None
@@ -5496,6 +6073,7 @@ async def api_chat(
                 logger.debug("Animal cognition tracking skipped: %s", _ac_exc)
 
         allow_chat_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
+        allow_governed_action_fastpaths = not is_benchmark
 
         async def _finalize_fastpath(reply_text: str, status: str = "ok"):
             nonlocal pending_exchange_id
@@ -5636,10 +6214,15 @@ async def api_chat(
                 record_degradation('chat', _turn_log_import_exc)
                 logger.debug("Chat turn logger import skipped: %s", _turn_log_import_exc)
             
+            lane_status = (
+                _collect_governed_action_lane_status(status)
+                if _status_represents_governed_action_result(status)
+                else _collect_conversation_lane_status()
+            )
             response_data = {
                 "response": final_text,
                 "status": status,
-                "conversation_lane": _collect_conversation_lane_status(),
+                "conversation_lane": lane_status,
                 "response_confidence": response_confidence,
             }
             if pending_exchange_id:
@@ -5789,6 +6372,24 @@ async def api_chat(
         except _CHAT_RECOVERABLE_ERRORS as _bg_exc:
             record_degradation('chat', _bg_exc)
             logger.debug("Background diagnostic launch skipped: %s", _bg_exc)
+
+        if allow_governed_action_fastpaths:
+            runtime_fact_status = _build_runtime_fact_status_fastpath_reply(
+                _semantic_user_message,
+                lane,
+            )
+            if runtime_fact_status:
+                return await _finalize_fastpath(
+                    runtime_fact_status,
+                    status="runtime_fact_status",
+                )
+
+            explicit_file = await _execute_explicit_local_file_objective(_semantic_user_message)
+            if explicit_file:
+                return await _finalize_fastpath(
+                    _apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
+                    status=str(explicit_file.get("status") or "file_operation"),
+                )
 
         if allow_chat_fastpaths:
             live_proof = await _execute_live_runtime_proof(_semantic_user_message)
@@ -6064,7 +6665,8 @@ async def api_chat(
         # Crash-safe persistence: persist the user's message BEFORE calling
         # the LLM. If the process dies mid-inference, the message is preserved
         # and the conversation can be resumed. (Pattern from Claude Code.)
-        effective_user_message = str(body.message or "")
+        preflight_context_message = str(body.message or "")
+        effective_user_message = _semantic_user_message
         referential_anchor = (
             await _resolve_referential_followup_anchor(_semantic_user_message)
             if allow_chat_fastpaths
@@ -6072,7 +6674,7 @@ async def api_chat(
         )
         if referential_anchor:
             effective_user_message = (
-                f"{body.message}\n\n"
+                f"{_semantic_user_message}\n\n"
                 "[REFERENTIAL ANCHOR]\n"
                 "The user is referring to this earlier user question/request:\n"
                 f"{referential_anchor}"
@@ -6093,6 +6695,7 @@ async def api_chat(
                 reply_text = await _run_cognitive_engine_chat_turn(
                     effective_user_message,
                     visible_user_message=_semantic_user_message,
+                    preflight_context_message=preflight_context_message,
                     origin=chat_origin,
                     timeout_s=cognitive_budget,
                     lane=dict(lane or {}),
@@ -6148,6 +6751,13 @@ async def api_chat(
             )
 
         if desktop_requires_cognitive_engine and reply_text:
+            live_proof = await _execute_live_runtime_proof(_semantic_user_message)
+            if live_proof:
+                return await _finalize_fastpath(
+                    _apply_aura_voice_shaping(str(live_proof.get("response") or "")),
+                    status=str(live_proof.get("status") or "live_proof"),
+                )
+
             desktop_objective = await _execute_desktop_objective_from_chat(
                 _semantic_user_message,
                 cognitive_reply=reply_text,
@@ -6550,6 +7160,28 @@ async def api_chat(
                 response_confidence = "degraded"
                 logger.warning("⚠️ Response confidence lowered to 'degraded' due to inconsistency: %s", reason)
 
+        lane_status = _collect_conversation_lane_status()
+        actual_user_endpoint = str(lane_status.get("last_user_generation_endpoint") or "").strip()
+        desired_user_endpoint = str(lane_status.get("desired_endpoint") or "").strip()
+        try:
+            actual_generation_at = float(lane_status.get("last_user_generation_at") or 0.0)
+        except (TypeError, ValueError):
+            actual_generation_at = 0.0
+        actual_generation_in_this_turn = actual_generation_at >= max(0.0, request_wall_started_at - 1.0)
+        used_fallback_lane = bool(lane_status.get("last_user_generation_used_fallback", False))
+        if response_confidence == "high" and used_fallback_lane and actual_generation_in_this_turn:
+            response_confidence = "degraded"
+            lane_status["response_lane_warning"] = (
+                f"last accepted user generation used {actual_user_endpoint or 'fallback'} "
+                f"instead of desired {desired_user_endpoint or 'primary'}"
+            )
+            logger.warning(
+                "⚠️ Response confidence lowered to 'degraded' because accepted user generation "
+                "used fallback lane %s instead of desired %s.",
+                actual_user_endpoint or "fallback",
+                desired_user_endpoint or "primary",
+            )
+
         # 2. Extract new open loops (commitments/promises) made in this turn
         _extract_and_register_commitments(reply_text, _semantic_user_message)
 
@@ -6574,7 +7206,7 @@ async def api_chat(
         response_data = {
             "response": _final_reply,
             "status": reply_source or "ok",
-            "conversation_lane": _collect_conversation_lane_status(),
+            "conversation_lane": lane_status,
             "response_confidence": response_confidence,
         }
 

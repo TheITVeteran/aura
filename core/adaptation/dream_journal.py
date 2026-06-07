@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from core.dual_memory import DualMemorySystem, Episode
 from core.container import ServiceContainer
+from core.governance_context import local_internal_governed_scope
 from core.health.degraded_events import record_degraded_event
 from core.runtime.file_write_gateway import get_file_write_gateway
 
@@ -233,8 +234,13 @@ Focus heavily on the emotional resonances, contradictions, repeated motifs, and 
             f"================================\n\n"
         )
         
-        get_file_write_gateway().append_text(
-            self.journal_file,
-            entry,
-            source="adaptation.dream_journal.journal",
-        )
+        with local_internal_governed_scope(
+            "adaptation.dream_journal.journal",
+            domain="file_write",
+            receipt_prefix="dream-journal-append",
+        ):
+            get_file_write_gateway().append_text(
+                self.journal_file,
+                entry,
+                source="adaptation.dream_journal.journal",
+            )

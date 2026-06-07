@@ -74,6 +74,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
 
@@ -1596,11 +1597,15 @@ class PhenomenologicalExperiencer:
             }
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().append_text(
-                archive_path,
-                json.dumps(entry) + "\n",
-                source="phenomenological_experiencer.persist_moment",
-            )
+            with local_internal_governed_scope(
+                "phenomenological_experiencer.persist_moment",
+                domain="file_write",
+            ):
+                get_file_write_gateway().append_text(
+                    archive_path,
+                    json.dumps(entry) + "\n",
+                    source="phenomenological_experiencer.persist_moment",
+                )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation("phenomenological_experiencer", e)
             logger.debug("Phenomenal archive write error: %s", e)
@@ -1635,11 +1640,15 @@ class PhenomenologicalExperiencer:
 
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
-                target_path,
-                json.dumps(memory, indent=2),
-                source="phenomenological_experiencer.save_memory",
-            )
+            with local_internal_governed_scope(
+                "phenomenological_experiencer.save_memory",
+                domain="file_write",
+            ):
+                get_file_write_gateway().write_text(
+                    target_path,
+                    json.dumps(memory, indent=2),
+                    source="phenomenological_experiencer.save_memory",
+                )
             logger.info("Phenomenal memory saved")
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation("phenomenological_experiencer", e)

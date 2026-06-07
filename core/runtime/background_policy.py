@@ -145,24 +145,24 @@ class BackgroundPolicyProfile:
 
 
 THOUGHT_BACKGROUND_POLICY = BackgroundPolicyProfile(
-    min_idle_seconds=5.0,
+    min_idle_seconds=30.0,
     max_memory_percent=85.0,
     max_failure_pressure=0.50,
-    require_conversation_ready=False,
+    require_conversation_ready=True,
 )
 
 RESEARCH_BACKGROUND_POLICY = BackgroundPolicyProfile(
-    min_idle_seconds=15.0,
+    min_idle_seconds=900.0,
     max_memory_percent=85.0,
     max_failure_pressure=0.50,
-    require_conversation_ready=False,
+    require_conversation_ready=True,
 )
 
 MAINTENANCE_BACKGROUND_POLICY = BackgroundPolicyProfile(
-    min_idle_seconds=60.0,
+    min_idle_seconds=1800.0,
     max_memory_percent=92.0,
     max_failure_pressure=0.75,
-    require_conversation_ready=False,
+    require_conversation_ready=True,
 )
 
 

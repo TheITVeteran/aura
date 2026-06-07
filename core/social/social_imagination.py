@@ -19,6 +19,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.governance_context import local_internal_governed_scope
+
 logger = logging.getLogger("Aura.SocialImagination")
 
 _FIRST_PERSON = re.compile(r"\b(i|me|my|mine|we|our|us)\b", re.IGNORECASE)
@@ -230,12 +232,13 @@ class SocialImagination:
             }
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
-                self._storage_path,
-                json.dumps(payload, indent=2),
-                encoding="utf-8",
-                source="social_imagination.save",
-            )
+            with local_internal_governed_scope("social_imagination.save", domain="file_write"):
+                get_file_write_gateway().write_text(
+                    self._storage_path,
+                    json.dumps(payload, indent=2),
+                    encoding="utf-8",
+                    source="social_imagination.save",
+                )
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('social_imagination', exc)
             logger.error("SocialImagination save failed: %s", exc)

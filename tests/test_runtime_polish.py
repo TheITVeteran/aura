@@ -121,6 +121,14 @@ def test_gui_actor_watchdog_uses_readiness_heartbeat():
     assert "REQUIRED_HEALTH_PROBE_GROUPS" in gui_actor
 
 
+def test_desktop_api_wait_accounts_for_32b_warmup():
+    aura_main = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
+
+    assert 'AURA_DESKTOP_HEALTH_WAIT_SECONDS", "90"' in aura_main
+    assert "GUI launch may be degraded" not in aura_main
+    assert "readiness heartbeat gating" in aura_main
+
+
 def test_gui_actor_rejects_heartbeat_without_required_probe_groups():
     from interface.gui_actor import _heartbeat_response_healthy
 
@@ -453,6 +461,8 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "requiredRuntimeProbesPass(requiredProbes)" in aura_js
     assert "memory: ['state_repository', 'memory_facade', 'memory_write_gateway']" in aura_js
     assert "runtimeHealthBlockers(payload).length > 0" in aura_js
+    assert "governed_action_result" in aura_js
+    assert "const preservesHeartbeatLane = governedActionResult" in aura_js
     assert "runtime_health_unverified" in aura_js
     assert "applyRuntimeHeartbeat(data)" in aura_js
     assert "setConnectionVisual('online');\n        dismissSplash();" not in aura_js
@@ -665,6 +675,29 @@ async def test_event_bus_optional_redis_publish_failure_keeps_local_bus_healthy(
     assert bus.get_status()["remote_degraded"] is True
     assert bus.get_status()["stats"]["remote_errors"] >= 1
     assert "redis offline" in str(bus.get_status()["stats"]["remote_last_error"])
+
+
+@pytest.mark.asyncio
+async def test_event_bus_shutdown_skips_remote_publish_without_false_degradation():
+    from core.event_bus import AuraEventBus
+
+    class RedisShouldNotPublish:
+        called = False
+
+        async def publish(self, *_args, **_kwargs):
+            self.called = True
+
+    bus = AuraEventBus()
+    bus._use_redis = True
+    redis = RedisShouldNotPublish()
+    bus._redis = redis
+    bus._closing = True
+
+    await bus.publish("runtime/test", {"ok": True})
+
+    assert redis.called is False
+    assert bus.degraded is False
+    assert bus.get_status()["stats"]["remote_errors"] == 0
 
 
 @pytest.mark.asyncio

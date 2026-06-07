@@ -261,6 +261,38 @@ def test_runtime_hygiene_adopts_late_active_children_before_flagging_rogue_proce
     assert summary["rogue_child_processes"] == 0
 
 
+def test_runtime_hygiene_explicit_process_owner_registration_deduplicates_by_pid():
+    class _OwnedProc:
+        pid = 43212
+        name = "MLXWorker-test"
+
+        def is_alive(self):
+            return True
+
+    hygiene = RuntimeHygieneManager()
+    proc = _OwnedProc()
+
+    hygiene.register_process_handle(
+        proc,
+        kind="multiprocessing",
+        name="MLXWorker-test",
+        source="test.worker_owner",
+        command="MLX worker for test",
+    )
+    hygiene.register_process_handle(
+        proc,
+        kind="multiprocessing",
+        name="MLXWorker-test",
+        source="test.worker_owner",
+        command="MLX worker for test",
+    )
+
+    summary = hygiene._process_summary()
+
+    assert summary["active_registered"] == 1
+    assert summary["active_multiprocessing"] == 1
+
+
 def test_runtime_hygiene_process_iter_system_error_is_nonfatal(monkeypatch):
     hygiene = RuntimeHygieneManager()
     hygiene._proc = SimpleNamespace(children=lambda recursive=True: [])

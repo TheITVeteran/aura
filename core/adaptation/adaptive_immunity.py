@@ -77,6 +77,29 @@ def _record_adaptive_immunity_degradation(
     )
 
 
+def _maintenance_background_deferral_reason() -> str:
+    """Return the runtime background-policy reason for deferring heavy immune work."""
+    try:
+        from core.container import ServiceContainer
+        from core.runtime.background_policy import (
+            MAINTENANCE_BACKGROUND_POLICY,
+            background_activity_reason,
+        )
+
+        orchestrator = ServiceContainer.get("orchestrator", default=None)
+        return str(
+            background_activity_reason(
+                orchestrator,
+                profile=MAINTENANCE_BACKGROUND_POLICY,
+                allow_no_user_anchor=True,
+            )
+            or ""
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("Adaptive immune background policy unavailable: %s", exc)
+        return ""
+
+
 def _json_safe(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -893,6 +916,8 @@ class AdaptiveImmuneSystem:
         self._observation_count = 0
         self._species_count = 1
         self._last_dream_at = 0
+        self._last_dream_defer_log_at = 0.0
+        self._last_dream_defer_reason = ""
         self._state_dir = self._resolve_state_dir(state_dir)
         self._state_dir.mkdir(parents=True, exist_ok=True)
         self._state_path = self._state_dir / "adaptive_immune_state.json"
@@ -1402,8 +1427,12 @@ class AdaptiveImmuneSystem:
 
             dream_consolidated = False
             if self._observation_count - self._last_dream_at >= self.cfg.dream_every_observations:
-                self.dream_consolidate()
-                dream_consolidated = True
+                defer_reason = _maintenance_background_deferral_reason()
+                if defer_reason:
+                    self._log_dream_deferred(defer_reason)
+                else:
+                    self.dream_consolidate()
+                    dream_consolidated = True
 
             activated_cells = [
                 {
@@ -1444,7 +1473,26 @@ class AdaptiveImmuneSystem:
                 }
             )
             self._save_state()
-            return response, top_cell
+        return response, top_cell
+
+    def _log_dream_deferred(self, defer_reason: str) -> None:
+        now = time.monotonic()
+        reason_key = "boot_grace" if defer_reason.startswith("boot_grace_") else defer_reason
+        if (
+            reason_key == self._last_dream_defer_reason
+            and now - self._last_dream_defer_log_at < 30.0
+        ):
+            logger.debug(
+                "AdaptiveImmuneSystem: dream consolidation still deferred — %s.",
+                defer_reason,
+            )
+            return
+        self._last_dream_defer_reason = reason_key
+        self._last_dream_defer_log_at = now
+        logger.info(
+            "AdaptiveImmuneSystem: dream consolidation deferred — %s.",
+            defer_reason,
+        )
 
     def _reinforce_without_execution(self, antigen: Antigen, response: ImmuneResponse) -> None:
         with self._lock:

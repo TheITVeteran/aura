@@ -298,21 +298,45 @@ class AuraEventBus:
                         "AuraEventBus: failed to cancel stale Redis listener task: %s",
                     )
             if old_redis:
-                async def safe_close(r):
-                    try:
-                        await r.aclose()
-                    except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
-                        self._record_remote_error(
-                            exc,
-                            "AuraEventBus: stale Redis close failed: %s",
-                        )
-                try:
-                    current_loop.create_task(safe_close(old_redis))
-                except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
+                self._dispose_stale_redis_client(old_redis, redis_loop)
+
+    def _dispose_stale_redis_client(
+        self,
+        redis_client: Any,
+        redis_loop: asyncio.AbstractEventLoop | None,
+    ) -> None:
+        """Dispose a Redis client without awaiting it from the wrong event loop."""
+        async def safe_close(r: Any) -> None:
+            try:
+                await r.aclose()
+            except asyncio.CancelledError:
+                raise
+            except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
+                if self._closing:
+                    logger.debug("AuraEventBus: stale Redis close skipped during shutdown: %s", exc)
+                    return
+                self._record_remote_error(
+                    exc,
+                    "AuraEventBus: stale Redis close failed: %s",
+                )
+
+        if redis_loop and redis_loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(safe_close(redis_client), redis_loop)
+                return
+            except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
+                if not self._closing:
                     self._record_remote_error(
                         exc,
-                        "AuraEventBus: error scheduling old Redis close: %s",
+                        "AuraEventBus: error scheduling stale Redis close on owner loop: %s",
                     )
+                    return
+                logger.debug("AuraEventBus: stale Redis owner-loop close skipped during shutdown: %s", exc)
+                return
+
+        logger.debug(
+            "AuraEventBus: dropping stale Redis client bound to closed or unknown loop without cross-loop close."
+        )
 
     async def _setup_redis(self):
         """Initialize Redis connection and start listener task."""
@@ -520,6 +544,8 @@ class AuraEventBus:
         await self._publish_local(topic, data, priority)
         
         # 2. Remote delivery via Redis (H-12)
+        if self._closing:
+            return
         if self._use_redis:
             self._check_loop_mismatch()
             if not self._redis:

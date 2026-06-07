@@ -126,6 +126,56 @@ async def test_telemetry_stream_emits_idle_heartbeat_and_unsubscribes(monkeypatc
     assert unsubscribed == [queue]
 
 
+def test_websocket_runtime_heartbeat_requires_conversation_lane(monkeypatch):
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+    from interface import websocket_manager
+    from interface.routes import chat as chat_routes
+
+    required_probes = {
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = True
+
+    monkeypatch.setattr(
+        "core.runtime.health_contract.runtime_health_report",
+        lambda: {
+            "healthy": True,
+            "status": "healthy",
+            "required_probes": required_probes,
+            "failures": {"critical": [], "important": [], "optional": []},
+            "services": [
+                {
+                    "container_key": component,
+                    "present": True,
+                    "liveness": "ok",
+                }
+                for group, components in REQUIRED_HEALTH_PROBE_GROUPS.items()
+                for component in components
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": False,
+            "state": "failed",
+            "last_failure_reason": "desktop_cognitive_engine_required_no_reply",
+        },
+    )
+    monkeypatch.setattr(chat_routes, "_conversation_lane_is_standby", lambda _lane: False)
+
+    payload = websocket_manager.runtime_heartbeat_payload("heartbeat")
+
+    assert payload["healthy"] is False
+    assert payload["status"] == "unhealthy"
+    assert payload["runtime_probe_healthy"] is True
+    assert payload["conversation_ready"] is False
+    assert "conversation_ready" in payload["blockers"]
+    assert "conversation_lane:failed" in payload["blockers"]
+
+
 @pytest.mark.asyncio
 async def test_runtime_heartbeat_fails_closed_when_required_probes_fail(monkeypatch):
     from interface.routes import system as system_routes

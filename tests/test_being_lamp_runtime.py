@@ -333,6 +333,38 @@ def test_aura_now_policy_blocks_consequential_will_action() -> None:
     assert "aura_now_ownership_low" in " ".join(decision.constraints)
 
 
+def test_aura_now_constrains_low_risk_interaction_memory_instead_of_dropping_it() -> None:
+    runtime = BeingRuntime()
+    now = SimpleNamespace(
+        body=SimpleNamespace(total_pressure=0.1),
+        affect=SimpleNamespace(distress=0.1, dominant_drive="coherence"),
+        prediction=SimpleNamespace(controllability=0.7, free_energy=0.1),
+        workspace=SimpleNamespace(ignition_strength=0.05, broadcast_targets=(), winner="none"),
+        ownership=SimpleNamespace(agency_confidence=0.8),
+        state_hash="low_workspace_hash",
+        tick=7,
+    )
+
+    continuity_policy = runtime.action_policy(
+        now,
+        domain="memory_write",
+        priority=0.5,
+        context={"conversation_continuity": True, "high_risk_memory_write": False},
+    )
+    generic_memory_policy = runtime.action_policy(now, domain="memory_write", priority=0.5)
+    high_risk_policy = runtime.action_policy(
+        now,
+        domain="memory_write",
+        priority=0.5,
+        context={"conversation_continuity": True, "high_risk_memory_write": True},
+    )
+
+    assert continuity_policy["outcome"] == "constrain"
+    assert "continuity_memory_write_constrained:not_deferred" in continuity_policy["constraints"]
+    assert generic_memory_policy["outcome"] == "defer"
+    assert high_risk_policy["outcome"] == "defer"
+
+
 def test_introspection_verifier_rejects_unsupported_overclaim() -> None:
     runtime = BeingRuntime()
     now = runtime.sample(AuraState.default(), objective="simple status")

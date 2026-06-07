@@ -1,6 +1,7 @@
 import asyncio
 import pytest
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 from core.perception.perception_daemon import PerceptionDaemon, get_perception_daemon
@@ -118,3 +119,47 @@ async def test_perception_daemon_active_perceive():
     res_bad = await daemon.active_perceive("file_status", "non_existent_file.xyz")
     assert res_bad["ok"] is False
     assert res_bad["error"] == "file_not_found"
+
+
+def test_perception_daemon_file_scan_is_bounded_and_prunes_heavy_dirs(monkeypatch, tmp_path):
+    daemon = PerceptionDaemon(check_interval_s=10.0)
+    recent = tmp_path / "recent.txt"
+    recent.write_text("changed", encoding="utf-8")
+    nested = tmp_path / ".venv" / "ignored.txt"
+    nested.parent.mkdir()
+    nested.write_text("ignored", encoding="utf-8")
+
+    monkeypatch.setenv("AURA_PERCEPTION_FILE_SCAN_MAX_FILES", "2")
+    monkeypatch.setenv("AURA_PERCEPTION_FILE_SCAN_MAX_SECONDS", "1.0")
+
+    found = daemon._scan_recent_file_mutations(tmp_path, interval_s=10.0)
+
+    assert str(recent) in found
+    assert str(nested) not in found
+
+
+@pytest.mark.asyncio
+async def test_perception_daemon_file_scan_runs_off_event_loop(monkeypatch, tmp_path):
+    daemon = PerceptionDaemon(check_interval_s=0.1)
+    calls: list[tuple[Path, float]] = []
+
+    async def _fake_sleep(_delay):
+        daemon.running = False
+
+    async def _fake_to_thread(func, *args):
+        calls.append((args[0], args[1]))
+        return []
+
+    async def _none():
+        return None
+
+    monkeypatch.setattr("core.perception.perception_daemon.asyncio.sleep", _fake_sleep)
+    monkeypatch.setattr("core.perception.perception_daemon.asyncio.to_thread", _fake_to_thread)
+    monkeypatch.setattr(daemon, "_check_active_window", _none)
+    monkeypatch.setattr(daemon, "_check_clipboard", _none)
+    daemon._file_scan_root = tmp_path
+    daemon.running = True
+
+    await daemon._main_perceptual_loop()
+
+    assert calls == [(tmp_path, 0.1)]

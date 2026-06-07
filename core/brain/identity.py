@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field, asdict
 
+from core.governance_context import local_internal_governed_scope
+
 logger = logging.getLogger("Brain.Identity")
 
 @dataclass
@@ -109,11 +111,12 @@ class IdentityService:
             self.data_path.parent.mkdir(parents=True, exist_ok=True)
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
-                self.data_path,
-                json.dumps(data, indent=4),
-                source="brain.identity.save",
-            )
+            with local_internal_governed_scope("brain.identity.save", domain="file_write"):
+                get_file_write_gateway().write_text(
+                    self.data_path,
+                    json.dumps(data, indent=4),
+                    source="brain.identity.save",
+                )
             logger.info("Identity state persisted.")
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('identity', e)

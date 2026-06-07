@@ -116,6 +116,8 @@ class IntentRouter:
         skill_name: str,
         params: Optional[Dict[str, Any]] = None,
         engine: Any = None,
+        *,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute a concrete skill through the governed capability engine.
 
@@ -131,14 +133,15 @@ class IntentRouter:
                 "error": "Capability engine unavailable for routed skill execution.",
                 "skill": str(skill_name or ""),
             }
+        execution_context = dict(context or {})
+        execution_context["origin"] = str(execution_context.get("origin") or "api")
+        execution_context["route"] = str(execution_context.get("route") or "intent_router.route_execution")
+        execution_context["foreground_request"] = True
+        execution_context["user_explicitly_authorized"] = True
+        execution_context["user_requested_action"] = True
+
         return await capability_engine.execute(
             str(skill_name or "").strip(),
             dict(params or {}),
-            context={
-                "origin": "api",
-                "route": "intent_router.route_execution",
-                "foreground_request": True,
-                "user_explicitly_authorized": True,
-                "user_requested_action": True,
-            },
+            context=execution_context,
         )

@@ -24,6 +24,7 @@ import traceback
 from importlib import import_module
 from pathlib import Path
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.task_ownership import create_tracked_task
@@ -241,11 +242,15 @@ class StallWatchdog(threading.Thread):
             buffer.write(f"\nThread ID: {thread_id}\n")
             traceback.print_stack(frame, file=buffer)
         try:
-            get_file_write_gateway().write_text(
-                dump_file,
-                buffer.getvalue(),
-                source="resilience.stall_watchdog.traceback_dump",
-            )
+            with local_internal_governed_scope(
+                "resilience.stall_watchdog.traceback_dump",
+                domain="file_write",
+            ):
+                get_file_write_gateway().write_text(
+                    dump_file,
+                    buffer.getvalue(),
+                    source="resilience.stall_watchdog.traceback_dump",
+                )
         except _STALL_WATCHDOG_ERRORS as exc:
             _record_watchdog_degradation(
                 exc,

@@ -112,10 +112,10 @@ class LocalPipeBus:
 
     def _fire_and_forget_write_timeout_s(self) -> float:
         try:
-            value = float(os.getenv("AURA_PIPE_FF_WRITE_TIMEOUT_S", "3.0") or 3.0)
+            value = float(os.getenv("AURA_PIPE_FF_WRITE_TIMEOUT_S", "0.5") or 0.5)
         except (TypeError, ValueError):
-            value = 3.0
-        return min(30.0, max(0.25, value))
+            value = 0.5
+        return min(5.0, max(0.05, value))
 
     def _pipe_suppression_window_s(self) -> float:
         try:
@@ -189,7 +189,6 @@ class LocalPipeBus:
     def is_alive(self) -> bool:
         """Return true only when the pipe transport and its workers are live."""
 
-        now = time.monotonic()
         read_closed = bool(getattr(self.read_conn, "closed", False))
         write_closed = bool(getattr(self.write_conn, "closed", False))
         loop_closed = bool(self._loop is not None and self._loop.is_closed())
@@ -207,7 +206,6 @@ class LocalPipeBus:
             and self._background_tasks_alive()
             and not self._dispatch_queue_saturated()
             and not self._pending_requests_saturated()
-            and now >= self._write_suppressed_until
         )
 
     def get_status(self) -> dict[str, Any]:
@@ -265,6 +263,10 @@ class LocalPipeBus:
             extra=self.get_status(),
         )
 
+    def _record_transport_warning(self, exc: BaseException, action: str) -> None:
+        self._last_error = f"{type(exc).__name__}: {exc}"
+        self._last_error_at = time.time()
+
     def _response_write_timeout_s(self) -> float:
         try:
             value = float(os.getenv("AURA_PIPE_RESPONSE_WRITE_TIMEOUT_S", "3.0") or 3.0)
@@ -307,7 +309,10 @@ class LocalPipeBus:
                 timeout=float(timeout_s),
             )
         except TimeoutError as exc:
-            logger.warning("⏳ Pipe write timed out in %s after %.1fs.", context, timeout_s)
+            if context.startswith("send:"):
+                logger.debug("⏳ Pipe write timed out in %s after %.1fs.", context, timeout_s)
+            else:
+                logger.warning("⏳ Pipe write timed out in %s after %.1fs.", context, timeout_s)
             raise TimeoutError(f"pipe write timed out in {context}") from exc
         finally:
             write_lock.release()
@@ -567,11 +572,11 @@ class LocalPipeBus:
             if write_lock.locked():
                 self._write_backpressure_drops += 1
                 if self._should_log_backpressure_drop():
-                    self._mark_transport_degraded(
+                    self._record_transport_warning(
                         TimeoutError(f"fire-and-forget pipe write blocked for {msg_type}"),
                         "fire-and-forget send dropped by write backpressure",
                     )
-                    logger.warning(
+                    logger.debug(
                         "📡 Pipe write backpressure: dropped fire-and-forget message "
                         "(drops=%d, msg_type=%s).",
                         self._write_backpressure_drops,
@@ -595,14 +600,14 @@ class LocalPipeBus:
             self._write_timeout_count += 1
             suppress_for_s = self._pipe_suppression_window_s()
             self._write_suppressed_until = time.monotonic() + suppress_for_s
-            self._mark_transport_degraded(
+            self._record_transport_warning(
                 TimeoutError(f"fire-and-forget pipe write timed out for {msg_type}"),
                 (
                     f"pipe write timed out; suppressed fire-and-forget writes "
                     f"for {suppress_for_s:.1f}s"
                 ),
             )
-            logger.warning(
+            logger.debug(
                 "📡 Pipe write TIMEOUT (%.1fs) — suppressing fire-and-forget writes "
                 "for %.1fs (streak=%d).",
                 self._fire_and_forget_write_timeout_s(),

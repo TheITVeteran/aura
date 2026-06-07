@@ -298,6 +298,7 @@ class BeingRuntime:
         *,
         domain: str = "",
         priority: float = 0.5,
+        context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Derive action constraints from the live AuraNow state + welfare.
 
@@ -309,6 +310,16 @@ class BeingRuntime:
         MANDATORY: Body cost is paid for every consequential action.
         """
         domain_name = str(domain or "").strip().lower()
+        context = dict(context or {})
+        continuity_memory_write = bool(
+            domain_name == "memory_write"
+            and context.get("conversation_continuity")
+            and not context.get("high_risk_memory_write")
+        )
+        foreground_continuity_state = bool(
+            domain_name == "state_mutation"
+            and context.get("foreground_continuity_state")
+        )
         consequential = domain_name in {
             "tool_execution",
             "memory_write",
@@ -428,7 +439,17 @@ class BeingRuntime:
         if blocks:
             outcome = "refuse"
         elif defers:
-            outcome = "defer"
+            if continuity_memory_write or foreground_continuity_state:
+                constraints.append(
+                    "continuity_memory_write_constrained:not_deferred"
+                    if continuity_memory_write
+                    else "foreground_state_commit_constrained:not_deferred"
+                )
+                note_prefix = "continuity_memory_note" if continuity_memory_write else "foreground_state_note"
+                constraints.extend(f"{note_prefix}:{item}" for item in defers[:4])
+                outcome = "constrain"
+            else:
+                outcome = "defer"
         elif constraints:
             outcome = "constrain"
         else:

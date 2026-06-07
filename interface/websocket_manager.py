@@ -69,10 +69,13 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
         report = runtime_health_report()
         required = required_probe_status(report)
         runtime_probe_healthy = required_probe_groups_pass(required)
-        healthy = bool(report.get("healthy", False)) and runtime_probe_healthy
+        conversation_lane, conversation_ready = _conversation_lane_readiness()
+        healthy = bool(report.get("healthy", False)) and runtime_probe_healthy and conversation_ready
         blockers = required_probe_blockers(required)
         if not bool(report.get("healthy", False)):
             blockers.extend(_runtime_report_blockers(report))
+        if not conversation_ready:
+            blockers.extend(_conversation_lane_blockers(conversation_lane))
         return {
             "type": kind,
             "timestamp": time.time(),
@@ -83,6 +86,8 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
             "runtime_probe_healthy": runtime_probe_healthy,
             "runtime_status": str(report.get("status", "unknown")),
             "required_probes": required,
+            "conversation_ready": bool(conversation_lane.get("conversation_ready", False)),
+            "conversation_lane": conversation_lane,
             "blockers": list(dict.fromkeys(blockers)),
         }
     except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
@@ -97,8 +102,56 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
             "runtime_probe_healthy": False,
             "runtime_status": "unknown",
             "required_probes": {"all_passed": False},
+            "conversation_ready": False,
+            "conversation_lane": {
+                "conversation_ready": False,
+                "state": "unknown",
+                "last_failure_reason": str(exc)[:240],
+            },
             "blockers": ["runtime_health_probe_error"],
         }
+
+
+def _conversation_lane_readiness() -> tuple[dict[str, Any], bool]:
+    """Return live conversation readiness for transport heartbeat payloads."""
+    try:
+        from interface.routes.chat import (
+            _collect_conversation_lane_status,
+            _conversation_lane_is_standby,
+        )
+
+        lane = _collect_conversation_lane_status()
+        if not isinstance(lane, dict):
+            raise TypeError(f"conversation lane collector returned {type(lane).__name__}")
+        ready = bool(lane.get("conversation_ready", False)) or _conversation_lane_is_standby(lane)
+        return lane, ready
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "websocket_manager",
+            exc,
+            severity="critical",
+            action="heartbeat failed closed: conversation lane readiness unavailable",
+            enforce_failure_policy=False,
+        )
+        return (
+            {
+                "conversation_ready": False,
+                "state": "unknown",
+                "last_failure_reason": str(exc)[:240],
+            },
+            False,
+        )
+
+
+def _conversation_lane_blockers(lane: dict[str, Any]) -> list[str]:
+    state = str(lane.get("state", "unknown") or "unknown").strip().lower()
+    blockers = ["conversation_ready"]
+    if state:
+        blockers.append(f"conversation_lane:{state}")
+    reason = str(lane.get("last_failure_reason", "") or lane.get("last_error", "") or "").strip()
+    if reason:
+        blockers.append(f"conversation_reason:{reason[:80]}")
+    return blockers
 
 
 def _runtime_report_blockers(report: dict[str, Any]) -> list[str]:

@@ -190,14 +190,16 @@ class DialogueCognitionEngine:
     def save(self) -> None:
         try:
             payload = {"profiles": {user_id: profile.to_dict() for user_id, profile in self._profiles.items()}}
+            from core.governance_context import local_internal_governed_scope
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
-                self._storage_path,
-                json.dumps(payload, indent=2),
-                encoding="utf-8",
-                source="dialogue_cognition.save",
-            )
+            with local_internal_governed_scope("dialogue_cognition.save", domain="file_write"):
+                get_file_write_gateway().write_text(
+                    self._storage_path,
+                    json.dumps(payload, indent=2),
+                    encoding="utf-8",
+                    source="dialogue_cognition.save",
+                )
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('dialogue_cognition', exc)
             logger.debug("DialogueCognition save skipped: %s", exc)

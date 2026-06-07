@@ -23,6 +23,7 @@ class ContinuousSensoryBuffer:
         self._capture_lock = asyncio.Lock()
         self._mss_module = None
         self._screen_probe_cooldown_until = 0.0
+        self._last_backend_fail_log = 0.0
         self._screen_permission_notice_at = 0.0
         self._screen_permission_notice_interval_s = 300.0
         try:
@@ -147,7 +148,8 @@ class ContinuousSensoryBuffer:
                 logger.info("👁️ [VISION] Continuous screen capture backend initialized: %s", monitor)
                 return True
             else:
-                logger.warning("👁️ [VISION] No valid monitors found.")
+                self._screen_probe_cooldown_until = time.monotonic() + 60.0
+                logger.debug("👁️ [VISION] No valid monitors found; screen capture remains unavailable.")
                 return False
         except (OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('continuous_vision', exc)
@@ -163,8 +165,8 @@ class ContinuousSensoryBuffer:
                     await self._ensure_screen_backend()
                     if self.sct is None:
                         now = time.monotonic()
-                        if now - getattr(self, "_last_backend_fail_log", 0) > 60.0:
-                            logger.warning("👁️ [VISION] No valid monitors found.")
+                        if now - getattr(self, "_last_backend_fail_log", 0) > 300.0:
+                            logger.info("👁️ [VISION] Screen capture unavailable: no valid monitors found.")
                             self._last_backend_fail_log = now
                         await asyncio.sleep(15.0)
                         continue

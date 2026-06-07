@@ -447,6 +447,23 @@ def test_social_imagination_holds_positive_feelings_as_socially_shaped(tmp_path)
     assert "hope" in block.lower() or "delight" in block.lower()
 
 
+def test_social_imagination_save_uses_internal_governance(monkeypatch, tmp_path):
+    monkeypatch.setenv("AURA_GOVERNANCE_MODE", "strict")
+    engine = SocialImagination(tmp_path / "social_imagination.json")
+
+    frame = asyncio.run(
+        engine.update_from_interaction(
+            "bryan",
+            "I'm working full time and still can't afford rent in this city.",
+        )
+    )
+
+    payload = json.loads((tmp_path / "social_imagination.json").read_text(encoding="utf-8"))
+    assert frame is not None
+    assert "bryan" in payload["frames"]
+    assert payload["frames"]["bryan"][0]["public_issues"]
+
+
 def test_terminal_fallback_drops_autonomous_message_when_executive_rejects(monkeypatch):
     terminal = TerminalFallbackChat()
 
@@ -855,6 +872,59 @@ def test_identity_service_blocks_unapproved_insight_write(monkeypatch, tmp_path)
     identity.add_insight("This should not persist.", source="creative_synthesis")
 
     assert identity.state.inner_insights == []
+
+
+def test_identity_service_save_uses_internal_governance(monkeypatch, tmp_path):
+    from core.brain.identity import IdentityState
+
+    monkeypatch.setenv("AURA_GOVERNANCE_MODE", "strict")
+
+    identity = object.__new__(IdentityService)
+    identity.data_path = tmp_path / "identity.json"
+    identity.state = IdentityState(
+        beliefs=["test belief"],
+        values=["test value"],
+    )
+
+    identity.save()
+
+    payload = json.loads((tmp_path / "identity.json").read_text(encoding="utf-8"))
+    assert payload["beliefs"] == ["test belief"]
+    assert payload["values"] == ["test value"]
+
+
+def test_phenomenological_experiencer_persistence_uses_internal_governance(monkeypatch, tmp_path):
+    from core.consciousness.phenomenological_experiencer import PhenomenologicalExperiencer
+
+    monkeypatch.setenv("AURA_GOVERNANCE_MODE", "strict")
+
+    experiencer = object.__new__(PhenomenologicalExperiencer)
+    experiencer.save_dir = tmp_path
+    experiencer._current_schema = None
+    experiencer._current_qualia = []
+    experiencer._current_emotion = "curiosity"
+    experiencer.psm = SimpleNamespace(
+        _phenomenal_reports=["I noticed the test."],
+        _witness_observation="witness",
+        _present_description="present",
+    )
+    experiencer.continuity = SimpleNamespace(
+        current_thread="unit-thread",
+        _moments=[],
+        get_episode_summary=lambda: {
+            "dominant_domain": "unit",
+            "dominant_tone": "steady",
+            "attention_stability": 0.8,
+        },
+    )
+
+    experiencer._persist_phenomenal_moment("governed archive write")
+    experiencer._save_phenomenal_memory()
+
+    archive = (tmp_path / "phenomenal_archive.jsonl").read_text(encoding="utf-8")
+    memory = json.loads((tmp_path / "phenomenal_memory.json").read_text(encoding="utf-8"))
+    assert "governed archive write" in archive
+    assert memory["continuity_thread"] == "unit-thread"
 
 
 def test_service_container_blocks_protected_overwrite_after_lock():

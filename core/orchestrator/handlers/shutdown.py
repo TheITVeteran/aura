@@ -9,6 +9,7 @@ import inspect
 import logging
 from typing import TYPE_CHECKING
 
+from core.bus.actor_bus import BusDegraded
 from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
 
@@ -42,6 +43,26 @@ async def _gracefully_stop_actor_via_bus(
     if callable(has_actor) and not has_actor(actor_name):
         return False
 
+    is_actor_usable = getattr(bus, "is_actor_usable", None)
+    if callable(is_actor_usable) and not is_actor_usable(actor_name):
+        supervisor = getattr(orch, "_supervisor_tree", None) or getattr(orch, "supervisor", None)
+        stop_actor = getattr(supervisor, "stop_actor", None)
+        if callable(stop_actor):
+            await asyncio.to_thread(
+                stop_actor,
+                actor_name,
+                graceful_timeout=stop_budget_s,
+                terminate_timeout=1.0,
+                kill_timeout=1.0,
+            )
+            return True
+        logger.debug(
+            "Actor bus transport for %s was already unusable during shutdown; "
+            "skipping bus stop request.",
+            actor_name,
+        )
+        return False
+
     try:
         await asyncio.wait_for(
             bus.request(
@@ -58,6 +79,13 @@ async def _gracefully_stop_actor_via_bus(
             action=f"continued shutdown after actor bus was already closed for {actor_name}",
         )
         logger.debug("Actor bus already closed while stopping %s: %s", actor_name, exc)
+        return False
+    except BusDegraded as exc:
+        logger.debug(
+            "Actor bus already degraded while stopping %s; supervisor shutdown will reap it: %s",
+            actor_name,
+            exc,
+        )
         return False
     except (RuntimeError, asyncio.CancelledError, AttributeError) as exc:
         _record_shutdown_degradation(

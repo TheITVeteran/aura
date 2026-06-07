@@ -70,12 +70,12 @@ def test_user_facing_unitary_response_timeout_matches_foreground_lane():
         is_user_facing=True,
         model_tier="primary",
         deep_handoff=False,
-    ) == 300.0
+    ) == 180.0
     assert UnitaryResponsePhase._timeout_for_request(
         is_user_facing=True,
         model_tier="secondary",
         deep_handoff=True,
-    ) == 360.0
+    ) == 210.0
 
 
 def test_simple_foreground_floor_does_not_bypass_live_conversation_turns():

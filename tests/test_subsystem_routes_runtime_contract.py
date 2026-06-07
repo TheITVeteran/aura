@@ -14,6 +14,37 @@ class PayloadRequest:
         return self.payload
 
 
+def test_skill_execute_payload_normalizer_unwraps_live_desktop_envelope():
+    params, context = subsystems._normalize_skill_execute_payload(
+        {
+            "input": {
+                "action": "write",
+                "path": "artifacts/live_runtime/generated/probe.txt",
+                "content": "ok",
+            },
+            "context": {"route": "desktop-ui.live_probe"},
+            "foreground_request": True,
+        }
+    )
+
+    assert params == {
+        "action": "write",
+        "path": "artifacts/live_runtime/generated/probe.txt",
+        "content": "ok",
+    }
+    assert context["route"] == "desktop-ui.live_probe"
+    assert context["foreground_request"] is True
+
+
+def test_skill_execute_payload_normalizer_preserves_direct_params():
+    params, context = subsystems._normalize_skill_execute_payload(
+        {"action": "exists", "path": "README.md"}
+    )
+
+    assert params == {"action": "exists", "path": "README.md"}
+    assert context == {}
+
+
 @pytest.mark.asyncio
 async def test_terminal_send_preserves_client_input_errors():
     with pytest.raises(HTTPException) as caught:
@@ -31,8 +62,8 @@ async def test_skill_execute_returns_structured_failure_for_router_runtime_error
         def __init__(self):
             self.calls = []
 
-        async def route_execution(self, skill_name, params, engine):
-            self.calls.append((skill_name, params, engine))
+        async def route_execution(self, skill_name, params, engine, *, context=None):
+            self.calls.append((skill_name, params, engine, context))
             raise RuntimeError(f"{skill_name} route unavailable")
 
     class Engine:

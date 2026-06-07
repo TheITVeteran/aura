@@ -199,14 +199,16 @@ class _ReceiptLog:
                 logger.warning("Receipt log append failed: %s", exc)
 
     def _append_sync(self, receipt: ActionReceipt) -> None:
+        from core.governance_context import local_internal_governed_scope
         from core.runtime.file_write_gateway import get_file_write_gateway
 
-        get_file_write_gateway().append_text(
-            self.path,
-            json.dumps(receipt.to_dict(), default=str) + "\n",
-            encoding="utf-8",
-            source="agency_orchestrator.receipt_log",
-        )
+        with local_internal_governed_scope("agency_orchestrator.receipt_log", domain="file_write"):
+            get_file_write_gateway().append_text(
+                self.path,
+                json.dumps(receipt.to_dict(), default=str) + "\n",
+                encoding="utf-8",
+                source="agency_orchestrator.receipt_log",
+            )
 
     def recent(self, limit: int = 50) -> list[dict[str, Any]]:
         return [r.to_dict() for r in list(self._recent)[-limit:]]

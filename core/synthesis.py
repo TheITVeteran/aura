@@ -11,6 +11,8 @@ from core.conversation.response_reliability import (
     assess_user_facing_reply,
     is_status_check_turn,
     live_chat_diagnostic_floor,
+    normalize_user_facing_format,
+    repair_instruction_shape,
 )
 from core.runtime.errors import record_degradation
 from core.runtime.structured_input import looks_like_learning_resource_bundle
@@ -373,7 +375,9 @@ def _conversation_response_floor(user_message: str) -> str:
 
 def stabilize_user_facing_response(text: str, user_message: str = "") -> str:
     """Shared final cleanup for user-visible conversational text."""
-    cleaned = strip_role_artifacts(text)
+    cleaned = normalize_user_facing_format(strip_role_artifacts(text))
+    if user_message:
+        cleaned = normalize_user_facing_format(strip_role_artifacts(repair_instruction_shape(user_message, cleaned)))
     # If the response contains code blocks, JSON/brackets, or multiple newlines,
     # we preserve the formatting (newlines/indentation) instead of folding whitespace.
     if "```" in cleaned or "{" in cleaned or "[" in cleaned or "\n" in cleaned:

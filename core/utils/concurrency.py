@@ -439,23 +439,34 @@ class EventLoopMonitor:
             logger.debug("Suppressed %s in core.utils.concurrency: %s", type(_exc).__name__, _exc)
 
         try:
-            from core.runtime import foreground_guard
-
-            reason = foreground_guard.foreground_activity_reason()
-            if reason:
-                return str(reason)
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
-            logger.debug("Suppressed %s in core.utils.concurrency: %s", type(_exc).__name__, _exc)
-
-        try:
             from core.container import ServiceContainer
 
             gate = ServiceContainer.get("inference_gate", default=None)
             status_getter = getattr(gate, "get_conversation_status", None)
             if callable(status_getter):
                 status = status_getter()
-                if bool(getattr(status, "active", False)):
+                if isinstance(status, dict):
+                    lane_state = str(status.get("state") or "").strip().lower()
+                    if (
+                        bool(status.get("active"))
+                        or bool(status.get("foreground_owned"))
+                        or bool(status.get("warmup_in_flight"))
+                        or int(status.get("active_generations", 0) or 0) > 0
+                        or float(status.get("current_request_started_at", 0.0) or 0.0) > 0.0
+                        or lane_state in {"spawning", "handshaking", "warming", "recovering"}
+                    ):
+                        return "foreground_generation"
+                elif bool(getattr(status, "active", False)):
                     return "foreground_generation"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+            logger.debug("Suppressed %s in core.utils.concurrency: %s", type(_exc).__name__, _exc)
+
+        try:
+            from core.runtime import foreground_guard
+
+            reason = foreground_guard.foreground_activity_reason()
+            if reason:
+                return str(reason)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
             logger.debug("Suppressed %s in core.utils.concurrency: %s", type(_exc).__name__, _exc)
 
@@ -496,10 +507,13 @@ class EventLoopMonitor:
         """Return True when the monitor task is running and accepting ticks."""
         if self._task is None or self._task.done() or self._stop_event.is_set():
             return False
-        if self._last_failure_at and (
-            self._healthy_lag_samples_after_failure < self.failure_recovery_samples
-        ):
-            return False
+        if self._last_failure_at:
+            stable_for = time.time() - self._last_failure_at
+            if (
+                self._healthy_lag_samples_after_failure < self.failure_recovery_samples
+                or stable_for < self.failure_recovery_window_s
+            ):
+                return False
         return True
 
     def get_status(self) -> dict[str, Any]:
@@ -511,6 +525,7 @@ class EventLoopMonitor:
             "last_failure_reason": self._last_failure_reason,
             "healthy_recovery_samples": self._healthy_lag_samples_after_failure,
             "required_recovery_samples": self.failure_recovery_samples,
+            "recovery_window_s": self.failure_recovery_window_s,
         }
 
     async def _run(self):
@@ -583,10 +598,15 @@ class EventLoopMonitor:
                 self._consecutive_breaches = 0
                 if self._last_failure_at:
                     self._healthy_lag_samples_after_failure += 1
-                    if self._healthy_lag_samples_after_failure >= self.failure_recovery_samples:
+                    stable_for = time.time() - self._last_failure_at
+                    if (
+                        self._healthy_lag_samples_after_failure >= self.failure_recovery_samples
+                        and stable_for >= self.failure_recovery_window_s
+                    ):
                         logger.info(
-                            "EventLoopMonitor recovered after %d healthy lag samples.",
+                            "EventLoopMonitor recovered after %d healthy lag samples over %.1fs.",
                             self._healthy_lag_samples_after_failure,
+                            stable_for,
                         )
                         self._last_failure_at = 0.0
                         self._last_failure_reason = ""

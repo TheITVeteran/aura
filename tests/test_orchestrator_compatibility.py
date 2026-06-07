@@ -431,8 +431,7 @@ async def test_orchestrator_shutdown_requests_graceful_state_vault_stop_before_b
     assert supervisor.stop_calls == 1
 
 
-@pytest.mark.asyncio
-async def test_graceful_state_vault_stop_continues_when_bus_already_closed():
+def test_graceful_state_vault_stop_continues_when_bus_already_closed():
     tracker = get_degradation_tracker()
     tracker.reset()
 
@@ -450,7 +449,7 @@ async def test_graceful_state_vault_stop_continues_when_bus_already_closed():
     closed_bus = _ClosedBus()
     orch = SimpleNamespace(_actor_bus=closed_bus, _supervisor_tree=None)
 
-    await _gracefully_stop_actor_via_bus(orch, "state_vault", stop_budget_s=0.01)
+    asyncio.run(_gracefully_stop_actor_via_bus(orch, "state_vault", stop_budget_s=0.01))
 
     assert len(closed_bus.request_calls) == 1
     assert any(
@@ -458,6 +457,70 @@ async def test_graceful_state_vault_stop_continues_when_bus_already_closed():
         for record in tracker.recent(subsystem="shutdown")
     )
     tracker.reset()
+
+
+def test_graceful_state_vault_stop_continues_when_actor_bus_is_degraded():
+    from core.bus.actor_bus import BusDegraded
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+
+    class _DegradedBus:
+        def __init__(self):
+            self.request_calls = []
+
+        def has_actor(self, name):
+            return name == "state_vault"
+
+        async def request(self, *_args, **_kwargs):
+            self.request_calls.append((_args, _kwargs))
+            raise BusDegraded("Bus degraded or congested for state_vault")
+
+    degraded_bus = _DegradedBus()
+    orch = SimpleNamespace(_actor_bus=degraded_bus, _supervisor_tree=None)
+
+    stopped = asyncio.run(
+        _gracefully_stop_actor_via_bus(orch, "state_vault", stop_budget_s=0.01)
+    )
+
+    assert stopped is False
+    assert len(degraded_bus.request_calls) == 1
+    assert not tracker.recent(subsystem="shutdown")
+    tracker.reset()
+
+
+def test_graceful_state_vault_stop_uses_supervisor_when_actor_bus_unusable():
+    class _UnusableBus:
+        def __init__(self):
+            self.request_calls = []
+
+        def has_actor(self, name):
+            return name == "state_vault"
+
+        def is_actor_usable(self, name):
+            return False
+
+        async def request(self, *_args, **_kwargs):
+            self.request_calls.append((_args, _kwargs))
+
+    class _Supervisor:
+        def __init__(self):
+            self.stop_calls = []
+
+        def stop_actor(self, name, **kwargs):
+            self.stop_calls.append((name, kwargs))
+
+    bus = _UnusableBus()
+    supervisor = _Supervisor()
+    orch = SimpleNamespace(_actor_bus=bus, _supervisor_tree=supervisor)
+
+    stopped = asyncio.run(
+        _gracefully_stop_actor_via_bus(orch, "state_vault", stop_budget_s=0.01)
+    )
+
+    assert stopped is True
+    assert bus.request_calls == []
+    assert supervisor.stop_calls[0][0] == "state_vault"
 
 
 @pytest.mark.asyncio

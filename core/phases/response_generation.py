@@ -10,6 +10,8 @@ from core.brain.llm.context_assembler import ContextAssembler
 from core.conversation.response_reliability import (
     assess_user_facing_reply,
     conversation_reliability_system_block,
+    repair_generic_assistant_language,
+    repair_instruction_shape,
 )
 from core.phases.dialogue_policy import enforce_dialogue_contract
 from core.phases.executive_guard import get_executive_guard
@@ -27,6 +29,15 @@ from ..state.aura_state import AuraState, CognitiveMode
 from . import BasePhase
 
 logger = logging.getLogger(__name__)
+
+_DOWNSTREAM_REPAIRABLE_RESPONSE_REASONS = {
+    "missing_requested_paragraph_count",
+    "missing_requested_list_count",
+    "missing_requested_followup_question",
+}
+_LOCAL_REPAIRABLE_RESPONSE_REASONS = _DOWNSTREAM_REPAIRABLE_RESPONSE_REASONS | {
+    "generic_assistant_language",
+}
 
 
 def _record_response_generation_degradation(
@@ -53,8 +64,39 @@ class ResponseGenerationPhase(BasePhase):
         if is_background:
             return 10.0
         if deep_handoff:
-            return 360.0
-        return 300.0
+            return 210.0
+        return 180.0
+
+    @staticmethod
+    def _repair_substantive_instruction_shape_miss(
+        objective: Any,
+        response_text: Any,
+    ) -> tuple[str, bool, tuple[str, ...]]:
+        """Repair explicit shape misses locally when the content is already substantive."""
+        response_text_s = str(response_text or "").strip()
+        if len(response_text_s) < 48 or len(response_text_s.split()) < 8:
+            return response_text_s, False, ()
+
+        reliability = assess_user_facing_reply(str(objective or ""), response_text_s)
+        reasons = tuple(reliability.reasons or ())
+        reason_set = set(reasons)
+        if (
+            not reliability.retryable
+            or not reason_set
+            or not reason_set.issubset(_LOCAL_REPAIRABLE_RESPONSE_REASONS)
+        ):
+            return response_text_s, False, reasons
+
+        repaired = response_text_s
+        if "generic_assistant_language" in reason_set:
+            repaired = repair_generic_assistant_language(objective, repaired)
+        repaired = repair_instruction_shape(objective, repaired)
+        if repaired == response_text_s:
+            return response_text_s, False, reasons
+        repaired_assessment = assess_user_facing_reply(str(objective or ""), repaired)
+        if repaired_assessment.ok:
+            return repaired, True, reasons
+        return response_text_s, False, reasons
 
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
         """
@@ -208,10 +250,29 @@ class ResponseGenerationPhase(BasePhase):
                 )
             if not is_background and not is_test_run:
                 reliability_block = conversation_reliability_system_block(objective)
+                runtime_context = kwargs.get("context")
+                if not isinstance(runtime_context, dict):
+                    runtime_context = {}
                 if messages and messages[0].get("role") == "system":
                     messages[0]["content"] = f"{messages[0]['content']}\n\n{reliability_block}"
                 else:
                     messages.insert(0, {"role": "system", "content": reliability_block})
+                repair_directive = ""
+                repair_directive = str(
+                    runtime_context.get("response_repair_directive") or ""
+                ).strip()
+                if repair_directive:
+                    repair_block = (
+                        "## LIVE RESPONSE REPAIR DIRECTIVE\n"
+                        f"{repair_directive}\n"
+                        "This directive is internal. Do not mention it in the answer."
+                    )
+                    if messages and messages[0].get("role") == "system":
+                        messages[0]["content"] = (
+                            f"{messages[0]['content']}\n\n{repair_block}"
+                        )
+                    else:
+                        messages.insert(0, {"role": "system", "content": repair_block})
 
             # Causal World Model Context Injection
             causal_model = None if proof_answer_run else self.container.get("causal_world_model", default=None)
@@ -258,6 +319,9 @@ class ResponseGenerationPhase(BasePhase):
             router = self.container.get("llm_router")
 
             # Derive context-dependent parameters from state
+            runtime_context = kwargs.get("context")
+            if not isinstance(runtime_context, dict):
+                runtime_context = {}
             tier = state.response_modifiers.get(
                 "model_tier", "tertiary" if is_background else "primary"
             )
@@ -333,13 +397,31 @@ class ResponseGenerationPhase(BasePhase):
                         foreground_request=not is_background,
                         deep_handoff=deep_handoff,
                         allow_cloud_fallback=False,
+                        cognitive_engine_required=bool(
+                            runtime_context.get("cognitive_engine_required", False)
+                        ),
+                        desktop_cognitive_engine_required=bool(
+                            runtime_context.get("desktop_cognitive_engine_required", False)
+                            or runtime_context.get("cognitive_engine_required", False)
+                        ),
                         soma=soma_data,
                         state=state,
                         temperature=0.7 * temp_mod,
                         max_tokens=token_budget,
                         timeout=request_timeout,
-                    )
+                )
                 response_text = await asyncio.wait_for(think_coro, timeout=request_timeout + 4.0)
+
+                shape_repaired = False
+                if not is_background and not is_test_run:
+                    response_text, shape_repaired, shape_repair_reasons = (
+                        self._repair_substantive_instruction_shape_miss(objective, response_text)
+                    )
+                    if shape_repaired:
+                        logger.info(
+                            "🛡️ ResponseGeneration repaired instruction shape locally before critique (%s).",
+                            ",".join(shape_repair_reasons) or "unknown",
+                        )
 
                 # System 2 internal critique layer to verify logical correctness
                 try:
@@ -347,7 +429,7 @@ class ResponseGenerationPhase(BasePhase):
                     async def _raw_generate(p, **kw):
                         return await router.think(p, **kw)
                     strategies = ReasoningStrategies(_raw_generate)
-                    if strategies._is_logical_check(objective):
+                    if not shape_repaired and strategies._is_logical_check(objective):
                         logger.info("⚡ [Critique] Running System 2 self-critique on response...")
                         critique_response = await strategies._self_critique(objective, response_text, origin=origin)
                         if critique_response and critique_response != response_text:
@@ -387,12 +469,38 @@ class ResponseGenerationPhase(BasePhase):
                 ):
                     reliability = assess_user_facing_reply(objective, response_text)
                     if reliability.retryable:
-                        logger.warning(
-                            "🛡️ ResponseGeneration rejected unsafe user-facing draft (%s, len=%d).",
-                            ",".join(reliability.reasons) or "unknown",
-                            len(str(response_text or "")),
+                        repaired_text, repaired_shape, repair_reasons = (
+                            self._repair_substantive_instruction_shape_miss(objective, response_text)
                         )
-                        return state
+                        if repaired_shape:
+                            logger.info(
+                                "🛡️ ResponseGeneration repaired instruction shape locally after refinement (%s).",
+                                ",".join(repair_reasons) or "unknown",
+                            )
+                            response_text = repaired_text
+                            reliability = assess_user_facing_reply(objective, response_text)
+                        reliability_reasons = set(reliability.reasons or ())
+                        response_text_s = str(response_text or "").strip()
+                        if (
+                            reliability_reasons
+                            and reliability_reasons.issubset(
+                                _DOWNSTREAM_REPAIRABLE_RESPONSE_REASONS
+                            )
+                            and len(response_text_s) >= 48
+                            and len(response_text_s.split()) >= 8
+                        ):
+                            logger.warning(
+                                "🛡️ ResponseGeneration kept repairable foreground draft for final reply repair (%s, len=%d).",
+                                ",".join(reliability.reasons) or "unknown",
+                                len(response_text_s),
+                            )
+                        else:
+                            logger.warning(
+                                "🛡️ ResponseGeneration rejected unsafe user-facing draft (%s, len=%d).",
+                                ",".join(reliability.reasons) or "unknown",
+                                len(str(response_text or "")),
+                            )
+                            return state
 
             # 4. Defensive Hardening: JSON Repair & Proactive Extraction
             content = response_text
@@ -589,6 +697,21 @@ class ResponseGenerationPhase(BasePhase):
                         severity="error",
                     )
                     logger.debug("ResponseShaper failed (using raw): %s", _shape_exc)
+
+            if not is_background and cleaned_response and not is_test_run:
+                repaired_response, repaired_shape, repair_reasons = (
+                    self._repair_substantive_instruction_shape_miss(objective, cleaned_response)
+                )
+                if repaired_shape:
+                    cleaned_response = repaired_response
+                    state.response_modifiers["post_voice_shape_repair"] = {
+                        "reasons": list(repair_reasons),
+                        "method": "deterministic_instruction_shape",
+                    }
+                    logger.info(
+                        "🛡️ ResponseGeneration repaired instruction shape after voice shaping (%s).",
+                        ",".join(repair_reasons) or "unknown",
+                    )
 
             # 6c. Skip emission for background tasks if they produced no meaningful content
             if is_background and not cleaned_response:

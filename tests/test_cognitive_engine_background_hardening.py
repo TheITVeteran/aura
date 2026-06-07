@@ -30,6 +30,81 @@ def test_cognitive_engine_treats_prefixed_user_origin_as_foreground():
     assert CognitiveEngine._is_background_request("autonomous_thought", False) is True
 
 
+def test_cognitive_engine_treats_live_desktop_origins_as_user_facing():
+    assert CognitiveEngine._is_user_facing_origin("chat_api") is True
+    assert CognitiveEngine._is_user_facing_origin("desktop_ui") is True
+    assert CognitiveEngine._is_user_facing_origin("voice_bridge") is True
+    assert CognitiveEngine._is_user_facing_origin("agency_core") is False
+
+
+def test_cognitive_engine_live_desktop_origin_updates_working_memory(monkeypatch):
+    engine = CognitiveEngine()
+    state = AuraState.default().derive("cognitive_intent: desktop_ui", origin="desktop_ui")
+    engine.state_repository = None
+    engine._phases = []
+
+    monkeypatch.setenv("AURA_TESTING", "1")
+
+    thought = asyncio.run(
+        engine._run_thinking_loop(
+            state,
+            "Desktop live path should stay foreground.",
+            ThinkingMode.FAST,
+            "desktop_ui",
+        )
+    )
+
+    assert state.transition_origin == "desktop_ui"
+    assert state.cognition.working_memory[-1]["role"] == "user"
+    assert state.cognition.working_memory[-1]["origin"] == "desktop_ui"
+    assert thought.reasoning
+
+
+def test_cognitive_engine_preserves_desktop_origin_after_phase_derives(monkeypatch):
+    class _ResettingPhase:
+        async def execute(self, state, objective=None, **_kwargs):
+            derived = state.derive("phase_default_origin_reset")
+            derived.cognition.working_memory.append(
+                {
+                    "role": "assistant",
+                    "content": "I will keep the live desktop turn on the foreground path.",
+                }
+            )
+            return derived
+
+    engine = CognitiveEngine()
+    repo = StateRepositoryFixture(AuraState.default())
+    engine.state_repository = repo
+    engine._phases = [_ResettingPhase()]
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(get=lambda name, default=None: repo if name == "state_repository" else default),
+    )
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        lambda name, default=None: default,
+    )
+    monkeypatch.setattr(
+        "core.runtime.background_policy.background_activity_reason",
+        lambda *args, **kwargs: "",
+    )
+
+    thought = asyncio.run(
+        engine.think(
+            "Keep this live desktop turn foreground.",
+            mode=ThinkingMode.FAST,
+            origin="desktop_ui",
+        )
+    )
+
+    assert thought.content == "I will keep the live desktop turn on the foreground path."
+    assert repo.commits
+    committed_state = repo.commits[-1][0]
+    assert committed_state.transition_origin == "desktop_ui"
+    assert committed_state.cognition.current_origin is None
+
+
 def test_cognitive_engine_context_patch_failure_is_reported(monkeypatch):
     import core.brain.llm.context_assembler_patch as patch_module
 

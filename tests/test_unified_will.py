@@ -114,6 +114,57 @@ class TestAllDomains:
         assert decision.reason == "permission_model_check_failed"
         assert "permission_model_failure" in decision.constraints
 
+    def test_aura_now_defer_allows_read_only_observation_tool(self, will, monkeypatch):
+        """Present-state deferral must not block harmless observation needed for stabilization."""
+
+        monkeypatch.setattr(
+            will,
+            "_sample_aura_now_evidence",
+            lambda **_kwargs: {
+                "outcome": "defer",
+                "constraints": ["needs_observation_first"],
+                "evidence": {"state_hash": "test", "tick": 1},
+            },
+        )
+
+        decision = will.decide(
+            content="tool:clock",
+            source="api",
+            domain=ActionDomain.TOOL_EXECUTION,
+            priority=0.9,
+            context={"tool": "clock", "effect_scope": "read_only", "read_only": True},
+        )
+
+        assert decision.outcome == WillOutcome.CONSTRAIN
+        assert decision.is_approved()
+        assert decision.reason == "aura_now_observation_lane"
+        assert "aura_now_observation_lane:read_only" in decision.constraints
+
+    def test_aura_now_defer_still_defers_consequential_tool(self, will, monkeypatch):
+        """The observation lane must not become a bypass for write/control tools."""
+
+        monkeypatch.setattr(
+            will,
+            "_sample_aura_now_evidence",
+            lambda **_kwargs: {
+                "outcome": "defer",
+                "constraints": ["needs_observation_first"],
+                "evidence": {"state_hash": "test", "tick": 1},
+            },
+        )
+
+        decision = will.decide(
+            content="tool:file_operation",
+            source="api",
+            domain=ActionDomain.TOOL_EXECUTION,
+            priority=0.9,
+            context={"tool": "file_operation", "effect_scope": "state_mutation", "read_only": False},
+        )
+
+        assert decision.outcome == WillOutcome.DEFER
+        assert not decision.is_approved()
+        assert decision.reason == "aura_now_defer: present-state policy requires stabilization or observation first"
+
 
 # ---------------------------------------------------------------------------
 # 2. Identity feeds into decisions

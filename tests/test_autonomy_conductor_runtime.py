@@ -51,6 +51,22 @@ def test_non_mapping_job_result_is_preserved_as_value(tmp_path):
     asyncio.run(scenario())
 
 
+def test_ledger_append_uses_internal_governance_in_strict_mode(monkeypatch, tmp_path):
+    async def scenario():
+        monkeypatch.setenv("AURA_GOVERNANCE_MODE", "strict")
+        conductor = AutonomyConductor(tmp_path / "autonomy.jsonl")
+        conductor.register("strict_job", 1, lambda: {"ok": True}, run_immediately=True)
+
+        result = await conductor.run_due_once()
+        ledger_entry = json.loads((tmp_path / "autonomy.jsonl").read_text(encoding="utf-8"))
+
+        assert result["strict_job"]["last_status"] == "ok"
+        assert ledger_entry["job"]["name"] == "strict_job"
+        assert ledger_entry["job"]["last_result"] == {"ok": True}
+
+    asyncio.run(scenario())
+
+
 def test_ledger_append_failure_keeps_in_memory_job_status(tmp_path):
     async def scenario():
         tracker = get_degradation_tracker()

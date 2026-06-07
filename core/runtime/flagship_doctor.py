@@ -281,7 +281,6 @@ def run_doctor(root: str | Path, *, include_gates: bool = True) -> DoctorReport:
     return DoctorReport(root=str(root), created_at=time.time(), overall=overall, findings=findings)
 
 
-import gc
 import logging
 import sqlite3
 import threading
@@ -325,6 +324,7 @@ class FlagshipDoctorDaemon:
         self._monitor_thread: threading.Thread | None = None
         self._loop: Any = None
         self._heartbeat_task: Any = None
+        self._last_lag_only_observed_at = 0.0
 
     def is_alive(self) -> bool:
         """Return daemon liveness only; use ``is_ready`` for runtime health."""
@@ -482,23 +482,35 @@ class FlagshipDoctorDaemon:
             logger.debug("Suppressed %s in core.runtime.flagship_doctor: %s", type(_exc).__name__, _exc)
 
         try:
-            from core.runtime import foreground_guard
-
-            reason = foreground_guard.foreground_activity_reason()
-            if reason:
-                return str(reason)
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
-            logger.debug("Suppressed %s in core.runtime.flagship_doctor: %s", type(_exc).__name__, _exc)
-
-        try:
             from core.container import ServiceContainer
 
             gate = ServiceContainer.get("inference_gate", default=None)
             status_getter = getattr(gate, "get_conversation_status", None)
             if callable(status_getter):
                 status = status_getter()
-                if bool(getattr(status, "active", False)):
+                if isinstance(status, dict):
+                    if (
+                        bool(status.get("active"))
+                        or bool(status.get("foreground_owned"))
+                        or int(status.get("active_generations", 0) or 0) > 0
+                        or bool(status.get("warmup_in_flight"))
+                        or bool(status.get("kernel_lock_held"))
+                        or float(status.get("current_request_started_at", 0.0) or 0.0) > 0.0
+                        or str(status.get("state", "")).lower()
+                        in {"spawning", "handshaking", "warming", "recovering"}
+                    ):
+                        return "foreground_generation"
+                elif bool(getattr(status, "active", False)):
                     return "foreground_generation"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+            logger.debug("Suppressed %s in core.runtime.flagship_doctor: %s", type(_exc).__name__, _exc)
+
+        try:
+            from core.runtime import foreground_guard
+
+            reason = foreground_guard.foreground_activity_reason()
+            if reason:
+                return str(reason)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
             logger.debug("Suppressed %s in core.runtime.flagship_doctor: %s", type(_exc).__name__, _exc)
 
@@ -515,19 +527,18 @@ class FlagshipDoctorDaemon:
         lag_threshold, lag_context = self._lag_threshold_for_context()
         ram_pressure = ram_percent > 0.0 and ram_percent >= self.ram_threshold
         lag_pressure = lag > lag_threshold
-        if not lag_pressure and not ram_pressure:
-            return False, lag_context, ram_pressure
-
-        if lag_context != "idle" and not ram_pressure:
-            logger.debug(
-                "FlagshipDoctorDaemon observed active-runtime lag without memory "
-                "pressure; treating as occupied runtime, not self-healing trigger "
-                "(lag=%.2fs context=%s threshold=%.2fs RAM=%.1f%%).",
-                lag,
-                lag_context,
-                lag_threshold,
-                ram_percent,
-            )
+        if not ram_pressure:
+            if lag_pressure and now - self._last_lag_only_observed_at >= self.min_heal_interval:
+                self._last_lag_only_observed_at = now
+                logger.warning(
+                    "FlagshipDoctorDaemon observed event-loop lag without RAM pressure; "
+                    "deferring heavy self-healing and leaving recovery to foreground "
+                    "backpressure (lag=%.2fs context=%s threshold=%.2fs RAM=%.1f%%).",
+                    lag,
+                    lag_context,
+                    lag_threshold,
+                    ram_percent,
+                )
             return False, lag_context, ram_pressure
 
         if now - self._last_heal_at < self.min_heal_interval:
@@ -595,56 +606,83 @@ class FlagshipDoctorDaemon:
         lag_context: str = "idle",
         ram_pressure: bool = False,
     ) -> None:
-        """Executes garbage collection and compacts SQLite databases under pressure."""
-        # 1. Run CPU Garbage Collection
-        logger.info("♻️ Reclaiming memory via gc.collect()...")
-        gc.collect()
-        
-        # 2. Compact SQLite Databases (specifically test_projects.db)
-        db_paths = [
-            self.root / "tests" / "test_projects.db",
-            Path.home() / ".aura" / "live-source" / "tests" / "test_projects.db",
-        ]
-        
+        """Executes bounded memory reclamation under real RAM pressure.
+
+        Event-loop lag alone is not a reason to run stop-the-world GC or SQLite
+        VACUUM. Those actions can amplify live desktop stalls, so this path is
+        only heavy when memory pressure is the trigger.
+        """
+        if not ram_pressure:
+            logger.warning(
+                "FlagshipDoctorDaemon skipped heavy self-healing for lag-only "
+                "signal (lag=%.2fs context=%s RAM=%.1f%%).",
+                lag,
+                lag_context,
+                ram_percent,
+            )
+            return
+
+        try:
+            import gc
+
+            full_gc_threshold = float(os.getenv("AURA_FLAGSHIP_DOCTOR_FULL_GC_RAM_PERCENT", "95.0"))
+        except (ImportError, TypeError, ValueError):
+            gc = None  # type: ignore[assignment]
+            full_gc_threshold = 95.0
+
+        gc_action = "unavailable"
+        if gc is not None:
+            generation = 2 if ram_percent >= full_gc_threshold else 0
+            logger.info(
+                "FlagshipDoctorDaemon reclaiming memory with bounded gc.collect(%s) "
+                "(RAM %.1f%%).",
+                generation,
+                ram_percent,
+            )
+            try:
+                gc.collect(generation)
+                gc_action = f"gc.collect({generation})"
+            except (RuntimeError, ValueError, TypeError) as exc:
+                logger.error("FlagshipDoctorDaemon memory reclamation failed: %s", exc)
+                gc_action = "gc_failed"
+
         compacted_count = 0
-        if ram_pressure or lag_context == "idle":
+        if os.getenv("AURA_FLAGSHIP_DOCTOR_DB_MAINTENANCE", "").strip().lower() in {"1", "true", "yes", "on"}:
+            db_paths = [
+                self.root / "tests" / "test_projects.db",
+                Path.home() / ".aura" / "live-source" / "tests" / "test_projects.db",
+            ]
+
             for db_path in db_paths:
                 if db_path.exists():
                     try:
-                        logger.info("🗄️ Compacting SQLite database: %s", db_path)
-                        conn = sqlite3.connect(str(db_path), timeout=5.0)
-                        conn.execute("VACUUM;")
-                        conn.close()
+                        logger.info("Compacting SQLite database under explicit doctor DB maintenance: %s", db_path)
+                        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+                            conn.execute("VACUUM;")
                         compacted_count += 1
                     except (sqlite3.Error, OSError, RuntimeError, ValueError) as e:
                         logger.error("Failed to compact DB %s: %s", db_path, e)
-        else:
-            logger.info(
-                "🗄️ Skipping database compaction for active-runtime lag context: %s",
-                lag_context,
-            )
-                    
-        # 3. Trigger global database maintenance if available
-        try:
-            from core.persistence.db_maintenance import get_db_maintenance
-            if ram_pressure or lag_context == "idle":
+
+            try:
+                from core.persistence.db_maintenance import get_db_maintenance
+
                 maint = get_db_maintenance()
-                logger.info("🗄️ Triggering global DatabaseMaintenance pass...")
+                logger.info("Triggering explicit global DatabaseMaintenance pass...")
                 maint.run_maintenance(force=True)
                 compacted_count += 1
-        except ImportError as _exc:
-            logger.debug("Suppressed %s in core.runtime.flagship_doctor: %s", type(_exc).__name__, _exc)
-        except (RuntimeError, AttributeError, ValueError, TypeError, OSError) as e:
-            logger.error("Global database maintenance run failed: %s", e)
-            
-        # 4. Record systemic degradation telemetry
+            except ImportError as _exc:
+                logger.debug("Suppressed %s in core.runtime.flagship_doctor: %s", type(_exc).__name__, _exc)
+            except (RuntimeError, AttributeError, ValueError, TypeError, OSError) as e:
+                logger.error("Global database maintenance run failed: %s", e)
+
+        # Record systemic degradation telemetry.
         try:
             from core.runtime.errors import record_degradation
             record_degradation(
                 "flagship_doctor",
                 RuntimeError(f"Self-healing active: lag={lag:.2f}s, RAM={ram_percent:.1f}%"),
                 severity="warning",
-                action=f"reclaimed RAM with gc.collect() and compacted {compacted_count} databases"
+                action=f"reclaimed RAM with {gc_action}; compacted {compacted_count} databases"
             )
         except (ImportError, RuntimeError, AttributeError, ValueError, TypeError, OSError) as e:
             logger.error("Failed to record degradation telemetry: %s", e)

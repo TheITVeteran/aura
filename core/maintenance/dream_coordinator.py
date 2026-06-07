@@ -62,11 +62,15 @@ class DreamCoordinator:
                 MAINTENANCE_BACKGROUND_POLICY,
                 background_activity_reason,
             )
+            from core.container import ServiceContainer
+
+            orchestrator = ServiceContainer.get("orchestrator", default=None)
+            allow_no_user_anchor = name in {"dlq_recovery"}
 
             reason = background_activity_reason(
-                None,
+                orchestrator,
                 profile=MAINTENANCE_BACKGROUND_POLICY,
-                allow_no_user_anchor=True,
+                allow_no_user_anchor=allow_no_user_anchor,
             )
             if reason:
                 logger.info("DreamCoordinator: '%s' deferred — %s.", name, reason)

@@ -10,7 +10,7 @@ from typing import Any
 
 from core.config import config
 from core.container import ServiceContainer
-from core.runtime.atomic_writer import atomic_write_text
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import FallbackClassification, record_degradation
 
 # Make sure we use the standard logger for this project
@@ -240,12 +240,30 @@ Synthesize a short (2-3 sentence) internal reflection that captures your subject
         # PP-001: Force utf-8 encoding
         from core.runtime.file_write_gateway import get_file_write_gateway
 
-        get_file_write_gateway().append_text(
-            self.storage_path,
-            json.dumps(entry, ensure_ascii=False, default=str) + "\n",
-            encoding="utf-8",
-            source="private_phenomenology.record_reflection",
-        )
+        with local_internal_governed_scope(
+            "private_phenomenology.record_reflection",
+            domain="file_write",
+        ):
+            get_file_write_gateway().append_text(
+                self.storage_path,
+                json.dumps(entry, ensure_ascii=False, default=str) + "\n",
+                encoding="utf-8",
+                source="private_phenomenology.record_reflection",
+            )
+
+    def _sync_write_pruned_reflections(self, text: str) -> None:
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        with local_internal_governed_scope(
+            "private_phenomenology.prune_reflections",
+            domain="file_write",
+        ):
+            get_file_write_gateway().write_text(
+                self.storage_path,
+                text,
+                encoding="utf-8",
+                source="private_phenomenology.prune_reflections",
+            )
 
     async def _record_reflection(self, text: str, pad: dict):
         """Asynchronously writes the internal monologue to the persistent soul-file."""
@@ -281,10 +299,8 @@ Synthesize a short (2-3 sentence) internal reflection that captures your subject
                 json.dumps(item, ensure_ascii=False, default=str) for item in sorted_kept
             )
             await asyncio.to_thread(
-                atomic_write_text,
-                self.storage_path,
+                self._sync_write_pruned_reflections,
                 payload + ("\n" if payload else ""),
-                encoding="utf-8",
             )
             return True
         except _PHENOMENOLOGY_RECOVERABLE_ERRORS as exc:

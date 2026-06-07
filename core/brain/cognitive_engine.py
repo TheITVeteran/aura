@@ -424,7 +424,7 @@ class CognitiveEngine:
 
         # 2. Derive base state for this cognitive cycle (Zenith-HF12 Fix)
         # This ensures every cycle starts with a unique version to prevent Atomic Guard rejections.
-        state = state.derive(f"cognitive_intent: {origin}")
+        state = state.derive(f"cognitive_intent: {origin}", origin=origin)
 
         # 3. Hardening: Set Current Objective & Origin
         # This prevents the race condition where ResponseGeneration would pick up
@@ -582,7 +582,13 @@ class CognitiveEngine:
         Internal method to execute the core cognitive phase loop.
         Extracted from `think` to allow pre/post-processing in `think`.
         """
-        if origin in ("user", "voice", "admin", "external"):
+        append_user_message = True
+        if isinstance(context, dict):
+            append_user_message = not bool(
+                context.get("suppress_user_memory_append")
+                or context.get("suppress_working_memory_user_append")
+            )
+        if self._is_user_facing_origin(origin) and append_user_message:
             # Check if already in history to avoid duplication
             # vResilience: Workaround for Pyre2 slice limitations
             history = state.cognition.working_memory
@@ -607,18 +613,38 @@ class CognitiveEngine:
         temp_state = state
         success = False
         is_background = bool(kwargs.get("is_background", False))
+        explicit_timeout = kwargs.get("timeout_s", kwargs.get("timeout"))
+        try:
+            cycle_timeout = float(explicit_timeout) if explicit_timeout is not None else 0.0
+        except (TypeError, ValueError):
+            cycle_timeout = 0.0
+        if cycle_timeout <= 0.0:
+            if self._is_user_facing_origin(origin):
+                cycle_timeout = 180.0
+            elif is_background:
+                cycle_timeout = 90.0
+            else:
+                cycle_timeout = 240.0
+        cycle_timeout = max(8.0, min(240.0, cycle_timeout))
 
         try:
-            # v26.3 HARDENING: 400s Cognitive Watchdog (accommodates 360s Phase/MLX timeouts)
-            async with asyncio.timeout(400.0):
+            async with asyncio.timeout(cycle_timeout):
                 for phase in self._phases:
                     # Pass through kwargs like is_background if phases support it
-                    temp_state = await phase.execute(temp_state, objective=objective, **kwargs)
+                    temp_state = await phase.execute(
+                        temp_state,
+                        objective=objective,
+                        context=context,
+                        **kwargs,
+                    )
 
                 state = temp_state
+                if self._is_user_facing_origin(origin):
+                    state.transition_origin = origin
+                    state.cognition.current_origin = origin
                 success = True
         except TimeoutError:
-            logger.error("🛑 [COGNITION] Watchdog: Cognitive cycle TIMEOUT (240s).")
+            logger.error("🛑 [COGNITION] Watchdog: Cognitive cycle TIMEOUT (%.1fs).", cycle_timeout)
             # Immediate Reactive Recovery
             return await self._reactive_recovery(objective, mode, origin, "timeout")
         except (sqlite3.Error, OSError) as e:
@@ -691,7 +717,7 @@ class CognitiveEngine:
                 preserved_origin = state.cognition.current_origin
 
                 latest = await self.state_repository.get_current()
-                state = latest.derive(f"rebase_retry_{attempt + 1}: {origin}")
+                state = latest.derive(f"rebase_retry_{attempt + 1}: {origin}", origin=origin)
 
                 # Apply preserved cognitive context onto the newly derived state
                 state.cognition.working_memory = preserved_memory
@@ -827,22 +853,11 @@ class CognitiveEngine:
                 logger.error("Failed last-resort structured recovery: %s", rec_err)
             return self._empty_thought(mode, "strict_answer_recovery_failed")
 
-        import random
-
-        _processing_fallbacks = [
-            "I did not form a clean answer in this cognitive cycle; I recorded the degraded turn instead of inventing one.",
-            "That's sitting with me, but I haven't landed on how to say it yet.",
-            "The thought is unresolved in this cycle; the live state needs another completed pass before it is answer-quality.",
-            "I heard you. My thinking is running deeper than my words right now.",
-            "I'm reaching for an answer that feels honest, not just quick.",
-        ]
-        return Thought(
-            id=str(uuid.uuid4()),
-            content=random.choice(_processing_fallbacks),
-            mode=mode,
-            confidence=0.5,
-            reasoning=["No explicit response generated in this cycle."],
+        logger.warning(
+            "🛡️ CognitiveEngine: user-facing cycle for origin=%s produced no answer-quality response.",
+            origin,
         )
+        return self._empty_thought(mode, "user_cycle_no_response")
 
     async def _reactive_recovery(
         self, objective: str, mode: ThinkingMode, origin: str, reason: str

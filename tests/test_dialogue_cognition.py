@@ -97,6 +97,16 @@ def test_get_dialogue_cognition_registers_service(monkeypatch, tmp_path):
     assert engine is ServiceContainer.get("dialogue_cognition")
 
 
+def test_dialogue_cognition_save_uses_internal_file_write_governance(monkeypatch, tmp_path):
+    monkeypatch.setattr("core.runtime.file_write_gateway.governance_runtime_active", lambda: True)
+
+    engine = DialogueCognitionEngine(storage_path=tmp_path / "dialogue.json")
+    engine.get_profile("bryan").interactions_analyzed = 1
+    engine.save()
+
+    assert (tmp_path / "dialogue.json").exists()
+
+
 def test_dialogue_cognition_source_blueprints_exist_without_corpora(tmp_path):
     engine = DialogueCognitionEngine(storage_path=tmp_path / "dialogue.json")
 

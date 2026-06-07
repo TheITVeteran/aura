@@ -495,6 +495,56 @@ class TestSelfHealingLoopSafety(unittest.IsolatedAsyncioTestCase):
         self.assertLess(time.perf_counter() - started, 0.12)
         self.assertGreater(watch.last_heartbeat_at, time.time() - 1.0)
 
+    async def test_inference_gate_foreground_dict_defers_healing_restart(self):
+        from core.runtime.self_healing import SelfHealing
+
+        ServiceContainer.clear()
+        ServiceContainer.register_instance(
+            "inference_gate",
+            SimpleNamespace(
+                get_conversation_status=lambda: {
+                    "foreground_owned": True,
+                    "active_generations": 1,
+                    "state": "ready",
+                }
+            ),
+        )
+        healer = SelfHealing()
+        restart = _AsyncCallRecorder()
+        healer.watch("foreground_watch", expected_interval_s=0.01, restart_async=restart)
+        watch = healer._watches["foreground_watch"]
+        watch.last_heartbeat_at = time.time() - 10
+
+        append_record = _AsyncCallRecorder()
+        try:
+            with swap.object(healer, "_append_record_async", new=append_record):
+                await healer._tick()
+        finally:
+            ServiceContainer.clear()
+
+        self.assertEqual(restart.await_count, 0)
+        self.assertEqual(append_record.await_count, 1)
+        self.assertEqual(append_record.await_args.args[0]["result"], "deferred_foreground_busy")
+        self.assertGreater(watch.last_heartbeat_at, time.time() - 1.0)
+
+    async def test_module_path_resolution_is_offloaded_for_deep_repair(self):
+        from core.runtime.self_healing import SelfHealing
+
+        healer = SelfHealing()
+        healer.watch("orchestrator", expected_interval_s=0.01, container_key="orchestrator")
+        watch = healer._watches["orchestrator"]
+        watch.restarts = 3
+        watch.last_heartbeat_at = time.time() - 10
+
+        to_thread = _AsyncCallRecorder(return_value="core/orchestrator/main.py")
+        with swap.dict(os.environ, {"AURA_ENABLE_DEEP_REPAIR": "1"}), \
+             swap("core.runtime.self_healing.asyncio.to_thread", new=to_thread), \
+             swap.object(healer, "schedule_deep_repair", return_value={"result": "deep_repair_scheduled"}), \
+             swap.object(healer, "_append_record_async", new=_AsyncCallRecorder()):
+            await healer._heal(watch, 10.0)
+
+        self.assertEqual(to_thread.await_count, 1)
+
 
 class TestRSSFallback(unittest.TestCase):
     def test_stdlib_rss_parser_returns_feedparser_like_shape(self):
@@ -1417,6 +1467,35 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(redis_client.published), 1)
         self.assertEqual(redis_client.published[0][0], "aura/events/shutdown-race")
+
+    async def test_event_bus_loop_mismatch_drops_closed_loop_redis_without_false_error(self):
+        from core.event_bus import AuraEventBus
+
+        class _ClosedLoop:
+            def is_running(self):
+                return False
+
+        class _Redis:
+            closed = False
+
+            async def aclose(self):
+                self.closed = True
+
+        bus = AuraEventBus()
+        bus._use_redis = True
+        bus._loop = asyncio.get_running_loop()
+        bus._redis_loop = _ClosedLoop()
+        redis_client = _Redis()
+        bus._redis = redis_client
+        bus._record_remote_error = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("closed-loop Redis disposal is not a remote transport failure")
+        )
+
+        bus._check_loop_mismatch()
+
+        self.assertIsNone(bus._redis)
+        self.assertIsNone(bus._redis_loop)
+        self.assertFalse(redis_client.closed)
 
     def _terminal_monitor_without_handler(self):
         from collections import deque

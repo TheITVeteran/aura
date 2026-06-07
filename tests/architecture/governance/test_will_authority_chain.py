@@ -131,5 +131,29 @@ async def test_receipt_log_keeps_memory_copy_when_durable_append_fails(tmp_path,
     )
 
 
+@pytest.mark.asyncio
+async def test_receipt_log_append_uses_internal_file_write_governance(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.runtime.file_write_gateway.governance_runtime_active", lambda: True)
+    log = agency_mod._ReceiptLog(path=tmp_path / "agency_receipts.jsonl")
+    receipt = ActionReceipt(
+        proposal_id="AO-governed",
+        drive="drive",
+        state_snapshot={},
+        expected_outcome="ok",
+        simulation_result={},
+        will_decision="approved",
+        will_receipt_id="will-1",
+        authority_receipt="authority-1",
+        capability_token="cap-1",
+        execution_receipt="exec-1",
+        outcome_assessment={"observed": {"ok": True}},
+    )
+
+    await log.append(receipt)
+
+    text = (tmp_path / "agency_receipts.jsonl").read_text(encoding="utf-8")
+    assert '"proposal_id": "AO-governed"' in text
+
+
 async def _async_dict(value):
     return value

@@ -337,6 +337,328 @@ def test_reliability_contract_allows_tiny_direct_answers():
     assert assess_user_facing_reply("Say exactly: 32B lane online.", "32B lane online.").ok
 
 
+def test_reliability_contract_rejects_missing_requested_paragraph_and_followup():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    user = (
+        "In two concise paragraphs, explain what you are currently optimizing "
+        "for in this desktop session, and then ask one grounded follow-up question."
+    )
+    reply = (
+        "I'm currently optimizing for understanding your goals and context, "
+        "then delivering precise and actionable responses."
+    )
+
+    assessment = assess_user_facing_reply(user, reply)
+
+    assert assessment.retryable
+    assert "missing_requested_paragraph_count" in assessment.reasons
+    assert "missing_requested_followup_question" in assessment.reasons
+
+
+def test_reliability_contract_accepts_requested_shape_when_satisfied():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    user = (
+        "In two concise paragraphs, explain what you are currently optimizing "
+        "for in this desktop session, and then ask one grounded follow-up question."
+    )
+    reply = (
+        "I am optimizing for the live desktop path staying coherent under real "
+        "user pressure: the request should enter the same governed runtime, use "
+        "the right model lane, and produce a complete answer instead of falling "
+        "back to thin status text.\n\n"
+        "I am also optimizing for verifiable action: if a tool is needed, it "
+        "should route through the governed capability path and leave evidence "
+        "that the task actually happened. Which part of the desktop path should "
+        "I validate next?"
+    )
+
+    assert assess_user_facing_reply(user, reply).ok
+
+
+def test_instruction_shape_repair_fixes_substantive_paragraph_and_followup_miss():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        repair_instruction_shape,
+    )
+
+    user = (
+        "In two concise paragraphs, explain what you are currently optimizing "
+        "for in this desktop session, and then ask one grounded follow-up question."
+    )
+    draft = (
+        "I am optimizing for the live desktop path to keep the same cognitive "
+        "runtime under real user pressure. Status probes, governed tools, memory "
+        "writes, and normal conversation should all use the same booted system. "
+        "I am also optimizing for failures to become repair evidence instead of "
+        "falling through into stale or generic replies."
+    )
+
+    repaired = repair_instruction_shape(user, draft)
+
+    assert repaired != draft
+    assert "\n\n" in repaired
+    assert "?" in repaired
+    assert assess_user_facing_reply(user, repaired).ok
+
+
+def test_instruction_shape_repair_uses_contextual_followup():
+    from core.conversation.response_reliability import repair_instruction_shape
+
+    user = (
+        "In two concise paragraphs, explain how I should spend the next hour "
+        "on this project, then ask one concrete follow-up question."
+    )
+    draft = (
+        "Start with the runtime path that is currently failing in real use, "
+        "because it gives you the clearest signal. Once that is stable, use a "
+        "focused test run to lock the behavior down."
+    )
+
+    repaired = repair_instruction_shape(user, draft)
+
+    assert "Which outcome would make the next hour feel most useful?" in repaired
+    assert "same live path" not in repaired
+
+
+def test_instruction_shape_repair_normalizes_jammed_numbered_sentences():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        repair_instruction_shape,
+    )
+
+    user = (
+        "Answer in exactly two numbered sentences. Explain why reliable "
+        "desktop tool use matters for a local AI assistant."
+    )
+    draft = (
+        "1. Reliable desktop tool use lets the assistant act on real user "
+        "intent through visible applications and files.2. It also creates "
+        "verifiable evidence that actions completed through the governed "
+        "runtime rather than a canned explanation."
+    )
+
+    repaired = repair_instruction_shape(user, draft)
+
+    assert "files.\n2. It also" in repaired
+    assert assess_user_facing_reply(user, repaired).ok
+
+
+def test_final_stabilizer_normalizes_jammed_numbered_sentences():
+    from core.synthesis import stabilize_user_facing_response
+
+    user = (
+        "Answer in exactly two numbered sentences. Explain why reliable "
+        "desktop tool use matters for a local AI assistant."
+    )
+    draft = (
+        "1. Reliable desktop tool use keeps local actions observable and "
+        "governed.2. It gives the user evidence that the assistant can operate "
+        "real apps and files instead of only describing intent."
+    )
+
+    stabilized = stabilize_user_facing_response(draft, user)
+
+    assert "governed.\n2. It gives" in stabilized
+
+
+def test_instruction_shape_repair_rebuilds_empty_numbered_slot():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        repair_instruction_shape,
+    )
+
+    user = (
+        "Answer in exactly two numbered sentences. Explain why reliable "
+        "desktop tool use matters for a local AI assistant, without mentioning runtime status."
+    )
+    draft = (
+        "1. \n"
+        "2. Reliable desktop tool use for me means being able to open files, "
+        "run native applications, and interact with the system as a user would, "
+        "ensuring that my recommendations and actions have real-world impact."
+    )
+
+    assessment = assess_user_facing_reply(user, draft)
+    assert assessment.retryable
+    assert "empty_requested_list_item" in assessment.reasons
+    assert "missing_requested_list_count" in assessment.reasons
+
+    repaired = repair_instruction_shape(user, draft)
+
+    assert "1. \n" not in repaired
+    assert repaired.startswith("1. Reliable desktop tool use")
+    assert "\n2. That ensures" in repaired
+    assert assess_user_facing_reply(user, repaired).ok
+
+
+def test_final_stabilizer_repairs_empty_numbered_slot():
+    from core.synthesis import stabilize_user_facing_response
+
+    user = (
+        "Answer in exactly two numbered sentences. Explain why reliable "
+        "desktop tool use matters for a local AI assistant, without mentioning runtime status."
+    )
+    draft = (
+        "1. \n"
+        "2. Reliable desktop tool use for me means being able to open files, "
+        "run native applications, and interact with the system as a user would, "
+        "ensuring that my recommendations and actions have real-world impact."
+    )
+
+    stabilized = stabilize_user_facing_response(draft, user)
+
+    assert stabilized.startswith("1. Reliable desktop tool use")
+    assert "\n2. That ensures" in stabilized
+    assert "runtime status" not in stabilized.lower()
+
+
+def test_numbered_acknowledgement_placeholder_does_not_pass_as_answer():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    user = (
+        "Answer in exactly two numbered sentences. Explain why reliable "
+        "desktop tool use matters for a local AI assistant."
+    )
+    reply = "1. I heard you.\n2. My thinking is running deeper than my words right now."
+
+    assessment = assess_user_facing_reply(user, reply)
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert "low_signal_acknowledgement_placeholder" in assessment.reasons
+
+
+def test_response_generation_repairs_substantive_shape_miss_before_model_retry():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from core.phases.response_generation import ResponseGenerationPhase
+
+    user = (
+        "In two concise paragraphs, explain what you are currently optimizing "
+        "for in this desktop session, and then ask one grounded follow-up question."
+    )
+    draft = (
+        "I am optimizing for the live desktop path to keep the same cognitive "
+        "runtime under real user pressure. Status probes, governed tools, memory "
+        "writes, and normal conversation should all use the same booted system. "
+        "I am also optimizing for failures to become repair evidence instead of "
+        "falling through into stale or generic replies."
+    )
+
+    repaired, changed, reasons = (
+        ResponseGenerationPhase._repair_substantive_instruction_shape_miss(user, draft)
+    )
+
+    assert changed is True
+    assert set(reasons) == {
+        "missing_requested_paragraph_count",
+        "missing_requested_followup_question",
+    }
+    assert repaired != draft
+    assert "\n\n" in repaired
+    assert "?" in repaired
+    assert assess_user_facing_reply(user, repaired).ok
+
+
+def test_response_generation_repairs_substantive_boilerplate_shape_miss_before_model_retry():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from core.phases.response_generation import ResponseGenerationPhase
+
+    user = (
+        "In two concise paragraphs, explain what you are currently optimizing "
+        "for in this desktop session, and then ask one grounded follow-up question."
+    )
+    draft = (
+        "I can help with that by focusing on engagement quality over throughput. "
+        "I am optimizing for live desktop coherence under real user pressure. "
+        "Cortex, memory, state, and governed tools should stay on the same path "
+        "instead of falling into fallback phrasing."
+    )
+
+    assert "generic_assistant_language" in assess_user_facing_reply(user, draft).reasons
+
+    repaired, changed, reasons = (
+        ResponseGenerationPhase._repair_substantive_instruction_shape_miss(user, draft)
+    )
+
+    assert changed is True
+    assert "generic_assistant_language" in reasons
+    assert "I can help with that" not in repaired
+    assert "\n\n" in repaired
+    assert "?" in repaired
+    assert assess_user_facing_reply(user, repaired).ok
+
+
+def test_response_generation_does_not_repair_empty_generic_boilerplate():
+    from core.phases.response_generation import ResponseGenerationPhase
+
+    repaired, changed, reasons = (
+        ResponseGenerationPhase._repair_substantive_instruction_shape_miss(
+            "What do you think about this?",
+            "How can I help?",
+        )
+    )
+
+    assert repaired == "How can I help?"
+    assert changed is False
+    assert reasons == ()
+
+
+def test_reliability_contract_rejects_missing_requested_list_items():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Give me three bullets about the live desktop path.",
+        "- The chat route is active.\n- Tool governance is active.",
+    )
+
+    assert assessment.retryable
+    assert "missing_requested_list_count" in assessment.reasons
+
+
+@pytest.mark.asyncio
+async def test_final_quality_gate_repairs_instruction_shape_without_llm(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    user = (
+        "In two concise paragraphs, explain what you are currently optimizing "
+        "for in this desktop session, and then ask one grounded follow-up question."
+    )
+    draft = (
+        "I am optimizing for the live desktop path to keep the same cognitive "
+        "runtime under real user pressure. Status probes, governed tools, memory "
+        "writes, and normal conversation should all use the same booted system. "
+        "I am also optimizing for failures to become repair evidence instead of "
+        "falling through into stale or generic replies."
+    )
+
+    stabilizer_calls = []
+
+    async def _should_not_call_stabilizer(*_args, **_kwargs):
+        stabilizer_calls.append((_args, _kwargs))
+        return "unexpected stabilizer path"
+
+    monkeypatch.setattr(chat_routes, "_stabilize_user_facing_reply", _should_not_call_stabilizer)
+
+    repaired, is_stale, is_same, is_off_topic, reason, changed = await chat_routes._repair_final_degraded_reply(
+        user,
+        draft,
+        stale=False,
+        same_diff=False,
+        off_topic=False,
+    )
+
+    assert changed is True
+    assert is_stale is False
+    assert is_same is False
+    assert is_off_topic is False
+    assert reason == ""
+    assert "\n\n" in repaired
+    assert "?" in repaired
+    assert stabilizer_calls == []
+
+
 @pytest.mark.asyncio
 async def test_final_quality_gate_repairs_repeated_degraded_reply(monkeypatch):
     from interface.routes import chat as chat_routes

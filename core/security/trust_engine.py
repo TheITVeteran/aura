@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 
@@ -415,11 +416,16 @@ class TrustEngine:
     def _log_event(self, event_type: str, data: dict):
         try:
             entry = {"timestamp": time.time(), "event": event_type, **data}
-            get_file_write_gateway().append_text(
-                TRUST_LOG_PATH,
-                json.dumps(entry) + "\n",
-                source="security.trust_engine.event",
-            )
+            with local_internal_governed_scope(
+                "security.trust_engine.event",
+                domain="file_write",
+                receipt_prefix="trust-engine-event",
+            ):
+                get_file_write_gateway().append_text(
+                    TRUST_LOG_PATH,
+                    json.dumps(entry) + "\n",
+                    source="security.trust_engine.event",
+                )
         except (json.JSONDecodeError, TypeError, ValueError) as _exc:
             record_degradation('trust_engine', _exc)
             logger.debug("Suppressed Exception: %s", _exc)

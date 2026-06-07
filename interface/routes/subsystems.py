@@ -38,6 +38,45 @@ _SUBSYSTEM_ROUTE_ERRORS = (
 )
 
 
+def _normalize_skill_execute_payload(params: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split API skill envelopes into skill params and execution context.
+
+    The live desktop/UI path uses a structured body so it can send foreground
+    context with the tool request. Skills, however, must receive only their
+    declared schema fields. Accept direct skill params too for backward
+    compatibility.
+    """
+
+    if not isinstance(params, dict):
+        return {}, {}
+
+    envelope_keys = ("input", "params", "arguments", "args", "payload")
+    context = dict(params.get("context") or {})
+    for key in (
+        "origin",
+        "route",
+        "foreground_request",
+        "user_explicitly_authorized",
+        "user_requested_action",
+        "surface",
+        "source",
+    ):
+        if key in params and key not in context:
+            context[key] = params[key]
+
+    for key in envelope_keys:
+        if key not in params:
+            continue
+        value = params.get(key)
+        if isinstance(value, dict):
+            return dict(value), context
+        if value is None:
+            return {}, context
+        return {"value": value}, context
+
+    return {k: v for k, v in params.items() if k != "context"}, context
+
+
 def _get_live_orchestrator_state() -> Any | None:
     """Best-effort access to the active runtime state used by the live orchestrator."""
     orch = ServiceContainer.get("orchestrator", default=None)
@@ -695,7 +734,13 @@ async def api_skill_execute(
         if not intent_router or not engine:
             return JSONResponse({"ok": False, "error": "Skill execution engine not available"}, status_code=503)
 
-        result = await intent_router.route_execution(skill_name, params, engine)
+        skill_params, execution_context = _normalize_skill_execute_payload(params)
+        result = await intent_router.route_execution(
+            skill_name,
+            skill_params,
+            engine,
+            context=execution_context,
+        )
 
         return JSONResponse(result)
     except _SUBSYSTEM_ROUTE_ERRORS as e:

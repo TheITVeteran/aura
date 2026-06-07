@@ -90,8 +90,9 @@ def test_mlx_runtime_probe_subprocess_is_bounded_and_reviewed():
     assert "core/brain/llm/mlx_client.py" in ALLOW_SUBPROCESS
     assert "get_subprocess_gateway().run(" in source
     assert "timeout=25.0" in source
-    assert "source=\"certification_tooling:mlx_runtime_probe\"" in source
-    assert "offline_tooling=True" in source
+    assert "source=\"runtime_probe:mlx_runtime_probe\"" in source
+    assert "read_only=True" in source
+    assert "AURA_TEST_MODE" not in source
     assert "shell=True" not in source
 
 

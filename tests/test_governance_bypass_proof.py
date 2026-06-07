@@ -12,6 +12,7 @@ These tests intentionally try to cheat the authority system:
 If any of these succeed, the governance architecture has a hole.
 """
 from dataclasses import dataclass
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -90,6 +91,111 @@ async def test_memory_write_blocked_without_will_approval(refusing_will):
     assert not decision.approved, "Memory write bypassed the Unified Will!"
     assert len(refusing_will.decisions) == 1
     assert refusing_will.decisions[0]["domain"].value == "memory_write"
+
+
+def test_authority_gateway_classifies_interaction_memory_without_belief_preflight():
+    """Conversation continuity must stay governed without being treated as belief mutation."""
+    from core.executive.authority_gateway import AuthorityGateway
+
+    context = AuthorityGateway._memory_write_context(
+        "interaction_commit",
+        "desktop_ui",
+        {"origin": "desktop_ui", "message": "hello"},
+        "hello -> reply",
+    )
+
+    assert context["conversation_continuity"] is True
+    assert context["high_risk_memory_write"] is False
+    assert AuthorityGateway._memory_preflight_domain("interaction_commit", {"origin": "desktop_ui"}) == "memory_write"
+    assert AuthorityGateway._memory_preflight_domain("belief_update", {"origin": "desktop_ui"}) == "belief_update"
+    assert (
+        AuthorityGateway._memory_preflight_domain("identity_profile", {"self_model_write": True})
+        == "belief_update"
+    )
+
+
+def test_authority_gateway_classifies_chat_api_memory_as_foreground_continuity():
+    """The live desktop chat path must not fall back to autonomous memory semantics."""
+    from core.executive.authority_gateway import AuthorityGateway
+
+    context = AuthorityGateway._memory_write_context(
+        "interaction_commit",
+        "api",
+        {
+            "origin": "api",
+            "source": "chat_api",
+            "objective": "continue the live desktop conversation",
+        },
+        "User turn -> Aura reply",
+    )
+
+    assert context["user_facing_memory_write"] is True
+    assert context["conversation_continuity"] is True
+    assert context["high_risk_memory_write"] is False
+
+
+def test_authority_gateway_marks_foreground_cognitive_cycle_state_continuity():
+    """Foreground cognitive-cycle state commits must carry scoped continuity context."""
+    from core.executive.authority_gateway import AuthorityGateway
+
+    foreground = AuthorityGateway._state_mutation_context("chat_api", "cognitive_cycle")
+    background = AuthorityGateway._state_mutation_context("dream_journal", "cognitive_cycle")
+
+    assert foreground["user_facing_state_mutation"] is True
+    assert foreground["foreground_continuity_state"] is True
+    assert background["user_facing_state_mutation"] is False
+    assert background["foreground_continuity_state"] is False
+
+
+def test_being_runtime_constrains_foreground_state_commit_instead_of_deferring():
+    """AuraNow pressure should not drop foreground conversation state persistence."""
+    from core.being.aura_now import (
+        AffectiveState,
+        AttentionState,
+        AuraNow,
+        BodyState,
+        MemoryContext,
+        OwnershipState,
+        PredictionState,
+        ReportBoundary,
+        SelfState,
+        WillStateSnapshot,
+        WorkspaceState,
+        WorldState,
+    )
+    from core.being.runtime import BeingRuntime
+
+    now = AuraNow(
+        tick=1,
+        timestamp=time.time(),
+        monotonic_time=time.monotonic(),
+        continuous_field=(0.0,),
+        body=BodyState(),
+        world=WorldState(),
+        attention=AttentionState(),
+        affect=AffectiveState(),
+        self_model=SelfState(),
+        memory_context=MemoryContext(),
+        workspace=WorkspaceState(ignition_strength=0.0, broadcast_targets=()),
+        will=WillStateSnapshot(),
+        prediction=PredictionState(controllability=0.0),
+        ownership=OwnershipState(agency_confidence=1.0),
+        report_boundary=ReportBoundary(),
+    )
+
+    policy = BeingRuntime().action_policy(
+        now,
+        domain="state_mutation",
+        priority=0.5,
+        context={
+            "foreground_continuity_state": True,
+            "state_origin": "chat_api",
+            "state_cause": "cognitive_cycle",
+        },
+    )
+
+    assert policy["outcome"] == "constrain"
+    assert "foreground_state_commit_constrained:not_deferred" in policy["constraints"]
 
 
 def test_initiative_blocked_without_will_approval_sync(refusing_will):

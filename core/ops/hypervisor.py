@@ -6,6 +6,7 @@ Monitors event loop health, memory leaks, and severe freezes.
 
 import asyncio
 import logging
+import os
 import time
 
 from core.observability.metrics import get_metrics
@@ -34,8 +35,29 @@ class Hypervisor:
         self._last_lag = 0.0
         self._last_severe_lag_at = 0.0
         self._last_failure_reason = ""
+        self._severe_lag_streak = 0
         self._healthy_lag_samples_after_failure = 0
         self._required_recovery_samples = 3
+        try:
+            self._required_severe_lag_samples = int(
+                os.getenv("AURA_HYPERVISOR_SEVERE_LAG_SAMPLES", "2")
+            )
+        except (TypeError, ValueError):
+            self._required_severe_lag_samples = 2
+        self._required_severe_lag_samples = min(10, max(1, self._required_severe_lag_samples))
+        try:
+            self._severe_lag_threshold_s = float(
+                os.getenv("AURA_HYPERVISOR_SEVERE_LAG_THRESHOLD_S", "5.0")
+            )
+        except (TypeError, ValueError):
+            self._severe_lag_threshold_s = 5.0
+        self._severe_lag_threshold_s = max(2.0, self._severe_lag_threshold_s)
+        try:
+            self._failure_recovery_window_s = float(
+                os.getenv("AURA_HYPERVISOR_FAILURE_RECOVERY_S", "90.0")
+            )
+        except (TypeError, ValueError):
+            self._failure_recovery_window_s = 90.0
 
     async def start(self):
         if self._running:
@@ -60,10 +82,13 @@ class Hypervisor:
         """Return True only when the watchdog loop is actively supervised."""
         if not bool(self._running and self._task is not None and not self._task.done()):
             return False
-        if self._last_severe_lag_at and (
-            self._healthy_lag_samples_after_failure < self._required_recovery_samples
-        ):
-            return False
+        if self._last_severe_lag_at:
+            stable_for = time.time() - self._last_severe_lag_at
+            if (
+                self._healthy_lag_samples_after_failure < self._required_recovery_samples
+                or stable_for < self._failure_recovery_window_s
+            ):
+                return False
         return True
 
     def get_status(self) -> dict[str, float | bool | str]:
@@ -72,9 +97,24 @@ class Hypervisor:
             "last_lag_s": self._last_lag,
             "last_severe_lag_at": self._last_severe_lag_at,
             "last_failure_reason": self._last_failure_reason,
+            "severe_lag_streak": self._severe_lag_streak,
+            "required_severe_lag_samples": self._required_severe_lag_samples,
+            "severe_lag_threshold_s": self._severe_lag_threshold_s,
             "healthy_recovery_samples": self._healthy_lag_samples_after_failure,
             "required_recovery_samples": self._required_recovery_samples,
+            "recovery_window_s": self._failure_recovery_window_s,
         }
+
+    def _confirm_severe_lag_failure(self, lag: float, uptime: float) -> bool:
+        """Return True only after sustained severe lag outside boot warmup."""
+        if lag <= self._severe_lag_threshold_s:
+            self._severe_lag_streak = 0
+            return False
+        if uptime < 180.0:
+            self._severe_lag_streak = 0
+            return False
+        self._severe_lag_streak += 1
+        return self._severe_lag_streak >= self._required_severe_lag_samples
 
     def _active_runtime_reason(self) -> str:
         try:
@@ -136,15 +176,17 @@ class Hypervisor:
                 )
                 metrics.increment("hypervisor.lag_spikes_total")
 
-                if lag > 5.0:
+                if lag > self._severe_lag_threshold_s:
                     uptime = time.time() - getattr(self, "_start_time", time.time())
                     if uptime < 180.0:
                         logger.warning(
-                            "🚨 Loop lag > 5s during boot/warmup grace period (uptime: %.1fs). "
+                            "🚨 Loop lag > %.1fs during boot/warmup grace period (uptime: %.1fs). "
                             "Skipping severe freeze failure recording to allow model load to complete.",
+                            self._severe_lag_threshold_s,
                             uptime,
                         )
-                    else:
+                        self._severe_lag_streak = 0
+                    elif self._confirm_severe_lag_failure(lag, uptime):
                         self._last_severe_lag_at = time.time()
                         self._last_failure_reason = f"severe event-loop lag {lag:.3f}s"
                         self._healthy_lag_samples_after_failure = 0
@@ -158,15 +200,32 @@ class Hypervisor:
                         logger.critical(
                             "🚨 SEVERE FREEZE: Loop lag > 5s. System stability compromised."
                         )
+                    else:
+                        logger.warning(
+                            "🚨 Severe lag candidate %.3fs observed (%d/%d samples); waiting for confirmation before failing health.",
+                            lag,
+                            self._severe_lag_streak,
+                            self._required_severe_lag_samples,
+                        )
+                else:
+                    self._severe_lag_streak = 0
             elif self._last_severe_lag_at:
                 self._healthy_lag_samples_after_failure += 1
-                if self._healthy_lag_samples_after_failure >= self._required_recovery_samples:
+                stable_for = time.time() - self._last_severe_lag_at
+                if (
+                    self._healthy_lag_samples_after_failure >= self._required_recovery_samples
+                    and stable_for >= self._failure_recovery_window_s
+                ):
                     logger.info(
-                        "Hypervisor recovered after %d healthy event-loop samples.",
+                        "Hypervisor recovered after %d healthy event-loop samples over %.1fs.",
                         self._healthy_lag_samples_after_failure,
+                        stable_for,
                     )
                     self._last_severe_lag_at = 0.0
                     self._last_failure_reason = ""
+                    self._severe_lag_streak = 0
+            else:
+                self._severe_lag_streak = 0
 
             # Memory Check
             import psutil

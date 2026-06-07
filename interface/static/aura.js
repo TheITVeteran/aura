@@ -3040,13 +3040,28 @@ function conversationLaneStatusText(lane) {
 function applyConversationLane(lane, healthStatus = '') {
     if (!lane || typeof lane !== 'object') return;
 
-    state.conversationLane = lane;
-    state.conversationReady = !!lane.conversation_ready;
+    const governedActionResult = lane.governed_action_result === true;
+    const preservesHeartbeatLane = governedActionResult
+        && lane.conversation_ready === false
+        && state.runtimeHealthy === true
+        && state.conversationLane
+        && state.conversationLane.conversation_ready === true;
+    const effectiveLane = preservesHeartbeatLane
+        ? Object.assign({}, state.conversationLane, {
+            governed_action_result: true,
+            governed_action_status: lane.governed_action_status || state.conversationLane.governed_action_status,
+            governed_action_completed_at: lane.governed_action_completed_at || Date.now() / 1000,
+            governed_action_health_note: lane.governed_action_health_note || ''
+        })
+        : lane;
 
-    const laneText = conversationLaneStatusText(lane);
-    const laneStandby = laneIsStandby(lane);
+    state.conversationLane = effectiveLane;
+    state.conversationReady = !!effectiveLane.conversation_ready;
+
+    const laneText = conversationLaneStatusText(effectiveLane);
+    const laneStandby = laneIsStandby(effectiveLane);
     if (state.connected) {
-        const healthy = laneHealthIsOperational(lane, healthStatus);
+        const healthy = laneHealthIsOperational(effectiveLane, healthStatus);
         const connectionMode = (state.conversationReady || laneStandby) && healthy ? 'online' : 'degraded';
         setConnectionVisual(connectionMode, !state.conversationReady ? laneText : '');
     }
@@ -3062,7 +3077,7 @@ function applyConversationLane(lane, healthStatus = '') {
     const tierEl = $('r-llm-tier');
     if (tierEl) {
         if (state.conversationReady) {
-            const endpoint = lane.foreground_endpoint || lane.desired_endpoint || 'Cortex';
+            const endpoint = effectiveLane.foreground_endpoint || effectiveLane.desired_endpoint || 'Cortex';
             tierEl.textContent = endpoint;
             tierEl.title = `Foreground: ${endpoint}`;
             tierEl.style.color = 'var(--success)';
@@ -3075,8 +3090,8 @@ function applyConversationLane(lane, healthStatus = '') {
             tierEl.textContent = stateLabel;
             tierEl.title = laneStandby
                 ? 'Aura is awake. Cortex will warm on first turn.'
-                : lane.last_failure_reason || (lane.desired_model || 'Cortex (32B)');
-            tierEl.style.color = laneStandby ? 'var(--success)' : lane.state === 'failed' ? 'var(--error)' : 'var(--warn)';
+                : effectiveLane.last_failure_reason || (effectiveLane.desired_model || 'Cortex (32B)');
+            tierEl.style.color = laneStandby ? 'var(--success)' : effectiveLane.state === 'failed' ? 'var(--error)' : 'var(--warn)';
         }
     }
 }

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+import logging
 from collections.abc import Awaitable, Callable
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
+logger = logging.getLogger(__name__)
 _FIRST_PERSON = re.compile(r"\b(?:i|i'm|i’ve|i've|i’d|i'd|my|me|for me|to me)\b", re.IGNORECASE)
 _QUESTION_OWNERSHIP = re.compile(
     r"\b(?:the question on my mind|i(?: am|'m)? wondering|what i'm wondering|what i keep wondering|"
@@ -449,6 +451,14 @@ def repair_dialogue_surface(text: str, contract: object | None) -> str:
     body = _collapse_repeated_sentences(body)
 
     sentences = _sentences(body)
+    if any(_contains_generic_assistant_language(sentence) for sentence in sentences):
+        kept = [
+            sentence
+            for sentence in sentences
+            if not _contains_generic_assistant_language(sentence)
+        ]
+        if kept and sum(len(sentence.split()) for sentence in kept) >= 8:
+            sentences = kept
     while sentences and _is_generic_question(sentences[-1]):
         sentences.pop()
 
@@ -516,6 +526,11 @@ async def enforce_dialogue_contract(
     if retry_generate is None:
         return repaired, repaired_validation, False
 
+    logger.info(
+        "Dialogue contract deterministic repair still failed before retry: initial=%s repaired=%s",
+        ",".join(validation.violations) or "none",
+        ",".join(repaired_validation.violations) or "none",
+    )
     retry_block = build_dialogue_repair_block(contract, validation, text)
     retried = str(await retry_generate(retry_block) or "").strip()
     retried_validation = validate_dialogue_response(retried, contract)

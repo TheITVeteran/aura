@@ -37,6 +37,14 @@ _TEST_MODE_GOVERNANCE_BYPASS_PREFIXES = (
     "certification_tooling:",
     "proof_tooling:",
 )
+_DESKTOP_LONGRUN_COMMAND_MARKERS = (
+    "challenges/nethack_challenge.py",
+    "nethack_challenge.py",
+    "run_dnu_agi_proof_battery.py",
+    "run_longevity_soak.py",
+    "aletheia_tier5",
+    "run_aletheia",
+)
 logger = logging.getLogger("Aura.SubprocessGateway")
 
 
@@ -68,6 +76,57 @@ def _validate_read_only_source(source: str) -> None:
         raise ValueError("read-only subprocess probes require a specific source label")
     if "\n" in source or "\r" in source:
         raise ValueError("subprocess source label must be single-line")
+
+
+def _truthy_env_value(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _effective_env_value(env: Mapping[str, str] | None, key: str) -> str | None:
+    if env is not None and key in env:
+        return str(env[key])
+    return os.getenv(key)
+
+
+def _desktop_safe_mode_requested(env: Mapping[str, str] | None) -> bool:
+    return _truthy_env_value(_effective_env_value(env, "AURA_SAFE_BOOT_DESKTOP")) or _truthy_env_value(
+        _effective_env_value(env, "AURA_LAUNCHED_FROM_APP")
+    )
+
+
+def _desktop_longrun_override(env: Mapping[str, str] | None) -> bool:
+    return _truthy_env_value(_effective_env_value(env, "AURA_ALLOW_DESKTOP_LONGRUNS")) or _truthy_env_value(
+        _effective_env_value(env, "AURA_ALLOW_DESKTOP_NETHACK")
+    )
+
+
+def _validate_desktop_safe_subprocess(
+    command: Sequence[str] | str,
+    *,
+    env: Mapping[str, str] | None,
+    source: str,
+    operation: str,
+) -> None:
+    """Prevent desktop boot/chat sessions from launching proof-scale child jobs.
+
+    Long environment batteries are valid proof tooling, but they are not part of
+    the live user desktop lane. They can exceed desktop memory budgets when they
+    are started by a stale shell, launch agent, or task handoff. An explicit
+    operator opt-in keeps proof work possible while making false "normal desktop"
+    launches fail closed.
+    """
+    if not _desktop_safe_mode_requested(env) or _desktop_longrun_override(env):
+        return
+    if isinstance(command, str):
+        normalized = command
+    else:
+        normalized = " ".join(str(part) for part in command)
+    lowered = normalized.lower()
+    if any(marker in lowered for marker in _DESKTOP_LONGRUN_COMMAND_MARKERS):
+        raise GovernanceViolation(
+            f"{operation}:{source} denied desktop-safe long-run subprocess; "
+            "set AURA_ALLOW_DESKTOP_LONGRUNS=1 for an intentional proof run"
+        )
 
 
 def _open_spawn_stream(path: str | os.PathLike[str], *, text: bool) -> IO[Any]:
@@ -169,6 +228,7 @@ class SubprocessGateway:
         )
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.run:{source}")
+        _validate_desktop_safe_subprocess(command, env=env, source=source, operation="run")
         return subprocess.run(
             command,
             cwd=_coerce_cwd(cwd),
@@ -238,6 +298,7 @@ class SubprocessGateway:
         )
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn:{source}")
+        _validate_desktop_safe_subprocess(command, env=env, source=source, operation="spawn")
         if stdout is not None and stdout_path is not None:
             raise ValueError("stdout and stdout_path are mutually exclusive")
         if stderr is not None and stderr_path is not None:
@@ -298,6 +359,7 @@ class SubprocessGateway:
         )
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn_async:{source}")
+        _validate_desktop_safe_subprocess(command, env=env, source=source, operation="spawn_async")
         return await asyncio.create_subprocess_exec(
             *command,
             stdin=stdin,
@@ -332,6 +394,7 @@ class SubprocessGateway:
         )
         if not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn_shell_async:{source}")
+        _validate_desktop_safe_subprocess(command, env=env, source=source, operation="spawn_shell_async")
         return await asyncio.create_subprocess_shell(
             command,
             stdin=stdin,

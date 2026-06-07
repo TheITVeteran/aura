@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from core.brain.llm.code_generator import LLMCodeGenerator, extract_python_code
@@ -137,3 +139,16 @@ def test_self_healing_schedule_deep_repair_respects_foreground_only_runtime(monk
     )
 
     assert record["result"] == "foreground_only_runtime"
+
+
+def test_self_healing_ledger_append_uses_internal_governance(monkeypatch, tmp_path):
+    from core.runtime import self_healing as self_healing_module
+
+    monkeypatch.setenv("AURA_GOVERNANCE_MODE", "strict")
+    monkeypatch.setattr(self_healing_module, "_LEDGER", tmp_path / "events.jsonl")
+
+    SelfHealing()._append_record({"name": "strict_heal", "result": "ok"})
+
+    payload = json.loads((tmp_path / "events.jsonl").read_text(encoding="utf-8"))
+    assert payload["name"] == "strict_heal"
+    assert payload["result"] == "ok"

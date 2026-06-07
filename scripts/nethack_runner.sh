@@ -8,6 +8,8 @@ export AURA_MODEL=Qwen2.5-32B-Instruct-8bit
 export AURA_LOCAL_BACKEND=mlx
 export AURA_NETHACK_LOG=~/.aura/logs/nethack/kernel_trace.jsonl
 : "${AURA_NETHACK_STEPS:=5000}"
+: "${AURA_NETHACK_SAFE_MAX_STEPS:=5000}"
+: "${AURA_NETHACK_LONG_RUN_CONFIRM_FILE:=$HOME/.aura/run/allow_long_nethack}"
 
 mkdir -p ~/.aura/logs/nethack/
 
@@ -27,12 +29,28 @@ if ! [[ "${AURA_NETHACK_STEPS}" =~ ^[0-9]+$ ]]; then
     exit 64
 fi
 
-if [[ "${AURA_ALLOW_LONG_NETHACK_RUN:-0}" != "1" && "${AURA_NETHACK_STEPS}" -gt 5000 ]]; then
-    echo "Refusing ${AURA_NETHACK_STEPS} NetHack steps without AURA_ALLOW_LONG_NETHACK_RUN=1." >> ~/.aura/logs/nethack/runner.log
+if ! [[ "${AURA_NETHACK_SAFE_MAX_STEPS}" =~ ^[0-9]+$ ]]; then
+    echo "Refusing invalid AURA_NETHACK_SAFE_MAX_STEPS=${AURA_NETHACK_SAFE_MAX_STEPS}." >> ~/.aura/logs/nethack/runner.log
     exit 64
 fi
 
-# Run challenges/nethack_challenge.py only after explicit resource guards pass.
+confirm_file="${AURA_NETHACK_LONG_RUN_CONFIRM_FILE/#\\~/$HOME}"
+required_confirmation="allow-long-nethack:${PWD}:${AURA_NETHACK_STEPS}"
+if [[ "${AURA_NETHACK_STEPS}" -gt "${AURA_NETHACK_SAFE_MAX_STEPS}" ]]; then
+    if [[ ! -f "${confirm_file}" || "$(cat "${confirm_file}")" != "${required_confirmation}" ]]; then
+        echo "Refusing ${AURA_NETHACK_STEPS} NetHack steps without one-shot confirmation file." >> ~/.aura/logs/nethack/runner.log
+        echo "Write '${required_confirmation}' to ${confirm_file} for an intentional long proof run." >> ~/.aura/logs/nethack/runner.log
+        exit 64
+    fi
+    rm -f "${confirm_file}"
+fi
+
+if [[ "${AURA_NETHACK_STEPS}" -gt 50000 && "${AURA_NETHACK_UNSAFE_RAM_CONFIRM:-}" != "I_ACCEPT_64GB_RAM_RISK" ]]; then
+    echo "Refusing ${AURA_NETHACK_STEPS} NetHack steps without AURA_NETHACK_UNSAFE_RAM_CONFIRM=I_ACCEPT_64GB_RAM_RISK." >> ~/.aura/logs/nethack/runner.log
+    exit 64
+fi
+
+# Run challenges/nethack_challenge.py only after resource guards pass.
 .venv/bin/python challenges/nethack_challenge.py \
     --mode strict_real \
     --steps "${AURA_NETHACK_STEPS}" \

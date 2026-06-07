@@ -62,6 +62,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
@@ -558,11 +559,16 @@ class EmergencyProtocol:
                 "severity": signal.severity,
                 "threat_score": self._threat_score,
             }
-            get_file_write_gateway().append_text(
-                THREAT_LOG_PATH,
-                json.dumps(entry) + "\n",
-                source="security.emergency_protocol.threat",
-            )
+            with local_internal_governed_scope(
+                "security.emergency_protocol.threat",
+                domain="file_write",
+                receipt_prefix="emergency-threat-log",
+            ):
+                get_file_write_gateway().append_text(
+                    THREAT_LOG_PATH,
+                    json.dumps(entry) + "\n",
+                    source="security.emergency_protocol.threat",
+                )
         except _EMERGENCY_RECOVERABLE_ERRORS as exc:
             record_degradation("emergency_protocol", exc)
             logger.debug("Threat log write failed: %s", exc)

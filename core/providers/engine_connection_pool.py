@@ -103,6 +103,13 @@ class ConnectionRetryConfig:
         """Get timeout with multiplier for retry attempts."""
         return base_timeout * (1.0 + (self.timeout_multiplier * (attempt + 1)))
 
+    @staticmethod
+    def coerce_total_timeout(timeout: float) -> float:
+        try:
+            return max(0.1, float(timeout))
+        except (TypeError, ValueError):
+            return 120.0
+
 
 class CognitiveEngineConnectionPool:
     """
@@ -184,7 +191,10 @@ class CognitiveEngineConnectionPool:
             operation_name: Name of the operation for logging
             coro_factory: Callable that returns the coroutine to execute
             connection_id: Connection identifier
-            timeout: Base timeout in seconds
+            timeout: Hard wall-clock budget in seconds for all attempts, including
+                retry backoff. The pool must never expand a foreground caller's
+                timeout because the desktop UI uses this value as its fail-closed
+                SLA.
             
         Returns:
             Result of the operation or None if all retries fail
@@ -195,11 +205,23 @@ class CognitiveEngineConnectionPool:
             self.stats[connection_id] = stats
         
         last_exception = None
+        total_timeout = self.retry_config.coerce_total_timeout(timeout)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + total_timeout
         
         for attempt in range(self.retry_config.max_retries):
             try:
-                # Calculate timeout for this attempt
-                attempt_timeout = self.retry_config.get_timeout_for_attempt(timeout, attempt)
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError(
+                        f"{operation_name} exceeded total budget {total_timeout:.1f}s"
+                    )
+                # Calculate timeout for this attempt without exceeding the caller's
+                # total wall-clock budget.
+                attempt_timeout = min(
+                    self.retry_config.get_timeout_for_attempt(total_timeout, attempt),
+                    remaining,
+                )
                 
                 logger.debug(
                     "🔄 %s attempt %d/%d (timeout=%.1fs)",
@@ -247,7 +269,15 @@ class CognitiveEngineConnectionPool:
             
             # Apply exponential backoff before retry (except on last attempt)
             if attempt < self.retry_config.max_retries - 1:
-                backoff_delay = self.retry_config.get_backoff_delay(attempt)
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                backoff_delay = min(
+                    self.retry_config.get_backoff_delay(attempt),
+                    max(0.0, remaining),
+                )
+                if backoff_delay <= 0:
+                    break
                 logger.info(
                     "⏳ Waiting %.1fs before retry (attempt %d/%d)",
                     backoff_delay,
