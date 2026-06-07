@@ -681,6 +681,19 @@ class EnvironmentKernel:
                 "tags": ("movement", "safety"),
             },
         ]
+
+        # Cognitive informational/passive loop suppression
+        recent_passive = 0
+        informational_names = {"observe", "wait", "search", "inventory", "inspect", "diagnose", "far_look"}
+        for frame in self.frames[-8:]:
+            act_name = frame.action_intent.name if frame.action_intent else None
+            if act_name in informational_names:
+                recent_passive += 1
+
+        if recent_passive >= 4:
+            # Strip observe and wait to force active options / prevent deadlock
+            candidates = [c for c in candidates if c["kind"] not in {"observe", "wait"}]
+
         return candidates
 
     def _advanced_pre_action_gate(self, frame: EnvironmentFrame, intent: ActionIntent) -> dict[str, Any] | None:
