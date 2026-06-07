@@ -1498,7 +1498,7 @@ async def test_desktop_cognitive_engine_keeps_preflight_context_out_of_objective
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_surface_fails_closed_when_cognitive_engine_pool_unavailable(monkeypatch):
+async def test_api_chat_desktop_surface_uses_direct_cognitive_engine_when_pool_unavailable(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface import server as server_module
     from interface.routes import chat as chat_routes
@@ -1508,7 +1508,12 @@ async def test_api_chat_desktop_surface_fails_closed_when_cognitive_engine_pool_
     class _FakeCognitiveEngine:
         async def think(self, *_args, **_kwargs):
             calls.append("engine_think")
-            return SimpleNamespace(content="unexpected engine reply")
+            return SimpleNamespace(
+                content=(
+                    "Yes. I am still reasoning through the desktop CognitiveEngine path, "
+                    "and I am keeping the answer on this live turn instead of switching lanes."
+                )
+            )
 
     class _FailingPool:
         async def acquire_engine_connection(self, *_args, **_kwargs):
@@ -1586,9 +1591,9 @@ async def test_api_chat_desktop_surface_fails_closed_when_cognitive_engine_pool_
         None,
     )
 
-    assert response.status_code == 503
-    assert b"desktop_cognitive_engine_unavailable" in response.body
-    assert calls == ["pool_acquire_failed"]
+    assert response.status_code == 200
+    assert b"desktop CognitiveEngine path" in response.body
+    assert calls == ["pool_acquire_failed", "engine_think"]
 
 
 def test_desktop_static_chat_requests_require_cognitive_engine():

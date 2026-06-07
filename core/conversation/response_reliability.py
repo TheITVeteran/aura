@@ -403,6 +403,14 @@ _OPEN_ENDED_MARKERS = (
     "help me understand",
 )
 _STATUS_CHECK_MARKERS = (
+    "are you there",
+    "you there",
+    "still there",
+    "still here",
+    "are you with me",
+    "still with me",
+    "still online",
+    "are you online",
     "you ok",
     "you okay",
     "you alright",
@@ -632,11 +640,16 @@ _PRACTICAL_DIAGNOSTIC_MARKERS = (
 _OPERATIONAL_STATUS_REQUEST_MARKERS = (
     "active model",
     "cognitiveengine",
+    "cognitive engine",
+    "cognitive engine path",
     "conversation lane",
+    "desktop path",
     "desktop path validation",
     "governed tool",
     "governed tools",
+    "live path",
     "live desktop path",
+    "live user path",
     "model lane",
     "recurrent depth",
     "tool availability",
@@ -1430,6 +1443,22 @@ def _has_reliability_diagnostic_substance(reply_text: Any) -> bool:
 
 def _has_status_substance(reply_text: Any) -> bool:
     reply = _normalize(reply_text)
+    presence_phrases = (
+        "i'm here",
+        "i am here",
+        "i'm still here",
+        "i am still here",
+        "i'm here with you",
+        "i am here with you",
+        "i'm still here with you",
+        "i am still here with you",
+        "i'm with you",
+        "i am with you",
+        "i'm present with you",
+        "i am present with you",
+    )
+    if any(phrase in reply for phrase in presence_phrases):
+        return True
     if _word_count(reply) < 10:
         return False
     if not re.search(r"\b(?:i|i'm|i am|my|me)\b", reply):
@@ -1597,7 +1626,11 @@ def _has_camelcase_internal_jargon(user_message: Any, reply_text: Any) -> bool:
     if not raw or not _CAMELCASE_INTERNAL_JARGON_RE.search(raw):
         return False
     prompt = _normalize(user_message)
-    if is_practical_diagnostic_turn(prompt) or is_reliability_concern(prompt):
+    if (
+        is_practical_diagnostic_turn(prompt)
+        or is_reliability_concern(prompt)
+        or is_operational_status_turn(prompt)
+    ):
         return False
     if any(marker in prompt for marker in ("architecture", "system", "kernel", "runtime", "code", "debug", "log")):
         return False

@@ -2628,6 +2628,44 @@ async def test_stability_guardian_run_checks_handles_priority_tick_metadata(monk
     assert report.mean_tick_ms > 0.0
 
 
+@pytest.mark.asyncio
+async def test_stability_guardian_snapshots_extra_checks_during_run(monkeypatch):
+    guardian = StabilityGuardian(SimpleNamespace(start_time=time.time()))
+    calls = []
+
+    def _healthy(name):
+        return HealthCheckResult(name, True, "ok")
+
+    for attr in (
+        "_check_memory",
+        "_check_asyncio_tasks",
+        "_check_lock_watchdog",
+        "_check_tick_rate",
+        "_check_state_integrity",
+        "_check_state_repository_pressure",
+        "_check_llm_circuit",
+        "_check_db_connections",
+        "_check_backup_maintenance",
+        "_check_runtime_hygiene",
+        "_check_background_tasks",
+    ):
+        monkeypatch.setattr(guardian, attr, lambda attr=attr: _healthy(attr))
+
+    def first_extra_check():
+        calls.append("first")
+        guardian.add_check(lambda: calls.append("late") or _healthy("late_extra"))
+        return _healthy("first_extra")
+
+    guardian.add_check(first_extra_check)
+
+    first_report = await guardian.run_checks()
+    second_report = await guardian.run_checks()
+
+    assert calls == ["first", "first", "late"]
+    assert [check.name for check in first_report.checks].count("late_extra") == 0
+    assert [check.name for check in second_report.checks].count("late_extra") == 1
+
+
 def test_collect_liquid_state_payload_prefers_runtime_signal_over_zero_stub():
     from interface import server as server_module
 

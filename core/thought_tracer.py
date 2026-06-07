@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.file_write_gateway import get_file_write_gateway
 
 
@@ -39,12 +40,16 @@ class ThoughtTracer:
         }
 
         try:
-            get_file_write_gateway().append_text(
-                self.current_trace_file,
-                json.dumps(entry) + "\n",
-                encoding="utf-8",
-                source="thought_tracer.log_cycle",
-            )
+            with local_internal_governed_scope(
+                "thought_tracer.log_cycle",
+                domain="file_write",
+            ):
+                get_file_write_gateway().append_text(
+                    self.current_trace_file,
+                    json.dumps(entry) + "\n",
+                    encoding="utf-8",
+                    source="thought_tracer.log_cycle",
+                )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('thought_tracer', e)
             self.logger.error("Failed to write trace: %s", e)
@@ -57,12 +62,16 @@ class ThoughtTracer:
             "details": details
         }
         try:
-            get_file_write_gateway().append_text(
-                self.current_trace_file,
-                json.dumps(entry) + "\n",
-                encoding="utf-8",
-                source="thought_tracer.log_event",
-            )
+            with local_internal_governed_scope(
+                "thought_tracer.log_event",
+                domain="file_write",
+            ):
+                get_file_write_gateway().append_text(
+                    self.current_trace_file,
+                    json.dumps(entry) + "\n",
+                    encoding="utf-8",
+                    source="thought_tracer.log_event",
+                )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
             record_degradation('thought_tracer', e)
             self.logger.error("Failed to write event trace: %s", e)

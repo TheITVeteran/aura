@@ -647,11 +647,19 @@ def runtime_health_report() -> dict[str, Any]:
 def log_health_report() -> HealthVerdict:
     """Evaluate and log the health report. Returns the verdict."""
     verdict = evaluate_health()
-    for line in verdict.summary().split("\n"):
-        if verdict.level == HealthLevel.HEALTHY:
+    summary_lines = verdict.summary().split("\n")
+    if verdict.level == HealthLevel.HEALTHY:
+        logger.info(summary_lines[0])
+    elif verdict.level == HealthLevel.DEGRADED:
+        logger.warning(summary_lines[0])
+    else:
+        logger.critical(summary_lines[0])
+
+    for status, line in zip(verdict.services, summary_lines[1:], strict=False):
+        if status.present and status.liveness_ok is not False:
             logger.info(line)
-        elif verdict.level == HealthLevel.DEGRADED:
-            logger.warning(line)
-        else:
+        elif status.requirement.tier == ServiceTier.CRITICAL:
             logger.critical(line)
+        else:
+            logger.warning(line)
     return verdict

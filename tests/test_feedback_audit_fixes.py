@@ -99,6 +99,43 @@ def test_dream_journal_thread_save_uses_local_file_write_governance(monkeypatch,
     ]
 
 
+def test_thought_tracer_uses_local_file_write_governance(monkeypatch, tmp_path):
+    from core.governance_context import require_governance
+    import core.thought_tracer as thought_tracer
+
+    calls = []
+
+    class Gateway:
+        def append_text(self, path, text, *, encoding="utf-8", source):
+            token = require_governance(
+                f"file_write_gateway.append_text:{source}",
+                strict=True,
+                allowed_domains=("file_write",),
+            )
+            calls.append((Path(path).name, source, token.domain, "probe" in text))
+
+    tracer = thought_tracer.ThoughtTracer(log_dir=str(tmp_path))
+    monkeypatch.setattr(thought_tracer, "get_file_write_gateway", lambda: Gateway())
+
+    tracer.log_cycle("probe objective", {"probe": True}, {"answer": "probe"}, "ok")
+    tracer.log_event("probe_event", {"probe": True})
+
+    assert calls == [
+        (
+            tracer.current_trace_file.name,
+            "thought_tracer.log_cycle",
+            "file_write",
+            True,
+        ),
+        (
+            tracer.current_trace_file.name,
+            "thought_tracer.log_event",
+            "file_write",
+            True,
+        ),
+    ]
+
+
 @pytest.mark.parametrize("skill_kind", ["core", "legacy"])
 def test_train_self_collects_paired_user_context(tmp_path, skill_kind):
     if skill_kind == "core":

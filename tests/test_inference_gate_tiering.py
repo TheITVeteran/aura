@@ -1209,6 +1209,25 @@ async def test_user_facing_reliability_fragments_are_failed_generations():
 
 
 @pytest.mark.asyncio
+async def test_user_facing_presence_check_accepts_concise_grounded_reply():
+    gate = InferenceGate()
+    client = _RecordingClient("I'm here with you.")
+
+    text = await gate._generate_with_client(
+        client,
+        "Aaaah, a break. Ok. Aura, are you there?",
+        "You are Aura.",
+        [],
+        get_deadline(30.0),
+        "PRIMARY",
+        origin="user",
+        foreground_request=True,
+    )
+
+    assert text == "I'm here with you."
+
+
+@pytest.mark.asyncio
 async def test_user_facing_primary_falls_back_to_brainstem_when_cortex_fails_without_cloud():
     gate = InferenceGate()
     class _FailedNoTextClient(_NoTextClient):

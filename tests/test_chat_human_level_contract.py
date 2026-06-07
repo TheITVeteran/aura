@@ -337,6 +337,37 @@ def test_reliability_contract_allows_tiny_direct_answers():
     assert assess_user_facing_reply("Say exactly: 32B lane online.", "32B lane online.").ok
 
 
+def test_reliability_contract_allows_concise_live_presence_check():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        is_status_check_turn,
+    )
+
+    user = "Aaaah, a break. Ok. Aura, are you there?"
+    reply = "I'm here with you."
+
+    assessment = assess_user_facing_reply(user, reply)
+
+    assert is_status_check_turn(user)
+    assert assessment.ok
+    assert not assessment.retryable
+
+
+def test_reliability_contract_allows_runtime_terms_for_operational_path_questions():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Can you still reason through the desktop path?",
+        (
+            "Yes. I am still reasoning through the desktop CognitiveEngine path, "
+            "and I am keeping the answer on this live turn instead of switching lanes."
+        ),
+    )
+
+    assert assessment.ok
+    assert not assessment.retryable
+
+
 def test_reliability_contract_rejects_missing_requested_paragraph_and_followup():
     from core.conversation.response_reliability import assess_user_facing_reply
 

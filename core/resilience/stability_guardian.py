@@ -400,7 +400,8 @@ class StabilityGuardian:
             self._check_runtime_hygiene,
             self._check_background_tasks,
         ]
-        for fn in check_fns + self._extra_checks:
+        extra_checks = list(self._extra_checks)
+        for fn in check_fns + extra_checks:
             check_name = getattr(fn, "__name__", "unknown")
             try:
                 result = await fn() if inspect.iscoroutinefunction(fn) else fn()
@@ -509,7 +510,7 @@ class StabilityGuardian:
         return HealthCheckResult("memory", True, f"Memory OK: {pct:.0f}%")
 
     async def _check_asyncio_tasks(self) -> HealthCheckResult:
-        tasks = asyncio.all_tasks()
+        tasks = list(asyncio.all_tasks())
         n     = len(tasks)
         current = asyncio.current_task()
         supervised = sum(1 for t in tasks if getattr(t, "_aura_supervised", False))
@@ -535,8 +536,7 @@ class StabilityGuardian:
                     if n - cancelled_count <= self.MAX_TASK_COUNT - 20:
                         break
 
-            task_list = list(tasks)
-            names = [t.get_name() for t in task_list[:20]]
+            names = [t.get_name() for t in tasks[:20]]
             try:
                 from core.utils.task_tracker import get_task_tracker
 
@@ -597,7 +597,7 @@ class StabilityGuardian:
         try:
             loop = asyncio.get_running_loop()
             live_tasks = sorted(
-                t.get_name() for t in asyncio.all_tasks(loop) if not t.done()
+                t.get_name() for t in list(asyncio.all_tasks(loop)) if not t.done()
             )
         except (RuntimeError, AttributeError, TypeError, ValueError):
             live_tasks = []
@@ -630,7 +630,8 @@ class StabilityGuardian:
             main_ident = threading.main_thread().ident
             main_block: str | None = None
             blocks: list[str] = []
-            for thread_id, frame in sys._current_frames().items():
+            frame_items = list(sys._current_frames().items())
+            for thread_id, frame in frame_items:
                 stack = "".join(traceback.format_stack(frame))
                 if thread_id != main_ident and any(marker in stack for marker in idle_markers):
                     continue
@@ -1141,7 +1142,7 @@ class StabilityGuardian:
         critical_tasks = {
             "aura.research_cycle",
         }
-        tasks          = asyncio.all_tasks()
+        tasks          = list(asyncio.all_tasks())
         running_names  = {t.get_name() for t in tasks if not t.done()}
         missing        = critical_tasks - running_names
         # Some may not exist yet at boot

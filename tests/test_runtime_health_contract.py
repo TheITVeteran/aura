@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +21,7 @@ from core.runtime.health_contract import (
     ServiceRequirement,
     ServiceTier,
     evaluate_health,
+    log_health_report,
     required_probe_blockers,
     required_probe_groups_pass,
     required_probe_status,
@@ -98,6 +100,28 @@ def test_runtime_contract_fails_closed_on_critical_liveness_failure():
     assert report["tier_summary"]["critical"]["liveness_failed"] == 1
     assert report["failures"]["critical"][0]["container_key"] == "inference_gate"
     assert report["failures"]["critical"][0]["liveness"] == "failed"
+
+
+def test_runtime_health_log_severity_tracks_each_service_status(caplog):
+    _register_contract_services(
+        tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT},
+        failing_key="inference_gate",
+    )
+    caplog.set_level(logging.INFO, logger="Aura.HealthContract")
+
+    verdict = log_health_report()
+
+    assert verdict.level == HealthLevel.CRITICAL
+    records_by_message = {record.message: record.levelname for record in caplog.records}
+    assert records_by_message["Health: CRITICAL"] == "CRITICAL"
+    assert any(
+        level == "INFO" and "Kernel Interface" in message and "[✓]" in message
+        for message, level in records_by_message.items()
+    )
+    assert any(
+        level == "CRITICAL" and "InferenceGate" in message and "liveness FAIL" in message
+        for message, level in records_by_message.items()
+    )
 
 
 def test_runtime_contract_fails_closed_when_required_liveness_method_is_missing():
