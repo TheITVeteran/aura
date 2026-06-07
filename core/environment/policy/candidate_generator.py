@@ -315,56 +315,86 @@ class CandidateGenerator:
         # If we have at least 10 observations of coordinates and they are all identical, position is static
         position_static = len(coords) >= 10 and len(set(coords[-10:])) == 1
 
-        # Check for oscillating loops in the last 15 actions
+        # Check for oscillating information loops in the last 15 actions
         oscillating_information_loop = self._information_loop(recent_names[-15:])
 
-        # Filter out suppressed candidates
+        # General two-action oscillation detection: if the last 12+ actions consist
+        # of only 1 or 2 unique names cycling with no spatial progress, both are stuck.
+        # This catches any alternating pair (e.g. observe↔retreat_to_safety) regardless
+        # of action semantics or game environment.
+        two_action_oscillating: set[str] = set()
+        tail = recent_names[-12:]
+        if len(tail) >= 12 and len(set(tail)) <= 2 and position_static:
+            two_action_oscillating = set(tail)
+
+        # Passive/non-exploratory actions — suppressed when the agent is stuck.
+        # These are actions that gather information or react defensively without
+        # changing the agent's position or context. Defined behaviorally, not by
+        # game-specific names.
+        passive_actions = {
+            "inventory", "search", "observe", "inspect", "diagnose",
+            "far_look", "retreat_to_safety",
+        }
+
         filtered = []
-        informational_actions = {"inventory", "search", "observe", "inspect", "diagnose", "far_look"}
-        
         for c in candidates:
             key = f"{c.name}:{context_id}"
-            
+
             # A. Suppress repeatedly failed actions
             if recent_failures.get(key, 0) >= self.suppression_threshold:
                 continue
-                
-            # B. Suppress informational actions if steps on level are excessive
-            if level_steps_excessive and c.name in informational_actions:
+
+            # B. Suppress passive actions if steps on context are excessive
+            if level_steps_excessive and c.name in passive_actions:
                 continue
-                
-            # C. Suppress informational actions if position is static
-            if position_static and c.name in informational_actions:
+
+            # C. Suppress passive actions if position is static
+            if position_static and c.name in passive_actions:
                 continue
-                
-            # D. Suppress informational actions if they are used too frequently in recent window
-            if c.name in informational_actions and recent_counts.get(c.name, 0) >= self.suppression_threshold:
+
+            # D. Suppress passive actions if overused in the recent window
+            if c.name in passive_actions and recent_counts.get(c.name, 0) >= self.suppression_threshold:
                 continue
-                
-            # E. Suppress informational actions if we are oscillating
-            if oscillating_information_loop and c.name in informational_actions:
+
+            # E. Suppress informational actions if we're in an information loop
+            if oscillating_information_loop and c.name in passive_actions:
                 continue
-                
+
+            # F. Suppress any action that is part of a detected two-action oscillation
+            if c.name in two_action_oscillating:
+                continue
+
             filtered.append(c)
 
-        # If everything was suppressed, add recovery actions
+        # If everything was suppressed, inject movement recovery candidates
         if not filtered:
             for direction in self._movement_directions(ParsedState(environment_id="", context_id=context_id), None):
-                filtered.append(ActionIntent(name="move", parameters={"direction": direction}, risk="caution", expected_effect="recover_from_information_loop"))
+                filtered.append(ActionIntent(name="move", parameters={"direction": direction}, risk="caution", expected_effect="recover_from_oscillation"))
             filtered.append(ActionIntent(name="wait", risk="safe"))
 
         return filtered
 
     @staticmethod
     def _information_loop(recent_names: list[str]) -> bool:
+        """Detect windows where the agent only issues passive/informational actions.
+
+        Checks the last 8 names. If at least 5 of them are passive information-
+        gathering actions and none are actions that produce real spatial progress
+        (coordinate or context change), the agent is considered stuck in an
+        information loop.
+
+        Note: retreat_to_safety is intentionally excluded from the progress set
+        because it does not change coordinates and cannot break a stuck cycle.
+        """
         window = recent_names[-8:]
         if len(window) < 4:
             return False
         informational = {"inventory", "observe", "inspect", "diagnose", "far_look", "search", "resolve_modal"}
         if sum(1 for name in window if name in informational) < 5:
             return False
-        progress = {"move", "use_stairs", "pickup", "eat", "stabilize_resource", "retreat_to_safety"}
-        return not any(name in progress for name in window)
+        # Only directional movement or context transitions count as real progress
+        spatial_progress = {"move", "use_stairs", "pickup", "eat", "stabilize_resource"}
+        return not any(name in spatial_progress for name in window)
 
     @staticmethod
     def _recent_threat_pressure(recent_frames: list | None) -> bool:
