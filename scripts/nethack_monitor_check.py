@@ -9,6 +9,24 @@ from pathlib import Path
 TRACE_FILE = Path(os.environ.get("AURA_NETHACK_LOG", "~/.aura/logs/nethack/kernel_trace.jsonl")).expanduser()
 RUNNER_LOG = Path("~/.aura/logs/nethack/runner.log").expanduser()
 
+
+def _as_mapping(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _observed_events(record):
+    assessment = _as_mapping(record.get("outcome_assessment"))
+    events = assessment.get("observed_events", [])
+    return events if isinstance(events, list) else []
+
+
+def _safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError, OverflowError):
+        return float(default)
+
+
 def check_status():
     if not TRACE_FILE.exists():
         return {
@@ -21,7 +39,7 @@ def check_status():
         with open(TRACE_FILE, "r", encoding="utf-8") as f:
             for line in f:
                 if line.strip():
-                    records.append(json.loads(line))
+                    records.append(_as_mapping(json.loads(line)))
     except (OSError, UnicodeError, json.JSONDecodeError) as e:
         return {
             "status": "error",
@@ -35,7 +53,7 @@ def check_status():
         }
 
     latest = records[-1]
-    latest_timestamp = latest.get("timestamp", 0.0)
+    latest_timestamp = _safe_float(latest.get("timestamp"), 0.0)
     current_time = time.time()
     elapsed_since_last_step = current_time - latest_timestamp
 
@@ -43,18 +61,22 @@ def check_status():
     stalled = elapsed_since_last_step > 300  # 5 minutes without writing a step
 
     # Count recent identical intents to detect loop
-    recent_intents = [
-        r.get("action_intent", {}).get("name") 
-        for r in records 
-        if r.get("action_intent") and r.get("action_intent", {}).get("name") is not None
-    ]
+    recent_intents = []
+    for r in records:
+        action_intent = _as_mapping(r.get("action_intent"))
+        action_name = action_intent.get("name")
+        if action_name is not None:
+            recent_intents.append(action_name)
     looping = len(recent_intents) >= 10 and len(set(recent_intents[-10:])) == 1
 
     # Check for deaths or terminal state
     died = False
     for r in reversed(records[-10:]):
-        events = r.get("outcome_assessment", {}).get("observed_events", [])
-        if "death" in events or "dywypy" in events or "You die" in str(r.get("execution_result", {}).get("observation_after", {}).get("raw", "")):
+        events = _observed_events(r)
+        exec_res = _as_mapping(r.get("execution_result"))
+        obs_after = _as_mapping(exec_res.get("observation_after"))
+        raw_obs = obs_after.get("raw") or ""
+        if "death" in events or "dywypy" in events or "You die" in str(raw_obs):
             died = True
             break
 
@@ -96,6 +118,8 @@ def check_status():
             runner_crashed = True
             last_error = f"Failed to read runner log: {exc}"
 
+    action_intent = _as_mapping(latest.get("action_intent"))
+    latest_assessment = _as_mapping(latest.get("outcome_assessment"))
     return {
         "status": "running" if not (stalled or level_stall) else "stalled",
         "looping": looping,
@@ -109,9 +133,9 @@ def check_status():
         "total_steps": len(records),
         "latest_step": {
             "sequence_id": latest.get("sequence_id"),
-            "action": latest.get("action_intent", {}).get("name"),
-            "events": latest.get("outcome_assessment", {}).get("observed_events", []),
-            "success_score": latest.get("outcome_assessment", {}).get("success_score"),
+            "action": action_intent.get("name"),
+            "events": _observed_events(latest),
+            "success_score": latest_assessment.get("success_score"),
             "context": latest.get("context_id"),
         }
     }
