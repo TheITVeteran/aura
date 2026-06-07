@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
 
@@ -576,6 +577,148 @@ class DesktopTaskSkill(BaseSkill):
             )
         return steps[:20]
 
+    @staticmethod
+    def _primitive_steps_are_only_observational(steps: list[DesktopTaskStep]) -> bool:
+        if not steps:
+            return True
+        non_effect_actions = {"read_screen_text", "wait", "get_clipboard"}
+        return all(step.action in non_effect_actions for step in steps)
+
+    @staticmethod
+    def _objective_requests_observation_only(objective: str) -> bool:
+        lowered = str(objective or "").lower()
+        if not lowered:
+            return False
+        observation_markers = (
+            "what is on my screen",
+            "what's on my screen",
+            "read the screen",
+            "read my screen",
+            "inspect the screen",
+            "look at the screen",
+            "describe the screen",
+            "screenshot",
+        )
+        return any(marker in lowered for marker in observation_markers)
+
+    @staticmethod
+    def _objective_needs_general_os_automation(objective: str) -> bool:
+        return bool(
+            re.search(
+                r"\b(?:arrange|resize|drag|focus|select|switch|close|"
+                r"minimi[sz]e|maximi[sz]e|organize)\b",
+                str(objective or ""),
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @classmethod
+    def _should_escalate_to_os_automation(
+        cls,
+        objective: str,
+        steps: list[DesktopTaskStep],
+        context: dict[str, Any] | None,
+    ) -> bool:
+        context = context or {}
+        if bool(context.get("disable_os_automation_fallback")):
+            return False
+        if cls._objective_requests_observation_only(objective):
+            return False
+        if cls._objective_needs_general_os_automation(objective) and not any(
+            step.action == "run_applescript" for step in steps
+        ):
+            return looks_like_desktop_objective(objective)
+        if not cls._primitive_steps_are_only_observational(steps):
+            return False
+        return looks_like_desktop_objective(objective)
+
+    @staticmethod
+    def _os_automation_effect_evidence(result: dict[str, Any]) -> tuple[bool, str]:
+        if not bool(result.get("ok")):
+            return False, str(result.get("error") or result.get("status") or "os automation reported failure")
+        receipt_id = str(result.get("receipt_id") or "").strip()
+        action_result = str(result.get("result") or "").strip()
+        adapter = str(result.get("adapter") or "").strip()
+        if receipt_id:
+            return True, f"receipt_id={receipt_id}"
+        if action_result:
+            return True, f"result={action_result[:240]}"
+        if adapter:
+            return True, f"adapter={adapter}"
+        return False, "missing os automation effect evidence"
+
+    async def _execute_os_automation_fallback(
+        self,
+        *,
+        capability_engine: Any,
+        objective: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        step_context = dict(context or {})
+        step_context.update(
+            {
+                "origin": step_context.get("origin") or "desktop_task",
+                "route": "desktop_task.os_automation",
+                "objective": objective,
+                "foreground_request": True,
+                "user_requested_action": True,
+                "user_explicitly_authorized": True,
+                "desktop_task_reason": (
+                    "Primitive desktop actions were not sufficient for this objective; "
+                    "escalating to governed OS automation."
+                ),
+                "desktop_task_expect": "OS automation receipt proves the visible desktop action ran.",
+            }
+        )
+        try:
+            result = await capability_engine.execute(
+                "os_automation",
+                {"goal": objective, "script_type": "applescript", "execute": True},
+                context=step_context,
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError, OSError, TimeoutError) as exc:
+            record_degradation(
+                "desktop_task",
+                exc,
+                action="blocked desktop task because OS automation fallback failed closed",
+                severity="degraded",
+            )
+            result = {
+                "ok": False,
+                "status": "os_automation_unavailable",
+                "error": str(exc),
+            }
+        if not isinstance(result, dict):
+            result = {"ok": bool(result), "result": result}
+
+        effect_verified, effect_evidence = self._os_automation_effect_evidence(result)
+        receipt = {
+            "index": 1,
+            "action": "os_automation",
+            "reason": step_context["desktop_task_reason"],
+            "expect": step_context["desktop_task_expect"],
+            "ok": bool(result.get("ok")) and effect_verified,
+            "effect_verified": effect_verified,
+            "effect_evidence": effect_evidence,
+            "result": result,
+        }
+        ok = bool(receipt["ok"])
+        return {
+            "ok": ok,
+            "status": "completed" if ok else "failed",
+            "objective": objective,
+            "steps_requested": 1,
+            "steps_completed": 1 if ok else 0,
+            "receipts": [receipt],
+            "failures": [] if ok else [receipt],
+            "planner": "os_automation_fallback",
+            "summary": (
+                "Desktop task completed 1/1 governed OS automation step."
+                if ok
+                else "Desktop task could not complete through primitive actions or governed OS automation."
+            ),
+        }
+
     async def execute(self, params: Any, context: dict[str, Any]) -> dict[str, Any]:
         if isinstance(params, dict):
             params = DesktopTaskParams(**params)
@@ -604,11 +747,19 @@ class DesktopTaskSkill(BaseSkill):
         failures: list[dict[str, Any]] = []
         objective = params.objective or str((context or {}).get("objective") or "desktop task")
 
+        task_context = dict(context or {})
         steps = list(params.steps)
         if not steps:
-            steps = self._steps_from_context(context)
+            steps = self._steps_from_context(task_context)
         if not steps:
-            steps = self._derive_steps_from_objective(objective, context)
+            steps = self._derive_steps_from_objective(objective, task_context)
+
+        if self._should_escalate_to_os_automation(objective, steps, task_context):
+            return await self._execute_os_automation_fallback(
+                capability_engine=capability_engine,
+                objective=objective,
+                context=task_context,
+            )
 
         for index, step in enumerate(steps, start=1):
             target = step.target
@@ -620,7 +771,7 @@ class DesktopTaskSkill(BaseSkill):
                 "x": int(step.x),
                 "y": int(step.y),
             }
-            step_context = dict(context or {})
+            step_context = dict(task_context)
             step_context.update(
                 {
                     "origin": step_context.get("origin") or "desktop_task",

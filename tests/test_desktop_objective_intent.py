@@ -16,6 +16,9 @@ def test_shared_desktop_objective_detector_covers_general_document_tasks() -> No
     assert looks_like_desktop_objective(
         "Create a local file with the draft and save it on my desktop."
     )
+    assert looks_like_desktop_objective(
+        "Use my computer to resize the current browser window and arrange it on the left side of the screen."
+    )
 
 
 def test_shared_desktop_objective_detector_rejects_explanation_only_requests() -> None:

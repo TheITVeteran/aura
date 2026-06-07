@@ -6,24 +6,33 @@ from core.utils.intent_normalization import normalize_memory_intent_text
 
 _DESKTOP_OBJECTIVE_ACTION_TERMS = (
     "attach",
+    "arrange",
     "browse",
     "click",
     "compose",
+    "close",
     "create",
     "download",
     "export",
     "find",
+    "focus",
     "google",
     "insert",
     "look up",
+    "maximize",
+    "minimize",
     "move",
     "navigate",
     "open",
+    "organize",
     "paste",
     "pdf",
+    "resize",
     "save",
     "search",
+    "select",
     "show me",
+    "switch",
     "tab",
     "timestamp",
     "type",
@@ -60,13 +69,15 @@ _DESKTOP_OBJECTIVE_SURFACE_TERMS = (
 
 _DIRECT_DESKTOP_ACTION_RE = re.compile(
     r"\b(?:please\s+)?(?:open|create|write|save|export|search|google|look\s+up|"
-    r"type|paste|compose|download|navigate|click|show\s+me)\b",
+    r"type|paste|compose|download|navigate|click|show\s+me|arrange|resize|drag|"
+    r"focus|select|switch|close|minimi[sz]e|maximi[sz]e|organize)\b",
     re.IGNORECASE,
 )
 _EXPLANATORY_DESKTOP_QUESTION_RE = re.compile(
     r"^\s*(?:how|what|why)\s+(?:would|could|should|do|does|can)\s+(?:you\s+)?"
     r"(?:open|create|write|save|export|search|google|look\s+up|type|paste|"
-    r"compose|download|navigate|click)\b",
+    r"compose|download|navigate|click|arrange|resize|drag|focus|select|switch|"
+    r"close|minimi[sz]e|maximi[sz]e|organize)\b",
     re.IGNORECASE,
 )
 

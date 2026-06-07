@@ -322,6 +322,81 @@ async def test_desktop_task_derives_generic_web_document_plan_without_demo_short
     assert calls[-1][1]["target"] == "command+v"
 
 
+@pytest.mark.asyncio
+async def test_desktop_task_escalates_unrepresented_desktop_workflow_to_os_automation(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            if skill_name == "os_automation":
+                return {
+                    "ok": True,
+                    "result": "arranged visible browser window",
+                    "receipt_id": "receipt-os-1",
+                    "adapter": "applescript",
+                }
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    skill = DesktopTaskSkill()
+    result = await skill.execute(
+        {
+            "objective": (
+                "Use my computer to resize the current browser window and arrange it "
+                "on the left side of the screen."
+            ),
+            "steps": [],
+        },
+        {"origin": "desktop_ui"},
+    )
+
+    assert result["ok"] is True
+    assert result["planner"] == "os_automation_fallback"
+    assert result["steps_requested"] == 1
+    assert result["steps_completed"] == 1
+    assert calls == [
+        (
+            "os_automation",
+            {
+                "goal": (
+                    "Use my computer to resize the current browser window and arrange it "
+                    "on the left side of the screen."
+                ),
+                "script_type": "applescript",
+                "execute": True,
+            },
+            {
+                "origin": "desktop_ui",
+                "route": "desktop_task.os_automation",
+                "objective": (
+                    "Use my computer to resize the current browser window and arrange it "
+                    "on the left side of the screen."
+                ),
+                "foreground_request": True,
+                "user_requested_action": True,
+                "user_explicitly_authorized": True,
+                "desktop_task_reason": (
+                    "Primitive desktop actions were not sufficient for this objective; "
+                    "escalating to governed OS automation."
+                ),
+                "desktop_task_expect": "OS automation receipt proves the visible desktop action ran.",
+            },
+        )
+    ]
+    receipt = result["receipts"][0]
+    assert receipt["action"] == "os_automation"
+    assert receipt["effect_verified"] is True
+    assert receipt["effect_evidence"] == "receipt_id=receipt-os-1"
+
+
 def test_desktop_task_discovered_and_ranked_for_chained_desktop_prompt(monkeypatch):
     from core.capability_engine import CapabilityEngine, SkillMetadata
 
