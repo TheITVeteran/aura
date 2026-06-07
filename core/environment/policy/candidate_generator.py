@@ -275,14 +275,17 @@ class CandidateGenerator:
             else:
                 break
 
-        level_num = 1
-        if context_id and context_id.startswith("dlvl_"):
-            try:
-                level_num = int(context_id.split("_")[1])
-            except (IndexError, ValueError):
-                level_num = 1
-        level_limit = 120 if level_num == 1 else 300
-        level_steps_excessive = steps_on_level > level_limit
+        # General heuristic: if the agent has only ever been in one context (starting area),
+        # apply a tighter step limit to force exploration. Once multiple contexts have been
+        # visited (agent has proven it can transition), apply a looser limit.
+        distinct_contexts: set = set()
+        for frame in recent_frames:
+            parsed = frame.post_parsed_state or frame.parsed_state
+            if parsed and parsed.context_id:
+                distinct_contexts.add(parsed.context_id)
+        is_first_context = len(distinct_contexts) <= 1
+        context_step_limit = 120 if is_first_context else 300
+        level_steps_excessive = steps_on_level > context_step_limit
 
         # 2. Count recent action frequencies and failures in a larger window (last 40 frames)
         recent_failures: dict[str, int] = {}

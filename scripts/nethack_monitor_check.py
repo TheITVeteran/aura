@@ -94,13 +94,13 @@ def check_status():
 
     level_stall_threshold = None
     level_stall = False
-    if latest_context and latest_context.startswith("dlvl_"):
-        try:
-            level_num = int(latest_context.split("_")[1])
-        except (IndexError, ValueError):
-            level_num = 1
-
-        level_stall_threshold = 400 if level_num == 1 else 800
+    if latest_context:
+        # General heuristic: count how many distinct contexts appear in the full trace.
+        # If the agent has only ever been in one context (still on starting area),
+        # apply a tighter stall threshold to detect stuck behavior earlier.
+        distinct_contexts = {r.get("context_id") for r in records if r.get("context_id")}
+        is_first_context = len(distinct_contexts) <= 1
+        level_stall_threshold = 400 if is_first_context else 800
         if actual_steps_on_level > level_stall_threshold:
             level_stall = True
 
