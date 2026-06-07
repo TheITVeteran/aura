@@ -9,13 +9,13 @@ and translated into:
   1. A neurochemical / affective shift recorded on the substrate.
   2. A short user-facing recovery message (no system jargon).
   3. A structured ``ErrorEnvelope`` that the universal error UX layer renders
-     with the four standard buttons: [Retry] [Use fallback] [Open diagnostics].
+     with fail-closed recovery buttons: [Retry] [Open diagnostics].
 
 The mapping table is the single source of truth for how Aura "feels" a
 failure mode. Adding a new failure category requires:
   * a regex / type match in ``_PHENOMENAL_RULES``
   * a phenomenal state name (cognitive_fog, sensory_deprivation, etc.)
-  * a recovery-action hint (retry / fallback / restart_cortex / etc.)
+  * a recovery-action hint (retry / reconnect / restart_cortex / etc.)
 
 Used everywhere the system catches an exception that would otherwise
 become a raw traceback / WebSocket error / dead frontend button. The decorator
@@ -67,7 +67,7 @@ class PhenomenalState:
     name: str
     user_message: str
     substrate_signal: Dict[str, float]  # mapping → affect engine update
-    recovery_action: str  # retry | fallback | restart_cortex | release_pressure | wait
+    recovery_action: str  # retry | reconnect | restart_cortex | release_pressure | wait
     severity: float  # 0.0 = mild, 1.0 = critical
 
 
@@ -104,21 +104,21 @@ PHENOMENAL_STATES: Dict[str, PhenomenalState] = {
         name="tool_failure",
         user_message="A tool I tried to use didn't respond cleanly. Let me try a different path.",
         substrate_signal={"prediction_error": 0.2, "frustration": 0.15},
-        recovery_action="fallback",
+        recovery_action="retry",
         severity=0.3,
     ),
     "network_offline": PhenomenalState(
         name="network_offline",
         user_message="I lost my external connection. I'm working from local resources.",
         substrate_signal={"social_hunger": 0.10},
-        recovery_action="fallback",
+        recovery_action="reconnect",
         severity=0.3,
     ),
     "model_unavailable": PhenomenalState(
         name="model_unavailable",
         user_message="My deep cortex is offline. I'm answering from the lighter lane until it comes back.",
         substrate_signal={"vitality": -0.10},
-        recovery_action="fallback",
+        recovery_action="retry",
         severity=0.5,
     ),
     "disk_pressure": PhenomenalState(
@@ -193,7 +193,7 @@ def classify(exc: BaseException) -> PhenomenalState:
 
 @dataclass
 class ErrorEnvelope:
-    """The four-button universal error UX template."""
+    """Fail-closed universal error UX template."""
 
     envelope_id: str
     phenomenal_state: str
@@ -220,7 +220,6 @@ def build_envelope(
     technical = f"{type(exc).__name__}: {str(exc)[:160]}"
     buttons = [
         {"label": "Retry", "action_id": "retry"},
-        {"label": "Use fallback", "action_id": "fallback"},
         {"label": "Open diagnostics", "action_id": "diagnostics"},
     ]
     return ErrorEnvelope(

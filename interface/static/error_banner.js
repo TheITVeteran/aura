@@ -12,11 +12,10 @@
  *   }
  *
  * This module renders the envelope at the top of the viewport with the
- * standard [Retry] [Use fallback] [Open diagnostics] buttons. It binds
+ * fail-closed [Retry] [Open diagnostics] buttons. It binds
  * the action_ids to the conversation lane:
  *
  *   - retry        → re-emits the last user message to /api/chat
- *   - fallback     → calls /api/chat with prefer_tier=tertiary
  *   - diagnostics  → opens the Aura DevTools time-scrubber for the
  *                    correlation_id (or /api/dashboard/snapshot if
  *                    DevTools isn't installed)
@@ -69,7 +68,6 @@
       ? envelope.recovery_buttons
       : [
           { label: "Retry", action_id: "retry" },
-          { label: "Use fallback", action_id: "fallback" },
           { label: "Open diagnostics", action_id: "diagnostics" },
         ];
     buttons.forEach((b, idx) => {
@@ -95,12 +93,6 @@
           renderBanner(data.envelope || data);
         }
       } catch (e) { console.warn("aura retry failed:", e); }
-    } else if (actionId === "fallback" && lastUserMessage) {
-      try {
-        const resp = await fetch("/api/chat", { method: "POST", headers: {"Content-Type": "application/json", "X-Aura-Surface": "desktop-ui", "X-Aura-Require-CognitiveEngine": "true"},
-          body: JSON.stringify({ message: lastUserMessage, prefer_tier: "tertiary" }) });
-        await resp.json();
-      } catch (e) { console.warn("aura fallback failed:", e); }
     } else if (actionId === "diagnostics") {
       const link = envelope.diagnostic_link || ("/api/trace/" + (envelope.correlation_id || ""));
       window.open(link, "_blank", "noopener");

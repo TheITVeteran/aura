@@ -1,8 +1,8 @@
-/* Universal four-button error UX banner.
+/* Universal fail-closed error UX banner.
    Bound to phenomenal-error envelopes from /api/* responses with
    `status === "phenomenal"`. The banner is full-width at the top of the
-   viewport, dismissible, and always exposes [Retry] [Use fallback]
-   [Open diagnostics]. No traceback ever reaches this surface. */
+   viewport, dismissible, and always exposes [Retry] [Open diagnostics].
+   No traceback ever reaches this surface. */
 
 .aura-error-banner {
   position: fixed;

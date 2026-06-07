@@ -265,32 +265,83 @@ class CandidateGenerator:
         recent_frames: list,
         context_id: str | None,
     ) -> list[ActionIntent]:
-        """Suppress candidates that have repeatedly failed in the same context."""
-        # Count recent failures per action
+        """Suppress candidates that have repeatedly failed or caused loops in the same context."""
+        # 1. Calculate steps taken on current context
+        steps_on_level = 0
+        for frame in reversed(recent_frames):
+            parsed = frame.post_parsed_state or frame.parsed_state
+            if parsed and parsed.context_id == context_id:
+                steps_on_level += 1
+            else:
+                break
+
+        level_num = 1
+        if context_id and context_id.startswith("dlvl_"):
+            try:
+                level_num = int(context_id.split("_")[1])
+            except (IndexError, ValueError):
+                level_num = 1
+        level_limit = 120 if level_num == 1 else 300
+        level_steps_excessive = steps_on_level > level_limit
+
+        # 2. Count recent action frequencies and failures in a larger window (last 40 frames)
         recent_failures: dict[str, int] = {}
         recent_counts: dict[str, int] = {}
         recent_names: list[str] = []
-        for frame in recent_frames[-10:]:
+        
+        # Check if position has been static for the last 10 steps
+        coords = []
+        for frame in recent_frames[-40:]:
             if frame.action_intent:
                 recent_names.append(frame.action_intent.name)
                 recent_counts[frame.action_intent.name] = recent_counts.get(frame.action_intent.name, 0) + 1
+            
+            # Check for failures
             if frame.outcome_assessment and frame.outcome_assessment.success_score < 0.3:
                 if frame.action_intent:
                     key = f"{frame.action_intent.name}:{context_id}"
                     recent_failures[key] = recent_failures.get(key, 0) + 1
+            
+            # Record coordinates for static check (only if no active modal was present)
+            parsed = frame.post_parsed_state or frame.parsed_state
+            if parsed and not parsed.modal_state:
+                pos = parsed.self_state.get("local_coordinates")
+                if pos:
+                    coords.append(pos)
 
-        oscillating_information_loop = self._information_loop(recent_names)
+        # If we have at least 10 observations of coordinates and they are all identical, position is static
+        position_static = len(coords) >= 10 and len(set(coords[-10:])) == 1
+
+        # Check for oscillating loops in the last 15 actions
+        oscillating_information_loop = self._information_loop(recent_names[-15:])
 
         # Filter out suppressed candidates
         filtered = []
+        informational_actions = {"inventory", "search", "observe", "inspect", "diagnose", "far_look"}
+        
         for c in candidates:
             key = f"{c.name}:{context_id}"
+            
+            # A. Suppress repeatedly failed actions
             if recent_failures.get(key, 0) >= self.suppression_threshold:
-                continue  # suppressed
-            if c.name in {"inventory", "search", "observe", "inspect", "diagnose", "far_look"} and recent_counts.get(c.name, 0) >= self.suppression_threshold:
                 continue
-            if oscillating_information_loop and c.name in {"inventory", "observe", "inspect", "diagnose", "far_look"}:
+                
+            # B. Suppress informational actions if steps on level are excessive
+            if level_steps_excessive and c.name in informational_actions:
                 continue
+                
+            # C. Suppress informational actions if position is static
+            if position_static and c.name in informational_actions:
+                continue
+                
+            # D. Suppress informational actions if they are used too frequently in recent window
+            if c.name in informational_actions and recent_counts.get(c.name, 0) >= self.suppression_threshold:
+                continue
+                
+            # E. Suppress informational actions if we are oscillating
+            if oscillating_information_loop and c.name in informational_actions:
+                continue
+                
             filtered.append(c)
 
         # If everything was suppressed, add recovery actions

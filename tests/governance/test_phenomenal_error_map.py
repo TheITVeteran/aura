@@ -1,5 +1,5 @@
 """Phenomenal error map: every catalogued exception type produces a
-non-empty user-facing message and a four-button recovery envelope.
+non-empty user-facing message and a fail-closed recovery envelope.
 Decorator must transform unhandled exceptions into PhenomenalRaise
 without leaking the original traceback to the caller surface.
 """
@@ -29,11 +29,31 @@ def test_classify_connection_refused_returns_network_offline():
     assert state.name == "network_offline"
 
 
-def test_envelope_has_three_buttons():
+def test_envelope_has_fail_closed_recovery_buttons():
     env = build_envelope(asyncio.TimeoutError("nope"))
-    assert len(env.recovery_buttons) == 3
+    assert len(env.recovery_buttons) == 2
     labels = {b["label"] for b in env.recovery_buttons}
-    assert {"Retry", "Use fallback", "Open diagnostics"} <= labels
+    action_ids = {b["action_id"] for b in env.recovery_buttons}
+    assert {"Retry", "Open diagnostics"} <= labels
+    assert "Use fallback" not in labels
+    assert "fallback" not in action_ids
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        RuntimeError("model unavailable"),
+        ConnectionRefusedError("network offline"),
+        RuntimeError("tool failed"),
+    ],
+)
+def test_envelope_never_suggests_user_fallback(exc):
+    env = build_envelope(exc)
+    labels = {b["label"] for b in env.recovery_buttons}
+    action_ids = {b["action_id"] for b in env.recovery_buttons}
+    assert env.suggested_action != "fallback"
+    assert "Use fallback" not in labels
+    assert "fallback" not in action_ids
 
 
 def test_decorator_translates_exception_to_phenomenal_raise():
