@@ -6,6 +6,7 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.event_bus import get_event_bus
+from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
@@ -13,42 +14,6 @@ logger = logging.getLogger("Aura.VoiceBridge")
 
 
 _WAKE_PREFIX_RE = re.compile(r"^\s*(?:hey|hi|okay|ok)?\s*aura[\s,;:.-]*", re.IGNORECASE)
-_DESKTOP_ACTION_TERMS = (
-    "attach",
-    "browse",
-    "click",
-    "create",
-    "download",
-    "export",
-    "find",
-    "google",
-    "insert",
-    "look up",
-    "move",
-    "open",
-    "pdf",
-    "save",
-    "search",
-    "show me",
-    "tab",
-    "timestamp",
-    "type",
-    "write",
-)
-_DESKTOP_SURFACE_TERMS = (
-    "app",
-    "browser",
-    "chrome",
-    "desktop",
-    "finder",
-    "folder",
-    "google",
-    "notes",
-    "pdf",
-    "safari",
-    "screen",
-    "tab",
-)
 
 
 class VoiceConversationBridge:
@@ -79,33 +44,7 @@ class VoiceConversationBridge:
 
     @staticmethod
     def _looks_like_desktop_objective(text: str) -> bool:
-        lowered = str(text or "").lower()
-        if not lowered:
-            return False
-        if not any(term in lowered for term in _DESKTOP_ACTION_TERMS):
-            return False
-        if not any(term in lowered for term in _DESKTOP_SURFACE_TERMS):
-            return False
-        try:
-            from core.phases.action_intent import detect_action_intent
-
-            intent = detect_action_intent(text)
-            if bool(getattr(intent, "should_execute", False)):
-                return True
-            if bool(getattr(intent, "has_action_request", False)) and re.search(
-                r"\b(?:can|could|will|would)\s+you\b",
-                lowered,
-            ):
-                return True
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            record_degradation("voice_bridge", exc)
-            logger.debug("Voice desktop objective detection degraded: %s", exc)
-        return bool(
-            re.search(
-                r"\b(?:please\s+)?(?:open|create|write|save|export|search|google|look up)\b",
-                lowered,
-            )
-        )
+        return looks_like_desktop_objective(text)
 
     async def _run_cognitive_engine(self, text: str) -> str | None:
         try:

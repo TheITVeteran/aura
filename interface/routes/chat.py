@@ -25,6 +25,9 @@ from pydantic import BaseModel
 
 from core.container import ServiceContainer
 from core.reasoning.artifact_synthesis import response_satisfies_artifact_contract
+from core.runtime.desktop_objective_intent import (
+    looks_like_desktop_objective as _shared_looks_like_desktop_objective,
+)
 from core.runtime.errors import record_degradation
 from core.runtime.structured_input import analyze_prompt_shape
 from core.utils.intent_normalization import normalize_memory_intent_text
@@ -4721,92 +4724,9 @@ async def _execute_governed_live_skill(
     return result
 
 
-_DESKTOP_OBJECTIVE_ACTION_TERMS = (
-    "attach",
-    "browse",
-    "click",
-    "compose",
-    "create",
-    "download",
-    "export",
-    "find",
-    "google",
-    "insert",
-    "look up",
-    "move",
-    "navigate",
-    "open",
-    "paste",
-    "pdf",
-    "save",
-    "search",
-    "show me",
-    "tab",
-    "timestamp",
-    "type",
-    "write",
-)
-
-_DESKTOP_OBJECTIVE_SURFACE_TERMS = (
-    "app",
-    "browser",
-    "chrome",
-    "computer",
-    "desktop",
-    "doc",
-    "document",
-    "drive",
-    "file",
-    "finder",
-    "folder",
-    "google",
-    "notes",
-    "pages",
-    "pdf",
-    "safari",
-    "screen",
-    "tab",
-    "textedit",
-    "web",
-    "website",
-    "window",
-    "word",
-)
-
-
-def _contains_desktop_objective_term(text: str, terms: tuple[str, ...]) -> bool:
-    for term in terms:
-        escaped = re.escape(term)
-        if re.search(rf"\b{escaped}\b", text):
-            return True
-    return False
-
-
 def _looks_like_desktop_objective(user_message: str) -> bool:
     """Identify desktop-control requests that should execute after Cognition."""
-    text = str(user_message or "").strip().lower()
-    if not text:
-        return False
-    if not _contains_desktop_objective_term(text, _DESKTOP_OBJECTIVE_ACTION_TERMS):
-        return False
-    if not _contains_desktop_objective_term(text, _DESKTOP_OBJECTIVE_SURFACE_TERMS):
-        return False
-    try:
-        from core.phases.action_intent import detect_action_intent
-
-        intent = detect_action_intent(user_message)
-        if bool(getattr(intent, "should_execute", False)):
-            return True
-        if bool(getattr(intent, "has_action_request", False)) and re.search(
-            r"\b(?:can|could|will|would)\s+you\b", text
-        ):
-            return True
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat_desktop_objective_intent", exc)
-        logger.debug("Desktop objective intent detection failed: %s", exc)
-    return bool(
-        re.search(r"\b(?:please\s+)?(?:open|create|write|save|export|search|google|look up)\b", text)
-    )
+    return _shared_looks_like_desktop_objective(user_message)
 
 
 async def _execute_desktop_objective_from_chat(
