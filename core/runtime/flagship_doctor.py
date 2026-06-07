@@ -344,6 +344,7 @@ class FlagshipDoctorDaemon:
         now = time.time()
         heartbeat_age_s = max(0.0, now - self._last_heartbeat) if self._last_heartbeat else None
         lag_threshold, lag_context = self._lag_threshold_for_context()
+        readiness_lag_threshold = float(self.lag_threshold)
         task = self._heartbeat_task
         try:
             task_done = bool(task.done()) if task is not None else True
@@ -355,7 +356,7 @@ class FlagshipDoctorDaemon:
             and task is not None
             and not task_done
             and heartbeat_age_s is not None
-            and heartbeat_age_s <= lag_threshold
+            and heartbeat_age_s <= readiness_lag_threshold
         )
 
         blockers: list[str] = []
@@ -413,6 +414,7 @@ class FlagshipDoctorDaemon:
             "daemon_running": self._running,
             "heartbeat_fresh": heartbeat_fresh,
             "heartbeat_age_s": round(heartbeat_age_s, 3) if heartbeat_age_s is not None else None,
+            "readiness_lag_threshold_s": round(float(readiness_lag_threshold), 3),
             "lag_threshold_s": round(float(lag_threshold), 3),
             "lag_context": lag_context,
             "runtime_contract_healthy": runtime_contract_healthy,

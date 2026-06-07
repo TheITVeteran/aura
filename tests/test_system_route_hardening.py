@@ -313,32 +313,13 @@ async def test_runtime_heartbeat_refuses_partial_probe_components(monkeypatch):
 @pytest.mark.asyncio
 async def test_runtime_heartbeat_refuses_boot_blockers_even_when_required_probes_pass(monkeypatch):
     from interface.routes import system as system_routes
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 
     required_probes = {
-        "all_passed": True,
-        "kernel": {"ok": True, "components": {"kernel_interface": True}},
-        "inference": {
-            "ok": True,
-            "components": {"inference_gate": True, "llm_router": True},
-        },
-        "memory": {
-            "ok": True,
-            "components": {
-                "state_repository": True,
-                "memory_facade": True,
-                "memory_write_gateway": True,
-            },
-        },
-        "scheduler": {"ok": True, "components": {"scheduler": True}},
-        "tool_governance": {
-            "ok": True,
-            "components": {
-                "unified_will": True,
-                "authority_gateway": True,
-                "capability_engine": True,
-            },
-        },
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
     }
+    required_probes["all_passed"] = True
     monkeypatch.setattr(system_routes, "_get_runtime_state_safe", lambda: {"state": {}})
     monkeypatch.setattr(
         system_routes,

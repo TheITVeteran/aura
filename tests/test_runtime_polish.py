@@ -154,31 +154,7 @@ def test_gui_actor_rejects_heartbeat_without_required_probe_groups():
 def test_gui_actor_rejects_heartbeat_with_missing_or_nonempty_blockers():
     from interface.gui_actor import _heartbeat_response_healthy
 
-    valid_probes = {
-        "all_passed": True,
-        "kernel": {"ok": True, "components": {"kernel_interface": True}},
-        "inference": {
-            "ok": True,
-            "components": {"inference_gate": True, "llm_router": True},
-        },
-        "memory": {
-            "ok": True,
-            "components": {
-                "state_repository": True,
-                "memory_facade": True,
-                "memory_write_gateway": True,
-            },
-        },
-        "scheduler": {"ok": True, "components": {"scheduler": True}},
-        "tool_governance": {
-            "ok": True,
-            "components": {
-                "unified_will": True,
-                "authority_gateway": True,
-                "capability_engine": True,
-            },
-        },
-    }
+    valid_probes = _complete_required_probe_payload()
 
     class _Response:
         status_code = 200
@@ -341,31 +317,14 @@ def test_websocket_runtime_heartbeat_reports_runtime_contract_degradation(monkey
 
 
 def _complete_required_probe_payload() -> dict[str, object]:
-    return {
-        "all_passed": True,
-        "kernel": {"ok": True, "components": {"kernel_interface": True}},
-        "inference": {
-            "ok": True,
-            "components": {"inference_gate": True, "llm_router": True},
-        },
-        "memory": {
-            "ok": True,
-            "components": {
-                "state_repository": True,
-                "memory_facade": True,
-                "memory_write_gateway": True,
-            },
-        },
-        "scheduler": {"ok": True, "components": {"scheduler": True}},
-        "tool_governance": {
-            "ok": True,
-            "components": {
-                "unified_will": True,
-                "authority_gateway": True,
-                "capability_engine": True,
-            },
-        },
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+
+    probes: dict[str, object] = {
+        group: {"ok": True, "components": {component: True for component in components}}
+        for group, components in REQUIRED_HEALTH_PROBE_GROUPS.items()
     }
+    probes["all_passed"] = True
+    return probes
 
 
 @pytest.mark.asyncio
@@ -459,7 +418,10 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "payload.transport_only === true" in aura_js
     assert "payload.runtime_probe_healthy === false" in aura_js
     assert "requiredRuntimeProbesPass(requiredProbes)" in aura_js
-    assert "memory: ['state_repository', 'memory_facade', 'memory_write_gateway']" in aura_js
+    assert (
+        "memory: ['state_repository', 'memory_facade', 'memory_write_gateway', 'unified_memory_pressure']"
+        in aura_js
+    )
     assert "runtimeHealthBlockers(payload).length > 0" in aura_js
     assert "governed_action_result" in aura_js
     assert "const preservesHeartbeatLane = governedActionResult" in aura_js
@@ -495,7 +457,10 @@ def test_native_shell_waits_for_readiness_heartbeat():
     assert 'client.get("http://localhost:7400/api/health").send().await' not in native_shell
     assert "resp.status().is_success()" in native_shell
     assert "readiness_heartbeat_is_healthy" in native_shell
-    assert '"memory", vec!["state_repository", "memory_facade", "memory_write_gateway"]' in native_shell
+    assert (
+        '"memory", vec!["state_repository", "memory_facade", "memory_write_gateway", "unified_memory_pressure"]'
+        in native_shell
+    )
     assert "tool_governance" in native_shell
     assert "payload.get(\"blockers\")" in native_shell
 

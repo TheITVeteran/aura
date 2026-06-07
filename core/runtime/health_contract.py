@@ -28,7 +28,12 @@ HEALTH_CONTRACT_VERSION = "runtime-health-v1"
 REQUIRED_HEALTH_PROBE_GROUPS: dict[str, tuple[str, ...]] = {
     "kernel": ("kernel_interface",),
     "inference": ("inference_gate", "llm_router"),
-    "memory": ("state_repository", "memory_facade", "memory_write_gateway"),
+    "memory": (
+        "state_repository",
+        "memory_facade",
+        "memory_write_gateway",
+        "unified_memory_pressure",
+    ),
     "scheduler": ("scheduler",),
     "tool_governance": ("unified_will", "authority_gateway", "capability_engine"),
 }
@@ -246,6 +251,14 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "Prometheus metrics endpoint.",
     ),
 ]
+
+UNIFIED_MEMORY_PRESSURE_REQUIREMENT = ServiceRequirement(
+    "Unified Memory Pressure",
+    "unified_memory_pressure",
+    ServiceTier.CRITICAL,
+    "Process-wide unified-memory pressure gate. Aura must not claim healthy when the live model lane risks system OOM.",
+    liveness_check="get_memory_pressure_snapshot",
+)
 
 
 class HealthLevel(StrEnum):
@@ -503,6 +516,33 @@ def _coerce_liveness_result(result: Any) -> tuple[bool, str | None]:
     return False, f"unsupported liveness result type: {type(result).__name__}"
 
 
+def _unified_memory_pressure_status() -> ServiceStatus:
+    try:
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        snapshot = get_memory_pressure_snapshot()
+        if snapshot.critical:
+            return ServiceStatus(
+                requirement=UNIFIED_MEMORY_PRESSURE_REQUIREMENT,
+                present=True,
+                liveness_ok=False,
+                error=snapshot.reason or f"memory pressure level is {snapshot.level}",
+            )
+        return ServiceStatus(
+            requirement=UNIFIED_MEMORY_PRESSURE_REQUIREMENT,
+            present=True,
+            liveness_ok=True,
+            error=None,
+        )
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        return ServiceStatus(
+            requirement=UNIFIED_MEMORY_PRESSURE_REQUIREMENT,
+            present=True,
+            liveness_ok=False,
+            error=f"memory pressure probe unavailable: {exc}",
+        )
+
+
 def _tier_summary(services: list[ServiceStatus], tier: ServiceTier) -> dict[str, int]:
     tier_services = [status for status in services if status.requirement.tier == tier]
     failed = [
@@ -569,7 +609,14 @@ def evaluate_health() -> HealthVerdict:
                 )
             )
 
+    statuses.append(_unified_memory_pressure_status())
+
     # Classify
+    concrete_statuses = [
+        status
+        for status in statuses
+        if status.requirement.container_key != UNIFIED_MEMORY_PRESSURE_REQUIREMENT.container_key
+    ]
     critical_alive = all(
         s.present and s.liveness_ok is not False
         for s in statuses
@@ -584,7 +631,7 @@ def evaluate_health() -> HealthVerdict:
         level = HealthLevel.HEALTHY
     elif critical_alive:
         level = HealthLevel.DEGRADED
-    elif any(s.present for s in statuses if s.requirement.tier == ServiceTier.CRITICAL):
+    elif any(s.present for s in concrete_statuses if s.requirement.tier == ServiceTier.CRITICAL):
         level = HealthLevel.CRITICAL
     else:
         level = HealthLevel.DEAD

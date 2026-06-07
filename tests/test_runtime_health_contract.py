@@ -135,9 +135,13 @@ def test_runtime_contract_reports_dead_when_no_critical_service_exists():
     assert report["status"] == HealthLevel.DEAD.value
     assert report["operational"] is False
     assert report["status_code"] == 503
-    assert (
-        report["tier_summary"]["critical"]["missing"] == report["tier_summary"]["critical"]["total"]
-    )
+    concrete_critical = [
+        service
+        for service in report["services"]
+        if service["tier"] == ServiceTier.CRITICAL.value
+        and service["container_key"] != "unified_memory_pressure"
+    ]
+    assert all(service["present"] is False for service in concrete_critical)
 
 
 def test_runtime_health_endpoint_uses_contract_status_code():
@@ -218,10 +222,68 @@ def test_runtime_contract_requires_kernel_inference_memory_scheduler_and_tool_go
     assert required["state_repository"].liveness_check == "is_initialized"
     assert required["memory_facade"].liveness_check == "is_ready"
     assert required["memory_write_gateway"].liveness_check == "is_ready"
+    assert REQUIRED_HEALTH_PROBE_GROUPS["memory"] == (
+        "state_repository",
+        "memory_facade",
+        "memory_write_gateway",
+        "unified_memory_pressure",
+    )
     assert required["scheduler"].liveness_check == "is_alive"
     assert required["unified_will"].liveness_check == "is_alive"
     assert required["authority_gateway"].liveness_check == "is_ready"
     assert required["capability_engine"].liveness_check == "is_ready"
+
+
+def test_runtime_contract_fails_closed_on_critical_unified_memory_pressure(monkeypatch):
+    import core.utils.memory_monitor as memory_monitor
+
+    gib = 1024**3
+    _register_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+    monkeypatch.setattr(
+        memory_monitor.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(total=64 * gib, available=2 * gib, percent=96.0),
+    )
+
+    report = runtime_health_report()
+    probes = required_probe_status(report)
+
+    assert report["status"] == HealthLevel.CRITICAL.value
+    assert report["healthy"] is False
+    assert report["operational"] is False
+    assert report["status_code"] == 503
+    assert "probe:memory" in report["probe_blockers"]
+    assert probes["memory"]["ok"] is False
+    assert probes["memory"]["components"]["unified_memory_pressure"] is False
+    assert any(
+        failure["container_key"] == "unified_memory_pressure"
+        and "memory_pressure:96.0%" in failure["error"]
+        for failure in report["failures"]["critical"]
+    )
+
+
+def test_runtime_contract_allows_high_noncritical_unified_memory_pressure(monkeypatch):
+    import core.utils.memory_monitor as memory_monitor
+
+    gib = 1024**3
+    _register_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+    monkeypatch.setattr(
+        memory_monitor.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(
+            total=64 * gib,
+            available=int(9.5 * gib),
+            percent=86.0,
+        ),
+    )
+
+    report = runtime_health_report()
+    probes = required_probe_status(report)
+
+    assert report["status"] == HealthLevel.HEALTHY.value
+    assert report["healthy"] is True
+    assert probes["memory"]["ok"] is True
+    assert probes["memory"]["components"]["unified_memory_pressure"] is True
 
 
 def test_required_probe_summary_fails_if_scheduler_or_tool_governance_is_unhealthy():

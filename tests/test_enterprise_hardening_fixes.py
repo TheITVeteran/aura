@@ -209,31 +209,14 @@ def test_flagship_doctor_self_healing_has_cooldown(monkeypatch, tmp_path: Path):
 
 
 def _complete_required_probe_payload() -> dict[str, object]:
-    return {
-        "all_passed": True,
-        "kernel": {"ok": True, "components": {"kernel_interface": True}},
-        "inference": {
-            "ok": True,
-            "components": {"inference_gate": True, "llm_router": True},
-        },
-        "memory": {
-            "ok": True,
-            "components": {
-                "state_repository": True,
-                "memory_facade": True,
-                "memory_write_gateway": True,
-            },
-        },
-        "scheduler": {"ok": True, "components": {"scheduler": True}},
-        "tool_governance": {
-            "ok": True,
-            "components": {
-                "unified_will": True,
-                "authority_gateway": True,
-                "capability_engine": True,
-            },
-        },
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+
+    probes: dict[str, object] = {
+        group: {"ok": True, "components": {component: True for component in components}}
+        for group, components in REQUIRED_HEALTH_PROBE_GROUPS.items()
     }
+    probes["all_passed"] = True
+    return probes
 
 
 def test_flagship_doctor_status_rejects_forged_runtime_probes(monkeypatch, tmp_path: Path):
@@ -298,6 +281,42 @@ def test_flagship_doctor_status_requires_fresh_event_loop_heartbeat(monkeypatch,
     assert status["heartbeat_fresh"] is False
     assert "event_loop_heartbeat_stale" in status["blockers"]
     assert daemon.is_ready() is False
+
+
+def test_flagship_doctor_readiness_uses_strict_heartbeat_freshness_under_active_context(
+    monkeypatch,
+    tmp_path: Path,
+):
+    from core.runtime import health_contract
+    from core.runtime.flagship_doctor import FlagshipDoctorDaemon
+
+    daemon = FlagshipDoctorDaemon(root_dir=tmp_path, lag_threshold=0.5)
+    daemon._running = True
+    daemon._loop = object()
+    daemon._heartbeat_task = SimpleNamespace(done=lambda: False)
+    daemon._last_heartbeat = time.time() - 5.0
+    daemon._active_runtime_reason = lambda: "foreground_generation"
+    required_probes = _complete_required_probe_payload()
+
+    monkeypatch.setattr(
+        health_contract,
+        "runtime_health_report",
+        lambda: {
+            "status": "healthy",
+            "healthy": True,
+            "operational": True,
+            "required_probes": required_probes,
+        },
+    )
+
+    status = daemon.get_status()
+
+    assert status["heartbeat_fresh"] is False
+    assert status["healthy"] is False
+    assert status["lag_context"] == "foreground_generation"
+    assert status["lag_threshold_s"] >= 30.0
+    assert status["readiness_lag_threshold_s"] == 0.5
+    assert "event_loop_heartbeat_stale" in status["blockers"]
 
 
 def test_flagship_doctor_status_is_ready_only_when_heartbeat_and_runtime_contract_pass(
