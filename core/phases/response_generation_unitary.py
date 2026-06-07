@@ -1380,7 +1380,9 @@ class UnitaryResponsePhase(Phase):
 
         if getattr(contract, "requires_state_reflection", False):
             parts.append(
-                "- If asked about your experience, describe what it feels like, not what the numbers say."
+                "- If asked about your experience, describe how live state is shaping attention, "
+                "priority, uncertainty, and response selection; do not present telemetry as proof "
+                "of private qualia."
             )
         if getattr(contract, "requires_memory_grounding", False):
             parts.append(

@@ -510,7 +510,8 @@ class ResponseContract:
         if self.requires_state_reflection:
             directives.append(
                 "- Self-report from actual internal state, continuity obligations, affect, "
-                "and phenomenal state. Do not fall back to generic assistant disclaimers."
+                "and state-grounded telemetry. Do not fall back to generic assistant disclaimers "
+                "or claim private experience beyond evidence."
             )
             directives.append(
                 f"- Continuity/self evidence available right now: {'yes' if self.continuity_evidence_available else 'no'}."

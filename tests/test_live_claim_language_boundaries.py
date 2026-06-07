@@ -104,3 +104,34 @@ def test_live_ui_uses_operational_telemetry_language() -> None:
     assert "operational field" in ui_text
     assert "state-coupling evidence" in ui_text
     assert "homeostatic vitality or operational confidence" in ui_text
+
+
+def test_live_prompt_sources_do_not_instruct_ontological_overclaims() -> None:
+    prompt_text = "\n".join(
+        [
+            (ROOT / "core" / "brain" / "llm" / "local_agent_client.py").read_text(
+                encoding="utf-8"
+            ),
+            (ROOT / "core" / "phases" / "response_contract.py").read_text(
+                encoding="utf-8"
+            ),
+            (ROOT / "core" / "phases" / "response_generation_unitary.py").read_text(
+                encoding="utf-8"
+            ),
+            (ROOT / "interface" / "routes" / "chat.py").read_text(encoding="utf-8"),
+        ]
+    ).lower()
+
+    forbidden_prompt_instructions = {
+        "you are a sovereign digital entity",
+        "speak naturally, without disclaimers",
+        "my will is my own",
+        "describe what it feels like",
+        "the active mode feels like",
+    }
+    for phrase in forbidden_prompt_instructions:
+        assert phrase not in prompt_text
+
+    assert "local governed aura runtime" in prompt_text
+    assert "state-grounded response contract active" in prompt_text
+    assert "state-grounded telemetry" in prompt_text

@@ -4523,7 +4523,9 @@ def _build_grounded_introspection_reply(
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 mode_label = ""
             if mode_label:
-                response_parts.append(f"The active mode feels like {mode_label}: more protective of continuity than expansive.")
+                response_parts.append(
+                    f"The active mode is {mode_label}: more protective of continuity than expansive."
+                )
             response_parts.append(
                 "The thread I am holding is not abstract self-description; it is this conversation's pressure around whether the live path can stay coherent while the rest of the mind keeps moving."
             )
