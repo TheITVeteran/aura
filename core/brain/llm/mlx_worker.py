@@ -2367,100 +2367,104 @@ def _mlx_worker_loop(
                     from mlx_lm.generate import stream_generate
                     # : NO GPUSentinel — same rationale as generate path.
 
-                    with metal_semaphore:
-                        watchdog.start_job()
-                        try:
-                            full_text = ""
-                            token_count = 0
-
-                            # ── Token Sentinel for streaming path ─────────
+                    surface_control_state = _apply_surface_generation_controls(engine, model, job)
+                    try:
+                        with metal_semaphore:
+                            watchdog.start_job()
                             try:
-                                from core.brain.llm.token_sentinel import (
-                                    InterventionType,
-                                    TokenSentinel,
-                                    get_refusal_fallback,
-                                )
-                                stream_sentinel = TokenSentinel(
-                                    check_interval=8,
-                                    affect_interval=16,
-                                    substrate_mem=substrate_mem,
-                                )
-                            except (ImportError, AttributeError, RuntimeError):
-                                stream_sentinel = None
+                                full_text = ""
+                                token_count = 0
 
-                            # [STABILITY v60] Definitive scrub of legacy kwargs.
-                            clean_keys = {"temperature", "top_p", "min_p", "repetition_penalty", "repetition_context_size", "stop_words"}
-                            clean_kwargs = {k: v for k, v in kwargs.items() if k not in clean_keys}
+                                # ── Token Sentinel for streaming path ─────────
+                                try:
+                                    from core.brain.llm.token_sentinel import (
+                                        InterventionType,
+                                        TokenSentinel,
+                                        get_refusal_fallback,
+                                    )
+                                    stream_sentinel = TokenSentinel(
+                                        check_interval=8,
+                                        affect_interval=16,
+                                        substrate_mem=substrate_mem,
+                                    )
+                                except (ImportError, AttributeError, RuntimeError):
+                                    stream_sentinel = None
 
-                            watchdog.activity()
-                            for response in stream_generate(model, tokenizer, prompt=prompt, **clean_kwargs):
+                                # [STABILITY v60] Definitive scrub of legacy kwargs.
+                                clean_keys = {"temperature", "top_p", "min_p", "repetition_penalty", "repetition_context_size", "stop_words"}
+                                clean_kwargs = {k: v for k, v in kwargs.items() if k not in clean_keys}
+
                                 watchdog.activity()
-                                token_count += 1
-                                token_text = response.text
-                                full_text += token_text
-                                full_text, role_continuation_hit = _truncate_role_continuation(full_text)
+                                for response in stream_generate(model, tokenizer, prompt=prompt, **clean_kwargs):
+                                    watchdog.activity()
+                                    token_count += 1
+                                    token_text = response.text
+                                    full_text += token_text
+                                    full_text, role_continuation_hit = _truncate_role_continuation(full_text)
 
-                                # ── Sentinel: mid-stream intervention ─────
-                                if stream_sentinel is not None:
-                                    sentinel_signal = stream_sentinel.feed(token_text)
-                                    if sentinel_signal.type == InterventionType.ABORT_LOOP:
-                                        logger.warning(
-                                            "🚨 [SENTINEL-STREAM] Aborting loop at token %d: %s",
-                                            token_count, sentinel_signal.reason,
-                                        )
-                                        ipc_writer.put({
+                                    # ── Sentinel: mid-stream intervention ─────
+                                    if stream_sentinel is not None:
+                                        sentinel_signal = stream_sentinel.feed(token_text)
+                                        if sentinel_signal.type == InterventionType.ABORT_LOOP:
+                                            logger.warning(
+                                                "🚨 [SENTINEL-STREAM] Aborting loop at token %d: %s",
+                                                token_count, sentinel_signal.reason,
+                                            )
+                                            ipc_writer.put({
+                                                "id": job.get("id"),
+                                                "action": "stream",
+                                                "status": "sentinel_abort",
+                                                "text": "",
+                                                "tokens_generated": token_count,
+                                                "timestamp": time.time(),
+                                            })
+                                            break
+                                        elif sentinel_signal.type in (InterventionType.ABORT_CAPITULATION,
+                                                                      InterventionType.ABORT_BOUNDARY):
+                                            logger.warning(
+                                                "🚨 [SENTINEL-STREAM] Aborting at token %d: %s",
+                                                token_count, sentinel_signal.reason,
+                                            )
+                                            # Send the refusal as the final token
+                                            ipc_writer.put({
+                                                "id": job.get("id"),
+                                                "action": "stream",
+                                                "status": "sentinel_abort",
+                                                "text": get_refusal_fallback(seed=token_count),
+                                                "tokens_generated": token_count,
+                                                "timestamp": time.time(),
+                                            })
+                                            break
+
+                                    ipc_writer.put(
+                                        {
                                             "id": job.get("id"),
                                             "action": "stream",
-                                            "status": "sentinel_abort",
-                                            "text": "",
+                                            "status": "token",
+                                            "text": token_text,
                                             "tokens_generated": token_count,
                                             "timestamp": time.time(),
-                                        })
-                                        break
-                                    elif sentinel_signal.type in (InterventionType.ABORT_CAPITULATION,
-                                                                  InterventionType.ABORT_BOUNDARY):
-                                        logger.warning(
-                                            "🚨 [SENTINEL-STREAM] Aborting at token %d: %s",
-                                            token_count, sentinel_signal.reason,
-                                        )
-                                        # Send the refusal as the final token
-                                        ipc_writer.put({
-                                            "id": job.get("id"),
-                                            "action": "stream",
-                                            "status": "sentinel_abort",
-                                            "text": get_refusal_fallback(seed=token_count),
-                                            "tokens_generated": token_count,
-                                            "timestamp": time.time(),
-                                        })
+                                        }
+                                    )
+
+                                    # [FRONTIER UPGRADE] Absolute safety cap natively expanded to frontier levels
+                                    if token_count > 8192:
+                                        logger.warning("🏁 [WORKER] Hard token limit (8192) reached. Truncating.")
                                         break
 
-                                ipc_writer.put(
-                                    {
-                                        "id": job.get("id"),
-                                        "action": "stream",
-                                        "status": "token",
-                                        "text": token_text,
-                                        "tokens_generated": token_count,
-                                        "timestamp": time.time(),
-                                    }
-                                )
-
-                                # [FRONTIER UPGRADE] Absolute safety cap natively expanded to frontier levels
-                                if token_count > 8192:
-                                    logger.warning("🏁 [WORKER] Hard token limit (8192) reached. Truncating.")
-                                    break
-
-                                stop_hit = role_continuation_hit
-                                for stop in stop_sequences:
-                                    stop_index = full_text.find(stop)
-                                    if stop_index > 0:
-                                        full_text = full_text[:stop_index]
-                                        stop_hit = True
+                                    stop_hit = role_continuation_hit
+                                    for stop in stop_sequences:
+                                        stop_index = full_text.find(stop)
+                                        if stop_index > 0:
+                                            full_text = full_text[:stop_index]
+                                            stop_hit = True
+                                            break
+                                    if stop_hit:
                                         break
-                                if stop_hit:
-                                    break
-                        finally:
-                            watchdog.stop_job()
+                            finally:
+                                watchdog.stop_job()
+                    finally:
+                        _restore_surface_generation_controls(surface_control_state)
 
                     ipc_writer.put({"status": "ok", "action": "stream_done"})
                 except (ImportError, AttributeError, RuntimeError) as e:

@@ -329,3 +329,30 @@ def test_stream_path_no_mid_generation_cache_clear():
         "Stream path still contains mid-generation cache clearing every 10 tokens. "
         "This was identified as harmful to throughput and must be removed."
     )
+
+
+def test_stream_path_uses_surface_generation_controls():
+    """Streaming user-visible text must use the same controls as normal generation.
+
+    The desktop UI commonly consumes streamed tokens. If this path bypasses
+    the surface clamp, live chat can diverge from proof/backend generation.
+    """
+    import inspect
+
+    from core.brain.llm.mlx_worker import _mlx_worker_loop
+
+    source = inspect.getsource(_mlx_worker_loop)
+    stream_start = source.find('elif action == "stream":')
+    assert stream_start > 0, "Could not find stream action handler"
+    stream_section = source[stream_start:]
+    apply_idx = stream_section.find("_apply_surface_generation_controls")
+    generate_idx = stream_section.find("stream_generate(")
+    restore_idx = stream_section.find("_restore_surface_generation_controls")
+
+    assert apply_idx > 0, "Stream path does not apply surface generation controls."
+    assert generate_idx > 0, "Stream path does not call stream_generate."
+    assert restore_idx > 0, "Stream path does not restore surface generation controls."
+    assert apply_idx < generate_idx < restore_idx, (
+        "Stream path must apply surface controls before token generation and "
+        "restore them after generation exits."
+    )
