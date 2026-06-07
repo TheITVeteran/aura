@@ -265,136 +265,123 @@ class CandidateGenerator:
         recent_frames: list,
         context_id: str | None,
     ) -> list[ActionIntent]:
-        """Suppress candidates that have repeatedly failed or caused loops in the same context."""
-        # 1. Calculate steps taken on current context
-        steps_on_level = 0
+        """Suppress candidates causing loops or stuck cycles in any environment.
+
+        All heuristics are purely structural — based on repetition patterns,
+        coordinate stability, and context-visit diversity. No action names are
+        hardcoded, making this logic applicable to any environment: games,
+        file systems, web navigation, internal architecture exploration, or
+        any novel context the agent may encounter.
+
+        An action is considered stuck/non-progressive if it is overused while
+        the agent's observable state (position, context) is not changing.
+        """
+        # ── 1. Steps taken consecutively in the current context ──────────────
+        steps_on_context = 0
         for frame in reversed(recent_frames):
             parsed = frame.post_parsed_state or frame.parsed_state
             if parsed and parsed.context_id == context_id:
-                steps_on_level += 1
+                steps_on_context += 1
             else:
                 break
 
-        # General heuristic: if the agent has only ever been in one context (starting area),
-        # apply a tighter step limit to force exploration. Once multiple contexts have been
-        # visited (agent has proven it can transition), apply a looser limit.
+        # ── 2. Context diversity ──────────────────────────────────────────────
+        # If the agent has only ever been in a single context it has not yet
+        # proven it can transition; apply a tighter step cap to force it to try.
         distinct_contexts: set = set()
         for frame in recent_frames:
             parsed = frame.post_parsed_state or frame.parsed_state
             if parsed and parsed.context_id:
                 distinct_contexts.add(parsed.context_id)
-        is_first_context = len(distinct_contexts) <= 1
-        context_step_limit = 120 if is_first_context else 300
-        level_steps_excessive = steps_on_level > context_step_limit
+        context_step_limit = 120 if len(distinct_contexts) <= 1 else 300
+        context_steps_excessive = steps_on_context > context_step_limit
 
-        # 2. Count recent action frequencies and failures in a larger window (last 40 frames)
+        # ── 3. Recent action stats (last 40 frames) ───────────────────────────
         recent_failures: dict[str, int] = {}
         recent_counts: dict[str, int] = {}
         recent_names: list[str] = []
-        
-        # Check if position has been static for the last 10 steps
-        coords = []
+        coords: list = []
+
         for frame in recent_frames[-40:]:
             if frame.action_intent:
-                recent_names.append(frame.action_intent.name)
-                recent_counts[frame.action_intent.name] = recent_counts.get(frame.action_intent.name, 0) + 1
-            
-            # Check for failures
+                name = frame.action_intent.name
+                recent_names.append(name)
+                recent_counts[name] = recent_counts.get(name, 0) + 1
+
             if frame.outcome_assessment and frame.outcome_assessment.success_score < 0.3:
                 if frame.action_intent:
                     key = f"{frame.action_intent.name}:{context_id}"
                     recent_failures[key] = recent_failures.get(key, 0) + 1
-            
-            # Record coordinates for static check (only if no active modal was present)
+
+            # Coordinates — only sampled when no modal is blocking the view
             parsed = frame.post_parsed_state or frame.parsed_state
             if parsed and not parsed.modal_state:
                 pos = parsed.self_state.get("local_coordinates")
                 if pos:
                     coords.append(pos)
 
-        # If we have at least 10 observations of coordinates and they are all identical, position is static
+        # ── 4. Position static ────────────────────────────────────────────────
+        # True when the last 10 non-modal coordinate readings are identical,
+        # meaning the agent's actions have produced no movement whatsoever.
         position_static = len(coords) >= 10 and len(set(coords[-10:])) == 1
 
-        # Check for oscillating information loops in the last 15 actions
-        oscillating_information_loop = self._information_loop(recent_names[-15:])
-
-        # General two-action oscillation detection: if the last 12+ actions consist
-        # of only 1 or 2 unique names cycling with no spatial progress, both are stuck.
-        # This catches any alternating pair (e.g. observe↔retreat_to_safety) regardless
-        # of action semantics or game environment.
-        two_action_oscillating: set[str] = set()
-        tail = recent_names[-12:]
-        if len(tail) >= 12 and len(set(tail)) <= 2 and position_static:
-            two_action_oscillating = set(tail)
-
-        # Passive/non-exploratory actions — suppressed when the agent is stuck.
-        # These are actions that gather information or react defensively without
-        # changing the agent's position or context. Defined behaviorally, not by
-        # game-specific names.
-        passive_actions = {
-            "inventory", "search", "observe", "inspect", "diagnose",
-            "far_look", "retreat_to_safety",
+        # ── 5. Overused actions ───────────────────────────────────────────────
+        # Any action taken >= suppression_threshold times in the recent window
+        # is structurally overused — regardless of what it is named.
+        overused: set[str] = {
+            name for name, count in recent_counts.items()
+            if count >= self.suppression_threshold
         }
 
-        filtered = []
+        # ── 6. Low-diversity oscillation ──────────────────────────────────────
+        # If the last 12+ actions cycle through ≤2 unique names while position
+        # is static, the agent is stuck in an alternating cycle. Both action
+        # names are flagged — no matter what they are called.
+        tail = recent_names[-12:]
+        oscillating: set[str] = set()
+        if len(tail) >= 12 and len(set(tail)) <= 2 and position_static:
+            oscillating = set(tail)
+
+        # ── 7. Filter ─────────────────────────────────────────────────────────
+        filtered: list[ActionIntent] = []
         for c in candidates:
             key = f"{c.name}:{context_id}"
 
-            # A. Suppress repeatedly failed actions
+            # A. Suppress repeatedly failed actions (environment-agnostic)
             if recent_failures.get(key, 0) >= self.suppression_threshold:
                 continue
 
-            # B. Suppress passive actions if steps on context are excessive
-            if level_steps_excessive and c.name in passive_actions:
+            # B. Suppress overused actions when context steps are excessive
+            #    (the agent has been in this context far too long without leaving)
+            if context_steps_excessive and c.name in overused:
                 continue
 
-            # C. Suppress passive actions if position is static
-            if position_static and c.name in passive_actions:
+            # C. Suppress overused actions when position is static
+            #    (the agent keeps taking the same actions while not moving)
+            if position_static and c.name in overused:
                 continue
 
-            # D. Suppress passive actions if overused in the recent window
-            if c.name in passive_actions and recent_counts.get(c.name, 0) >= self.suppression_threshold:
-                continue
-
-            # E. Suppress informational actions if we're in an information loop
-            if oscillating_information_loop and c.name in passive_actions:
-                continue
-
-            # F. Suppress any action that is part of a detected two-action oscillation
-            if c.name in two_action_oscillating:
+            # D. Suppress any action that is part of a low-diversity oscillation
+            #    (catches any two-action cycle regardless of action semantics)
+            if c.name in oscillating:
                 continue
 
             filtered.append(c)
 
-        # If everything was suppressed, inject movement recovery candidates
+        # ── 8. Fallback: inject recovery candidates if all were suppressed ────
         if not filtered:
-            for direction in self._movement_directions(ParsedState(environment_id="", context_id=context_id), None):
-                filtered.append(ActionIntent(name="move", parameters={"direction": direction}, risk="caution", expected_effect="recover_from_oscillation"))
+            for direction in self._movement_directions(
+                ParsedState(environment_id="", context_id=context_id), None
+            ):
+                filtered.append(ActionIntent(
+                    name="move",
+                    parameters={"direction": direction},
+                    risk="caution",
+                    expected_effect="recover_from_oscillation",
+                ))
             filtered.append(ActionIntent(name="wait", risk="safe"))
 
         return filtered
-
-    @staticmethod
-    def _information_loop(recent_names: list[str]) -> bool:
-        """Detect windows where the agent only issues passive/informational actions.
-
-        Checks the last 8 names. If at least 5 of them are passive information-
-        gathering actions and none are actions that produce real spatial progress
-        (coordinate or context change), the agent is considered stuck in an
-        information loop.
-
-        Note: retreat_to_safety is intentionally excluded from the progress set
-        because it does not change coordinates and cannot break a stuck cycle.
-        """
-        window = recent_names[-8:]
-        if len(window) < 4:
-            return False
-        informational = {"inventory", "observe", "inspect", "diagnose", "far_look", "search", "resolve_modal"}
-        if sum(1 for name in window if name in informational) < 5:
-            return False
-        # Only directional movement or context transitions count as real progress
-        spatial_progress = {"move", "use_stairs", "pickup", "eat", "stabilize_resource"}
-        return not any(name in spatial_progress for name in window)
 
     @staticmethod
     def _recent_threat_pressure(recent_frames: list | None) -> bool:
