@@ -418,6 +418,70 @@ async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+    import core.utils.memory_monitor as memory_monitor
+
+    gib = 1024**3
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, *_args, **_kwargs):
+            calls.append("engine_think")
+            return SimpleNamespace(content="unexpected engine reply")
+
+    def _fake_get(name, default=None):
+        if name == "cognitive_engine":
+            return _FakeCognitiveEngine()
+        return default
+
+    monkeypatch.setattr(
+        memory_monitor.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(
+            total=64 * gib,
+            available=2 * gib,
+            percent=96.0,
+        ),
+    )
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_resolve_live_aura_state", lambda: None)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="Use the desktop path to answer this."),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 503
+    assert b"memory_pressure_guard" in response.body
+    assert b"memory_pressure" in response.body
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_surface_disables_social_reflex_fastpath(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes

@@ -235,11 +235,12 @@ def _runtime_uptime_seconds(orchestrator: Any = None) -> float:
 
 
 def _foreground_activity_reason() -> str:
+    guard_reason = ""
     try:
         from core.runtime.foreground_guard import foreground_activity_reason
 
         guard_reason = foreground_activity_reason()
-        if guard_reason:
+        if guard_reason == "foreground_chat_active":
             return guard_reason
     except (ImportError, AttributeError, RuntimeError) as _exc:
         record_degradation(
@@ -271,6 +272,8 @@ def _foreground_activity_reason() -> str:
         )
         logger.warning("Background policy inference foreground probe failed: %s", _exc)
         return "foreground_generation_status_unavailable"
+    if guard_reason:
+        return guard_reason
     return ""
 
 

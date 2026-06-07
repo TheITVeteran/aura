@@ -5977,23 +5977,37 @@ async def api_chat(
             record_degradation('chat', _lease_exc)
             logger.debug("Foreground guard lease skipped: %s", _lease_exc)
 
-        # VRAM Circuit Breaker (Limp Mode)
+        # Unified-memory circuit breaker. A heartbeat or foreground lock should
+        # never make the desktop path look healthy while macOS is near OOM.
         try:
-            mem = psutil.virtual_memory()
-            # [STABILITY v55] Raised from 85% to 94%. On a 64GB M5 system
-            # running the 32B model, 85-90% RAM is the NORMAL operating
-            # state. The old 85% threshold forced Limp Mode (REACTIVE
-            # cognitive mode, zero conversation energy) on nearly every
-            # request, crippling the cortex's reasoning capability.
-            # 94% is the actual macOS memory throttle wall.
-            if mem.percent > 94.0:
-                logger.warning("🚨 [VRAM CIRCUIT BREAKER] Unified memory at %.1f%%. Entering Limp Mode.", mem.percent)
-                # Force constraint at state level
+            from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+            memory_snapshot = get_memory_pressure_snapshot()
+            if memory_snapshot.critical:
+                logger.warning(
+                    "🚨 [MEMORY GUARD] Unified memory pressure blocks foreground chat: %s",
+                    memory_snapshot.reason,
+                )
                 live_state = _resolve_live_aura_state()
                 if live_state:
                     live_state.cognition.conversation_energy = 0.0
                     live_state.cognition.current_mode = 0  # CognitiveMode.REACTIVE
-                    live_state.response_modifiers['sys_pressure'] = 'CRITICAL VRAM LIMIT'
+                    live_state.response_modifiers["sys_pressure"] = "CRITICAL MEMORY LIMIT"
+                if memory_snapshot.refuse_heavy_local_generation and not is_benchmark:
+                    return JSONResponse(
+                        {
+                            "response": (
+                                "I need to shed memory pressure before I can safely start the "
+                                "desktop model lane. I am blocking this turn instead of risking "
+                                "another system-level memory crash."
+                            ),
+                            "status": "memory_pressure_guard",
+                            "conversation_lane": _collect_conversation_lane_status(),
+                            "memory_pressure": memory_snapshot.to_dict(),
+                            "response_confidence": "guarded",
+                        },
+                        status_code=503,
+                    )
         except _CHAT_RECOVERABLE_ERRORS as e:
             record_degradation('chat', e)
             logger.debug("Memory check failed: %s", e)

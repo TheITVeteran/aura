@@ -26,6 +26,7 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.concurrency import run_io_bound
 from core.utils.deadlines import Deadline, get_deadline
+from core.utils.memory_monitor import get_memory_pressure_snapshot
 from core.utils.task_tracker import get_task_tracker
 
 from .chat_format import format_chatml_messages, format_chatml_prompt
@@ -2735,36 +2736,39 @@ class MLXLocalClient:
                 )
                 return None
 
-        # ── PREVENTIVE: Memory pressure check before generation ──────
-        # If RAM is critically low, reduce max_tokens to prevent OOM kill.
-        # This is the #1 cause of cortex death on 64GB machines under load.
+        # ── PREVENTIVE: unified-memory pressure check before generation ──────
+        # If RAM is critically low, do not start a heavy local generation at all.
+        # Token caps are useful under high pressure; under critical/emergency
+        # pressure they are insufficient because the model process itself can
+        # push macOS into swap or jetsam before a token is produced.
         try:
-            vm = psutil.virtual_memory()
-            total_gb = vm.total / (1024**3)
-            # On 64GB+ machines, be much more lenient — the cortex needs room to work
-            if total_gb >= 60:
-                critical_pct = 92.0
-                high_pct = 87.0
-                gc_pct = 90.0
-            else:
-                critical_pct = 88.0
-                high_pct = 80.0
-                gc_pct = 82.0
-
-            if vm.percent >= critical_pct:
-                current_max = kwargs.get("max_tokens", self.max_tokens)
-                kwargs["max_tokens"] = min(current_max, 128)
-                logger.warning(
-                    "[MLX] MEMORY PRESSURE (%.1f%%): Capping max_tokens to 128 to prevent OOM",
-                    vm.percent,
-                )
-            elif vm.percent >= high_pct:
-                current_max = kwargs.get("max_tokens", self.max_tokens)
-                kwargs["max_tokens"] = min(current_max, 256)
-            if vm.percent >= gc_pct:
-                import gc
-
+            memory_snapshot = get_memory_pressure_snapshot()
+            if memory_snapshot.max_token_cap is not None:
+                current_max = int(kwargs.get("max_tokens", self.max_tokens) or self.max_tokens)
+                kwargs["max_tokens"] = min(current_max, memory_snapshot.max_token_cap)
+            if memory_snapshot.should_gc:
                 gc.collect()
+            if (
+                memory_snapshot.refuse_heavy_local_generation
+                and self._is_primary_or_deep_lane()
+                and not benchmark_request
+                and str(os.environ.get("AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION", "")).strip().lower()
+                not in {"1", "true", "yes", "on"}
+            ):
+                if self.is_alive() and int(getattr(self, "_active_generations", 0) or 0) <= 0:
+                    await self.reboot_worker(reason="memory_pressure_guard", mark_failed=False)
+                self._record_degraded_event(
+                    "memory_pressure_refused_generation",
+                    detail=f"{os.path.basename(self.model_path)}:{memory_snapshot.reason}",
+                    severity="critical",
+                    foreground_request=foreground_request,
+                )
+                logger.warning(
+                    "[MLX] Refusing heavy local generation for %s under critical memory pressure: %s",
+                    os.path.basename(self.model_path),
+                    memory_snapshot.reason,
+                )
+                return None
         except (OSError, AttributeError) as exc:
             logger.debug("MLX memory pressure probe unavailable: %s", exc)
 
