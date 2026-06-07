@@ -554,16 +554,21 @@ class EnvironmentKernel:
         await self.adapter.close()
 
     def save_learning_stores(self) -> None:
-        if self.outcome_ledger:
-            try:
-                self.outcome_ledger.save()
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation("environment_kernel", exc, severity="warning", action="continued after outcome ledger save failed")
-        if self.procedural_store:
-            try:
-                self.procedural_store.save()
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation("environment_kernel", exc, severity="warning", action="continued after procedural store save failed")
+        from core.governance_context import local_internal_governed_scope
+        try:
+            with local_internal_governed_scope("save_learning_stores", domain="file_write"):
+                if self.outcome_ledger:
+                    try:
+                        self.outcome_ledger.save()
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                        record_degradation("environment_kernel", exc, severity="warning", action="continued after outcome ledger save failed")
+                if self.procedural_store:
+                    try:
+                        self.procedural_store.save()
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                        record_degradation("environment_kernel", exc, severity="warning", action="continued after procedural store save failed")
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("environment_kernel", exc, severity="warning", action="continued after save learning stores governance block")
 
     def _trace(self, frame: EnvironmentFrame, *, latency_ms: float = 0.0) -> None:
         parsed = frame.post_parsed_state or frame.parsed_state
