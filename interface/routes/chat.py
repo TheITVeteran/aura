@@ -366,10 +366,10 @@ def _is_session_memory_recall_request(user_message: str) -> bool:
     return any(marker in text for marker in markers)
 
 
-async def _store_session_memory_pin(content: str, source: str) -> None:
+async def _store_session_memory_pin(content: str, source: str) -> bool:
     pinned = str(content or "").strip()
     if not pinned:
-        return
+        return False
     timestamp = datetime.now(tz=UTC).isoformat()
     async with _get_convo_lock():
         _session_memory_pins.append(
@@ -384,7 +384,7 @@ async def _store_session_memory_pin(content: str, source: str) -> None:
     try:
         memory_facade = ServiceContainer.get("memory_facade", default=None)
         if memory_facade is None or not hasattr(memory_facade, "add_memory"):
-            return
+            return False
         result = memory_facade.add_memory(
             f"Session memory pin: {pinned[:240]}",
             metadata={
@@ -403,10 +403,12 @@ async def _store_session_memory_pin(content: str, source: str) -> None:
             },
         )
         if hasattr(result, "__await__"):
-            await result
+            result = await result
+        return bool(result)
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.session_memory_pin", exc)
         logger.debug("Durable session memory pin write skipped: %s", exc)
+        return False
 
 
 def _session_memory_pin_from_record(item: Any) -> dict[str, str] | None:
@@ -472,9 +474,14 @@ async def _build_memory_state_fastpath_reply(
     """Return deterministic memory/continuity replies from canonical runtime state."""
     session_pin = _extract_session_memory_pin_request(user_message)
     if session_pin:
-        await _store_session_memory_pin(session_pin, user_message)
+        durable_ok = await _store_session_memory_pin(session_pin, user_message)
+        if not durable_ok:
+            return (
+                f"I can hold \"{session_pin}\" in this running session, but durable memory storage did not accept the write yet.",
+                "session_memory_pin_transient",
+            )
         return (
-            f"I've pinned \"{session_pin}\" in this session memory. Ask for it later and I'll pull it back directly.",
+            f"I've pinned \"{session_pin}\" in durable session memory. Ask for it later and I'll pull it back directly.",
             "session_memory_pin",
         )
 

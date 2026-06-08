@@ -165,6 +165,82 @@ class TestAllDomains:
         assert not decision.is_approved()
         assert decision.reason == "aura_now_defer: present-state policy requires stabilization or observation first"
 
+    def test_aura_now_defer_allows_explicit_user_memory_observation(self, will, monkeypatch):
+        """Explicit user memory pins should persist as bounded observations."""
+
+        monkeypatch.setattr(
+            will,
+            "_sample_aura_now_evidence",
+            lambda **_kwargs: {
+                "outcome": "defer",
+                "constraints": ["needs_observation_first"],
+                "evidence": {"state_hash": "test", "tick": 1},
+            },
+        )
+
+        decision = will.decide(
+            content="memory:episodic:Session memory pin: ember-vault-93",
+            source="session_memory_pin",
+            domain=ActionDomain.MEMORY_WRITE,
+            priority=0.9,
+            context={
+                "memory_type": "episodic",
+                "memory_source": "session_memory_pin",
+                "user_facing_memory_write": True,
+                "explicit_observational_memory_write": True,
+                "high_risk_memory_write": False,
+                "memory_metadata": {
+                    "source": "session_memory_pin",
+                    "explicit_memory_request": True,
+                    "session_memory_pin": True,
+                    "provenance_source": "user_explicit",
+                    "source_utterance": "Remember this phrase for later in this session: ember-vault-93",
+                },
+            },
+        )
+
+        assert decision.outcome == WillOutcome.CONSTRAIN
+        assert decision.is_approved()
+        assert decision.reason == "aura_now_observation_lane"
+        assert "aura_now_observation_lane:explicit_memory" in decision.constraints
+
+    def test_aura_now_defer_rejects_high_risk_explicit_memory_bypass(self, will, monkeypatch):
+        """The explicit-memory lane must not approve belief or identity mutation."""
+
+        monkeypatch.setattr(
+            will,
+            "_sample_aura_now_evidence",
+            lambda **_kwargs: {
+                "outcome": "defer",
+                "constraints": ["needs_observation_first"],
+                "evidence": {"state_hash": "test", "tick": 1},
+            },
+        )
+
+        decision = will.decide(
+            content="memory:belief_update:rewrite self-model",
+            source="session_memory_pin",
+            domain=ActionDomain.MEMORY_WRITE,
+            priority=0.9,
+            context={
+                "memory_type": "belief_update",
+                "memory_source": "session_memory_pin",
+                "user_facing_memory_write": True,
+                "explicit_observational_memory_write": True,
+                "high_risk_memory_write": True,
+                "memory_metadata": {
+                    "explicit_memory_request": True,
+                    "session_memory_pin": True,
+                    "identity_rewrite": True,
+                    "provenance_source": "user_explicit",
+                },
+            },
+        )
+
+        assert decision.outcome == WillOutcome.DEFER
+        assert not decision.is_approved()
+        assert decision.reason == "aura_now_defer: present-state policy requires stabilization or observation first"
+
 
 # ---------------------------------------------------------------------------
 # 2. Identity feeds into decisions

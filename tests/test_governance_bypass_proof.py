@@ -134,6 +134,27 @@ def test_authority_gateway_classifies_chat_api_memory_as_foreground_continuity()
     assert context["high_risk_memory_write"] is False
 
 
+def test_authority_gateway_classifies_session_memory_pin_as_explicit_observation():
+    """User-pinned memory must remain user-facing when it reaches Will."""
+    from core.executive.authority_gateway import AuthorityGateway
+
+    context = AuthorityGateway._memory_write_context(
+        "episodic",
+        "session_memory_pin",
+        {
+            "source": "session_memory_pin",
+            "explicit_memory_request": True,
+            "session_memory_pin": True,
+            "provenance_source": "user_explicit",
+        },
+        "Session memory pin: ember-vault-93",
+    )
+
+    assert context["user_facing_memory_write"] is True
+    assert context["explicit_observational_memory_write"] is True
+    assert context["high_risk_memory_write"] is False
+
+
 def test_authority_gateway_marks_foreground_cognitive_cycle_state_continuity():
     """Foreground cognitive-cycle state commits must carry scoped continuity context."""
     from core.executive.authority_gateway import AuthorityGateway

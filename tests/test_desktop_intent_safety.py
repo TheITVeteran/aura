@@ -368,3 +368,30 @@ async def test_desktop_state_fastpath_serves_recall_without_model_lane() -> None
     reply, status = result
     assert status == "conversation_recall"
     assert "governed desktop" in reply
+
+
+@pytest.mark.asyncio
+async def test_session_memory_pin_does_not_overclaim_when_durable_write_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from interface.routes import chat as chat_routes
+
+    class MemoryFacade:
+        async def add_memory(self, *_args, **_kwargs):
+            return False
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: MemoryFacade() if name == "memory_facade" else default),
+    )
+
+    result = await chat_routes._build_memory_state_fastpath_reply(
+        "Remember this phrase for later in this session: ember-vault-93"
+    )
+
+    assert result is not None
+    reply, status = result
+    assert status == "session_memory_pin_transient"
+    assert "durable memory storage did not accept the write" in reply
+    assert "durable session memory" not in reply

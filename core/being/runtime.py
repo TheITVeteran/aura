@@ -313,7 +313,10 @@ class BeingRuntime:
         context = dict(context or {})
         continuity_memory_write = bool(
             domain_name == "memory_write"
-            and context.get("conversation_continuity")
+            and (
+                context.get("conversation_continuity")
+                or context.get("explicit_observational_memory_write")
+            )
             and not context.get("high_risk_memory_write")
         )
         foreground_continuity_state = bool(

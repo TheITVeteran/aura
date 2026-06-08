@@ -66,6 +66,7 @@ class MemoryFacade:
         "gui",
         "interface",
         "live_chat",
+        "session_memory_pin",
         "ui",
         "user",
         "voice",

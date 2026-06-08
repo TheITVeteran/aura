@@ -153,7 +153,28 @@ class ConcreteMemoryWriteGateway(MemoryWriteGatewayBase):
                 domain="memory_write",
                 action=family,
                 cause=request.cause,
-                context={"family": family, "record_id": (request.metadata or {}).get("record_id")},
+                context={
+                    "family": family,
+                    "record_id": (request.metadata or {}).get("record_id"),
+                    "memory_type": str(family or "").strip().lower(),
+                    "memory_source": str((request.metadata or {}).get("source") or "").strip().lower().replace("-", "_"),
+                    "memory_metadata": dict(request.metadata or {}),
+                    "explicit_observational_memory_write": bool(
+                        (request.metadata or {}).get("explicit_memory_request")
+                        or (request.metadata or {}).get("session_memory_pin")
+                    ),
+                    "user_facing_memory_write": bool(
+                        (request.metadata or {}).get("explicit_memory_request")
+                        or (request.metadata or {}).get("session_memory_pin")
+                        or (request.metadata or {}).get("source") in {"user", "chat_api", "desktop_ui", "session_memory_pin"}
+                    ),
+                    "high_risk_memory_write": bool(
+                        (request.metadata or {}).get("belief_update")
+                        or (request.metadata or {}).get("identity_rewrite")
+                        or (request.metadata or {}).get("self_model_write")
+                    ),
+                    "objective": str(request.content or "")[:400],
+                },
             )
             if asyncio.iscoroutine(decision):
                 decision = await decision

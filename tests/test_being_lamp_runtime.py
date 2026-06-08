@@ -351,6 +351,12 @@ def test_aura_now_constrains_low_risk_interaction_memory_instead_of_dropping_it(
         priority=0.5,
         context={"conversation_continuity": True, "high_risk_memory_write": False},
     )
+    explicit_memory_policy = runtime.action_policy(
+        now,
+        domain="memory_write",
+        priority=0.5,
+        context={"explicit_observational_memory_write": True, "high_risk_memory_write": False},
+    )
     generic_memory_policy = runtime.action_policy(now, domain="memory_write", priority=0.5)
     high_risk_policy = runtime.action_policy(
         now,
@@ -361,6 +367,8 @@ def test_aura_now_constrains_low_risk_interaction_memory_instead_of_dropping_it(
 
     assert continuity_policy["outcome"] == "constrain"
     assert "continuity_memory_write_constrained:not_deferred" in continuity_policy["constraints"]
+    assert explicit_memory_policy["outcome"] == "constrain"
+    assert "continuity_memory_write_constrained:not_deferred" in explicit_memory_policy["constraints"]
     assert generic_memory_policy["outcome"] == "defer"
     assert high_risk_policy["outcome"] == "defer"
 

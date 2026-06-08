@@ -634,6 +634,17 @@ async def test_memory_facade_add_memory_defaults_to_gateway(monkeypatch):
     assert vector_calls == []
 
 
+def test_memory_facade_treats_session_memory_pin_as_user_facing_source():
+    facade = MemoryFacade()
+
+    assert (
+        facade._resolve_memory_write_source(
+            {"source": "session_memory_pin", "explicit_memory_request": True}
+        )
+        == "session_memory_pin"
+    )
+
+
 @pytest.mark.asyncio
 async def test_memory_ops_archival_insert_calls_gateway(monkeypatch):
     gateway = install_memory_gateway_fixture(monkeypatch)

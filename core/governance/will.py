@@ -1164,6 +1164,58 @@ class UnifiedWill:
         return bool(read_only or tool_name in observation_tools)
 
     @staticmethod
+    def _is_observation_only_memory_context(content: str, context: dict[str, Any]) -> bool:
+        """Allow bounded user-provided memory observations during present-state defer.
+
+        This lane is for commitments like "remember this phrase" where the user
+        supplied the fact and the runtime is only preserving it with provenance.
+        It is not a bypass for belief, identity, policy, or self-model mutation.
+        """
+
+        ctx = dict(context or {})
+        metadata = ctx.get("memory_metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        source = str(ctx.get("memory_source") or ctx.get("source") or "").strip().lower().replace("-", "_")
+        provenance = str(metadata.get("provenance_source") or metadata.get("source") or "").strip().lower().replace("-", "_")
+        user_facing = bool(ctx.get("user_facing_memory_write")) or source in {
+            "api",
+            "chat",
+            "chat_api",
+            "desktop",
+            "desktop_ui",
+            "live_chat",
+            "session_memory_pin",
+            "ui",
+            "user",
+            "voice",
+            "web_ui",
+        }
+        explicit = bool(
+            ctx.get("explicit_observational_memory_write")
+            or metadata.get("explicit_memory_request")
+            or metadata.get("session_memory_pin")
+            or provenance in {"user", "user_explicit"}
+        )
+        high_risk = bool(ctx.get("high_risk_memory_write"))
+        high_risk_markers = {
+            "belief_update",
+            "identity_rewrite",
+            "self_model_write",
+            "policy_change",
+            "constitutional_change",
+            "governance_change",
+        }
+        if high_risk or any(bool(metadata.get(marker)) for marker in high_risk_markers):
+            return False
+
+        content_len = len(str(content or ""))
+        source_utterance_len = len(str(metadata.get("source_utterance") or metadata.get("objective") or ""))
+        bounded = content_len <= 1200 and source_utterance_len <= 1200
+        return bool(user_facing and explicit and bounded)
+
+    @staticmethod
     def _state_from_repository(repo: Any) -> Any | None:
         if repo is None:
             return None
@@ -1310,6 +1362,16 @@ class UnifiedWill:
             and self._is_observation_only_tool_context(content, dict(context or {}))
         ):
             constraints.append("aura_now_observation_lane:read_only")
+            if outcome == WillOutcome.PROCEED:
+                return WillOutcome.CONSTRAIN, "aura_now_observation_lane", constraints
+            return outcome, reason, constraints
+
+        if (
+            policy_outcome == "defer"
+            and domain == ActionDomain.MEMORY_WRITE
+            and self._is_observation_only_memory_context(content, dict(context or {}))
+        ):
+            constraints.append("aura_now_observation_lane:explicit_memory")
             if outcome == WillOutcome.PROCEED:
                 return WillOutcome.CONSTRAIN, "aura_now_observation_lane", constraints
             return outcome, reason, constraints

@@ -297,6 +297,7 @@ class AuthorityGateway:
             "gui",
             "interface",
             "live_chat",
+            "session_memory_pin",
             "ui",
             "user",
             "voice",
@@ -325,13 +326,27 @@ class AuthorityGateway:
             "policy",
             "governance",
         )
-        high_risk = memory_type_l == "belief_update" or any(marker in memory_type_l for marker in high_risk_markers)
+        high_risk = (
+            memory_type_l == "belief_update"
+            or any(marker in memory_type_l for marker in high_risk_markers)
+            or bool(payload.get("belief_update") or payload.get("identity_rewrite") or payload.get("self_model_write"))
+        )
         continuity_write = memory_type_l == "interaction_commit" and user_facing and not high_risk
+        explicit_observational_write = bool(
+            user_facing
+            and not high_risk
+            and (
+                payload.get("explicit_memory_request")
+                or payload.get("session_memory_pin")
+                or str(payload.get("provenance_source") or "").strip().lower() in {"user", "user_explicit"}
+            )
+        )
         return {
             "memory_type": memory_type_l,
             "memory_source": source_l,
             "memory_metadata": payload,
             "conversation_continuity": continuity_write,
+            "explicit_observational_memory_write": explicit_observational_write,
             "user_facing_memory_write": user_facing,
             "high_risk_memory_write": high_risk,
             "objective": str(payload.get("objective") or payload.get("message") or content or "")[:400],
