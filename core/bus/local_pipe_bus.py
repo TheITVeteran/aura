@@ -29,6 +29,14 @@ _BUS_HANDLER_ERRORS = (
 )
 
 
+def _is_shutdown_commit_request(msg_type: str, payload: Any) -> bool:
+    return (
+        str(msg_type or "") == "commit"
+        and isinstance(payload, dict)
+        and str(payload.get("cause") or "").lower() == "shutdown"
+    )
+
+
 class LocalPipeBus:
     """
     High-performance, zero-config intra-process communication using multiprocessing.Pipe.
@@ -729,13 +737,17 @@ class LocalPipeBus:
                 if not future.done():
                     future.cancel()
             
+            quiet_shutdown_commit = _is_shutdown_commit_request(msg_type, payload)
             if not getattr(self, '_pipe_broken', False):
                 self._pipe_broken = True
-                self._mark_transport_degraded(
-                    e,
-                    "pipe request failed with broken transport",
-                )
-                logger.warning("📡 Bus request failed (Broken Pipe): %s", e)
+                if quiet_shutdown_commit:
+                    logger.info("📡 Bus closed during shutdown commit; state replay will handle it.")
+                else:
+                    self._mark_transport_degraded(
+                        e,
+                        "pipe request failed with broken transport",
+                    )
+                    logger.warning("📡 Bus request failed (Broken Pipe): %s", e)
             
             try:
                 self._safe_close_connection(self.write_conn)

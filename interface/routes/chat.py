@@ -464,6 +464,34 @@ async def _recall_session_memory_pin() -> dict[str, str] | None:
     return await _recall_durable_session_memory_pin()
 
 
+async def _build_memory_state_fastpath_reply(user_message: str) -> tuple[str, str] | None:
+    """Return deterministic memory/continuity replies from canonical runtime state."""
+    session_pin = _extract_session_memory_pin_request(user_message)
+    if session_pin:
+        await _store_session_memory_pin(session_pin, user_message)
+        return (
+            f"I've pinned \"{session_pin}\" in this session memory. Ask for it later and I'll pull it back directly.",
+            "session_memory_pin",
+        )
+
+    if _is_session_memory_recall_request(user_message):
+        remembered = await _recall_session_memory_pin()
+        if remembered and remembered.get("content"):
+            storage = str(remembered.get("storage") or "session")
+            source_label = "from durable memory" if storage == "durable" else "in this session"
+            return (
+                f"The phrase you asked me to remember {source_label} was \"{remembered['content']}\".",
+                "session_memory_recall",
+            )
+        return "I don't have a pinned phrase from this session yet.", "session_memory_miss"
+
+    conversation_recall = await _build_conversation_recall_reply(user_message)
+    if conversation_recall:
+        return conversation_recall, "conversation_recall"
+
+    return None
+
+
 _OWNER_NAME_RECALL_MARKERS = (
     "do you know my name",
     "do you remember my name",
@@ -961,6 +989,197 @@ def _build_recent_user_context_block(recent_user_messages: list[str], *, limit: 
         if str(message or "").strip()
     ]
     return "\n".join(lines)
+
+
+_CONVERSATION_RECALL_LAST_USER_MARKERS = (
+    "what did i just ask",
+    "what was my last question",
+    "what did i ask you",
+    "what did i say earlier",
+    "what did i say before",
+    "what was the last thing i said",
+)
+_CONVERSATION_RECALL_LAST_AURA_MARKERS = (
+    "what did you just say",
+    "what was your last answer",
+    "what did you tell me",
+    "what was the last thing you said",
+)
+_CONVERSATION_RECALL_TOPIC_MARKERS = (
+    "what were we talking about",
+    "what have we been talking about",
+    "what are we talking about",
+    "what was this conversation about",
+    "what is this conversation about",
+    "do you remember what we were discussing",
+    "summarize our conversation",
+    "summarize what we have discussed",
+)
+
+
+def _classify_conversation_recall_request(user_message: str) -> str:
+    text = normalize_memory_intent_text(_normalize_user_message(user_message)).rstrip(" ?!.")
+    if not text:
+        return ""
+    if any(marker in text for marker in _CONVERSATION_RECALL_LAST_AURA_MARKERS):
+        return "last_aura"
+    if any(marker in text for marker in _CONVERSATION_RECALL_LAST_USER_MARKERS):
+        return "last_user"
+    if any(marker in text for marker in _CONVERSATION_RECALL_TOPIC_MARKERS):
+        return "topic"
+    return ""
+
+
+def _clip_conversation_text(text: Any, *, limit: int = 420) -> str:
+    clipped = " ".join(str(text or "").strip().split())
+    if len(clipped) <= limit:
+        return clipped
+    return clipped[: max(0, limit - 1)].rstrip() + "..."
+
+
+async def _recent_completed_conversation_exchanges(
+    *,
+    current_user_message: str,
+    limit: int = 6,
+) -> list[dict[str, str]]:
+    current = str(current_user_message or "").strip()
+    async with _get_convo_lock():
+        completed = [
+            entry
+            for entry in _conversation_log
+            if str(entry.get("status") or "complete").strip().lower() == "complete"
+        ]
+
+    exchanges: list[dict[str, str]] = []
+    for entry in reversed(completed):
+        user_text = str(entry.get("user") or "").strip()
+        aura_text = str(entry.get("aura") or "").strip()
+        if current and user_text == current:
+            continue
+        if not user_text and not aura_text:
+            continue
+        exchanges.append(
+            {
+                "user": user_text,
+                "aura": aura_text,
+                "timestamp": str(entry.get("completed_at") or entry.get("timestamp") or ""),
+            }
+        )
+        if len(exchanges) >= max(1, int(limit)):
+            break
+    exchanges.reverse()
+    return exchanges
+
+
+async def _recall_durable_conversation_snippets(user_message: str, *, limit: int = 3) -> list[str]:
+    try:
+        memory_facade = ServiceContainer.get("memory_facade", default=None)
+        if memory_facade is None:
+            return []
+        search = getattr(memory_facade, "search", None) or getattr(memory_facade, "query_memory", None)
+        if not callable(search):
+            return []
+        query = f"recent conversation continuity {str(user_message or '').strip()[:160]}"
+        result = search(query, limit=max(1, int(limit)))
+        records = await result if hasattr(result, "__await__") else result
+        snippets: list[str] = []
+        for item in list(records or []):
+            if isinstance(item, dict):
+                metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+                if metadata and metadata.get("private"):
+                    continue
+                content = str(item.get("content") or item.get("text") or item.get("summary") or "").strip()
+            else:
+                content = str(item or "").strip()
+            if content:
+                snippets.append(_clip_conversation_text(content, limit=260))
+            if len(snippets) >= limit:
+                break
+        return snippets
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.conversation_recall", exc)
+        logger.debug("Durable conversation recall skipped: %s", exc)
+        return []
+
+
+async def _build_conversation_recall_reply(user_message: str) -> str | None:
+    recall_kind = _classify_conversation_recall_request(user_message)
+    if not recall_kind:
+        return None
+
+    exchanges = await _recent_completed_conversation_exchanges(
+        current_user_message=user_message,
+        limit=6,
+    )
+    if exchanges:
+        last = exchanges[-1]
+        if recall_kind == "last_user":
+            user_text = _clip_conversation_text(last.get("user"), limit=520)
+            if user_text:
+                return f"Your last completed message before this was: \"{user_text}\""
+        if recall_kind == "last_aura":
+            aura_text = _clip_conversation_text(last.get("aura"), limit=620)
+            if aura_text:
+                return f"My last completed reply before this was: \"{aura_text}\""
+
+        topic_lines: list[str] = []
+        for entry in exchanges[-4:]:
+            user_text = _clip_conversation_text(entry.get("user"), limit=180)
+            aura_text = _clip_conversation_text(entry.get("aura"), limit=180)
+            if user_text and aura_text:
+                topic_lines.append(f"- You: {user_text} / Me: {aura_text}")
+            elif user_text:
+                topic_lines.append(f"- You: {user_text}")
+            elif aura_text:
+                topic_lines.append(f"- Me: {aura_text}")
+        if topic_lines:
+            return "Recently, this conversation has been about:\n" + "\n".join(topic_lines)
+
+    durable = await _recall_durable_conversation_snippets(user_message, limit=3)
+    if durable:
+        lines = "\n".join(f"- {snippet}" for snippet in durable)
+        return "I do not have a completed prior turn in this live session, but durable memory has:\n" + lines
+
+    return "I do not have a completed prior turn to recall yet in this live session."
+
+
+_CONVERSATION_RECALL_DEFLECTION_RE = re.compile(
+    r"\b(?:something about|it sits|sits heavy|i'?m not sure|i don'?t remember|"
+    r"i can'?t recall|i cannot recall|i don'?t have that|lost the thread|"
+    r"my memory is|memory feels)\b",
+    re.IGNORECASE,
+)
+
+
+def _conversation_recall_reply_is_inadequate(
+    user_message: str,
+    reply_text: str,
+    expected_reply: str | None,
+) -> bool:
+    if not _classify_conversation_recall_request(user_message):
+        return False
+    reply = str(reply_text or "").strip()
+    if not reply:
+        return True
+    if _CONVERSATION_RECALL_DEFLECTION_RE.search(reply):
+        return True
+    expected = str(expected_reply or "").strip()
+    if not expected:
+        return False
+    expected_tokens = _extract_topic_tokens(expected)
+    reply_tokens = _extract_topic_tokens(reply)
+    if not expected_tokens:
+        return False
+    overlap = expected_tokens & reply_tokens
+    required = min(4, max(2, len(expected_tokens) // 6))
+    return len(overlap) < required
+
+
+async def _repair_conversation_recall_if_needed(user_message: str, reply_text: str) -> tuple[str, bool]:
+    expected = await _build_conversation_recall_reply(user_message)
+    if expected and _conversation_recall_reply_is_inadequate(user_message, reply_text, expected):
+        return expected, True
+    return reply_text, False
 
 
 _TRACEABILITY_REASON_MARKERS = (
@@ -1713,6 +1932,18 @@ async def _run_cognitive_engine_chat_turn(
             retry_off_topic_reason,
             ",".join(retry_assessment.reasons),
         )
+        conversation_recall_reply = await _build_conversation_recall_reply(visible)
+        if conversation_recall_reply:
+            logger.warning(
+                "CognitiveEngine desktop chat repair retry failed conversation recall; "
+                "repairing from canonical conversation log."
+            )
+            return _ground_runtime_fact_status_reply(
+                visible,
+                conversation_recall_reply,
+                lane,
+                cognitive_engine_handled=True,
+            )
         owner_name_reply = _build_owner_name_recall_reply(visible)
         if owner_name_reply:
             logger.warning(
@@ -1781,6 +2012,18 @@ async def _run_cognitive_engine_chat_turn(
             )
             if retry_reply:
                 return retry_reply
+            conversation_recall_reply = await _build_conversation_recall_reply(visible)
+            if conversation_recall_reply:
+                logger.warning(
+                    "CognitiveEngine desktop chat produced no usable text for conversation recall; "
+                    "repairing from canonical conversation log."
+                )
+                return _ground_runtime_fact_status_reply(
+                    visible,
+                    conversation_recall_reply,
+                    lane,
+                    cognitive_engine_handled=True,
+                )
             owner_name_reply = _build_owner_name_recall_reply(visible)
             if owner_name_reply:
                 logger.warning(
@@ -1837,6 +2080,18 @@ async def _run_cognitive_engine_chat_turn(
                 off_topic_reason,
                 ",".join(repaired_assessment.reasons),
             )
+            conversation_recall_reply = await _build_conversation_recall_reply(visible)
+            if conversation_recall_reply:
+                logger.warning(
+                    "CognitiveEngine desktop chat failed repair for conversation recall; "
+                    "repairing from canonical conversation log."
+                )
+                return _ground_runtime_fact_status_reply(
+                    visible,
+                    conversation_recall_reply,
+                    lane,
+                    cognitive_engine_handled=True,
+                )
             owner_name_reply = _build_owner_name_recall_reply(visible)
             if owner_name_reply:
                 logger.warning(
@@ -4750,6 +5005,10 @@ async def _repair_final_degraded_reply(
     if not needs_repair:
         return reply_text, stale, same_diff, off_topic, off_topic_reason, False
 
+    conversation_recall_reply = await _build_conversation_recall_reply(user_message)
+    if conversation_recall_reply:
+        return conversation_recall_reply, False, False, False, "", True
+
     owner_name_reply = _build_owner_name_recall_reply(user_message)
     if owner_name_reply:
         return owner_name_reply, False, False, False, "", True
@@ -6928,6 +7187,15 @@ async def api_chat(
                 status="cognitive_engine_capability_inventory",
             )
 
+        if not is_benchmark:
+            memory_state_reply = await _build_memory_state_fastpath_reply(_semantic_user_message)
+            if memory_state_reply:
+                memory_reply, memory_status = memory_state_reply
+                return await _finalize_fastpath(
+                    memory_reply,
+                    status=memory_status,
+                )
+
         if allow_chat_fastpaths and (
             _is_social_greeting_request(_semantic_user_message)
             or _is_live_presence_check_request(_semantic_user_message)
@@ -7090,32 +7358,6 @@ async def api_chat(
             )
 
         if allow_chat_fastpaths:
-            session_pin = _extract_session_memory_pin_request(_semantic_user_message)
-            if session_pin:
-                await _store_session_memory_pin(session_pin, _semantic_user_message)
-                return await _finalize_fastpath(
-                    f"I've pinned \"{session_pin}\" in this session memory. Ask for it later and I'll pull it back directly.",
-                    status="session_memory_pin",
-                )
-
-            if _is_session_memory_recall_request(_semantic_user_message):
-                remembered = await _recall_session_memory_pin()
-                if remembered and remembered.get("content"):
-                    storage = str(remembered.get("storage") or "session")
-                    source_label = (
-                        "from durable memory"
-                        if storage == "durable"
-                        else "in this session"
-                    )
-                    return await _finalize_fastpath(
-                        f"The phrase you asked me to remember {source_label} was \"{remembered['content']}\".",
-                        status="session_memory_recall",
-                    )
-                return await _finalize_fastpath(
-                    "I don't have a pinned phrase from this session yet.",
-                    status="session_memory_miss",
-                )
-
             repo_probe = _read_repo_probe_reply(_semantic_user_message)
             if repo_probe:
                 return await _finalize_fastpath(
@@ -7274,6 +7516,15 @@ async def api_chat(
                 "[REFERENTIAL ANCHOR]\n"
                 "The user is referring to this earlier user question/request:\n"
                 f"{referential_anchor}"
+            )
+        conversation_recall_evidence = await _build_conversation_recall_reply(_semantic_user_message)
+        if conversation_recall_evidence:
+            effective_user_message = (
+                f"{effective_user_message}\n\n"
+                "[CONVERSATION RECALL EVIDENCE]\n"
+                f"{conversation_recall_evidence}\n"
+                "[END CONVERSATION RECALL EVIDENCE]\n"
+                "Answer the recall question from the evidence above. Do not guess or invent a memory."
             )
         try:
             if not is_benchmark:
@@ -7652,6 +7903,15 @@ async def api_chat(
                 "🧭 Replacing inadequate capability inventory reply with grounded live catalog summary."
             )
             reply_text = _build_grounded_capability_inventory_reply(_semantic_user_message)
+        repaired_recall_reply, repaired_recall = await _repair_conversation_recall_if_needed(
+            _semantic_user_message,
+            reply_text,
+        )
+        if repaired_recall:
+            logger.warning(
+                "🧠 Replacing inadequate conversation recall reply with canonical chat-log recall."
+            )
+            reply_text = repaired_recall_reply
 
         # ── Response confidence assessment ────────────────────────
         global _consecutive_degraded_count

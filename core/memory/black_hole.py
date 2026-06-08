@@ -58,6 +58,10 @@ class DecodedPayload(str):
         return super().__getitem__(key)
 
 
+class BlackHoleDecodeError(ValueError):
+    """Encrypted payload could not be authenticated or decoded with this key."""
+
+
 def _resolve_aes_key(key_material: str | bytes) -> bytes:
     """Accept base64-encoded keys, raw AES keys, or arbitrary strings.
 
@@ -153,7 +157,7 @@ def encode_payload(data: str | bytes, key_b64: str) -> Dict[str, str]:
     return {"encoded": encoded, "ratio": ratio}
 
 
-def decode_payload(b64_blob: str, key_b64: str) -> DecodedPayload:
+def decode_payload(b64_blob: str, key_b64: str, *, strict: bool = False) -> DecodedPayload:
     """Module-level compatibility for Zenith memory decryption."""
     try:
         key = _resolve_aes_key(key_b64)
@@ -166,6 +170,7 @@ def decode_payload(b64_blob: str, key_b64: str) -> DecodedPayload:
         decrypted = aesgcm.decrypt(nonce, ciphertext, None).decode()
         return DecodedPayload(decrypted)
     except _BLACK_HOLE_DECODE_ERRORS as e:
-        record_degradation('black_hole', e)
+        if strict:
+            raise BlackHoleDecodeError("payload authentication or decoding failed") from e
         logger.debug("decode_payload failed: %s", e)  # Downgraded — happens on first boot with no stored data
         return DecodedPayload("")

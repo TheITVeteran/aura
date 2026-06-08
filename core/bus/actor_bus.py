@@ -30,6 +30,15 @@ class BusDegraded(Exception):  # noqa: N818 - public compatibility name.
     """Raised when the bus health probe fails or congestion is too high."""
 
 
+def _is_shutdown_commit_request(actor: str, msg_type: str, payload: Any) -> bool:
+    return (
+        str(actor or "") == "state_vault"
+        and str(msg_type or "") == "commit"
+        and isinstance(payload, dict)
+        and str(payload.get("cause") or "").lower() == "shutdown"
+    )
+
+
 class ActorBus:
     """Unified Actor Bus abstraction with health gating and congestion control.
     Manages multiple LocalPipeBus transports indexed by actor name.
@@ -490,7 +499,10 @@ class ActorBus:
             return result
             
         except (TimeoutError, BusDegraded, BrokenPipeError, ConnectionResetError) as e:
-            logger.warning("📡 Bus degraded for %s → %s", actor, e)
+            if _is_shutdown_commit_request(actor, msg_type, payload):
+                logger.info("📡 StateVault bus closed during shutdown commit; replay queue will handle it.")
+            else:
+                logger.warning("📡 Bus degraded for %s → %s", actor, e)
             raise
 
     async def send(self, actor: str, msg_type: str, payload: Any) -> bool:

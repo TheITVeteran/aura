@@ -35,6 +35,20 @@ def test_state_scheduler_closes_unscheduled_awaitable():
     assert awaitable.closed is True
 
 
+def test_shutdown_commit_bus_quieting_is_limited_to_state_vault_shutdown() -> None:
+    from core.bus.actor_bus import _is_shutdown_commit_request as actor_shutdown_commit
+    from core.bus.local_pipe_bus import _is_shutdown_commit_request as local_shutdown_commit
+
+    payload = {"state": {"version": 1}, "cause": "shutdown", "trace_id": "shutdown-test"}
+
+    assert local_shutdown_commit("commit", payload) is True
+    assert actor_shutdown_commit("state_vault", "commit", payload) is True
+    assert local_shutdown_commit("commit", {"cause": "foreground_commit"}) is False
+    assert actor_shutdown_commit("state_vault", "commit", {"cause": "foreground_commit"}) is False
+    assert actor_shutdown_commit("other_actor", "commit", payload) is False
+    assert actor_shutdown_commit("state_vault", "get_state", payload) is False
+
+
 @pytest.mark.asyncio
 async def test_state_repair_reports_deferred_consumer_restart(monkeypatch, tmp_path):
     monkeypatch.setattr(state_module, "get_task_tracker", lambda: FailingTracker())

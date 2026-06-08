@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.container import ServiceContainer
+from core.memory.black_hole import BlackHoleDecodeError, decode_payload
 from core.memory.black_hole_vault import BlackHoleVault
 from core.memory.memory_facade import MemoryFacade
 from core.runtime.atomic_writer import atomic_write_json
@@ -417,6 +418,43 @@ def test_black_hole_vault_delete_memories_supports_episode_metadata(monkeypatch)
     assert [memory["text"] for memory in vault.memories] == ["keep"]
     assert vault._dirty is True
     assert saves == [True]
+
+
+def test_black_hole_strict_decode_raises_without_runtime_degradation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.memory import black_hole
+
+    degradations = []
+    monkeypatch.setattr(black_hole, "record_degradation", lambda *args, **kwargs: degradations.append(args))
+
+    assert decode_payload("not-valid-ciphertext", "active-test-key") == ""
+    assert degradations == []
+
+    with pytest.raises(BlackHoleDecodeError):
+        decode_payload("not-valid-ciphertext", "active-test-key", strict=True)
+
+    assert degradations == []
+
+
+def test_black_hole_vault_quarantines_unreadable_encrypted_file(tmp_path) -> None:
+    vault = BlackHoleVault.__new__(BlackHoleVault)
+    vault.data_dir = str(tmp_path)
+    vault.memories_file = str(tmp_path / "event_horizon.json")
+    vault.key = "active-test-key"
+    vault.memories = [{"text": "stale"}]
+    vault._fallback_mode = False
+
+    (tmp_path / "event_horizon.json").write_text("not-valid-ciphertext", encoding="utf-8")
+
+    BlackHoleVault._load_vault(vault)
+
+    assert vault.memories == []
+    assert vault._fallback_mode is True
+    assert not (tmp_path / "event_horizon.json").exists()
+    quarantined = list(tmp_path.glob("event_horizon.json.quarantine-*"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_text(encoding="utf-8") == "not-valid-ciphertext"
 
 
 @pytest.mark.asyncio

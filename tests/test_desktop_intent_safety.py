@@ -12,6 +12,17 @@ INVENTORY_PROMPT = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_chat_route_state():
+    from interface.routes import chat as chat_routes
+
+    chat_routes._conversation_log.clear()
+    chat_routes._session_memory_pins.clear()
+    yield
+    chat_routes._conversation_log.clear()
+    chat_routes._session_memory_pins.clear()
+
+
 def test_capability_inventory_prompt_is_not_desktop_execution() -> None:
     from core.phases.action_intent import detect_action_intent
     from core.runtime.desktop_objective_intent import looks_like_desktop_objective
@@ -182,3 +193,122 @@ def test_owner_name_recall_does_not_disclose_without_owner_session(
     assert reply
     assert "owner-verified" in reply
     assert "Bryan" not in reply
+
+
+@pytest.mark.asyncio
+async def test_conversation_recall_reads_completed_chat_log() -> None:
+    from interface.routes import chat as chat_routes
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+        chat_routes._conversation_log.extend(
+            [
+                {
+                    "user": "Can you explain why the live desktop path failed?",
+                    "aura": "The live path was hitting the final CognitiveEngine reliability gate.",
+                    "status": "complete",
+                },
+                {
+                    "user": "What should we fix first?",
+                    "aura": "We should fix routing, memory pressure, and fallback repair.",
+                    "status": "complete",
+                },
+            ]
+        )
+
+    last_user = await chat_routes._build_conversation_recall_reply("What did I just ask you?")
+    last_aura = await chat_routes._build_conversation_recall_reply("What did you just say?")
+    topic = await chat_routes._build_conversation_recall_reply("What were we talking about?")
+
+    assert last_user is not None
+    assert "What should we fix first?" in last_user
+    assert last_aura is not None
+    assert "fallback repair" in last_aura
+    assert topic is not None
+    assert "live desktop path" in topic
+    assert "CognitiveEngine reliability gate" in topic
+
+
+@pytest.mark.asyncio
+async def test_conversation_recall_repairs_thin_desktop_cognitive_reply() -> None:
+    from interface.routes import chat as chat_routes
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+        chat_routes._conversation_log.append(
+            {
+                "user": "Can you remember this chain?",
+                "aura": "Yes, I am tracking the chain in the live conversation log.",
+                "status": "complete",
+            }
+        )
+
+    repaired, stale, same_diff, off_topic, reason, did_repair = (
+        await chat_routes._repair_final_degraded_reply(
+            "What did you just say?",
+            "Yes.",
+            stale=False,
+            same_diff=False,
+            off_topic=False,
+        )
+    )
+
+    assert did_repair is True
+    assert stale is False
+    assert same_diff is False
+    assert off_topic is False
+    assert reason == ""
+    assert "live conversation log" in repaired
+
+
+@pytest.mark.asyncio
+async def test_conversation_recall_replaces_vague_reflex_reply() -> None:
+    from interface.routes import chat as chat_routes
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+        chat_routes._conversation_log.append(
+            {
+                "user": "What tools can you hypothetically use externally on my computer?",
+                "aura": "I can use governed desktop, browser, file, terminal, memory, and self-repair tools.",
+                "status": "complete",
+            }
+        )
+
+    expected = await chat_routes._build_conversation_recall_reply("What did you just say?")
+
+    assert chat_routes._conversation_recall_reply_is_inadequate(
+        "What did you just say?",
+        "Something about that question sits heavy with me.",
+        expected,
+    )
+
+    repaired, did_repair = await chat_routes._repair_conversation_recall_if_needed(
+        "What did you just say?",
+        "Something about that question sits heavy with me.",
+    )
+
+    assert did_repair is True
+    assert "governed desktop" in repaired
+
+
+@pytest.mark.asyncio
+async def test_desktop_state_fastpath_serves_recall_without_model_lane() -> None:
+    from interface.routes import chat as chat_routes
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+        chat_routes._conversation_log.append(
+            {
+                "user": "What tools can you hypothetically use externally on my computer?",
+                "aura": "I can use governed desktop, browser, file, terminal, memory, and self-repair tools.",
+                "status": "complete",
+            }
+        )
+
+    result = await chat_routes._build_memory_state_fastpath_reply("What did you just say?")
+
+    assert result is not None
+    reply, status = result
+    assert status == "conversation_recall"
+    assert "governed desktop" in reply

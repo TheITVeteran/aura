@@ -7,7 +7,7 @@ import math
 import threading
 from typing import Dict, Any, List, Optional
 from core.memory.horcrux import HorcruxManager
-from core.memory.black_hole import encode_payload, decode_payload
+from core.memory.black_hole import BlackHoleDecodeError, encode_payload, decode_payload
 from core.memory.physics import bekenstein_check, hawking_decay
 from core.memory.retention_policy import MemoryRetentionPolicy, black_hole_retention_policy
 from core.governance_context import local_internal_governed_scope
@@ -127,14 +127,41 @@ class BlackHoleVault:
         try:
             with open(self.memories_file, "r", encoding="utf-8") as f:
                 encrypted_data = f.read().strip()
-            res = decode_payload(encrypted_data, self.key)
+            if not encrypted_data:
+                self.memories = []
+                return
+            res = decode_payload(encrypted_data, self.key, strict=True)
             raw_json = res.get("decoded", "")
             self.memories = json.loads(raw_json) if raw_json else []
+        except BlackHoleDecodeError as exc:
+            quarantined = self._quarantine_unreadable_vault(reason=type(exc).__name__)
+            logger.warning(
+                "BlackHoleVault quarantined unreadable encrypted memory file: %s",
+                quarantined or "quarantine_failed",
+            )
+            self._fallback_mode = True
+            self.memories = []
         except _VAULT_LOAD_ERRORS as e:
             record_degradation("black_hole_vault.load", e)
             logger.warning("Failed to load vault (falling back to empty): %s", e)
             self._fallback_mode = True
             self.memories = []
+
+    def _quarantine_unreadable_vault(self, *, reason: str) -> str:
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        base = f"{self.memories_file}.quarantine-{stamp}-{reason}"
+        target = base
+        counter = 1
+        while os.path.exists(target):
+            counter += 1
+            target = f"{base}-{counter}"
+        try:
+            os.replace(self.memories_file, target)
+            return target
+        except OSError as exc:
+            record_degradation("black_hole_vault.quarantine", exc)
+            logger.warning("Failed to quarantine unreadable vault file: %s", exc)
+            return ""
             
     def _save_vault(self):
         self._ensure_ready()
