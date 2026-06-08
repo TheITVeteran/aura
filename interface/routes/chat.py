@@ -464,6 +464,93 @@ async def _recall_session_memory_pin() -> dict[str, str] | None:
     return await _recall_durable_session_memory_pin()
 
 
+_OWNER_NAME_RECALL_MARKERS = (
+    "do you know my name",
+    "do you remember my name",
+    "what is my name",
+    "what's my name",
+    "who am i",
+    "who do you think i am",
+    "do you know who i am",
+)
+
+
+def _is_owner_name_recall_request(user_message: str) -> bool:
+    text = normalize_memory_intent_text(_normalize_user_message(user_message)).rstrip(" ?!.")
+    return bool(text and any(marker in text for marker in _OWNER_NAME_RECALL_MARKERS))
+
+
+def _resolve_primary_operator_name() -> str:
+    try:
+        identity_kernel = ServiceContainer.get("identity_kernel", default=None)
+        if identity_kernel is not None and hasattr(identity_kernel, "get_current_identity"):
+            current = identity_kernel.get_current_identity()
+            if isinstance(current, dict):
+                primary = str(current.get("primary_operator") or "").strip()
+                if primary:
+                    return primary
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.owner_identity", exc)
+        logger.debug("IdentityKernel primary-operator lookup skipped: %s", exc)
+
+    try:
+        from core.identity.self_contract import SelfContract
+
+        primary = str(SelfContract().get_relationship_constraints().get("primary_operator") or "").strip()
+        if primary:
+            return primary
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.owner_identity", exc)
+        logger.debug("SelfContract primary-operator lookup skipped: %s", exc)
+
+    return "the verified owner"
+
+
+def _owner_session_is_verified(*, owner_session_restored: bool = False) -> bool:
+    if owner_session_restored:
+        return True
+    try:
+        from core.security.user_recognizer import get_user_recognizer
+
+        recognizer = get_user_recognizer()
+        if hasattr(recognizer, "is_session_verified") and recognizer.is_session_verified():
+            return True
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.owner_identity", exc)
+        logger.debug("UserRecognizer verification lookup skipped: %s", exc)
+
+    try:
+        from core.security.trust_engine import TrustLevel, get_trust_engine
+
+        context = getattr(get_trust_engine(), "_context", None)
+        level = getattr(context, "level", None)
+        return bool(level == TrustLevel.SOVEREIGN)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.owner_identity", exc)
+        logger.debug("TrustEngine verification lookup skipped: %s", exc)
+    return False
+
+
+def _build_owner_name_recall_reply(
+    user_message: str,
+    *,
+    owner_session_restored: bool = False,
+) -> str | None:
+    if not _is_owner_name_recall_request(user_message):
+        return None
+    if not _owner_session_is_verified(owner_session_restored=owner_session_restored):
+        return (
+            "I know the primary operator from my identity contract, but I should not expose "
+            "that as the current speaker's identity until this session is owner-verified."
+        )
+
+    name = _resolve_primary_operator_name()
+    return (
+        f"Yes. You're {name}. I know that from the verified owner session and my identity "
+        "contract, not from guessing at the last message."
+    )
+
+
 def _extract_repo_probe_request(user_message: str) -> dict[str, str] | None:
     text = str(user_message or "").strip()
     if not text:
@@ -1626,6 +1713,18 @@ async def _run_cognitive_engine_chat_turn(
             retry_off_topic_reason,
             ",".join(retry_assessment.reasons),
         )
+        owner_name_reply = _build_owner_name_recall_reply(visible)
+        if owner_name_reply:
+            logger.warning(
+                "CognitiveEngine desktop chat repair retry failed owner identity recall; "
+                "repairing from verified runtime identity contract."
+            )
+            return _ground_runtime_fact_status_reply(
+                visible,
+                owner_name_reply,
+                lane,
+                cognitive_engine_handled=True,
+            )
         return None
     
     async def engine_think_operation():
@@ -1682,6 +1781,18 @@ async def _run_cognitive_engine_chat_turn(
             )
             if retry_reply:
                 return retry_reply
+            owner_name_reply = _build_owner_name_recall_reply(visible)
+            if owner_name_reply:
+                logger.warning(
+                    "CognitiveEngine desktop chat produced no usable text for owner identity recall; "
+                    "repairing from verified runtime identity contract."
+                )
+                return _ground_runtime_fact_status_reply(
+                    visible,
+                    owner_name_reply,
+                    lane,
+                    cognitive_engine_handled=True,
+                )
         return None
     try:
         from core.conversation.response_reliability import assess_user_facing_reply
@@ -1726,6 +1837,18 @@ async def _run_cognitive_engine_chat_turn(
                 off_topic_reason,
                 ",".join(repaired_assessment.reasons),
             )
+            owner_name_reply = _build_owner_name_recall_reply(visible)
+            if owner_name_reply:
+                logger.warning(
+                    "CognitiveEngine desktop chat failed repair for owner identity recall; "
+                    "repairing from verified runtime identity contract."
+                )
+                return _ground_runtime_fact_status_reply(
+                    visible,
+                    owner_name_reply,
+                    lane,
+                    cognitive_engine_handled=True,
+                )
             retry_reply = await _attempt_repair_retry(text, assessment.reasons)
             if retry_reply:
                 return retry_reply
@@ -3590,6 +3713,301 @@ def _is_capability_request(user_message: str) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _is_capability_inventory_request(user_message: str) -> bool:
+    try:
+        from core.phases.response_contract import looks_like_capability_inventory_request
+
+        return looks_like_capability_inventory_request(user_message)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Capability inventory classifier unavailable: %s", exc)
+    return _is_capability_request(user_message)
+
+
+_CAPABILITY_FALSE_LIMITATION_RE = re.compile(
+    r"\bi\s+(?:can(?:not|'t)|cannot|am unable to|don't have access to|do not have access to)"
+    r"\b.{0,120}\b(?:tools?|apps?|computer|desktop|browser|search|open|execute|control|files?|terminal)\b",
+    re.IGNORECASE,
+)
+
+
+_CAPABILITY_CATEGORY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "desktop and app control",
+        (
+            "computer",
+            "desktop",
+            "screen",
+            "vision",
+            "os_",
+            "os ",
+            "mouse",
+            "keyboard",
+            "click",
+            "type",
+            "window",
+            "app",
+        ),
+    ),
+    (
+        "web and browser research",
+        (
+            "web",
+            "browser",
+            "search",
+            "internet",
+            "network",
+            "reddit",
+            "http",
+            "url",
+            "page",
+        ),
+    ),
+    (
+        "files, documents, and workspace operations",
+        (
+            "file",
+            "folder",
+            "document",
+            "pdf",
+            "workspace",
+            "read",
+            "write",
+            "copy",
+            "move",
+        ),
+    ),
+    (
+        "terminal, code, and sandbox execution",
+        (
+            "terminal",
+            "shell",
+            "subprocess",
+            "run_code",
+            "code",
+            "python",
+            "test",
+            "install",
+            "sandbox",
+        ),
+    ),
+    (
+        "memory, state, and continuity",
+        (
+            "memory",
+            "belief",
+            "state",
+            "continuity",
+            "recall",
+            "ledger",
+            "journal",
+        ),
+    ),
+    (
+        "self-repair and self-modification",
+        (
+            "repair",
+            "refactor",
+            "modify",
+            "improvement",
+            "self_",
+            "patch",
+            "test_generator",
+        ),
+    ),
+)
+
+
+_CAPABILITY_CATEGORY_EXACT_SKILLS: dict[str, str] = {
+    "computer_use": "desktop and app control",
+    "desktop_task": "desktop and app control",
+    "os_manipulation": "desktop and app control",
+    "sovereign_vision": "desktop and app control",
+    "web_search": "web and browser research",
+    "search_web": "web and browser research",
+    "free_search": "web and browser research",
+    "grounded_search": "web and browser research",
+    "sovereign_browser": "web and browser research",
+    "sovereign_network": "web and browser research",
+    "reddit_adapter": "web and browser research",
+    "email_adapter": "web and browser research",
+    "file_operation": "files, documents, and workspace operations",
+    "document_ingest": "files, documents, and workspace operations",
+    "code_repl": "terminal, code, and sandbox execution",
+    "coding_skill": "terminal, code, and sandbox execution",
+    "run_code": "terminal, code, and sandbox execution",
+    "internal_sandbox": "terminal, code, and sandbox execution",
+    "install_package": "terminal, code, and sandbox execution",
+    "sovereign_terminal": "terminal, code, and sandbox execution",
+    "memory_ops": "memory, state, and continuity",
+    "memory_sync": "memory, state, and continuity",
+    "query_beliefs": "memory, state, and continuity",
+    "add_belief": "memory, state, and continuity",
+    "personality": "memory, state, and continuity",
+    "self_improvement": "self-repair and self-modification",
+    "self_repair": "self-repair and self-modification",
+    "self_modify": "self-repair and self-modification",
+    "auto_refactor": "self-repair and self-modification",
+    "shadow_ast_healer": "self-repair and self-modification",
+    "test_generator": "self-repair and self-modification",
+    "skill_evolution": "self-repair and self-modification",
+    "train_self": "self-repair and self-modification",
+}
+
+
+_CAPABILITY_EXAMPLE_PRIORITY = {
+    "computer_use": 0,
+    "desktop_task": 1,
+    "os_manipulation": 2,
+    "sovereign_vision": 3,
+    "web_search": 0,
+    "search_web": 1,
+    "grounded_search": 2,
+    "sovereign_browser": 3,
+    "file_operation": 0,
+    "document_ingest": 1,
+    "sovereign_terminal": 0,
+    "run_code": 1,
+    "code_repl": 2,
+    "install_package": 3,
+    "memory_ops": 0,
+    "memory_sync": 1,
+    "query_beliefs": 2,
+    "add_belief": 3,
+    "self_repair": 0,
+    "self_improvement": 1,
+    "auto_refactor": 2,
+    "self_modify": 3,
+}
+
+
+def _catalog_category_for_tool(item: dict[str, Any]) -> str:
+    name = str(item.get("name") or "").strip().lower()
+    if name in _CAPABILITY_CATEGORY_EXACT_SKILLS:
+        return _CAPABILITY_CATEGORY_EXACT_SKILLS[name]
+    haystack = " ".join(
+        str(item.get(key) or "")
+        for key in (
+            "name",
+            "description",
+            "route_class",
+            "risk_class",
+            "effect_scope",
+            "example_usage",
+        )
+    ).lower()
+    for label, keywords in _CAPABILITY_CATEGORY_KEYWORDS:
+        if any(keyword in haystack for keyword in keywords):
+            return label
+    return "specialized governed skills"
+
+
+def _read_capability_catalog_snapshot() -> tuple[int, dict[str, list[str]], bool]:
+    categories: dict[str, list[str]] = {}
+    available_count = 0
+    governance_available = _runtime_tool_governance_available()
+    try:
+        capability_engine = ServiceContainer.get("capability_engine", default=None)
+        catalog: list[dict[str, Any]] = []
+        if capability_engine is not None and hasattr(capability_engine, "get_tool_catalog"):
+            catalog = list(capability_engine.get_tool_catalog(include_inactive=True) or [])
+        elif capability_engine is not None and hasattr(capability_engine, "get_catalog"):
+            legacy_catalog = capability_engine.get_catalog(include_inactive=True) or {}
+            if isinstance(legacy_catalog, dict):
+                catalog = [
+                    {
+                        "name": name,
+                        "available": isinstance(value, dict)
+                        and str(value.get("status") or "").lower() != "unavailable",
+                        "description": "",
+                        "route_class": value.get("route_class") if isinstance(value, dict) else "",
+                        "risk_class": value.get("risk_class") if isinstance(value, dict) else "",
+                    }
+                    for name, value in legacy_catalog.items()
+                ]
+
+        for item in catalog:
+            if not isinstance(item, dict) or not bool(item.get("available")):
+                continue
+            available_count += 1
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            exact_category = _CAPABILITY_CATEGORY_EXACT_SKILLS.get(name.lower())
+            category = exact_category or _catalog_category_for_tool(item)
+            if exact_category is None and category != "specialized governed skills":
+                category = "specialized governed skills"
+            bucket = categories.setdefault(category, [])
+            if len(bucket) < 12:
+                bucket.append(name)
+        for bucket in categories.values():
+            bucket.sort(key=lambda skill: (_CAPABILITY_EXAMPLE_PRIORITY.get(skill, 100), skill))
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Capability catalog snapshot unavailable: %s", exc)
+    return available_count, categories, governance_available
+
+
+def _build_grounded_capability_inventory_reply(user_message: str) -> str:
+    available_count, categories, governance_available = _read_capability_catalog_snapshot()
+    ordered_labels = [label for label, _ in _CAPABILITY_CATEGORY_KEYWORDS if label in categories]
+    ordered_labels.extend(label for label in categories if label not in ordered_labels)
+
+    if ordered_labels:
+        category_text = "; ".join(
+            f"{label} ({', '.join(categories[label][:4])})"
+            for label in ordered_labels[:6]
+        )
+    else:
+        category_text = (
+            "desktop/app control, browser and web research, file/document work, "
+            "terminal/code execution, memory/state operations, and self-repair surfaces"
+        )
+
+    governance = (
+        "The live governance path is available, so consequential actions still need an explicit execution request, Will/Authority approval, and receipts."
+        if governance_available
+        else "The governance probe is not currently green, so I should describe capabilities but fail closed on consequential execution until it is healthy."
+    )
+    count_text = f"{available_count} available governed skill surfaces" if available_count else "the registered governed skill surfaces"
+
+    reply = (
+        f"I can use {count_text} through Aura's governed runtime. The practical categories are: {category_text}. "
+        f"{governance} "
+        "A realistic multi-step scenario would be: you ask me to research a topic, compare sources, create or edit a local document, save/export the result, and record what I did in memory with receipts. "
+        "For this turn I am only describing the tool surface; I am not opening apps, browsing, typing, moving files, or executing tools because you explicitly asked for a hypothetical inventory."
+    )
+    return _apply_aura_voice_shaping(reply)
+
+
+def _capability_inventory_reply_is_inadequate(user_message: str, reply_text: str) -> bool:
+    if not _is_capability_inventory_request(user_message):
+        return False
+    reply = str(reply_text or "").strip()
+    if not reply:
+        return True
+    if _CAPABILITY_FALSE_LIMITATION_RE.search(reply):
+        return True
+    lowered = reply.lower()
+    category_hits = sum(
+        1
+        for marker in (
+            "desktop",
+            "browser",
+            "web",
+            "file",
+            "document",
+            "terminal",
+            "memory",
+            "govern",
+            "tool",
+            "skill",
+        )
+        if marker in lowered
+    )
+    return category_hits < 4 or len(reply.split()) < 35
+
+
 def _build_capability_reply(user_message: str) -> str:
     frame = _build_aura_expression_frame(user_message)
     mood = str(frame.get("mood") or "steady")
@@ -4331,6 +4749,10 @@ async def _repair_final_degraded_reply(
     )
     if not needs_repair:
         return reply_text, stale, same_diff, off_topic, off_topic_reason, False
+
+    owner_name_reply = _build_owner_name_recall_reply(user_message)
+    if owner_name_reply:
+        return owner_name_reply, False, False, False, "", True
 
     logger.warning(
         "🛡️ Final reply quality gate repairing degraded output "
@@ -6500,6 +6922,12 @@ async def api_chat(
                 return None
             return stabilized
 
+        if not is_benchmark and _is_capability_inventory_request(_semantic_user_message):
+            return await _finalize_fastpath(
+                _build_grounded_capability_inventory_reply(_semantic_user_message),
+                status="cognitive_engine_capability_inventory",
+            )
+
         if allow_chat_fastpaths and (
             _is_social_greeting_request(_semantic_user_message)
             or _is_live_presence_check_request(_semantic_user_message)
@@ -7219,6 +7647,11 @@ async def api_chat(
             return JSONResponse(response_data)
 
         reply_text = await _stabilize_user_facing_reply(_semantic_user_message, reply_text)
+        if _capability_inventory_reply_is_inadequate(_semantic_user_message, reply_text):
+            logger.warning(
+                "🧭 Replacing inadequate capability inventory reply with grounded live catalog summary."
+            )
+            reply_text = _build_grounded_capability_inventory_reply(_semantic_user_message)
 
         # ── Response confidence assessment ────────────────────────
         global _consecutive_degraded_count

@@ -160,6 +160,10 @@ class UserRecognizer:
         self._session_verified = True
         logger.info("UserRecognizer: session owner override applied (%s).", reason)
 
+    def is_session_verified(self) -> bool:
+        """Return whether the current session is verified as the owner."""
+        return bool(self._session_verified)
+
     def setup_passphrase(self, passphrase: str) -> bool:
         """
         Hash and store a new passphrase. Call once during setup.

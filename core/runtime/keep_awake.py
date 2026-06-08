@@ -68,8 +68,14 @@ class AssertionProcess:
         try:
             waited_pid, status = os.waitpid(self.pid, os.WNOHANG)
         except ChildProcessError:
-            self.returncode = 0
-            return self.returncode
+            try:
+                os.kill(self.pid, 0)
+            except ProcessLookupError:
+                self.returncode = 0
+                return self.returncode
+            except PermissionError:
+                return None
+            return None
         if waited_pid == 0:
             return None
         self.returncode = os.waitstatus_to_exitcode(status)
@@ -102,6 +108,26 @@ def _spawn_assertion_process(command: tuple[str, ...]):
         start_new_session=True,
         source="core.runtime.keep_awake.caffeinate_assertion",
     )
+
+
+def _register_assertion_with_runtime_hygiene(process: Any, command: tuple[str, ...]) -> None:
+    try:
+        from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+        get_runtime_hygiene().register_process_handle(
+            process,
+            kind="subprocess",
+            name="keep_awake.caffeinate",
+            source="core.runtime.keep_awake",
+            command=" ".join(command),
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "keep_awake",
+            exc,
+            severity="warning",
+            action="keep-awake assertion process could not register with runtime hygiene",
+        )
 
 
 class MacKeepAwakeController:
@@ -152,6 +178,7 @@ class MacKeepAwakeController:
         cmd = self.build_command(keep_display_awake=keep_display_awake, require_ac_power=require_ac_power)
         try:
             self._process = self._process_launcher(cmd)
+            _register_assertion_with_runtime_hygiene(self._process, cmd)
             self._reason = reason
             self._started_at = time.time()
         except _KEEP_AWAKE_RECOVERABLE_ERRORS as exc:

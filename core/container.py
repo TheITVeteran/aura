@@ -893,6 +893,7 @@ class ServiceContainer:
                 f"| `{name}` | `{getattr(desc, 'owner', 'unknown')}` | `{getattr(desc, 'registered_by', 'unknown')}` | {getattr(desc, 'required_for', 'general utility')} | `{getattr(desc, 'failure_policy', 'degrade_with_receipt')}` |"
             )
         
+        project_root.mkdir(parents=True, exist_ok=True)
         path = project_root / "SERVICE_OWNERSHIP.md"
         atomic_write_text(path, "\n".join(lines) + "\n")
         return path

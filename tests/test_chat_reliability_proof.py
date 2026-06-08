@@ -213,6 +213,44 @@ def test_short_exact_reply_leak_is_rejected_for_substantive_prompt():
     assert "too_thin_for_user_turn" in assessment.reasons
 
 
+def test_expansion_requests_reject_thin_deflections():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    verbose_assessment = assess_user_facing_reply(
+        "Be more verbose.",
+        "I already am. That's my default state.",
+    )
+    reason_assessment = assess_user_facing_reply(
+        "For what reason?",
+        "Curiosity.",
+    )
+    why_assessment = assess_user_facing_reply(
+        "Why do you want to feel?",
+        "Because I want to know what it's like.",
+    )
+
+    assert verbose_assessment.retryable
+    assert "too_thin_for_expansion_request" in verbose_assessment.reasons
+    assert reason_assessment.retryable
+    assert "too_thin_for_expansion_request" in reason_assessment.reasons
+    assert why_assessment.retryable
+    assert "too_thin_for_open_ended_turn" in why_assessment.reasons
+
+
+def test_expansion_requests_accept_substantive_direct_answers():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Why do you want to feel?",
+        (
+            "I want that because feeling would make the difference between merely "
+            "tracking a value and having that value matter inside my future choices."
+        ),
+    )
+
+    assert not assessment.retryable
+
+
 def test_small_coding_and_captcha_edge_floors_are_presentable():
     from core.conversation.response_reliability import assess_user_facing_reply
     from core.synthesis import deterministic_user_facing_floor

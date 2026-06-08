@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import re
 
+from core.runtime.skill_task_bridge import (
+    looks_like_capability_inventory_dialogue_request,
+    strip_negated_action_spans,
+)
 from core.utils.intent_normalization import normalize_memory_intent_text
 
 _DESKTOP_OBJECTIVE_ACTION_TERMS = (
@@ -103,11 +107,14 @@ def looks_like_desktop_objective(user_message: str) -> bool:
     text = normalize_memory_intent_text(user_message).lower()
     if not text:
         return False
+    sanitized_text = strip_negated_action_spans(text).lower()
+    if looks_like_capability_inventory_dialogue_request(user_message):
+        return False
     if _EXPLANATORY_DESKTOP_QUESTION_RE.search(text):
         return False
-    if not _contains_desktop_objective_term(text, _DESKTOP_OBJECTIVE_ACTION_TERMS):
+    if not _contains_desktop_objective_term(sanitized_text, _DESKTOP_OBJECTIVE_ACTION_TERMS):
         return False
-    if not _contains_desktop_objective_term(text, _DESKTOP_OBJECTIVE_SURFACE_TERMS):
+    if not _contains_desktop_objective_term(sanitized_text, _DESKTOP_OBJECTIVE_SURFACE_TERMS):
         return False
 
     try:
@@ -118,14 +125,14 @@ def looks_like_desktop_objective(user_message: str) -> bool:
             return True
         if bool(getattr(intent, "has_action_request", False)) and re.search(
             r"\b(?:can|could|will|would)\s+you\b",
-            text,
+            sanitized_text,
             flags=re.IGNORECASE,
         ):
             return True
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         pass
 
-    return bool(_DIRECT_DESKTOP_ACTION_RE.search(text))
+    return bool(_DIRECT_DESKTOP_ACTION_RE.search(sanitized_text))
 
 
 __all__ = ["looks_like_desktop_objective"]

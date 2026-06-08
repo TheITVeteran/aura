@@ -31,6 +31,7 @@ _ACTION_VERBS = (
     "report",
     "return",
     "come back",
+    "use",
 )
 
 _ACTION_RE = re.compile(
@@ -124,7 +125,7 @@ _FIRST_PERSON_REPORT_RE = re.compile(r"\b(?:i|we)\b", re.IGNORECASE)
 _DIRECT_EXECUTION_PREFIX_RE = re.compile(
     r"^\s*(?:please\s+|can you\s+|could you\s+|would you\s+|i need you to\s+|"
     r"help me\s+|go\s+)?(?:open|launch|run|execute|click|tap|press|type|"
-    r"search|look up|read|inspect|download|save|fix|implement|create|build|"
+    r"write|search|look up|read|inspect|download|save|fix|implement|create|build|"
     r"set up|automate|organize)\b",
     re.IGNORECASE,
 )
@@ -135,6 +136,25 @@ _EXPLANATORY_PREFIX_RE = re.compile(
 _QUESTION_WORD_RE = re.compile(r"\b(?:what|why|how|when|where|which)\b", re.IGNORECASE)
 _CONCEPTUAL_SHOULD_RE = re.compile(
     r"\b(?:what|why|how|when)\s+(?:should|would|is|are|do|does|can|could)\b",
+    re.IGNORECASE,
+)
+_CAPABILITY_INVENTORY_RE = re.compile(
+    r"\b(?:what|which|list|tell me|describe|explain|show)\b.{0,100}"
+    r"\b(?:tools?|skills?|capabilit(?:y|ies)|things? you can do|what you can do)\b|"
+    r"\b(?:can|could|do|does|are|is|have|has)\b.{0,100}\b(?:you|aura)\b.{0,100}"
+    r"\b(?:tools?|skills?|capabilit(?:y|ies)|external(?:ly)?|desktop|computer|browser|files?|apps?|notes?|pdf|search|web|terminal)\b",
+    re.IGNORECASE,
+)
+_NEGATED_ACTION_SPAN_RE = re.compile(
+    r"\b(?:do\s+not|don't|dont|never|without|no)\b"
+    r"(?:\s+[a-z0-9_'/-]+){0,10}\s+"
+    r"\b(?:"
+    + "|".join(
+        re.escape(verb).replace(r"\ ", r"\s+")
+        for verb in (*_ACTION_VERBS, "tool", "tools", "app", "apps")
+    )
+    + r")\b"
+    r"(?:\s+[a-z0-9_'/-]+){0,8}",
     re.IGNORECASE,
 )
 
@@ -154,6 +174,24 @@ def normalize_matched_skills(matched_skills: object) -> list[str]:
                 normalized.append(text)
         return normalized
     return [str(matched_skills)]
+
+
+def strip_negated_action_spans(text: str) -> str:
+    """Remove local negative action clauses before execution-intent matching."""
+
+    normalized = normalize_memory_intent_text(text)
+    if not normalized:
+        return ""
+    return re.sub(r"\s+", " ", _NEGATED_ACTION_SPAN_RE.sub(" ", normalized)).strip()
+
+
+def looks_like_capability_inventory_dialogue_request(text: str) -> bool:
+    normalized = normalize_memory_intent_text(text)
+    if not normalized:
+        return False
+    sanitized = strip_negated_action_spans(normalized).lower()
+    direct_execution = bool(_DIRECT_EXECUTION_PREFIX_RE.search(sanitized))
+    return bool(_CAPABILITY_INVENTORY_RE.search(normalized)) and not direct_execution
 
 
 def looks_like_execution_report(text: str) -> bool:
@@ -186,6 +224,8 @@ def looks_like_explanatory_dialogue_request(text: str) -> bool:
     normalized = normalize_memory_intent_text(text)
     if not normalized:
         return False
+    if looks_like_capability_inventory_dialogue_request(normalized):
+        return True
     lowered = normalized.lower()
     has_question_shape = "?" in lowered or _EXPLANATORY_PREFIX_RE.search(lowered)
     if not has_question_shape:
@@ -216,7 +256,7 @@ def looks_like_multi_step_skill_request(
     if looks_like_explanatory_dialogue_request(normalized):
         return False
 
-    lowered = normalized.lower()
+    lowered = strip_negated_action_spans(normalized).lower()
     skills = normalize_matched_skills(matched_skills)
 
     action_hits = {match.group(0).lower() for match in _ACTION_RE.finditer(lowered)}

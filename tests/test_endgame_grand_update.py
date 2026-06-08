@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import runpy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -160,6 +161,60 @@ def test_keep_awake_uses_screen_saver_friendly_caffeinate_flags():
     assert "-d" not in cmd
 
 
+def test_keep_awake_registers_assertion_process_with_runtime_hygiene(monkeypatch):
+    from core.runtime import keep_awake
+
+    registered = []
+    proc = SimpleNamespace(pid=1234, args=("caffeinate", "-i", "-m", "-s"), poll=lambda: None)
+    monkeypatch.setattr(
+        keep_awake,
+        "_register_assertion_with_runtime_hygiene",
+        lambda process, command: registered.append((process, command)),
+    )
+
+    controller = keep_awake.MacKeepAwakeController(
+        process_launcher=lambda _cmd: proc,
+        platform_name="Darwin",
+        path_resolver=lambda _name: "/usr/bin/caffeinate",
+    )
+
+    status = controller.start()
+
+    assert status.active is True
+    assert registered == [(proc, ("caffeinate", "-i", "-m", "-s"))]
+
+
+def test_keep_awake_assertion_poll_keeps_reparented_live_pid_active(monkeypatch):
+    from core.runtime import keep_awake
+
+    monkeypatch.setattr(keep_awake.os, "waitpid", lambda *_args: (_ for _ in ()).throw(ChildProcessError()))
+    monkeypatch.setattr(keep_awake.os, "kill", lambda *_args: None)
+
+    proc = keep_awake.AssertionProcess(pid=1234, args=("caffeinate", "-i"))
+
+    assert proc.poll() is None
+    assert proc.returncode is None
+
+
+def test_keep_awake_assertion_poll_marks_missing_reparented_pid_done(monkeypatch):
+    from core.runtime import keep_awake
+
+    attempts = []
+
+    def missing_pid(*_args):
+        attempts.append(_args)
+        raise ProcessLookupError()
+
+    monkeypatch.setattr(keep_awake.os, "waitpid", lambda *_args: (_ for _ in ()).throw(ChildProcessError()))
+    monkeypatch.setattr(keep_awake.os, "kill", missing_pid)
+
+    proc = keep_awake.AssertionProcess(pid=1234, args=("caffeinate", "-i"))
+
+    assert proc.poll() == 0
+    assert proc.returncode == 0
+    assert attempts
+
+
 def test_keep_awake_defaults_on_for_live_runtime(monkeypatch):
     from core.runtime.keep_awake import (
         keep_awake_enabled_from_environment,
@@ -180,6 +235,81 @@ def test_keep_awake_defaults_on_for_live_runtime(monkeypatch):
     monkeypatch.setenv("AURA_KEEP_AWAKE", "1")
     monkeypatch.setenv("AURA_KEEP_AWAKE_ON_BATTERY", "1")
     assert require_ac_power_from_environment() is False
+
+
+def test_keep_awake_controller_does_not_start_from_spawn_child(monkeypatch):
+    import aura_main
+
+    monkeypatch.setattr(
+        aura_main.multiprocessing,
+        "current_process",
+        lambda: SimpleNamespace(name="AuraActor:state_vault"),
+    )
+    monkeypatch.setattr(aura_main, "__name__", "__mp_main__")
+
+    assert aura_main._should_start_keep_awake_controller() is False
+
+
+def test_root_runtime_hard_exit_predicate_excludes_cli_and_spawn(monkeypatch):
+    import aura_main
+
+    root_args = SimpleNamespace(
+        cli=False,
+        watchdog=False,
+        gui_window=False,
+        philosophy=False,
+    )
+    cli_args = SimpleNamespace(
+        cli=True,
+        watchdog=False,
+        gui_window=False,
+        philosophy=False,
+    )
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("AURA_DISABLE_HARD_EXIT_AFTER_MAIN", raising=False)
+    monkeypatch.setattr(
+        aura_main.multiprocessing,
+        "current_process",
+        lambda: SimpleNamespace(name="MainProcess"),
+    )
+    monkeypatch.setattr(aura_main, "__name__", "__main__")
+    assert aura_main._should_force_root_process_exit_after_main(root_args) is True
+    assert aura_main._should_force_root_process_exit_after_main(cli_args) is False
+
+    monkeypatch.setattr(
+        aura_main.multiprocessing,
+        "current_process",
+        lambda: SimpleNamespace(name="AuraActor:state_vault"),
+    )
+    monkeypatch.setattr(aura_main, "__name__", "__mp_main__")
+    assert aura_main._should_force_root_process_exit_after_main(root_args) is False
+
+
+def test_root_runtime_hard_exit_runs_multiprocessing_finalizers(monkeypatch):
+    import aura_main
+
+    calls = []
+    args = SimpleNamespace(cli=False, watchdog=False, gui_window=False, philosophy=False)
+
+    monkeypatch.setattr(aura_main, "_should_force_root_process_exit_after_main", lambda _args: True)
+    monkeypatch.setattr(
+        aura_main,
+        "_run_multiprocessing_finalizers_before_hard_exit",
+        lambda: calls.append("mp_finalizers"),
+    )
+
+    def fake_exit(code: int):
+        calls.append(("exit", code))
+        raise SystemExit(code)
+
+    monkeypatch.setattr(aura_main.os, "_exit", fake_exit)
+
+    with pytest.raises(SystemExit) as exc_info:
+        aura_main._finalize_root_runtime_process_exit(args, exit_code=0)
+
+    assert exc_info.value.code == 0
+    assert calls == ["mp_finalizers", ("exit", 0)]
 
 
 def test_output_gate_routes_background_self_talk_to_secondary():

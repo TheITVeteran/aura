@@ -123,6 +123,104 @@ def _foreground_only_runtime() -> bool:
     return _env_flag("AURA_FOREGROUND_ONLY", False)
 
 
+def _should_start_keep_awake_controller() -> bool:
+    """Start macOS keep-awake only from the root Aura process.
+
+    Multiprocessing spawn imports this module inside child actors as
+    ``__mp_main__``. Starting keep-awake at import time from those children
+    leaks orphan ``caffeinate`` helpers and can keep actor processes alive after
+    shutdown, so the controller is root-process only.
+    """
+
+    try:
+        process_name = multiprocessing.current_process().name
+    except _AURA_MAIN_BOUNDARY_ERRORS:
+        process_name = "unknown"
+    return process_name == "MainProcess" and __name__ != "__mp_main__"
+
+
+def _should_force_root_process_exit_after_main(args: Any) -> bool:
+    """Return true for long-lived root runtimes after their shutdown completes."""
+
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    if _env_flag("AURA_DISABLE_HARD_EXIT_AFTER_MAIN", False):
+        return False
+    if not _should_start_keep_awake_controller():
+        return False
+    return not any(
+        bool(getattr(args, name, False))
+        for name in ("cli", "watchdog", "gui_window", "philosophy")
+    )
+
+
+def _run_multiprocessing_finalizers_before_hard_exit(timeout_s: float = 3.0) -> None:
+    """Give multiprocessing a bounded chance to unregister queues/semaphores."""
+
+    done = threading.Event()
+
+    def _run_finalizers() -> None:
+        try:
+            import multiprocessing.util as mp_util
+
+            mp_util._exit_function()
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+            record_degradation(
+                "aura_main",
+                exc,
+                action="continued root hard-exit after multiprocessing finalizer failed",
+            )
+            logger.debug("Multiprocessing finalizer failed before root hard-exit: %s", exc)
+        finally:
+            done.set()
+
+    thread = threading.Thread(
+        target=_run_finalizers,
+        name="aura-multiprocessing-finalizers",
+        daemon=True,
+    )
+    thread.start()
+    thread.join(timeout=max(0.0, float(timeout_s)))
+    if not done.is_set():
+        record_degradation(
+            "aura_main",
+            TimeoutError("multiprocessing finalizer timeout before hard exit"),
+            action="continued root hard-exit after bounded multiprocessing cleanup timed out",
+        )
+        logger.warning(
+            "Multiprocessing finalizers did not finish within %.1fs before root hard-exit.",
+            timeout_s,
+        )
+
+
+def _finalize_root_runtime_process_exit(args: Any, exit_code: int = 0) -> None:
+    if not _should_force_root_process_exit_after_main(args):
+        return
+    try:
+        from core.runtime.keep_awake import get_keep_awake_controller
+
+        get_keep_awake_controller().stop()
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation(
+            "aura_main",
+            exc,
+            action="continued root process exit after keep-awake stop failed",
+        )
+        logger.debug("Keep-awake final stop failed during root process exit: %s", exc)
+    try:
+        release_instance_lock()
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation(
+            "aura_main",
+            exc,
+            action="continued root process exit after lock release failed",
+        )
+        logger.debug("Instance lock release failed during root process exit: %s", exc)
+    _run_multiprocessing_finalizers_before_hard_exit()
+    logger.info("Root runtime shutdown complete; exiting process with code %d.", exit_code)
+    os._exit(int(exit_code))
+
+
 def _profile_is_proof(profile: str | None, ready_label: str | None = None) -> bool:
     """Return True for canonical proof/evaluation boot profiles."""
 
@@ -238,15 +336,16 @@ try:
     # Centralized logging setup - always include log_dir for persistence
     setup_logging(log_dir=config.paths.log_dir)
     logger = logging.getLogger("Aura.Main")
-    try:
-        from core.runtime.keep_awake import start_from_environment
+    if _should_start_keep_awake_controller():
+        try:
+            from core.runtime.keep_awake import start_from_environment
 
-        _keep_awake_status = start_from_environment()
-        if _keep_awake_status.active:
-            logger.info("Aura keep-awake assertion active: pid=%s", _keep_awake_status.pid)
-    except _AURA_MAIN_BOUNDARY_ERRORS as _keep_awake_exc:
-        record_degradation("aura_main", _keep_awake_exc)
-        logger.warning("Aura keep-awake setup failed: %s", _keep_awake_exc)
+            _keep_awake_status = start_from_environment()
+            if _keep_awake_status.active:
+                logger.info("Aura keep-awake assertion active: pid=%s", _keep_awake_status.pid)
+        except _AURA_MAIN_BOUNDARY_ERRORS as _keep_awake_exc:
+            record_degradation("aura_main", _keep_awake_exc)
+            logger.warning("Aura keep-awake setup failed: %s", _keep_awake_exc)
 except _AURA_MAIN_BOUNDARY_ERRORS as exc:
     # Minimal fallback logging if core is broken
     import traceback
@@ -633,10 +732,19 @@ async def _boot_runtime_orchestrator(
     ServiceContainer.lock_registration()
     _enforce_service_manifest(ready_label)
     try:
-        ServiceContainer.write_service_ownership_manifest(PROJECT_ROOT)
-        logger.info("🧾 SERVICE_OWNERSHIP.md manifest written successfully.")
+        ownership_root = (
+            PROJECT_ROOT
+            if _env_flag("AURA_WRITE_TRACKED_SERVICE_OWNERSHIP", False)
+            else Path(
+                artifact_root
+                or os.environ.get("AURA_ARTIFACTS_DIR")
+                or PROJECT_ROOT / "artifacts" / "current"
+            )
+        )
+        ownership_path = ServiceContainer.write_service_ownership_manifest(ownership_root)
+        logger.info("🧾 Runtime service ownership manifest written: %s", ownership_path)
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
-        logger.warning("⚠️ Failed to write SERVICE_OWNERSHIP.md: %s", exc)
+        logger.warning("⚠️ Failed to write runtime service ownership manifest: %s", exc)
     await _enforce_boot_probes(ready_label)
     _write_runtime_manifest(
         profile=profile or ready_label.lower(),
@@ -2220,8 +2328,30 @@ def main():
                     from core.graceful_shutdown import GracefulShutdown
 
                     await _stop_orchestrator_once(orchestrator, reason="server_exit")
-                    await GracefulShutdown.trigger_shutdown("server_exit")
-                    await GracefulShutdown.wait_for_shutdown()
+                    try:
+                        await asyncio.wait_for(
+                            GracefulShutdown.trigger_shutdown("server_exit"),
+                            timeout=20.0,
+                        )
+                    except TimeoutError as exc:
+                        record_degradation(
+                            "aura_main",
+                            exc,
+                            action="continued server exit after graceful shutdown trigger timed out",
+                            severity="degraded",
+                        )
+                    try:
+                        await asyncio.wait_for(
+                            GracefulShutdown.wait_for_shutdown(),
+                            timeout=5.0,
+                        )
+                    except TimeoutError as exc:
+                        record_degradation(
+                            "aura_main",
+                            exc,
+                            action="continued server exit after graceful shutdown wait timed out",
+                            severity="warning",
+                        )
             asyncio.run(_run_server_with_bootstrap())
         elif args.desktop:
             # For desktop, we'll need a way to bootstrap the loop if uvicorn starts it
@@ -2258,6 +2388,7 @@ def main():
         record_degradation('aura_main', e)
         logger.critical("FATAL BOOT ERROR: %s", e, exc_info=True)
         sys.exit(1)
+    _finalize_root_runtime_process_exit(args, exit_code=0)
 
 if __name__ == "__main__":
     import multiprocessing

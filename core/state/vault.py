@@ -17,6 +17,23 @@ from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Actor.StateVault")
 
+
+def _should_force_vault_process_exit() -> bool:
+    """Return true for live spawned actor children after cleanup completes."""
+    return not bool(
+        os.getenv("PYTEST_CURRENT_TEST")
+        or os.getenv("AURA_DISABLE_VAULT_HARD_EXIT")
+    )
+
+
+def _finalize_vault_process_exit(exit_code: int = 0) -> None:
+    """Prevent inherited helper threads/resources from keeping actor children alive."""
+    if not _should_force_vault_process_exit():
+        return
+    logger.debug("StateVaultActor process cleanup complete; exiting child process.")
+    os._exit(exit_code)
+
+
 class StateVaultActor:
     """
     Standalone process that manages the canonical AuraState.
@@ -83,7 +100,26 @@ class StateVaultActor:
             await self._cancel_background_tasks()
             if self._bus is not None:
                 await self._bus.stop()
-            self.shm_transport.close()
+            repo_shm = getattr(self.repo, "_shm", None)
+            try:
+                await self.repo.close()
+            except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+                record_degradation(
+                    "vault",
+                    exc,
+                    action="continued StateVaultActor shutdown after repository close failed",
+                )
+                logger.warning("StateVaultActor repository close failed during shutdown: %s", exc)
+            if self.shm_transport is not None and self.shm_transport is not repo_shm:
+                try:
+                    self.shm_transport.close()
+                except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+                    record_degradation(
+                        "vault",
+                        exc,
+                        action="continued StateVaultActor shutdown after shared memory close failed",
+                    )
+                    logger.debug("StateVaultActor shared memory close issue: %s", exc)
 
     async def _heartbeat_loop(self):
         """Emit liveness pulses without racing the parent transport reader."""
@@ -202,6 +238,7 @@ class StateVaultActor:
 
 def vault_process_entry(db_path: str, pipe):
     """Entry point for the vault process."""
+    exit_code = 0
     try:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
@@ -258,7 +295,10 @@ def vault_process_entry(db_path: str, pipe):
             loop.close()
         logger.debug("StateVaultActor asyncio loop exited gracefully.")
     except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+        exit_code = 1
         record_degradation('vault', e)
         logger.critical("Vault process CRASHED: %s", e)
         import traceback
         traceback.print_exc(file=sys.stderr)
+    finally:
+        _finalize_vault_process_exit(exit_code)

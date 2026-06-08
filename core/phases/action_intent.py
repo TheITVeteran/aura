@@ -17,6 +17,8 @@ import re
 from dataclasses import dataclass
 from typing import Dict, Optional
 
+from core.runtime.skill_task_bridge import strip_negated_action_spans
+
 
 _ACTION_VERBS = (
     "open", "launch", "run", "start", "execute", "click", "type",
@@ -83,7 +85,7 @@ def detect_action_intent(text: str) -> ActionIntent:
     if not raw:
         return ActionIntent(False, False, None, None, "")
 
-    lowered = raw.lower()
+    lowered = strip_negated_action_spans(raw).lower()
     verb_match = _ACTION_VERB_RE.search(lowered)
     has_action = verb_match is not None
     verb = verb_match.group(1).lower() if verb_match else None

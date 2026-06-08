@@ -58,6 +58,13 @@ class Hypervisor:
             )
         except (TypeError, ValueError):
             self._failure_recovery_window_s = 90.0
+        try:
+            self._startup_lag_grace_s = float(
+                os.getenv("AURA_HYPERVISOR_STARTUP_LAG_GRACE_S", "180.0")
+            )
+        except (TypeError, ValueError):
+            self._startup_lag_grace_s = 180.0
+        self._startup_lag_grace_s = max(0.0, self._startup_lag_grace_s)
 
     async def start(self):
         if self._running:
@@ -116,6 +123,12 @@ class Hypervisor:
         self._severe_lag_streak += 1
         return self._severe_lag_streak >= self._required_severe_lag_samples
 
+    def _is_startup_idle_lag(self, lag_context: str, uptime: float) -> bool:
+        return bool(
+            lag_context == "idle"
+            and uptime < self._startup_lag_grace_s
+        )
+
     def _active_runtime_reason(self) -> str:
         try:
             from core.runtime.proof_policy import proof_run_active
@@ -168,16 +181,26 @@ class Hypervisor:
 
             lag_threshold, lag_context = self._lag_threshold_for_context()
             if lag > lag_threshold:
-                logger.warning(
-                    "🚨 HIGH EVENT LOOP LAG detected: %.3fs (context=%s threshold=%.3fs)",
-                    lag,
-                    lag_context,
-                    lag_threshold,
-                )
+                uptime = time.time() - getattr(self, "_start_time", time.time())
+                if self._is_startup_idle_lag(lag_context, uptime):
+                    logger.info(
+                        "Startup event-loop lag observed during boot grace: %.3fs "
+                        "(context=%s threshold=%.3fs uptime=%.1fs).",
+                        lag,
+                        lag_context,
+                        lag_threshold,
+                        uptime,
+                    )
+                else:
+                    logger.warning(
+                        "🚨 HIGH EVENT LOOP LAG detected: %.3fs (context=%s threshold=%.3fs)",
+                        lag,
+                        lag_context,
+                        lag_threshold,
+                    )
                 metrics.increment("hypervisor.lag_spikes_total")
 
                 if lag > self._severe_lag_threshold_s:
-                    uptime = time.time() - getattr(self, "_start_time", time.time())
                     if uptime < 180.0:
                         logger.warning(
                             "🚨 Loop lag > %.1fs during boot/warmup grace period (uptime: %.1fs). "

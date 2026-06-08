@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import re
 import time
 from pathlib import Path
@@ -19,6 +20,17 @@ BANNED_LIVE_FALLBACKS = re.compile(
 
 def assert_no_live_reset_boilerplate(text: str) -> None:
     assert not BANNED_LIVE_FALLBACKS.search(str(text or ""))
+
+
+def test_hypervisor_treats_idle_boot_lag_as_startup_grace(monkeypatch):
+    from core.ops.hypervisor import Hypervisor
+
+    monkeypatch.setenv("AURA_HYPERVISOR_STARTUP_LAG_GRACE_S", "180")
+    hypervisor = Hypervisor()
+
+    assert hypervisor._is_startup_idle_lag("idle", uptime=30.0) is True
+    assert hypervisor._is_startup_idle_lag("foreground_generation_active", uptime=30.0) is False
+    assert hypervisor._is_startup_idle_lag("idle", uptime=181.0) is False
 
 
 def test_desktop_origins_are_foreground_across_live_response_stack():
@@ -383,6 +395,151 @@ def test_supervision_tree_reaps_cooperative_actor_without_escalation():
     tree.stop_actor("state_vault", graceful_timeout=0.1)
 
     assert process.join_calls == [0.1]
+    assert process.terminate_calls == 0
+    assert process.kill_calls == 0
+    assert tree._actors["state_vault"].process is None
+
+
+def test_supervision_tree_closes_pipe_before_graceful_actor_join():
+    from core.supervisor.tree import ActorSpec, ManagedActor, SupervisionTree
+
+    class PipeExitProcess:
+        def __init__(self, pipe):
+            self.pipe = pipe
+            self.alive = True
+            self.join_calls = []
+            self.terminate_calls = 0
+            self.kill_calls = 0
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=0.0):
+            self.join_calls.append(timeout)
+            if self.pipe.closed:
+                self.alive = False
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+        def kill(self):
+            self.kill_calls += 1
+
+    class FakePipe:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    pipe = FakePipe()
+    process = PipeExitProcess(pipe)
+    tree = SupervisionTree()
+    tree._actors["state_vault"] = ManagedActor(
+        spec=ActorSpec(name="state_vault", entry_point=lambda: None),
+        process=process,
+        pipe=pipe,
+    )
+
+    tree.stop_actor("state_vault", graceful_timeout=0.1)
+
+    assert pipe.closed is True
+    assert process.join_calls == [0.1]
+    assert process.terminate_calls == 0
+    assert process.kill_calls == 0
+    assert tree._actors["state_vault"].process is None
+
+
+def test_supervision_tree_treats_missing_pid_as_exited():
+    from core.supervisor.tree import SupervisionTree
+
+    class StaleProcessHandle:
+        pid = 999999999
+        exitcode = None
+
+        def is_alive(self):
+            return True
+
+    assert SupervisionTree()._process_is_alive(StaleProcessHandle()) is False
+
+
+def test_supervision_tree_accepts_exitcode_after_actor_kill(caplog):
+    from core.supervisor.tree import ActorSpec, ManagedActor, SupervisionTree
+
+    class ExitcodeAfterKillProcess:
+        def __init__(self):
+            self.exitcode = None
+            self.join_calls = []
+            self.terminate_calls = 0
+            self.kill_calls = 0
+
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=0.0):
+            self.join_calls.append(timeout)
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+        def kill(self):
+            self.kill_calls += 1
+            self.exitcode = -9
+
+    process = ExitcodeAfterKillProcess()
+    tree = SupervisionTree()
+    tree._actors["state_vault"] = ManagedActor(
+        spec=ActorSpec(name="state_vault", entry_point=lambda: None),
+        process=process,
+        pipe=None,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="Aura.Supervisor"):
+        tree.stop_actor("state_vault", terminate_timeout=0.01, kill_timeout=0.01)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 1
+    assert not any("did not exit after kill" in message for message in messages)
+    assert tree._actors["state_vault"].process is None
+
+
+def test_supervision_tree_stop_all_gives_actor_shutdown_grace(monkeypatch):
+    from core.supervisor.tree import ActorSpec, ManagedActor, SupervisionTree
+
+    class PeerClosedProcess:
+        def __init__(self):
+            self.alive = True
+            self.join_calls = []
+            self.terminate_calls = 0
+            self.kill_calls = 0
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=0.0):
+            self.join_calls.append(timeout)
+            if timeout and timeout > 0:
+                self.alive = False
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+        def kill(self):
+            self.kill_calls += 1
+
+    monkeypatch.setenv("AURA_ACTOR_SHUTDOWN_GRACE_S", "1.25")
+    process = PeerClosedProcess()
+    tree = SupervisionTree()
+    tree._actors["state_vault"] = ManagedActor(
+        spec=ActorSpec(name="state_vault", entry_point=lambda: None),
+        process=process,
+        pipe=None,
+    )
+
+    tree.stop_all()
+
+    assert process.join_calls == [1.25]
     assert process.terminate_calls == 0
     assert process.kill_calls == 0
     assert tree._actors["state_vault"].process is None

@@ -64,6 +64,137 @@ async def test_shutdown_proxy_commit_deferral_logs_as_lifecycle_event(tmp_path, 
     await repo.close()
 
 
+@pytest.mark.asyncio
+async def test_shutdown_proxy_commit_bus_degraded_defers_instead_of_raising(tmp_path, caplog):
+    from core.bus.actor_bus import BusDegraded
+
+    class DegradedTransport:
+        def __init__(self):
+            self.calls = 0
+
+        async def request(self, *_args, **_kwargs):
+            self.calls += 1
+            raise BusDegraded("Bus degraded or congested for state_vault")
+
+    repo = StateRepository(db_path=str(tmp_path / "state.db"), is_vault_owner=False)
+    payload = {"state": {"version": 1}, "cause": "shutdown", "trace_id": "shutdown-test"}
+    transport_probe = DegradedTransport()
+
+    with caplog.at_level(logging.INFO, logger=state_module.logger.name):
+        ok, transport, error = await repo._send_proxy_commit_request(transport_probe, payload)
+        await repo._defer_proxy_commit(payload, error)
+
+    assert ok is False
+    assert isinstance(error, BusDegraded)
+    assert transport is None
+    assert transport_probe.calls == 1
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("commit will be queued for boot replay" in msg for msg in messages)
+    assert any("Graceful-shutdown state commit stored for boot replay" in msg for msg in messages)
+
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_state_vault_actor_closes_repository_on_shutdown(monkeypatch):
+    import core.bus.local_pipe_bus as local_pipe_bus_module
+    from core.state.vault import StateVaultActor
+
+    class FakeBus:
+        def __init__(self, *args, **kwargs):
+            self._is_running = True
+            self.handlers = {}
+            self.stopped = False
+            self.started = False
+            self.sent = []
+
+        def register_handler(self, name, handler):
+            self.handlers[name] = handler
+
+        def start(self):
+            self.started = True
+
+        async def send(self, *_args, **_kwargs):
+            self.sent.append((_args, _kwargs))
+            return None
+
+        async def stop(self):
+            self.stopped = True
+            self._is_running = False
+
+    class FakeRepo:
+        def __init__(self, shm):
+            self._shm = shm
+            self.initialized = False
+            self.closed = False
+
+        async def initialize(self):
+            self.initialized = True
+            actor._is_running = False
+
+        async def close(self):
+            self.closed = True
+            self._shm.close()
+
+    class FakeShm:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(local_pipe_bus_module, "LocalPipeBus", FakeBus)
+
+    actor = StateVaultActor.__new__(StateVaultActor)
+    actor.db_path = "unused.db"
+    shm = FakeShm()
+    actor.repo = FakeRepo(shm)
+    actor.shm_transport = shm
+    actor._is_running = False
+    actor._bus = None
+    actor._heartbeat_interval = 0.01
+    actor._heartbeat_task = None
+    actor._background_tasks = set()
+
+    await StateVaultActor.run(actor, pipe=None)
+
+    assert actor.repo.initialized is True
+    assert actor.repo.closed is True
+    assert actor._bus.stopped is True
+    assert shm.closed is True
+
+
+def test_state_vault_hard_exit_guard_is_disabled_for_tests(monkeypatch):
+    import core.state.vault as vault_module
+
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "state-vault-test")
+    monkeypatch.delenv("AURA_DISABLE_VAULT_HARD_EXIT", raising=False)
+
+    assert vault_module._should_force_vault_process_exit() is False
+
+
+def test_state_vault_hard_exit_guard_respects_disable_env(monkeypatch):
+    import core.state.vault as vault_module
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setenv("AURA_DISABLE_VAULT_HARD_EXIT", "1")
+
+    assert vault_module._should_force_vault_process_exit() is False
+
+
+def test_state_vault_process_exit_uses_os_exit_in_live_child(monkeypatch):
+    import core.state.vault as vault_module
+
+    calls = []
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("AURA_DISABLE_VAULT_HARD_EXIT", raising=False)
+    monkeypatch.setattr(vault_module.os, "_exit", lambda code: calls.append(code))
+
+    vault_module._finalize_vault_process_exit(7)
+
+    assert calls == [7]
+
+
 def test_state_queue_coalescing_is_bounded_and_keeps_latest(tmp_path):
     repo = StateRepository(db_path=str(tmp_path / "state.db"), is_vault_owner=True)
     repo._mutation_queue.put_nowait({"version": 1})

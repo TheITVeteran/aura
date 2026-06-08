@@ -344,6 +344,25 @@ def test_reader_survives_failed_dispatch_saturation_error_response():
     asyncio.run(scenario())
 
 
+def test_reader_marks_bus_stopped_on_peer_eof():
+    async def scenario():
+        read_conn = _ScriptedReadConnection([])
+        write_conn = _FakeConnection()
+        bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=True)
+        bus._is_running = True
+        bus._loop = asyncio.get_running_loop()
+
+        try:
+            await bus._read_loop()
+
+            assert bus._is_running is False
+            assert bus.is_alive() is False
+        finally:
+            bus._shutdown_executor()
+
+    asyncio.run(scenario())
+
+
 def test_actor_bus_reports_transport_health():
     async def scenario():
         from core.bus.actor_bus import ActorBus

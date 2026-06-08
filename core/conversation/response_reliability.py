@@ -394,6 +394,8 @@ _OPEN_ENDED_MARKERS = (
     "how",
     "explain",
     "tell me",
+    "what reason",
+    "for what reason",
     "what do you think",
     "what are your thoughts",
     "what do you feel",
@@ -401,6 +403,25 @@ _OPEN_ENDED_MARKERS = (
     "what is your take",
     "talk to me",
     "help me understand",
+)
+_EXPANSION_REQUEST_MARKERS = (
+    "be more verbose",
+    "expand",
+    "expand on",
+    "elaborate",
+    "go deeper",
+    "more depth",
+    "say more",
+    "tell me more",
+    "explain more",
+    "explain why",
+    "for what reason",
+    "what reason",
+)
+_EXPANSION_DEFLECTION_RE = re.compile(
+    r"^\s*(?:i already am|that'?s all|curiosity|because curiosity|"
+    r"because i want to know|because i want to|i don'?t know)\s*[.!?]*\s*$",
+    re.IGNORECASE,
 )
 _STATUS_CHECK_MARKERS = (
     "are you there",
@@ -1109,6 +1130,11 @@ def is_status_check_turn(user_message: Any) -> bool:
     return bool(text and any(marker in text for marker in _STATUS_CHECK_MARKERS))
 
 
+def is_expansion_request_turn(user_message: Any) -> bool:
+    text = _normalize(user_message).rstrip(" ?!.")
+    return bool(text and any(marker in text for marker in _EXPANSION_REQUEST_MARKERS))
+
+
 def is_live_self_reflection_turn(user_message: Any) -> bool:
     text = _normalize(user_message)
     if not text:
@@ -1326,6 +1352,8 @@ def _requires_substantive_reply(user_message: Any) -> bool:
     if not text:
         return False
     if is_status_check_turn(user_message):
+        return True
+    if is_expansion_request_turn(user_message):
         return True
     if len(text.split()) >= 4:
         return True
@@ -2059,6 +2087,10 @@ def assess_user_facing_reply(
     elif is_live_self_reflection_turn(user_message):
         if not _has_self_reflection_substance(raw):
             reasons.append("off_topic_self_reflection_reply")
+    elif is_expansion_request_turn(user_message):
+        words = _word_count(raw)
+        if words < 20 or _EXPANSION_DEFLECTION_RE.search(raw):
+            reasons.append("too_thin_for_expansion_request")
     elif is_status_check_turn(user_message):
         if _LOW_SIGNAL_REASSURANCE_RE.match(raw):
             reasons.append("low_signal_status_reply")
@@ -2075,7 +2107,7 @@ def assess_user_facing_reply(
             reasons.append("too_thin_for_user_turn")
         elif not _is_task_turn(user_message):
             open_ended = any(marker in user_norm for marker in _OPEN_ENDED_MARKERS)
-            if open_ended and words < 3:
+            if open_ended and words < 12:
                 reasons.append("too_thin_for_open_ended_turn")
 
     if is_confusion_repair_turn(user_message) and _word_count(raw) < 8:
@@ -2123,6 +2155,7 @@ def assess_user_facing_reply(
         "reliability_diagnostic_too_thin",
         "too_thin_for_reliability_turn",
         "too_thin_for_confusion_repair",
+        "too_thin_for_expansion_request",
         "too_short_for_user_turn",
         "too_thin_for_user_turn",
         "too_thin_for_open_ended_turn",

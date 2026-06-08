@@ -39,22 +39,27 @@ async def _gracefully_stop_actor_via_bus(
     if bus is None:
         return False
 
+    async def _stop_via_supervisor() -> bool:
+        supervisor = getattr(orch, "_supervisor_tree", None) or getattr(orch, "supervisor", None)
+        stop_actor = getattr(supervisor, "stop_actor", None)
+        if not callable(stop_actor):
+            return False
+        await asyncio.to_thread(
+            stop_actor,
+            actor_name,
+            graceful_timeout=stop_budget_s,
+            terminate_timeout=3.0,
+            kill_timeout=2.0,
+        )
+        return True
+
     has_actor = getattr(bus, "has_actor", None)
     if callable(has_actor) and not has_actor(actor_name):
         return False
 
     is_actor_usable = getattr(bus, "is_actor_usable", None)
     if callable(is_actor_usable) and not is_actor_usable(actor_name):
-        supervisor = getattr(orch, "_supervisor_tree", None) or getattr(orch, "supervisor", None)
-        stop_actor = getattr(supervisor, "stop_actor", None)
-        if callable(stop_actor):
-            await asyncio.to_thread(
-                stop_actor,
-                actor_name,
-                graceful_timeout=stop_budget_s,
-                terminate_timeout=1.0,
-                kill_timeout=1.0,
-            )
+        if await _stop_via_supervisor():
             return True
         logger.debug(
             "Actor bus transport for %s was already unusable during shutdown; "
@@ -63,37 +68,47 @@ async def _gracefully_stop_actor_via_bus(
         )
         return False
 
+    stop_payload = {"source": "orchestrator_shutdown", "reason": "graceful_shutdown"}
     try:
-        await asyncio.wait_for(
-            bus.request(
-                actor_name,
-                "stop",
-                {"source": "orchestrator_shutdown", "reason": "graceful_shutdown"},
+        send = getattr(bus, "send", None)
+        if callable(send):
+            sent = await asyncio.wait_for(
+                send(actor_name, "stop", stop_payload),
                 timeout=stop_budget_s,
-            ),
-            timeout=stop_budget_s,
-        )
+            )
+            if not sent:
+                raise BusDegraded(f"Bus degraded or congested for {actor_name}")
+        else:
+            await asyncio.wait_for(
+                bus.request(
+                    actor_name,
+                    "stop",
+                    stop_payload,
+                    timeout=stop_budget_s,
+                ),
+                timeout=stop_budget_s,
+            )
     except (BrokenPipeError, ConnectionError, OSError) as exc:
         _record_shutdown_degradation(
             exc,
             action=f"continued shutdown after actor bus was already closed for {actor_name}",
         )
         logger.debug("Actor bus already closed while stopping %s: %s", actor_name, exc)
-        return False
+        return await _stop_via_supervisor()
     except BusDegraded as exc:
         logger.debug(
             "Actor bus already degraded while stopping %s; supervisor shutdown will reap it: %s",
             actor_name,
             exc,
         )
-        return False
+        return await _stop_via_supervisor()
     except (RuntimeError, asyncio.CancelledError, AttributeError) as exc:
         _record_shutdown_degradation(
             exc,
             action=f"continued shutdown after actor bus stop request failed for {actor_name}",
         )
         logger.debug("Graceful stop request failed for %s: %s", actor_name, exc)
-        return False
+        return await _stop_via_supervisor()
 
     supervisor = getattr(orch, "_supervisor_tree", None) or getattr(orch, "supervisor", None)
     is_actor_running = getattr(supervisor, "is_actor_running", None)
@@ -138,6 +153,7 @@ async def orchestrator_shutdown(orch: RobustOrchestrator) -> None:
     logger.info("Initiating secure shutdown sequence... Called by:\n%s", stack_str)
     orch.status.running = False
     orch.status.is_processing = False
+    state_vault_stop_requested = False
 
     # 1. Stop high-priority substrate loops
     if hasattr(orch, "substrate"):
@@ -227,6 +243,13 @@ async def orchestrator_shutdown(orch: RobustOrchestrator) -> None:
         )
         logger.error("UPSO: Failed to commit shutdown state: %s", exc)
 
+    if hasattr(orch, "_actor_bus") and orch._actor_bus:
+        state_vault_stop_requested = await _gracefully_stop_actor_via_bus(
+            orch,
+            "state_vault",
+            stop_budget_s=2.0,
+        )
+
     # 3. Release service locks / Graceful shutdown of subsystems
     orch._publish_status({"event": "stopping", "message": "Graceful shutdown initiated"})
 
@@ -282,7 +305,8 @@ async def orchestrator_shutdown(orch: RobustOrchestrator) -> None:
             logger.error("KernelInterface shutdown failed: %s", exc)
 
     if hasattr(orch, "_actor_bus") and orch._actor_bus:
-        await _gracefully_stop_actor_via_bus(orch, "state_vault", stop_budget_s=2.0)
+        if not state_vault_stop_requested:
+            await _gracefully_stop_actor_via_bus(orch, "state_vault", stop_budget_s=2.0)
         try:
             await asyncio.wait_for(orch._actor_bus.stop(), timeout=5.0)
         except TimeoutError as _exc:

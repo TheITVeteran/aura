@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
+from core.bus.actor_bus import BusDegraded
 from core.memory.retention_policy import state_log_retention_policy
 from core.runtime.background_policy import is_user_facing_origin
 from core.runtime.effect_boundary import effect_sink
@@ -594,6 +595,11 @@ class StateRepository:
                 transport = self._resolve_transport()
             if transport is None:
                 last_error = RuntimeError("state_vault transport unavailable")
+                if _is_shutdown_commit_payload(payload):
+                    logger.info(
+                        "🔌 [STATE] Vault transport unavailable during shutdown; commit will be queued for boot replay."
+                    )
+                    return False, None, last_error
                 _record_proxy_transport_degradation(
                     last_error,
                     action="state proxy commit deferred because vault transport was unavailable",
@@ -618,13 +624,14 @@ class StateRepository:
                         f"state_vault commit failed: {response.get('error') or response}"
                     )
                 return True, transport, None
-            except (BrokenPipeError, ConnectionError) as exc:
+            except (BrokenPipeError, BusDegraded, ConnectionError) as exc:
                 last_error = exc
                 if _is_shutdown_commit_payload(payload):
                     logger.info(
-                        "🔌 [STATE] Vault pipe closed during shutdown (attempt %d/2); commit will be queued for boot replay.",
+                        "🔌 [STATE] Vault transport unavailable during shutdown (attempt %d/2); commit will be queued for boot replay.",
                         attempt + 1,
                     )
+                    return False, None, exc
                 else:
                     _record_proxy_transport_degradation(exc)
                     logger.warning(

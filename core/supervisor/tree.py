@@ -135,6 +135,38 @@ class SupervisionTree:
         except (RuntimeError, AttributeError, TypeError, ValueError):
             pass  # no-op: intentional
 
+    def _process_is_alive(self, process: multiprocessing.Process) -> bool:
+        if getattr(process, "exitcode", None) is not None:
+            return False
+        try:
+            if not process.is_alive():
+                return False
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            pass
+        pid = getattr(process, "pid", None)
+        if not pid:
+            return True
+        try:
+            import psutil
+
+            proc = psutil.Process(pid)
+            if proc.status() == psutil.STATUS_ZOMBIE:
+                return False
+            return proc.is_running()
+        except ImportError:
+            pass
+        except (psutil.NoSuchProcess, ProcessLookupError):  # type: ignore[name-defined]
+            return False
+        except (psutil.Error, RuntimeError, AttributeError, TypeError, ValueError):  # type: ignore[name-defined]
+            return True
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+
     def record_activity(self, name: str):
         """Mark an actor as alive without directly reading from its IPC pipe."""
         with self._lock:
@@ -215,34 +247,45 @@ class SupervisionTree:
         if actor and actor.process:
             logger.info("🛑 Stopping Actor: %s", name)
             process = actor.process
+            pipe_closed = False
             try:
-                if not process.is_alive():
+                if not self._process_is_alive(process):
                     process.join(timeout=0.0)
                     logger.info("Actor %s already exited; reaped process handle.", name)
                     return
 
                 if graceful_timeout > 0:
+                    if actor.pipe is not None:
+                        self._close_pipe(actor.pipe)
+                        pipe_closed = True
+                        with self._lock:
+                            actor.pipe = None
                     process.join(timeout=max(0.0, graceful_timeout))
-                    if not process.is_alive():
+                    if not self._process_is_alive(process):
                         logger.info("Actor %s exited cooperatively.", name)
                         return
 
                 process.terminate()
                 process.join(timeout=max(0.0, terminate_timeout))
-                if process.is_alive():
+                if self._process_is_alive(process):
                     logger.warning(
                         "Actor %s did not exit after terminate within timeout; escalating to kill.",
                         name,
                     )
                     process.kill()
                     process.join(timeout=max(0.0, kill_timeout))
-                if process.is_alive():
+                if self._process_is_alive(process):
+                    process.join(timeout=0.0)
+                if self._process_is_alive(process) and process.exitcode is None:
                     logger.warning("Actor %s did not exit after kill within timeout.", name)
+                elif process.exitcode is not None:
+                    process.join(timeout=0.0)
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('tree', e)
                 logger.debug("Error stopping actor %s: %s", name, e)
             finally:
-                self._close_pipe(actor.pipe)
+                if not pipe_closed:
+                    self._close_pipe(actor.pipe)
                 with self._lock:
                     actor.process = None
                     actor.pipe = None
@@ -379,10 +422,15 @@ class SupervisionTree:
         """Kill everything."""
         self._shutting_down = True
         self._is_running = False
+        try:
+            graceful_timeout = float(os.getenv("AURA_ACTOR_SHUTDOWN_GRACE_S", "2.0"))
+        except (TypeError, ValueError):
+            graceful_timeout = 2.0
+        graceful_timeout = min(10.0, max(0.0, graceful_timeout))
         with self._lock:
             actor_names = list(self._actors.keys())
         for name in actor_names:
-            self.stop_actor(name)
+            self.stop_actor(name, graceful_timeout=graceful_timeout)
         # Ensure all multiprocess children are reaped (ORPHAN-04)
         import multiprocessing
         for p in multiprocessing.active_children():

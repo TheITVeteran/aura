@@ -11,6 +11,7 @@ from core.runtime.proof_policy import (
     proof_run_active,
 )
 from core.runtime.skill_task_bridge import (
+    looks_like_capability_inventory_dialogue_request,
     looks_like_execution_report,
     looks_like_explanatory_dialogue_request,
     looks_like_multi_step_skill_request,
@@ -333,7 +334,22 @@ class CognitiveRoutingPhase(BasePhase):
                     normalized["role"] = role_for_origin(normalized.get("origin"))
                 last_msg = normalized
 
-        user_origins = ("user", "voice", "admin", "external", "gui", "api", "websocket", "direct", "test", "benchmark")
+        user_origins = (
+            "user",
+            "voice",
+            "admin",
+            "external",
+            "gui",
+            "api",
+            "websocket",
+            "direct",
+            "desktop_ui",
+            "desktop-ui",
+            "native_shell",
+            "native-shell",
+            "test",
+            "benchmark",
+        )
         active_objective = state.cognition.current_objective or objective
         active_origin = (
             (state.cognition.current_origin if active_objective else None)
@@ -503,6 +519,9 @@ class CognitiveRoutingPhase(BasePhase):
         is_learning_bundle = looks_like_learning_resource_bundle(
             input_text
         ) or looks_like_learning_resource_bundle(skill_input_text)
+        is_capability_inventory_dialogue = looks_like_capability_inventory_dialogue_request(
+            skill_input_text
+        )
         try:
             cap = self.container.get("capability_engine", default=None)
             if (
@@ -511,6 +530,7 @@ class CognitiveRoutingPhase(BasePhase):
                 and routing_origin in user_origins
                 and not is_deep_mind_probe
                 and not is_learning_bundle
+                and not is_capability_inventory_dialogue
             ):
                 matched_skills = list(cap.detect_intent(skill_input_text) or [])
                 if matched_skills:

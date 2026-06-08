@@ -459,6 +459,76 @@ def test_graceful_state_vault_stop_continues_when_bus_already_closed():
     tracker.reset()
 
 
+def test_graceful_state_vault_stop_prefers_fire_and_forget_send():
+    class _Bus:
+        def __init__(self):
+            self.calls = []
+
+        def has_actor(self, name):
+            return name == "state_vault"
+
+        async def send(self, actor, msg_type, payload):
+            self.calls.append(("send", actor, msg_type, payload))
+            return True
+
+        async def request(self, *_args, **_kwargs):
+            self.calls.append(("request",))
+            raise AssertionError("shutdown stop should not require a response")
+
+    class _Supervisor:
+        def is_actor_running(self, name):
+            assert name == "state_vault"
+            return False
+
+    bus = _Bus()
+    orch = SimpleNamespace(_actor_bus=bus, _supervisor_tree=_Supervisor())
+
+    stopped = asyncio.run(
+        _gracefully_stop_actor_via_bus(orch, "state_vault", stop_budget_s=0.05)
+    )
+
+    assert stopped is True
+    assert bus.calls == [
+        (
+            "send",
+            "state_vault",
+            "stop",
+            {"source": "orchestrator_shutdown", "reason": "graceful_shutdown"},
+        )
+    ]
+
+
+def test_graceful_state_vault_stop_falls_back_to_supervisor_when_send_degrades():
+    class _Bus:
+        def has_actor(self, name):
+            return name == "state_vault"
+
+        async def send(self, *_args, **_kwargs):
+            return False
+
+    class _Supervisor:
+        def __init__(self):
+            self.stop_calls = []
+
+        def stop_actor(self, name, **kwargs):
+            self.stop_calls.append((name, kwargs))
+
+    supervisor = _Supervisor()
+    orch = SimpleNamespace(_actor_bus=_Bus(), _supervisor_tree=supervisor)
+
+    stopped = asyncio.run(
+        _gracefully_stop_actor_via_bus(orch, "state_vault", stop_budget_s=0.25)
+    )
+
+    assert stopped is True
+    assert supervisor.stop_calls == [
+        (
+            "state_vault",
+            {"graceful_timeout": 0.25, "terminate_timeout": 3.0, "kill_timeout": 2.0},
+        )
+    ]
+
+
 def test_graceful_state_vault_stop_continues_when_actor_bus_is_degraded():
     from core.bus.actor_bus import BusDegraded
 
