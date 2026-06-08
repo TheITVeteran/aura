@@ -464,7 +464,11 @@ async def _recall_session_memory_pin() -> dict[str, str] | None:
     return await _recall_durable_session_memory_pin()
 
 
-async def _build_memory_state_fastpath_reply(user_message: str) -> tuple[str, str] | None:
+async def _build_memory_state_fastpath_reply(
+    user_message: str,
+    *,
+    owner_session_restored: bool = False,
+) -> tuple[str, str] | None:
     """Return deterministic memory/continuity replies from canonical runtime state."""
     session_pin = _extract_session_memory_pin_request(user_message)
     if session_pin:
@@ -484,6 +488,13 @@ async def _build_memory_state_fastpath_reply(user_message: str) -> tuple[str, st
                 "session_memory_recall",
             )
         return "I don't have a pinned phrase from this session yet.", "session_memory_miss"
+
+    owner_name_reply = _build_owner_name_recall_reply(
+        user_message,
+        owner_session_restored=owner_session_restored,
+    )
+    if owner_name_reply:
+        return owner_name_reply, "owner_identity_recall"
 
     conversation_recall = await _build_conversation_recall_reply(user_message)
     if conversation_recall:
@@ -6419,7 +6430,7 @@ async def api_chat_regenerate(
 ):
     """Regenerate the last Aura response by replaying the last user message.
     Every flagship AI product supports response regeneration."""
-    _restore_owner_session_from_request(request)
+    owner_session_restored = bool(_restore_owner_session_from_request(request))
     desktop_requires_cognitive_engine, request_surface = _request_requires_cognitive_engine(request)
     foreground_timeout = _foreground_timeout_for_lane(_collect_conversation_lane_status())
     try:
@@ -6781,7 +6792,7 @@ async def api_chat(
         record_degradation('chat', _conscience_exc)
         logger.debug("conscience pre-gate skipped: %s", _conscience_exc)
 
-    _restore_owner_session_from_request(request)
+    owner_session_restored = bool(_restore_owner_session_from_request(request))
     lane = _collect_conversation_lane_status()
     foreground_timeout = _foreground_timeout_for_lane(lane)
     request_started_at = time.monotonic()
@@ -7188,7 +7199,10 @@ async def api_chat(
             )
 
         if not is_benchmark:
-            memory_state_reply = await _build_memory_state_fastpath_reply(_semantic_user_message)
+            memory_state_reply = await _build_memory_state_fastpath_reply(
+                _semantic_user_message,
+                owner_session_restored=owner_session_restored,
+            )
             if memory_state_reply:
                 memory_reply, memory_status = memory_state_reply
                 return await _finalize_fastpath(

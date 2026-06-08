@@ -196,6 +196,62 @@ def test_owner_name_recall_does_not_disclose_without_owner_session(
 
 
 @pytest.mark.asyncio
+async def test_state_fastpath_serves_verified_owner_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(chat_routes, "_owner_session_is_verified", lambda **_kwargs: True)
+    monkeypatch.setattr(chat_routes, "_resolve_primary_operator_name", lambda: "Bryan")
+
+    result = await chat_routes._build_memory_state_fastpath_reply("Do you know my name?")
+
+    assert result is not None
+    reply, status = result
+    assert status == "owner_identity_recall"
+    assert "Bryan" in reply
+    assert "verified owner session" in reply
+
+
+@pytest.mark.asyncio
+async def test_state_fastpath_blocks_owner_identity_without_verified_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(chat_routes, "_owner_session_is_verified", lambda **_kwargs: False)
+    monkeypatch.setattr(chat_routes, "_resolve_primary_operator_name", lambda: "Bryan")
+
+    result = await chat_routes._build_memory_state_fastpath_reply("Do you know my name?")
+
+    assert result is not None
+    reply, status = result
+    assert status == "owner_identity_recall"
+    assert "owner-verified" in reply
+    assert "Bryan" not in reply
+
+
+@pytest.mark.asyncio
+async def test_state_fastpath_uses_restored_owner_session_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(chat_routes, "_owner_session_is_verified", lambda **kwargs: bool(kwargs.get("owner_session_restored")))
+    monkeypatch.setattr(chat_routes, "_resolve_primary_operator_name", lambda: "Bryan")
+
+    result = await chat_routes._build_memory_state_fastpath_reply(
+        "Do you know my name?",
+        owner_session_restored=True,
+    )
+
+    assert result is not None
+    reply, status = result
+    assert status == "owner_identity_recall"
+    assert "Bryan" in reply
+
+
+@pytest.mark.asyncio
 async def test_conversation_recall_reads_completed_chat_log() -> None:
     from interface.routes import chat as chat_routes
 
