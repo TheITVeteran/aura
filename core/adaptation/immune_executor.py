@@ -36,6 +36,22 @@ _ALLOWED_UNARYOPS = {
 class ImmuneHeuristicExecutor:
     """Symbolic, sandboxed instruction interpreter for immune cell behavioral rules."""
 
+    _SIMULATION_SOURCES = frozenset(
+        {
+            "causal_fitness_lab",
+            "offline_coevolution_lab",
+            "immune_simulation",
+            "test_simulation",
+        }
+    )
+    _MAINTENANCE_SOURCES = frozenset(
+        {
+            "adaptive_immune_system",
+            "adaptive_immunity",
+            "immune_maintenance",
+        }
+    )
+
     def evaluate_condition(self, condition: dict[str, Any], sensors_data: dict[str, float]) -> bool:
         """Evaluates a single condition against current sensor values safely."""
         sensor_id = condition.get("sensor")
@@ -139,7 +155,94 @@ class ImmuneHeuristicExecutor:
             return float(_ALLOWED_UNARYOPS[type(node.op)](self._eval_ast_node(node.operand)))
         raise ValueError(f"unsupported expression node: {type(node).__name__}")
 
-    def execute_rule(self, rule: dict[str, Any]) -> dict[str, Any]:
+    def _authorize_execution(self, context: dict[str, Any]) -> tuple[bool, str, str]:
+        """Authorize an immune behavioral rule before it reaches any actuator.
+
+        Behavioral rules are evolved background policies, not user requests.  They
+        must never run just because a live chat turn happened to surface anomaly
+        telemetry.  The only ungated path is an explicitly isolated simulation
+        context used by causal-fitness and coevolution labs.
+        """
+
+        source = str(context.get("source") or "").strip().lower()
+        simulation_only = bool(
+            context.get("isolated_simulation")
+            and context.get("world_model_isolated")
+            and source in self._SIMULATION_SOURCES
+        )
+        if simulation_only:
+            return True, "simulation_authorized", "isolated simulation context"
+
+        if source not in self._MAINTENANCE_SOURCES:
+            return (
+                False,
+                "governance_denied",
+                "immune behavioral rules require an isolated simulation or adaptive-maintenance context",
+            )
+
+        try:
+            from core.container import ServiceContainer
+            from core.runtime.background_policy import (
+                MAINTENANCE_BACKGROUND_POLICY,
+                background_activity_reason,
+            )
+
+            orchestrator = ServiceContainer.get("orchestrator", default=None)
+            defer_reason = str(
+                background_activity_reason(
+                    orchestrator,
+                    profile=MAINTENANCE_BACKGROUND_POLICY,
+                    allow_no_user_anchor=True,
+                )
+                or ""
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Immune behavioral rule background-policy probe failed: %s", exc)
+            return (
+                False,
+                "governance_denied",
+                "background policy unavailable for immune behavioral rule",
+            )
+
+        if defer_reason:
+            return (
+                False,
+                "deferred",
+                f"immune behavioral action deferred by maintenance policy: {defer_reason}",
+            )
+
+        try:
+            from core.executive.authority_gateway import get_authority_gateway
+
+            decision = get_authority_gateway().authorize_state_mutation_sync(
+                "adaptive_immune_system",
+                "adaptive_immune_behavioral_rule",
+                priority=float(context.get("priority", 0.68) or 0.68),
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Immune behavioral rule AuthorityGateway probe failed: %s", exc)
+            return (
+                False,
+                "governance_denied",
+                "AuthorityGateway unavailable for immune behavioral rule",
+            )
+
+        if not getattr(decision, "approved", False):
+            reason = str(getattr(decision, "reason", "") or "").strip()
+            return (
+                False,
+                "governance_denied",
+                f"immune behavioral action denied by AuthorityGateway: {reason}",
+            )
+
+        return True, "authorized", "adaptive maintenance authorized"
+
+    def execute_rule(
+        self,
+        rule: dict[str, Any],
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Parses and executes a behavioral rule graph.
 
         Example Rule Format:
@@ -159,6 +262,18 @@ class ImmuneHeuristicExecutor:
           ]
         }
         """
+        context = dict(context or {})
+        authorized, status, message = self._authorize_execution(context)
+        if not authorized:
+            return {
+                "conditions_met": False,
+                "actions_executed": [],
+                "success": False,
+                "status": status,
+                "deferred": status == "deferred",
+                "message": message,
+            }
+
         registry = get_sensor_registry()
         # Make sure we pull the latest values from the physics simulator
         registry.sync_from_world_model()
@@ -172,6 +287,7 @@ class ImmuneHeuristicExecutor:
                 "conditions_met": False,
                 "actions_executed": [],
                 "success": True,
+                "status": "no_actions",
                 "message": "No actions to execute.",
             }
 
@@ -187,6 +303,7 @@ class ImmuneHeuristicExecutor:
                 "conditions_met": False,
                 "actions_executed": [],
                 "success": True,
+                "status": "conditions_not_met",
                 "message": "Conditions not satisfied, skipped execution.",
             }
 
@@ -210,7 +327,16 @@ class ImmuneHeuristicExecutor:
                 "Executing immune action '%s' with params: %s", actuator_name, resolved_params
             )
 
-            res: ActuatorResult = actuator_registry.execute_action(actuator_name, resolved_params)
+            res: ActuatorResult = actuator_registry.execute_action(
+                actuator_name,
+                resolved_params,
+                context={
+                    "source": context.get("source") or "adaptive_immune_system",
+                    "priority": float(context.get("priority", 0.68) or 0.68),
+                    "is_critical": bool(context.get("is_critical", False)),
+                    "isolated_simulation": bool(context.get("isolated_simulation", False)),
+                },
+            )
 
             # Trigger dynamic synthesis if actuator is missing
             if not res.success and ("not found" in res.message or "not registered" in res.message):
@@ -289,6 +415,7 @@ class ImmuneHeuristicExecutor:
             "conditions_met": True,
             "actions_executed": executed_actions,
             "success": overall_success,
+            "status": "executed" if executed_actions else "no_actions_executed",
             "message": "; ".join(messages),
         }
 

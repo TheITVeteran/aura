@@ -455,6 +455,64 @@ def test_patch_artifact_failure_returns_execution_report(tmp_path, monkeypatch):
     )
 
 
+def test_behavioral_rule_artifact_defers_during_foreground_turn(tmp_path):
+    from core.runtime import foreground_guard
+
+    immune = AdaptiveImmuneSystem(state_dir=tmp_path, rng_seed=21)
+    antigen = _test_antigen(subsystem="runtime_engine")
+    behavioral_cell = ImmuneCell(
+        cell_id="behavioral",
+        lineage_id="behavioral_lineage",
+        kind=CellKind.B,
+        receptor=antigen.vector.copy(),
+        subsystem_scope="runtime_engine",
+        persistence=0.8,
+        behavioral_rule={
+            "conditions": [{"sensor": "port_east_load", "operator": ">", "value": 1.0}],
+            "actions": [
+                {
+                    "actuator": "reallocate_flow",
+                    "params": {
+                        "source_id": "Port_East",
+                        "target_id": "Port_West",
+                        "amount": 100.0,
+                    },
+                }
+            ],
+        },
+    )
+    immune._cells = [behavioral_cell]
+    artifact = EffectorArtifact(
+        artifact_id="eff_behavioral",
+        kind=EffectorKind.REDUCE_LOAD,
+        component="runtime_engine",
+        confidence=0.95,
+        source_cell_id="behavioral",
+        lineage_id="behavioral_lineage",
+        bounded_payload={},
+    )
+
+    foreground_guard._reset_for_tests()
+    lease = foreground_guard.begin_foreground_turn(owner="test", source="chat_api")
+    try:
+        report = run(
+            immune._maybe_execute_artifact(
+                artifact,
+                antigen,
+                coverage_report={"coverage_ratio": 0.9},
+            )
+        )
+    finally:
+        lease.close()
+        foreground_guard._reset_for_tests()
+
+    assert report["status"] == "deferred"
+    assert report["verified_success"] is False
+    assert artifact.executed is False
+    assert artifact.success is False
+    assert "foreground_chat_active" in artifact.notes
+
+
 def test_autopoiesis_failure_returns_execution_report(tmp_path, monkeypatch):
     recorded = []
     monkeypatch.setattr(

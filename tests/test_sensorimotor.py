@@ -63,3 +63,66 @@ def test_immune_executor_uses_safe_arithmetic_resolver():
 
     blocked = executor.resolve_params({"amount": "$port_east_load / 0"}, sensors)
     assert blocked["amount"] == "$port_east_load / 0"
+
+
+def test_immune_executor_requires_authorized_context_before_actuation():
+    from core.world.world_model import get_physics_world_model
+
+    model = get_physics_world_model()
+    east_before = model.get_entity("Port_East").load
+    west_before = model.get_entity("Port_West").load
+
+    executor = ImmuneHeuristicExecutor()
+    result = executor.execute_rule(
+        {
+            "conditions": [{"sensor": "port_east_load", "operator": ">", "value": 1.0}],
+            "actions": [
+                {
+                    "actuator": "reallocate_flow",
+                    "params": {
+                        "source_id": "Port_East",
+                        "target_id": "Port_West",
+                        "amount": 100.0,
+                    },
+                }
+            ],
+        }
+    )
+
+    assert result["success"] is False
+    assert result["status"] == "governance_denied"
+    assert result["actions_executed"] == []
+    assert model.get_entity("Port_East").load == east_before
+    assert model.get_entity("Port_West").load == west_before
+
+
+def test_immune_executor_defers_maintenance_rule_during_foreground_turn():
+    from core.runtime import foreground_guard
+
+    foreground_guard._reset_for_tests()
+    lease = foreground_guard.begin_foreground_turn(owner="test", source="chat_api")
+    try:
+        result = ImmuneHeuristicExecutor().execute_rule(
+            {
+                "conditions": [{"sensor": "port_east_load", "operator": ">", "value": 1.0}],
+                "actions": [
+                    {
+                        "actuator": "reallocate_flow",
+                        "params": {
+                            "source_id": "Port_East",
+                            "target_id": "Port_West",
+                            "amount": 100.0,
+                        },
+                    }
+                ],
+            },
+            context={"source": "adaptive_immune_system", "priority": 0.8},
+        )
+    finally:
+        lease.close()
+        foreground_guard._reset_for_tests()
+
+    assert result["success"] is False
+    assert result["status"] == "deferred"
+    assert result["deferred"] is True
+    assert "foreground_chat_active" in result["message"]

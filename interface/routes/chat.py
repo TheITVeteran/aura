@@ -7199,13 +7199,13 @@ async def api_chat(
                 return None
             return stabilized
 
-        if not is_benchmark and _is_capability_inventory_request(_semantic_user_message):
+        if allow_chat_fastpaths and _is_capability_inventory_request(_semantic_user_message):
             return await _finalize_fastpath(
                 _build_grounded_capability_inventory_reply(_semantic_user_message),
                 status="cognitive_engine_capability_inventory",
             )
 
-        if not is_benchmark:
+        if allow_chat_fastpaths:
             memory_state_reply = await _build_memory_state_fastpath_reply(
                 _semantic_user_message,
                 owner_session_restored=owner_session_restored,
@@ -7919,7 +7919,10 @@ async def api_chat(
             return JSONResponse(response_data)
 
         reply_text = await _stabilize_user_facing_reply(_semantic_user_message, reply_text)
-        if _capability_inventory_reply_is_inadequate(_semantic_user_message, reply_text):
+        if allow_chat_fastpaths and _capability_inventory_reply_is_inadequate(
+            _semantic_user_message,
+            reply_text,
+        ):
             logger.warning(
                 "🧭 Replacing inadequate capability inventory reply with grounded live catalog summary."
             )

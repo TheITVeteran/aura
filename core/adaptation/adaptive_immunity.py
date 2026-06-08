@@ -705,7 +705,15 @@ def _evaluate_causal_fitness(rule: dict[str, Any] | None) -> float:
             )
 
             executor = ImmuneHeuristicExecutor()
-            exec_res = executor.execute_rule(rule)
+            exec_res = executor.execute_rule(
+                rule,
+                context={
+                    "source": "causal_fitness_lab",
+                    "isolated_simulation": True,
+                    "world_model_isolated": True,
+                    "priority": 0.2,
+                },
+            )
 
             if exec_res.get("conditions_met") and exec_res.get("success"):
                 sim_model.simulate(10.0)
@@ -1767,11 +1775,30 @@ class AdaptiveImmuneSystem:
             from core.adaptation.immune_executor import get_immune_executor
 
             executor = get_immune_executor()
-            exec_res = executor.execute_rule(acting_cell.behavioral_rule)
+            exec_res = executor.execute_rule(
+                acting_cell.behavioral_rule,
+                context={
+                    "source": "adaptive_immune_system",
+                    "artifact_id": artifact.artifact_id,
+                    "artifact_kind": artifact.kind.value,
+                    "antigen_id": antigen.antigen_id,
+                    "subsystem": antigen.subsystem,
+                    "priority": min(0.95, 0.45 + 0.35 * antigen.danger),
+                },
+            )
 
-            artifact.executed = True
-            artifact.success = bool(exec_res.get("success", False))
+            status = str(exec_res.get("status") or "")
+            artifact.executed = bool(exec_res.get("actions_executed"))
+            artifact.success = bool(exec_res.get("success", False) and artifact.executed)
             artifact.notes = str(exec_res.get("message", ""))
+            if status == "governance_denied":
+                artifact.governance_denied = True
+            if status in {"deferred", "governance_denied"}:
+                return self._default_verification_report(
+                    status=status,
+                    coverage_ratio=coverage_ratio,
+                    notes=artifact.notes,
+                )
 
             if artifact.success:
                 self._tissue.mark_repair(artifact.component, 0.40)
