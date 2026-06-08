@@ -115,6 +115,39 @@ def _expected_recurrent_loops_from_model_path(model_path: str) -> int:
     return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_SMALL", 1)
 
 
+def _model_load_min_available_gb(model_path: str) -> float:
+    def _env_float(name: str, default: float) -> float:
+        try:
+            return float(os.environ.get(name, str(default)))
+        except (TypeError, ValueError):
+            return default
+
+    lowered = str(model_path or "").lower()
+    if any(token in lowered for token in ("72b", "solver")):
+        return _env_float("AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB", 28.0)
+    if any(token in lowered for token in ("32b", "cortex", "zenith")):
+        return _env_float("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", 16.0)
+    return _env_float("AURA_MLX_LOAD_MIN_AVAILABLE_GB", 8.0)
+
+
+def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
+    try:
+        snapshot = get_memory_pressure_snapshot()
+    except (OSError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("MLX worker-spawn memory probe unavailable: %s", exc)
+        return None
+
+    min_available_gb = _model_load_min_available_gb(model_path)
+    if snapshot.refuse_heavy_local_generation:
+        return snapshot.reason or "critical_memory_pressure"
+    if snapshot.available_gb < min_available_gb:
+        return (
+            f"model_load_headroom:{snapshot.available_gb:.1f}GB "
+            f"< required {min_available_gb:.1f}GB"
+        )
+    return None
+
+
 def _normalize_recurrent_depth_status(status: Any, *, model_path: str) -> dict[str, Any]:
     payload = dict(status) if isinstance(status, dict) else {}
     expected_loops = payload.get("expected_loops")
@@ -1676,6 +1709,16 @@ class MLXLocalClient:
 
     def _spawn_worker_blocking(self) -> mp.Process:
         """Isolated spawn logic for the MLX worker, run in a background thread."""
+        memory_block = _memory_pressure_blocks_worker_spawn(self.model_path)
+        if memory_block:
+            error = RuntimeError(f"memory_pressure_refused_worker_spawn:{memory_block}")
+            _record_mlx_degradation(
+                error,
+                action="refused MLX worker spawn before model load due to memory pressure",
+                severity="critical",
+            )
+            raise error
+
         runtime_ok, runtime_detail = _probe_mlx_runtime()
         if not runtime_ok:
             raise RuntimeError(f"mlx_runtime_probe_failed:{runtime_detail}")

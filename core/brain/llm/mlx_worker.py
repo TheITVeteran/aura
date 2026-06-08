@@ -967,6 +967,73 @@ class HeartbeatThread(threading.Thread):
             self.writer.put({"status": "heartbeat", "timestamp": time.time(), "type": "mlx_worker"})
             time.sleep(2.0)
 
+
+class WorkerMemorySentinel(threading.Thread):
+    """Terminate this MLX worker before unified memory exhaustion kills macOS."""
+
+    def __init__(self, writer: IPCWriterThread, model_path: str):
+        super().__init__(name="MLX-MemorySentinel", daemon=True)
+        self.writer = writer
+        self.model_path = str(model_path or "")
+        self._stop_event = threading.Event()
+        self._pid = os.getpid()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def _worker_rss_limit_gb(self, total_gb: float) -> float:
+        configured = os.environ.get("AURA_MLX_WORKER_RSS_LIMIT_GB")
+        if configured:
+            try:
+                return max(4.0, float(configured))
+            except (TypeError, ValueError):
+                pass
+        if any(token in self.model_path.lower() for token in ("72b", "solver")):
+            return min(56.0, max(40.0, total_gb * 0.84))
+        if any(token in self.model_path.lower() for token in ("32b", "cortex", "zenith")):
+            return min(52.0, max(34.0, total_gb * 0.78))
+        return min(24.0, max(10.0, total_gb * 0.45))
+
+    def _sample_rss_gb(self) -> float:
+        try:
+            import psutil
+
+            return float(psutil.Process(self._pid).memory_info().rss) / float(1024**3)
+        except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError):
+            return 0.0
+
+    def run(self):
+        while not self._stop_event.is_set():
+            try:
+                from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+                snapshot = get_memory_pressure_snapshot()
+                rss_gb = self._sample_rss_gb()
+                rss_limit_gb = self._worker_rss_limit_gb(float(snapshot.total_gb or 0.0))
+                reason = ""
+                if rss_gb >= rss_limit_gb:
+                    reason = f"worker_rss:{rss_gb:.1f}GB/{rss_limit_gb:.1f}GB"
+                elif snapshot.emergency:
+                    reason = snapshot.reason or "system_memory_emergency"
+                elif snapshot.available_gb < max(1.0, snapshot.min_available_gb / 2.0):
+                    reason = snapshot.reason or f"available_memory:{snapshot.available_gb:.1f}GB"
+
+                if reason:
+                    message = f"MLX worker memory fuse tripped for {os.path.basename(self.model_path)}: {reason}"
+                    logger.critical("🛑 [MLX_MEMORY] %s", message)
+                    self.writer.put(
+                        {
+                            "status": "error",
+                            "action": "memory_fuse",
+                            "message": message,
+                            "memory_pressure": snapshot.to_dict(),
+                        }
+                    )
+                    os._exit(137)
+            except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("MLX worker memory sentinel probe unavailable: %s", exc)
+            time.sleep(0.5)
+
 # Set environment variables for MLX stability
 def _setup_worker_env():
     import os
@@ -1324,6 +1391,9 @@ def _mlx_worker_loop(
 
     heartbeat = HeartbeatThread(ipc_writer)
     heartbeat.start()
+
+    memory_sentinel = WorkerMemorySentinel(ipc_writer, model_path)
+    memory_sentinel.start()
 
     watchdog = JobWatchdog(timeout=360.0)  # Align with the protected foreground solver envelope.
     watchdog.start()
