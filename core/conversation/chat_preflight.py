@@ -51,6 +51,11 @@ PENDING_QUEUE_PATH = Path.home() / ".aura/live-source/aura/knowledge/pending-cha
 
 FILE_READ_BUDGET = 16 * 1024  # 16 KB total across all referenced files
 MAX_FILES_PER_TURN = 3
+MAX_RESUME_PREFIX_CHARS = 12 * 1024
+MAX_RESUME_ANSWER_CHARS = 4 * 1024
+MAX_PROFILE_CONTEXT_CHARS = 8 * 1024
+MAX_OPERATIONAL_SELF_CONTEXT_CHARS = 4 * 1024
+MAX_COMPOSED_PREFLIGHT_CHARS = 48 * 1024
 SUPPORTED_EXTS = {
     ".md",
     ".markdown",
@@ -123,6 +128,20 @@ def _safe_text(value: Any, default: str = "", *, max_chars: int = 1000) -> str:
     if len(text) > max_chars:
         return text[:max_chars]
     return text
+
+
+def _safe_truncated_text(
+    value: Any,
+    *,
+    max_chars: int,
+    suffix: str = "\n[... truncated by live-chat context budget ...]",
+) -> str:
+    text = _safe_text(value, max_chars=max(max_chars + len(suffix) + 1, max_chars))
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= len(suffix):
+        return text[:max_chars]
+    return text[: max_chars - len(suffix)] + suffix
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -517,8 +536,42 @@ def format_resume_prefix(delivered: list[PendingChat]) -> str:
         snippet_q = d.user_message[:120].rstrip()
         if len(d.user_message) > 120:
             snippet_q += "…"
-        parts.append(f'[Coming back to your earlier message — "{snippet_q}":\n{d.answer_text}\n]\n')
-    return "\n".join(parts) + "\n"
+        answer = _safe_truncated_text(d.answer_text, max_chars=MAX_RESUME_ANSWER_CHARS)
+        parts.append(f'[Coming back to your earlier message — "{snippet_q}":\n{answer}\n]\n')
+    return _safe_truncated_text(
+        "\n".join(parts) + "\n",
+        max_chars=MAX_RESUME_PREFIX_CHARS,
+    )
+
+
+def clamp_composed_chat_context(
+    composed_message: str,
+    original_user_message: str,
+    *,
+    max_chars: int = MAX_COMPOSED_PREFLIGHT_CHARS,
+) -> str:
+    """Bound live prompt augmentation while preserving the user's real request."""
+    text = _safe_text(
+        composed_message,
+        max_chars=max(MAX_QUEUE_LINE_CHARS, max_chars + MAX_USER_MESSAGE_CHARS),
+    )
+    if len(text) <= max_chars:
+        return text
+
+    original = _safe_truncated_text(
+        original_user_message,
+        max_chars=min(MAX_USER_MESSAGE_CHARS, max(512, max_chars // 3)),
+        suffix="\n[... original user message truncated by live-chat context budget ...]",
+    )
+    marker = (
+        "\n\n[Live chat preflight context truncated to protect foreground memory and latency. "
+        "The original user request is preserved below.]\n"
+    )
+    tail = f"{marker}{original}"
+    head_budget = max(0, max_chars - len(tail))
+    if head_budget <= 0:
+        return tail[-max_chars:]
+    return text[:head_budget] + tail
 
 
 # ── Directive injection (anti-confabulation, substrate-grounded introspection) ─
@@ -764,7 +817,8 @@ async def inject_profile_context() -> str:
         context = await manager.get_context_injection()
         
         if context:
-            return f"[Learned Context From Prior Conversations]\n{context}\n[End context]\n\n"
+            bounded = _safe_truncated_text(context, max_chars=MAX_PROFILE_CONTEXT_CHARS)
+            return f"[Learned Context From Prior Conversations]\n{bounded}\n[End context]\n\n"
         return ""
     except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
         _emit_chat_fault(
@@ -810,7 +864,10 @@ async def inject_operational_self_context() -> str:
         
         lines.append("[End operational self context]")
         
-        return "\n".join(lines) + "\n\n"
+        return _safe_truncated_text(
+            "\n".join(lines) + "\n\n",
+            max_chars=MAX_OPERATIONAL_SELF_CONTEXT_CHARS,
+        )
     
     except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
         _emit_chat_fault(

@@ -26,6 +26,7 @@ from core.conversation.chat_preflight import (  # noqa: E402
     PendingChat,
     answer_pending,
     build_file_context_block,
+    clamp_composed_chat_context,
     compose_chat_directive_prefix,
     consume_for_session,
     enqueue,
@@ -172,6 +173,34 @@ class TestPendingQueue(unittest.TestCase):
         self.assertIn("Coming back to your earlier message", prefix)
         self.assertIn("status of the deploy", prefix)
         self.assertIn("all four shards green", prefix)
+
+    def test_format_resume_prefix_bounds_large_late_answers(self):
+        delivered = [
+            PendingChat(
+                session_id="s4",
+                user_message="What happened during the long repair?",
+                queued_at=time.time(),
+                answered=True,
+                answer_text="x" * 80_000,
+                answered_at=time.time(),
+            )
+        ]
+
+        prefix = format_resume_prefix(delivered)
+
+        self.assertLessEqual(len(prefix), cp.MAX_RESUME_PREFIX_CHARS)
+        self.assertIn("Coming back to your earlier message", prefix)
+        self.assertIn("truncated by live-chat context budget", prefix)
+
+    def test_clamp_composed_chat_context_preserves_original_request(self):
+        original = "Open Notes, create a folder, export a PDF, then summarize the result."
+        composed = "[Profile]\n" + ("profile-data\n" * 10_000) + original
+
+        clamped = clamp_composed_chat_context(composed, original, max_chars=4096)
+
+        self.assertLessEqual(len(clamped), 4096)
+        self.assertIn("preflight context truncated", clamped)
+        self.assertIn(original, clamped)
 
     def test_empty_delivered_returns_empty_string(self):
         self.assertEqual(format_resume_prefix([]), "")

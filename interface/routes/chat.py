@@ -6722,6 +6722,7 @@ async def api_chat(
     try:
         from core.conversation.chat_preflight import (
             build_file_context_block,
+            clamp_composed_chat_context,
             compose_chat_directive_prefix,
             consume_for_session,
             extract_file_references,
@@ -6808,6 +6809,11 @@ async def api_chat(
             except _CHAT_RECOVERABLE_ERRORS as _self_context_exc:
                 record_degradation('chat', _self_context_exc)
                 logger.debug("Chat operational self preflight skipped: %s", _self_context_exc)
+
+            body.message = clamp_composed_chat_context(
+                body.message,
+                _original_user_message,
+            )
     except _CHAT_RECOVERABLE_ERRORS as _preflight_outer:
         record_degradation('chat', _preflight_outer)
         logger.debug("Chat preflight (outer) skipped: %s", _preflight_outer)
