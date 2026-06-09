@@ -138,8 +138,14 @@ def test_identity_contract_reports_welfare(monkeypatch):
 
 def test_block_reason_survives_snapshot_failure(monkeypatch):
     class ExplodingModel:
+        def __init__(self):
+            self.attempts = 0
+
         def snapshot(self, **_kwargs):
+            self.attempts += 1
             raise RuntimeError("telemetry offline")
 
-    monkeypatch.setattr(welfare_mod, "get_welfare_model", lambda: ExplodingModel())
+    model = ExplodingModel()
+    monkeypatch.setattr(welfare_mod, "get_welfare_model", lambda: model)
     assert welfare_block_reason() == ""
+    assert model.attempts == 1

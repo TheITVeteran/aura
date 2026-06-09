@@ -2471,7 +2471,10 @@ def test_memory_governor_only_counts_descendant_runtime_workers(monkeypatch):
         SimpleNamespace(children=lambda recursive=True: children),
     )
 
-    def _forbidden_global_scan(*_args, **_kwargs):
+    forbidden_calls: list[tuple] = []
+
+    def _forbidden_global_scan(*args, **kwargs):
+        forbidden_calls.append((args, kwargs))
         raise AssertionError(
             "memory governor must not scan the global process table on the loop"
         )
@@ -2484,6 +2487,7 @@ def test_memory_governor_only_counts_descendant_runtime_workers(monkeypatch):
     managed = list(governor._iter_managed_runtime_processes())
 
     assert [proc.info["pid"] for proc in managed] == [111]
+    assert forbidden_calls == []
 
 
 def test_memory_governor_degradation_audit_is_clean():

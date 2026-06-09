@@ -203,14 +203,19 @@ class TestLethalPath(unittest.TestCase):
 
 class TestRuntimeSurface(unittest.TestCase):
     def test_tick_survives_sampler_failure(self):
+        import time
+
         h = _Harness()
+        attempts: list[float] = []
 
         def _boom() -> MemorySample:
+            attempts.append(time.monotonic())
             raise RuntimeError("psutil unavailable")
 
         h.dog._sampler = _boom
         with self.assertRaises(RuntimeError):
             h.dog._tick()
+        self.assertEqual(len(attempts), 1)
         # The run loop catches this class of error; verify it is in the
         # recoverable set the loop guards against.
         from core.resilience.memory_watchdog import _WATCHDOG_RECOVERABLE_ERRORS
