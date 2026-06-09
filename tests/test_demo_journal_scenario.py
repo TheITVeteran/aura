@@ -204,3 +204,27 @@ def test_journal_demo_steps_carry_governed_context():
         assert context["user_requested_action"] is True
         assert context["route"] == "desktop_task.computer_use"
         assert context["objective"]
+
+
+def test_user_requests_mentioning_proof_are_not_hijacked_by_harness_lane():
+    """Live-boot-proof finding: a folder named 'Aura Live Proof' tripped
+    the canned proof lane, which derived its own steps and reported
+    success while the user's actual request was never executed."""
+    from interface.routes.chat import _is_live_runtime_proof_request
+
+    hijack_victims = [
+        "Please create a folder named 'Aura Live Proof' in my Documents "
+        "folder and write a file inside it.",
+        "I think that would be a hell of a proof.",
+        "Save the live proof notes I dictated into a folder.",
+    ]
+    for message in hijack_victims:
+        assert _is_live_runtime_proof_request(message) is False, message
+
+    harness_invocations = [
+        "Run a live runtime proof of the desktop lane.",
+        "live proof: desktop",
+        "Show me a live proof that you can use the computer.",
+    ]
+    for message in harness_invocations:
+        assert _is_live_runtime_proof_request(message) is True, message

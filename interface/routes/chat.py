@@ -5871,9 +5871,25 @@ def _build_grounded_introspection_reply(
 
 # ── Live Runtime Proof Fast Paths ──────────────────────────────
 
+_LIVE_PROOF_IMPERATIVE_RE = re.compile(
+    r"(?:^\s*live (?:runtime )?proof\b)|"
+    r"(?:\b(?:run|execute|perform|start|do|show me|give me)\b[^.?!]{0,48}"
+    r"\blive (?:runtime )?proof\b)",
+    re.IGNORECASE,
+)
+
+
 def _is_live_runtime_proof_request(user_message: str) -> bool:
+    """Match only explicit harness imperatives, never content mentions.
+
+    A user request whose *content* merely contains the words 'live proof'
+    (a folder called 'Aura Live Proof', 'that would be a hell of a proof')
+    must never be hijacked into the canned proof lane: that lane derives
+    its own steps and once reported success while the user's actual ask
+    was never executed — a false 'done' observed in the live boot proof.
+    """
     text = _normalize_user_message(user_message)
-    return "live runtime proof" in text or "live proof" in text
+    return bool(_LIVE_PROOF_IMPERATIVE_RE.search(text))
 
 
 def _classify_live_runtime_proof(user_message: str) -> str | None:
