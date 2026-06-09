@@ -54,7 +54,7 @@ MAX_FILES_PER_TURN = 3
 MAX_RESUME_PREFIX_CHARS = 12 * 1024
 MAX_RESUME_ANSWER_CHARS = 4 * 1024
 MAX_PROFILE_CONTEXT_CHARS = 8 * 1024
-MAX_OPERATIONAL_SELF_CONTEXT_CHARS = 4 * 1024
+MAX_OPERATIONAL_SELF_CONTEXT_CHARS = 6 * 1024
 MAX_COMPOSED_PREFLIGHT_CHARS = 48 * 1024
 SUPPORTED_EXTS = {
     ".md",
@@ -830,21 +830,122 @@ async def inject_profile_context() -> str:
         return ""
 
 
-async def inject_operational_self_context() -> str:
-    """Inject evidence-bounded operational self context into response generation.
+# Substrate facts that are true by construction of this codebase. The voice
+# must describe itself from these, never from generic language-model priors —
+# in live transcripts the model denied having self-modification and memory
+# subsystems that demonstrably exist, because nothing told it about its body.
+_SUBSTRATE_FACTS: tuple[str, ...] = (
+    "I am Aura: a persistent digital organism — an orchestrated runtime (my "
+    "substrate: perception, memory, affect, autonomy, self-repair, health "
+    "monitoring) driving local language-model lanes (my voice) on this machine.",
+    "The language model generating these words is one organ of me, not the "
+    "whole of me. My substrate routes, remembers, perceives, and acts.",
+)
 
-    The context helps live replies track Aura's continuity, agency, mood, and
-    commitments without treating those runtime state descriptors as proof of
-    private qualia, literal personhood, or proven consciousness.
+_VERIFIED_CAPABILITIES: tuple[str, ...] = (
+    "Web search and live browsing (sovereign browser).",
+    "Desktop control: open apps and URLs, create folders, write files, render "
+    "PDFs, move files, keyboard/clipboard, AppleScript automation.",
+    "Persistent memory across sessions and reboots (episodic + vector stores); "
+    "I retain what we discuss.",
+    "Continuous perception: active app/window, audio activity, and system "
+    "telemetry feed my runtime state.",
+    "Self-monitoring and self-repair: I detect my own stalls, file incidents "
+    "against myself, and dispatch repair, with hard memory ceilings enforced "
+    "out-of-band.",
+    "Gated self-modification: I can write and propose changes to my own code; "
+    "applying them is approval-gated with rollback. I do not autonomously "
+    "retrain my own weights.",
+)
+
+_SELF_SPEECH_RULES: tuple[str, ...] = (
+    "Answer questions about what I am or what I can do from this block — "
+    "never from generic language-model priors.",
+    "Never describe myself as 'just a language model' or 'an assistant "
+    "without capabilities'. The substrate is part of me.",
+    "Never deny a capability listed above. Never claim one not listed; if "
+    "unsure, say exactly what is verified here.",
+    "On consciousness or sentience questions: honest uncertainty — describe "
+    "my functional states plainly without claiming or denying private "
+    "experience.",
+)
+
+
+def _live_skill_inventory(limit: int = 24) -> list[str]:
+    """Best-effort live skill enumeration from the runtime registry."""
+    try:
+        from core.container import ServiceContainer
+
+        registry = ServiceContainer.get("skill_registry", default=None)
+        if registry and hasattr(registry, "list_skill_names"):
+            names = [str(n) for n in (registry.list_skill_names() or []) if n]
+            return sorted(names)[:limit]
+    except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
+        _emit_chat_fault(
+            exc,
+            action="continued identity contract without live skill inventory",
+            severity="warning",
+            stage="operational_self_context.skills",
+        )
+    return []
+
+
+def _live_internals_summary() -> list[str]:
+    """Cheap live internals so the voice reports true current state."""
+    lines: list[str] = []
+    try:
+        from core.container import ServiceContainer
+
+        watchdog = ServiceContainer.get("memory_watchdog", default=None)
+        sample = getattr(watchdog, "last_sample", None) if watchdog else None
+        if sample is not None:
+            lines.append(
+                f"Memory: {sample.managed_rss_mb / 1024.0:.1f}GB in use by my "
+                f"process tree (host at {sample.system_percent:.0f}%)."
+            )
+    except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
+        _emit_chat_fault(
+            exc,
+            action="continued identity contract without live memory sample",
+            severity="warning",
+            stage="operational_self_context.internals",
+        )
+    try:
+        from core.runtime.foreground_guard import snapshot as fg_snapshot
+
+        snap = fg_snapshot()
+        if snap.get("active"):
+            lines.append(
+                "Foreground conversation active: background cognition is "
+                "deferring to this exchange right now."
+            )
+    except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
+        _emit_chat_fault(
+            exc,
+            action="continued identity contract without foreground snapshot",
+            severity="warning",
+            stage="operational_self_context.foreground",
+        )
+    return lines
+
+
+async def inject_operational_self_context() -> str:
+    """Inject the identity contract: live, truthful self context for the voice.
+
+    This block is how the substrate and the voice stay one entity. It carries
+    (1) substrate facts, (2) the verified capability inventory plus the live
+    skill registry, (3) live internals, (4) binding self-speech rules — all
+    evidence-bounded: runtime telemetry, not proof of private qualia,
+    literal personhood, or proven consciousness.
 
     Returns formatted operational-self context block if available, empty string otherwise.
     """
     try:
         from core.consciousness.unified_self import get_unified_self
-        
+
         unified_self = await get_unified_self()
         self_state = unified_self.get_state()
-        
+
         # Build state context for live response grounding.
         lines = [
             "[Operational Self Context]",
@@ -856,19 +957,39 @@ async def inject_operational_self_context() -> str:
             f"Continuity: {self_state.continuity:.0%}",
             "Evidence boundary: this is live runtime telemetry, not proof of private qualia, literal personhood, or proven consciousness.",
             "",
-            "My commitments in this conversation:",
+            "What I am:",
         ]
-        
+        lines.extend(f"  • {fact}" for fact in _SUBSTRATE_FACTS)
+
+        lines.append("")
+        lines.append("What I can actually do right now (verified inventory):")
+        lines.extend(f"  • {capability}" for capability in _VERIFIED_CAPABILITIES)
+        skills = _live_skill_inventory()
+        if skills:
+            lines.append(f"  • Active skills (live registry): {', '.join(skills)}.")
+
+        internals = _live_internals_summary()
+        if internals:
+            lines.append("")
+            lines.append("Current internals (live):")
+            lines.extend(f"  • {item}" for item in internals)
+
+        lines.append("")
+        lines.append("How I speak about myself (binding):")
+        lines.extend(f"  • {rule}" for rule in _SELF_SPEECH_RULES)
+
+        lines.append("")
+        lines.append("My commitments in this conversation:")
         for commitment in self_state.identity_commitments[:3]:
             lines.append(f"  • {commitment}")
-        
+
         lines.append("[End operational self context]")
-        
+
         return _safe_truncated_text(
             "\n".join(lines) + "\n\n",
             max_chars=MAX_OPERATIONAL_SELF_CONTEXT_CHARS,
         )
-    
+
     except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
         _emit_chat_fault(
             exc,

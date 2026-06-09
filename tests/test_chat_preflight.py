@@ -386,3 +386,73 @@ class TestNeurochemicalHomeostasis(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestIdentityContract(unittest.TestCase):
+    """The operational self context is how the voice knows the body.
+
+    Live transcripts showed the chat model denying capabilities the
+    substrate demonstrably has (self-modification, persistent memory)
+    because nothing told the voice about its body. These tests pin the
+    identity contract so that regression is impossible without failing CI.
+    """
+
+    def _render(self) -> str:
+        import asyncio
+
+        from core.conversation.chat_preflight import inject_operational_self_context
+
+        return asyncio.run(inject_operational_self_context())
+
+    def test_contract_carries_substrate_facts(self):
+        block = self._render()
+        self.assertIn("[Operational Self Context]", block)
+        self.assertIn("digital organism", block)
+        self.assertIn("one organ of me, not the whole of me", block)
+
+    def test_contract_carries_verified_capability_inventory(self):
+        block = self._render()
+        for needle in (
+            "Web search",
+            "Desktop control",
+            "Persistent memory across sessions",
+            "self-repair",
+            "Gated self-modification",
+        ):
+            self.assertIn(needle, block)
+
+    def test_contract_binds_self_speech_rules(self):
+        block = self._render()
+        self.assertIn("How I speak about myself (binding):", block)
+        self.assertIn("never from generic language-model priors", block)
+        self.assertIn("'just a language model'", block)
+        self.assertIn("Never deny a capability listed above", block)
+
+    def test_contract_keeps_evidence_boundary(self):
+        block = self._render()
+        self.assertIn(
+            "not proof of private qualia, literal personhood, or proven consciousness",
+            block,
+        )
+
+    def test_contract_respects_budget(self):
+        block = self._render()
+        self.assertLessEqual(len(block), cp.MAX_OPERATIONAL_SELF_CONTEXT_CHARS)
+
+    def test_contract_includes_live_skill_registry_when_available(self):
+        import asyncio
+
+        from core.container import ServiceContainer
+        from core.conversation.chat_preflight import inject_operational_self_context
+
+        class Registry:
+            def list_skill_names(self):
+                return ["web_search", "sovereign_browser", "desktop_task"]
+
+        ServiceContainer.register_instance("skill_registry", Registry(), required=False)
+        try:
+            block = asyncio.run(inject_operational_self_context())
+            self.assertIn("Active skills (live registry):", block)
+            self.assertIn("sovereign_browser", block)
+        finally:
+            ServiceContainer.clear()
