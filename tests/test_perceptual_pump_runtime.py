@@ -134,3 +134,85 @@ def test_perceptual_pump_updates_world_state_with_grounded_frame() -> None:
         assert "Voice detected: Open a few articles" in descriptions
     finally:
         ServiceContainer.clear()
+
+
+def test_screen_probe_timeout_does_not_propagate_and_sets_backoff(monkeypatch) -> None:
+    import subprocess
+
+    import core.perception.perceptual_pump as pump_mod
+
+    monkeypatch.setattr(pump_mod, "_LAST_SCREEN_PROBE_TIMEOUT_AT", 0.0)
+
+    class HangingGateway:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, argv, **kwargs):
+            self.calls += 1
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=2.0)
+
+    gateway = HangingGateway()
+    monkeypatch.setattr(
+        "core.runtime.subprocess_gateway.get_subprocess_gateway",
+        lambda: gateway,
+    )
+
+    # A hung osascript must yield an empty state, not an exception — a
+    # TimeoutExpired here killed the entire pump task in live runtime.
+    state = _collect_screen_state("")
+    assert state.active_app == ""
+    assert gateway.calls == 1
+
+    # Backoff: the next collection skips the subprocess entirely.
+    state = _collect_screen_state("")
+    assert gateway.calls == 1
+    assert pump_mod._LAST_SCREEN_PROBE_TIMEOUT_AT > 0.0
+
+
+def test_pump_runtime_errors_cover_subprocess_failures() -> None:
+    import subprocess
+
+    from core.perception.perceptual_pump import _PUMP_RUNTIME_ERRORS
+
+    assert issubclass(subprocess.TimeoutExpired, _PUMP_RUNTIME_ERRORS)
+
+
+def test_throttle_stretches_subprocess_sensor_cadence(monkeypatch) -> None:
+    import asyncio
+
+    pump = PerceptualPump()
+    screen_calls = []
+
+    async def _run() -> None:
+        monkeypatch.setattr(pump, "_cognitive_load_throttle_active", lambda: True)
+        monkeypatch.setattr(
+            "core.perception.perceptual_pump._collect_screen_state",
+            lambda prev: screen_calls.append(prev) or ScreenState(),
+        )
+        # SCREEN_EVERY_N ticks would normally trigger a screen probe;
+        # under throttle it must not.
+        for _ in range(pump.SCREEN_EVERY_N):
+            await pump._tick()
+        assert screen_calls == []
+
+        # At the throttled cadence the probe still happens — perception
+        # slows down under load, it never stops.
+        for _ in range(pump.SCREEN_EVERY_N * (pump.THROTTLED_MULTIPLIER - 1)):
+            await pump._tick()
+        assert len(screen_calls) == 1
+
+    asyncio.run(_run())
+
+
+def test_throttle_reads_foreground_inference_lane(monkeypatch) -> None:
+    pump = PerceptualPump()
+
+    class Gate:
+        def get_conversation_status(self):
+            return {"foreground_owned": True, "active_generations": 1}
+
+    ServiceContainer.register_instance("inference_gate", Gate(), required=False)
+    try:
+        assert pump._cognitive_load_throttle_active() is True
+    finally:
+        ServiceContainer.clear()

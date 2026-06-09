@@ -25,6 +25,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import subprocess
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -47,7 +48,17 @@ _PUMP_RUNTIME_ERRORS = (
     TypeError,
     ValueError,
     asyncio.TimeoutError,
+    # A hung osascript raises TimeoutExpired (a SubprocessError, not an
+    # OSError) — it escaped every catch list and killed the whole pump
+    # task during the 110GB incident. No sensor failure may end perception.
+    subprocess.SubprocessError,
 )
+
+# After an AppleScript probe times out, skip subprocess-based screen
+# probes for this long. A hung System Events under host load otherwise
+# costs 2s of a worker thread every 500ms, forever.
+_SCREEN_PROBE_BACKOFF_S = 10.0
+_LAST_SCREEN_PROBE_TIMEOUT_AT: float = 0.0
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -147,28 +158,39 @@ def _collect_screen_state(prev_hash: str) -> ScreenState:
     state.timestamp = now
 
     # 1. Get active app and window title via AppleScript (fast, no imports)
+    global _LAST_SCREEN_PROBE_TIMEOUT_AT
+    probe_allowed = (now - _LAST_SCREEN_PROBE_TIMEOUT_AT) >= _SCREEN_PROBE_BACKOFF_S
     try:
-        from core.runtime.subprocess_gateway import get_subprocess_gateway
-        gw = get_subprocess_gateway()
+        if probe_allowed:
+            from core.runtime.subprocess_gateway import get_subprocess_gateway
+            gw = get_subprocess_gateway()
 
-        # Active app name
-        result = gw.run(
-            ["osascript", "-e",
-             'tell application "System Events" to get name of first application process whose frontmost is true'],
-            capture_output=True, timeout=2.0, read_only=True, source="perceptual_pump.screen.app",
-        )
-        if result.returncode == 0 and result.stdout:
-            state.active_app = result.stdout.strip()
-
-        # Window title
-        if state.active_app:
+            # Active app name
             result = gw.run(
                 ["osascript", "-e",
-                 f'tell application "System Events" to get name of front window of process "{state.active_app}"'],
-                capture_output=True, timeout=2.0, read_only=True, source="perceptual_pump.screen.title",
+                 'tell application "System Events" to get name of first application process whose frontmost is true'],
+                capture_output=True, timeout=2.0, read_only=True, source="perceptual_pump.screen.app",
             )
             if result.returncode == 0 and result.stdout:
-                state.window_title = result.stdout.strip()[:200]
+                state.active_app = result.stdout.strip()
+
+            # Window title
+            if state.active_app:
+                result = gw.run(
+                    ["osascript", "-e",
+                     f'tell application "System Events" to get name of front window of process "{state.active_app}"'],
+                    capture_output=True, timeout=2.0, read_only=True, source="perceptual_pump.screen.title",
+                )
+                if result.returncode == 0 and result.stdout:
+                    state.window_title = result.stdout.strip()[:200]
+    except subprocess.SubprocessError as e:
+        _LAST_SCREEN_PROBE_TIMEOUT_AT = time.time()
+        record_degradation("perceptual_pump.screen", e)
+        logger.debug(
+            "Screen probe timed out; backing off AppleScript for %.0fs: %s",
+            _SCREEN_PROBE_BACKOFF_S,
+            e,
+        )
     except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
         record_degradation("perceptual_pump.screen", e)
         logger.debug("Screen state AppleScript probe failed: %s", e)
@@ -490,7 +512,9 @@ class PerceptualPump:
                 tick_start = time.time()
                 try:
                     await self._tick()
-                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                except asyncio.CancelledError:
+                    raise
+                except _PUMP_RUNTIME_ERRORS as e:
                     self._errors += 1
                     record_degradation("perceptual_pump", e)
                     if self._errors % 50 == 1:
@@ -508,14 +532,39 @@ class PerceptualPump:
             logger.error("PerceptualPump loop crashed: %s", e)
             self.running = False
 
+    def _cognitive_load_throttle_active(self) -> bool:
+        """Perception yields to cognition.
+
+        While foreground inference owns the machine or memory is tight,
+        the subprocess-spawning sensors (AppleScript probes) slow down to
+        a crawl instead of competing for a starved host. Attention
+        narrows under load; it does not flail.
+        """
+        try:
+            gate = ServiceContainer.get("inference_gate", default=None)
+            if gate and hasattr(gate, "get_conversation_status"):
+                lane = gate.get_conversation_status() or {}
+                if lane.get("foreground_owned") or int(lane.get("active_generations", 0) or 0) > 0:
+                    return True
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            pass
+        return float(getattr(self._system, "memory_percent", 0.0) or 0.0) >= 85.0
+
+    # While throttled, screen/user sensors run 10x slower (every 5s).
+    THROTTLED_MULTIPLIER = 10
+
     async def _tick(self) -> None:
         """One pump tick: collect sensors, build frame, inject into substrate."""
         self._frame_count += 1
         n = self._frame_count
 
+        throttled = self._cognitive_load_throttle_active()
+        screen_every = self.SCREEN_EVERY_N * (self.THROTTLED_MULTIPLIER if throttled else 1)
+        user_every = self.USER_EVERY_N * (self.THROTTLED_MULTIPLIER if throttled else 1)
+
         # Collect from each modality at its configured rate
         # These run in a thread to avoid blocking the event loop
-        if n % self.SCREEN_EVERY_N == 0:
+        if n % screen_every == 0:
             self._screen = await asyncio.to_thread(
                 _collect_screen_state, self._last_screen_hash
             )
@@ -527,7 +576,7 @@ class PerceptualPump:
         if n % self.SYSTEM_EVERY_N == 0:
             self._system = await asyncio.to_thread(_collect_system_state)
 
-        if n % self.USER_EVERY_N == 0:
+        if n % user_every == 0:
             self._user = await asyncio.to_thread(_collect_user_state)
 
         # Build the frame
