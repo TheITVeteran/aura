@@ -7020,12 +7020,47 @@ async def api_chat(
         allow_chat_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
         allow_governed_action_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
 
+        _desktop_exec_state = {"attempted": False}
+
         async def _finalize_fastpath(reply_text: str, status: str = "ok"):
             nonlocal pending_exchange_id
             final_text = str(reply_text or "…").strip() or "…"
             response_confidence = "high"
             proof_status = str(status or "")
             is_live_proof_status = proof_status.startswith("live_proof")
+
+            # ── Desktop-objective chokepoint ────────────────────────────
+            # Every reply lane converges here. If the user asked for real
+            # desktop/file action and no executor ran on the lane that
+            # produced this reply, run the governed executor NOW and ship
+            # its receipts instead of narration. Round-3 live proof showed
+            # per-lane wiring misses lanes; the chokepoint cannot.
+            if (
+                not is_benchmark
+                and not _desktop_exec_state["attempted"]
+                and not is_live_proof_status
+                and not proof_status.startswith(("desktop_objective", "file_operation"))
+                and _looks_like_desktop_objective(_semantic_user_message)
+            ):
+                _desktop_exec_state["attempted"] = True
+                try:
+                    _executed = await _execute_desktop_objective_from_chat(
+                        _semantic_user_message,
+                        cognitive_reply=final_text,
+                    )
+                except _CHAT_RECOVERABLE_ERRORS as _exec_exc:
+                    record_degradation('chat', _exec_exc)
+                    _executed = None
+                if isinstance(_executed, dict) and _executed.get("response"):
+                    final_text = (
+                        _apply_aura_voice_shaping(str(_executed.get("response") or "")).strip()
+                        or final_text
+                    )
+                    proof_status = str(_executed.get("status") or "desktop_objective")
+                    status = proof_status
+                    # Receipt summaries are evidence, not prose: skip the
+                    # conversational staleness/topicality reshaping below.
+                    is_live_proof_status = True
 
             if is_benchmark:
                 blocked_reply = (
