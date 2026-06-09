@@ -379,6 +379,22 @@ def background_activity_reason(
         logger.warning("Background policy failure-state probe failed: %s", _exc)
         return "failure_state_unavailable"
 
+    try:
+        from core.organism.welfare import welfare_block_reason
+
+        welfare_reason = welfare_block_reason()
+        if welfare_reason:
+            # The organism's vital interests (memory integrity, repair
+            # capacity) gate optional work: welfare is causal machinery
+            # here, not narrative.
+            return welfare_reason
+    except (ImportError, AttributeError, RuntimeError) as _exc:
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="continued background gating without welfare model",
+        )
+
     if require_conversation_ready:
         try:
             from core.container import ServiceContainer

@@ -926,6 +926,17 @@ def _live_internals_summary() -> list[str]:
             severity="warning",
             stage="operational_self_context.foreground",
         )
+    try:
+        from core.organism.welfare import get_welfare_model
+
+        lines.append(get_welfare_model().snapshot().summary_line())
+    except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
+        _emit_chat_fault(
+            exc,
+            action="continued identity contract without welfare summary",
+            severity="warning",
+            stage="operational_self_context.welfare",
+        )
     return lines
 
 
