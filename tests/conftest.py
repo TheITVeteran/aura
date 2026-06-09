@@ -278,6 +278,41 @@ def _reset_shutdown_request_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def _contain_governance_strictness_between_tests():
+    """Order-independence for governance enforcement.
+
+    governance_runtime_active() flips strict once kernel-marker services
+    exist or container registration locks. Tests that register those and
+    don't clean up made every later gateway write in the same process
+    fail with GovernanceViolationError (observed across whole chunks).
+    This guard restores only the governance-flipping state — marker
+    services added during the test and the registration lock — leaving
+    all other registrations untouched.
+    """
+    from core.container import ServiceContainer
+
+    markers = ("executive_core", "aura_kernel", "kernel_interface")
+    before = {name: ServiceContainer.has(name) for name in markers}
+    locked_before = bool(getattr(ServiceContainer, "_registration_locked", False))
+    yield
+    try:
+        services = getattr(ServiceContainer, "_services", None)
+        aliases = getattr(ServiceContainer, "_aliases", {})
+        if services is not None:
+            for name in markers:
+                if not before[name] and ServiceContainer.has(name):
+                    resolved = aliases.get(name, name)
+                    services.pop(resolved, None)
+                    services.pop(name, None)
+        if not locked_before and getattr(
+            ServiceContainer, "_registration_locked", False
+        ):
+            ServiceContainer._registration_locked = False
+    except (AttributeError, RuntimeError, TypeError):
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _reset_foreground_guard_between_tests():
     """Order-independence: chat-route tests leave the module-global
     foreground quiet window armed, which made unrelated suites (e.g.

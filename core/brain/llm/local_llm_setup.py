@@ -125,7 +125,6 @@ class OllamaManager(LocalLLMServer):
             res = get_subprocess_gateway().run(
                 ["ollama", "list"],
                 capture_output=True,
-                text=True,
                 timeout=_LIST_TIMEOUT_S,
                 source="maintenance_tooling:local_llm_setup",
                 offline_tooling=True,

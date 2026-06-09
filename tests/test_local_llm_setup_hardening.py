@@ -8,51 +8,49 @@ from core.brain.llm import local_llm_setup
 from core.brain.llm.local_llm_setup import OllamaManager
 
 
+class _GatewayDouble:
+    """Mirrors SubprocessGateway.run's contract (returncode/stdout/stderr)."""
+
+    def __init__(self, listing="other-model"):
+        self.calls = []
+        self._listing = listing
+
+    def run(self, argv, **kwargs):
+        self.calls.append((list(argv), kwargs))
+        if list(argv) == ["ollama", "list"]:
+            return SimpleNamespace(returncode=0, stdout=self._listing, stderr="")
+        return SimpleNamespace(returncode=0, stdout="ollama version 1.0", stderr="")
+
+
 def test_ensure_installed_uses_bounded_version_check(monkeypatch):
-    calls = []
+    gateway = _GatewayDouble()
     monkeypatch.setattr(local_llm_setup.shutil, "which", lambda _name: "/usr/local/bin/ollama")
-
-    def _run(cmd, **kwargs):
-        calls.append((cmd, kwargs))
-        return SimpleNamespace(stdout="ollama version 1.0")
-
-    monkeypatch.setattr(local_llm_setup.subprocess, "run", _run)
+    monkeypatch.setattr(local_llm_setup, "get_subprocess_gateway", lambda: gateway)
 
     assert OllamaManager().ensure_installed() is True
-    assert calls == [
-        (
-            ["ollama", "--version"],
-            {"check": True, "capture_output": True, "timeout": local_llm_setup._VERSION_TIMEOUT_S},
-        )
-    ]
+    argv, kwargs = gateway.calls[0]
+    assert argv == ["ollama", "--version"]
+    assert kwargs["timeout"] == local_llm_setup._VERSION_TIMEOUT_S
+    assert kwargs["capture_output"] is True
+    assert kwargs["offline_tooling"] is True
+    assert kwargs["source"] == "maintenance_tooling:local_llm_setup"
 
 
 def test_ensure_model_uses_bounded_list_and_pull(monkeypatch):
-    calls = []
-
-    def _run(cmd, **kwargs):
-        calls.append((cmd, kwargs))
-        if cmd == ["ollama", "list"]:
-            return SimpleNamespace(stdout="other-model")
-        return SimpleNamespace(stdout="")
-
-    monkeypatch.setattr(local_llm_setup.subprocess, "run", _run)
+    gateway = _GatewayDouble(listing="other-model")
+    monkeypatch.setattr(local_llm_setup, "get_subprocess_gateway", lambda: gateway)
 
     manager = OllamaManager(model_name="aura-test")
     assert manager.ensure_model() is True
-    assert calls[0] == (
-        ["ollama", "list"],
-        {
-            "check": True,
-            "capture_output": True,
-            "text": True,
-            "timeout": local_llm_setup._LIST_TIMEOUT_S,
-        },
-    )
-    assert calls[1] == (
-        ["ollama", "pull", "aura-test"],
-        {"check": True, "timeout": local_llm_setup._PULL_TIMEOUT_S},
-    )
+
+    list_argv, list_kwargs = gateway.calls[0]
+    assert list_argv == ["ollama", "list"]
+    assert list_kwargs["timeout"] == local_llm_setup._LIST_TIMEOUT_S
+    assert "text" not in list_kwargs, "gateway sets text=True itself; passing it crashes"
+
+    pull_argv, pull_kwargs = gateway.calls[1]
+    assert pull_argv == ["ollama", "pull", "aura-test"]
+    assert pull_kwargs["timeout"] == local_llm_setup._PULL_TIMEOUT_S
 
 
 @pytest.mark.asyncio
