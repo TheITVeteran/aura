@@ -155,3 +155,6 @@ tests/life_trial/*.sqlite3
 
 # Test-generated vector store
 test_vdb/
+
+# Generated release artifacts (manifest lives in the release bundle, not the repo)
+artifacts/release/

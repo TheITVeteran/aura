@@ -117,6 +117,10 @@ test:
 	@$(PYTHON) tools/run_test_chunks.py --chunks $(TEST_CHUNKS) --marker "not live"
 	@echo "✅ Tests passed"
 
+release-manifest:
+	@echo "📋 Building release manifest..."
+	@$(PYTHON) tools/build_release_manifest.py
+
 # Single-process run (accumulates memory across ~7400 tests; the OS has
 # OOM-killed it at ~83% — kept only for debugging chunk-boundary issues).
 test-onepass:
