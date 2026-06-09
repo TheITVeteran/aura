@@ -58,7 +58,11 @@ lint:
 
 source-hygiene:
 	@echo "🧼 Checking source snapshot hygiene..."
-	@tracked="$$(git ls-files | grep -E '(^|/)__pycache__/|\.py[cod]$$|\$$py\.class$$|(^|/)\.(pytest|mypy|ruff)_cache/' || true)"; \
+	@git rev-parse --git-dir >/dev/null 2>&1 || { \
+		echo "❌ source-hygiene requires a git checkout: cannot inspect tracked files without .git"; \
+		exit 1; \
+	}
+	@tracked="$$(git ls-files | grep -E '(^|/)__pycache__/|\.py[cod]$$|\$$py\.class$$|(^|/)\.(pytest|mypy|ruff)_cache/|\.sqlite3?$$|(^|/)test_vdb/' || true)"; \
 	if [ -n "$$tracked" ]; then \
 		echo "Generated cache artifacts are tracked:"; \
 		echo "$$tracked"; \
@@ -241,14 +245,24 @@ setup-prod:
 
 doctor:
 	@echo "🩺 Running clean-room doctor checks..."
-	@echo "  Checking Python version..."
-	@$(PYTHON) --version
+	@echo "  Checking Python version (3.12 required)..."
+	@$(PYTHON) -c "import sys; v=sys.version_info; assert (v.major, v.minor) == (3, 12), f'Python 3.12 required, found {v.major}.{v.minor} — see .python-version'; print(f'  ✅ Python {v.major}.{v.minor}.{v.micro}')"
+	@echo "  Checking git state..."
+	@git rev-parse --git-dir >/dev/null 2>&1 || { echo "  ❌ Not a git checkout: source integrity cannot be verified"; exit 1; }
+	@echo "  ✅ Git checkout present (commit $$(git rev-parse --short HEAD))"
+	@echo "  Checking production dependencies..."
+	@$(PYTHON) -c "import fastapi, pydantic, httpx, psutil, structlog, aiosqlite, yaml; print('  ✅ Production dependencies present')"
 	@echo "  Checking critical imports..."
 	@$(PYTHON) -c "import aura_main; print('  ✅ aura_main imports OK')"
 	@$(PYTHON) -c "from core.runtime.mode import get_mode, mode_context; print(f'  ✅ Runtime mode: {get_mode().value}')"
 	@$(PYTHON) -c "from core.container import ServiceContainer; print('  ✅ ServiceContainer imports OK')"
 	@$(PYTHON) -c "from core.will import UnifiedWill; print('  ✅ UnifiedWill imports OK')"
-	@$(PYTHON) -c "from core.governance.will_gate import WillGate; print('  ✅ WillGate imports OK')"
+	@$(PYTHON) -c "from core.governance.will_gate import will_gated, WillRefused, audit_will_coverage; print('  ✅ Will gate imports OK')"
+	@$(PYTHON) -c "from core.resilience.memory_watchdog import MemoryWatchdog; print('  ✅ MemoryWatchdog imports OK')"
+	@$(PYTHON) -c "from core.organism.welfare import get_welfare_model; print('  ✅ Welfare model imports OK')"
+	@$(PYTHON) -c "from core.conversation.self_claim_verifier import verify_self_claims; print('  ✅ Self-claim verifier imports OK')"
+	@echo "  Checking local data paths..."
+	@$(PYTHON) -c "from pathlib import Path; missing=[p for p in ('data', 'logs') if not Path(p).is_dir()]; assert not missing, f'missing local data dirs: {missing} (run from the repo root after setup)'; print('  ✅ Local data paths present')"
 	@echo "  Checking compilation..."
 	@$(PYTHON) -m compileall -q core aura_main.py
 	@echo "  Checking test collection..."

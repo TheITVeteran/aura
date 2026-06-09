@@ -152,3 +152,6 @@ aura/knowledge/pending-chat-queue.jsonl
 
 # Life trial sqlite files
 tests/life_trial/*.sqlite3
+
+# Test-generated vector store
+test_vdb/

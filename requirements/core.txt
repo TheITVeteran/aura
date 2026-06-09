@@ -32,6 +32,7 @@ ollama>=0.3
 
 # System & utilities
 psutil>=5.9
+structlog>=24.1
 backoff>=2.2
 colorlog>=6.0
 prometheus-client>=0.21
