@@ -102,4 +102,10 @@ markers = [
     "hardware: marks tests that require local hardware, OS, or device access",
     "external: marks tests that call external services or APIs",
     "property: marks invariant/property tests",
+    "unit: marks fast dependency-free unit tests",
+    "desktop: marks tests requiring GUI/desktop stack (pywebview, screen access)",
+    "model: marks tests requiring local model weights or inference runtimes",
+    "network: marks tests requiring network access",
+    "macos: marks tests requiring macOS-specific facilities (AppleScript, Metal)",
+    "longrun: marks soak/longevity tests measured in hours",
 ]
