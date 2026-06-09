@@ -5,10 +5,13 @@ This module is the single source of truth for:
   - local artifact paths for both MLX and GGUF runtimes
   - the active local backend selection
 """
+import copy
 import json
 import os
 import re
 import shutil
+import threading
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -525,9 +528,54 @@ def get_active_model() -> str:
     return ACTIVE_MODEL
 
 
-def audit_lane_assignments() -> dict[str, Any]:
-    """Detect role drift so callers can surface it in health before runtime churn begins."""
+_LANE_AUDIT_CACHE_LOCK = threading.Lock()
+_LANE_AUDIT_CACHE: dict[str, Any] = {"key": None, "at": 0.0, "result": None}
 
+
+def _lane_audit_cache_ttl_s() -> float:
+    try:
+        return max(0.0, float(os.getenv("AURA_LANE_AUDIT_CACHE_TTL_S", "30") or 30))
+    except (TypeError, ValueError):
+        return 30.0
+
+
+def audit_lane_assignments(*, force_refresh: bool = False) -> dict[str, Any]:
+    """Detect role drift so callers can surface it in health before runtime churn begins.
+
+    The audit result is cached for a short TTL keyed by the lane→model
+    assignment. Health probes call this on every is_ready()/UI bootstrap,
+    and the uncached path does directory globs plus realpath per lane —
+    blocking disk work that takes seconds exactly when the host is
+    swapping (observed in stall dumps during the 110GB incident).
+    """
+    cache_key = "|".join(
+        f"{endpoint}={get_lane_model_name(endpoint)}"
+        for endpoint in (
+            PRIMARY_ENDPOINT,
+            DEEP_ENDPOINT,
+            BRAINSTEM_ENDPOINT,
+            FALLBACK_ENDPOINT,
+        )
+    )
+    ttl = _lane_audit_cache_ttl_s()
+    now = time.monotonic()
+    if not force_refresh and ttl > 0:
+        with _LANE_AUDIT_CACHE_LOCK:
+            cached = _LANE_AUDIT_CACHE
+            if (
+                cached["result"] is not None
+                and cached["key"] == cache_key
+                and (now - float(cached["at"])) < ttl
+            ):
+                return copy.deepcopy(cached["result"])
+
+    result = _audit_lane_assignments_uncached()
+    with _LANE_AUDIT_CACHE_LOCK:
+        _LANE_AUDIT_CACHE.update(key=cache_key, at=now, result=copy.deepcopy(result))
+    return result
+
+
+def _audit_lane_assignments_uncached() -> dict[str, Any]:
     def _artifact_key(value: str) -> str:
         text = str(value or "").strip()
         if not text:

@@ -51,3 +51,74 @@ def test_get_model_path_preserves_missing_absolute_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(model_registry, "LOCAL_BACKEND", "mlx")
 
     assert model_registry.get_model_path(str(missing)) == str(missing)
+
+
+def _reset_lane_audit_cache():
+    model_registry._LANE_AUDIT_CACHE.update(key=None, at=0.0, result=None)
+
+
+def test_audit_lane_assignments_caches_filesystem_work(monkeypatch):
+    _reset_lane_audit_cache()
+    calls = {"n": 0}
+    real_realpath = model_registry.os.path.realpath
+
+    def _counting_realpath(path):
+        calls["n"] += 1
+        return real_realpath(path)
+
+    monkeypatch.setattr(model_registry.os.path, "realpath", _counting_realpath)
+    try:
+        first = model_registry.audit_lane_assignments(force_refresh=True)
+        after_first = calls["n"]
+        second = model_registry.audit_lane_assignments()
+
+        assert second == first
+        assert calls["n"] == after_first, "cached call must not hit the filesystem"
+    finally:
+        _reset_lane_audit_cache()
+
+
+def test_audit_lane_assignments_cache_returns_copies(monkeypatch):
+    _reset_lane_audit_cache()
+    try:
+        first = model_registry.audit_lane_assignments(force_refresh=True)
+        first["lanes"].clear()
+        second = model_registry.audit_lane_assignments()
+        assert second["lanes"], "callers mutating a result must not poison the cache"
+    finally:
+        _reset_lane_audit_cache()
+
+
+def test_audit_lane_assignments_invalidates_on_assignment_change(monkeypatch):
+    _reset_lane_audit_cache()
+    try:
+        model_registry.audit_lane_assignments(force_refresh=True)
+        monkeypatch.setattr(model_registry, "ACTIVE_MODEL", "totally-new-model")
+        refreshed = model_registry.audit_lane_assignments()
+        assert (
+            refreshed["lanes"][model_registry.PRIMARY_ENDPOINT]["model"]
+            == "totally-new-model"
+        )
+    finally:
+        _reset_lane_audit_cache()
+
+
+def test_audit_lane_assignments_ttl_zero_disables_cache(monkeypatch):
+    _reset_lane_audit_cache()
+    monkeypatch.setenv("AURA_LANE_AUDIT_CACHE_TTL_S", "0")
+    calls = {"n": 0}
+    real_uncached = model_registry._audit_lane_assignments_uncached
+
+    def _counting_uncached():
+        calls["n"] += 1
+        return real_uncached()
+
+    monkeypatch.setattr(
+        model_registry, "_audit_lane_assignments_uncached", _counting_uncached
+    )
+    try:
+        model_registry.audit_lane_assignments()
+        model_registry.audit_lane_assignments()
+        assert calls["n"] == 2
+    finally:
+        _reset_lane_audit_cache()
