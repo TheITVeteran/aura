@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from core.brain.grounding_guard import GroundingGuard
@@ -351,7 +353,7 @@ def test_curriculum_generates_next_task_from_bottleneck_and_mastery():
 async def test_kernel_wires_budget_replay_abstraction_curriculum_and_external_proof():
     screens = [
         "#####\n#@.>#\n#####",
-        "#####\n#.@>#\n#####",
+        "#####\n#.@>#\n#####\ntask_completed",
     ]
     compiler = CommandCompiler("terminal_grid:generic")
     register_generic_handlers(compiler)
@@ -374,6 +376,34 @@ async def test_kernel_wires_budget_replay_abstraction_curriculum_and_external_pr
     assert evidence.passed is True
     assert evidence.proof_level == "simulated"
     assert evidence.trace_rows >= 1
+    assert evidence.success_runs == 1
+
+
+def test_external_task_proof_rejects_closed_run_without_success():
+    adapter = SimpleNamespace(
+        environment_id="terminal_grid:generic",
+        is_alive=lambda: True,
+    )
+    kernel = SimpleNamespace(
+        adapter=adapter,
+        environment_id="terminal_grid:generic",
+        blackbox=SimpleNamespace(rows=[{"action": "observe"}]),
+        run_manager=SimpleNamespace(
+            mode="simulated_canary",
+            records=[
+                SimpleNamespace(
+                    ended_at=1.0,
+                    terminal_reason="closed",
+                    contaminated=False,
+                )
+            ],
+        ),
+    )
+
+    evidence = ExternalTaskProofGate().evaluate_kernel(kernel)
+
+    assert evidence.passed is False
+    assert "missing_successful_run_record" in evidence.reasons
 
 
 @pytest.mark.asyncio

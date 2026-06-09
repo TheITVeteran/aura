@@ -78,6 +78,8 @@ class ExternalTaskProofGate:
             reasons.append("missing_blackbox_trace_rows")
         if not closed:
             reasons.append("missing_closed_run_record")
+        if not success:
+            reasons.append("missing_successful_run_record")
         if contaminated:
             reasons.append("contaminated_run")
         if adapter is not None and callable(getattr(adapter, "is_alive", None)):
@@ -138,6 +140,8 @@ class ExternalTaskProofGate:
             reasons.append("unrecognized_or_unlabeled_mode")
         if trace_rows <= 0:
             reasons.append("missing_blackbox_trace_rows")
+        reasons.append("missing_closed_run_record")
+        reasons.append("missing_successful_run_record")
 
         return ExternalTaskEvidence(
             adapter_id=adapter_id,
