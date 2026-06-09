@@ -123,33 +123,29 @@ class MemoryGovernor:
         )
 
     def _iter_managed_runtime_processes(self):
-        """Yield heavyweight local-runtime processes owned by Aura."""
+        """Yield heavyweight local-runtime processes owned by Aura.
+
+        Iterates the child tree directly instead of scanning the global
+        process table — the full-table scan ran on the event loop and was
+        a measurable lag source under memory pressure.
+        """
         try:
             children = self._proc.children(recursive=True)
-            descendant_pids = {
-                int(getattr(proc, "pid", 0) or 0)
-                for proc in children
-                if getattr(proc, "pid", None) is not None
-            }
-        except (RuntimeError, AttributeError, TypeError) as exc:
+        except _RSS_SAMPLE_ERRORS as exc:
             self._record_degradation(
                 exc,
                 severity="warning",
                 action="skipped managed-runtime RSS scan after child process inspection failed",
             )
             logger.debug("Memory Governor: could not inspect child process tree: %s", exc)
-            descendant_pids = set()
-
-        if not descendant_pids:
             return
 
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'memory_info']):
+        for proc in children:
             try:
-                if int(proc.info.get('pid') or 0) not in descendant_pids:
-                    continue
-                cmdline = proc.info.get('cmdline') or []
-                cmd_str = " ".join(cmdline)
+                info = proc.as_dict(attrs=['pid', 'name', 'cmdline', 'memory_info'])
+                cmd_str = " ".join(info.get('cmdline') or [])
                 if "llama-server" in cmd_str or "mlx_worker.py" in cmd_str or "MTLCompilerService" in cmd_str:
+                    proc.info = info  # match the process_iter contract callers rely on
                     yield proc
             except _PROCESS_INSPECTION_ERRORS:
                 continue
@@ -233,10 +229,8 @@ class MemoryGovernor:
                     )
                 await asyncio.sleep(10)
 
-    async def _enforce_policy(self):
-        """Check RSS memory and system-wide RAM to trigger cleanup actions."""
-        now = time.monotonic()
-        # 1. Check Process Memory
+    def _sample_rss_sync(self) -> tuple[float, float]:
+        """Sample core and managed-runtime RSS. Runs off-loop via to_thread."""
         try:
             rss_mb = self._proc.memory_info().rss / (1024 * 1024)
         except _RSS_SAMPLE_ERRORS as exc:
@@ -246,7 +240,15 @@ class MemoryGovernor:
                 action="continued memory policy with zero core RSS after process sample failed",
             )
             rss_mb = 0.0
-        runtime_rss_mb = self._managed_runtime_rss_mb()
+        return rss_mb, self._managed_runtime_rss_mb()
+
+    async def _enforce_policy(self):
+        """Check RSS memory and system-wide RAM to trigger cleanup actions."""
+        now = time.monotonic()
+        # 1. Check Process Memory (sampled off-loop: child-tree RSS walks
+        # hit the disk/kernel hard during swap pressure and must never
+        # block the event loop).
+        rss_mb, runtime_rss_mb = await asyncio.to_thread(self._sample_rss_sync)
         managed_rss_mb = rss_mb + runtime_rss_mb
         logger.debug(
             "Managed RSS: core=%.2f MB runtime=%.2f MB total=%.2f MB",
@@ -270,9 +272,19 @@ class MemoryGovernor:
             "sampled_at": time.time(),
         }
 
-        if sys_percent > 98.0:
-            logger.critical("🚨 HIGH RAM: System at %.1f%%. Checking for idle local-runtime workers.", sys_percent)
-            
+        if sys_percent > 98.0 or managed_rss_mb > self.threshold_critical:
+            # The managed-RSS condition must live at this level: the old
+            # structure only reached the critical cleanup when system-wide
+            # RAM crossed 98%, which macOS memory compression can prevent
+            # even while this process tree balloons toward host freeze.
+            logger.critical(
+                "🚨 CRITICAL MEMORY: system %.1f%%, managed RSS %.0fMB "
+                "(threshold %.0fMB). Checking for idle local-runtime workers.",
+                sys_percent,
+                managed_rss_mb,
+                float(self.threshold_critical),
+            )
+
             # v8.0.1: Neural Purge of idle workers
             idle_purged = 0
             for proc in self._iter_managed_runtime_processes():
@@ -296,18 +308,20 @@ class MemoryGovernor:
                         action="continued neural purge after idle runtime worker disappeared or was denied",
                     )
                     continue
-            
+
             if idle_purged > 0:
                 logger.info("✅ NEURAL PURGE: Reclaimed RAM from %d idle workers.", idle_purged)
-            
-            # If still critical or core RSS is huge, trigger full cleanup
-            if sys_percent > 95.0 or managed_rss_mb > self.threshold_critical:
-                if (now - self._last_critical_action_time) >= self.critical_cooldown_s:
-                    logger.critical("🚨 EMERGENCY: RAM remains critical (%.1f%%). Triggering FULL cleanup.", sys_percent)
-                    await self._critical_cleanup()
-                    self._last_critical_action_time = now
-                else:
-                    logger.debug("Memory Governor: critical cleanup cooldown active.")
+
+            if (now - self._last_critical_action_time) >= self.critical_cooldown_s:
+                logger.critical(
+                    "🚨 EMERGENCY: memory remains critical (system %.1f%%, managed %.0fMB). Triggering FULL cleanup.",
+                    sys_percent,
+                    managed_rss_mb,
+                )
+                await self._critical_cleanup()
+                self._last_critical_action_time = now
+            else:
+                logger.debug("Memory Governor: critical cleanup cooldown active.")
         elif sys_percent >= 88.0 or managed_rss_mb > self.threshold_unload:
             should_unload = (
                 sys_percent >= 88.0

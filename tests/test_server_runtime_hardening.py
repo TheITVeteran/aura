@@ -2448,30 +2448,37 @@ def test_memory_governor_only_counts_descendant_runtime_workers(monkeypatch):
 
     governor = MemoryGovernor(SimpleNamespace())
 
-    managed_child = SimpleNamespace(pid=111)
-    monkeypatch.setattr(
-        governor,
-        "_proc",
-        SimpleNamespace(children=lambda recursive=True: [managed_child]),
-    )
-
-    class _Proc:
+    class _Child:
         def __init__(self, pid, cmdline):
-            self.info = {
-                "pid": pid,
-                "cmdline": cmdline,
+            self.pid = pid
+            self._cmdline = cmdline
+
+        def as_dict(self, attrs=None):
+            return {
+                "pid": self.pid,
+                "name": "python",
+                "cmdline": self._cmdline,
                 "memory_info": SimpleNamespace(rss=128 * 1024 * 1024),
             }
 
+    children = [
+        _Child(111, ["llama-server", "--model", "demo.gguf"]),
+        _Child(333, ["python", "worker.py"]),
+    ]
+    monkeypatch.setattr(
+        governor,
+        "_proc",
+        SimpleNamespace(children=lambda recursive=True: children),
+    )
+
+    def _forbidden_global_scan(*_args, **_kwargs):
+        raise AssertionError(
+            "memory governor must not scan the global process table on the loop"
+        )
+
     monkeypatch.setattr(
         "core.resilience.memory_governor.psutil.process_iter",
-        lambda *_args, **_kwargs: iter(
-            [
-                _Proc(111, ["llama-server", "--model", "demo.gguf"]),
-                _Proc(222, ["llama-server", "--model", "someone-elses.gguf"]),
-                _Proc(333, ["python", "worker.py"]),
-            ]
-        ),
+        _forbidden_global_scan,
     )
 
     managed = list(governor._iter_managed_runtime_processes())

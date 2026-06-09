@@ -707,6 +707,46 @@ class OrchestratorBootMixin(
                         logger.error("❌ Memory Governor failed: %s", e)
                     ServiceContainer.register_instance("memory_governor", gov)
 
+                # Out-of-band memory watchdog: a daemon thread that keeps
+                # enforcing RSS/swap ceilings even when the event loop is
+                # wedged (the in-loop governor goes blind exactly when a
+                # swap spiral stalls the loop).
+                try:
+                    from core.resilience.memory_watchdog import start_memory_watchdog
+
+                    self.memory_watchdog = start_memory_watchdog(
+                        loop=asyncio.get_running_loop(),
+                        governor=gov,
+                    )
+                    ServiceContainer.register_instance(
+                        "memory_watchdog", self.memory_watchdog
+                    )
+                    try:
+                        from core.runtime.shutdown_coordinator import (
+                            get_shutdown_coordinator,
+                        )
+
+                        get_shutdown_coordinator().register(
+                            self.memory_watchdog.stop,
+                            phase="task_supervisor",
+                            name="memory_watchdog.stop",
+                            timeout=5.0,
+                        )
+                    except (ImportError, RuntimeError, ValueError, TypeError) as e:
+                        _record_boot_degradation(
+                            e,
+                            action="continued boot without memory watchdog shutdown hook",
+                            severity="warning",
+                        )
+                    logger.info("🛡️ Memory Watchdog started (out-of-band).")
+                except (ImportError, RuntimeError, AttributeError, TypeError) as e:
+                    _record_boot_degradation(
+                        e,
+                        action="continued boot without out-of-band memory watchdog",
+                        severity="degraded",
+                    )
+                    logger.error("❌ Memory Watchdog failed: %s", e)
+
                 # Start Prometheus Metrics (Phase 3)
                 try:
                     self.metrics_exporter = MetricsExporter(port=9090)
