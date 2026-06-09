@@ -277,6 +277,20 @@ def _reset_shutdown_request_between_tests():
         pass
 
 
+@pytest.fixture(autouse=True)
+def _reset_foreground_guard_between_tests():
+    """Order-independence: chat-route tests leave the module-global
+    foreground quiet window armed, which made unrelated suites (e.g.
+    flagship doctor idle-context assertions) fail when run together."""
+    yield
+    try:
+        from core.runtime.foreground_guard import _reset_for_tests
+
+        _reset_for_tests()
+    except (ImportError, RuntimeError, AttributeError):
+        pass
+
+
 def pytest_sessionfinish(session, exitstatus):
     """Final cleanup for singleton executors that can keep pytest alive.
 
