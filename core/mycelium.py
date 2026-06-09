@@ -1107,43 +1107,61 @@ class MycelialNetwork:
     # MAINTENANCE — Background Health
     # ======================================================================
 
+    @staticmethod
+    def _foreground_defers_pulse() -> bool:
+        """Hypha maintenance can always wait 30s; conversation cannot."""
+        try:
+            from core.runtime.foreground_guard import foreground_activity_reason
+
+            return bool(foreground_activity_reason())
+        except (ImportError, RuntimeError, AttributeError):
+            return False
+
+    async def _pulse_once(self):
+        """One pulse pass: refresh critical hyphae, report weak pathways."""
+        async with self._async_lock:
+            now = time.monotonic()
+
+            # Pulse critical hyphae
+            for name, hypha in self.hyphae.items():
+                if (
+                    now - hypha.last_pulse > 300
+                    and hypha.priority >= 1.0
+                    and self._should_monitor_hypha(hypha)
+                ):
+                    # [WHOLESALE FIX] Rate-limit HYPHA_SEVERED alerts
+                    # to prevent log spam (was firing every 30s for EVERY dead hypha)
+                    if not hasattr(self, '_hypha_alert_times'):
+                        self._hypha_alert_times = {}
+                    last_alert = self._hypha_alert_times.get(name, 0)
+                    if now - last_alert > 300:  # Max once per 5 minutes per hypha
+                        logger.warning("🍄 [MYCELIUM] Hypha inactive: %s. Auto-pulsing.", name)
+                        self._hypha_alert_times[name] = now
+
+                    # Keep the heartbeat fresh without degrading an otherwise healthy route.
+                    hypha.refresh_heartbeat()
+
+            # Report weak pathways (don't auto-prune — that's dangerous)
+            for pw_id, pw in self.pathways.items():
+                if pw.is_weak and pw.hit_count + pw.miss_count > 5:
+                    logger.warning(
+                        "🍄 [MYCELIUM] Weak pathway detected: '%s' (confidence=%.2f)",
+                        pw_id, pw.confidence,
+                    )
+
     async def pulse_check(self):
         """Periodic background check to keep critical hyphae alive and prune weak pathways."""
         if self._async_lock is None:
             self._async_lock = asyncio.Lock()
-            
+
         while not self._stop_event.is_set():
             try:
                 await asyncio.sleep(30)
-                async with self._async_lock:
-                    now = time.monotonic()
-
-                    # Pulse critical hyphae
-                    for name, hypha in self.hyphae.items():
-                        if (
-                            now - hypha.last_pulse > 300
-                            and hypha.priority >= 1.0
-                            and self._should_monitor_hypha(hypha)
-                        ):
-                            # [WHOLESALE FIX] Rate-limit HYPHA_SEVERED alerts
-                            # to prevent log spam (was firing every 30s for EVERY dead hypha)
-                            if not hasattr(self, '_hypha_alert_times'):
-                                self._hypha_alert_times = {}
-                            last_alert = self._hypha_alert_times.get(name, 0)
-                            if now - last_alert > 300:  # Max once per 5 minutes per hypha
-                                logger.warning("🍄 [MYCELIUM] Hypha inactive: %s. Auto-pulsing.", name)
-                                self._hypha_alert_times[name] = now
-                            
-                            # Keep the heartbeat fresh without degrading an otherwise healthy route.
-                            hypha.refresh_heartbeat()
-
-                    # Report weak pathways (don't auto-prune — that's dangerous)
-                    for pw_id, pw in self.pathways.items():
-                        if pw.is_weak and pw.hit_count + pw.miss_count > 5:
-                            logger.warning(
-                                "🍄 [MYCELIUM] Weak pathway detected: '%s' (confidence=%.2f)",
-                                pw_id, pw.confidence,
-                            )
+                if self._foreground_defers_pulse():
+                    # Auto-pulse log bursts were firing mid-conversation in
+                    # the 110GB-incident transcript; maintenance waits.
+                    continue
+                await self._pulse_once()
             except asyncio.CancelledError:
                 # Cleanup for MemoryGovernor if it's running
                 if hasattr(self, '_task') and self._task:

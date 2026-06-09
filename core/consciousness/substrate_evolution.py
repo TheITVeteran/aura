@@ -205,6 +205,27 @@ class SubstrateEvolution:
             )
             return
 
+        try:
+            from core.runtime.background_policy import background_activity_reason
+
+            defer_reason = background_activity_reason(allow_no_user_anchor=True)
+            if defer_reason:
+                # Evolution generations evaluated genomes and applied
+                # champions to the live mesh during foreground chat turns
+                # (observed in the 110GB-incident logs). Foreground owns
+                # the machine; evolution waits for quiet.
+                logger.debug(
+                    "Substrate evolution generation deferred (%s).", defer_reason
+                )
+                return
+        except _RECOVERABLE_EVOLUTION_ERRORS as exc:
+            record_degradation(
+                "substrate_evolution",
+                exc,
+                action="deferred full generation because background policy could not be verified",
+            )
+            return
+
         self._generation += 1
         gen = self._generation
         mutations = 0
