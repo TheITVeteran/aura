@@ -11,6 +11,7 @@ MYPY_FLAGS ?= --follow-imports=skip --explicit-package-bases
 PYTEST_TARGETS ?= tests -q -m "not live"
 SMOKE_TEST_TARGETS ?= tests/test_response_contract.py tests/test_chat_format.py tests/test_effect_closure.py tests/test_local_server_client.py tests/test_cognitive_pipeline_2026.py tests/test_safe_mode_runtime.py tests/test_response_patch_retirement.py tests/test_context_assembler_runtime.py tests/test_context_limit_runtime.py tests/test_consciousness_patch_retirement.py -q
 ENTERPRISE_BASELINE ?= config/aura_enterprise_gate_baseline.json
+TEST_CHUNKS ?= 6
 
 # ─── Reproducible build (one-command path for external reviewers) ────────
 
@@ -112,7 +113,14 @@ activation-audit:
 	@$(PYTHON) tools/activation_audit.py --output artifacts/activation_report.json
 
 test:
-	@echo "🧪 Running tests..."
+	@echo "🧪 Running tests (bounded process chunks)..."
+	@$(PYTHON) tools/run_test_chunks.py --chunks $(TEST_CHUNKS) --marker "not live"
+	@echo "✅ Tests passed"
+
+# Single-process run (accumulates memory across ~7400 tests; the OS has
+# OOM-killed it at ~83% — kept only for debugging chunk-boundary issues).
+test-onepass:
+	@echo "🧪 Running tests (single process — may exhaust memory)..."
 	@$(PYTHON) -m pytest $(PYTEST_TARGETS)
 	@echo "✅ Tests passed"
 
