@@ -3591,6 +3591,9 @@ class UnitaryResponsePhase(Phase):
 
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
         priority = kwargs.get("priority", False)
+        runtime_context = kwargs.get("context")
+        if not isinstance(runtime_context, dict):
+            runtime_context = {}
         if not objective:
             return state
         new_state = state.derive("unitary_response", origin="UnitaryResponsePhase")
@@ -3719,6 +3722,19 @@ class UnitaryResponsePhase(Phase):
             # Read the tier decision from CognitiveRoutingPhase before building the prompt.
             model_tier = new_state.response_modifiers.get("model_tier", "primary")
             deep_handoff = bool(new_state.response_modifiers.get("deep_handoff", False))
+            if runtime_context.get("prefer_tier"):
+                model_tier = str(runtime_context.get("prefer_tier") or model_tier)
+            if runtime_context.get("allow_deep_handoff") is False:
+                deep_handoff = False
+                new_state.response_modifiers["deep_handoff"] = False
+            if runtime_context.get("desktop_descriptive_turn") or runtime_context.get(
+                "capability_inventory_contract"
+            ):
+                deep_handoff = False
+                if model_tier == "secondary":
+                    model_tier = "primary"
+                new_state.response_modifiers["desktop_descriptive_turn"] = True
+                new_state.response_modifiers["model_tier"] = model_tier
             if strict_proof_answer_request or proof_evaluation_turn:
                 model_tier = proof_model_tier()
                 deep_handoff = False
@@ -4886,6 +4902,20 @@ class UnitaryResponsePhase(Phase):
                 "timeout": request_timeout,
                 "state": new_state,
             }
+            try:
+                foreground_cap = int(runtime_context.get("max_tokens") or 0)
+            except (TypeError, ValueError, OverflowError):
+                foreground_cap = 0
+            if foreground_cap > 0 and is_user_facing:
+                capped_tokens = max(64, min(foreground_cap, 2048))
+                llm_kwargs["max_tokens"] = capped_tokens
+                llm_kwargs["num_predict"] = capped_tokens
+            if runtime_context.get("skip_runtime_payload"):
+                llm_kwargs["skip_runtime_payload"] = True
+            if runtime_context.get("disable_prompt_cache"):
+                llm_kwargs["disable_prompt_cache"] = True
+            if runtime_context.get("clear_prompt_cache"):
+                llm_kwargs["clear_prompt_cache"] = True
             if use_compact_router_payload or exact_format_required or operator_evidence_turn:
                 llm_kwargs["skip_runtime_payload"] = True
             if strict_proof_answer_request:

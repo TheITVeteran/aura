@@ -298,6 +298,67 @@ async def test_unitary_response_uses_context_assembler_messages(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_desktop_descriptive_context_bounds_foreground_generation(monkeypatch):
+    state = AuraState()
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_objective = "What tools can you use externally?"
+    state.response_modifiers["model_tier"] = "secondary"
+    state.response_modifiers["deep_handoff"] = True
+
+    llm = SimpleNamespace(
+        think=AsyncCallProbe(return_value="I can describe governed tool surfaces without loading the solver lane.")
+    )
+    kernel = SimpleNamespace(organs={})
+    phase = UnitaryResponsePhase(kernel)
+
+    monkeypatch.setattr(
+        "core.phases.response_generation_unitary.ContextAssembler.build_messages",
+        staticmethod(lambda _state, objective: [
+            {"role": "system", "content": "desktop_context"},
+            {"role": "user", "content": objective},
+        ]),
+    )
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda name, default=None: llm if name == "llm_router" else default),
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation_unitary.build_response_contract",
+        lambda _state, _objective, is_user_facing=False: ResponseContract(
+            is_user_facing=is_user_facing,
+            reason="ordinary_dialogue",
+        ),
+    )
+
+    new_state = await phase.execute(
+        state,
+        objective=state.cognition.current_objective,
+        priority=True,
+        context={
+            "desktop_descriptive_turn": True,
+            "capability_inventory_contract": True,
+            "prefer_tier": "primary",
+            "allow_deep_handoff": False,
+            "max_tokens": 768,
+            "skip_runtime_payload": True,
+            "disable_prompt_cache": True,
+            "clear_prompt_cache": True,
+        },
+    )
+
+    _, kwargs = llm.think.await_args
+    assert kwargs["prefer_tier"] == "primary"
+    assert kwargs["deep_handoff"] is False
+    assert kwargs["max_tokens"] == 768
+    assert kwargs["num_predict"] == 768
+    assert kwargs["skip_runtime_payload"] is True
+    assert kwargs["disable_prompt_cache"] is True
+    assert kwargs["clear_prompt_cache"] is True
+    assert new_state.response_modifiers["model_tier"] == "primary"
+    assert new_state.response_modifiers["deep_handoff"] is False
+
+
+@pytest.mark.asyncio
 async def test_unitary_response_injects_active_grounding_evidence_for_targeted_followup(monkeypatch):
     state = AuraState()
     state.cognition.current_origin = "api"

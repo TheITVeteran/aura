@@ -1725,6 +1725,11 @@ async def _run_cognitive_engine_chat_turn(
         preflight_context = ""
     mode = _select_cognitive_chat_mode(visible, effective_user_message)
     shape = analyze_prompt_shape(visible)
+    capability_inventory_contract = _is_explicit_capability_inventory_request(visible)
+    if capability_inventory_contract:
+        from core.brain.types import ThinkingMode
+
+        mode = ThinkingMode.FAST
     desktop_execution_contract = _looks_like_desktop_objective(visible)
     context = {
         "route": "desktop_chat",
@@ -1743,6 +1748,21 @@ async def _run_cognitive_engine_chat_turn(
             ),
         },
     }
+    if capability_inventory_contract:
+        context.update(
+            {
+                "capability_inventory_contract": True,
+                "desktop_descriptive_turn": True,
+                "prefer_tier": "primary",
+                "deep_handoff": False,
+                "allow_deep_handoff": False,
+                "max_tokens": 768,
+                "num_predict": 768,
+                "skip_runtime_payload": True,
+                "disable_prompt_cache": True,
+                "clear_prompt_cache": True,
+            }
+        )
     if desktop_execution_contract:
         context.update(
             {
@@ -2059,6 +2079,21 @@ async def _run_cognitive_engine_chat_turn(
         from core.conversation.response_reliability import assess_user_facing_reply
 
         assessment = assess_user_facing_reply(visible, text)
+        if (
+            require_engine
+            and _is_explicit_capability_inventory_request(visible)
+            and _capability_inventory_reply_is_inadequate(visible, text)
+        ):
+            logger.warning(
+                "CognitiveEngine desktop chat produced inadequate capability inventory; "
+                "grounding from live capability catalog."
+            )
+            return _ground_runtime_fact_status_reply(
+                visible,
+                _build_grounded_capability_inventory_reply(visible),
+                lane,
+                cognitive_engine_handled=True,
+            )
         if assessment.retryable:
             logger.warning(
                 "CognitiveEngine desktop chat reply failed reliability gate (%s); attempting general repair.",
@@ -3995,6 +4030,33 @@ def _is_capability_inventory_request(user_message: str) -> bool:
         record_degradation("chat", exc)
         logger.debug("Capability inventory classifier unavailable: %s", exc)
     return _is_capability_request(user_message)
+
+
+def _is_explicit_capability_inventory_request(user_message: str) -> bool:
+    text = _normalize_user_message(user_message)
+    if not text or not _is_capability_inventory_request(user_message):
+        return False
+    explicit_markers = (
+        "what tools can you use",
+        "which tools can you use",
+        "what tools do you have",
+        "which tools do you have",
+        "list your tools",
+        "show me your tools",
+        "what are your tools",
+        "what capabilities do you have",
+        "what are your capabilities",
+        "what can you do externally",
+        "what can you use externally",
+        "what can aura do",
+    )
+    if any(marker in text for marker in explicit_markers):
+        return True
+    return (
+        "hypothetical" in text
+        and any(token in text for token in ("tool", "tools", "capability", "capabilities"))
+        and any(token in text for token in ("use", "using", "externally", "external"))
+    )
 
 
 _CAPABILITY_FALSE_LIMITATION_RE = re.compile(

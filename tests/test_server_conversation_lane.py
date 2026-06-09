@@ -1576,6 +1576,69 @@ async def test_desktop_cognitive_engine_keeps_preflight_context_out_of_objective
 
 
 @pytest.mark.asyncio
+async def test_desktop_capability_inventory_uses_bounded_cognitive_engine_contract(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content=(
+                    "I can use governed desktop, browser, file, terminal, memory, and repair tools. "
+                    "A realistic scenario is researching a topic, creating a document, exporting it, "
+                    "and recording receipts for what changed."
+                )
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = "What tools can you use externally, and what is a hypothetical scenario where you use them?"
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=5.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply
+    assert calls[0]["objective"] == user_message
+    assert calls[0]["context"]["capability_inventory_contract"] is True
+    assert calls[0]["context"]["desktop_descriptive_turn"] is True
+    assert calls[0]["context"]["prefer_tier"] == "primary"
+    assert calls[0]["context"]["allow_deep_handoff"] is False
+    assert calls[0]["context"]["max_tokens"] <= 768
+    assert str(calls[0]["kwargs"]["mode"]).lower().endswith("fast")
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_surface_uses_direct_cognitive_engine_when_pool_unavailable(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface import server as server_module
