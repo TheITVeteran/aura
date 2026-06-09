@@ -29,7 +29,6 @@ is treated as the hard tier even if RSS alone is under the ceiling.
 from __future__ import annotations
 
 import gc
-import json
 import logging
 import os
 import threading
@@ -485,14 +484,21 @@ class MemoryWatchdog(threading.Thread):
             "recent_actions": [asdict(a) for a in self._actions[-20:]],
         }
         try:
+            from core.runtime.atomic_writer import atomic_write_json
+
             _TOMBSTONE_DIR.mkdir(parents=True, exist_ok=True)
             path = _TOMBSTONE_DIR / f"oom_tombstone_{int(time.time())}.json"
-            # Raw write on purpose: the gateway stack may itself be starved
-            # of memory at this point; the tombstone must not depend on it.
-            with open(path, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh, indent=2)
+            # Approved emergency writer: atomic_writer is an audited file
+            # sink with no governed-gateway machinery to starve under OOM,
+            # and a torn tombstone would be worse than none.
+            atomic_write_json(
+                path,
+                payload,
+                schema_version=1,
+                schema_name="aura.memory_watchdog.tombstone",
+            )
             logger.critical("💀 [MEMWATCH] Tombstone written: %s", path)
-        except OSError as exc:
+        except (OSError, RuntimeError, ImportError, TypeError, ValueError) as exc:
             logger.critical("💀 [MEMWATCH] Tombstone write failed: %s", exc)
 
     @staticmethod
