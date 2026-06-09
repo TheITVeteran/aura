@@ -20,7 +20,7 @@ def test_mlx_worker_spawn_blocks_32b_when_headroom_is_too_low(monkeypatch):
 
     assert reason is not None
     assert "model_load_headroom" in reason
-    assert "required 16.0GB" in reason
+    assert "required 22.0GB" in reason
 
 
 def test_mlx_worker_spawn_allows_32b_with_sufficient_headroom(monkeypatch):
@@ -28,7 +28,7 @@ def test_mlx_worker_spawn_allows_32b_with_sufficient_headroom(monkeypatch):
 
     snapshot = SimpleNamespace(
         refuse_heavy_local_generation=False,
-        available_gb=20.0,
+        available_gb=24.0,
         reason="",
     )
     monkeypatch.setattr(mlx_client, "get_memory_pressure_snapshot", lambda: snapshot)
@@ -62,8 +62,8 @@ def test_worker_memory_sentinel_uses_bounded_heavy_lane_limits(monkeypatch):
     sentinel_32b = WorkerMemorySentinel(writer, "/models/Qwen2.5-32B-Instruct-8bit")
     sentinel_72b = WorkerMemorySentinel(writer, "/models/Qwen2.5-72B-Instruct-4bit")
 
-    assert sentinel_32b._worker_rss_limit_gb(64.0) <= 52.0
-    assert sentinel_72b._worker_rss_limit_gb(64.0) <= 56.0
+    assert sentinel_32b._worker_rss_limit_gb(64.0) <= 40.0
+    assert sentinel_72b._worker_rss_limit_gb(64.0) <= 44.0
 
     monkeypatch.setenv("AURA_MLX_WORKER_RSS_LIMIT_GB", "44")
     assert sentinel_32b._worker_rss_limit_gb(64.0) == 44.0

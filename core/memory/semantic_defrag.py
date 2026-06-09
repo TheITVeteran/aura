@@ -201,18 +201,23 @@ class SemanticDefragmenter:
         """Scan vector memory for tight duplicate clusters and consolidate them."""
         logger.info("Semantic sleep: starting defragmentation cycle for '%s'", self.collection_name)
 
+        block_reason = self._background_block_reason()
+        if block_reason:
+            logger.info("Semantic Defrag: deferred — %s.", block_reason)
+            return {"status": "skipped", "reason": block_reason}
+
         memory = ServiceContainer.get("vector_memory", default=None)
         if not memory or getattr(memory, "_fallback_mode", False):
             logger.warning("Semantic Defrag: vector memory unavailable or in fallback mode; skipping.")
             return {"status": "skipped", "reason": "vector_memory_unavailable"}
 
         try:
-            batch = self._fetch_batch(memory)
+            batch = await asyncio.to_thread(self._fetch_batch, memory)
             if len(batch) < MIN_DEFRAG_BATCH:
                 logger.debug("Semantic Defrag: not enough memories in micro-batch to justify defrag.")
                 return {"status": "skipped", "reason": "not_enough_memories", "count": len(batch)}
 
-            clusters = self._find_clusters(memory, batch)
+            clusters = await asyncio.to_thread(self._find_clusters, memory, batch)
             if not clusters:
                 logger.info("Semantic Defrag: no fragmentation clusters detected.")
                 return {"status": "completed", "clusters": 0, "merged": 0}
@@ -232,6 +237,27 @@ class SemanticDefragmenter:
             )
             logger.error("Semantic Defrag failed: %s", exc)
             return {"status": "failed", "error": type(exc).__name__}
+
+    def _background_block_reason(self) -> str:
+        try:
+            from core.runtime.background_policy import (
+                MAINTENANCE_BACKGROUND_POLICY,
+                background_activity_reason,
+            )
+
+            orchestrator = ServiceContainer.get("orchestrator", default=None)
+            return background_activity_reason(
+                orchestrator,
+                profile=MAINTENANCE_BACKGROUND_POLICY,
+                allow_no_user_anchor=True,
+            )
+        except _SEMANTIC_DEFRAG_ERRORS as exc:
+            _record_semantic_defrag_degradation(
+                exc,
+                action="blocked semantic defrag because background-policy probe failed",
+                severity="warning",
+            )
+            return "background_policy_unavailable"
 
     def _fetch_batch(self, memory: Any) -> list[dict[str, Any]]:
         collection = getattr(memory, "_collection", memory)
@@ -371,7 +397,7 @@ class SemanticDefragmenter:
         }
 
         try:
-            add_memory(consolidated_content, metadata=metadata)
+            await asyncio.to_thread(add_memory, consolidated_content, metadata=metadata)
         except _SEMANTIC_DEFRAG_ERRORS as exc:
             _record_semantic_defrag_degradation(
                 exc,
@@ -392,7 +418,7 @@ class SemanticDefragmenter:
             return True
 
         try:
-            delete(ids=cluster_ids)
+            await asyncio.to_thread(delete, ids=cluster_ids)
             logger.info("Successfully merged %s memories into one concept", len(cluster_ids))
             return True
         except _SEMANTIC_DEFRAG_ERRORS as exc:

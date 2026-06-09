@@ -2435,6 +2435,25 @@ def test_dialogue_policy_rejects_ungrounded_live_voice_replies():
     assert "ungrounded_live_voice" in validation.violations
 
 
+def test_dialogue_policy_allows_conversation_memory_grounding_without_retry():
+    from core.phases.dialogue_policy import validate_dialogue_response
+    from core.phases.response_contract import ResponseContract
+
+    contract = ResponseContract(requires_memory_grounding=True)
+
+    confirmation = validate_dialogue_response(
+        "I've noted 'live-route-blue-cedar' in this conversation.",
+        contract,
+    )
+    recall = validate_dialogue_response(
+        "The phrase I remembered from earlier in this conversation is 'live-route-blue-cedar'.",
+        contract,
+    )
+
+    assert confirmation.ok is True
+    assert recall.ok is True
+
+
 def test_subjective_self_reflex_contains_live_grounding():
     from interface.routes.chat import _build_subjective_self_reflex
 

@@ -989,9 +989,13 @@ class WorkerMemorySentinel(threading.Thread):
             except (TypeError, ValueError):
                 pass
         if any(token in self.model_path.lower() for token in ("72b", "solver")):
-            return min(56.0, max(40.0, total_gb * 0.84))
+            if total_gb < 80.0:
+                return min(44.0, max(36.0, total_gb * 0.66))
+            return min(64.0, max(48.0, total_gb * 0.55))
         if any(token in self.model_path.lower() for token in ("32b", "cortex", "zenith")):
-            return min(52.0, max(34.0, total_gb * 0.78))
+            if total_gb < 80.0:
+                return min(40.0, max(30.0, total_gb * 0.62))
+            return min(56.0, max(42.0, total_gb * 0.48))
         return min(24.0, max(10.0, total_gb * 0.45))
 
     def _sample_rss_gb(self) -> float:

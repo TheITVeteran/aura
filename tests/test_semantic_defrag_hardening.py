@@ -57,6 +57,7 @@ def test_semantic_defrag_deterministic_merge_when_llm_unavailable(monkeypatch):
 
     memory = Memory()
     _install_container(monkeypatch, memory, llm=None)
+    monkeypatch.setattr(SemanticDefragmenter, "_background_block_reason", lambda self: "")
 
     result = asyncio.run(SemanticDefragmenter().run_defrag_cycle())
 
@@ -86,6 +87,7 @@ def test_semantic_defrag_collection_failure_records_receipt(monkeypatch):
 
     monkeypatch.setattr(semantic_module, "record_degradation", record_degradation)
     _install_container(monkeypatch, Memory(), llm=None)
+    monkeypatch.setattr(SemanticDefragmenter, "_background_block_reason", lambda self: "")
 
     result = asyncio.run(SemanticDefragmenter().run_defrag_cycle())
 
@@ -94,6 +96,37 @@ def test_semantic_defrag_collection_failure_records_receipt(monkeypatch):
     assert recorded[0][1] == "RuntimeError"
     assert recorded[0][2]["receipt_required"] is True
     assert "without deleting source memories" in str(recorded[0][2]["action"])
+
+
+def test_semantic_defrag_defers_during_foreground_quiet_window(monkeypatch):
+    memory_calls = {"get": 0}
+
+    class Collection:
+        def get(self, **_kwargs):
+            memory_calls["get"] += 1
+            return {"ids": [], "documents": [], "metadatas": []}
+
+    class Memory:
+        _fallback_mode = False
+        _collection = Collection()
+
+    class Orchestrator:
+        _foreground_user_quiet_until = 10**12
+        is_busy = False
+
+    def get(name, default=None):
+        if name == "vector_memory":
+            return Memory()
+        if name == "orchestrator":
+            return Orchestrator()
+        return default
+
+    monkeypatch.setattr(semantic_module.ServiceContainer, "get", staticmethod(get))
+
+    result = asyncio.run(SemanticDefragmenter().run_defrag_cycle())
+
+    assert result == {"status": "skipped", "reason": "foreground_quiet_window"}
+    assert memory_calls["get"] == 0
 
 
 def test_semantic_defrag_start_stop_uses_task_tracker(monkeypatch):

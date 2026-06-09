@@ -124,9 +124,9 @@ def _model_load_min_available_gb(model_path: str) -> float:
 
     lowered = str(model_path or "").lower()
     if any(token in lowered for token in ("72b", "solver")):
-        return _env_float("AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB", 28.0)
+        return _env_float("AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB", 34.0)
     if any(token in lowered for token in ("32b", "cortex", "zenith")):
-        return _env_float("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", 16.0)
+        return _env_float("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", 22.0)
     return _env_float("AURA_MLX_LOAD_MIN_AVAILABLE_GB", 8.0)
 
 

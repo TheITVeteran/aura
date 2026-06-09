@@ -150,7 +150,7 @@ def get_memory_pressure_snapshot() -> MemoryPressureSnapshot:
     emergency_pct = _env_float("AURA_MEMORY_EMERGENCY_PCT", emergency_default)
     min_available_gb = _env_float("AURA_MEMORY_MIN_AVAILABLE_GB", min_available_default)
     if total_gb >= 60.0:
-        process_rss_limit_default = min(48.0, max(32.0, total_gb * 0.68))
+        process_rss_limit_default = min(42.0, max(30.0, total_gb * 0.64))
     elif total_gb > 0.0:
         process_rss_limit_default = min(24.0, max(10.0, total_gb * 0.70))
     else:
