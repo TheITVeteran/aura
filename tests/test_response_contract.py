@@ -627,3 +627,30 @@ async def test_prepare_runtime_payload_hydrates_memory_from_memory_facade(monkey
     assert contract.requires_memory_grounding is True
     assert contract.memory_evidence_available is True
     assert "Bryan said this reminded him of Aura." in messages[0]["content"]
+
+
+@pytest.mark.parametrize(
+    "honest_sentence",
+    [
+        "I don't know.",
+        "I cannot verify that.",
+        "I do not have grounded memory evidence for that.",
+        "I'm not sure - let me check my memory before answering.",
+    ],
+)
+def test_dialogue_policy_never_flags_honest_uncertainty(honest_sentence):
+    """Honest uncertainty is central to Aura's claim discipline.
+
+    These sentences must always validate: a contract that punishes
+    'I don't know' trains the system to confabulate instead.
+    """
+    state = AuraState.default()
+    contract = build_response_contract(
+        state,
+        "When did you first boot?",
+        is_user_facing=True,
+    )
+
+    validation = validate_dialogue_response(honest_sentence, contract)
+
+    assert validation.ok is True, validation.violations

@@ -155,3 +155,14 @@ def test_directive_carries_unique_corrections():
 
 def test_clean_verdict_has_empty_directive():
     assert verify_self_claims("All good here.").regeneration_directive() == ""
+
+
+def test_grounded_memory_uncertainty_passes():
+    """Claim-discipline phrasing must never read as a memory denial."""
+    assert verify_self_claims(
+        "I don't have grounded memory evidence for a start date yet."
+    ).ok
+
+
+def test_plain_i_dont_know_passes():
+    assert verify_self_claims("I don't know. I cannot verify that.").ok
