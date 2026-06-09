@@ -594,7 +594,9 @@ class StateRepository:
             if transport is None:
                 transport = self._resolve_transport()
             if transport is None:
-                last_error = RuntimeError("state_vault transport unavailable")
+                # Keep the original pipe/bus failure when a retry could not
+                # re-resolve a transport — callers classify on that error.
+                last_error = last_error or RuntimeError("state_vault transport unavailable")
                 if _is_shutdown_commit_payload(payload):
                     logger.info(
                         "🔌 [STATE] Vault transport unavailable during shutdown; commit will be queued for boot replay."
@@ -627,9 +629,18 @@ class StateRepository:
             except (BrokenPipeError, BusDegraded, ConnectionError) as exc:
                 last_error = exc
                 if _is_shutdown_commit_payload(payload):
+                    if attempt == 0:
+                        # One immediate retry on a fresh transport: a pipe
+                        # that broke mid-teardown often re-resolves, and
+                        # landing the final state now beats boot replay.
+                        logger.info(
+                            "🔌 [STATE] Vault pipe closed during shutdown (attempt 1/2); retrying once before queueing for boot replay.",
+                        )
+                        self._transport = None
+                        transport = self._resolve_transport()
+                        continue
                     logger.info(
-                        "🔌 [STATE] Vault transport unavailable during shutdown (attempt %d/2); commit will be queued for boot replay.",
-                        attempt + 1,
+                        "🔌 [STATE] Vault pipe closed during shutdown (attempt 2/2); commit will be queued for boot replay.",
                     )
                     return False, None, exc
                 else:

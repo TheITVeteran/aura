@@ -2192,7 +2192,7 @@ def test_inference_gate_failed_initialization_does_not_count_as_ready(monkeypatc
         def __init__(self):
             self.calls = 0
 
-        def __call__(self):
+        def __call__(self, *args, **kwargs):
             self.calls += 1
             raise RuntimeError("mlx unavailable")
 
