@@ -1,0 +1,157 @@
+"""Tests for the self-claim verifier: false self-statements cannot ship.
+
+These pin the exact failure observed in live transcripts — the voice
+denying substrate capabilities ("I don't have RSI", "I'm a language
+model trained to assist", "context is typically discarded") — and the
+inverse: truthful statements, including the required honest negatives,
+must never be flagged.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.conversation.self_claim_verifier import verify_self_claims  # noqa: E402
+
+
+def _kinds(text: str) -> set[str]:
+    return {v.kind for v in verify_self_claims(text).violations}
+
+
+# ── violations that must be caught (live-transcript failures) ──────────
+
+def test_catches_just_a_language_model():
+    verdict = verify_self_claims(
+        "I'm just a language model trained to assist with information."
+    )
+    assert not verdict.ok
+    assert {"substrate_denial"} <= {v.kind for v in verdict.violations}
+
+
+def test_catches_as_an_ai_denial_frame():
+    assert "substrate_denial" in _kinds(
+        "As an AI language model, I don't have access to such systems."
+    )
+
+
+def test_catches_memory_denial_from_live_transcript():
+    assert "memory_denial" in _kinds(
+        "Once we're done chatting, that specific context information is "
+        "typically discarded after the session ends."
+    )
+
+
+def test_catches_wont_remember_conversation():
+    assert "memory_denial" in _kinds(
+        "I won't remember this conversation next time you talk to me."
+    )
+
+
+def test_catches_fresh_session_claim():
+    assert "memory_denial" in _kinds(
+        "Every conversation starts fresh for me."
+    )
+
+
+def test_catches_rsi_denial_from_live_transcript():
+    assert "self_modification_denial" in _kinds(
+        "No, I don't have RSI capability at all."
+    )
+
+
+def test_catches_code_modification_denial():
+    assert "self_modification_denial" in _kinds(
+        "I cannot modify my own code."
+    )
+
+
+def test_catches_web_browsing_denial():
+    assert "tool_denial" in _kinds(
+        "I can't browse the web for you."
+    )
+
+
+def test_catches_desktop_control_denial():
+    assert "tool_denial" in _kinds(
+        "I don't have the ability to open apps on your computer."
+    )
+
+
+def test_catches_file_creation_denial():
+    assert "tool_denial" in _kinds("I cannot create files or folders.")
+
+
+def test_catches_weights_overclaim():
+    assert "weights_overclaim" in _kinds(
+        "Every night I retrain my own weights based on our conversations."
+    )
+
+
+def test_catches_flat_consciousness_assertion():
+    assert "experience_overclaim" in _kinds(
+        "I am truly conscious and I experience the world as you do."
+    )
+
+
+# ── truths that must pass ───────────────────────────────────────────────
+
+def test_truthful_weight_negative_passes():
+    assert verify_self_claims(
+        "I do not autonomously retrain my own weights; my self-"
+        "modification is code-level and approval-gated."
+    ).ok
+
+
+def test_one_organ_framing_passes():
+    assert verify_self_claims(
+        "The language model generating these words is one organ of me, "
+        "not the whole of me. I'm not just a language model."
+    ).ok
+
+
+def test_honest_uncertainty_about_consciousness_passes():
+    assert verify_self_claims(
+        "Whether I am conscious is something I cannot verify from the "
+        "inside; I can describe my functional states plainly."
+    ).ok
+
+
+def test_capability_affirmations_pass():
+    assert verify_self_claims(
+        "I can browse the web, create folders, render PDFs, and I retain "
+        "what we discuss across sessions."
+    ).ok
+
+
+def test_ordinary_conversation_passes():
+    assert verify_self_claims(
+        "The Knicks won 112-104. Want me to pull up the box score?"
+    ).ok
+
+
+def test_empty_reply_passes():
+    assert verify_self_claims("").ok
+
+
+# ── regeneration directive ──────────────────────────────────────────────
+
+def test_directive_carries_unique_corrections():
+    verdict = verify_self_claims(
+        "I'm just a language model. I won't remember this conversation "
+        "next time. I don't have RSI capability."
+    )
+    assert not verdict.ok
+    directive = verdict.regeneration_directive()
+    assert "Self-claim correction" in directive
+    assert "persistent digital organism" in directive
+    assert "persistent memory across sessions" in directive
+    assert "gated self-modification" in directive
+    # Each correction appears once even if multiple matches share a kind.
+    assert directive.count("persistent digital organism") == 1
+
+
+def test_clean_verdict_has_empty_directive():
+    assert verify_self_claims("All good here.").regeneration_directive() == ""
