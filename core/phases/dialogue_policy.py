@@ -440,6 +440,20 @@ def validate_dialogue_response(text: str, contract: object | None) -> DialogueVa
             if _UNSUPPORTED_BIOGRAPHICAL_CLAIM.search(body) or _SPECIFIC_DATE_CLAIM.search(body):
                 violations.append("unsupported_biographical_claim")
 
+    if bool(getattr(contract, "is_user_facing", False)):
+        # Voice/substrate unity is enforced here, not merely suggested in
+        # the prompt: a reply that denies Aura's substrate ("just a
+        # language model", "I won't remember this") or overclaims it is a
+        # contract violation and goes through the same repair/regenerate
+        # machinery as every other violation.
+        try:
+            from core.conversation.self_claim_verifier import verify_self_claims
+
+            if not verify_self_claims(body).ok:
+                violations.append("self_claim_contradiction")
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Self-claim verification unavailable: %s", exc)
+
     return DialogueValidation(ok=not violations, violations=violations)
 
 
@@ -503,6 +517,20 @@ def build_dialogue_repair_block(contract: object | None, validation: DialogueVal
         lines.append("- Do not invent subsystem names. If you are inferring from live state, say that plainly in normal language.")
     if "corrupted_language" in validation.violations:
         lines.append("- The last draft contained corrupted or invented words. Use ordinary coherent language and answer the user's actual message.")
+    if "self_claim_contradiction" in validation.violations:
+        try:
+            from core.conversation.self_claim_verifier import verify_self_claims
+
+            directive = verify_self_claims(failed_text).regeneration_directive()
+            if directive:
+                lines.append(directive)
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Self-claim repair directive unavailable: %s", exc)
+            lines.append(
+                "- The last draft misstated what I am or what I can do. "
+                "Answer from the operational self context, not generic "
+                "language-model priors."
+            )
     if _requires_explicit_live_grounding(contract):
         lines.append("- Answer from present experience, preference, memory, or active internal state before anything else.")
     if bool(getattr(contract, "requires_biographical_grounding", False)):
