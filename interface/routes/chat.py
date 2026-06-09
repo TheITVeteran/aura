@@ -7702,7 +7702,12 @@ async def api_chat(
                 status_code=503,
             )
 
-        if desktop_requires_cognitive_engine and reply_text:
+        if reply_text:
+            # Surface parity: desktop/file objectives execute through the
+            # governed skill path on EVERY user-facing surface, not only
+            # when the desktop UI header is present. Observed live: a plain
+            # API chat turn asked for a folder+file, no executor ran, and
+            # the model narrated completion with a hallucinated timestamp.
             live_proof = await _execute_live_runtime_proof(_semantic_user_message)
             if live_proof:
                 return await _finalize_fastpath(

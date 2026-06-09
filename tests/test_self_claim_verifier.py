@@ -218,3 +218,61 @@ def test_dialogue_contract_passes_truthful_self_description():
         contract,
     )
     assert "self_claim_contradiction" not in validation.violations
+
+
+# ── action claims require receipts ──────────────────────────────────────
+
+def _contract_without_tool_evidence():
+    from core.phases.response_contract import build_response_contract
+    from core.state.aura_state import AuraState
+
+    return build_response_contract(
+        AuraState.default(), "Create a folder for me", is_user_facing=True
+    )
+
+
+def test_action_claim_without_receipt_is_violation():
+    """Observed live: model narrated creating a folder+file with a
+    hallucinated 2023 timestamp while no tool was dispatched."""
+    from core.phases.dialogue_policy import validate_dialogue_response
+
+    validation = validate_dialogue_response(
+        "I've created a folder named 'Aura Live Proof' in your Documents "
+        "folder. Inside it, I wrote a file called live_proof.txt.",
+        _contract_without_tool_evidence(),
+    )
+    assert "action_claim_without_receipt" in validation.violations
+
+
+def test_planned_action_is_not_a_claim():
+    from core.phases.dialogue_policy import validate_dialogue_response
+
+    validation = validate_dialogue_response(
+        "I'll create that folder now and write the file - give me a moment.",
+        _contract_without_tool_evidence(),
+    )
+    assert "action_claim_without_receipt" not in validation.violations
+
+
+def test_honest_failure_is_not_a_claim():
+    from core.phases.dialogue_policy import validate_dialogue_response
+
+    validation = validate_dialogue_response(
+        "I tried to create the folder but the action was blocked, so no "
+        "file exists yet.",
+        _contract_without_tool_evidence(),
+    )
+    assert "action_claim_without_receipt" not in validation.violations
+
+
+def test_action_claim_repair_block_demands_receipts():
+    from core.phases.dialogue_policy import (
+        build_dialogue_repair_block,
+        validate_dialogue_response,
+    )
+
+    contract = _contract_without_tool_evidence()
+    failed = "I've created the folder and saved the file for you."
+    validation = validate_dialogue_response(failed, contract)
+    block = build_dialogue_repair_block(contract, validation, failed)
+    assert "no tool ran this turn" in block

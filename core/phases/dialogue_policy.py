@@ -388,6 +388,28 @@ def _requires_non_generic_aura_voice(contract: object | None) -> bool:
     return _requires_live_aura_voice(contract)
 
 
+# First-person completed-action claims over concrete artifacts. Verb set is
+# past/perfective on purpose: "I will create" and "let me open" are plans,
+# not claims, and stay legal without receipts.
+_ACTION_COMPLETION_CLAIM = re.compile(
+    r"\bi(?:'ve| have| just|'ve just| already)?\s+"
+    r"(?:created|made|wrote|written|saved|moved|renamed|deleted|opened|"
+    r"rendered|exported|downloaded|generated)\b"
+    r"[^.?!]{0,80}?"
+    r"\b(?:folder|file|files|pdf|document|note|notes app|app|application|"
+    r"tab|directory|spreadsheet)\b",
+    re.IGNORECASE,
+)
+
+# Honest failure/attempt framings are never violations.
+_ACTION_CLAIM_NEGATION = re.compile(
+    r"\b(?:couldn'?t|could not|can'?t|cannot|failed|unable|tried to|"
+    r"attempted|wasn'?t able|blocked|denied|without receipts?|"
+    r"haven'?t(?:\s+\w+){0,2}\s+yet)\b",
+    re.IGNORECASE,
+)
+
+
 def validate_dialogue_response(text: str, contract: object | None) -> DialogueValidation:
     body = str(text or "").strip()
     if not body:
@@ -454,6 +476,14 @@ def validate_dialogue_response(text: str, contract: object | None) -> DialogueVa
         except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug("Self-claim verification unavailable: %s", exc)
 
+        # Receipts or it didn't happen: a completed-action claim with no
+        # tool evidence in the turn is confabulated agency. Observed live:
+        # the model narrated creating a folder and a file — with a
+        # hallucinated 2023 timestamp — while no tool was ever dispatched.
+        if not bool(getattr(contract, "tool_evidence_available", False)):
+            if _ACTION_COMPLETION_CLAIM.search(body) and not _ACTION_CLAIM_NEGATION.search(body):
+                violations.append("action_claim_without_receipt")
+
     return DialogueValidation(ok=not violations, violations=violations)
 
 
@@ -517,6 +547,13 @@ def build_dialogue_repair_block(contract: object | None, validation: DialogueVal
         lines.append("- Do not invent subsystem names. If you are inferring from live state, say that plainly in normal language.")
     if "corrupted_language" in validation.violations:
         lines.append("- The last draft contained corrupted or invented words. Use ordinary coherent language and answer the user's actual message.")
+    if "action_claim_without_receipt" in validation.violations:
+        lines.append(
+            "- The last draft claimed a completed file/desktop action, but no "
+            "tool ran this turn. Never narrate actions as done. Either state "
+            "plainly that you have not done it yet and will do it now, or "
+            "describe only what is actually verified."
+        )
     if "self_claim_contradiction" in validation.violations:
         try:
             from core.conversation.self_claim_verifier import verify_self_claims

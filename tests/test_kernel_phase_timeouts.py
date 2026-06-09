@@ -4,16 +4,19 @@ from core.kernel.aura_kernel import AuraKernel
 
 
 def test_foreground_response_phases_get_extra_headroom():
+    # 180s is the deliberate ceiling: live turns complete in 10-25s, and a
+    # wedged generation must not hold the kernel lock for minutes — the
+    # old 300s budget let one stall starve every other phase.
     kernel = AuraKernel.__new__(AuraKernel)
     kernel.state = SimpleNamespace(response_modifiers={})
-    assert kernel._phase_timeout_seconds("UnitaryResponsePhase", priority=True) == 300.0
-    assert kernel._phase_timeout_seconds("ResponseGenerationPhase", priority=True) == 300.0
+    assert kernel._phase_timeout_seconds("UnitaryResponsePhase", priority=True) == 180.0
+    assert kernel._phase_timeout_seconds("ResponseGenerationPhase", priority=True) == 180.0
 
 
 def test_deep_handoff_response_phases_get_solver_headroom():
     kernel = AuraKernel.__new__(AuraKernel)
     kernel.state = SimpleNamespace(response_modifiers={"deep_handoff": True})
-    assert kernel._phase_timeout_seconds("UnitaryResponsePhase", priority=True) == 360.0
+    assert kernel._phase_timeout_seconds("UnitaryResponsePhase", priority=True) == 210.0
 
 
 def test_non_response_phase_timeouts_remain_stable():

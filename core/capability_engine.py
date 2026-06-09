@@ -2840,7 +2840,10 @@ class CapabilityEngine(AuraBaseModule):
                     return {
                         "ok": False,
                         "error": "Metabolic self-preservation guard unavailable",
-                        "status": "blocked_by_self_preservation_guard_unavailable",
+                        # Canonical status string — the other fail-closed
+                        # path uses the same one; two spellings for one
+                        # condition broke caller classification.
+                        "status": "blocked_by_self_preservation_unavailable",
                     }
 
             # ── PERMISSION RISK MODEL GATE ──────────────────────────────
