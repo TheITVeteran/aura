@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import sys
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -16,7 +17,7 @@ from typing import Any
 logger = logging.getLogger("Aura.ProjectStore")
 
 PROJECT_STATUSES = frozenset({"active", "completed", "archived", "failed"})
-TASK_STATUSES = frozenset({"pending", "in_progress", "completed", "failed"})
+TASK_STATUSES = frozenset({"pending", "in_progress", "completed", "failed", "archived"})
 
 
 @dataclass(frozen=True)
@@ -62,14 +63,16 @@ class ProjectStore:
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Run a caller-controlled transaction with fail-closed rollback."""
         conn = self._get_connection()
+        conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.execute("BEGIN IMMEDIATE")
             yield conn
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
         finally:
+            exc_type = sys.exc_info()[0]
+            if conn.in_transaction:
+                if exc_type is None:
+                    conn.commit()
+                else:
+                    conn.rollback()
             conn.close()
 
     def _init_db(self) -> None:

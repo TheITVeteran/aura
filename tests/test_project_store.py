@@ -83,6 +83,21 @@ class TestProjectStore(unittest.TestCase):
         self.assertFalse(self.store.update_project_status("missing-project", "completed"))
         self.assertFalse(self.store.update_task_status("missing-task", "completed"))
 
+    def test_task_can_be_archived_when_superseded_by_replan(self):
+        proj = self.store.create_project("Replan Proj", "Goal")
+        task = self.store.add_task(proj.id, "Original task")
+
+        self.assertTrue(
+            self.store.update_task_status(
+                task.id,
+                "archived",
+                {"reason": "replanned"},
+            )
+        )
+        [stored_task] = self.store.get_tasks_for_project(proj.id)
+        self.assertEqual(stored_task.status, "archived")
+        self.assertEqual(stored_task.metadata["reason"], "replanned")
+
     def test_orphan_task_is_rejected_by_foreign_key(self):
         with pytest.raises(sqlite3.IntegrityError):
             self.store.add_task("missing-project", "cannot be orphaned")
