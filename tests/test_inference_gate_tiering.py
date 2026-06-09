@@ -472,87 +472,118 @@ async def test_background_requests_wait_when_cortex_has_failed():
 
 @pytest.mark.asyncio
 async def test_deep_handoff_uses_solver_then_returns_response():
-    gate = InferenceGate()
-    cortex = _FakeClient("cortex")
-    solver = _FakeClient("solver")
-    gate._mlx_client = cortex
-    gate._restore_primary_after_deep_handoff = AsyncCallProbe()
+    # The local deep solver is auto-disabled on <96GB hosts (memory-
+    # class policy). Force-enable so the tier logic under test is
+    # actually exercised regardless of the machine running the suite.
+    os.environ["AURA_ENABLE_LOCAL_DEEP_SOLVER"] = "1"
+    try:
 
-    def _fake_get_mlx_client(model_path=None, **kwargs):
-        if model_path == "/models/deep":
-            return solver
-        if model_path == "/models/active":
-            return cortex
-        raise AssertionError(f"Unexpected model path: {model_path}")
+        gate = InferenceGate()
+        cortex = _FakeClient("cortex")
+        solver = _FakeClient("solver")
+        gate._mlx_client = cortex
+        gate._restore_primary_after_deep_handoff = AsyncCallProbe()
 
-    scheduled = []
+        def _fake_get_mlx_client(model_path=None, **kwargs):
+            if model_path == "/models/deep":
+                return solver
+            if model_path == "/models/active":
+                return cortex
+            raise AssertionError(f"Unexpected model path: {model_path}")
 
-    def _capture_task(coro, **kwargs):
-        scheduled.append(coro)
-        return TaskProbe(done=False)
+        scheduled = []
 
-    # Fixed memory headroom so test doesn't depend on actual system RAM
-    _low_pressure = {"tier": "secondary", "pressure_pct": 40.0, "total_gb": 64.0, "available_gb": 32.0, "max_pressure_pct": 84.0, "min_available_gb": 16.0, "can_admit": True}
-    with replace("asyncio.create_task", side_effect=_capture_task):
-        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-            with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
-                with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                    with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
-                        with replace.object(InferenceGate, "_headroom_snapshot", staticmethod(lambda *a, **kw: _low_pressure)):
-                            result = await gate.generate(
-                                "perform a flagship architecture deep dive",
-                                context={"prefer_tier": "secondary", "deep_handoff": True},
-                            )
+        def _capture_task(coro, **kwargs):
+            scheduled.append(coro)
+            return TaskProbe(done=False)
 
-    for coro in scheduled:
-        await coro
+        # Fixed memory headroom so test doesn't depend on actual system RAM
+        _low_pressure = {"tier": "secondary", "pressure_pct": 40.0, "total_gb": 64.0, "available_gb": 32.0, "max_pressure_pct": 84.0, "min_available_gb": 16.0, "can_admit": True}
+        with replace("asyncio.create_task", side_effect=_capture_task):
+            with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+                with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+                    with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                        with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
+                            with replace.object(InferenceGate, "_headroom_snapshot", staticmethod(lambda *a, **kw: _low_pressure)):
+                                result = await gate.generate(
+                                    "perform a flagship architecture deep dive",
+                                    context={"prefer_tier": "secondary", "deep_handoff": True},
+                                )
 
-    assert result == "solver"
-    solver.generate_text_async.assert_awaited()
-    cortex.generate_text_async.assert_not_called()
-    gate._restore_primary_after_deep_handoff.assert_awaited_once()
+        for coro in scheduled:
+            await coro
+
+        assert result == "solver"
+        solver.generate_text_async.assert_awaited()
+        cortex.generate_text_async.assert_not_called()
+        gate._restore_primary_after_deep_handoff.assert_awaited_once()
+    finally:
+        os.environ.pop("AURA_ENABLE_LOCAL_DEEP_SOLVER", None)
 
 
 @pytest.mark.asyncio
 async def test_deep_handoff_failure_still_schedules_primary_restore():
-    gate = InferenceGate()
-    cortex = _NoTextClient()
-    solver = _NoTextClient()
-    reflex = _NoTextClient()
-    gate._mlx_client = cortex
-    gate._schedule_primary_restore_after_deep_handoff = CallProbe()
+    # The local deep solver is auto-disabled on <96GB hosts (memory-
+    # class policy). Force-enable so the tier logic under test is
+    # actually exercised regardless of the machine running the suite.
+    os.environ["AURA_ENABLE_LOCAL_DEEP_SOLVER"] = "1"
+    try:
 
-    def _fake_get_mlx_client(model_path=None, **kwargs):
-        if model_path == "/models/deep":
-            return solver
-        if model_path == "/models/active":
-            return cortex
-        if model_path == "/models/fallback":
-            return reflex
-        raise AssertionError(f"Unexpected model path: {model_path}")
+        gate = InferenceGate()
+        cortex = _NoTextClient()
+        solver = _NoTextClient()
+        reflex = _NoTextClient()
+        gate._mlx_client = cortex
+        gate._schedule_primary_restore_after_deep_handoff = CallProbe()
 
-    with replace.object(
-        gate,
-        "_enforce_foreground_admission",
-        new=AsyncCallProbe(
-            return_value={
-                "can_admit": True,
-                "pressure_pct": 40.0,
-                "available_gb": 28.0,
-            }
-        ),
-    ):
-        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-            with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
-                with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                    with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
-                        with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
-                            await gate.generate(
-                                "perform a flagship architecture deep dive",
-                                context={"origin": "user", "prefer_tier": "secondary", "deep_handoff": True},
-                            )
+        def _fake_get_mlx_client(model_path=None, **kwargs):
+            if model_path == "/models/deep":
+                return solver
+            if model_path == "/models/active":
+                return cortex
+            if model_path == "/models/fallback":
+                return reflex
+            raise AssertionError(f"Unexpected model path: {model_path}")
 
-    gate._schedule_primary_restore_after_deep_handoff.assert_called_once()
+        _low_pressure_snapshot = {
+            "tier": "secondary",
+            "pressure_pct": 40.0,
+            "total_gb": 128.0,
+            "available_gb": 64.0,
+            "max_pressure_pct": 84.0,
+            "min_available_gb": 16.0,
+            "can_admit": True,
+            "reason": "",
+        }
+        with replace.object(
+            gate,
+            "_enforce_foreground_admission",
+            new=AsyncCallProbe(
+                return_value={
+                    "can_admit": True,
+                    "pressure_pct": 40.0,
+                    "available_gb": 28.0,
+                }
+            ),
+        ):
+            with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+                with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+                    with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                        with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                            with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
+                                with replace.object(
+                                    InferenceGate,
+                                    "_headroom_snapshot",
+                                    staticmethod(lambda *a, **kw: dict(_low_pressure_snapshot)),
+                                ):
+                                    await gate.generate(
+                                        "perform a flagship architecture deep dive",
+                                        context={"origin": "user", "prefer_tier": "secondary", "deep_handoff": True},
+                                    )
+
+        gate._schedule_primary_restore_after_deep_handoff.assert_called_once()
+    finally:
+        os.environ.pop("AURA_ENABLE_LOCAL_DEEP_SOLVER", None)
 
 
 @pytest.mark.asyncio
@@ -766,98 +797,114 @@ async def test_user_facing_primary_uses_compact_foreground_context_builders():
 
 @pytest.mark.asyncio
 async def test_user_facing_secondary_uses_compact_foreground_context_builders():
-    gate = InferenceGate()
-    cortex_reply = "Cortex lane stayed available, but the solver should own this deeper diagnostic turn."
-    solver_reply = "Solver lane is online, using the compact foreground context to analyze the async deadlock directly."
-    cortex = _RecordingClient(cortex_reply)
-    solver = _RecordingClient(solver_reply)
-    gate._mlx_client = cortex
-    gate._build_compact_system_prompt = CallProbe(return_value="compact-system")
-    gate._build_compact_living_mind_context = AsyncCallProbe(return_value="compact-live")
-    gate._build_system_prompt = CallProbe(side_effect=AssertionError("full system prompt should not be used"))
-    gate._build_living_mind_context = AsyncCallProbe(side_effect=AssertionError("full living context should not be used"))
-    gate._schedule_primary_restore_after_deep_handoff = CallProbe()
+    # The local deep solver is auto-disabled on <96GB hosts (memory-
+    # class policy). Force-enable so the tier logic under test is
+    # actually exercised regardless of the machine running the suite.
+    os.environ["AURA_ENABLE_LOCAL_DEEP_SOLVER"] = "1"
+    try:
 
-    def _fake_get_mlx_client(model_path=None, **kwargs):
-        if model_path == "/models/deep":
-            return solver
-        if model_path == "/models/fallback":
-            return _FakeClient("fallback")
-        if model_path == "/models/active":
-            return cortex
-        raise AssertionError(f"Unexpected model path: {model_path}")
+        gate = InferenceGate()
+        cortex_reply = "Cortex lane stayed available, but the solver should own this deeper diagnostic turn."
+        solver_reply = "Solver lane is online, using the compact foreground context to analyze the async deadlock directly."
+        cortex = _RecordingClient(cortex_reply)
+        solver = _RecordingClient(solver_reply)
+        gate._mlx_client = cortex
+        gate._build_compact_system_prompt = CallProbe(return_value="compact-system")
+        gate._build_compact_living_mind_context = AsyncCallProbe(return_value="compact-live")
+        gate._build_system_prompt = CallProbe(side_effect=AssertionError("full system prompt should not be used"))
+        gate._build_living_mind_context = AsyncCallProbe(side_effect=AssertionError("full living context should not be used"))
+        gate._schedule_primary_restore_after_deep_handoff = CallProbe()
 
-    low_pressure = {
-        "tier": "secondary",
-        "pressure_pct": 40.0,
-        "total_gb": 64.0,
-        "available_gb": 32.0,
-        "max_pressure_pct": 86.0,
-        "min_available_gb": 10.0,
-        "can_admit": True,
-    }
+        def _fake_get_mlx_client(model_path=None, **kwargs):
+            if model_path == "/models/deep":
+                return solver
+            if model_path == "/models/fallback":
+                return _FakeClient("fallback")
+            if model_path == "/models/active":
+                return cortex
+            raise AssertionError(f"Unexpected model path: {model_path}")
 
-    with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-        with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
-            with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
-                    with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
-                        with replace.object(InferenceGate, "_headroom_snapshot", staticmethod(lambda *a, **kw: low_pressure)):
-                            result = await gate.generate(
-                                "Do a root-cause analysis of this async deadlock.",
-                                context={"origin": "api", "prefer_tier": "secondary", "deep_handoff": True, "history": []},
-                            )
+        low_pressure = {
+            "tier": "secondary",
+            "pressure_pct": 40.0,
+            "total_gb": 64.0,
+            "available_gb": 32.0,
+            "max_pressure_pct": 86.0,
+            "min_available_gb": 10.0,
+            "can_admit": True,
+        }
 
-    assert result == solver_reply
-    gate._build_compact_system_prompt.assert_called_once()
-    gate._build_compact_living_mind_context.assert_awaited_once()
-    assert "compact-system" in solver.prompts[0]
-    assert "compact-live" in solver.prompts[0]
+        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+            with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+                with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                    with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                        with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
+                            with replace.object(InferenceGate, "_headroom_snapshot", staticmethod(lambda *a, **kw: low_pressure)):
+                                result = await gate.generate(
+                                    "Do a root-cause analysis of this async deadlock.",
+                                    context={"origin": "api", "prefer_tier": "secondary", "deep_handoff": True, "history": []},
+                                )
+
+        assert result == solver_reply
+        gate._build_compact_system_prompt.assert_called_once()
+        gate._build_compact_living_mind_context.assert_awaited_once()
+        assert "compact-system" in solver.prompts[0]
+        assert "compact-live" in solver.prompts[0]
+    finally:
+        os.environ.pop("AURA_ENABLE_LOCAL_DEEP_SOLVER", None)
 
 
 @pytest.mark.asyncio
 async def test_protected_primary_chat_failure_does_not_promote_to_solver():
-    gate = InferenceGate()
-    cortex = _NoTextReadyClient()
-    brainstem = _FakeClient("Brainstem fallback kept the live turn alive without loading the deep solver.")
-    gate._mlx_client = cortex
-    gate._ensure_cortex_recovery = AsyncCallProbe()
-    gate._build_compact_system_prompt = CallProbe(return_value="compact-system")
-    gate._build_compact_living_mind_context = AsyncCallProbe(return_value="compact-live")
+    # The local deep solver is auto-disabled on <96GB hosts (memory-
+    # class policy). Force-enable so the tier logic under test is
+    # actually exercised regardless of the machine running the suite.
+    os.environ["AURA_ENABLE_LOCAL_DEEP_SOLVER"] = "1"
+    try:
 
-    requested_models = []
+        gate = InferenceGate()
+        cortex = _NoTextReadyClient()
+        brainstem = _FakeClient("I'm still here with you - my main lane is warming back up, but I'm present and not going anywhere.")
+        gate._mlx_client = cortex
+        gate._ensure_cortex_recovery = AsyncCallProbe()
+        gate._build_compact_system_prompt = CallProbe(return_value="compact-system")
+        gate._build_compact_living_mind_context = AsyncCallProbe(return_value="compact-live")
 
-    def _fake_get_mlx_client(model_path=None, **kwargs):
-        requested_models.append(str(model_path))
-        if model_path == "/models/deep":
-            raise AssertionError("protected primary chat must not load the 72B solver fallback")
-        if model_path == "/models/brainstem":
-            return brainstem
-        if model_path == "/models/active":
+        requested_models = []
+
+        def _fake_get_mlx_client(model_path=None, **kwargs):
+            requested_models.append(str(model_path))
+            if model_path == "/models/deep":
+                raise AssertionError("protected primary chat must not load the 72B solver fallback")
+            if model_path == "/models/brainstem":
+                return brainstem
+            if model_path == "/models/active":
+                return cortex
+            if model_path == "/models/fallback":
+                return _FakeClient("cpu")
             return cortex
-        if model_path == "/models/fallback":
-            return _FakeClient("cpu")
-        return cortex
 
-    with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-            with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
-                with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                    with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
-                        result = await gate.generate(
-                            "Are you still with me?",
-                            context={
-                                "origin": "api",
-                                "prefer_tier": "primary",
-                                "protected_foreground_lane": True,
-                                "history": [],
-                                "allow_cloud_fallback": False,
-                            },
-                            timeout=30.0,
-                        )
+        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+            with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+                with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+                    with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                        with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                            result = await gate.generate(
+                                "Are you still with me?",
+                                context={
+                                    "origin": "api",
+                                    "prefer_tier": "primary",
+                                    "protected_foreground_lane": True,
+                                    "history": [],
+                                    "allow_cloud_fallback": False,
+                                },
+                                timeout=30.0,
+                            )
 
-    assert result == "Brainstem fallback kept the live turn alive without loading the deep solver."
-    assert "/models/deep" not in requested_models
+        assert result == "I'm still here with you - my main lane is warming back up, but I'm present and not going anywhere."
+        assert "/models/deep" not in requested_models
+    finally:
+        os.environ.pop("AURA_ENABLE_LOCAL_DEEP_SOLVER", None)
 
 
 @pytest.mark.asyncio
@@ -1761,51 +1808,59 @@ async def test_solver_hot_spare_warmup_uses_background_semantics():
 
 @pytest.mark.asyncio
 async def test_secondary_requests_downgrade_to_primary_when_headroom_is_tight():
-    gate = InferenceGate()
-    cortex_reply = "Cortex lane handled the audit after headroom forced the deep solver request back to primary."
-    solver_reply = "Solver should not run when foreground headroom is too tight for the deep handoff."
-    cortex = _RecordingClient(cortex_reply)
-    solver = _RecordingClient(solver_reply)
-    brainstem = _FakeClient("brainstem")
-    gate._mlx_client = cortex
-    gate._restore_primary_after_deep_handoff = AsyncCallProbe()
+    # The local deep solver is auto-disabled on <96GB hosts (memory-
+    # class policy). Force-enable so the tier logic under test is
+    # actually exercised regardless of the machine running the suite.
+    os.environ["AURA_ENABLE_LOCAL_DEEP_SOLVER"] = "1"
+    try:
 
-    def _fake_get_mlx_client(model_path=None, **kwargs):
-        if model_path == "/models/deep":
-            return solver
-        if model_path == "/models/brainstem":
-            return brainstem
-        raise AssertionError(f"Unexpected model path: {model_path}")
+        gate = InferenceGate()
+        cortex_reply = "Cortex lane handled the audit after headroom forced the deep solver request back to primary."
+        solver_reply = "Solver should not run when foreground headroom is too tight for the deep handoff."
+        cortex = _RecordingClient(cortex_reply)
+        solver = _RecordingClient(solver_reply)
+        brainstem = _FakeClient("brainstem")
+        gate._mlx_client = cortex
+        gate._restore_primary_after_deep_handoff = AsyncCallProbe()
 
-    with replace.object(
-        gate,
-        "_enforce_foreground_admission",
-        side_effect=[
-            {
-                "can_admit": False,
-                "pressure_pct": 91.0,
-                "available_gb": 8.0,
-            },
-            {
-                "can_admit": True,
-                "pressure_pct": 81.0,
-                "available_gb": 18.0,
-            },
-        ],
-    ):
-        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-            with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
-                with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-                    with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
-                        result = await gate.generate(
-                            "Do a deep architecture audit.",
-                            context={"origin": "user", "prefer_tier": "secondary", "deep_handoff": True},
-                        )
+        def _fake_get_mlx_client(model_path=None, **kwargs):
+            if model_path == "/models/deep":
+                return solver
+            if model_path == "/models/brainstem":
+                return brainstem
+            raise AssertionError(f"Unexpected model path: {model_path}")
 
-    assert result == cortex_reply
-    assert cortex.deadlines
-    assert not solver.deadlines
-    gate._restore_primary_after_deep_handoff.assert_not_awaited()
+        with replace.object(
+            gate,
+            "_enforce_foreground_admission",
+            side_effect=[
+                {
+                    "can_admit": False,
+                    "pressure_pct": 91.0,
+                    "available_gb": 8.0,
+                },
+                {
+                    "can_admit": True,
+                    "pressure_pct": 81.0,
+                    "available_gb": 18.0,
+                },
+            ],
+        ):
+            with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+                with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+                    with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+                        with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                            result = await gate.generate(
+                                "Do a deep architecture audit.",
+                                context={"origin": "user", "prefer_tier": "secondary", "deep_handoff": True},
+                            )
+
+        assert result == cortex_reply
+        assert cortex.deadlines
+        assert not solver.deadlines
+        gate._restore_primary_after_deep_handoff.assert_not_awaited()
+    finally:
+        os.environ.pop("AURA_ENABLE_LOCAL_DEEP_SOLVER", None)
 
 
 def test_secondary_headroom_snapshot_blocks_64gb_solver_envelope_by_default(monkeypatch):

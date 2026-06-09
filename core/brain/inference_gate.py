@@ -964,9 +964,16 @@ class InferenceGate:
             "last_progress_at": 0.0,
             "warmup_attempted": False,
             "warmup_in_flight": bool(self._prewarm_task and not self._prewarm_task.done()),
-            "last_user_generation_endpoint": self._last_user_generation_endpoint,
-            "last_user_generation_at": self._last_user_generation_at,
-            "last_user_generation_used_fallback": self._last_user_generation_used_fallback,
+            # getattr defaults: this snapshot feeds watchdogs and recovery
+            # probes — a missing informational field must degrade to its
+            # default, never raise out of a status read.
+            "last_user_generation_endpoint": getattr(
+                self, "_last_user_generation_endpoint", None
+            ),
+            "last_user_generation_at": getattr(self, "_last_user_generation_at", 0.0),
+            "last_user_generation_used_fallback": getattr(
+                self, "_last_user_generation_used_fallback", False
+            ),
         }
         raw_ready = False
         if self._mlx_client and hasattr(self._mlx_client, "get_lane_status"):

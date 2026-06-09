@@ -100,6 +100,10 @@ def _make_gate(client=None):
     gate._maintenance_task = None
     gate._last_background_memory_shed_at = 0.0
     gate._last_spare_maintenance_at = 0.0
+    gate._last_cortex_warmup_deferral_log_at = 0.0
+    gate._last_user_generation_endpoint = None
+    gate._last_user_generation_at = 0.0
+    gate._last_user_generation_used_fallback = False
     import threading
     gate._foreground_ready_lock = threading.Lock()
     return gate
