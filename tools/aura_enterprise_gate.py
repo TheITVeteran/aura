@@ -86,6 +86,10 @@ ALLOW_SUBPROCESS = {
     "skills/shell.py",
     "tools/aura_enterprise_gate.py",
     "tools/box/parent_controller.py",
+    # Operator/CI drivers that orchestrate child processes by design:
+    "tools/run_test_chunks.py",
+    "tools/live_boot_proof.py",
+    "tools/build_release_manifest.py",
     # Legitimate production modules requiring OS/subprocess interface
     "core/architect/safety_gate.py",
     "core/architect/shadow_workspace.py",

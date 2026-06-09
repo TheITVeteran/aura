@@ -10,7 +10,7 @@ Run `make closeout-rubric` to verify programmatically.
 
 | # | Criterion | Verification | Status |
 |---|-----------|-------------|--------|
-| 1 | Clean install works on supported hardware | `make setup-prod && make doctor` | ✅ |
+| 1 | Clean install works on supported hardware | `make setup-prod && make doctor` | ⏳ pending fresh-environment proof — gates pass on the dev machine; a clean Python 3.12 venv install + collection run has not been independently reproduced this cycle |
 | 2 | One canonical production boot path exists | `boot_aura_runtime()` in `aura_main.py` | ✅ |
 | 3 | Production/research/dev/simulation/safe modes separated | `core/runtime/mode.py` | ✅ |
 | 4 | All consequential actions route through Will/Authority | `core/will.py` + `core/governance/will_gate.py` | ✅ |
@@ -28,7 +28,7 @@ Run `make closeout-rubric` to verify programmatically.
 | 16 | Backup/restore drills pass | `make restore-test` | ✅ |
 | 17 | Release rollback tested | `make restore BACKUP=<prev>` | ✅ |
 | 18 | User privacy export/delete works | `make data-export` / `make data-purge` | ✅ |
-| 19 | External reviewer can reproduce the release | `make setup && make quality && make production-gate` | ✅ |
+| 19 | External reviewer can reproduce the release | `make setup && make quality && make production-gate` | ⏳ pending — no external reviewer transcript exists yet (see CHALLENGE.md) |
 | 20 | Known limitations published | `KNOWN_FAILURE_MODES.md` | ✅ |
 
 ## Release Classification
