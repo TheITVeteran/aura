@@ -39,8 +39,12 @@ Run `make closeout-rubric` to verify programmatically.
 | **research build** | + enterprise gate, governance lint | ✅ |
 | **candidate build** | + production gate, security scan | ✅ |
 | **operator build** | + SLO compliance, backup/restore drill | ✅ |
-| **stable build** | + longevity soak, known limitations published | ✅ |
-| **enterprise build** | + external validation, signed artifacts, SBOM | ✅ |
+| **stable build** | + longevity soak, known limitations published | ⏳ evidence pending — `artifacts/proof_bundle/latest/LONGEVITY_RUN.json` honestly records `passed: unknown` (instant snapshot, no wall-clock soak). Operator action: run `make longevity-4h` / `make longevity-24h` and let the artifact record the real result. |
+| **enterprise build** | + external validation, signed artifacts, SBOM | ⏳ evidence pending — external reviewers have not yet reproduced the release from a clean clone (see CHALLENGE.md). Artifacts/SBOM machinery is in place; the independent reproduction is the missing evidence. |
+
+Status discipline: a level is ✅ only when its verification command passes
+right now from this commit. Missing evidence is recorded as pending, never
+greened by aspiration — the same rule the proof artifacts follow.
 
 ## Release Artifacts
 
