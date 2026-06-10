@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+_MONO_START = 0.0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,6 +37,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
 
+    global _MONO_START
+    _MONO_START = time.monotonic()
     command = list(args.command)
     if command and command[0] == "--":
         command = command[1:]
@@ -46,9 +49,26 @@ def main(argv: list[str] | None = None) -> int:
     started = time.time()
     timed_out = False
     returncode: int | None = None
+    # Sleep-proofing (the 9-hour 'hang' was a lid-closed MacBook):
+    # caffeinate -i holds off idle sleep for exactly this step's
+    # lifetime, and the wait loop below checks WALL clock too —
+    # monotonic deadlines freeze during sleep, wall time does not, so
+    # a sleep-spanning step is killed on wake instead of resuming as
+    # a zombie run.
+    if sys.platform == "darwin":
+        command = ["/usr/bin/caffeinate", "-i", *command]
     proc = subprocess.Popen(command, cwd=ROOT, start_new_session=True)
+    wall_deadline = started + args.timeout * 1.25 + 60.0
     try:
-        returncode = proc.wait(timeout=args.timeout)
+        remaining = args.timeout
+        while True:
+            try:
+                returncode = proc.wait(timeout=min(30.0, max(1.0, remaining)))
+                break
+            except subprocess.TimeoutExpired:
+                remaining = args.timeout - (time.monotonic() - _MONO_START)
+                if remaining <= 0 or time.time() > wall_deadline:
+                    raise
     except subprocess.TimeoutExpired:
         timed_out = True
         try:
