@@ -1459,6 +1459,19 @@ class AffectiveSteeringEngine:
         Derivation of steering vectors takes ~2-5 minutes on first run,
         then loads from cache instantly on subsequent runs.
         """
+        if os.environ.get("AURA_DISABLE_AFFECTIVE_STEERING", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }:
+            # Kill-switch for live fault isolation: rounds 5 and 6 of the
+            # live boot proof died by silent external SIGKILL during the
+            # first steered in-process generation, immediately after hook
+            # install. This gate lets a probe run prove or clear the
+            # steering pathway without code churn.
+            logger.warning(
+                "AffectiveSteeringEngine attach skipped: AURA_DISABLE_AFFECTIVE_STEERING set."
+            )
+            return
+
         if self._model_attached:
             logger.warning("Engine already attached. Call detach() first.")
             return
