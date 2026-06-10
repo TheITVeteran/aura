@@ -27,6 +27,7 @@ import argparse
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -157,6 +158,32 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         time.sleep(max(0.5, args.interval))
+
+    # Target vanished without OUR kill: capture the unified log around
+    # the death immediately — silent SIGKILLs leave their only evidence
+    # in the kernel namespace, and it ages out fast.
+    try:
+        capture = subprocess.run(
+            [
+                "log", "show", "--last", "3m",
+                "--predicate",
+                f'eventMessage CONTAINS "{args.pid}" OR '
+                'eventMessage CONTAINS "memorystatus" OR '
+                'eventMessage CONTAINS "Python" OR '
+                'eventMessage CONTAINS "SIGKILL"',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        out_path = args.tombstone_dir / f"death_syslog_{int(time.time())}.log"
+        args.tombstone_dir.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            f"target pid {args.pid} vanished at {time.time()}\n"
+            + (capture.stdout or "")[-200_000:]
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
     return 0
 
 
