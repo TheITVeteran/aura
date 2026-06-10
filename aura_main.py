@@ -929,6 +929,33 @@ async def _boot_runtime_orchestrator(
     return orchestrator
 
 
+def _install_fault_forensics() -> None:
+    """A death with no traceback is forbidden: faulthandler dumps every
+    thread's stack to a persistent file on native faults (SIGSEGV/BUS/
+    ABRT/ILL) and on SIGTERM, so the next silent exit names its killer."""
+    try:
+        import faulthandler
+        import signal as _signal
+
+        crash_dir = Path("data/error_logs/crash")
+        crash_dir.mkdir(parents=True, exist_ok=True)
+        crash_file = open(crash_dir / "faulthandler.log", "a")
+        crash_file.write(
+            f"\n===== boot pid={os.getpid()} at={time.time()} =====\n"
+        )
+        crash_file.flush()
+        faulthandler.enable(file=crash_file, all_threads=True)
+        faulthandler.register(_signal.SIGTERM, file=crash_file, all_threads=True, chain=True)
+        logger.info("🛡️ Fault forensics armed: data/error_logs/crash/faulthandler.log")
+    except (OSError, ValueError, RuntimeError, AttributeError) as exc:
+        record_degradation(
+            _AURA_MAIN_DEGRADATION_KEY,
+            exc,
+            action="continued boot without fault forensics",
+            severity="warning",
+        )
+
+
 def _install_systemwide_memory_protection() -> None:
     """Memory protection that survives process suspension.
 
@@ -960,8 +987,8 @@ def _install_systemwide_memory_protection() -> None:
         if rlimit_gb > 0:
             limit_bytes = int(rlimit_gb * (1024**3))
             soft, hard = resource.getrlimit(resource.RLIMIT_DATA)
-            new_hard = hard if hard != resource.RLIM_INFINITY and hard < limit_bytes else limit_bytes
-            resource.setrlimit(resource.RLIMIT_DATA, (min(limit_bytes, new_hard), new_hard))
+            new_soft = limit_bytes if hard == resource.RLIM_INFINITY else min(limit_bytes, hard)
+            resource.setrlimit(resource.RLIMIT_DATA, (new_soft, hard))
             logger.info("🛡️ RLIMIT_DATA installed: %.0fGB heap ceiling (kernel-enforced).", rlimit_gb)
     except (ValueError, OSError, resource.error) as exc:
         record_degradation(
@@ -971,26 +998,13 @@ def _install_systemwide_memory_protection() -> None:
             severity="warning",
         )
 
+    # MLX memory cap travels by ENV ONLY: importing mlx.core in this
+    # parent process violates the deferred-Metal-bindings protection
+    # (platform_root defers exactly to protect spawn children) and is
+    # the prime suspect in a silent native death mid-generation during
+    # live proof round 5. Workers apply the limit on their side.
     mlx_gb = str(os.environ.get("AURA_MLX_MEMORY_LIMIT_GB", "24") or "24")
-    os.environ.setdefault("AURA_MLX_MEMORY_LIMIT_GB", mlx_gb)  # workers inherit
-    try:
-        import mlx.core as mx
-
-        limit_bytes = int(float(mlx_gb) * (1024**3))
-        if hasattr(mx, "set_memory_limit"):
-            mx.set_memory_limit(limit_bytes)
-        elif hasattr(mx, "metal") and hasattr(mx.metal, "set_memory_limit"):
-            mx.metal.set_memory_limit(limit_bytes)
-        logger.info("🛡️ MLX Metal memory limit installed: %sGB.", mlx_gb)
-    except ImportError:
-        pass
-    except (ValueError, OSError, RuntimeError, AttributeError, TypeError) as exc:
-        record_degradation(
-            _AURA_MAIN_DEGRADATION_KEY,
-            exc,
-            action="continued boot without MLX memory limit",
-            severity="warning",
-        )
+    os.environ.setdefault("AURA_MLX_MEMORY_LIMIT_GB", mlx_gb)
 
     if str(os.environ.get("AURA_MEMORY_SENTINEL", "1")).strip().lower() not in {"0", "false", "no", "off"}:
         try:
@@ -1038,6 +1052,7 @@ async def boot_aura_runtime(
     CLI, desktop, server, and validation/proof surfaces must use this path so
     their evidence reflects the same live Aura boot contract.
     """
+    _install_fault_forensics()
     _install_systemwide_memory_protection()
     if profile == "minimal":
         os.environ["AURA_BOOT_PROFILE"] = "minimal"
