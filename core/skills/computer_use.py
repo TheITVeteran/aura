@@ -403,19 +403,40 @@ class ComputerUseSkill(BaseSkill):
             raise ValueError("Target must be a JSON object.")
         return payload
 
+    @staticmethod
+    def _versioned_path(path: Path) -> Path:
+        """Next free 'name (N).ext' so repeats never overwrite or fail.
+
+        Refusing outright killed whole desktop chains on the second run
+        of the same request (observed live: 'Refusing to overwrite'
+        surfaced to the user as an opaque task failure). Safety stays —
+        existing data is never touched — and the action reports the
+        path it actually wrote.
+        """
+        if not path.exists():
+            return path
+        for index in range(2, 1000):
+            candidate = path.with_name(f"{path.stem} ({index}){path.suffix}")
+            if not candidate.exists():
+                return candidate
+        raise FileExistsError(f"No free versioned name for {path}")
+
     def _write_text_file(self, target: str) -> dict[str, Any]:
         payload = self._target_json(target)
         path = self._resolve_allowed_desktop_path(payload.get("path"))
         content = str(payload.get("content") or "")
         overwrite = bool(payload.get("overwrite", False))
+        requested = path
         if path.exists() and not overwrite:
-            return {"ok": False, "error": f"Refusing to overwrite existing file: {path}"}
+            path = self._versioned_path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, content, encoding="utf-8")
         return {
             "ok": True,
             "action": "write_text_file",
             "path": str(path),
+            "requested_path": str(requested),
+            "versioned": path != requested,
             "bytes": path.stat().st_size,
         }
 
@@ -439,7 +460,7 @@ class ComputerUseSkill(BaseSkill):
         destination = self._resolve_allowed_desktop_path(payload.get("destination"))
         overwrite = bool(payload.get("overwrite", False))
         if destination.exists() and not overwrite:
-            return {"ok": False, "error": f"Refusing to overwrite existing destination: {destination}"}
+            destination = self._versioned_path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         moved_to = shutil.move(str(source), str(destination))
         final_path = Path(moved_to).resolve(strict=True)
@@ -460,7 +481,7 @@ class ComputerUseSkill(BaseSkill):
         if not body.strip():
             return {"ok": False, "error": "PDF body is empty."}
         if path.exists() and not overwrite:
-            return {"ok": False, "error": f"Refusing to overwrite existing PDF: {path}"}
+            path = self._versioned_path(path)
         if path.suffix.lower() != ".pdf":
             return {"ok": False, "error": "PDF path must end with .pdf."}
 

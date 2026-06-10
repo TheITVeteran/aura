@@ -503,3 +503,45 @@ async def test_computer_use_mycelial_pulse_failure_does_not_block_action(monkeyp
         for record in tracker.recent(subsystem="computer_use")
     )
     tracker.reset()
+
+
+def test_write_text_file_versions_instead_of_refusing(tmp_path, monkeypatch):
+    """Live failure: second run of the same desktop request died on
+    'Refusing to overwrite existing file' and the whole chain failed.
+    Repeats must version like Finder ('name (2).txt'), never clobber,
+    never fail."""
+    import json
+
+    from core.skills.computer_use import ComputerUseSkill
+
+    skill = ComputerUseSkill()
+    monkeypatch.setattr(
+        skill, "_resolve_allowed_desktop_path", lambda p, must_exist=False: tmp_path / Path(str(p)).name
+    )
+
+    first = skill._write_text_file(json.dumps({"path": "note.txt", "content": "one"}))
+    second = skill._write_text_file(json.dumps({"path": "note.txt", "content": "two"}))
+
+    assert first["ok"] and second["ok"]
+    assert first["path"].endswith("note.txt")
+    assert second["versioned"] is True
+    assert second["path"].endswith("note (2).txt")
+    assert (tmp_path / "note.txt").read_text() == "one"
+    assert (tmp_path / "note (2).txt").read_text() == "two"
+
+
+def test_write_text_file_overwrite_flag_still_overwrites(tmp_path, monkeypatch):
+    import json
+
+    from core.skills.computer_use import ComputerUseSkill
+
+    skill = ComputerUseSkill()
+    monkeypatch.setattr(
+        skill, "_resolve_allowed_desktop_path", lambda p, must_exist=False: tmp_path / Path(str(p)).name
+    )
+    skill._write_text_file(json.dumps({"path": "note.txt", "content": "one"}))
+    result = skill._write_text_file(
+        json.dumps({"path": "note.txt", "content": "two", "overwrite": True})
+    )
+    assert result["ok"] and result["versioned"] is False
+    assert (tmp_path / "note.txt").read_text() == "two"
