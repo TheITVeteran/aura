@@ -198,10 +198,19 @@ class BootResilienceMixin:
 
         # v51: We isolate cognitive I/O from system I/O to prevent starvation.
         # If the default pool fills up with DB reads, Aura's heartbeat will still fire.
-        # [STABILITY v54] Scaling for M-series high parallelism.
-        # We increase from 32 to 64 to ensure that even during heavy vision/IPC
-        # bursts, the main cognitive heartbeat is never starved of a thread.
-        cog_executor = ThreadPoolExecutor(max_workers=64, thread_name_prefix="Aura_Cognition")
+        # [MEMORY] The 32→64 escalation chased heartbeat starvation whose real
+        # cause was blocking calls on the loop itself (since fixed at source:
+        # health-path globs, RSS scans, AppleScript probes). 64-wide concurrency
+        # is a memory amplifier: in the 115GB host crash the stall dump showed a
+        # 104-thread pile-up, with this pool's workers running heavyweight
+        # deferred tasks simultaneously. Bounded width makes overload queue
+        # (bounded memory) instead of fan out (unbounded memory).
+        import os as _os
+
+        _cog_workers = max(4, min(16, int(_os.environ.get("AURA_COGNITION_POOL_WORKERS", "0") or 0) or ((_os.cpu_count() or 8) + 4)))
+        cog_executor = ThreadPoolExecutor(
+            max_workers=_cog_workers, thread_name_prefix="Aura_Cognition"
+        )
         try:
             asyncio.get_running_loop().set_default_executor(cog_executor)
         except RuntimeError:
