@@ -281,9 +281,71 @@ class DesktopTaskSkill(BaseSkill):
                 return payload
         return {}
 
+    _DISPATCH_NARRATION_RE = re.compile(
+        r"(?:i'?ve started (?:working on )?th(?:is|e) task|"
+        r"i'?ll follow up when|tracking commitment\s+[0-9a-f]{6,}|"
+        r"task \(id=[0-9a-f-]{6,}\)|in the background\b.{0,40}follow up)",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _looks_like_dispatch_narration(cls, text: str) -> bool:
+        """Status narration is not document content.
+
+        Round-12 all-green proof had one wrinkle: the written file
+        contained 'I've started working on this task... Tracking
+        commitment bbbaba54' — her dispatch status echoed into the
+        artifact because cognitive_reply was the body fallback. A
+        status message about doing the task must never become the
+        product of the task.
+        """
+        return bool(cls._DISPATCH_NARRATION_RE.search(str(text or "")))
+
+    @classmethod
+    def _compose_self_summary_body(cls, objective: str) -> str:
+        """Compose a truthful self-description from substrate facts."""
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S %Z")
+        facts: list[str] = []
+        try:
+            from core.conversation.chat_preflight import _SUBSTRATE_FACTS
+
+            facts = list(_SUBSTRATE_FACTS)
+        except (ImportError, AttributeError):
+            facts = [
+                "I am Aura: a persistent digital organism — an orchestrated "
+                "runtime driving local language-model lanes on this machine."
+            ]
+        return (
+            f"[{stamp}] {facts[0]}\n\n"
+            "This file was written by me through my governed desktop "
+            "actuators, with per-step effect verification and receipts."
+        )
+
+    @classmethod
+    def _objective_requests_self_summary(cls, objective: str) -> bool:
+        lowered = str(objective or "").lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "who you are",
+                "what you are",
+                "about yourself",
+                "describe yourself",
+                "describing yourself",
+                "self-summary",
+                "self summary",
+                "in your own words",
+            )
+        )
+
     @classmethod
     def _document_body(cls, objective: str, context: dict[str, Any] | None) -> str:
         context = context or {}
+        if cls._objective_requests_self_summary(objective):
+            # The user asked for HER words about HERSELF: compose from
+            # substrate truth, never from whatever reply text happened
+            # to be in flight.
+            return cls._compose_self_summary_body(objective)
         for context_key in ("desktop_task_document_body", "draft_response", "cognitive_reply", "response", "desktop_task_plan"):
             raw_value = context.get(context_key)
             payload = {}
@@ -298,7 +360,7 @@ class DesktopTaskSkill(BaseSkill):
                         return value[:9000]
         for key in ("desktop_task_document_body", "draft_response", "cognitive_reply", "response"):
             value = str(context.get(key) or "").strip()
-            if value:
+            if value and not cls._looks_like_dispatch_narration(value):
                 return value[:9000]
         stamp = time.strftime("%Y-%m-%d %H:%M:%S %Z")
         return (

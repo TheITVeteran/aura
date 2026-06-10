@@ -522,3 +522,49 @@ def test_derived_steps_keep_defaults_without_explicit_parameters():
     assert write_steps, "default flow still writes a text artifact"
     path = write_steps[0].target["path"]
     assert path.endswith(".txt")
+
+
+def test_dispatch_narration_never_becomes_document_content():
+    """Round-12 wrinkle: the written file contained 'I've started
+    working on this task... Tracking commitment bbbaba54' — her status
+    message echoed into the artifact. A report about doing the task
+    must never become the product of the task."""
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    narration = (
+        "I've started working on this task in the background. I've "
+        "started this task (id=a781768a). Tracking commitment bbbaba54."
+    )
+    assert DesktopTaskSkill._looks_like_dispatch_narration(narration) is True
+
+    body = DesktopTaskSkill._document_body(
+        "write a note about the weather", {"cognitive_reply": narration}
+    )
+    assert "Tracking commitment" not in body
+    assert "started working on this task" not in body
+
+
+def test_self_summary_objective_composes_substrate_truth():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    body = DesktopTaskSkill._document_body(
+        "write a file with one sentence about who you are and the "
+        "current timestamp",
+        {"cognitive_reply": "I've started this task (id=deadbeef)."},
+    )
+    assert "I am Aura" in body
+    assert "digital organism" in body
+    # Timestamped, as requested.
+    import re as _re
+
+    assert _re.search(r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", body)
+
+
+def test_real_prose_reply_still_qualifies_as_body():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    prose = "The tide tables show a low at 6:14 AM and a high at 12:40 PM."
+    body = DesktopTaskSkill._document_body(
+        "write a note about the tides", {"cognitive_reply": prose}
+    )
+    assert body == prose
