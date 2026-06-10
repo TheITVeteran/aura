@@ -549,11 +549,21 @@ def find_existing_proof_runners() -> list[dict]:
     except ImportError:
         return []
 
+    # Exclude our whole ancestor chain, not just our own pid: under the
+    # bounded proof-step wrapper the PARENT's cmdline contains this
+    # script's name as an argument, and matching it terminated our own
+    # process tree 0.13s after launch (rc=-15 in final-proof run 3).
+    ancestors = {me}
+    try:
+        ancestors.update(p.pid for p in psutil.Process(me).parents())
+    except (psutil.Error, OSError):
+        pass
+
     instances: list[dict] = []
     for proc in psutil.process_iter(["pid", "username", "cmdline"]):
         try:
             pid = int(proc.info.get("pid") or 0)
-            if pid == me:
+            if pid in ancestors:
                 continue
             user = str(proc.info.get("username") or "")
             cmdline = proc.info.get("cmdline") or []
