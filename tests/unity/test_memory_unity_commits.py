@@ -3,19 +3,25 @@ from __future__ import annotations
 from core.memory.memory_facade import MemoryFacade
 
 
-class _VectorRecorder:
+class _GatewayRecorder:
+    """Memory writes route through the governed memory-write gateway in
+    strict runtime; unity metadata must survive that boundary."""
+
     def __init__(self):
         self.calls = []
 
-    def add_memory(self, content, metadata):
-        self.calls.append((content, dict(metadata)))
+    async def write(self, request):
+        self.calls.append((request.content, dict(request.metadata or {})))
         return True
 
 
 def test_memory_metadata_carries_unity_fields(monkeypatch):
     facade = MemoryFacade()
-    recorder = _VectorRecorder()
-    facade._vector = recorder
+    recorder = _GatewayRecorder()
+    monkeypatch.setattr(
+        "core.memory.memory_write_gateway.get_memory_write_gateway",
+        lambda: recorder,
+    )
     monkeypatch.setattr(
         facade,
         "_current_unity_metadata",
@@ -42,8 +48,11 @@ def test_memory_metadata_carries_unity_fields(monkeypatch):
 
 def test_memory_write_defers_when_unity_requires_it(monkeypatch):
     facade = MemoryFacade()
-    recorder = _VectorRecorder()
-    facade._vector = recorder
+    recorder = _GatewayRecorder()
+    monkeypatch.setattr(
+        "core.memory.memory_write_gateway.get_memory_write_gateway",
+        lambda: recorder,
+    )
     monkeypatch.setattr(
         facade,
         "_current_unity_metadata",

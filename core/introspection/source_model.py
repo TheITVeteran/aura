@@ -63,6 +63,11 @@ PROTECTED_SOURCE_PATHS = {
     "core/security/constitutional_guard.py",
     "core/self_modification/safe_modification.py",
     "core/will.py",
+    # core/will.py re-exports; the class definition the symbol index can
+    # actually see lives here. Without it, repo growth pushed the real
+    # UnifiedWill outside the sampling cap and the self-model went blind
+    # to its own Will.
+    "core/governance/will.py",
 }
 
 
