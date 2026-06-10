@@ -1029,6 +1029,17 @@ def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
     requested_numbered = _requested_count(_NUMBERED_LIST_REQUEST_RE, user)
     requested_numbered_sentences = _requested_count(_NUMBERED_SENTENCE_REQUEST_RE, user)
     requested_list_items = _requested_list_item_count(user)
+    # Exact-label replies ("Objective: ...", "Stop conditions: ...") are
+    # already structured by the user's own labels; renumbering them
+    # destroys an exact-format contract that was satisfied. Count
+    # label-styled lines as fulfilled structure.
+    label_lines = sum(
+        1
+        for line in repaired.splitlines()
+        if re.match(r"^[A-Z][^:\n]{0,40}:\s", line.strip())
+    )
+    if requested_list_items > 1 and label_lines >= requested_list_items:
+        requested_list_items = 0
     if requested_list_items > 1 and _bullet_count(repaired) < requested_list_items:
         if requested_numbered or requested_numbered_sentences:
             list_repaired = _number_sentences(sentences, requested_list_items)

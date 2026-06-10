@@ -201,6 +201,7 @@ def _critical_supervision_audit() -> Dict[str, Any]:
         supervised = (
             "get_task_tracker" in source
             or "TaskTracker(" in source
+            or "create_tracked_task(" in source  # task_ownership primitive
             or "tracker.create_task(" in source
             or "tracker.bounded_track(" in source
             or "_spawn_server_task(" in source
