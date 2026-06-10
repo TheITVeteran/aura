@@ -114,9 +114,9 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
     consecutive_over = 0
-    while True:
-        if not target.is_running():
-            return 0
+    # Bounded by the target's own lifetime: the sentinel exists exactly
+    # as long as the process it guards.
+    while target.is_running():
         core_mb, child_mb, proc_count = tree_rss_mb(target)
         managed = core_mb + child_mb
         entry = {
@@ -157,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         time.sleep(max(0.5, args.interval))
+    return 0
 
 
 if __name__ == "__main__":
