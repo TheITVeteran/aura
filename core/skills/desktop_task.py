@@ -4,6 +4,7 @@ import json
 import re
 import time
 import urllib.parse
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -110,6 +111,40 @@ class DesktopTaskSkill(BaseSkill):
         if match:
             return str(match.group(1) or match.group(2) or "").strip()[:100]
         return f"Aura Desktop Task {int(time.time())}"
+
+    @staticmethod
+    def _extract_root_hint(objective: str) -> str:
+        """Honor the user's stated artifact root.
+
+        Live proof rounds wrote to the Desktop default while the user
+        said 'in my Documents folder' — parameter fidelity is general
+        capability, not pattern-matching: extract what was actually
+        asked.
+        """
+        lowered = str(objective or "").lower()
+        for token, root in (
+            ("documents folder", "~/Documents"),
+            ("my documents", "~/Documents"),
+            ("documents directory", "~/Documents"),
+            ("downloads folder", "~/Downloads"),
+            ("my downloads", "~/Downloads"),
+            ("desktop folder", "~/Desktop"),
+            ("my desktop", "~/Desktop"),
+        ):
+            if token in lowered:
+                return root
+        return ""
+
+    @staticmethod
+    def _extract_explicit_filename(objective: str) -> str:
+        """The user's stated filename wins over generated stems."""
+        match = re.search(
+            r"\bfile\b[^.\n]{0,60}?\b(?:named|called|titled)\s+"
+            r"['\"]?([\w][\w .-]{0,80}?\.(?:txt|md|markdown|rtf|text))['\"]?",
+            str(objective or ""),
+            flags=re.IGNORECASE,
+        )
+        return match.group(1).strip() if match else ""
 
     @staticmethod
     def _explicit_pdf_requested(objective: str) -> bool:
@@ -488,7 +523,8 @@ class DesktopTaskSkill(BaseSkill):
         lowered = text.lower()
         steps: list[DesktopTaskStep] = []
         folder_name = self._extract_folder_name(text)
-        folder_path = folder_name
+        root_hint = self._extract_root_hint(text)
+        folder_path = f"{root_hint}/{folder_name}" if root_hint else folder_name
         wants_folder = any(token in lowered for token in ("folder", "directory"))
         wants_document = any(
             token in lowered
@@ -616,8 +652,13 @@ class DesktopTaskSkill(BaseSkill):
                 image_search_url=image_search_url,
                 search_url=search_url,
             )
-            filename_stem = self._safe_filename("aura_journal_entry" if "journal" in lowered else "aura_desktop_summary")
-            text_path = f"{folder_path}/{filename_stem}.txt"
+            explicit_filename = self._extract_explicit_filename(text)
+            if explicit_filename:
+                filename_stem = self._safe_filename(Path(explicit_filename).stem)
+                text_path = f"{folder_path}/{explicit_filename}"
+            else:
+                filename_stem = self._safe_filename("aura_journal_entry" if "journal" in lowered else "aura_desktop_summary")
+                text_path = f"{folder_path}/{filename_stem}.txt"
             steps.append(
                 DesktopTaskStep(
                     action="write_text_file",

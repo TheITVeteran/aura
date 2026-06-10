@@ -480,3 +480,45 @@ def test_desktop_task_discovered_and_ranked_for_chained_desktop_prompt(monkeypat
     assert "desktop_task" in engine.detect_intent(prompt)
     assert engine._rank_tool_candidates(objective=prompt, max_tools=3)[0] == "desktop_task"
     assert engine.get_tool_catalog(include_inactive=True)[0]["risk_class"] == "critical"
+
+
+def test_derived_steps_honor_explicit_root_and_filename():
+    """Live rounds wrote to Desktop defaults while the user said
+    'in my Documents folder ... called live_proof.txt'. The user's
+    stated parameters win over generated defaults — that is general
+    capability, not pattern-matching."""
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    skill = DesktopTaskSkill()
+    objective = (
+        "Please create a folder named 'Aura Live Proof' in my Documents "
+        "folder and write a file inside it called live_proof.txt with one "
+        "sentence about who you are and the current timestamp."
+    )
+    steps = skill._derive_steps_from_objective(objective, {})
+    by_action = {}
+    for step in steps:
+        by_action.setdefault(step.action, []).append(step)
+
+    folder_target = by_action["create_folder"][0].target
+    folder_path = folder_target["path"] if isinstance(folder_target, dict) else folder_target
+    assert str(folder_path).startswith("~/Documents/"), folder_path
+    assert "Aura Live Proof" in str(folder_path)
+
+    write_target = by_action["write_text_file"][0].target
+    write_path = write_target["path"] if isinstance(write_target, dict) else write_target
+    assert str(write_path).endswith("/live_proof.txt"), write_path
+    assert str(write_path).startswith("~/Documents/"), write_path
+
+
+def test_derived_steps_keep_defaults_without_explicit_parameters():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    skill = DesktopTaskSkill()
+    steps = skill._derive_steps_from_objective(
+        "Write a quick summary note for me in a new folder.", {}
+    )
+    write_steps = [s for s in steps if s.action == "write_text_file"]
+    assert write_steps, "default flow still writes a text artifact"
+    path = write_steps[0].target["path"]
+    assert path.endswith(".txt")
