@@ -459,7 +459,9 @@ final-proof:
 	python -m compileall -q aura_main.py core aura interface skills tools scripts proof_kernel
 	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest --collect-only -q
 	pytest --collect-only -q
-	python -m core.runtime.flagship_readiness --strict .
+	python tools/run_proof_step.py --name flagship_readiness --timeout 900 \
+	  --artifact artifacts/current/proof_steps/flagship_readiness.json -- \
+	  python -m core.runtime.flagship_readiness --strict .
 	python tools/aura_enterprise_gate.py \
 	  --root . \
 	  --baseline config/aura_enterprise_gate_baseline.json \
@@ -476,33 +478,47 @@ final-proof:
 	python tools/proof_integrity_lint.py \
 	  --scope production \
 	  --out artifacts/current/proof_integrity_lint.json
-	python tools/agi/run_dnu_agi_proof_battery.py \
+	python tools/run_proof_step.py --name dnu_agi_battery --timeout 7200 \
+	  --artifact artifacts/current/proof_steps/dnu_agi_battery.json -- \
+	  python tools/agi/run_dnu_agi_proof_battery.py \
 	  --full \
 	  --model-tier primary \
 	  --stop-existing-runtime \
 	  --out artifacts/current/agi_live
-	python tools/agi/validate_dnu_final_bundle.py \
+	python tools/run_proof_step.py --name dnu_bundle_validate --timeout 600 \
+	  --artifact artifacts/current/proof_steps/dnu_bundle_validate.json -- \
+	  python tools/agi/validate_dnu_final_bundle.py \
 	  artifacts/current/agi_live
-	python tools/agency/run_agency_emergence_battery.py \
+	python tools/run_proof_step.py --name agency_emergence_battery --timeout 7200 \
+	  --artifact artifacts/current/proof_steps/agency_emergence_battery.json -- \
+	  python tools/agency/run_agency_emergence_battery.py \
 	  --full \
 	  --out artifacts/current/agency_emergence_boxed_entity
 	python tools/agency/validate_agency_emergence_bundle.py \
 	  artifacts/current/agency_emergence_boxed_entity
-	python tools/external_validation/run_external_live_validation.py \
+	python tools/run_proof_step.py --name external_live_validation --timeout 5400 \
+	  --artifact artifacts/current/proof_steps/external_live_validation.json -- \
+	  python tools/external_validation/run_external_live_validation.py \
 	  --full \
 	  --out artifacts/current/external_live_validation
 	python tools/external_validation/validate_external_live_bundle.py \
 	  artifacts/current/external_live_validation
-	python tools/integration/run_unified_aura_scenario.py \
+	python tools/run_proof_step.py --name unified_scenario --timeout 3600 \
+	  --artifact artifacts/current/proof_steps/unified_scenario.json -- \
+	  python tools/integration/run_unified_aura_scenario.py \
 	  --out artifacts/current/unified_system_scenario
 	python tools/integration/validate_unified_aura_scenario.py \
 	  artifacts/current/unified_system_scenario
-	python tools/learning/run_continual_learning_battery.py \
+	python tools/run_proof_step.py --name continual_learning_battery --timeout 5400 \
+	  --artifact artifacts/current/proof_steps/continual_learning_battery.json -- \
+	  python tools/learning/run_continual_learning_battery.py \
 	  --full \
 	  --out artifacts/current/continual_learning
 	python tools/learning/validate_continual_learning_bundle.py \
 	  artifacts/current/continual_learning
-	python tools/environments/run_novel_environment_battery.py \
+	python tools/run_proof_step.py --name novel_environment_battery --timeout 5400 \
+	  --artifact artifacts/current/proof_steps/novel_environment_battery.json -- \
+	  python tools/environments/run_novel_environment_battery.py \
 	  --full \
 	  --out artifacts/current/novel_environment_adaptation
 	python tools/environments/validate_novel_environment_bundle.py \
