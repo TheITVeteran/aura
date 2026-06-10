@@ -7022,6 +7022,43 @@ async def api_chat(
 
         _desktop_exec_state = {"attempted": False}
 
+        async def _apply_desktop_objective_chokepoint(
+            final_text: str, status: str
+        ) -> tuple[str, str]:
+            """Execute-or-stay-honest gate shared by EVERY reply exit.
+
+            Round-10 live proof: the kernel/deep lane exits through its
+            own response build and served a confabulated 'I created the
+            folder' (with a fabricated 60-trillion-parameter self-claim)
+            while no tool ever dispatched — the chokepoint guarded only
+            the fastpath door. Both doors now pass through here.
+            """
+            if (
+                is_benchmark
+                or _desktop_exec_state["attempted"]
+                or str(status or "").startswith(
+                    ("live_proof", "desktop_objective", "file_operation")
+                )
+                or not _looks_like_desktop_objective(_semantic_user_message)
+            ):
+                return final_text, status
+            _desktop_exec_state["attempted"] = True
+            try:
+                _executed = await _execute_desktop_objective_from_chat(
+                    _semantic_user_message,
+                    cognitive_reply=final_text,
+                )
+            except _CHAT_RECOVERABLE_ERRORS as _exec_exc:
+                record_degradation('chat', _exec_exc)
+                _executed = None
+            if isinstance(_executed, dict) and _executed.get("response"):
+                return (
+                    _apply_aura_voice_shaping(str(_executed.get("response") or "")).strip()
+                    or final_text,
+                    str(_executed.get("status") or "desktop_objective"),
+                )
+            return final_text, status
+
         async def _finalize_fastpath(reply_text: str, status: str = "ok"):
             nonlocal pending_exchange_id
             final_text = str(reply_text or "…").strip() or "…"
@@ -7029,38 +7066,16 @@ async def api_chat(
             proof_status = str(status or "")
             is_live_proof_status = proof_status.startswith("live_proof")
 
-            # ── Desktop-objective chokepoint ────────────────────────────
-            # Every reply lane converges here. If the user asked for real
-            # desktop/file action and no executor ran on the lane that
-            # produced this reply, run the governed executor NOW and ship
-            # its receipts instead of narration. Round-3 live proof showed
-            # per-lane wiring misses lanes; the chokepoint cannot.
-            if (
-                not is_benchmark
-                and not _desktop_exec_state["attempted"]
-                and not is_live_proof_status
-                and not proof_status.startswith(("desktop_objective", "file_operation"))
-                and _looks_like_desktop_objective(_semantic_user_message)
-            ):
-                _desktop_exec_state["attempted"] = True
-                try:
-                    _executed = await _execute_desktop_objective_from_chat(
-                        _semantic_user_message,
-                        cognitive_reply=final_text,
-                    )
-                except _CHAT_RECOVERABLE_ERRORS as _exec_exc:
-                    record_degradation('chat', _exec_exc)
-                    _executed = None
-                if isinstance(_executed, dict) and _executed.get("response"):
-                    final_text = (
-                        _apply_aura_voice_shaping(str(_executed.get("response") or "")).strip()
-                        or final_text
-                    )
-                    proof_status = str(_executed.get("status") or "desktop_objective")
-                    status = proof_status
-                    # Receipt summaries are evidence, not prose: skip the
-                    # conversational staleness/topicality reshaping below.
-                    is_live_proof_status = True
+            _new_text, _new_status = await _apply_desktop_objective_chokepoint(
+                final_text, proof_status
+            )
+            if _new_status != proof_status:
+                final_text = _new_text
+                proof_status = _new_status
+                status = _new_status
+                # Receipt summaries are evidence, not prose: skip the
+                # conversational staleness/topicality reshaping below.
+                is_live_proof_status = True
 
             if is_benchmark:
                 blocked_reply = (
@@ -8216,12 +8231,16 @@ async def api_chat(
         # context in body.message above, so the reply already acknowledges
         # the thread.
         _final_reply = reply_text or "…"
+        _final_status = reply_source or "ok"
+        _final_reply, _final_status = await _apply_desktop_objective_chokepoint(
+            _final_reply, _final_status
+        )
         if _resume_prefix_for_response:
             _final_reply = _resume_prefix_for_response + _final_reply
 
         response_data = {
             "response": _final_reply,
-            "status": reply_source or "ok",
+            "status": _final_status,
             "conversation_lane": lane_status,
             "response_confidence": response_confidence,
         }
