@@ -284,6 +284,7 @@ class LiveProof:
             )
         target_dir = Path.home() / "Documents" / "Aura Live Proof"
         marker = target_dir / "live_proof.txt"
+        step_started = time.time()
         ok, text, latency = self.chat(
             "Please create a folder named 'Aura Live Proof' in my Documents "
             "folder and write a file inside it called live_proof.txt with one "
@@ -293,8 +294,20 @@ class LiveProof:
         )
         self.guard_rss()
         # External verification: the proof is on disk, not in her words.
+        # Freshness required: versioned writes mean the fixed path may
+        # hold a PREVIOUS round's file (round 13 verified round 12's
+        # artifact). Accept the newest matching file in the folder, but
+        # only if it was written AFTER this step began — stale green is
+        # forbidden evidence.
         time.sleep(2.0)
-        file_exists = marker.is_file()
+        candidates = sorted(
+            target_dir.glob("live_proof*.txt"),
+            key=lambda c: c.stat().st_mtime if c.exists() else 0,
+            reverse=True,
+        ) if target_dir.is_dir() else []
+        fresh = [c for c in candidates if c.stat().st_mtime >= step_started - 1.0]
+        marker = fresh[0] if fresh else marker
+        file_exists = bool(fresh) and marker.is_file()
         content = marker.read_text(errors="replace")[:400] if file_exists else ""
         return self.record(
             "desktop_action",
