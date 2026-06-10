@@ -131,6 +131,48 @@ class _Thresholds:
         )
 
 
+def _phys_footprint_mb(pid: int) -> float:
+    """RSS + compressed + IOKit: the metric macOS memorystatus kills on.
+
+    The 78GB kill ('largest compressed process') was invisible to every
+    RSS-based guard — compressed pages leave RSS. Darwin-only; returns
+    0.0 elsewhere or on failure.
+    """
+    try:
+        import ctypes
+
+        class _RUsageV2(ctypes.Structure):
+            _fields_ = [
+                ("ri_uuid", ctypes.c_uint8 * 16),
+                ("ri_user_time", ctypes.c_uint64),
+                ("ri_system_time", ctypes.c_uint64),
+                ("ri_pkg_idle_wkups", ctypes.c_uint64),
+                ("ri_interrupt_wkups", ctypes.c_uint64),
+                ("ri_pageins", ctypes.c_uint64),
+                ("ri_wired_size", ctypes.c_uint64),
+                ("ri_resident_size", ctypes.c_uint64),
+                ("ri_phys_footprint", ctypes.c_uint64),
+                ("ri_proc_start_abstime", ctypes.c_uint64),
+                ("ri_proc_exit_abstime", ctypes.c_uint64),
+                ("ri_child_user_time", ctypes.c_uint64),
+                ("ri_child_system_time", ctypes.c_uint64),
+                ("ri_child_pkg_idle_wkups", ctypes.c_uint64),
+                ("ri_child_interrupt_wkups", ctypes.c_uint64),
+                ("ri_child_pageins", ctypes.c_uint64),
+                ("ri_child_elapsed_abstime", ctypes.c_uint64),
+                ("ri_diskio_bytesread", ctypes.c_uint64),
+                ("ri_diskio_byteswritten", ctypes.c_uint64),
+            ]
+
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+        ru = _RUsageV2()
+        if libproc.proc_pid_rusage(int(pid), 2, ctypes.byref(ru)) != 0:
+            return 0.0
+        return ru.ri_phys_footprint / (1024 * 1024)
+    except (OSError, AttributeError, ValueError):
+        return 0.0
+
+
 def default_sampler() -> MemorySample:
     proc = psutil.Process(os.getpid())
     core_rss = 0.0
@@ -139,10 +181,16 @@ def default_sampler() -> MemorySample:
         core_rss = proc.memory_info().rss / (1024 * 1024)
     except _WATCHDOG_RECOVERABLE_ERRORS:
         pass
+    # Compression-aware: managed memory is the larger of RSS and the
+    # kernel's phys_footprint view of this process.
+    core_rss = max(core_rss, _phys_footprint_mb(os.getpid()))
     try:
         for child in proc.children(recursive=True):
             try:
-                child_rss += child.memory_info().rss / (1024 * 1024)
+                child_rss += max(
+                    child.memory_info().rss / (1024 * 1024),
+                    _phys_footprint_mb(child.pid),
+                )
             except _WATCHDOG_RECOVERABLE_ERRORS:
                 continue
     except _WATCHDOG_RECOVERABLE_ERRORS:

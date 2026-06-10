@@ -36,26 +36,71 @@ import psutil
 
 RING_MAX_LINES = 600  # ~20 minutes at 2s
 
+# macOS killed Aura as 'largest compressed process Python 78557 MB'
+# while RSS read 20GB: compressed pages leave RSS but live in
+# phys_footprint. Every guard must watch footprint, not RSS alone.
+try:
+    import ctypes
 
-def tree_rss_mb(root: psutil.Process) -> tuple[float, float, int]:
+    class _RUsageV2(ctypes.Structure):
+        _fields_ = [
+            ("ri_uuid", ctypes.c_uint8 * 16),
+            ("ri_user_time", ctypes.c_uint64),
+            ("ri_system_time", ctypes.c_uint64),
+            ("ri_pkg_idle_wkups", ctypes.c_uint64),
+            ("ri_interrupt_wkups", ctypes.c_uint64),
+            ("ri_pageins", ctypes.c_uint64),
+            ("ri_wired_size", ctypes.c_uint64),
+            ("ri_resident_size", ctypes.c_uint64),
+            ("ri_phys_footprint", ctypes.c_uint64),
+            ("ri_proc_start_abstime", ctypes.c_uint64),
+            ("ri_proc_exit_abstime", ctypes.c_uint64),
+            ("ri_child_user_time", ctypes.c_uint64),
+            ("ri_child_system_time", ctypes.c_uint64),
+            ("ri_child_pkg_idle_wkups", ctypes.c_uint64),
+            ("ri_child_interrupt_wkups", ctypes.c_uint64),
+            ("ri_child_pageins", ctypes.c_uint64),
+            ("ri_child_elapsed_abstime", ctypes.c_uint64),
+            ("ri_diskio_bytesread", ctypes.c_uint64),
+            ("ri_diskio_byteswritten", ctypes.c_uint64),
+        ]
+
+    _LIBPROC = ctypes.CDLL("/usr/lib/libproc.dylib")
+except (OSError, AttributeError):  # non-macOS or restricted
+    _LIBPROC = None
+
+
+def phys_footprint_mb(pid: int) -> float:
+    """RSS + compressed + IOKit-mapped: the metric memorystatus kills on."""
+    if _LIBPROC is None:
+        return 0.0
+    ru = _RUsageV2()
+    if _LIBPROC.proc_pid_rusage(int(pid), 2, ctypes.byref(ru)) != 0:
+        return 0.0
+    return ru.ri_phys_footprint / (1024 * 1024)
+
+
+def tree_rss_mb(root: psutil.Process) -> tuple[float, float, int, float]:
     core = 0.0
     children = 0.0
     count = 1
+    footprint = phys_footprint_mb(root.pid)
     try:
         core = root.memory_info().rss / (1024 * 1024)
     except psutil.Error:
-        return 0.0, 0.0, 0
+        return 0.0, 0.0, 0, footprint
     try:
         kids = root.children(recursive=True)
         count += len(kids)
         for child in kids:
             try:
                 children += child.memory_info().rss / (1024 * 1024)
+                footprint += phys_footprint_mb(child.pid)
             except psutil.Error:
                 continue
     except psutil.Error:
         pass
-    return core, children, count
+    return core, children, count, footprint
 
 
 def write_ring(path: Path, entry: dict) -> None:
@@ -118,12 +163,15 @@ def main(argv: list[str] | None = None) -> int:
     # Bounded by the target's own lifetime: the sentinel exists exactly
     # as long as the process it guards.
     while target.is_running():
-        core_mb, child_mb, proc_count = tree_rss_mb(target)
-        managed = core_mb + child_mb
+        core_mb, child_mb, proc_count, footprint_mb = tree_rss_mb(target)
+        # memorystatus kills on footprint (RSS + compressed); guard on
+        # whichever view is larger so compression cannot hide a runaway.
+        managed = max(core_mb + child_mb, footprint_mb)
         entry = {
             "at": time.time(),
             "core_mb": round(core_mb, 1),
             "child_mb": round(child_mb, 1),
+            "footprint_mb": round(footprint_mb, 1),
             "managed_mb": round(managed, 1),
             "procs": proc_count,
         }
