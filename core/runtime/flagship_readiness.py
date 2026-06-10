@@ -187,7 +187,22 @@ class _Visitor(ast.NodeVisitor):
                     )
                 )
         if name.endswith(".write_text") or name in {"Path.write_text", "pathlib.Path.write_text"}:
-            if _is_production_file(self.rel) and not _is_test(self.rel) and self.rel not in _ALLOWED_DIRECT_WRITE_FILES:
+            # Gateway receivers ARE the approved durable path: flagging
+            # gateway.write_text(...) as a bypass inverted the policy and
+            # produced four false positives that failed strict final-proof
+            # (config.save, action_executor FILE_WRITE domain, file_motor —
+            # all governed-gateway calls).
+            receiver = name.rsplit(".", 1)[0] if "." in name else ""
+            is_gateway_receiver = (
+                "gateway" in receiver.lower()
+                or receiver.endswith("get_file_write_gateway()")
+            )
+            if (
+                not is_gateway_receiver
+                and _is_production_file(self.rel)
+                and not _is_test(self.rel)
+                and self.rel not in _ALLOWED_DIRECT_WRITE_FILES
+            ):
                 self.issues.append(
                     FlagshipIssue(
                         code="DIRECT_WRITE_TEXT",
@@ -317,6 +332,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  -> {issue.suggestion}")
 
     if args.strict and report.issues:
+        # The verdict line must agree with the exit code: a strict run
+        # with findings is a FAIL, not a 'PASS' that exits 1.
+        print(f"Aura flagship gate: FAIL (strict — {len(report.issues)} finding(s))")
         return 1
     return 0 if report.ok else 1
 
