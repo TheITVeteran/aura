@@ -2504,17 +2504,39 @@ class MLXLocalClient:
                     request_started_at + 0.5,
                     progress_baseline + 0.5,
                 )
+                # Heartbeats stretch the first-token SLA; they never waive
+                # it. Round 14 live proof: a LIVELOCKED generation (worker
+                # heartbeating, zero tokens) ran 185s to the endpoint
+                # deadline because runtime progress exempted it forever.
+                # Past the hard ceiling, silence is wedged no matter how
+                # alive the worker claims to be.
+                hard_first_token_ceiling = first_token_sla * float(
+                    os.environ.get("AURA_FIRST_TOKEN_HARD_MULT", "1.8") or 1.8
+                ) + float(os.environ.get("AURA_FIRST_TOKEN_HARD_PAD_S", "20") or 20)
+                elapsed_without_token = time.time() - request_started_at
                 if (
                     req_id == self._current_request_id
                     and request_started_at > 0.0
                     and self._current_first_token_at <= 0.0
-                    and (time.time() - request_started_at) > first_token_sla
-                    and not has_runtime_progress_after_request
+                    and (
+                        (
+                            elapsed_without_token > first_token_sla
+                            and not has_runtime_progress_after_request
+                        )
+                        or elapsed_without_token > hard_first_token_ceiling
+                    )
                 ):
                     logger.error(
-                        "🛑 [MLX] First-token SLA exceeded for %s (>%.1fs).",
+                        "🛑 [MLX] First-token %s for %s (%.1fs elapsed, sla=%.1fs, hard=%.1fs).",
+                        (
+                            "HARD CEILING exceeded (livelocked: heartbeats but zero tokens)"
+                            if elapsed_without_token > hard_first_token_ceiling
+                            else "SLA exceeded"
+                        ),
                         os.path.basename(self.model_path),
+                        elapsed_without_token,
                         first_token_sla,
+                        hard_first_token_ceiling,
                     )
                     self._pending_generations.pop(req_id, None)
                     self._record_degraded_event(
