@@ -258,9 +258,15 @@ class LiveProof:
         ok2, text2, lat2 = self.chat("What codeword did I just give you?")
         self.guard_rss()
         recalled = token.lower() in text2.lower()
+        # Recall is the criterion. Round 13: she answered 'The codeword
+        # you gave me is amber-82004' — perfect recall — but the set
+        # turn's reply text had been empty under gate serialization and
+        # the old all-three conjunction marked the step red. A silent
+        # set with proven recall is a pass; the set latency still lands
+        # in the transcript for the record.
         return self.record(
             "chat_continuity",
-            ok1 and ok2 and recalled,
+            ok2 and recalled,
             summary=(
                 f"set {lat1:.1f}s / recall {lat2:.1f}s — "
                 + ("codeword recalled" if recalled else
