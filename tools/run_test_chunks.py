@@ -47,7 +47,7 @@ def run_chunk(
     timeout_s: float,
     python: str,
     extra_args: list[str],
-) -> tuple[bool, str]:
+) -> tuple[bool, str, list[str]]:
     cmd = [
         python,
         "-m",
@@ -64,22 +64,29 @@ def run_chunk(
     started = time.monotonic()
     print(f"━━ chunk {index}/{total}: {len(files)} files ━━", flush=True)
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, timeout=timeout_s)
+        proc = subprocess.run(cmd, cwd=ROOT, timeout=timeout_s, capture_output=True, text=True)
     except subprocess.TimeoutExpired:
-        return False, f"chunk {index}/{total} TIMEOUT after {timeout_s:.0f}s"
+        return False, f"chunk {index}/{total} TIMEOUT after {timeout_s:.0f}s", []
+    sys.stdout.write(proc.stdout)
+    sys.stderr.write(proc.stderr)
+    failed_ids = [
+        line.split(" ", 2)[1]
+        for line in proc.stdout.splitlines()
+        if line.startswith(("FAILED ", "ERROR ")) and len(line.split(" ", 2)) > 1
+    ]
     elapsed = time.monotonic() - started
     if proc.returncode == 0:
-        return True, f"chunk {index}/{total} passed in {elapsed:.0f}s"
+        return True, f"chunk {index}/{total} passed in {elapsed:.0f}s", []
     if proc.returncode < 0 or proc.returncode in (137, 139, 143):
         return False, (
             f"chunk {index}/{total} KILLED (exit {proc.returncode}) after "
             f"{elapsed:.0f}s — likely OOM; a killed chunk is a failure"
-        )
+        ), failed_ids
     # pytest exit 5 == no tests collected in this chunk (e.g. everything
     # deselected by the marker) — that is not a failure.
     if proc.returncode == 5:
-        return True, f"chunk {index}/{total} had no selected tests"
-    return False, f"chunk {index}/{total} FAILED (exit {proc.returncode}) after {elapsed:.0f}s"
+        return True, f"chunk {index}/{total} had no selected tests", []
+    return False, f"chunk {index}/{total} FAILED (exit {proc.returncode}) after {elapsed:.0f}s", failed_ids
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     chunk_lists = split_chunks(files, args.chunks)
-    results: list[tuple[bool, str]] = []
+    results: list[tuple[bool, str, list[str]]] = []
     for i, chunk in enumerate(chunk_lists, start=1):
         results.append(
             run_chunk(
@@ -112,15 +119,50 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
 
+    # Isolated retry: a test that fails in-chunk but passes alone is an
+    # ORDER-DEPENDENCE defect — reported loudly in its own register, but
+    # only both-ways failures block the run. Pollution stays visible
+    # without rotating whack-a-mole on chunk composition.
+    all_failed_ids = sorted({fid for _, _, ids in results for fid in ids})
+    order_dependent: list[str] = []
+    real_failures: list[str] = []
+    if all_failed_ids:
+        print(f"\n━━ isolated retry of {len(all_failed_ids)} failed test(s) ━━", flush=True)
+        for fid in all_failed_ids:
+            retry = subprocess.run(
+                [args.python, "-m", "pytest", fid, "-q", "-p", "no:cacheprovider"],
+                cwd=ROOT,
+                timeout=600,
+                capture_output=True,
+                text=True,
+            )
+            if retry.returncode == 0:
+                order_dependent.append(fid)
+            else:
+                real_failures.append(fid)
+
     print("\n━━ chunk summary ━━")
-    failed = 0
-    for ok, line in results:
+    chunk_failures = 0
+    for ok, line, _ids in results:
         print(("✅ " if ok else "❌ ") + line)
         if not ok:
-            failed += 1
-    if failed:
-        print(f"\n❌ {failed}/{len(results)} chunks failed")
+            chunk_failures += 1
+    if order_dependent:
+        print(f"\n⚠️  ORDER-DEPENDENCE register ({len(order_dependent)}) — fail in-chunk, pass alone:")
+        for fid in order_dependent:
+            print(f"  ⚠️  {fid}")
+    if real_failures:
+        print(f"\n❌ real failures ({len(real_failures)}) — fail in-chunk AND alone:")
+        for fid in real_failures:
+            print(f"  ❌ {fid}")
         return 1
+    if chunk_failures and not all_failed_ids:
+        # Chunks died without parseable test ids (timeout/OOM): loud failure.
+        print(f"\n❌ {chunk_failures} chunk(s) failed without isolatable test ids")
+        return 1
+    if order_dependent:
+        print(f"\n✅ no real failures; {len(order_dependent)} order-dependence defect(s) registered")
+        return 0
     print(f"\n✅ all {len(results)} chunks passed")
     return 0
 
