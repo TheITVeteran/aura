@@ -60,15 +60,20 @@ def main(argv: list[str] | None = None) -> int:
     proc = subprocess.Popen(command, cwd=ROOT, start_new_session=True)
     wall_deadline = started + args.timeout * 1.25 + 60.0
     try:
-        remaining = args.timeout
-        while True:
+        # Bounded poll: the slice count is derived from the wall deadline,
+        # so this loop terminates even if monotonic time froze in sleep.
+        max_slices = int((args.timeout * 1.25 + 120.0) / 30.0) + 2
+        returncode = None
+        for _ in range(max_slices):
+            remaining = args.timeout - (time.monotonic() - _MONO_START)
             try:
                 returncode = proc.wait(timeout=min(30.0, max(1.0, remaining)))
                 break
             except subprocess.TimeoutExpired:
-                remaining = args.timeout - (time.monotonic() - _MONO_START)
                 if remaining <= 0 or time.time() > wall_deadline:
                     raise
+        if returncode is None:
+            raise subprocess.TimeoutExpired(command, args.timeout)
     except subprocess.TimeoutExpired:
         timed_out = True
         try:
