@@ -937,6 +937,23 @@ def _live_internals_summary() -> list[str]:
             severity="warning",
             stage="operational_self_context.welfare",
         )
+    try:
+        from core.memory.recall_telemetry import get_recall_telemetry
+
+        window = get_recall_telemetry().snapshot().get("window") or {}
+        if window.get("attempted"):
+            lines.append(
+                f"Memory recall (recent): hit rate {window.get('hit_rate')}, "
+                f"p50 {window.get('latency_p50_ms')}ms over "
+                f"{window.get('attempted')} retrievals."
+            )
+    except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as exc:
+        _emit_chat_fault(
+            exc,
+            action="continued identity contract without recall telemetry",
+            severity="warning",
+            stage="operational_self_context.recall",
+        )
     return lines
 
 
