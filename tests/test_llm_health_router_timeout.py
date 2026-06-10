@@ -640,3 +640,33 @@ def test_background_quiet_error_treats_local_runtime_unavailable_as_non_user_noi
     from core.brain.llm_health_router import _background_error_is_quiet
 
     assert _background_error_is_quiet("local_runtime_unavailable:server_unreachable") is True
+
+
+def test_generation_gate_refuses_to_stack_beyond_bound():
+    """Round-9 finding: nine concurrent generations stacked for one turn,
+    allocating ~2GB/s until macOS executed the process at 78GB
+    phys_footprint. The gate makes stacking impossible: saturated
+    callers get a truthful failure, never a queue-up."""
+    import core.brain.llm_health_router as router_mod
+
+    gate = router_mod._GENERATION_GATE
+    held = []
+    try:
+        # Drain every slot.
+        while gate.acquire(blocking=False):
+            held.append(True)
+        assert held, "gate must have at least one slot"
+
+        # A saturated acquire with a tiny wait must fail, not block long.
+        import time as _time
+
+        start = _time.monotonic()
+        got = gate.acquire(True, 0.2)
+        elapsed = _time.monotonic() - start
+        assert got is False
+        assert elapsed < 5.0
+        assert router_mod._GATE_SATURATION_RESULT["ok"] is False
+        assert "saturated" in router_mod._GATE_SATURATION_RESULT["endpoint"]
+    finally:
+        for _ in held:
+            gate.release()

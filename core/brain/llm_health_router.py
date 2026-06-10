@@ -60,6 +60,34 @@ from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Brain.HealthRouter")
 
+# ── Generation concurrency gate ────────────────────────────────────────
+# Round-9 spike stacks caught NINE concurrent generate calls stacked for
+# a single user turn (draft/retry fan-out never cancelling predecessors).
+# Each in-process generation holds GB-scale KV/context: the stack-up
+# allocated ~2GB/s of compressible pages until macOS executed the
+# process at a 78GB phys_footprint. Local generation is now a bounded
+# resource: callers either acquire a slot within the wait budget or get
+# a truthful saturation failure — stacking is the one outcome that can
+# never happen again.
+import threading as _threading
+
+_GENERATION_GATE = _threading.BoundedSemaphore(
+    max(1, int(os.environ.get("AURA_MAX_CONCURRENT_GENERATIONS", "2") or 2))
+)
+_GENERATION_GATE_WAIT_S = float(
+    os.environ.get("AURA_GENERATION_GATE_WAIT_S", "20") or 20
+)
+_GATE_SATURATION_RESULT = {
+    "ok": False,
+    "text": "",
+    "endpoint": "generation_gate_saturated",
+    "tokens": 0,
+    "error": (
+        "local generation lane saturated: refusing to stack another "
+        "concurrent generation (memory-bomb prevention)"
+    ),
+}
+
 
 def _record_router_degradation(
     exc: BaseException,
@@ -719,6 +747,41 @@ class HealthAwareLLMRouter:
         Falls back to local if all remote endpoints fail.
         Always returns a dict: {"ok": bool, "text": str, "endpoint": str, "tokens": int}
         """
+        acquired = await asyncio.to_thread(
+            _GENERATION_GATE.acquire, True, _GENERATION_GATE_WAIT_S
+        )
+        if not acquired:
+            record_degradation(
+                "llm_health_router",
+                RuntimeError("generation gate saturated"),
+                severity="degraded",
+                action="refused to stack another concurrent generation",
+            )
+            return dict(_GATE_SATURATION_RESULT)
+        try:
+            return await self._generate_with_metadata_gated(
+                prompt,
+                system_prompt=system_prompt,
+                timeout=timeout,
+                prefer_tier=prefer_tier,
+                schema=schema,
+                **kwargs,
+            )
+        finally:
+            try:
+                _GENERATION_GATE.release()
+            except ValueError:
+                pass
+
+    async def _generate_with_metadata_gated(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        timeout: float = 180.0,  # noqa: ASYNC109 - inherited budget semantics.
+        prefer_tier: str | None = None,
+        schema: dict | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
         _contract_tool_handoff_val = kwargs.pop("_contract_tool_handoff", False)
         if (not prompt) and "messages" in kwargs:
             prompt, inferred_system_prompt = self._coerce_prompt_from_messages(kwargs.get("messages", []))
