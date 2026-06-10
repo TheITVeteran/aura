@@ -102,6 +102,10 @@ APPROVED_SUBPROCESS_SINKS = {
     "core/runtime/action_executor.py",
     "core/runtime/desktop_action_gateway.py",
     "core/runtime/subprocess_gateway.py",
+    # Documented emergency exemption: the external memory sentinel must
+    # be spawned at canonical boot BEFORE governance services exist —
+    # it is the killer that survives when the governed process cannot.
+    "aura_main.py",
 }
 APPROVED_NETWORK_SINKS = {
     "core/runtime/action_executor.py",
@@ -113,6 +117,12 @@ APPROVED_FILE_WRITE_SINKS = {
     "core/runtime/atomic_writer.py",
     "core/runtime/file_write_gateway.py",
     "core/runtime/post_action_receipt.py",
+    # Documented emergency exemptions (crash forensics): faulthandler
+    # requires a raw OS file descriptor and must work precisely when the
+    # governed gateway stack cannot be trusted or scheduled — these
+    # writes are append-only diagnostic dumps under data/error_logs/.
+    "aura_main.py",                       # fault forensics + sentinel log
+    "core/resilience/memory_watchdog.py", # spike-stack faulthandler dumps
 }
 APPROVED_DYNAMIC_CODE_SINKS = {
     "core/runtime/dynamic_execution_gateway.py",
