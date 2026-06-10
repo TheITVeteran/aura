@@ -410,7 +410,9 @@ _ACTION_CLAIM_NEGATION = re.compile(
 )
 
 
-def validate_dialogue_response(text: str, contract: object | None) -> DialogueValidation:
+def validate_dialogue_response(
+    text: str, contract: object | None, state: object | None = None
+) -> DialogueValidation:
     body = str(text or "").strip()
     if not body:
         return DialogueValidation(ok=False, violations=["empty_response"])
@@ -476,11 +478,24 @@ def validate_dialogue_response(text: str, contract: object | None) -> DialogueVa
         except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug("Self-claim verification unavailable: %s", exc)
 
-        # Receipts or it didn't happen: a completed-action claim with no
-        # tool evidence in the turn is confabulated agency. Observed live:
-        # the model narrated creating a folder and a file — with a
-        # hallucinated 2023 timestamp — while no tool was ever dispatched.
-        if not bool(getattr(contract, "tool_evidence_available", False)):
+        # Receipts or it didn't happen: a completed-action claim needs
+        # tool evidence from THIS turn. Cross-turn evidence stays valid
+        # for grounding follow-ups, but it must never authorize action
+        # claims — observed live: an earlier turn's skill success let
+        # the model claim a folder creation that had actually failed.
+        # Same-turn identity: skills echo the contract's turn marker.
+        evidence = False
+        modifiers = getattr(state, "response_modifiers", None) if state is not None else None
+        if isinstance(modifiers, dict) and modifiers.get("last_skill_ok"):
+            turn_marker = modifiers.get("evidence_turn_marker")
+            evidence = bool(
+                turn_marker and modifiers.get("last_skill_turn_marker") == turn_marker
+            )
+        elif state is None:
+            # Legacy callers without state: fall back to contract-time
+            # evidence rather than flagging blind.
+            evidence = bool(getattr(contract, "tool_evidence_available", False))
+        if not evidence:
             if _ACTION_COMPLETION_CLAIM.search(body) and not _ACTION_CLAIM_NEGATION.search(body):
                 violations.append("action_claim_without_receipt")
 
@@ -584,13 +599,14 @@ async def enforce_dialogue_contract(
     contract: object | None,
     *,
     retry_generate: Callable[[str], Awaitable[str]] | None = None,
+    state: object | None = None,
 ) -> tuple[str, DialogueValidation, bool]:
-    validation = validate_dialogue_response(text, contract)
+    validation = validate_dialogue_response(text, contract, state)
     if validation.ok:
         return text, validation, False
 
     repaired = repair_dialogue_surface(text, contract)
-    repaired_validation = validate_dialogue_response(repaired, contract)
+    repaired_validation = validate_dialogue_response(repaired, contract, state)
     if repaired_validation.ok:
         return repaired, repaired_validation, False
 
@@ -604,14 +620,14 @@ async def enforce_dialogue_contract(
     )
     retry_block = build_dialogue_repair_block(contract, validation, text)
     retried = str(await retry_generate(retry_block) or "").strip()
-    retried_validation = validate_dialogue_response(retried, contract)
+    retried_validation = validate_dialogue_response(retried, contract, state)
     if retried_validation.ok:
         return retried, retried_validation, True
 
     retried_repaired = repair_dialogue_surface(retried, contract)
-    retried_repaired_validation = validate_dialogue_response(retried_repaired, contract)
+    retried_repaired_validation = validate_dialogue_response(retried_repaired, contract, state)
     if retried_repaired_validation.ok:
         return retried_repaired, retried_repaired_validation, True
 
     fallback = retried_repaired or repaired or text
-    return fallback, validate_dialogue_response(fallback, contract), True
+    return fallback, validate_dialogue_response(fallback, contract, state), True

@@ -4311,6 +4311,7 @@ class UnitaryResponsePhase(Phase):
                     # Also inject as a skill modifier so the LLM system prompt can reference it
                     new_state.response_modifiers["last_skill_run"] = "sovereign_browser"
                     new_state.response_modifiers["last_skill_ok"] = True
+                    new_state.response_modifiers["last_skill_turn_marker"] = new_state.response_modifiers.get("evidence_turn_marker")
                     new_state.response_modifiers["last_skill_result_payload"] = {
                         "ok": True,
                         "content": fetched_block[:250000],
@@ -4375,6 +4376,7 @@ class UnitaryResponsePhase(Phase):
                     if grounded_payload and grounded_skill:
                         new_state.response_modifiers["last_skill_run"] = grounded_skill
                         new_state.response_modifiers["last_skill_ok"] = True
+                        new_state.response_modifiers["last_skill_turn_marker"] = new_state.response_modifiers.get("evidence_turn_marker")
                         new_state.response_modifiers["last_skill_result_payload"] = grounded_payload
                         contract = build_response_contract(
                             new_state, objective, is_user_facing=is_user_facing
@@ -5723,6 +5725,7 @@ class UnitaryResponsePhase(Phase):
                     response_text,
                     contract,
                     retry_generate=_retry_dialogue if is_user_facing else None,
+                    state=new_state,
                 )
                 if is_user_facing and dialogue_retried and pre_dialogue_response:
                     try:

@@ -1020,6 +1020,18 @@ def build_response_contract(
     requires_exact_dates = bool(requires_exact_dates and not requires_aura_stance)
     requires_aura_question = bool(is_user_facing and _matches_any(lower, _AURA_QUESTION_INVITATION_PATTERNS))
 
+    # Turn identity for evidence scoping. Cross-turn tool evidence is
+    # legitimate for GROUNDING (answering follow-ups about a previous
+    # fetch) but must never authorize THIS turn's action claims —
+    # observed live: an earlier turn's skill success let the model claim
+    # a folder creation that had actually failed this turn. Skills that
+    # run this turn echo this marker; the dialogue validator compares.
+    modifiers = getattr(state, "response_modifiers", None)
+    if isinstance(modifiers, dict):
+        import uuid as _uuid
+
+        modifiers["evidence_turn_marker"] = _uuid.uuid4().hex
+
     tool_evidence = has_tool_evidence(state)
     memory_evidence = has_memory_evidence(state)
     if biographical_grounding:

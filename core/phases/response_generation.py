@@ -681,6 +681,7 @@ class ResponseGenerationPhase(BasePhase):
                 cleaned_response,
                 contract,
                 retry_generate=_retry_dialogue if not is_background and not is_test_run else None,
+                state=state,
             )
             state.response_modifiers["dialogue_validation"] = dialogue_validation.to_dict()
             if dialogue_retried:

@@ -276,3 +276,47 @@ def test_action_claim_repair_block_demands_receipts():
     validation = validate_dialogue_response(failed, contract)
     block = build_dialogue_repair_block(contract, validation, failed)
     assert "no tool ran this turn" in block
+
+
+def test_prior_turn_evidence_does_not_authorize_action_claims():
+    """Live crash finding: an earlier turn's skill success authorized a
+    false 'done' while this turn's tool had actually FAILED."""
+    from core.phases.dialogue_policy import validate_dialogue_response
+    from core.phases.response_contract import build_response_contract
+    from core.state.aura_state import AuraState
+
+    state = AuraState.default()
+    # Previous turn: a skill succeeded.
+    state.response_modifiers["last_skill_ok"] = True
+    state.response_modifiers["last_skill_turn_marker"] = "previous-turn"
+    # New turn begins: contract stamps a fresh marker.
+    contract = build_response_contract(state, "Create a folder for me", is_user_facing=True)
+    assert state.response_modifiers["evidence_turn_marker"] != "previous-turn"
+
+    validation = validate_dialogue_response(
+        "I've created the folder and saved the file for you.",
+        contract,
+        state,
+    )
+    assert "action_claim_without_receipt" in validation.violations
+
+
+def test_same_turn_skill_success_authorizes_action_claims():
+    from core.phases.dialogue_policy import validate_dialogue_response
+    from core.phases.response_contract import build_response_contract
+    from core.state.aura_state import AuraState
+
+    state = AuraState.default()
+    contract = build_response_contract(state, "Create a folder for me", is_user_facing=True)
+    # This turn: skill ran and echoed the live marker.
+    state.response_modifiers["last_skill_ok"] = True
+    state.response_modifiers["last_skill_turn_marker"] = state.response_modifiers[
+        "evidence_turn_marker"
+    ]
+
+    validation = validate_dialogue_response(
+        "I've created the folder and saved the file for you.",
+        contract,
+        state,
+    )
+    assert "action_claim_without_receipt" not in validation.violations
