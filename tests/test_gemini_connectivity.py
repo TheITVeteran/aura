@@ -5,6 +5,8 @@ import logging
 import httpx
 from core.brain.llm.gemini_adapter import GeminiAdapter
 
+pytestmark = [pytest.mark.network, pytest.mark.external]  # requires Gemini API surface; default suite skips honestly
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("test_gemini")
 

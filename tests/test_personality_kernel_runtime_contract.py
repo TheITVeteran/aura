@@ -25,6 +25,14 @@ class FailingKeyFile:
         self.write_attempted = True
         raise OSError("identity volume locked")
 
+    def __fspath__(self) -> str:
+        # Key persistence now routes through the governed file-write
+        # gateway, which coerces the target path before any write. The
+        # failure is injected here — the earliest point the gateway
+        # touches the key file.
+        self.write_attempted = True
+        raise OSError("identity volume locked")
+
 
 class LockdownRecorder:
     def __init__(self) -> None:

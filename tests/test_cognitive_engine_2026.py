@@ -110,8 +110,13 @@ async def test_engine_think_no_response(engine):
 
     thought = await engine.think("Hello", origin="test")
     assert isinstance(thought, Thought)
-    assert thought.confidence == 0.5
-    assert thought.content  # fallback message is non-empty
+    # Honest-suppression contract: when no answer-quality response is
+    # produced, the engine returns an explicitly suppressed empty thought
+    # (confidence 0.0) instead of fabricating a 0.5-confidence filler —
+    # downstream layers own retry/fallback with receipts.
+    assert thought.confidence == 0.0
+    assert thought.metadata.get("suppressed") is True
+    assert any("cycle_no_response" in r for r in (thought.reasoning or []))
 
 @pytest.mark.asyncio
 async def test_engine_health_check(engine):

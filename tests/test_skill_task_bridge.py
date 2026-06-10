@@ -403,6 +403,9 @@ def test_task_engine_planning_tool_specs_include_relevant_skill_defs(monkeypatch
     cap = SimpleNamespace(
         select_tool_definitions=lambda objective="", max_tools=10: [tool_defs[0]],
         get_tool_definitions=lambda: tool_defs,
+        _tool_definition_for_skill=lambda name: next(
+            (d for d in tool_defs if d["function"]["name"] == name), None
+        ),
     )
 
     monkeypatch.setattr(

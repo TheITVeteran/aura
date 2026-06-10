@@ -4,6 +4,8 @@ import pytest
 from core.brain.llm import gemini_adapter as gemini_module
 from core.brain.llm.gemini_adapter import GeminiAdapter, GeminiProviderUnavailable
 
+pytestmark = [pytest.mark.network, pytest.mark.external]  # requires Gemini API surface; default suite skips honestly
+
 
 class _AllowingLimiter:
     def can_call(self, *_args, **_kwargs):

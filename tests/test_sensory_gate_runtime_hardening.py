@@ -39,19 +39,18 @@ async def test_browse_without_browser_fails_closed():
 
 @pytest.mark.asyncio
 async def test_search_handles_mismatched_response_without_crashing(monkeypatch):
-    class FakeResponse:
-        def __enter__(self):
-            return self
+    class FakeGateway:
+        def request(self, method, url, **kwargs):
+            return {
+                "ok": True,
+                "content": json.dumps(
+                    ["aura", ["Aura", "Aura 2"], ["first snippet"], ["https://example.com/aura"]]
+                ).encode(),
+            }
 
-        def __exit__(self, *_args):
-            return False
-
-        def read(self):
-            return json.dumps(
-                ["aura", ["Aura", "Aura 2"], ["first snippet"], ["https://example.com/aura"]]
-            ).encode()
-
-    monkeypatch.setattr("urllib.request.urlopen", lambda *_args, **_kwargs: FakeResponse())
+    monkeypatch.setattr(
+        "core.bus.sensory_gate.get_network_gateway", lambda: FakeGateway()
+    )
     actor = _actor_without_bus()
 
     result = await actor._handle_search({"query": "aura"}, "trace-2")

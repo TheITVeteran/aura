@@ -118,7 +118,10 @@ async def test_narrative_thread_start_seeds_snapshot_and_falls_back_task_tracker
     assert thread.get_status()["task_alive"] is True
     assert thread.get_status()["has_snapshot"] is True
     assert thread.get_narrative_context() == thread.get_current_narrative()
-    assert "raw asyncio task" in str(recorded[0][2]["action"])
+    # The thread now starts through task_ownership.create_tracked_task —
+    # ownership is structural, so a broken legacy task_tracker module
+    # neither blocks startup nor needs a raw-task degradation receipt.
+    assert recorded == []
 
     await thread.stop()
 
