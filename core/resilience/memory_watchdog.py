@@ -357,7 +357,16 @@ class MemoryWatchdog(threading.Thread):
 
     def _tick(self) -> None:
         sample = self._sampler()
+        previous = self._last_sample
         self._last_sample = sample
+        if (
+            previous is not None
+            and (sample.managed_rss_mb - previous.managed_rss_mb) > 8192.0
+        ):
+            self._dump_thread_stacks(
+                f"footprint spike {previous.managed_rss_mb:.0f}→"
+                f"{sample.managed_rss_mb:.0f}MB in one interval"
+            )
         self._evaluate(sample, time.monotonic())
 
     def _evaluate(self, sample: MemorySample, now: float) -> str:
@@ -403,6 +412,7 @@ class MemoryWatchdog(threading.Thread):
             return "hard_cooldown"
         self._last_hard_action_at = now
         reason = "swap exhaustion" if swap_escalation else "hard RSS ceiling"
+        self._dump_thread_stacks(f"hard tier at {sample.managed_rss_mb:.0f}MB")
         logger.critical(
             "🚨 [MEMWATCH] %s: managed RSS %.0fMB swap %.1fGB. "
             "Out-of-band reclaim (terminate heavy workers + gc).",
@@ -490,6 +500,26 @@ class MemoryWatchdog(threading.Thread):
         return "lethal_exit"
 
     # ── helpers ───────────────────────────────────────────────────────
+
+    def _dump_thread_stacks(self, why: str) -> None:
+        """Snapshot every thread's stack at memory-spike time.
+
+        The 78GB compressed runaway died with the allocator anonymous.
+        At hard tier the allocator is, with high probability, ON one of
+        these stacks — faulthandler writes them without allocating
+        Python objects, safe under pressure.
+        """
+        try:
+            import faulthandler
+
+            crash_dir = Path("data/error_logs/crash")
+            crash_dir.mkdir(parents=True, exist_ok=True)
+            with open(crash_dir / "memory_spike_stacks.log", "a") as fh:
+                fh.write(f"\n===== {why} pid={os.getpid()} at={time.time()} =====\n")
+                fh.flush()
+                faulthandler.dump_traceback(file=fh, all_threads=True)
+        except (OSError, ValueError, RuntimeError) as exc:
+            logger.debug("MemoryWatchdog stack dump failed: %s", exc)
 
     def _remember(self, tier: str, sample: MemorySample, detail: str) -> None:
         self._actions.append(
