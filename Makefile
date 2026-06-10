@@ -457,8 +457,12 @@ seal: quality seal-quick
 
 final-proof:
 	python -m compileall -q aura_main.py core aura interface skills tools scripts proof_kernel
-	PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest --collect-only -q
-	pytest --collect-only -q
+	python tools/run_proof_step.py --name pytest_collect_guarded --timeout 900 \
+	  --artifact artifacts/current/proof_steps/pytest_collect_guarded.json -- \
+	  env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest --collect-only -q
+	python tools/run_proof_step.py --name pytest_collect_autoload --timeout 900 \
+	  --artifact artifacts/current/proof_steps/pytest_collect_autoload.json -- \
+	  pytest --collect-only -q
 	python tools/run_proof_step.py --name flagship_readiness --timeout 900 \
 	  --artifact artifacts/current/proof_steps/flagship_readiness.json -- \
 	  python -m core.runtime.flagship_readiness --strict .
