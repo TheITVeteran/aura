@@ -929,6 +929,103 @@ async def _boot_runtime_orchestrator(
     return orchestrator
 
 
+def _install_systemwide_memory_protection() -> None:
+    """Memory protection that survives process suspension.
+
+    The in-process MemoryWatchdog thread was alive during a 115GB host
+    crash and could not act: when the main process itself is the hog,
+    macOS thrashes/suspends the whole process — watchdog threads
+    included. These three layers do not need the dying process to
+    cooperate:
+
+    1. RLIMIT_DATA: the kernel caps malloc'd heap; a runaway allocation
+       raises MemoryError inside the offending call instead of taking
+       the host.
+    2. MLX Metal memory limit: GPU-wired model memory gets a hard cap
+       (inherited by workers via env).
+    3. External sentinel process: SIGKILLs this process tree past the
+       lethal ceiling. It lives outside us; it cannot be paused with us.
+    """
+    import resource
+
+    try:
+        import psutil
+
+        total_mb = psutil.virtual_memory().total / (1024 * 1024)
+    except (ImportError, OSError, AttributeError):
+        total_mb = 65536.0
+
+    try:
+        rlimit_gb = float(os.environ.get("AURA_RLIMIT_DATA_GB", "48") or 48)
+        if rlimit_gb > 0:
+            limit_bytes = int(rlimit_gb * (1024**3))
+            soft, hard = resource.getrlimit(resource.RLIMIT_DATA)
+            new_hard = hard if hard != resource.RLIM_INFINITY and hard < limit_bytes else limit_bytes
+            resource.setrlimit(resource.RLIMIT_DATA, (min(limit_bytes, new_hard), new_hard))
+            logger.info("🛡️ RLIMIT_DATA installed: %.0fGB heap ceiling (kernel-enforced).", rlimit_gb)
+    except (ValueError, OSError, resource.error) as exc:
+        record_degradation(
+            _AURA_MAIN_DEGRADATION_KEY,
+            exc,
+            action="continued boot without RLIMIT_DATA heap ceiling",
+            severity="warning",
+        )
+
+    mlx_gb = str(os.environ.get("AURA_MLX_MEMORY_LIMIT_GB", "24") or "24")
+    os.environ.setdefault("AURA_MLX_MEMORY_LIMIT_GB", mlx_gb)  # workers inherit
+    try:
+        import mlx.core as mx
+
+        limit_bytes = int(float(mlx_gb) * (1024**3))
+        if hasattr(mx, "set_memory_limit"):
+            mx.set_memory_limit(limit_bytes)
+        elif hasattr(mx, "metal") and hasattr(mx.metal, "set_memory_limit"):
+            mx.metal.set_memory_limit(limit_bytes)
+        logger.info("🛡️ MLX Metal memory limit installed: %sGB.", mlx_gb)
+    except ImportError:
+        pass
+    except (ValueError, OSError, RuntimeError, AttributeError, TypeError) as exc:
+        record_degradation(
+            _AURA_MAIN_DEGRADATION_KEY,
+            exc,
+            action="continued boot without MLX memory limit",
+            severity="warning",
+        )
+
+    if str(os.environ.get("AURA_MEMORY_SENTINEL", "1")).strip().lower() not in {"0", "false", "no", "off"}:
+        try:
+            lethal_mb = float(
+                os.environ.get("AURA_MEMWATCH_LETHAL_MB", "") or min(57344.0, total_mb * 0.85)
+            )
+            sentinel_log = Path("data/error_logs/memory")
+            sentinel_log.mkdir(parents=True, exist_ok=True)
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve().parent / "tools" / "memory_sentinel.py"),
+                    "--pid",
+                    str(os.getpid()),
+                    "--lethal-mb",
+                    str(lethal_mb),
+                ],
+                stdout=open(sentinel_log / "sentinel.log", "a"),
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                cwd=str(Path(__file__).resolve().parent),
+            )
+            logger.info(
+                "🛡️ External memory sentinel armed: lethal=%.0fMB (kills from outside).",
+                lethal_mb,
+            )
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            record_degradation(
+                _AURA_MAIN_DEGRADATION_KEY,
+                exc,
+                action="continued boot without external memory sentinel",
+                severity="degraded",
+            )
+
+
 async def boot_aura_runtime(
     *,
     profile: str,
@@ -941,6 +1038,7 @@ async def boot_aura_runtime(
     CLI, desktop, server, and validation/proof surfaces must use this path so
     their evidence reflects the same live Aura boot contract.
     """
+    _install_systemwide_memory_protection()
     if profile == "minimal":
         os.environ["AURA_BOOT_PROFILE"] = "minimal"
         os.environ["AURA_USE_MOCK_LLM"] = "1"

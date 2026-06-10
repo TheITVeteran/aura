@@ -296,7 +296,14 @@ class MemoryWatchdog(threading.Thread):
                     action="kept out-of-band memory watchdog alive after tick failure",
                 )
                 logger.debug("MemoryWatchdog tick failed: %s", exc)
-            self._stop_event.wait(self.sample_interval_s)
+            # Adaptive cadence: past the hard ceiling every second counts —
+            # a runaway in-process allocation can add gigabytes between
+            # relaxed samples.
+            wait_s = self.sample_interval_s
+            sample = self._last_sample
+            if sample is not None and sample.managed_rss_mb >= self.thresholds.hard_mb:
+                wait_s = min(1.0, wait_s)
+            self._stop_event.wait(wait_s)
 
     # ── policy ────────────────────────────────────────────────────────
 
@@ -503,7 +510,10 @@ class MemoryWatchdog(threading.Thread):
 
     @staticmethod
     def _default_process_exit(code: int) -> None:
-        logging.shutdown()
+        # No logging.shutdown() here: flushing handlers can block
+        # indefinitely under swap thrash — observed in the 115GB crash
+        # where the lethal path never reached exit. The tombstone is
+        # already on disk; die immediately.
         os._exit(code)
 
 
