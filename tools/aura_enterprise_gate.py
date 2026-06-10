@@ -90,6 +90,8 @@ ALLOW_SUBPROCESS = {
     "tools/run_test_chunks.py",
     "tools/live_boot_proof.py",
     "tools/build_release_manifest.py",
+    "tools/run_proof_step.py",
+    "tools/memory_sentinel.py",
     # Legitimate production modules requiring OS/subprocess interface
     "core/architect/safety_gate.py",
     "core/architect/shadow_workspace.py",
