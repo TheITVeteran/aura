@@ -450,6 +450,20 @@ def test_desktop_shell_renders_tool_results_without_inline_html_handlers():
     assert "letter-spacing: -" not in aura_css
 
 
+def test_desktop_shell_bounds_long_session_dedupe_state():
+    aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+
+    assert "const PROCESSED_EVENT_ID_MAX = 2000;" in aura_js
+    assert "const PROCESSED_MESSAGE_FINGERPRINT_MAX = 500;" in aura_js
+    assert "function rememberBoundedSetValue" in aura_js
+    assert "return rememberBoundedSetValue(state.processedEventIds, id, PROCESSED_EVENT_ID_MAX);" in aura_js
+    assert "function rememberMessageFingerprint" in aura_js
+    assert "rememberMessageFingerprint(fingerprint)" in aura_js
+    assert "rememberMessageFingerprint(httpFp)" in aura_js
+    assert "state.processedMessageFingerprints.add(" not in aura_js
+    assert "state.processedEventIds.add(" not in aura_js
+
+
 def test_native_shell_waits_for_readiness_heartbeat():
     native_shell = (PROJECT_ROOT / "native" / "aura-shell" / "src" / "main.rs").read_text(encoding="utf-8")
 

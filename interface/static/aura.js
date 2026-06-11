@@ -64,6 +64,8 @@ const CHAT_REQUEST_TIMEOUT_RECOVERING_MS = 395000;
 const THOUGHT_QUEUE_MAX = 160;
 const THOUGHT_COALESCE_WINDOW_MS = 12000;
 const THOUGHT_COALESCE_LOOKBACK = 18;
+const PROCESSED_EVENT_ID_MAX = 2000;
+const PROCESSED_MESSAGE_FINGERPRINT_MAX = 500;
 const TYPING_SIGNAL_DEBOUNCE_MS = 850;
 const VOICE_SIGNAL_FLUSH_MS = 900;
 const CAMERA_SIGNAL_INTERVAL_MS = 2200;
@@ -935,16 +937,26 @@ function initializeMetricGuide() {
 }
 
 function rememberEventId(id) {
-    if (!id) return false;
-    if (state.processedEventIds.has(id)) return true;
-    state.processedEventIds.add(id);
-    if (state.processedEventIds.size > 2000) {
-        const iter = state.processedEventIds.values();
-        for (let i = 0; i < 1000; i++) {
-            const next = iter.next();
-            if (next.done) break;
-            state.processedEventIds.delete(next.value);
-        }
+    return rememberBoundedSetValue(state.processedEventIds, id, PROCESSED_EVENT_ID_MAX);
+}
+
+function rememberMessageFingerprint(fingerprint) {
+    return rememberBoundedSetValue(
+        state.processedMessageFingerprints,
+        fingerprint,
+        PROCESSED_MESSAGE_FINGERPRINT_MAX
+    );
+}
+
+function rememberBoundedSetValue(set, rawValue, maxSize) {
+    const value = String(rawValue || '').trim();
+    if (!value) return false;
+    if (set.has(value)) return true;
+    set.add(value);
+    while (set.size > maxSize) {
+        const oldest = set.values().next();
+        if (oldest.done) break;
+        set.delete(oldest.value);
     }
     return false;
 }
@@ -1845,17 +1857,9 @@ function handleWsEvent(data) {
             // Use content-only fingerprint — the same response can arrive
             // via HTTP and via WebSocket with different IDs.
             const fingerprint = msg.trim().substring(0, 200);
-            if (state.processedMessageFingerprints.has(fingerprint)) {
+            if (rememberMessageFingerprint(fingerprint)) {
                 // duplicate message skipped (same content via different channel)
                 return;
-            }
-            state.processedMessageFingerprints.add(fingerprint);
-            // Limit set size — trim to 250 when exceeding 500
-            if (state.processedMessageFingerprints.size > 500) {
-                const iter = state.processedMessageFingerprints.values();
-                for (let i = 0; i < 250; i++) {
-                    state.processedMessageFingerprints.delete(iter.next().value);
-                }
             }
 
             appendMsg('aura', msg, false, meta);
@@ -2513,7 +2517,7 @@ $('chat-form').onsubmit = async e => {
             const alreadyDelivered = state.processedMessageFingerprints.has(httpFp);
             const alreadyStreamed = (typeof activeStreamContentRaw !== 'undefined' && activeStreamContentRaw.trim() === data.response.trim());
             if (!alreadyDelivered && !alreadyStreamed) {
-                state.processedMessageFingerprints.add(httpFp);
+                rememberMessageFingerprint(httpFp);
                 const chatMeta = {};
                 if (data.thought) chatMeta.thought = data.thought;
                 appendMsg('aura', data.response, false, chatMeta);
