@@ -240,13 +240,22 @@ class GoalEngine:
     def _initialize(self) -> None:
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA busy_timeout=5000;")
-            self._conn.execute("PRAGMA journal_mode=WAL;")
-            self._conn.execute("PRAGMA synchronous=NORMAL;")
-            self._conn.executescript(_SCHEMA)
-            self._conn.commit()
+            # The whole lifecycle is serialized under self._lock: a re-init
+            # (salvage boot path) that rebinds self._conn while another
+            # thread is mid-execute lets the old connection be GC-closed
+            # inside sqlite3_step — native heap corruption, not an
+            # exception. Re-init reuses a live connection instead.
+            with self._lock:
+                if self._conn is not None:
+                    return
+                conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA busy_timeout=5000;")
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA synchronous=NORMAL;")
+                conn.executescript(_SCHEMA)
+                conn.commit()
+                self._conn = conn
         except (sqlite3.Error, OSError) as exc:
             _record_goal_degradation(
                 exc,
@@ -718,7 +727,6 @@ class GoalEngine:
     def _fetch_records(self, *, statuses: Iterable[str] | None = None, limit: int = 100) -> list[GoalRecord]:
         if self._conn is None:
             return []
-        self._conn.row_factory = sqlite3.Row
         query = "SELECT * FROM goals"
         params: list[Any] = []
         if statuses:
@@ -744,7 +752,6 @@ class GoalEngine:
     ) -> GoalRecord | None:
         if self._conn is None:
             return None
-        self._conn.row_factory = sqlite3.Row
         clauses = []
         params: list[Any] = []
         for field_name, value in (
@@ -1008,7 +1015,7 @@ class GoalEngine:
         if normalized_status == GoalStatus.FAILED.value and existing.status != GoalStatus.FAILED.value:
             logger.warning("⚡ [GOAL] Goal failure detected: '%s'. Initiating counterfactual replanning...", existing.objective)
             try:
-                from core.will import get_will, ActionDomain, WillOutcome
+                from core.will import ActionDomain, WillOutcome, get_will
                 will = get_will()
                 decision = will.decide(
                     content=f"defer_and_replan_on_goal_failure:{goal_id}",
