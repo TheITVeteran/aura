@@ -975,6 +975,8 @@ async def test_api_chat_desktop_surface_executes_governed_desktop_objective_afte
 
     cognitive_calls = []
     skill_calls = []
+    completed_exchanges = []
+    output_receipts = []
 
     class _FakeCognitiveEngine:
         async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
@@ -1013,9 +1015,11 @@ async def test_api_chat_desktop_surface_executes_governed_desktop_objective_afte
         return "desktop-objective"
 
     async def _fake_complete_exchange(*_args, **_kwargs):
+        completed_exchanges.append((_args, _kwargs))
         return None
 
     async def _fake_output_receipt(*_args, **_kwargs):
+        output_receipts.append((_args, _kwargs))
         return None
 
     async def _fake_execute_governed_live_skill(skill_name, params, *, objective, extra_context=None):
@@ -1102,6 +1106,7 @@ async def test_api_chat_desktop_surface_executes_governed_desktop_objective_afte
 
     assert response.status_code == 200
     assert b"desktop_objective_completed" in response.body
+    assert b"Desktop task completed 5/5 governed computer-use steps" in response.body
     assert cognitive_calls
     assert cognitive_calls[0]["context"]["source"] == "desktop_ui"
     assert cognitive_calls[0]["context"]["cognitive_engine_required"] is True
@@ -1136,6 +1141,12 @@ async def test_api_chat_desktop_surface_executes_governed_desktop_objective_afte
             },
         }
     ]
+    assert completed_exchanges
+    assert completed_exchanges[-1][0][0] == "desktop-objective"
+    assert "Desktop task completed 5/5 governed computer-use steps" in completed_exchanges[-1][0][2]
+    assert "Aura self-summary. Timestamp" not in completed_exchanges[-1][0][2]
+    assert output_receipts
+    assert "Desktop task completed 5/5 governed computer-use steps" in output_receipts[-1][0][0]
 
 
 @pytest.mark.asyncio

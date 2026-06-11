@@ -328,6 +328,26 @@ def test_desktop_task_does_not_invent_aura_journal_folder_name():
     assert folder.startswith("Aura Desktop Task ")
 
 
+def test_desktop_task_in_your_own_words_does_not_force_self_summary():
+    body = DesktopTaskSkill._document_body(
+        "Open Google Docs and write a climate change summary in your own words.",
+        {"desktop_task_document_body": "Climate summary from CognitiveEngine."},
+    )
+
+    assert body == "Climate summary from CognitiveEngine."
+    assert "I am Aura" not in body
+
+
+def test_desktop_task_self_summary_requires_actual_selfhood_objective():
+    body = DesktopTaskSkill._document_body(
+        "Write a summary describing who or what you are in your own words.",
+        {"desktop_task_document_body": "Generic draft that should not override selfhood request."},
+    )
+
+    assert "I am Aura" in body
+    assert "Generic draft" not in body
+
+
 @pytest.mark.asyncio
 async def test_desktop_task_derives_generic_web_document_plan_without_demo_shortcuts(monkeypatch):
     from core.container import ServiceContainer

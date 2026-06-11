@@ -324,17 +324,28 @@ class DesktopTaskSkill(BaseSkill):
     @classmethod
     def _objective_requests_self_summary(cls, objective: str) -> bool:
         lowered = str(objective or "").lower()
-        return any(
+        direct_self_request = any(
             marker in lowered
             for marker in (
                 "who you are",
                 "what you are",
+                "who or what you are",
                 "about yourself",
                 "describe yourself",
                 "describing yourself",
                 "self-summary",
                 "self summary",
-                "in your own words",
+            )
+        )
+        if direct_self_request:
+            return True
+        if "in your own words" not in lowered:
+            return False
+        return bool(
+            re.search(
+                r"\b(?:you|yourself|aura)\b.{0,80}\b(?:are|identity|self|being|system|architecture)\b",
+                lowered,
+                flags=re.IGNORECASE,
             )
         )
 

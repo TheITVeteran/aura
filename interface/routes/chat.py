@@ -8407,16 +8407,16 @@ async def api_chat(
             "response_confidence": response_confidence,
         }
 
-        _record_recent_response(reply_text or "…", _semantic_user_message)
+        _record_recent_response(_final_reply or "…", _semantic_user_message)
         if pending_exchange_id:
             await _complete_logged_exchange(
                 pending_exchange_id,
                 _semantic_user_message,
-                reply_text or "…",
+                _final_reply or "…",
             )
             pending_exchange_id = None
         else:
-            await _log_exchange(_semantic_user_message, reply_text or "…")
+            await _log_exchange(_semantic_user_message, _final_reply or "…")
 
         # Cache idempotent response
         if idem_key:
@@ -8426,11 +8426,11 @@ async def api_chat(
                     _idempotency_cache.popitem(last=False)
 
         await _emit_chat_output_receipt(
-            reply_text or "…",
+            _final_reply or "…",
             cause="chat_response",
             metadata={
                 "response_confidence": response_confidence,
-                "path": reply_source or "stabilized",
+                "path": _final_status or reply_source or "stabilized",
             },
         )
 
