@@ -1543,6 +1543,8 @@ _RUNTIME_ACTION_OBJECTIVE_RE = re.compile(
 
 def _is_runtime_fact_status_request(user_message: str) -> bool:
     text = str(user_message or "")
+    if _is_explicit_capability_inventory_request(text):
+        return False
     if not _RUNTIME_FACT_STATUS_RE.search(text):
         return False
     if _RUNTIME_ACTION_OBJECTIVE_RE.search(text) and not re.search(
@@ -1715,10 +1717,6 @@ async def _run_cognitive_engine_chat_turn(
     - Health monitoring
     - Strict fail-closed support for CognitiveEngine-required callers
     """
-    engine = ServiceContainer.get("cognitive_engine", default=None)
-    if engine is None or not hasattr(engine, "think"):
-        return None
-
     visible = str(visible_user_message or effective_user_message or "")
     preflight_context = str(preflight_context_message or "").strip()
     if preflight_context == visible.strip():
@@ -1726,6 +1724,16 @@ async def _run_cognitive_engine_chat_turn(
     mode = _select_cognitive_chat_mode(visible, effective_user_message)
     shape = analyze_prompt_shape(visible)
     capability_inventory_contract = _is_explicit_capability_inventory_request(visible)
+    if capability_inventory_contract and require_engine:
+        logger.info(
+            "Serving bounded desktop capability inventory from governed catalog without foreground model allocation."
+        )
+        return _build_grounded_capability_inventory_reply(visible)
+
+    engine = ServiceContainer.get("cognitive_engine", default=None)
+    if engine is None or not hasattr(engine, "think"):
+        return None
+
     if capability_inventory_contract:
         from core.brain.types import ThinkingMode
 

@@ -153,6 +153,53 @@ def test_capability_inventory_reply_repairs_false_tool_limitation(monkeypatch: p
     assert "i can't" not in lowered
 
 
+def test_runtime_status_grounding_does_not_replace_capability_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from interface.routes import chat as chat_routes
+
+    class FakeCapabilityEngine:
+        def get_tool_catalog(self, *, include_inactive: bool = True) -> list[dict]:
+            return [
+                {
+                    "name": "computer_use",
+                    "available": True,
+                    "description": "Control desktop apps with governed screen, mouse, and keyboard actions.",
+                    "route_class": "desktop",
+                    "risk_class": "critical",
+                    "effect_scope": "external_io",
+                },
+                {
+                    "name": "web_search",
+                    "available": True,
+                    "description": "Search and inspect live web sources.",
+                    "route_class": "external_io",
+                    "risk_class": "medium",
+                    "effect_scope": "external_io",
+                },
+            ]
+
+    def fake_get(name: str, default=None):
+        if name == "capability_engine":
+            return FakeCapabilityEngine()
+        return default
+
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", fake_get)
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+
+    inventory = chat_routes._build_grounded_capability_inventory_reply(INVENTORY_PROMPT)
+    grounded = chat_routes._ground_runtime_fact_status_reply(
+        INVENTORY_PROMPT,
+        inventory,
+        {"desired_model": "Cortex (32B)"},
+        cognitive_engine_handled=True,
+    )
+
+    assert grounded == inventory
+    assert "computer_use" in grounded
+    assert "Cortex (32B) is the active foreground lane" not in grounded
+
+
 @pytest.mark.asyncio
 async def test_owner_name_recall_repairs_thin_desktop_cognitive_reply(
     monkeypatch: pytest.MonkeyPatch,

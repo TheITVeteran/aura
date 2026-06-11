@@ -418,6 +418,112 @@ async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_capability_inventory_bypasses_model_allocation(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    class _FakeCapabilityEngine:
+        def get_tool_catalog(self, *, include_inactive: bool = True):
+            return [
+                {
+                    "name": "computer_use",
+                    "available": True,
+                    "description": "Control desktop apps with governed screen, mouse, and keyboard actions.",
+                    "route_class": "desktop",
+                    "risk_class": "critical",
+                    "effect_scope": "external_io",
+                },
+                {
+                    "name": "web_search",
+                    "available": True,
+                    "description": "Search and inspect live web sources.",
+                    "route_class": "external_io",
+                    "risk_class": "medium",
+                    "effect_scope": "external_io",
+                },
+            ]
+
+    class _FakeAuthority:
+        def is_ready(self):
+            return True
+
+    class _FakeWill:
+        def decide(self, *_args, **_kwargs):
+            return SimpleNamespace(allowed=True)
+
+    class _FakeKernelInterface:
+        def __init__(self):
+            self.process_calls = 0
+
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            self.process_calls += 1
+            return "unexpected kernel reply"
+
+    def _fake_get(name, default=None):
+        if name == "cognitive_engine":
+            raise AssertionError("desktop capability inventory must not allocate CognitiveEngine")
+        if name == "capability_engine":
+            return _FakeCapabilityEngine()
+        if name == "authority_gateway":
+            return _FakeAuthority()
+        if name == "unified_will":
+            return _FakeWill()
+        return default
+
+    async def _fake_log_exchange(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncCallFixture())
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    fake_kernel = _FakeKernelInterface()
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: fake_kernel))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message="What tools can you use externally, and what is a hypothetical scenario where you use them?",
+            session_id="desktop-inventory",
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 200
+    assert b"computer_use" in response.body
+    assert b"web_search" in response.body
+    assert b"not opening apps" in response.body
+    assert b"response_confidence\":\"high" in response.body
+    assert fake_kernel.process_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
@@ -1576,46 +1682,58 @@ async def test_desktop_cognitive_engine_keeps_preflight_context_out_of_objective
 
 
 @pytest.mark.asyncio
-async def test_desktop_capability_inventory_uses_bounded_cognitive_engine_contract(monkeypatch):
-    from core.providers import engine_connection_pool as pool_module
+async def test_desktop_capability_inventory_uses_bounded_catalog_without_engine_allocation(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    calls = []
-
-    class _FakeCognitiveEngine:
-        async def think(self, objective, context=None, **kwargs):
-            calls.append(
+    class _FakeCapabilityEngine:
+        def get_tool_catalog(self, *, include_inactive: bool = True):
+            return [
                 {
-                    "objective": objective,
-                    "context": dict(context or {}),
-                    "kwargs": dict(kwargs),
-                }
-            )
-            return SimpleNamespace(
-                content=(
-                    "I can use governed desktop, browser, file, terminal, memory, and repair tools. "
-                    "A realistic scenario is researching a topic, creating a document, exporting it, "
-                    "and recording receipts for what changed."
-                )
-            )
+                    "name": "computer_use",
+                    "available": True,
+                    "description": "Control desktop apps with governed screen, mouse, and keyboard actions.",
+                    "route_class": "desktop",
+                    "risk_class": "critical",
+                    "effect_scope": "external_io",
+                },
+                {
+                    "name": "web_search",
+                    "available": True,
+                    "description": "Search and inspect live web sources.",
+                    "route_class": "external_io",
+                    "risk_class": "medium",
+                    "effect_scope": "external_io",
+                },
+                {
+                    "name": "file_operation",
+                    "available": True,
+                    "description": "Read and write local files and documents.",
+                    "route_class": "stateful",
+                    "risk_class": "medium",
+                    "effect_scope": "file_system",
+                },
+            ]
 
-    class _Pool:
-        async def acquire_engine_connection(self, *_args, **_kwargs):
-            return None
+    class _FakeAuthority:
+        def is_ready(self):
+            return True
 
-        async def execute_with_retry(self, _name, operation, **_kwargs):
-            return await operation()
+    class _FakeWill:
+        def decide(self, *_args, **_kwargs):
+            return SimpleNamespace(allowed=True)
 
-    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
-    monkeypatch.setattr(
-        chat_routes.ServiceContainer,
-        "get",
-        staticmethod(
-            lambda name, default=None: _FakeCognitiveEngine()
-            if name == "cognitive_engine"
-            else default
-        ),
-    )
+    def fake_get(name, default=None):
+        if name == "cognitive_engine":
+            raise AssertionError("capability inventory must not allocate the model lane")
+        if name == "capability_engine":
+            return _FakeCapabilityEngine()
+        if name == "authority_gateway":
+            return _FakeAuthority()
+        if name == "unified_will":
+            return _FakeWill()
+        return default
+
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(fake_get))
 
     user_message = "What tools can you use externally, and what is a hypothetical scenario where you use them?"
     reply = await chat_routes._run_cognitive_engine_chat_turn(
@@ -1629,13 +1747,11 @@ async def test_desktop_capability_inventory_uses_bounded_cognitive_engine_contra
     )
 
     assert reply
-    assert calls[0]["objective"] == user_message
-    assert calls[0]["context"]["capability_inventory_contract"] is True
-    assert calls[0]["context"]["desktop_descriptive_turn"] is True
-    assert calls[0]["context"]["prefer_tier"] == "primary"
-    assert calls[0]["context"]["allow_deep_handoff"] is False
-    assert calls[0]["context"]["max_tokens"] <= 768
-    assert str(calls[0]["kwargs"]["mode"]).lower().endswith("fast")
+    assert "computer_use" in reply
+    assert "web_search" in reply
+    assert "file_operation" in reply
+    assert "not opening apps" in reply.lower()
+    assert "will/authority" in reply.lower()
 
 
 @pytest.mark.asyncio
