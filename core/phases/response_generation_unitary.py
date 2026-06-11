@@ -3613,24 +3613,32 @@ class UnitaryResponsePhase(Phase):
             last_task_payload = new_state.response_modifiers.get("last_task_result_payload", {})
             if isinstance(last_task_payload, dict):
                 task_summary = str(last_task_payload.get("summary", "")).strip()
-                if task_summary:
-                    # Task dispatch was successful - generate acknowledgment response
-                    ack_response = (
-                        f"I've started working on this task in the background. {task_summary}"
-                    )
+                task_id = str(last_task_payload.get("task_id", "") or "").strip()
+                commitment_id = str(last_task_payload.get("commitment_id", "") or "").strip()
+                if task_summary or task_id or commitment_id:
+                    details = ["Task accepted into governed background execution."]
+                    if task_id:
+                        details.append(f"Task id: {task_id}.")
+                    if commitment_id:
+                        details.append(f"Commitment id: {commitment_id}.")
+                    if task_summary:
+                        details.append(task_summary)
+                    details.append("No completion is claimed yet.")
+                    ack_response = " ".join(details)
                     new_state.cognition.last_response = ack_response
                     logger.info(
                         "🎯 [CRITICAL FIX] Background task already started (outcome=started). "
-                        "Returning acknowledgment instead of LLM-generated response."
+                        "Returning evidence-bounded acknowledgment instead of LLM-generated response."
                     )
                     return new_state
-            # Fallback if payload is missing
             new_state.cognition.last_response = (
-                "I've started working on that task. I'll keep you updated as it progresses."
+                "A background task start was signaled, but no task id, commitment id, or status "
+                "summary was attached. I will not claim progress until the task ledger exposes "
+                "verifiable status."
             )
             logger.info(
                 "🎯 [CRITICAL FIX] Background task dispatched (outcome=started). "
-                "Returning generic acknowledgment."
+                "Returning fail-closed missing-payload acknowledgment."
             )
             return new_state
 

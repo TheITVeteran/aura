@@ -84,6 +84,9 @@ async def test_inline_timeout_keeps_task_running_in_background(monkeypatch, tmp_
     acceptance = await verifier.verify_and_dispatch("keep going under pressure", state=None)
 
     assert acceptance.outcome == DispatchOutcome.STARTED
+    assert "task ledger is tracking completion status" in acceptance.summary.lower()
+    assert "i'll" not in acceptance.summary.lower()
+    assert "keep tracking" not in acceptance.summary.lower()
     await asyncio.sleep(0.15)
 
     status = verifier.get_task_status(acceptance.task_id)
@@ -189,6 +192,44 @@ async def test_task_commitment_verifier_passes_user_origin_into_task_context(mon
     assert task_engine.goals[0][1]["origin"] == "api"
     assert task_engine.goals[0][1]["intent_source"] == "api"
     assert task_engine.goals[0][1]["request_origin"] == "api"
+
+
+@pytest.mark.asyncio
+async def test_task_commitment_verifier_async_acceptance_is_evidence_bounded(monkeypatch, tmp_path):
+    tracker = _GoalTracker()
+    task_engine = _FastTaskEngine()
+
+    def _fake_get(name, default=None):
+        if name == "task_engine":
+            return task_engine
+        if name == "goal_engine":
+            return tracker
+        return default
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(_fake_get),
+    )
+    monkeypatch.setattr(
+        TaskCommitmentVerifier,
+        "_assess_capability",
+        lambda self, objective: CapabilityAssessment(can_fulfil=True, matched_tools=["desktop_task"], confidence=1.0),
+    )
+    monkeypatch.setattr(TaskCommitmentVerifier, "_register_commitment", lambda self, objective: "commit-123")
+
+    verifier = TaskCommitmentVerifier(kernel=None, persist_path=tmp_path / "task_commitment_state.json")
+
+    acceptance = await verifier.verify_and_dispatch("Prepare a visible desktop workflow", state=None, force_async=True)
+    await asyncio.sleep(0)
+
+    assert acceptance.outcome == DispatchOutcome.STARTED
+    assert acceptance.commitment_id == "commit-123"
+    assert "task accepted into governed background execution" in acceptance.summary.lower()
+    assert "task ledger is tracking completion status" in acceptance.summary.lower()
+    assert "no completion is claimed yet" in acceptance.summary.lower()
+    assert "i'll" not in acceptance.summary.lower()
+    assert "follow up" not in acceptance.summary.lower()
+    assert tracker.dispatches
 
 
 @pytest.mark.asyncio

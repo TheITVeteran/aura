@@ -686,7 +686,11 @@ async def test_unitary_response_does_not_leak_stale_technical_recovery_into_non_
     }
     state.response_modifiers["last_task_result_payload"] = {
         "status": "started",
-        "summary": "I've started this task (id=48792829). I'll follow up when it's done. Tracking commitment 8ec3f96b.",
+        "summary": (
+            "Task accepted into governed background execution (id=48792829). "
+            "The task ledger is tracking completion status. No completion is claimed yet. "
+            "Tracking commitment 8ec3f96b."
+        ),
         "steps_completed": 1,
         "steps_total": 3,
     }
@@ -718,6 +722,66 @@ async def test_unitary_response_does_not_leak_stale_technical_recovery_into_non_
 
     assert "i hit an interruption" not in new_state.cognition.last_response.lower()
     assert "tracking commitment" not in new_state.cognition.last_response.lower()
+
+
+@pytest.mark.asyncio
+async def test_unitary_response_started_task_ack_is_evidence_bounded_without_llm(monkeypatch):
+    state = AuraState()
+    state.cognition.current_origin = "api"
+    state.cognition.current_objective = "Open Notes, write a timestamped summary, and export it as a PDF."
+    state.response_modifiers["last_task_outcome"] = "started"
+    state.response_modifiers["last_task_result_payload"] = {
+        "status": "started",
+        "summary": "Queued desktop_task through governed task execution.",
+        "task_id": "task-123",
+        "commitment_id": "commit-456",
+    }
+
+    llm = SimpleNamespace(think=AsyncCallProbe(return_value="I should not be called."))
+    phase = UnitaryResponsePhase(SimpleNamespace(organs={}))
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda name, default=None: llm if name == "llm_router" else default),
+    )
+
+    new_state = await phase.execute(state, objective=state.cognition.current_objective, priority=True)
+
+    llm.think.assert_not_awaited()
+    reply = new_state.cognition.last_response
+    assert "Task accepted into governed background execution" in reply
+    assert "Task id: task-123" in reply
+    assert "Commitment id: commit-456" in reply
+    assert "No completion is claimed yet" in reply
+    assert "started working" not in reply.lower()
+    assert "keep you updated" not in reply.lower()
+    assert "i'll" not in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_unitary_response_started_task_missing_payload_fails_closed(monkeypatch):
+    state = AuraState()
+    state.cognition.current_origin = "api"
+    state.cognition.current_objective = "Keep working on the desktop task."
+    state.response_modifiers["last_task_outcome"] = "started"
+    state.response_modifiers["last_task_result_payload"] = {}
+
+    llm = SimpleNamespace(think=AsyncCallProbe(return_value="I should not be called."))
+    phase = UnitaryResponsePhase(SimpleNamespace(organs={}))
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda name, default=None: llm if name == "llm_router" else default),
+    )
+
+    new_state = await phase.execute(state, objective=state.cognition.current_objective, priority=True)
+
+    llm.think.assert_not_awaited()
+    reply = new_state.cognition.last_response.lower()
+    assert "no task id" in reply
+    assert "will not claim progress" in reply
+    assert "keep you updated" not in reply
+    assert "started working" not in reply
 
 
 @pytest.mark.asyncio

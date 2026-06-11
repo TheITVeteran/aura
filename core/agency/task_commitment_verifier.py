@@ -683,7 +683,7 @@ class TaskCommitmentVerifier:
                 requested_objective=requested_objective,
                 summary=(
                     f"This task is still running in the background (took >={self.INLINE_TIMEOUT_S:.0f}s). "
-                    "I'll keep tracking it until it completes."
+                    "The task ledger is tracking completion status."
                     + (f" Commitment {commitment_id} is attached." if commitment_id else "")
                 ),
                 elapsed_ms=elapsed,
@@ -787,8 +787,8 @@ class TaskCommitmentVerifier:
             objective=objective,
             requested_objective=requested_objective,
             summary=(
-                f"I've started this task (id={task_id}). "
-                "I'll follow up when it's done."
+                f"Task accepted into governed background execution (id={task_id}). "
+                "The task ledger is tracking completion status. No completion is claimed yet."
                 + (f" Tracking commitment {commitment_id}." if commitment_id else "")
             ),
             elapsed_ms=elapsed,
