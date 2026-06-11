@@ -42,7 +42,7 @@ RING_MAX_LINES = 600  # ~20 minutes at 2s
 try:
     import ctypes
 
-    class _RUsageV2(ctypes.Structure):
+    class _RUsageV4(ctypes.Structure):
         _fields_ = [
             ("ri_uuid", ctypes.c_uint8 * 16),
             ("ri_user_time", ctypes.c_uint64),
@@ -63,9 +63,28 @@ try:
             ("ri_child_elapsed_abstime", ctypes.c_uint64),
             ("ri_diskio_bytesread", ctypes.c_uint64),
             ("ri_diskio_byteswritten", ctypes.c_uint64),
+            ("ri_cpu_time_qos_default", ctypes.c_uint64),
+            ("ri_cpu_time_qos_maintenance", ctypes.c_uint64),
+            ("ri_cpu_time_qos_background", ctypes.c_uint64),
+            ("ri_cpu_time_qos_utility", ctypes.c_uint64),
+            ("ri_cpu_time_qos_legacy", ctypes.c_uint64),
+            ("ri_cpu_time_qos_user_initiated", ctypes.c_uint64),
+            ("ri_cpu_time_qos_user_interactive", ctypes.c_uint64),
+            ("ri_billed_system_time", ctypes.c_uint64),
+            ("ri_serviced_system_time", ctypes.c_uint64),
+            ("ri_logical_writes", ctypes.c_uint64),
+            ("ri_lifetime_max_phys_footprint", ctypes.c_uint64),
+            ("ri_instructions", ctypes.c_uint64),
+            ("ri_cycles", ctypes.c_uint64),
+            ("ri_billed_energy", ctypes.c_uint64),
+            ("ri_serviced_energy", ctypes.c_uint64),
         ]
 
     _LIBPROC = ctypes.CDLL("/usr/lib/libproc.dylib")
+    _LIBPROC.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+    _LIBPROC.proc_pid_rusage.restype = ctypes.c_int
+    _LIBPROC.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+    _LIBPROC.proc_listchildpids.restype = ctypes.c_int
 except (OSError, AttributeError):  # non-macOS or restricted
     _LIBPROC = None
 
@@ -74,10 +93,49 @@ def phys_footprint_mb(pid: int) -> float:
     """RSS + compressed + IOKit-mapped: the metric memorystatus kills on."""
     if _LIBPROC is None:
         return 0.0
-    ru = _RUsageV2()
-    if _LIBPROC.proc_pid_rusage(int(pid), 2, ctypes.byref(ru)) != 0:
+    ru = _RUsageV4()
+    if _LIBPROC.proc_pid_rusage(int(pid), 4, ctypes.byref(ru)) != 0:
         return 0.0
-    return ru.ri_phys_footprint / (1024 * 1024)
+    return max(ru.ri_phys_footprint, ru.ri_lifetime_max_phys_footprint) / (1024 * 1024)
+
+
+def child_pids(root_pid: int, *, recursive: bool = True, max_children: int = 128) -> list[int]:
+    """Return child pids without relying on psutil's recursive ppid map."""
+
+    if sys.platform == "darwin" and _LIBPROC is not None:
+        seen: set[int] = set()
+        frontier = [int(root_pid)]
+        deadline = time.monotonic() + 1.0
+        while frontier and len(seen) < max_children and time.monotonic() < deadline:
+            parent = frontier.pop(0)
+            try:
+                buffer = (ctypes.c_int * max_children)()
+                count = int(
+                    _LIBPROC.proc_listchildpids(
+                        int(parent),
+                        ctypes.byref(buffer),
+                        ctypes.sizeof(buffer),
+                    )
+                )
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                break
+            if count <= 0:
+                break
+            for raw_pid in list(buffer)[: min(count, max_children)]:
+                pid = int(raw_pid)
+                if pid <= 0:
+                    continue
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                if recursive and len(seen) < max_children:
+                    frontier.append(pid)
+        return list(seen)
+
+    try:
+        return [child.pid for child in psutil.Process(root_pid).children(recursive=recursive)]
+    except psutil.Error:
+        return []
 
 
 def tree_rss_mb(root: psutil.Process) -> tuple[float, float, int, float]:
@@ -90,10 +148,11 @@ def tree_rss_mb(root: psutil.Process) -> tuple[float, float, int, float]:
     except psutil.Error:
         return 0.0, 0.0, 0, footprint
     try:
-        kids = root.children(recursive=True)
+        kids = child_pids(root.pid, recursive=True)
         count += len(kids)
-        for child in kids:
+        for child_pid in kids:
             try:
+                child = psutil.Process(child_pid)
                 children += child.memory_info().rss / (1024 * 1024)
                 footprint += phys_footprint_mb(child.pid)
             except psutil.Error:
@@ -120,10 +179,11 @@ def write_ring(path: Path, entry: dict) -> None:
 def kill_tree(root: psutil.Process) -> list[int]:
     killed: list[int] = []
     procs: list[psutil.Process] = []
-    try:
-        procs = root.children(recursive=True)
-    except psutil.Error:
-        pass
+    for pid in child_pids(root.pid, recursive=True):
+        try:
+            procs.append(psutil.Process(pid))
+        except psutil.Error:
+            continue
     procs.append(root)
     for proc in procs:
         try:
@@ -137,8 +197,8 @@ def kill_tree(root: psutil.Process) -> list[int]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pid", type=int, required=True)
-    parser.add_argument("--lethal-mb", type=float, default=57344.0)
-    parser.add_argument("--interval", type=float, default=2.0)
+    parser.add_argument("--lethal-mb", type=float, default=46080.0)
+    parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument(
         "--ring",
         type=Path,

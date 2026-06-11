@@ -1040,8 +1040,9 @@ def _install_systemwide_memory_protection() -> None:
     if str(os.environ.get("AURA_MEMORY_SENTINEL", "1")).strip().lower() not in {"0", "false", "no", "off"}:
         try:
             lethal_mb = float(
-                os.environ.get("AURA_MEMWATCH_LETHAL_MB", "") or min(57344.0, total_mb * 0.85)
+                os.environ.get("AURA_MEMWATCH_LETHAL_MB", "") or min(46080.0, total_mb * 0.70)
             )
+            sentinel_interval_s = float(os.environ.get("AURA_MEMORY_SENTINEL_INTERVAL_S", "1.0") or 1.0)
             sentinel_log = Path("data/error_logs/memory")
             sentinel_log.mkdir(parents=True, exist_ok=True)
             subprocess.Popen(
@@ -1052,6 +1053,8 @@ def _install_systemwide_memory_protection() -> None:
                     str(os.getpid()),
                     "--lethal-mb",
                     str(lethal_mb),
+                    "--interval",
+                    str(max(0.5, sentinel_interval_s)),
                 ],
                 stdout=open(sentinel_log / "sentinel.log", "a"),
                 stderr=subprocess.STDOUT,

@@ -28,18 +28,22 @@ is treated as the hard tier even if RSS alone is under the ceiling.
 
 from __future__ import annotations
 
+import ctypes
 import gc
 import logging
 import os
+import sys
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import psutil
 
 from core.runtime.errors import record_degradation
+from core.utils.memory_monitor import process_memory_bytes
 
 logger = logging.getLogger("Aura.Resilience.MemoryWatchdog")
 
@@ -62,6 +66,8 @@ MEMORY_ABORT_EXIT_CODE = 70
 _HEAVY_WORKER_MARKERS = ("llama-server", "mlx_worker.py", "MTLCompilerService")
 
 _TOMBSTONE_DIR = Path("data/error_logs/memory")
+_DARWIN_CHILD_LIBPROC: Any | None = None
+_DARWIN_CHILD_LIBPROC_UNAVAILABLE = False
 
 
 def _env_float(name: str, default: float) -> float:
@@ -112,16 +118,21 @@ class _Thresholds:
     boot_grace_s: float = 300.0
 
     @classmethod
-    def from_environment(cls, total_ram_gb: float) -> "_Thresholds":
-        # Defaults align with the MemoryGovernor ladder (prune 32 GB /
-        # unload 48 GB / critical 56 GB on a 64 GB host) and scale down
-        # proportionally on smaller machines.
-        scale = min(1.0, total_ram_gb / 64.0) if total_ram_gb > 0 else 1.0
+    def from_environment(cls, total_ram_gb: float) -> _Thresholds:
+        # Daily-use defaults for the 64 GB desktop path. The previous 48/56 GB
+        # hard/lethal tiers were too late once Chrome, Safari, the UI, and
+        # compressed MLX pages were present; macOS could cross into global
+        # application-memory failure before Aura reclaimed. Scale down on
+        # smaller machines while preserving explicit operator overrides.
+        total_mb = max(8192.0, total_ram_gb * 1024.0)
         return cls(
-            soft_mb=_env_float("AURA_MEMWATCH_SOFT_MB", 32768.0 * scale),
-            hard_mb=_env_float("AURA_MEMWATCH_HARD_MB", 49152.0 * scale),
-            lethal_mb=_env_float("AURA_MEMWATCH_LETHAL_MB", 57344.0 * scale),
-            swap_hard_gb=_env_float("AURA_MEMWATCH_SWAP_HARD_GB", 16.0 * scale),
+            soft_mb=_env_float("AURA_MEMWATCH_SOFT_MB", min(32768.0, total_mb * 0.50)),
+            hard_mb=_env_float("AURA_MEMWATCH_HARD_MB", min(40960.0, total_mb * 0.62)),
+            lethal_mb=_env_float("AURA_MEMWATCH_LETHAL_MB", min(46080.0, total_mb * 0.70)),
+            swap_hard_gb=_env_float(
+                "AURA_MEMWATCH_SWAP_HARD_GB",
+                min(8.0, max(2.0, total_ram_gb * 0.12)),
+            ),
             soft_cooldown_s=_env_float("AURA_MEMWATCH_SOFT_COOLDOWN_S", 30.0),
             hard_cooldown_s=_env_float("AURA_MEMWATCH_HARD_COOLDOWN_S", 60.0),
             lethal_confirmations=max(
@@ -132,45 +143,73 @@ class _Thresholds:
 
 
 def _phys_footprint_mb(pid: int) -> float:
-    """RSS + compressed + IOKit: the metric macOS memorystatus kills on.
-
-    The 78GB kill ('largest compressed process') was invisible to every
-    RSS-based guard — compressed pages leave RSS. Darwin-only; returns
-    0.0 elsewhere or on failure.
-    """
+    """Return the canonical RSS/phys-footprint memory sample in MB."""
     try:
-        import ctypes
-
-        class _RUsageV2(ctypes.Structure):
-            _fields_ = [
-                ("ri_uuid", ctypes.c_uint8 * 16),
-                ("ri_user_time", ctypes.c_uint64),
-                ("ri_system_time", ctypes.c_uint64),
-                ("ri_pkg_idle_wkups", ctypes.c_uint64),
-                ("ri_interrupt_wkups", ctypes.c_uint64),
-                ("ri_pageins", ctypes.c_uint64),
-                ("ri_wired_size", ctypes.c_uint64),
-                ("ri_resident_size", ctypes.c_uint64),
-                ("ri_phys_footprint", ctypes.c_uint64),
-                ("ri_proc_start_abstime", ctypes.c_uint64),
-                ("ri_proc_exit_abstime", ctypes.c_uint64),
-                ("ri_child_user_time", ctypes.c_uint64),
-                ("ri_child_system_time", ctypes.c_uint64),
-                ("ri_child_pkg_idle_wkups", ctypes.c_uint64),
-                ("ri_child_interrupt_wkups", ctypes.c_uint64),
-                ("ri_child_pageins", ctypes.c_uint64),
-                ("ri_child_elapsed_abstime", ctypes.c_uint64),
-                ("ri_diskio_bytesread", ctypes.c_uint64),
-                ("ri_diskio_byteswritten", ctypes.c_uint64),
-            ]
-
-        libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
-        ru = _RUsageV2()
-        if libproc.proc_pid_rusage(int(pid), 2, ctypes.byref(ru)) != 0:
-            return 0.0
-        return ru.ri_phys_footprint / (1024 * 1024)
-    except (OSError, AttributeError, ValueError):
+        return float(process_memory_bytes(pid)) / float(1024 * 1024)
+    except _WATCHDOG_RECOVERABLE_ERRORS:
         return 0.0
+
+
+def _darwin_child_pids(root_pid: int, *, recursive: bool, max_children: int = 64) -> list[int]:
+    """Return child pids via libproc on macOS without psutil's full ppid map.
+
+    A live stall trace showed ``psutil.Process.children(recursive=True)`` stuck
+    in the watchdog thread while the event loop was already wedged. On Darwin,
+    ``proc_listchildpids`` gives a bounded direct-child query without a global
+    process-table ppid map or a production raw-subprocess surface.
+    """
+
+    global _DARWIN_CHILD_LIBPROC, _DARWIN_CHILD_LIBPROC_UNAVAILABLE
+    if sys.platform != "darwin" or _DARWIN_CHILD_LIBPROC_UNAVAILABLE:
+        return []
+    seen: set[int] = set()
+    frontier = [int(root_pid)]
+    deadline = time.monotonic() + 0.75
+    try:
+        if _DARWIN_CHILD_LIBPROC is None:
+            _DARWIN_CHILD_LIBPROC = ctypes.CDLL("/usr/lib/libproc.dylib")
+            _DARWIN_CHILD_LIBPROC.proc_listchildpids.argtypes = [
+                ctypes.c_int,
+                ctypes.c_void_p,
+                ctypes.c_int,
+            ]
+            _DARWIN_CHILD_LIBPROC.proc_listchildpids.restype = ctypes.c_int
+    except (AttributeError, OSError, TypeError, ValueError):
+        _DARWIN_CHILD_LIBPROC_UNAVAILABLE = True
+        return []
+
+    while frontier and len(seen) < max_children and time.monotonic() < deadline:
+        parent = frontier.pop(0)
+        try:
+            buffer = (ctypes.c_int * max_children)()
+            count = int(
+                _DARWIN_CHILD_LIBPROC.proc_listchildpids(
+                    int(parent),
+                    ctypes.byref(buffer),
+                    ctypes.sizeof(buffer),
+                )
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError, ctypes.ArgumentError):
+            _DARWIN_CHILD_LIBPROC_UNAVAILABLE = True
+            break
+        if count <= 0:
+            break
+        for raw_pid in list(buffer)[: min(count, max_children)]:
+            pid = int(raw_pid)
+            if pid <= 0:
+                continue
+            if pid in seen:
+                continue
+            seen.add(pid)
+            if recursive and len(seen) < max_children:
+                frontier.append(pid)
+    return list(seen)
+
+
+def _child_processes(root_pid: int, *, recursive: bool = True) -> list[psutil.Process]:
+    if sys.platform == "darwin":
+        return [psutil.Process(pid) for pid in _darwin_child_pids(root_pid, recursive=recursive)]
+    return psutil.Process(root_pid).children(recursive=recursive)
 
 
 def default_sampler() -> MemorySample:
@@ -185,7 +224,7 @@ def default_sampler() -> MemorySample:
     # kernel's phys_footprint view of this process.
     core_rss = max(core_rss, _phys_footprint_mb(os.getpid()))
     try:
-        for child in proc.children(recursive=True):
+        for child in _child_processes(proc.pid, recursive=True):
             try:
                 child_rss += max(
                     child.memory_info().rss / (1024 * 1024),
@@ -220,7 +259,7 @@ def terminate_heavy_child_workers(grace_s: float = 2.0) -> int:
     """Terminate inference child workers out-of-band. Returns count killed."""
     killed = 0
     try:
-        children = psutil.Process(os.getpid()).children(recursive=True)
+        children = _child_processes(os.getpid(), recursive=True)
     except _WATCHDOG_RECOVERABLE_ERRORS as exc:
         logger.debug("MemoryWatchdog: child scan failed: %s", exc)
         return 0

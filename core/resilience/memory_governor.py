@@ -11,6 +11,7 @@ import psutil
 from core.memory.physics import hawking_decay
 from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
+from core.utils.memory_monitor import process_memory_bytes
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Resilience.MemoryGovernor")
@@ -34,17 +35,25 @@ _RSS_SAMPLE_ERRORS = (
     AttributeError,
     RuntimeError,
     TypeError,
+    ValueError,
 ) + _PROCESS_INSPECTION_ERRORS
 _PROCESS_TERMINATION_ERRORS = _PROCESS_INSPECTION_ERRORS + (OSError,)
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError, OverflowError):
+        return float(default)
 
 
 class MemoryGovernor:
     """Monitors system memory and enforces pruning/unloading thresholds.
     
-    Thresholds:
-    - 32GB: Trigger VectorMemory pruning.
-    - 48GB: Trigger LLM model unloading.
-    - 56GB: Emergency cleanup and metabolic slowdown.
+    Daily-use thresholds on a 64GB desktop:
+    - 28GB: Trigger VectorMemory pruning.
+    - 34GB: Trigger local model unloading.
+    - 40GB: Emergency cleanup and metabolic slowdown.
     """
     def __init__(self, orchestrator: Any):
         self.orchestrator = orchestrator
@@ -52,10 +61,21 @@ class MemoryGovernor:
         self._task: asyncio.Task | None = None
         self._proc = psutil.Process(os.getpid())
 
-        # Thresholds in MB (scaled for 64GB M5 Pro)
-        self.threshold_prune = 32768
-        self.threshold_unload = 48000
-        self.threshold_critical = 56000
+        # Thresholds in MB. These intentionally sit below the out-of-band
+        # MemoryWatchdog hard/lethal ladder so graceful cleanup runs first.
+        try:
+            total_mb = psutil.virtual_memory().total / (1024 * 1024)
+        except _RSS_SAMPLE_ERRORS:
+            total_mb = 65536.0
+        self.threshold_prune = int(
+            _env_float("AURA_GOVERNOR_PRUNE_MB", min(28672.0, total_mb * 0.44))
+        )
+        self.threshold_unload = int(
+            _env_float("AURA_GOVERNOR_UNLOAD_MB", min(34816.0, total_mb * 0.53))
+        )
+        self.threshold_critical = int(
+            _env_float("AURA_GOVERNOR_CRITICAL_MB", min(40960.0, total_mb * 0.62))
+        )
 
         self.check_interval = 60.0  # Seconds
         self._last_vacuum_time = time.monotonic()
@@ -232,7 +252,7 @@ class MemoryGovernor:
     def _sample_rss_sync(self) -> tuple[float, float]:
         """Sample core and managed-runtime RSS. Runs off-loop via to_thread."""
         try:
-            rss_mb = self._proc.memory_info().rss / (1024 * 1024)
+            rss_mb = process_memory_bytes(self._proc.pid) / (1024 * 1024)
         except _RSS_SAMPLE_ERRORS as exc:
             self._record_degradation(
                 exc,

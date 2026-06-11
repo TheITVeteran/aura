@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -233,10 +234,44 @@ class TestRuntimeSurface(unittest.TestCase):
         self.assertAlmostEqual(snap["last_sample"]["core_rss_mb"], 25_000.0)
 
     def test_default_thresholds_scale_with_ram(self):
-        full = _Thresholds.from_environment(64.0)
-        half = _Thresholds.from_environment(32.0)
+        with patch.dict(
+            "os.environ",
+            {
+                "AURA_MEMWATCH_SOFT_MB": "",
+                "AURA_MEMWATCH_HARD_MB": "",
+                "AURA_MEMWATCH_LETHAL_MB": "",
+                "AURA_MEMWATCH_SWAP_HARD_GB": "",
+            },
+            clear=False,
+        ):
+            full = _Thresholds.from_environment(64.0)
+            half = _Thresholds.from_environment(32.0)
+        self.assertAlmostEqual(full.soft_mb, 32768.0, delta=1.0)
+        self.assertAlmostEqual(full.hard_mb, 64.0 * 1024.0 * 0.62, delta=1.0)
+        self.assertAlmostEqual(full.lethal_mb, 64.0 * 1024.0 * 0.70, delta=1.0)
+        self.assertAlmostEqual(full.swap_hard_gb, 7.68, delta=0.1)
         self.assertAlmostEqual(half.soft_mb, full.soft_mb / 2.0, delta=1.0)
         self.assertAlmostEqual(half.lethal_mb, full.lethal_mb / 2.0, delta=1.0)
+
+    def test_memory_governor_daily_use_thresholds_align_with_watchdog(self):
+        from types import SimpleNamespace
+
+        from core.resilience.memory_governor import MemoryGovernor
+
+        with patch.dict(
+            "os.environ",
+            {
+                "AURA_GOVERNOR_PRUNE_MB": "",
+                "AURA_GOVERNOR_UNLOAD_MB": "",
+                "AURA_GOVERNOR_CRITICAL_MB": "",
+            },
+            clear=False,
+        ):
+            governor = MemoryGovernor(SimpleNamespace())
+
+        self.assertLess(governor.threshold_prune, governor.threshold_unload)
+        self.assertLess(governor.threshold_unload, governor.threshold_critical)
+        self.assertLess(governor.threshold_critical, _Thresholds.from_environment(64.0).hard_mb)
 
     def test_singleton_start_stop(self):
         import core.resilience.memory_watchdog as mw
