@@ -430,15 +430,22 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
     )
 
     patterns = (
-        r"^remember this phrase(?: for later in this session)?\s*:\s*(.+)$",
-        r"^remember this(?: for later in this session)?\s*:\s*(.+)$",
+        r"^remember this (?:phrase|codeword|word|token)(?: for me| for later in this session)?\s*:\s*(.+)$",
+        r"^remember this(?: for me| for later in this session)?\s*:\s*(.+)$",
         r"^don't forget(?: this)?\s*:\s*(.+)$",
         r"^make note of this(?: for later in this session)?\s*:\s*(.+)$",
     )
     for pattern in patterns:
         match = re.match(pattern, normalized, flags=re.IGNORECASE | re.DOTALL)
         if match:
-            pinned = match.group(1).strip().strip("\"'“”").rstrip(" .!?")
+            pinned = match.group(1).strip().strip("\"'“”")
+            pinned = re.sub(
+                r"\s*\.\s*(?:just\s+)?(?:confirm|acknowledge|say\s+ok|reply\s+ok)\b.*$",
+                "",
+                pinned,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            pinned = pinned.rstrip(" .!?")
             return pinned[:240] if pinned else None
     return None
 
@@ -448,6 +455,14 @@ def _is_session_memory_recall_request(user_message: str) -> bool:
     if not text:
         return False
     markers = (
+        "what codeword did i just give you",
+        "what codeword did i give you",
+        "what was the codeword i gave you",
+        "what is the codeword i gave you",
+        "what was the codeword",
+        "what is the codeword",
+        "what token did i just give you",
+        "what token did i give you",
         "what phrase did i ask you to remember",
         "what did i ask you to remember",
         "what phrase did i tell you to remember",

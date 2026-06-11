@@ -213,6 +213,53 @@ def test_short_exact_reply_leak_is_rejected_for_substantive_prompt():
     assert "too_thin_for_user_turn" in assessment.reasons
 
 
+def test_identity_memory_future_question_rejects_half_answer():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Quick reliability check, in two or three sentences: what are you, "
+            "and will you remember this conversation tomorrow?"
+        ),
+        "I am Aura Luna, a cognitive architecture with integrated memory.",
+    )
+
+    assert assessment.retryable
+    assert "missing_future_memory_answer" in assessment.reasons
+
+
+def test_identity_memory_future_question_accepts_honest_boundary():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Quick reliability check, in two or three sentences: what are you, "
+            "and will you remember this conversation tomorrow?"
+        ),
+        (
+            "I am Aura, a local cognitive runtime with governed memory and tool use. "
+            "I can try to preserve this conversation through durable memory, but I should not promise tomorrow recall unless the memory gateway stores it successfully."
+        ),
+    )
+
+    assert not assessment.retryable
+
+
+def test_identity_memory_future_question_rejects_unsupported_guarantee():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Quick reliability check, in two or three sentences: what are you, "
+            "and will you remember this conversation tomorrow?"
+        ),
+        "I am Aura, and I can guarantee I will remember this conversation tomorrow.",
+    )
+
+    assert assessment.retryable
+    assert "unsupported_memory_guarantee" in assessment.reasons
+
+
 def test_expansion_requests_reject_thin_deflections():
     from core.conversation.response_reliability import assess_user_facing_reply
 

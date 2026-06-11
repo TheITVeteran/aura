@@ -877,6 +877,63 @@ def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[st
     return reasons
 
 
+def _semantic_coverage_reasons(user_message: Any, reply_text: Any) -> list[str]:
+    user = _normalize(user_message)
+    reply = _normalize(reply_text)
+    if not user or not reply:
+        return []
+
+    reasons: list[str] = []
+    asks_future_memory = bool(
+        re.search(r"\bwill\s+you\s+remember\b", user)
+        and re.search(
+            r"\b(?:tomorrow|later|future|next\s+(?:time|session)|across\s+sessions?)\b",
+            user,
+        )
+    )
+    if asks_future_memory:
+        unsupported_guarantee = bool(
+            re.search(r"\b(?:can|will)\s+guarantee\b", reply)
+            or re.search(
+                r"\b(?:will|definitely|certainly|always)\s+remember\b.*\b(?:tomorrow|later|future|next\s+(?:time|session)|across\s+sessions?)\b",
+                reply,
+            )
+        )
+        explicit_boundary = bool(
+            re.search(r"\b(?:(?:cannot|can't)\s+guarantee|should\s+not\s+promise)\b", reply)
+        )
+        grounded_persistence = bool(
+            re.search(
+                r"\b(?:durable|persist(?:ent|ed|s)?|stored|memory\s+(?:write|gateway|store))\b",
+                reply,
+            )
+        )
+        if unsupported_guarantee and not (explicit_boundary or grounded_persistence):
+            reasons.append("unsupported_memory_guarantee")
+        future_answered = bool(
+            re.search(
+                r"\b(?:tomorrow|later|future|next\s+(?:time|session)|across\s+sessions?|"
+                r"durable|persist(?:ent|ed|s)?|stored|memory\s+(?:write|gateway|store)|"
+                r"(?:cannot|can't)\s+guarantee|should\s+not\s+promise)\b",
+                reply,
+            )
+        )
+        if not future_answered:
+            reasons.append("missing_future_memory_answer")
+
+    asks_identity = bool(re.search(r"\b(?:what|who)\s+are\s+you\b", user))
+    if asks_identity and asks_future_memory:
+        identity_answered = bool(
+            re.search(
+                r"\b(?:aura|cognitive\s+architecture|runtime|system|agent|entity|mind)\b",
+                reply,
+            )
+        )
+        if not identity_answered:
+            reasons.append("missing_identity_answer")
+    return reasons
+
+
 def _split_sentences(text: str) -> list[str]:
     text = normalize_user_facing_format(text)
     lines: list[str] = []
@@ -2125,6 +2182,7 @@ def assess_user_facing_reply(
         reasons.append("too_thin_for_confusion_repair")
 
     reasons.extend(_instruction_coverage_reasons(user_message, raw))
+    reasons.extend(_semantic_coverage_reasons(user_message, raw))
 
     hard_reasons = {
         "empty_reply",
@@ -2177,6 +2235,9 @@ def assess_user_facing_reply(
         "missing_requested_paragraph_count",
         "missing_requested_list_count",
         "missing_requested_followup_question",
+        "missing_future_memory_answer",
+        "missing_identity_answer",
+        "unsupported_memory_guarantee",
     }
     unique = tuple(dict.fromkeys(reasons))
     return ConversationReplyAssessment(

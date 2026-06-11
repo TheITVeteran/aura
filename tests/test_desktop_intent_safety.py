@@ -471,3 +471,36 @@ async def test_session_memory_pin_does_not_overclaim_when_durable_write_fails(
     assert status == "session_memory_pin_transient"
     assert "durable memory storage did not accept the write" in reply
     assert "durable session memory" not in reply
+
+
+@pytest.mark.asyncio
+async def test_codeword_memory_fastpath_round_trips_without_model_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from interface.routes import chat as chat_routes
+
+    class MemoryFacade:
+        async def add_memory(self, *_args, **_kwargs):
+            return True
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: MemoryFacade() if name == "memory_facade" else default),
+    )
+
+    set_result = await chat_routes._build_memory_state_fastpath_reply(
+        "Remember this codeword for me: amber-45873. Just confirm you have it."
+    )
+    recall_result = await chat_routes._build_memory_state_fastpath_reply(
+        "What codeword did I just give you?"
+    )
+
+    assert set_result is not None
+    set_reply, set_status = set_result
+    assert set_status == "session_memory_pin"
+    assert "amber-45873" in set_reply
+    assert recall_result is not None
+    recall_reply, recall_status = recall_result
+    assert recall_status == "session_memory_recall"
+    assert "amber-45873" in recall_reply

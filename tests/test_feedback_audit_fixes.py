@@ -2220,6 +2220,17 @@ def test_session_memory_pin_extracts_phrase_with_common_typo():
     )
 
 
+def test_session_memory_pin_extracts_codeword_and_strips_confirmation_instruction():
+    from interface.routes.chat import _extract_session_memory_pin_request
+
+    assert (
+        _extract_session_memory_pin_request(
+            "Remember this codeword for me: amber-45873. Just confirm you have it."
+        )
+        == "amber-45873"
+    )
+
+
 def test_session_memory_pin_round_trip():
     from interface.routes import chat as chat_route
 

@@ -990,7 +990,20 @@ def _install_systemwide_memory_protection() -> None:
             new_soft = limit_bytes if hard == resource.RLIM_INFINITY else min(limit_bytes, hard)
             resource.setrlimit(resource.RLIMIT_DATA, (new_soft, hard))
             logger.info("🛡️ RLIMIT_DATA installed: %.0fGB heap ceiling (kernel-enforced).", rlimit_gb)
-    except (ValueError, OSError, resource.error) as exc:
+    except ValueError as exc:
+        if "current limit exceeds maximum limit" in str(exc):
+            logger.info(
+                "RLIMIT_DATA unsupported by this kernel/Python runtime; "
+                "continuing with MLX memory ceiling and external RSS sentinel."
+            )
+        else:
+            record_degradation(
+                _AURA_MAIN_DEGRADATION_KEY,
+                exc,
+                action="continued boot without RLIMIT_DATA heap ceiling",
+                severity="warning",
+            )
+    except (OSError, resource.error) as exc:
         record_degradation(
             _AURA_MAIN_DEGRADATION_KEY,
             exc,

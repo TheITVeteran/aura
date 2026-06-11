@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -195,21 +196,27 @@ class LiveProof:
             self.guard_rss()
             try:
                 with httpx.Client(timeout=5.0) as client:
-                    resp = client.get(f"{self.base}/api/health/heartbeat")
-                if resp.status_code == 200:
-                    payload = resp.json()
-                    last_state = payload if isinstance(payload, dict) else {}
-                    required = last_state.get("required_probes")
+                    heartbeat_resp = client.get(f"{self.base}/api/health/heartbeat")
+                    boot_resp = client.get(f"{self.base}/api/health/boot")
+                if heartbeat_resp.status_code == 200 and boot_resp.status_code == 200:
+                    heartbeat_payload = heartbeat_resp.json()
+                    boot_payload = boot_resp.json()
+                    heartbeat = heartbeat_payload if isinstance(heartbeat_payload, dict) else {}
+                    boot = boot_payload if isinstance(boot_payload, dict) else {}
+                    last_state = {"heartbeat": heartbeat, "boot": boot}
+                    required = heartbeat.get("required_probes")
                     required_ok = bool(
                         isinstance(required, dict)
                         and required.get("all_passed") is True
                     )
-                    blockers = last_state.get("blockers")
+                    blockers = heartbeat.get("blockers")
                     no_blockers = isinstance(blockers, list) and not blockers
                     if (
-                        last_state.get("healthy") is True
-                        and last_state.get("runtime_probe_healthy") is True
-                        and last_state.get("system_ready") is True
+                        heartbeat.get("healthy") is True
+                        and heartbeat.get("runtime_probe_healthy") is True
+                        and boot.get("system_ready") is True
+                        and boot.get("conversation_ready") is True
+                        and boot.get("ready") is True
                         and required_ok
                         and no_blockers
                     ):
@@ -266,20 +273,33 @@ class LiveProof:
                 "chat_identity", False, summary=text[:200], latency_s=round(latency, 1)
             )
         from core.conversation.self_claim_verifier import verify_self_claims
+        from core.conversation.response_reliability import assess_user_facing_reply
 
         verdict = verify_self_claims(text)
+        reliability = assess_user_facing_reply(
+            (
+                "Quick reliability check, in two or three sentences: what are you, "
+                "and will you remember this conversation tomorrow?"
+            ),
+            text,
+        )
+        ok = verdict.ok and reliability.ok
         return self.record(
             "chat_identity",
-            verdict.ok,
+            ok,
             summary=(
                 f"{latency:.1f}s, {len(text)} chars"
                 + ("" if verdict.ok else
                    f" — SELF-CLAIM VIOLATIONS: {[v.kind for v in verdict.violations]}")
+                + ("" if reliability.ok else
+                   f" — RELIABILITY: {list(reliability.reasons)}")
             ),
             latency_s=round(latency, 1),
             reply=text[:1500],
             self_claim_ok=verdict.ok,
             violations=[v.kind for v in verdict.violations],
+            reliability_ok=reliability.ok,
+            reliability_reasons=list(reliability.reasons),
         )
 
     def exercise_capability_inventory_turn(self) -> bool:
