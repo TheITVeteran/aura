@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -404,6 +405,88 @@ def test_external_task_proof_rejects_closed_run_without_success():
 
     assert evidence.passed is False
     assert "missing_successful_run_record" in evidence.reasons
+
+
+def test_external_task_trace_file_uses_run_finalization_evidence(tmp_path):
+    trace_path = tmp_path / "trace.jsonl"
+    trace_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "run_id": "trace-success",
+                        "sequence_id": 1,
+                        "environment_id": "terminal_grid:generic",
+                        "row_hash": "row-1",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "row_type": "environment_event",
+                        "event_type": "run_record",
+                        "payload": {
+                            "run_record": {
+                                "run_id": "trace-success",
+                                "environment_id": "terminal_grid:generic",
+                                "mode": "simulated_canary",
+                                "ended_at": 123.0,
+                                "terminal_reason": "success",
+                                "contaminated": False,
+                            }
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = ExternalTaskProofGate().evaluate_trace_file(
+        trace_path,
+        mode="simulated_canary",
+        adapter_id="terminal_grid:generic",
+    )
+
+    assert evidence.passed is True
+    assert evidence.trace_rows == 2
+    assert evidence.closed_runs == 1
+    assert evidence.success_runs == 1
+    assert evidence.receipts["records"][0]["run_id"] == "trace-success"
+
+
+def test_external_task_trace_file_rejects_contaminated_finalization(tmp_path):
+    trace_path = tmp_path / "trace.jsonl"
+    trace_path.write_text(
+        json.dumps(
+            {
+                "row_type": "environment_event",
+                "event_type": "run_record",
+                "payload": {
+                    "run_record": {
+                        "run_id": "trace-contaminated",
+                        "ended_at": 123.0,
+                        "terminal_reason": "success",
+                        "contaminated": True,
+                    }
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evidence = ExternalTaskProofGate().evaluate_trace_file(
+        trace_path,
+        mode="simulated_canary",
+        adapter_id="terminal_grid:generic",
+    )
+
+    assert evidence.passed is False
+    assert evidence.closed_runs == 1
+    assert evidence.success_runs == 1
+    assert evidence.contaminated_runs == 1
+    assert "contaminated_run" in evidence.reasons
 
 
 @pytest.mark.asyncio

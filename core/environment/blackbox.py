@@ -63,5 +63,23 @@ class BlackBoxRecorder:
                 handle.write(json.dumps(_json_safe(asdict(row)), sort_keys=True) + "\n")
         return row
 
+    def record_event(self, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        event = {
+            "row_type": "environment_event",
+            "event_type": str(event_type),
+            "payload": _json_safe(payload),
+            "previous_hash": self._last_hash,
+            "event_hash": "",
+            "timestamp": time.time(),
+        }
+        event["event_hash"] = hashlib.sha256(
+            json.dumps(event, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        self._last_hash = str(event["event_hash"])
+        if self.path:
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, sort_keys=True) + "\n")
+        return event
+
 
 __all__ = ["BlackBoxRow", "BlackBoxRecorder"]

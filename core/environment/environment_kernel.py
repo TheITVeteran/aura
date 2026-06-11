@@ -956,7 +956,15 @@ class EnvironmentKernel:
     def _refresh_external_evidence(self) -> None:
         self.last_external_evidence = self.external_proof_gate.evaluate_kernel(self)
         if self.run_manager.records:
-            self.run_manager.records[-1].metadata["external_task_evidence"] = self.last_external_evidence.to_dict()
+            record = self.run_manager.records[-1]
+            record.metadata["external_task_evidence"] = self.last_external_evidence.to_dict()
+            self.blackbox.record_event(
+                "run_record",
+                {
+                    "run_record": asdict(record),
+                    "external_task_evidence": self.last_external_evidence.to_dict(),
+                },
+            )
 
     def _terminal_reason(
         self,

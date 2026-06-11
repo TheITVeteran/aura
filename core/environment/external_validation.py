@@ -121,6 +121,11 @@ class ExternalTaskProofGate:
         path = Path(trace_path)
         reasons: list[str] = []
         trace_rows = 0
+        closed_runs = 0
+        success_runs = 0
+        death_runs = 0
+        contaminated_runs = 0
+        records: list[dict[str, Any]] = []
         if not path.exists():
             reasons.append("trace_file_missing")
         else:
@@ -129,10 +134,22 @@ class ExternalTaskProofGate:
                     if line.strip():
                         trace_rows += 1
                         try:
-                            json.loads(line)
+                            row = json.loads(line)
                         except json.JSONDecodeError:
                             reasons.append("trace_file_not_jsonl")
                             break
+                        record = self._record_from_trace_row(row)
+                        if record is not None:
+                            records.append(record)
+                            terminal_reason = str(record.get("terminal_reason", ""))
+                            if record.get("ended_at"):
+                                closed_runs += 1
+                            if terminal_reason == "success":
+                                success_runs += 1
+                            if terminal_reason == "death":
+                                death_runs += 1
+                            if bool(record.get("contaminated")) or terminal_reason == "contamination":
+                                contaminated_runs += 1
         proof_level = self._proof_level(mode)
         if require_strict_real and proof_level != "strict_real":
             reasons.append("strict_real_required")
@@ -140,21 +157,28 @@ class ExternalTaskProofGate:
             reasons.append("unrecognized_or_unlabeled_mode")
         if trace_rows <= 0:
             reasons.append("missing_blackbox_trace_rows")
-        reasons.append("missing_closed_run_record")
-        reasons.append("missing_successful_run_record")
+        if closed_runs <= 0:
+            reasons.append("missing_closed_run_record")
+        if success_runs <= 0:
+            reasons.append("missing_successful_run_record")
+        if contaminated_runs:
+            reasons.append("contaminated_run")
 
         return ExternalTaskEvidence(
             adapter_id=adapter_id,
             mode=mode,
             proof_level=proof_level,
             trace_rows=trace_rows,
-            closed_runs=0,
-            success_runs=0,
-            death_runs=0,
-            contaminated_runs=0,
+            closed_runs=closed_runs,
+            success_runs=success_runs,
+            death_runs=death_runs,
+            contaminated_runs=contaminated_runs,
             placeholder_detected=False,
             reasons=tuple(reasons),
-            receipts={"trace_path": str(path)},
+            receipts={
+                "trace_path": str(path),
+                "records": records[-5:],
+            },
         )
 
     @staticmethod
@@ -182,6 +206,26 @@ class ExternalTaskProofGate:
         name = adapter.__class__.__name__.lower()
         text = f"{name}\n{doc}".lower()
         return any(token in text for token in self.PLACEHOLDER_TOKENS)
+
+    @staticmethod
+    def _record_from_trace_row(row: Any) -> dict[str, Any] | None:
+        if not isinstance(row, dict):
+            return None
+        candidates = [
+            row,
+            row.get("run_record"),
+            row.get("record"),
+            row.get("payload"),
+        ]
+        payload = row.get("payload")
+        if isinstance(payload, dict):
+            candidates.extend([payload.get("run_record"), payload.get("record")])
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            if "terminal_reason" in candidate or "ended_at" in candidate:
+                return dict(candidate)
+        return None
 
     @staticmethod
     def _safe_record(record: Any) -> dict[str, Any]:
