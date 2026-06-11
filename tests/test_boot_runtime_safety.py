@@ -211,6 +211,48 @@ def test_compute_mlx_memory_limit_uses_desktop_safe_active_memory_ceiling(monkey
     assert limit == int(total * 0.62)
 
 
+def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
+    from tools.live_boot_proof import build_safe_boot_env
+
+    monkeypatch.setattr(
+        "tools.live_boot_proof.psutil.virtual_memory",
+        lambda: SimpleNamespace(total=64 * 1024 ** 3),
+    )
+
+    env = build_safe_boot_env({})
+
+    assert env["AURA_SAFE_BOOT_DESKTOP"] == "1"
+    assert env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] == "0.16"
+    assert env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] == "10"
+    assert env["AURA_FOREGROUND_CHAT_MAX_TOKENS"] == "3072"
+    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "40"
+
+
+def test_live_boot_proof_preserves_operator_mlx_limit(monkeypatch):
+    from tools.live_boot_proof import build_safe_boot_env
+
+    monkeypatch.setattr(
+        "tools.live_boot_proof.psutil.virtual_memory",
+        lambda: SimpleNamespace(total=64 * 1024 ** 3),
+    )
+
+    env = build_safe_boot_env({"AURA_MLX_MEMORY_LIMIT_GB": "28"})
+
+    assert env["AURA_SAFE_BOOT_DESKTOP"] == "1"
+    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "28"
+
+
+def test_live_boot_proof_uses_readiness_heartbeat_contract():
+    source = (PROJECT_ROOT / "tools" / "live_boot_proof.py").read_text()
+
+    assert "/api/health/heartbeat" in source
+    assert "required_probes" in source
+    assert "runtime_probe_healthy" in source
+    assert "system_ready" in source
+    assert "exercise_capability_inventory_turn" in source
+    assert "X-Aura-Require-CognitiveEngine" in source
+
+
 def test_compute_mlx_cache_limit_defaults_to_standard_ratio_when_not_safe(monkeypatch):
     monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
     monkeypatch.delenv("AURA_LAUNCHED_FROM_APP", raising=False)

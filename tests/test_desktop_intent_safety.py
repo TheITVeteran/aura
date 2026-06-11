@@ -43,6 +43,35 @@ def test_capability_inventory_prompt_is_not_desktop_execution() -> None:
     assert analyze_turn(INVENTORY_PROMPT, matched_skills=["desktop_task"]).intent_type == "CHAT"
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "What tools can you do externally if I ask you to flex your muscles?",
+        "What can you do on my computer with apps, browser tabs, files, and documents?",
+        "Describe whether you can open apps, use the browser, and work with PDFs on my desktop.",
+        "What tools could Aura use externally in a hypothetical desktop scenario?",
+        "What tools can she do externally from the live desktop path?",
+    ],
+)
+def test_capability_inventory_variants_stay_descriptive(prompt: str) -> None:
+    from core.phases.response_contract import looks_like_capability_inventory_request
+    from core.runtime.desktop_objective_intent import looks_like_desktop_objective
+    from core.runtime.skill_task_bridge import (
+        looks_like_capability_inventory_dialogue_request,
+        looks_like_multi_step_skill_request,
+    )
+    from interface.routes import chat as chat_routes
+
+    assert looks_like_capability_inventory_request(prompt) is True
+    assert looks_like_capability_inventory_dialogue_request(prompt) is True
+    assert chat_routes._is_explicit_capability_inventory_request(prompt) is True
+    assert looks_like_desktop_objective(prompt) is False
+    assert looks_like_multi_step_skill_request(
+        prompt,
+        ["desktop_task", "computer_use", "web_search"],
+    ) is False
+
+
 def test_desktop_command_with_negative_constraint_still_executes() -> None:
     from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 

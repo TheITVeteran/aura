@@ -50,6 +50,34 @@ PROOF_DIR = ROOT / "artifacts" / "live_proof"
 RSS_ABORT_MB = 45_000.0
 
 
+def build_safe_boot_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
+    """Return the bounded desktop environment used by live proof boots.
+
+    The live proof exercises the same local model lane a desktop user relies
+    on, but it must never be allowed to reproduce an unbounded MLX/Metal memory
+    spike. These defaults mirror the app launcher while preserving explicit
+    operator overrides.
+    """
+
+    env = dict(base_env or os.environ)
+    env.setdefault("AURA_SAFE_BOOT_DESKTOP", "1")
+    env.setdefault("AURA_SAFE_BOOT_METAL_CACHE_RATIO", "0.16")
+    env.setdefault("AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", "10")
+    env.setdefault("AURA_FOREGROUND_CHAT_MAX_TOKENS", "3072")
+    env.setdefault("AURA_WATCHDOG_BOOT_GRACE_S", "240")
+
+    if "AURA_MLX_MEMORY_LIMIT_GB" not in env:
+        try:
+            from core.runtime.desktop_boot_safety import compute_mlx_memory_limit
+
+            limit_bytes = compute_mlx_memory_limit(psutil.virtual_memory().total, env)
+            limit_gb = max(1.0, min(40.0, limit_bytes / float(1024 ** 3)))
+        except (ImportError, RuntimeError, TypeError, ValueError, OSError, psutil.Error):
+            limit_gb = 40.0
+        env["AURA_MLX_MEMORY_LIMIT_GB"] = f"{limit_gb:.0f}"
+    return env
+
+
 class LiveProof:
     def __init__(self, *, port: int, boot_timeout_s: float, skip_desktop: bool):
         self.port = port
@@ -144,8 +172,7 @@ class LiveProof:
                 f"refusing to double-boot",
             )
 
-        env = dict(os.environ)
-        env.setdefault("AURA_WATCHDOG_BOOT_GRACE_S", "240")
+        env = build_safe_boot_env(os.environ)
         self.proc = subprocess.Popen(
             [sys.executable, "aura_main.py", "--headless", "--port", str(self.port)],
             cwd=ROOT,
@@ -168,18 +195,24 @@ class LiveProof:
             self.guard_rss()
             try:
                 with httpx.Client(timeout=5.0) as client:
-                    resp = client.get(f"{self.base}/api/health")
+                    resp = client.get(f"{self.base}/api/health/heartbeat")
                 if resp.status_code == 200:
                     payload = resp.json()
                     last_state = payload if isinstance(payload, dict) else {}
-                    status = str(
-                        last_state.get("status")
-                        or last_state.get("state")
-                        or ""
-                    ).lower()
-                    if status in {"healthy", "ok", "ready"} or last_state.get(
-                        "healthy"
-                    ) is True:
+                    required = last_state.get("required_probes")
+                    required_ok = bool(
+                        isinstance(required, dict)
+                        and required.get("all_passed") is True
+                    )
+                    blockers = last_state.get("blockers")
+                    no_blockers = isinstance(blockers, list) and not blockers
+                    if (
+                        last_state.get("healthy") is True
+                        and last_state.get("runtime_probe_healthy") is True
+                        and last_state.get("system_ready") is True
+                        and required_ok
+                        and no_blockers
+                    ):
                         return self.record(
                             "boot_health",
                             True,
@@ -248,6 +281,65 @@ class LiveProof:
             self_claim_ok=verdict.ok,
             violations=[v.kind for v in verdict.violations],
         )
+
+    def exercise_capability_inventory_turn(self) -> bool:
+        started = time.monotonic()
+        rss_before = self.tree_rss_mb()
+        message = (
+            "What tools can you do externally from the live desktop path? "
+            "Name the practical categories and one hypothetical multi-step scenario, "
+            "but do not open apps or execute tools yet."
+        )
+        try:
+            with httpx.Client(
+                timeout=45.0,
+                headers={
+                    "X-Aura-Surface": "desktop-ui",
+                    "X-Aura-Require-CognitiveEngine": "true",
+                },
+            ) as client:
+                resp = client.post(
+                    f"{self.base}/api/chat",
+                    json={"message": message, "session_id": "live-proof"},
+                )
+            latency = time.monotonic() - started
+            self.guard_rss()
+            if resp.status_code != 200:
+                return self.record(
+                    "chat_capability_inventory",
+                    False,
+                    summary=f"http {resp.status_code}: {resp.text[:200]}",
+                    latency_s=round(latency, 1),
+                )
+            payload = resp.json()
+            text = str(payload.get("response") or "").strip()
+            lowered = text.lower()
+            status = str(payload.get("status") or "")
+            required_terms = ("desktop", "browser", "file", "govern", "not opening apps")
+            missing = [term for term in required_terms if term not in lowered]
+            false_limit = bool(re.search(r"\bi\s+(?:can(?:not|'t)|cannot|do not have access)\b", lowered))
+            ok = bool(text) and not missing and not false_limit
+            return self.record(
+                "chat_capability_inventory",
+                ok,
+                summary=(
+                    f"{latency:.1f}s, status={status or 'unknown'}, "
+                    f"rss_delta={self.tree_rss_mb() - rss_before:.0f}MB"
+                    + ("" if ok else f", missing={missing}, false_limit={false_limit}")
+                ),
+                latency_s=round(latency, 1),
+                status=status,
+                reply=text[:1200],
+                rss_before_mb=round(rss_before, 1),
+                rss_after_mb=round(self.tree_rss_mb(), 1),
+            )
+        except httpx.HTTPError as exc:
+            return self.record(
+                "chat_capability_inventory",
+                False,
+                summary=f"{type(exc).__name__}: {exc}",
+                latency_s=round(time.monotonic() - started, 1),
+            )
 
     def exercise_continuity_turn(self) -> bool:
         token = f"amber-{int(time.time()) % 100000}"
@@ -419,6 +511,7 @@ class LiveProof:
                 passed = False
             else:
                 passed &= self.snapshot_vitals()
+                passed &= self.exercise_capability_inventory_turn()
                 passed &= self.exercise_identity_turn()
                 passed &= self.exercise_continuity_turn()
                 passed &= self.exercise_desktop_action()

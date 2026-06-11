@@ -142,6 +142,8 @@ _CAPABILITY_INVENTORY_RE = re.compile(
     r"\b(?:what|which|list|tell me|describe|explain|show)\b.{0,100}"
     r"\b(?:tools?|skills?|capabilit(?:y|ies)|things? you can do|what you can do)\b|"
     r"\b(?:can|could|do|does|are|is|have|has)\b.{0,100}\b(?:you|aura)\b.{0,100}"
+    r"\b(?:tools?|skills?|capabilit(?:y|ies)|external(?:ly)?|desktop|computer|browser|files?|apps?|notes?|pdf|search|web|terminal)\b|"
+    r"\b(?:whether|if)\s+(?:you|aura|she)\s+(?:can|could|would)\b.{0,120}"
     r"\b(?:tools?|skills?|capabilit(?:y|ies)|external(?:ly)?|desktop|computer|browser|files?|apps?|notes?|pdf|search|web|terminal)\b",
     re.IGNORECASE,
 )

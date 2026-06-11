@@ -4138,7 +4138,15 @@ def _is_explicit_capability_inventory_request(user_message: str) -> bool:
         return False
     explicit_markers = (
         "what tools can you use",
+        "what tools can you do",
+        "what tools could you use",
+        "what tools could you do",
+        "what tools can aura use",
+        "what tools can aura do",
+        "what tools can she use",
+        "what tools can she do",
         "which tools can you use",
+        "which tools can you run",
         "what tools do you have",
         "which tools do you have",
         "list your tools",
@@ -4148,9 +4156,50 @@ def _is_explicit_capability_inventory_request(user_message: str) -> bool:
         "what are your capabilities",
         "what can you do externally",
         "what can you use externally",
+        "what can you do on my computer",
+        "what can you do with my computer",
+        "what can you do with the desktop",
+        "what can you do with apps",
+        "what can you do with tools",
+        "what can you do with browser",
+        "what can you do with files",
+        "what can you do with documents",
         "what can aura do",
+        "what can aura use",
     )
     if any(marker in text for marker in explicit_markers):
+        return True
+    if re.search(
+        r"\bwhat\s+(?:tools?|apps?|desktop|browser|files?|documents?)\s+"
+        r"(?:can|could|would)\s+(?:you|aura|she)\s+"
+        r"(?:use|do|run|execute|control|open|access)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    if re.search(
+        r"\bwhat\s+can\s+(?:you|aura|she)\s+do\b.{0,120}"
+        r"\b(?:externally|on\s+(?:my|the)\s+computer|with\s+(?:my|the)?\s*"
+        r"(?:computer|desktop|apps?|browser|tools?|files?|documents?))\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    if re.search(
+        r"\b(?:can|could|would)\s+(?:you|aura|she)\b.{0,80}"
+        r"\b(?:use|open|control|run|execute|access)\b.{0,80}"
+        r"\b(?:tools?|apps?|desktop|browser|computer|notes?|files?|documents?|pdf)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    if re.search(
+        r"\b(?:whether|if)\s+(?:you|aura|she)\s+(?:can|could|would)\b.{0,100}"
+        r"\b(?:use|open|control|run|execute|access|work\s+with)\b.{0,100}"
+        r"\b(?:tools?|apps?|desktop|browser|computer|notes?|files?|documents?|pdf)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
         return True
     return (
         "hypothetical" in text
