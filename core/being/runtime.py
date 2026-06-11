@@ -323,6 +323,14 @@ class BeingRuntime:
             domain_name == "state_mutation"
             and context.get("foreground_continuity_state")
         )
+        explicit_foreground_desktop_tool = bool(
+            domain_name == "tool_execution"
+            and context.get("desktop_execution_contract")
+            and context.get("foreground_request")
+            and context.get("user_explicitly_authorized")
+            and context.get("user_visible_desktop_action")
+            and context.get("verification_required")
+        )
         consequential = domain_name in {
             "tool_execution",
             "memory_write",
@@ -438,6 +446,19 @@ class BeingRuntime:
         if not now.workspace.broadcast_targets and consequential and not repair_lane:
             constraints.append("aura_now_no_workspace_broadcast")
             defers.append("no_workspace_broadcast_for_consequential_action")
+
+        if explicit_foreground_desktop_tool and defers and not blocks:
+            desktop_soft_defers = {
+                "action_controllability_too_low",
+                "workspace_not_ignited",
+                "no_workspace_broadcast_for_consequential_action",
+                "prediction_error_requires_observation_or_plan",
+            }
+            hard_defers = [item for item in defers if item not in desktop_soft_defers]
+            if not hard_defers:
+                constraints.append("foreground_desktop_action_constrained:not_deferred")
+                constraints.extend(f"foreground_desktop_note:{item}" for item in defers[:4])
+                defers = []
 
         if blocks:
             outcome = "refuse"

@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 
+from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 from core.runtime.structured_input import analyze_prompt_shape, looks_like_learning_resource_bundle
 from core.state.aura_state import AuraState
 from core.utils.intent_normalization import normalize_memory_intent_text
@@ -910,6 +911,7 @@ def build_response_contract(
     lower = normalize_memory_intent_text(text)
     prompt_shape = analyze_prompt_shape(text)
     is_embodied_control = "[embodied control contract]" in lower
+    is_desktop_objective = bool(is_user_facing and looks_like_desktop_objective(text))
     is_learning_bundle = looks_like_learning_resource_bundle(text)
     exact_format_instruction = _extract_exact_format_instruction(text) if is_user_facing else ""
     requires_exact_format = bool(exact_format_instruction)
@@ -979,6 +981,15 @@ def build_response_contract(
         factual_followup = False
         temporal_live_lookup = False
     if search_capability_question or capability_inventory_question:
+        explicit_search = False
+        factual_lookup = False
+        factual_followup = False
+        temporal_live_lookup = False
+    if is_desktop_objective:
+        # Desktop objectives own their research/action sequence through
+        # desktop_task. Letting the response contract launch web_search first
+        # creates a duplicate consequential path and can destabilize Will before
+        # the actual desktop action executes.
         explicit_search = False
         factual_lookup = False
         factual_followup = False

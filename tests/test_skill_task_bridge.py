@@ -7,7 +7,6 @@ import pytest
 from pydantic import BaseModel
 
 from core.agency.autonomous_task_engine import AutonomousTaskEngine
-from core.agency.task_commitment_verifier import DispatchOutcome, TaskAcceptance
 from core.brain.llm.function_calling_adapter import FunctionCallingAdapter
 from core.capability_engine import CapabilityEngine
 from core.kernel.upgrades_10x import GodModeToolPhase
@@ -324,47 +323,27 @@ def test_godmode_keeps_operator_explanation_out_of_task_engine(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_godmode_reroutes_multi_step_skill_request_to_task_verifier(monkeypatch):
+async def test_godmode_keeps_desktop_objective_out_of_generic_task_verifier(monkeypatch):
     objective = "Open Notes, click into a new note, type hello, then come back and report."
     phase = GodModeToolPhase(kernel=SimpleNamespace())
     state = AuraState.default()
     state.cognition.current_objective = objective
     state.response_modifiers["intent_type"] = "SKILL"
     state.response_modifiers["matched_skills"] = ["computer_use"]
+    dispatch_attempts = []
 
-    class _StubVerifier:
-        async def verify_and_dispatch(self, objective_text, state_obj):
-            return TaskAcceptance(
-                outcome=DispatchOutcome.COMPLETED,
-                task_id="task-123",
-                objective=objective_text,
-                requested_objective=objective_text,
-                summary="Opened Notes and typed the message.",
-                result_data=SimpleNamespace(
-                    plan_id="plan-123",
-                    trace_id="trace-123",
-                    steps_completed=4,
-                    steps_total=4,
-                    duration_s=1.5,
-                    evidence=["Notes opened", "Text typed"],
-                    succeeded=True,
-                ),
-            )
+    async def _should_not_dispatch(*_args, **_kwargs):
+        dispatch_attempts.append("desktop_objective")
+        raise AssertionError("desktop objective entered generic TaskEngine dispatch")
 
-    monkeypatch.setattr(
-        "core.agency.task_commitment_verifier.get_task_commitment_verifier",
-        lambda kernel=None: _StubVerifier(),
-    )
+    monkeypatch.setattr(phase, "_dispatch_task_request", _should_not_dispatch)
 
     new_state = await phase.execute(state, objective=objective)
 
-    assert new_state.response_modifiers["intent_type"] == "TASK"
-    assert new_state.response_modifiers["last_task_outcome"] == "completed"
-    assert new_state.response_modifiers["last_task_id"] == "task-123"
-    assert any(
-        msg.get("metadata", {}).get("type") == "task_result"
-        for msg in new_state.cognition.working_memory
-    )
+    assert new_state.response_modifiers["intent_type"] == "CHAT"
+    assert new_state.response_modifiers["desktop_execution_contract"] is True
+    assert "matched_skills" not in new_state.response_modifiers
+    assert dispatch_attempts == []
 
 
 def test_task_engine_planning_tool_specs_include_relevant_skill_defs(monkeypatch):

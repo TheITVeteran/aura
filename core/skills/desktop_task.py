@@ -172,6 +172,9 @@ class DesktopTaskSkill(BaseSkill):
     def _extract_search_query(objective: str) -> str:
         text = str(objective or "").strip()
         patterns = (
+            r"\bfind\s+(?:\d+\s+)?(?:different\s+)?(?:articles?|sources?|stories?|news)\s+(?:on|about|for)\s+([^.;\n,]+)",
+            r"\b(?:summari[sz]e|write\s+(?:a\s+)?summary\s+of)\s+(?:\d+\s+)?(?:different\s+)?(?:articles?|sources?|stories?|news)\s+(?:on|about|for)\s+([^.;\n,]+)",
+            r"\b(?:articles?|sources?|stories?|news)\s+(?:on|about|for)\s+([^.;\n,]+)",
             r"\bsearch\s+(?:for\s+)?([^.;\n]+)",
             r"\blook\s+up\s+([^.;\n]+)",
             r"\bgoogle\s+([^.;\n]+)",
@@ -186,6 +189,59 @@ class DesktopTaskSkill(BaseSkill):
         if "news" in text.lower():
             return text[:240]
         return ""
+
+    @staticmethod
+    def _objective_requests_research_document(objective: str) -> bool:
+        lowered = str(objective or "").lower()
+        has_source_markers = any(
+            marker in lowered
+            for marker in (
+                "article",
+                "articles",
+                "sources",
+                "source",
+                "news",
+                "research",
+                "report",
+                "reports",
+            )
+        )
+        visual_reference_only = any(
+            marker in lowered
+            for marker in ("image", "picture", "photo", "illustration")
+        ) and not has_source_markers
+        if visual_reference_only:
+            return False
+        wants_research = any(
+            marker in lowered
+            for marker in (
+                "article",
+                "articles",
+                "sources",
+                "source",
+                "news",
+                "research",
+                "look up",
+                "search",
+                "find",
+            )
+        )
+        wants_written_output = any(
+            marker in lowered
+            for marker in (
+                "summarize",
+                "summary",
+                "write",
+                "document",
+                "doc",
+                "essay",
+                "report",
+                "note",
+                "pdf",
+                "type",
+            )
+        )
+        return wants_research and wants_written_output
 
     @staticmethod
     def _search_url(query: str, *, images: bool = False) -> str:
@@ -383,6 +439,63 @@ class DesktopTaskSkill(BaseSkill):
             "canonical computer-use gateway."
         )
 
+    @staticmethod
+    def _research_sources_from_result(result: dict[str, Any]) -> list[dict[str, str]]:
+        raw_sources = (
+            result.get("citations")
+            or result.get("sources")
+            or result.get("results")
+            or result.get("chunks")
+            or []
+        )
+        sources: list[dict[str, str]] = []
+        if not isinstance(raw_sources, list):
+            return sources
+        for item in raw_sources[:5]:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or item.get("name") or item.get("url") or item.get("link") or "").strip()
+            url = str(item.get("url") or item.get("link") or item.get("uri") or "").strip()
+            snippet = str(item.get("snippet") or item.get("text") or item.get("content") or item.get("summary") or "").strip()
+            if not title and not url and not snippet:
+                continue
+            sources.append({"title": title[:240], "url": url[:500], "snippet": snippet[:700]})
+        return sources
+
+    @classmethod
+    def _research_section_from_context(cls, context: dict[str, Any] | None) -> str:
+        context = context or {}
+        summary = str(context.get("desktop_task_research_summary") or "").strip()
+        query = str(context.get("desktop_task_research_query") or "").strip()
+        sources = context.get("desktop_task_research_sources") or []
+        if not summary and not sources:
+            return ""
+
+        lines = []
+        heading = "Research summary"
+        if query:
+            heading += f" for: {query}"
+        lines.append(heading)
+        lines.append("")
+        if summary:
+            lines.append(summary[:2500])
+            lines.append("")
+        if isinstance(sources, list) and sources:
+            lines.append("Sources opened or consulted:")
+            for index, item in enumerate(sources[:5], start=1):
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or "Untitled source").strip()
+                url = str(item.get("url") or "").strip()
+                snippet = str(item.get("snippet") or "").strip()
+                source_line = f"{index}. {title}"
+                if url:
+                    source_line += f" — {url}"
+                lines.append(source_line)
+                if snippet:
+                    lines.append(f"   {snippet[:300]}")
+        return "\n".join(lines).strip()
+
     @classmethod
     def _document_body_with_references(
         cls,
@@ -394,6 +507,16 @@ class DesktopTaskSkill(BaseSkill):
         search_url: str = "",
     ) -> str:
         body = cls._document_body(objective, context)
+        research_section = cls._research_section_from_context(context)
+        if research_section and cls._objective_requests_research_document(objective):
+            lowered_body = body.lower()
+            if cls._looks_like_dispatch_narration(body) or re.search(
+                r"\bi\s+will\s+(?:open|search|look|create|write|start|follow|route)\b",
+                lowered_body,
+            ):
+                body = research_section
+            elif research_section not in body:
+                body = f"{body.rstrip()}\n\n{research_section}"
         references: list[str] = []
         if search_url:
             references.append(f"Search opened: {search_url}")
@@ -405,6 +528,83 @@ class DesktopTaskSkill(BaseSkill):
         if not references:
             return body
         return f"{body.rstrip()}\n\nArtifact references:\n" + "\n".join(f"- {item}" for item in references)
+
+    async def _collect_research_context(
+        self,
+        *,
+        capability_engine: Any,
+        objective: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self._objective_requests_research_document(objective):
+            return {}
+        query = self._extract_search_query(objective)
+        if not query:
+            return {}
+        step_context = dict(context or {})
+        step_context.update(
+            {
+                "origin": step_context.get("origin") or "desktop_task",
+                "route": "desktop_task.web_search",
+                "objective": objective,
+                "foreground_request": False,
+                "user_requested_action": True,
+                "user_explicitly_authorized": True,
+                "desktop_task_reason": "Collect live research evidence before composing the requested document.",
+                "desktop_task_expect": "Web search returns sources or an explicit failure.",
+            }
+        )
+        try:
+            result = await capability_engine.execute(
+                "web_search",
+                {
+                    "query": query,
+                    "num_results": 3,
+                    "deep": False,
+                    "retain": False,
+                    "force_refresh": True,
+                },
+                context=step_context,
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError, OSError, TimeoutError) as exc:
+            record_degradation(
+                "desktop_task",
+                exc,
+                action="continued desktop document task without pre-document research evidence",
+                severity="warning",
+            )
+            return {
+                "desktop_task_research_query": query,
+                "desktop_task_research_error": str(exc),
+            }
+        if not isinstance(result, dict):
+            result = {"ok": bool(result), "result": result}
+        if not bool(result.get("ok", True)):
+            return {
+                "desktop_task_research_query": query,
+                "desktop_task_research_error": str(result.get("error") or result.get("status") or result),
+                "desktop_task_research_result": result,
+            }
+        sources = self._research_sources_from_result(result)
+        summary = str(
+            result.get("summary")
+            or result.get("answer")
+            or result.get("message")
+            or result.get("content")
+            or result.get("result")
+            or ""
+        ).strip()
+        if not summary and sources:
+            summary = "Key source notes:\n" + "\n".join(
+                f"- {item.get('title') or item.get('url')}: {item.get('snippet')}"
+                for item in sources[:3]
+            )
+        return {
+            "desktop_task_research_query": query,
+            "desktop_task_research_summary": summary[:3000],
+            "desktop_task_research_sources": sources,
+            "desktop_task_research_result": result,
+        }
 
     @classmethod
     def _steps_from_payload(cls, payload: Any) -> list[DesktopTaskStep]:
@@ -941,6 +1141,13 @@ class DesktopTaskSkill(BaseSkill):
         objective = params.objective or str((context or {}).get("objective") or "desktop task")
 
         task_context = dict(context or {})
+        research_context = await self._collect_research_context(
+            capability_engine=capability_engine,
+            objective=objective,
+            context=task_context,
+        )
+        if research_context:
+            task_context.update(research_context)
         steps = list(params.steps)
         if not steps:
             steps = self._steps_from_context(task_context)
@@ -1012,6 +1219,11 @@ class DesktopTaskSkill(BaseSkill):
             "steps_completed": sum(1 for receipt in receipts if receipt.get("ok")),
             "receipts": receipts,
             "failures": failures,
+            "research": {
+                "query": task_context.get("desktop_task_research_query"),
+                "sources": task_context.get("desktop_task_research_sources") or [],
+                "error": task_context.get("desktop_task_research_error"),
+            } if research_context else None,
             "summary": (
                 f"Desktop task completed {sum(1 for receipt in receipts if receipt.get('ok'))}/"
                 f"{len(steps)} governed computer-use steps."

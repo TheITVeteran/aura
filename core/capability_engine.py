@@ -2888,9 +2888,23 @@ class CapabilityEngine(AuraBaseModule):
                 from core.executive.authority_gateway import get_authority_gateway
 
                 constitution = get_constitutional_core(self.orchestrator)
+                constitutional_args = dict(params or {})
+                for context_key in (
+                    "desktop_execution_contract",
+                    "foreground_request",
+                    "local_desktop_action",
+                    "predicted_outcome",
+                    "user_explicitly_authorized",
+                    "user_requested_action",
+                    "user_visible_desktop_action",
+                    "verification_required",
+                ):
+                    if context_key in ctx and context_key not in constitutional_args:
+                        constitutional_args[context_key] = ctx[context_key]
+
                 tool_handle = await constitution.begin_tool_execution(
                     skill_name,
-                    params,
+                    constitutional_args,
                     source=exec_source,
                     objective=str(ctx.get("objective") or ctx.get("message") or ""),
                 )

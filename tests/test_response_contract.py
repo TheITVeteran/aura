@@ -83,8 +83,42 @@ def test_response_contract_does_not_treat_desktop_execution_as_tool_inventory():
     )
 
     assert contract.requires_capability_inventory is False
+    assert contract.requires_search is False
     assert contract.max_tool_turns > 0
     assert "capability_inventory" not in contract.reason
+
+
+def test_response_contract_leaves_desktop_research_to_desktop_task():
+    state = AuraState.default()
+
+    contract = build_response_contract(
+        state,
+        (
+            "Go to Google Chrome, find 3 different articles on climate change, "
+            "open Google Docs, and summarize those articles."
+        ),
+        is_user_facing=True,
+    )
+
+    assert contract.requires_search is False
+    assert contract.required_skill is None
+    assert contract.max_tool_turns > 0
+
+
+def test_response_contract_does_not_search_for_local_desktop_proof_filename():
+    state = AuraState.default()
+
+    contract = build_response_contract(
+        state,
+        (
+            "Please create a folder named 'Aura Live Proof' in my Documents folder "
+            "and write a file inside it called live_proof.txt with one sentence about who you are."
+        ),
+        is_user_facing=True,
+    )
+
+    assert contract.requires_search is False
+    assert contract.required_skill is None
 
 
 def test_response_contract_searches_when_capability_question_has_target():

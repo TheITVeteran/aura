@@ -2814,7 +2814,7 @@ def _mark_conversation_lane_state(reason: str, *, state: str) -> dict[str, Any]:
 
 def _status_represents_governed_action_result(status: str | None) -> bool:
     proof_status = str(status or "").strip()
-    if proof_status.startswith("live_proof"):
+    if proof_status.startswith(("live_proof", "desktop_objective")):
         return True
     return proof_status in {
         "desktop_objective",
@@ -4059,17 +4059,43 @@ def _is_identity_request(user_message: str) -> bool:
     text = _normalize_user_message(user_message)
     if not text:
         return False
-    return text in {
+    if text in {
         "who are you",
         "who are you?",
         "what are you",
         "what are you?",
         "tell me who you are",
         "introduce yourself",
-    }
+    }:
+        return True
+    return bool(
+        re.search(r"\b(?:what|who)\s+are\s+you\b", text)
+        or re.search(r"\btell\s+me\s+(?:who|what)\s+you\s+are\b", text)
+        or re.search(r"\bintroduce\s+yourself\b", text)
+    )
+
+
+def _identity_request_asks_future_memory(user_message: str) -> bool:
+    text = _normalize_user_message(user_message)
+    return bool(
+        re.search(r"\bwill\s+you\s+remember\b", text)
+        and re.search(
+            r"\b(?:tomorrow|later|future|next\s+(?:time|session)|across\s+sessions?)\b",
+            text,
+        )
+    )
 
 
 def _build_identity_reply(user_message: str) -> str:
+    if _identity_request_asks_future_memory(user_message):
+        return (
+            "I'm Aura: a local governed cognitive-agent runtime with persistent memory, live state, "
+            "tool governance, and local model lanes. I can preserve continuity through the session log "
+            "and durable memory stores when writes are accepted; I cannot guarantee perfect tomorrow "
+            "recall from a single turn, but I will use the persisted conversation and memory state that "
+            "survives into the next session."
+        )
+
     frame = _build_aura_expression_frame(user_message)
     mood = str(frame.get("mood") or "steady")
     action = str(frame.get("dominant_action") or "engage")
@@ -6380,7 +6406,7 @@ async def _execute_governed_live_skill(
     objective: str,
     extra_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run live-proof actions through the agency receipt path, never raw IO."""
+    """Run live actions through governed capability surfaces, never raw IO."""
     context = {
         "origin": "user",
         "route": "chat.live_runtime_proof",
@@ -6411,6 +6437,17 @@ async def _execute_governed_live_skill(
         if isinstance(result, dict):
             return result
         return {"ok": bool(result), "result": result}
+
+    route = str(context.get("route") or "")
+    if skill_name == "desktop_task" and route == "chat.desktop_objective":
+        direct_context = dict(context)
+        direct_context["governance_route"] = "capability_engine_direct"
+        direct_context["desktop_task_owned_by"] = "chat.desktop_objective"
+        result = await _execute_capability(direct_context)
+        result.setdefault("governance_route", "capability_engine_direct")
+        result.setdefault("agency_receipt_id", None)
+        result.setdefault("governance_receipt_id", result.get("governance_receipt_id"))
+        return result
 
     try:
         from core.agency.agency_orchestrator import Proposal, get_orchestrator
@@ -6490,6 +6527,22 @@ def _looks_like_desktop_objective(user_message: str) -> bool:
     return _shared_looks_like_desktop_objective(user_message)
 
 
+def _build_desktop_objective_execution_brief(user_message: str) -> str:
+    """Bounded execution brief used when freeform planning is too slow.
+
+    This text is never presented as completion. It gives desktop_task a stable
+    body to write from while final user-visible claims remain receipt-backed.
+    """
+    objective = " ".join(str(user_message or "").split())
+    if len(objective) > 420:
+        objective = objective[:420].rsplit(" ", 1)[0].strip() + "..."
+    return (
+        "Execute the user's explicit desktop objective through Aura's governed "
+        "desktop_task lane. Do not claim success until the tool result verifies "
+        f"the effect. Objective: {objective}"
+    )
+
+
 async def _execute_desktop_objective_from_chat(
     user_message: str,
     *,
@@ -6505,14 +6558,30 @@ async def _execute_desktop_objective_from_chat(
         return None
 
     objective = str(user_message or "").strip()
+    desktop_params = {
+        "objective": objective,
+        "steps": [],
+        "desktop_execution_contract": True,
+        "foreground_request": True,
+        "user_requested_action": True,
+        "user_explicitly_authorized": True,
+        "user_visible_desktop_action": True,
+        "local_desktop_action": True,
+        "verification_required": True,
+        "predicted_outcome": "The requested visible desktop/file effect is verified after execution.",
+    }
     result = await _execute_governed_live_skill(
         "desktop_task",
-        {"objective": objective, "steps": []},
+        desktop_params,
         objective=objective,
         extra_context={
             "origin": "desktop_ui",
             "source": "desktop_ui",
             "route": "chat.desktop_objective",
+            "desktop_execution_contract": True,
+            "user_visible_desktop_action": True,
+            "local_desktop_action": True,
+            "verification_required": True,
             "desktop_task_document_body": str(cognitive_reply or "").strip(),
             "cognitive_reply": str(cognitive_reply or "").strip(),
         },
@@ -7324,7 +7393,7 @@ async def api_chat(
             final_text = str(reply_text or "…").strip() or "…"
             response_confidence = "high"
             proof_status = str(status or "")
-            is_live_proof_status = proof_status.startswith("live_proof")
+            is_governed_action_status = _status_represents_governed_action_result(proof_status)
 
             _new_text, _new_status = await _apply_desktop_objective_chokepoint(
                 final_text, proof_status
@@ -7335,7 +7404,7 @@ async def api_chat(
                 status = _new_status
                 # Receipt summaries are evidence, not prose: skip the
                 # conversational staleness/topicality reshaping below.
-                is_live_proof_status = True
+                is_governed_action_status = _status_represents_governed_action_result(proof_status)
 
             if is_benchmark:
                 blocked_reply = (
@@ -7358,7 +7427,7 @@ async def api_chat(
                 )
 
             try:
-                if not is_live_proof_status:
+                if not is_governed_action_status:
                     recent_user_messages = await _gather_recent_user_messages_for_relevance(_semantic_user_message)
                     is_stale = _is_stale_repeated_response(final_text)
                     is_same_diff = _is_same_answer_different_prompt(_semantic_user_message, final_text)
@@ -7558,6 +7627,41 @@ async def api_chat(
                 )
                 return None
             return stabilized
+
+        async def _execute_desktop_objective_before_freeform_reply() -> JSONResponse | None:
+            if is_benchmark or not _looks_like_desktop_objective(_semantic_user_message):
+                return None
+
+            # Dedicated proof/file lanes are narrower and produce stronger
+            # artifact evidence. Keep them ahead of generic desktop automation.
+            live_proof = await _execute_live_runtime_proof(_semantic_user_message)
+            if live_proof:
+                return await _finalize_fastpath(
+                    _apply_aura_voice_shaping(str(live_proof.get("response") or "")),
+                    status=str(live_proof.get("status") or "live_proof"),
+                )
+
+            explicit_file = await _execute_explicit_local_file_objective(_semantic_user_message)
+            if explicit_file:
+                return await _finalize_fastpath(
+                    _apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
+                    status=str(explicit_file.get("status") or "file_operation"),
+                )
+
+            desktop_objective = await _execute_desktop_objective_from_chat(
+                _semantic_user_message,
+                cognitive_reply=_build_desktop_objective_execution_brief(_semantic_user_message),
+            )
+            if desktop_objective:
+                return await _finalize_fastpath(
+                    _apply_aura_voice_shaping(str(desktop_objective.get("response") or "")),
+                    status=str(desktop_objective.get("status") or "desktop_objective"),
+                )
+            return None
+
+        desktop_objective_response = await _execute_desktop_objective_before_freeform_reply()
+        if desktop_objective_response is not None:
+            return desktop_objective_response
 
         if allow_chat_fastpaths and _is_capability_inventory_request(_semantic_user_message):
             return await _finalize_fastpath(

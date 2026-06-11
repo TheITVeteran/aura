@@ -1383,6 +1383,24 @@ class UnifiedWill:
                 constraints,
             )
         if policy_outcome == "defer" and self._is_consequential_domain(domain):
+            logger.warning(
+                "Will AuraNow defer: domain=%s source=%s constraints=%s defers=%s evidence=%s context_flags=%s",
+                domain.value,
+                str((context or {}).get("source") or (context or {}).get("origin") or "unknown"),
+                policy_constraints,
+                list(policy.get("defers") or []),
+                dict(policy.get("evidence") or {}),
+                {
+                    key: bool((context or {}).get(key))
+                    for key in (
+                        "desktop_execution_contract",
+                        "foreground_request",
+                        "user_explicitly_authorized",
+                        "user_visible_desktop_action",
+                        "verification_required",
+                    )
+                },
+            )
             return (
                 WillOutcome.DEFER,
                 "aura_now_defer: present-state policy requires stabilization or observation first",

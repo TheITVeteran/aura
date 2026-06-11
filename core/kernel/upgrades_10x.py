@@ -16,6 +16,7 @@ from core.phases.response_contract import (
     build_response_contract,
 )
 from core.runtime.background_policy import background_activity_allowed
+from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 from core.runtime.errors import record_degradation
 from core.runtime.skill_task_bridge import (
     looks_like_explanatory_dialogue_request,
@@ -1164,6 +1165,18 @@ class GodModeToolPhase(Phase):
             state.response_modifiers["intent_type"] = "CHAT"
             state.response_modifiers.pop("matched_skills", None)
             logger.info("⚡ GodMode: benchmark/proof artifact turn kept out of tool/task dispatch.")
+            return state
+        desktop_execution_contract = bool(
+            state.response_modifiers.get("desktop_execution_contract")
+        ) or looks_like_desktop_objective(objective)
+        if desktop_execution_contract:
+            state.response_modifiers["intent_type"] = "CHAT"
+            state.response_modifiers["desktop_execution_contract"] = True
+            state.response_modifiers.pop("matched_skills", None)
+            logger.info(
+                "⚡ GodMode: desktop objective kept out of generic TaskEngine; "
+                "desktop_task chokepoint owns execution."
+            )
             return state
         if intent_type == "TASK" and _looks_like_simple_dialogue_request(objective):
             state.response_modifiers["intent_type"] = "CHAT"

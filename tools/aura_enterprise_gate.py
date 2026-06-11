@@ -653,7 +653,11 @@ def compare_to_baseline(report: GateReport, baseline: dict) -> None:
                 )
             )
 
-    current_high_critical = report.high_or_critical_count()
+    current_high_critical = sum(
+        1
+        for finding in report.findings
+        if finding.kind != "baseline_regression" and finding.severity in {"high", "critical"}
+    )
     max_high_critical = int(baseline.get("max_high_or_critical_count", 0))
     if current_high_critical > max_high_critical:
         report.findings.append(

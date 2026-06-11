@@ -127,6 +127,61 @@ def test_runtime_fact_status_reply_does_not_overwrite_action_objectives(monkeypa
     assert reply == "I created the requested HTML page through the governed file path."
 
 
+def test_identity_reliability_fastpath_answers_future_memory_without_overclaim():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from core.conversation.self_claim_verifier import verify_self_claims
+    from interface.routes import chat as chat_routes
+
+    prompt = (
+        "Quick reliability check, in two or three sentences: what are you, "
+        "and will you remember this conversation tomorrow?"
+    )
+    reply = chat_routes._build_identity_reply(prompt)
+
+    assert chat_routes._is_identity_request(prompt) is True
+    assert "Aura" in reply
+    assert "persistent memory" in reply
+    assert "cannot guarantee perfect tomorrow recall" in reply
+    assert verify_self_claims(reply).ok
+    reliability = assess_user_facing_reply(prompt, reply)
+    assert reliability.ok, reliability.reasons
+
+
+def test_aura_now_allows_verified_foreground_desktop_action_under_soft_workspace_defer():
+    from core.being.runtime import BeingRuntime
+
+    runtime = BeingRuntime.__new__(BeingRuntime)
+    runtime._last_welfare = None
+    runtime._last_body_snapshot = SimpleNamespace(fatigue=0.0)
+    runtime.body_service = SimpleNamespace(spend=lambda *_args, **_kwargs: {"compute": 0.01})
+    now = SimpleNamespace(
+        body=SimpleNamespace(total_pressure=0.2),
+        affect=SimpleNamespace(distress=0.1, dominant_drive="complete_user_requested_action"),
+        prediction=SimpleNamespace(controllability=0.1, free_energy=1.0),
+        workspace=SimpleNamespace(ignition_strength=0.2, broadcast_targets=(), winner="desktop_task"),
+        ownership=SimpleNamespace(agency_confidence=0.8),
+        state_hash="state-test",
+        tick=42,
+    )
+
+    policy = runtime.action_policy(
+        now,
+        domain="tool_execution",
+        priority=0.9,
+        context={
+            "desktop_execution_contract": True,
+            "foreground_request": True,
+            "user_explicitly_authorized": True,
+            "user_visible_desktop_action": True,
+            "verification_required": True,
+        },
+    )
+
+    assert policy["outcome"] == "constrain"
+    assert policy["defers"] == []
+    assert "foreground_desktop_action_constrained:not_deferred" in policy["constraints"]
+
+
 def test_foreground_timeout_for_cold_or_recovering_lane():
     from interface import server as server_module
 
@@ -968,32 +1023,19 @@ async def test_api_chat_desktop_surface_disables_social_reflex_fastpath(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_surface_executes_governed_desktop_objective_after_cognition(monkeypatch):
+async def test_api_chat_desktop_surface_executes_governed_desktop_objective_without_freeform_generation(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
-    cognitive_calls = []
     skill_calls = []
     completed_exchanges = []
     output_receipts = []
 
     class _FakeCognitiveEngine:
         async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
-            cognitive_calls.append(
-                {
-                    "objective": objective,
-                    "context": dict(context or {}),
-                    "origin": origin,
-                    "kwargs": dict(kwargs),
-                }
-            )
-            return SimpleNamespace(
-                content=(
-                    "Aura self-summary. Timestamp: 2026-06-02 12:00:00. "
-                    "This is the body I would place into the desktop artifact."
-                ),
-                mode=mode,
+            pytest.fail(
+                "desktop objectives must not wait on freeform CognitiveEngine generation"
             )
 
     class _FakePool:
@@ -1107,46 +1149,187 @@ async def test_api_chat_desktop_surface_executes_governed_desktop_objective_afte
     assert response.status_code == 200
     assert b"desktop_objective_completed" in response.body
     assert b"Desktop task completed 5/5 governed computer-use steps" in response.body
-    assert cognitive_calls
-    assert cognitive_calls[0]["context"]["source"] == "desktop_ui"
-    assert cognitive_calls[0]["context"]["cognitive_engine_required"] is True
-    assert cognitive_calls[0]["context"]["desktop_execution_contract"] is True
-    assert "{{document_body}}" in str(cognitive_calls[0]["context"]["desktop_task_planning_schema"])
-    assert skill_calls == [
-        {
-            "skill_name": "desktop_task",
-            "params": {
-                "objective": (
-                    "Can you open my Notes app, write a timestamped summary, save it as a PDF "
-                    "in a new folder titled Aura's Journal, and search for a robot image?"
-                ),
-                "steps": [],
-            },
-            "objective": (
-                "Can you open my Notes app, write a timestamped summary, save it as a PDF "
-                "in a new folder titled Aura's Journal, and search for a robot image?"
-            ),
-            "extra_context": {
-                "origin": "desktop_ui",
-                "source": "desktop_ui",
-                "route": "chat.desktop_objective",
-                "desktop_task_document_body": (
-                    "Aura self-summary. Timestamp: 2026-06-02 12:00:00. "
-                    "This is the body I would place into the desktop artifact."
-                ),
-                "cognitive_reply": (
-                    "Aura self-summary. Timestamp: 2026-06-02 12:00:00. "
-                    "This is the body I would place into the desktop artifact."
-                ),
-            },
-        }
-    ]
+    assert len(skill_calls) == 1
+    assert skill_calls[0]["skill_name"] == "desktop_task"
+    assert skill_calls[0]["params"]["objective"] == (
+        "Can you open my Notes app, write a timestamped summary, save it as a PDF "
+        "in a new folder titled Aura's Journal, and search for a robot image?"
+    )
+    assert skill_calls[0]["params"]["steps"] == []
+    assert skill_calls[0]["params"]["desktop_execution_contract"] is True
+    assert skill_calls[0]["params"]["user_visible_desktop_action"] is True
+    assert skill_calls[0]["params"]["verification_required"] is True
+    assert skill_calls[0]["objective"] == skill_calls[0]["params"]["objective"]
+    assert skill_calls[0]["extra_context"] == {
+        "origin": "desktop_ui",
+        "source": "desktop_ui",
+        "route": "chat.desktop_objective",
+        "desktop_execution_contract": True,
+        "user_visible_desktop_action": True,
+        "local_desktop_action": True,
+        "verification_required": True,
+        "desktop_task_document_body": (
+            "Execute the user's explicit desktop objective through Aura's governed desktop_task lane. "
+            "Do not claim success until the tool result verifies the effect. Objective: Can you open "
+            "my Notes app, write a timestamped summary, save it as a PDF in a new folder titled "
+            "Aura's Journal, and search for a robot image?"
+        ),
+        "cognitive_reply": (
+            "Execute the user's explicit desktop objective through Aura's governed desktop_task lane. "
+            "Do not claim success until the tool result verifies the effect. Objective: Can you open "
+            "my Notes app, write a timestamped summary, save it as a PDF in a new folder titled "
+            "Aura's Journal, and search for a robot image?"
+        ),
+    }
     assert completed_exchanges
     assert completed_exchanges[-1][0][0] == "desktop-objective"
     assert "Desktop task completed 5/5 governed computer-use steps" in completed_exchanges[-1][0][2]
     assert "Aura self-summary. Timestamp" not in completed_exchanges[-1][0][2]
     assert output_receipts
     assert "Desktop task completed 5/5 governed computer-use steps" in output_receipts[-1][0][0]
+
+
+@pytest.mark.asyncio
+async def test_chat_desktop_objective_uses_capability_engine_without_agency_wrapper(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append(
+                {
+                    "skill_name": skill_name,
+                    "params": dict(params),
+                    "context": dict(context or {}),
+                }
+            )
+            return {
+                "ok": True,
+                "summary": "Desktop task completed 2/2 governed computer-use steps.",
+                "steps_requested": 2,
+                "steps_completed": 2,
+            }
+
+    class _ForbiddenAgency:
+        async def run(self, *_args, **_kwargs):
+            pytest.fail("chat.desktop_objective must not enter AgencyOrchestrator")
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                _FakeCapabilityEngine()
+                if name == "capability_engine"
+                else _ForbiddenAgency()
+                if name == "agency_orchestrator"
+                else default
+            )
+        ),
+    )
+
+    objective = (
+        "Please create a folder named 'Aura Live Proof' in my Documents folder "
+        "and write a file inside it called live_proof.txt."
+    )
+    result = await chat_routes._execute_desktop_objective_from_chat(
+        objective,
+        cognitive_reply="Plan the desktop action; do not claim completion.",
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert result["status"] == "desktop_objective_completed"
+    assert len(calls) == 1
+    assert calls[0]["skill_name"] == "desktop_task"
+    assert calls[0]["params"]["objective"] == objective
+    assert calls[0]["params"]["steps"] == []
+    assert calls[0]["params"]["desktop_execution_contract"] is True
+    assert calls[0]["params"]["user_visible_desktop_action"] is True
+    assert calls[0]["params"]["verification_required"] is True
+    assert calls[0]["context"]["route"] == "chat.desktop_objective"
+    assert calls[0]["context"]["governance_route"] == "capability_engine_direct"
+    assert calls[0]["context"]["desktop_task_owned_by"] == "chat.desktop_objective"
+    assert calls[0]["context"]["foreground_request"] is True
+    assert calls[0]["context"]["user_explicitly_authorized"] is True
+
+
+@pytest.mark.asyncio
+async def test_api_chat_desktop_objective_executes_without_cognitive_preflight(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    skill_calls = []
+    output_receipts = []
+
+    async def _slow_or_empty_cognitive_turn(*args, **kwargs):
+        pytest.fail("desktop objective execution should not allocate a freeform preflight")
+
+    async def _fake_execute_governed_live_skill(skill_name, params, *, objective, extra_context=None):
+        skill_calls.append(
+            {
+                "skill_name": skill_name,
+                "params": dict(params),
+                "objective": objective,
+                "extra_context": dict(extra_context or {}),
+            }
+        )
+        return {
+            "ok": True,
+            "status": "completed",
+            "summary": "Desktop task completed 2/2 governed computer-use steps.",
+            "steps_requested": 2,
+            "steps_completed": 2,
+        }
+
+    async def _fake_log_exchange(*_args, **_kwargs):
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _slow_or_empty_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message=(
+                "Please create a folder named 'Aura Live Proof' in my Documents folder "
+                "and write a file inside it called live_proof.txt."
+            )
+        ),
+        SimpleNamespace(headers={}, client=SimpleNamespace(host="test")),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["status"] == "desktop_objective_completed"
+    assert payload["conversation_lane"]["governed_action_result"] is True
+    assert payload["conversation_lane"]["governed_action_status"] == "desktop_objective_completed"
+    assert "Desktop task completed 2/2 governed computer-use steps" in payload["response"]
+    assert skill_calls and skill_calls[0]["skill_name"] == "desktop_task"
+    assert "Execute the user's explicit desktop objective" in skill_calls[0]["extra_context"]["desktop_task_document_body"]
+    assert output_receipts
 
 
 @pytest.mark.asyncio

@@ -392,6 +392,78 @@ async def test_desktop_task_derives_generic_web_document_plan_without_demo_short
 
 
 @pytest.mark.asyncio
+async def test_desktop_task_collects_research_before_document_composition(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            if skill_name == "web_search":
+                return {
+                    "ok": True,
+                    "summary": (
+                        "Climate change reporting points to rising global temperatures, "
+                        "more intense extreme-weather risks, and adaptation needs for cities."
+                    ),
+                    "citations": [
+                        {
+                            "title": "Climate assessment",
+                            "url": "https://example.test/climate-assessment",
+                            "snippet": "Observed warming is changing risk patterns.",
+                        },
+                        {
+                            "title": "Adaptation briefing",
+                            "url": "https://example.test/adaptation",
+                            "snippet": "Cities are adapting infrastructure and emergency plans.",
+                        },
+                        {
+                            "title": "Extreme weather report",
+                            "url": "https://example.test/extreme-weather",
+                            "snippet": "Heat and precipitation extremes are increasing.",
+                        },
+                    ],
+                }
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    skill = DesktopTaskSkill()
+    result = await skill.execute(
+        {
+            "objective": (
+                "Go to Google Chrome, find 3 different articles on climate change, "
+                "open Google Docs, title the doc, and summarize those articles."
+            ),
+            "steps": [],
+        },
+        {
+            "origin": "desktop_ui",
+            "desktop_task_document_body": "I will open the browser and write the requested document.",
+        },
+    )
+
+    assert result["ok"] is True
+    assert calls[0][0] == "web_search"
+    assert calls[0][1]["query"] == "climate change"
+    assert calls[0][2]["route"] == "desktop_task.web_search"
+    desktop_actions = [call[1]["action"] for call in calls if call[0] == "computer_use"]
+    assert desktop_actions[:4] == ["open_app", "open_url", "open_url", "set_clipboard"]
+    clipboard_body = next(call[1]["target"] for call in calls if call[0] == "computer_use" and call[1]["action"] == "set_clipboard")
+    assert "Research summary for: climate change" in clipboard_body
+    assert "Climate assessment" in clipboard_body
+    assert "https://example.test/climate-assessment" in clipboard_body
+    assert "I will open the browser" not in clipboard_body
+    assert result["research"]["query"] == "climate change"
+    assert len(result["research"]["sources"]) == 3
+
+
+@pytest.mark.asyncio
 async def test_desktop_task_escalates_unrepresented_desktop_workflow_to_os_automation(monkeypatch):
     from core.container import ServiceContainer
 
