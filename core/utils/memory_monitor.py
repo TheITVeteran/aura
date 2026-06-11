@@ -127,7 +127,13 @@ def _darwin_phys_footprint_bytes(pid: int) -> int:
 
 def _process_memory_bytes_from_process(process: psutil.Process) -> int:
     rss_bytes = int(getattr(process.memory_info(), "rss", 0) or 0)
-    return max(rss_bytes, _darwin_phys_footprint_bytes(process.pid))
+    # The footprint lookup is an enhancement over RSS, never a gate: a
+    # process object without a usable pid (test doubles, exited handles)
+    # must degrade to plain RSS instead of discarding a valid sample.
+    pid = int(getattr(process, "pid", 0) or 0)
+    if pid <= 0:
+        return rss_bytes
+    return max(rss_bytes, _darwin_phys_footprint_bytes(pid))
 
 
 def process_memory_bytes(pid: int | None = None) -> int:

@@ -2426,10 +2426,19 @@ async def test_memory_governor_prunes_when_rss_growth_crosses_hysteresis(monkeyp
     governor._last_prune_rss_mb = governor.threshold_prune
     governor._prune_memory = _AsyncCallRecorder()
 
+    # The governor samples through memory_monitor.process_memory_bytes
+    # (RSS vs phys_footprint max) since ea2cfba9, not _proc.memory_info.
     monkeypatch.setattr(
         governor,
         "_proc",
-        SimpleNamespace(memory_info=lambda: SimpleNamespace(rss=current_rss_mb * 1024 * 1024)),
+        SimpleNamespace(
+            pid=4242,
+            memory_info=lambda: SimpleNamespace(rss=current_rss_mb * 1024 * 1024),
+        ),
+    )
+    monkeypatch.setattr(
+        "core.resilience.memory_governor.process_memory_bytes",
+        lambda pid: current_rss_mb * 1024 * 1024,
     )
     monkeypatch.setattr(
         "core.resilience.memory_governor.psutil.virtual_memory",
