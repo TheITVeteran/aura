@@ -176,6 +176,10 @@ class PreemptibleChatLock:
 def _get_fg_lock(): return _locks.setdefault("fg", PreemptibleChatLock())
 _foreground_chat_lock = _get_fg_lock()
 _FOREGROUND_CHAT_BUSY_WAIT_S = 2.0
+_CHAT_TURN_MEMORY_LOG_TASK_NAME = "ChatTurnMemoryLog"
+_CHAT_TURN_MEMORY_LOG_MAX_ACTIVE = 2
+_CHAT_TURN_MEMORY_LOG_TIMEOUT_S = 20.0
+_CHAT_TURN_CONSCIOUSNESS_UPDATE_TIMEOUT_S = 8.0
 
 
 def _new_exchange_id() -> str:
@@ -323,6 +327,94 @@ async def _preserve_large_user_paste(user_msg: str) -> None:
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         logger.debug("Large paste preservation skipped: %s", exc)
+
+
+def _active_task_count_by_name(tracker: Any, task_name: str) -> int:
+    active = 0
+    for task in list(getattr(tracker, "tasks", ()) or ()):
+        try:
+            if not task.done() and task.get_name() == task_name:
+                active += 1
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat.task_tracker", exc)
+            logger.debug("Task name inspection failed: %s", exc)
+    return active
+
+
+def _schedule_chat_turn_memory_log(
+    *,
+    user_message: str,
+    aura_response: str,
+    session_id: str,
+    chat_origin: str,
+) -> bool:
+    """Schedule post-response memory logging without allowing task pileups."""
+    try:
+        task_tracker = get_task_tracker()
+        active_logs = _active_task_count_by_name(task_tracker, _CHAT_TURN_MEMORY_LOG_TASK_NAME)
+        if active_logs >= _CHAT_TURN_MEMORY_LOG_MAX_ACTIVE:
+            record_degradation(
+                "chat.memory_log_backpressure",
+                RuntimeError(
+                    f"{_CHAT_TURN_MEMORY_LOG_TASK_NAME} active limit reached: {active_logs}"
+                ),
+            )
+            logger.warning(
+                "Skipping chat turn memory log because %d %s task(s) are already active.",
+                active_logs,
+                _CHAT_TURN_MEMORY_LOG_TASK_NAME,
+            )
+            return False
+
+        from core.memory.chat_turn_logger import log_chat_turn_auto
+
+        async def _log_and_continue() -> None:
+            try:
+                await asyncio.wait_for(
+                    log_chat_turn_auto(
+                        user_message=user_message,
+                        aura_response=aura_response,
+                        session_id=session_id,
+                        emotional_valence=0.0,
+                        metadata={"conversation_lane": True, "origin": chat_origin},
+                    ),
+                    timeout=_CHAT_TURN_MEMORY_LOG_TIMEOUT_S,
+                )
+
+                try:
+                    from core.consciousness.coordinator import get_consciousness_coordinator
+
+                    coordinator = await get_consciousness_coordinator()
+                    await asyncio.wait_for(
+                        coordinator.on_chat_turn(user_message, aura_response),
+                        timeout=_CHAT_TURN_CONSCIOUSNESS_UPDATE_TIMEOUT_S,
+                    )
+                except _CHAT_RECOVERABLE_ERRORS as exc:
+                    record_degradation("chat.consciousness_update", exc)
+                    logger.debug("Consciousness update skipped: %s", exc)
+            except TimeoutError as exc:
+                record_degradation("chat.memory_log_timeout", exc)
+                logger.warning(
+                    "Chat turn memory log exceeded %.1fs and was cancelled.",
+                    _CHAT_TURN_MEMORY_LOG_TIMEOUT_S,
+                )
+            except _CHAT_RECOVERABLE_ERRORS as exc:
+                record_degradation("chat", exc)
+                logger.debug("Chat turn logging failed: %s", exc)
+
+        schedule = getattr(task_tracker, "bounded_track", None) or getattr(
+            task_tracker,
+            "create_task",
+            None,
+        )
+        if not callable(schedule):
+            raise RuntimeError("task_tracker_has_no_scheduler")
+        schedule(_log_and_continue(), name=_CHAT_TURN_MEMORY_LOG_TASK_NAME)
+        return True
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Chat turn logging task creation failed: %s", exc)
+        return False
 
 
 def _extract_session_memory_pin_request(user_message: str) -> str | None:
@@ -7272,46 +7364,12 @@ async def api_chat(
 
             _record_recent_response(final_text, _semantic_user_message)
             
-            # CRITICAL: Ensure conversation is logged to persistent memory to prevent loss
-            # This runs in the background to not block response
-            try:
-                from core.memory.chat_turn_logger import log_chat_turn_auto
-                
-                # Schedule memory logging without blocking response
-                async def _log_and_continue():
-                    try:
-                        await log_chat_turn_auto(
-                            user_message=_semantic_user_message,
-                            aura_response=final_text,
-                            session_id=_chat_session_id,
-                            emotional_valence=0.0,
-                            metadata={"conversation_lane": True, "origin": chat_origin},
-                        )
-                        
-                        # Update unified consciousness with this interaction
-                        try:
-                            from core.consciousness.coordinator import get_consciousness_coordinator
-                            
-                            coordinator = await get_consciousness_coordinator()
-                            await coordinator.on_chat_turn(_semantic_user_message, final_text)
-                        except _CHAT_RECOVERABLE_ERRORS as _consci_exc:
-                            record_degradation('chat.consciousness_update', _consci_exc)
-                            logger.debug("Consciousness update skipped: %s", _consci_exc)
-                    
-                    except _CHAT_RECOVERABLE_ERRORS as _turn_log_exc:
-                        record_degradation('chat', _turn_log_exc)
-                        logger.debug("Chat turn logging failed: %s", _turn_log_exc)
-                
-                # Fire-and-forget background task
-                try:
-                    task_tracker = get_task_tracker()
-                    task_tracker.create_task(_log_and_continue(), name="ChatTurnMemoryLog")
-                except _CHAT_RECOVERABLE_ERRORS as _task_exc:
-                    record_degradation('chat', _task_exc)
-                    logger.debug("Chat turn logging task creation failed: %s", _task_exc)
-            except _CHAT_RECOVERABLE_ERRORS as _turn_log_import_exc:
-                record_degradation('chat', _turn_log_import_exc)
-                logger.debug("Chat turn logger import skipped: %s", _turn_log_import_exc)
+            _schedule_chat_turn_memory_log(
+                user_message=_semantic_user_message,
+                aura_response=final_text,
+                session_id=_chat_session_id,
+                chat_origin=chat_origin,
+            )
             
             lane_status = (
                 _collect_governed_action_lane_status(status)

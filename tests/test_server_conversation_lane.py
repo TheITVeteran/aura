@@ -1,3 +1,4 @@
+import asyncio
 import json
 import tempfile
 import time
@@ -605,6 +606,128 @@ def test_capability_inventory_skips_catalog_under_memory_pressure(monkeypatch):
     assert capability_engine.catalog_calls == 0
     assert "registered governed skill surfaces" in reply
     assert "Will/Authority approval" in reply
+
+
+def test_chat_turn_memory_log_scheduler_skips_when_active_limit_reached(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _FakeTask:
+        def done(self):
+            return False
+
+        def get_name(self):
+            return chat_routes._CHAT_TURN_MEMORY_LOG_TASK_NAME
+
+    class _FakeTracker:
+        def __init__(self):
+            self.tasks = {_FakeTask(), _FakeTask()}
+            self.bounded_calls = 0
+
+        def bounded_track(self, *_args, **_kwargs):
+            self.bounded_calls += 1
+            return None
+
+    tracker = _FakeTracker()
+    monkeypatch.setattr(chat_routes, "get_task_tracker", lambda: tracker)
+
+    scheduled = chat_routes._schedule_chat_turn_memory_log(
+        user_message="hello",
+        aura_response="hi",
+        session_id="test-session",
+        chat_origin="desktop_ui",
+    )
+
+    assert scheduled is False
+    assert tracker.bounded_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_turn_memory_log_scheduler_uses_bounded_track(monkeypatch):
+    from interface.routes import chat as chat_routes
+    from core.memory import chat_turn_logger
+    from core.consciousness import coordinator as consciousness_coordinator
+
+    log_calls = []
+    consciousness_calls = []
+
+    async def _fake_log_chat_turn_auto(**kwargs):
+        log_calls.append(kwargs)
+
+    class _FakeCoordinator:
+        async def on_chat_turn(self, user_message, aura_response):
+            consciousness_calls.append((user_message, aura_response))
+
+    async def _fake_get_consciousness_coordinator():
+        return _FakeCoordinator()
+
+    class _FakeTracker:
+        def __init__(self):
+            self.tasks = set()
+            self.scheduled = []
+
+        def bounded_track(self, coro, name=None):
+            task = asyncio.create_task(coro, name=name)
+            self.tasks.add(task)
+            task.add_done_callback(lambda completed: self.tasks.discard(completed))
+            self.scheduled.append((task, name))
+            return task
+
+    tracker = _FakeTracker()
+    monkeypatch.setattr(chat_routes, "get_task_tracker", lambda: tracker)
+    monkeypatch.setattr(chat_turn_logger, "log_chat_turn_auto", _fake_log_chat_turn_auto)
+    monkeypatch.setattr(
+        consciousness_coordinator,
+        "get_consciousness_coordinator",
+        _fake_get_consciousness_coordinator,
+    )
+
+    scheduled = chat_routes._schedule_chat_turn_memory_log(
+        user_message="remember this",
+        aura_response="I will keep it in the log.",
+        session_id="test-session",
+        chat_origin="desktop_ui",
+    )
+
+    assert scheduled is True
+    assert tracker.scheduled[0][1] == chat_routes._CHAT_TURN_MEMORY_LOG_TASK_NAME
+    await tracker.scheduled[0][0]
+    assert log_calls[0]["user_message"] == "remember this"
+    assert log_calls[0]["metadata"]["origin"] == "desktop_ui"
+    assert consciousness_calls == [("remember this", "I will keep it in the log.")]
+
+
+@pytest.mark.asyncio
+async def test_chat_turn_memory_log_scheduler_times_out_slow_logger(monkeypatch):
+    from interface.routes import chat as chat_routes
+    from core.memory import chat_turn_logger
+
+    async def _slow_log_chat_turn_auto(**_kwargs):
+        await asyncio.sleep(1.0)
+
+    class _FakeTracker:
+        def __init__(self):
+            self.tasks = set()
+            self.scheduled = []
+
+        def bounded_track(self, coro, name=None):
+            task = asyncio.create_task(coro, name=name)
+            self.scheduled.append(task)
+            return task
+
+    tracker = _FakeTracker()
+    monkeypatch.setattr(chat_routes, "get_task_tracker", lambda: tracker)
+    monkeypatch.setattr(chat_routes, "_CHAT_TURN_MEMORY_LOG_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(chat_turn_logger, "log_chat_turn_auto", _slow_log_chat_turn_auto)
+
+    scheduled = chat_routes._schedule_chat_turn_memory_log(
+        user_message="slow",
+        aura_response="logger",
+        session_id="test-session",
+        chat_origin="desktop_ui",
+    )
+
+    assert scheduled is True
+    await tracker.scheduled[0]
 
 
 @pytest.mark.asyncio
