@@ -2075,7 +2075,7 @@ class UnitaryResponsePhase(Phase):
         state: AuraState,
         episodic_matches: list[Any] | None = None,
     ) -> str | None:
-        candidates: list[str] = []
+        candidates: list[tuple[str, str]] = []
         objective_norm = normalize_memory_intent_text(cls._normalize_text(objective)).rstrip("?")
         if "conversation lane" in objective_norm and any(
             marker in objective_norm for marker in ("died", "dead")
@@ -2096,16 +2096,54 @@ class UnitaryResponsePhase(Phase):
             ):
                 utterance = cls._extract_user_utterance(raw)
                 if utterance:
-                    candidates.append(utterance)
+                    candidates.append(("user", utterance))
 
         for item in list(getattr(state.cognition, "long_term_memory", []) or []):
             utterance = cls._extract_user_utterance(item)
             if utterance:
-                candidates.append(utterance)
+                candidates.append(("user", utterance))
 
-        filtered: list[str] = []
+        for item in reversed(list(getattr(state.cognition, "working_memory", []) or [])[-24:]):
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role", "") or "").strip().lower()
+            if role not in {"user", "assistant"}:
+                continue
+            content = cls._normalize_text(item.get("content", ""), 500)
+            if content:
+                candidates.append((role, content))
+
+        def _role_recall_bias(role: str) -> float:
+            asks_aura_words = any(
+                marker in objective_norm
+                for marker in (
+                    "what did you say",
+                    "what were your exact words",
+                    "what was your answer",
+                    "what did your reply",
+                    "what did you tell me",
+                )
+            )
+            asks_user_words = any(
+                marker in objective_norm
+                for marker in (
+                    "what did i say",
+                    "what did i tell",
+                    "what was my",
+                    "what were my exact words",
+                    "what do you remember i said",
+                    "do you remember what i",
+                )
+            )
+            if asks_aura_words:
+                return 4.0 if role == "assistant" else -1.0
+            if asks_user_words:
+                return 4.0 if role == "user" else -1.0
+            return 0.0
+
+        filtered: list[tuple[str, str]] = []
         seen: set[str] = set()
-        for candidate in candidates:
+        for role, candidate in candidates:
             normalized = cls._normalize_text(candidate).lower().rstrip("?")
             if not normalized or len(normalized) < 8:
                 continue
@@ -2119,25 +2157,31 @@ class UnitaryResponsePhase(Phase):
                 and "conversation lane" in objective_norm
             ):
                 continue
-            if normalized in seen:
+            seen_key = f"{role}:{normalized}"
+            if seen_key in seen:
                 continue
-            seen.add(normalized)
-            filtered.append(candidate)
+            seen.add(seen_key)
+            filtered.append((role, candidate))
 
         if not filtered:
             return None
 
         ranked = sorted(
             filtered,
-            key=lambda candidate: cls._score_memory_candidate(candidate, objective),
+            key=lambda candidate: (
+                cls._score_memory_candidate(candidate[1], objective)
+                + _role_recall_bias(candidate[0])
+            ),
             reverse=True,
         )
-        chosen = ranked[0]
-        if cls._score_memory_candidate(chosen, objective) < 1.0:
+        chosen_role, chosen = ranked[0]
+        if cls._score_memory_candidate(chosen, objective) + _role_recall_bias(chosen_role) < 1.0:
             return None
         if any(
             marker in objective_norm for marker in ("exact phrase", "exact words", "exact wording")
         ):
+            if chosen_role == "assistant":
+                return f'I said: "{chosen}"'
             return f'You told me: "{chosen}"'
         if "conversation lane" in objective_norm and (
             "stay with me" in objective_norm
@@ -2148,6 +2192,10 @@ class UnitaryResponsePhase(Phase):
                 "I would stay with you now by answering this turn directly, avoiding raw tool or memory artifacts, "
                 "and making any repair visible instead of pretending a broken fragment was a real reply."
             )
+        if chosen_role == "assistant":
+            return f'I remember saying: "{chosen}"'
+        if chosen_role == "user":
+            return f'I remember you saying: "{chosen}"'
         return f'I remember this: "{chosen}"'
 
     @classmethod

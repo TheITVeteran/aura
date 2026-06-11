@@ -196,6 +196,49 @@ def test_memory_recall_answer_handles_conversation_lane_died_without_llm():
     assert "stale repair text" in answer
 
 
+def test_memory_recall_answer_uses_recent_user_working_memory_without_llm():
+    state = AuraState.default()
+    state.cognition.working_memory = [
+        {"role": "user", "content": "Remember this phrase: blue lantern at 3:14."},
+        {"role": "assistant", "content": "I have it anchored for this conversation."},
+        {"role": "user", "content": "What did I tell you to remember?"},
+    ]
+
+    answer = UnitaryResponsePhase._compose_memory_recall_answer(
+        "What did I tell you to remember?",
+        state,
+        [],
+    )
+
+    assert answer is not None
+    assert "blue lantern at 3:14" in answer
+    assert "What did I tell you to remember" not in answer
+    assert answer.startswith("I remember you saying")
+
+
+def test_memory_recall_answer_uses_recent_assistant_working_memory_when_asked():
+    state = AuraState.default()
+    state.cognition.working_memory = [
+        {"role": "user", "content": "What tools can you use externally?"},
+        {
+            "role": "assistant",
+            "content": "I can use governed desktop, browser, file, search, and terminal tools when authorized.",
+        },
+        {"role": "user", "content": "What did you say earlier about tools?"},
+    ]
+
+    answer = UnitaryResponsePhase._compose_memory_recall_answer(
+        "What did you say earlier about tools?",
+        state,
+        [],
+    )
+
+    assert answer is not None
+    assert answer.startswith("I remember saying")
+    assert "governed desktop" in answer
+    assert "What did you say earlier" not in answer
+
+
 @pytest.mark.asyncio
 async def test_short_confusion_turn_reaches_llm(monkeypatch):
     state = AuraState()
