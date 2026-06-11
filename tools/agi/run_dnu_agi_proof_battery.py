@@ -554,9 +554,14 @@ def find_existing_proof_runners() -> list[dict]:
     # script's name as an argument, and matching it terminated our own
     # process tree 0.13s after launch (rc=-15 in final-proof run 3).
     ancestors = {me}
+    # Resolve the error class up front: a replaced/lesioned psutil (test
+    # doubles, ablations) may lack .Process AND .Error — referencing
+    # psutil.Error inside the except clause would raise while handling.
+    _psutil_error = getattr(psutil, "Error", OSError)
     try:
         ancestors.update(p.pid for p in psutil.Process(me).parents())
-    except (psutil.Error, OSError):
+    except (AttributeError, _psutil_error, OSError):
+        # Degrade the exclusion to self-only instead of crashing.
         pass
 
     instances: list[dict] = []

@@ -8,6 +8,12 @@ from core.runtime.skill_task_bridge import (
 )
 from core.utils.intent_normalization import normalize_memory_intent_text
 
+_WEB_SEARCH_REQUEST_SPAN_RE = re.compile(
+    r"\b(?:search|google|look\s*up|research)\b[^.?!]{0,48}?"
+    r"\b(?:the\s+)?(?:internet|web|online)\b",
+    re.IGNORECASE,
+)
+
 _DESKTOP_OBJECTIVE_ACTION_TERMS = (
     "attach",
     "arrange",
@@ -108,6 +114,13 @@ def looks_like_desktop_objective(user_message: str) -> bool:
     if not text:
         return False
     sanitized_text = strip_negated_action_spans(text).lower()
+    # Explicit web-search phrasing ("search the internet/web for X") is a
+    # research request, not a desktop objective; classifying it as desktop
+    # let the response contract suppress requires_search while desktop_task
+    # had nothing visible to do — the search silently went dark on both
+    # lanes. Strip the span so only OTHER action/surface terms ("...and
+    # save it to Notes") can still classify the request as desktop.
+    sanitized_text = _WEB_SEARCH_REQUEST_SPAN_RE.sub(" ", sanitized_text)
     if looks_like_capability_inventory_dialogue_request(user_message):
         return False
     if _EXPLANATORY_DESKTOP_QUESTION_RE.search(text):
