@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import core.self_improvement.blinded_workspace as blinded_workspace_mod
@@ -78,9 +79,20 @@ def test_blinded_workspace_writes_artifacts_through_file_gateway(tmp_path, monke
             "core.self_improvement.blinded_workspace.tests_init",
             "core.self_improvement.blinded_workspace.copied_test",
             "core.self_improvement.blinded_workspace.spec_reference",
+            "core.self_improvement.blinded_workspace.audit_manifest",
         }.issubset(sources)
         assert (workspace.workspace_dir / "tests" / "test_visible.py").read_text(
             encoding="utf-8"
         ) == "def test_visible():\n    assert True\n"
+        manifest = json.loads(workspace.audit_manifest_path.read_text(encoding="utf-8"))
+        assert manifest["schema"] == "aura.blinded_workspace.audit_manifest.v1"
+        assert manifest["module_path"] == "pkg/module.py"
+        assert manifest["forbidden_path_count"] == 2
+        assert len(manifest["forbidden_path_hashes"]) == 2
+        assert manifest["generated_interface"]["path"] == "pkg/module.py"
+        assert manifest["generated_interface"]["sha256"]
+        assert manifest["copied_tests"][0]["source_name"] == "test_visible.py"
+        assert manifest["copied_tests"][0]["sha256"]
+        assert "original implementation" not in json.dumps(manifest).lower()
     finally:
         workspace.cleanup()

@@ -9,6 +9,8 @@ the original code or original results.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import shutil
@@ -24,6 +26,14 @@ from core.self_improvement.interface_contract import (
 )
 
 logger = logging.getLogger("Aura.BlindedWorkspace")
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 @dataclass
@@ -54,6 +64,10 @@ class BlindedWorkspace:
     @property
     def test_dir(self) -> Path:
         return self.workspace_dir / "tests"
+
+    @property
+    def audit_manifest_path(self) -> Path:
+        return self.workspace_dir / "AUDIT_MANIFEST.json"
 
     def record_access(self, path: str) -> None:
         """Record a file access for audit purposes."""
@@ -118,7 +132,7 @@ class BlindedWorkspaceFactory:
         self._write_init_files(workspace_dir, spec.module_path)
 
         # 3. Copy test files
-        self._copy_tests(workspace, spec)
+        copied_tests = self._copy_tests(workspace, spec)
 
         # 4. Write spec reference
         spec_ref_path = workspace_dir / "SPEC.txt"
@@ -128,6 +142,9 @@ class BlindedWorkspaceFactory:
             encoding="utf-8",
             source="core.self_improvement.blinded_workspace.spec_reference",
         )
+
+        # 5. Write clean-room audit manifest without original implementation text.
+        self._write_audit_manifest(workspace, spec, original_module_path, copied_tests)
 
         logger.info("Created blinded workspace at %s for %s", workspace_dir, spec.module_path)
         return workspace
@@ -218,7 +235,7 @@ class BlindedWorkspaceFactory:
                     source="core.self_improvement.blinded_workspace.package_init",
                 )
 
-    def _copy_tests(self, workspace: BlindedWorkspace, spec: ModuleSpec) -> None:
+    def _copy_tests(self, workspace: BlindedWorkspace, spec: ModuleSpec) -> list[dict[str, str | int]]:
         """Copy test files into the workspace."""
         test_dir = workspace.test_dir
         test_dir.mkdir(parents=True, exist_ok=True)
@@ -229,19 +246,68 @@ class BlindedWorkspaceFactory:
             source="core.self_improvement.blinded_workspace.tests_init",
         )
 
+        copied_tests: list[dict[str, str | int]] = []
         for tc in spec.test_cases:
             if tc.file_path:
                 src = self.project_root / tc.file_path
                 if src.exists():
                     dst = test_dir / Path(tc.file_path).name
                     try:
+                        payload = src.read_bytes()
                         get_file_write_gateway().write_bytes(
                             dst,
-                            src.read_bytes(),
+                            payload,
                             source="core.self_improvement.blinded_workspace.copied_test",
+                        )
+                        copied_tests.append(
+                            {
+                                "source_path_hash": _sha256_text(str(src.resolve())),
+                                "source_name": Path(tc.file_path).name,
+                                "destination": dst.relative_to(workspace.workspace_dir).as_posix(),
+                                "sha256": _sha256_bytes(payload),
+                                "size_bytes": len(payload),
+                            }
                         )
                     except OSError as e:
                         logger.debug("Could not copy test %s: %s", tc.file_path, e)
+        return copied_tests
+
+    def _write_audit_manifest(
+        self,
+        workspace: BlindedWorkspace,
+        spec: ModuleSpec,
+        original_module_path: str,
+        copied_tests: list[dict[str, str | int]],
+    ) -> None:
+        interface_rel = workspace.interface_path.relative_to(workspace.workspace_dir).as_posix()
+        manifest = {
+            "schema": "aura.blinded_workspace.audit_manifest.v1",
+            "module_path": spec.module_path,
+            "original_module_path_hash": _sha256_text(
+                str((self.project_root / original_module_path).resolve())
+            ),
+            "forbidden_path_hashes": sorted(
+                _sha256_text(path) for path in workspace.forbidden_paths
+            ),
+            "forbidden_path_count": len(workspace.forbidden_paths),
+            "generated_interface": {
+                "path": interface_rel,
+                "sha256": _sha256_bytes(workspace.interface_path.read_bytes()),
+            },
+            "copied_tests": copied_tests,
+            "claim_supported": "clean_room_workspace_inputs_are_hash_manifested",
+            "claim_not_supported": [
+                "candidate_correctness",
+                "source_equivalence",
+                "original_implementation_access",
+            ],
+        }
+        get_file_write_gateway().write_text(
+            workspace.audit_manifest_path,
+            json.dumps(manifest, indent=2, sort_keys=True),
+            encoding="utf-8",
+            source="core.self_improvement.blinded_workspace.audit_manifest",
+        )
 
 
 __all__ = ["BlindedWorkspace", "BlindedWorkspaceFactory"]
