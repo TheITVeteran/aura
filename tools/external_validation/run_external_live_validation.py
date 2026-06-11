@@ -471,6 +471,16 @@ async def async_main(argv: list[str] | None = None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Live forensics tap: SIGUSR1 dumps every thread's Python stack to
+    # stderr without disturbing the run — the only way to see a frozen
+    # event-loop callback in the act (SIGTERM dumps kill the process).
+    try:
+        import faulthandler
+        import signal as _signal
+
+        faulthandler.register(_signal.SIGUSR1, all_threads=True, chain=False)
+    except (ImportError, AttributeError, ValueError, OSError):
+        pass
     return asyncio.run(async_main(argv))
 
 

@@ -348,7 +348,7 @@ async def run_debugging_loop(
 
     await asyncio.to_thread(_write_text, patch_target, proposal.content)
     logger.info("Successfully wrote agent patch to %s", patch_target.name)
-    
+
     trace.append({
         "stage": "patch",
         "patched_file": str(patch_target.relative_to(repo_path)),
@@ -358,7 +358,18 @@ async def run_debugging_loop(
 
     # Step 4: Verify (Re-run test suite)
     logger.info("Step 4: Re-running test suite for verification...")
-    await asyncio.sleep(0.1)
+    try:
+        await asyncio.sleep(0.1)
+    except BaseException as exc:
+        # Forensics 2026-06-11: two batteries died silently in this exact
+        # gap — the coroutine never reached the verify pytest. Name the
+        # interrupter loudly instead of vanishing.
+        logger.error(
+            "Verification interrupted before pytest: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        raise
     post_test = await run_terminal_command(["pytest"], repo_path)
     trace.append({
         "stage": "verify",
