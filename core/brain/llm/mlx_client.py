@@ -22,8 +22,8 @@ import psutil
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
-from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.concurrency import run_io_bound
 from core.utils.deadlines import Deadline, get_deadline
 from core.utils.memory_monitor import get_memory_pressure_snapshot
@@ -342,7 +342,13 @@ def _foreground_owner_wait_budget(
     *,
     foreground_request: bool,
 ) -> float:
-    default = 10.0 if foreground_request else 8.0
+    # A foreground waiter must be able to outlast one full serialized
+    # turn: the generation gate caps concurrency at 2 and healthy gated
+    # turns measure 31-44s. The old 10s budget guaranteed a timeout
+    # whenever the owner was mid-turn, collapsing proof-primary requests
+    # into refused lower-lane fallbacks. Background requests still bail
+    # fast rather than camp on the foreground worker.
+    default = 60.0 if foreground_request else 8.0
     if not isinstance(deadline, Deadline):
         return default
 
