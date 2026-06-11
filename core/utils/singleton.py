@@ -165,7 +165,14 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
                     message = f"⚠️  Aura ({lock_name}) is already running (PID: {pid})."
                     logger.error(message)
                     print(message)
-                    raise SystemExit(0)
+                    # Exit 0 only under the launchd supervisor (it sets
+                    # AURA_SUPERVISED=1): a non-zero exit there would
+                    # restart-loop against the live instance every 15s.
+                    # Every other caller — proof batteries especially —
+                    # must see "couldn't run" as failure, never success.
+                    if os.environ.get("AURA_SUPERVISED") == "1":
+                        raise SystemExit(0)
+                    raise SystemExit(75)  # EX_TEMPFAIL: instance busy
                 except OSError:
                     # Process is dead. Reclaim the stale lock.
                     logger.warning(
