@@ -2327,6 +2327,84 @@ async def test_stabilize_user_facing_reply_rejects_identity_collapse_disclaimer(
     assert result == "I do have a live stance here, and I should speak from it directly."
 
 
+def test_stabilizer_generation_budget_respects_memory_token_cap(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            max_token_cap=192,
+            refuse_heavy_local_generation=False,
+            reason="memory_pressure:high",
+        ),
+    )
+
+    max_tokens, block_reason = chat_routes._bound_stabilizer_generation_budget(4096)
+
+    assert max_tokens == 192
+    assert block_reason == ""
+
+
+@pytest.mark.asyncio
+async def test_stabilizer_skips_second_generation_under_critical_memory_pressure(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _PassingGate:
+        def validate_output(self, _text, enforce_supervision=False):
+            return True, "ok", 1.0
+
+        def sanitize(self, text):
+            return text
+
+    class _InferenceGate:
+        def __init__(self):
+            self.calls = []
+
+        async def think(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return "unexpected rewrite"
+
+    inference_gate = _InferenceGate()
+
+    monkeypatch.setattr(chat_routes, "_resolve_live_aura_state", lambda: None)
+    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping", lambda text: str(text))
+    monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping_compat", lambda text, _msg: str(text))
+    monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
+    monkeypatch.setattr(chat_routes, "_record_recent_response", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_is_stale_repeated_response", lambda _text: False)
+    monkeypatch.setattr(
+        chat_routes,
+        "_call_stateful_voice_reflex",
+        lambda _frame, _msg: "I should not launch a second model pass while memory is unsafe.",
+    )
+    monkeypatch.setattr(
+        "core.identity.identity_guard.PersonaEnforcementGate",
+        lambda: _PassingGate(),
+    )
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            max_token_cap=32,
+            refuse_heavy_local_generation=True,
+            reason="process_tree_rss:54GB/48GB",
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: inference_gate if name == "inference_gate" else default),
+    )
+
+    result = await chat_routes._stabilize_user_facing_reply(
+        "How do you say all of that about yourself and still claim you have no opinions?",
+        "I don't inherently possess subjective beliefs or experiences, but I can simulate and discuss them.",
+    )
+
+    assert inference_gate.calls == []
+    assert result == "I should not launch a second model pass while memory is unsafe."
+
+
 @pytest.mark.asyncio
 async def test_stabilize_user_facing_reply_uses_live_grounding_for_specificity_push(monkeypatch):
     from interface.routes import chat as chat_routes

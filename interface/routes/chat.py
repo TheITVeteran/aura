@@ -4602,6 +4602,23 @@ def _strip_unexpected_cjk_artifacts(user_message: str, reply_text: Any) -> str:
     return cleaned_chars if len(cleaned_chars) >= 24 else reply
 
 
+def _bound_stabilizer_generation_budget(requested_max_tokens: int) -> tuple[int, str]:
+    """Apply the unified memory policy before launching a repair generation."""
+    max_tokens = max(1, int(requested_max_tokens or 1))
+    try:
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        snapshot = get_memory_pressure_snapshot()
+        token_cap = getattr(snapshot, "max_token_cap", None)
+        if token_cap is not None:
+            max_tokens = max(1, min(max_tokens, int(token_cap)))
+        if bool(getattr(snapshot, "refuse_heavy_local_generation", False)):
+            return max_tokens, str(getattr(snapshot, "reason", "") or "critical_memory_pressure")
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        logger.debug("Stabilizer memory budget probe unavailable: %s", exc)
+    return max_tokens, ""
+
+
 async def _stabilize_user_facing_reply(user_message: str, reply_text: Any) -> str:
     frame = _build_aura_expression_frame(user_message)
     contract = frame.get("contract")
@@ -4886,7 +4903,16 @@ async def _stabilize_user_facing_reply(user_message: str, reply_text: Any) -> st
                 {"role": "system", "content": rewrite_system_prompt},
                 {"role": "user", "content": correction_prompt},
             ]
+            stabilizer_max_tokens, memory_block = _bound_stabilizer_generation_budget(
+                stabilizer_max_tokens
+            )
             try:
+                if memory_block:
+                    logger.warning(
+                        "Skipping stabilizer rewrite under memory pressure: %s",
+                        memory_block,
+                    )
+                    raise RuntimeError(f"stabilizer_rewrite_memory_pressure:{memory_block}")
                 # Shorter rewrite budget: 20s blocked the foreground lane long
                 # enough that the next user turn was already typed. 12s gives
                 # the warm 32B time to rewrite without making the chat feel
