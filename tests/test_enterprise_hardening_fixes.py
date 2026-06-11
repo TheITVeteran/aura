@@ -1501,7 +1501,14 @@ def test_strict_answer_contract_is_deterministic_and_cache_isolated():
     assert "AURA_HEALTH_WARM_LOCAL_TIERS" in gate_source
     assert 'statuses["brainstem"] = f"deferred:{deferral_reason}"' in gate_source
     assert 'context.setdefault("temperature", 0.0)' in gate_source
-    assert 'not bool(context.get("strict_answer_contract", False))' in gate_source
+    # The strict-contract micro budget (128) applies only to sealed
+    # <answer>-envelope prompts or when the caller pinned max_tokens;
+    # unpinned structured proof requests keep their computed budget.
+    assert "elif strict_proof_answer_request:" in gate_source
+    assert "strict_max_token_cap = None" in gate_source
+    assert (
+        "if strict_answer_contract and strict_max_token_cap is not None:" in gate_source
+    )
     assert '"strict_answer_contract": bool(kwargs.get("strict_answer_contract", False))' in client_source
     assert '"strict_value_contract": bool(kwargs.get("strict_value_contract", False))' in client_source
     assert 'def get_lane_status(self) -> dict[str, Any]:' in gate_source

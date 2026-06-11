@@ -4092,11 +4092,23 @@ class InferenceGate:
             or proof_evaluation_contract
             or operator_evidence_contract
         )
-        # not bool(context.get("strict_answer_contract", False))
-        strict_max_token_cap = 128
+        # Sealed proof prompts (<answer> envelope) get a micro budget so a
+        # one-word answer cannot ramble; a caller-pinned max_tokens always
+        # wins. But the contract also reaches structured proof requests
+        # (e.g. the repair loop asking for a full replacement file as
+        # JSON) — for those, an unconditional 128 default truncated every
+        # generation mid-JSON. Unpinned non-envelope requests now keep the
+        # budget computed below instead of collapsing to 128.
+        strict_max_token_cap: int | None = 128
         if strict_answer_contract:
             try:
-                strict_max_token_cap = max(1, int(context.get("max_tokens") or 128))
+                explicit_cap = context.get("max_tokens")
+                if explicit_cap:
+                    strict_max_token_cap = max(1, int(explicit_cap))
+                elif strict_proof_answer_request:
+                    strict_max_token_cap = 128
+                else:
+                    strict_max_token_cap = None
             except (TypeError, ValueError, OverflowError):
                 strict_max_token_cap = 128
 
@@ -4599,7 +4611,7 @@ class InferenceGate:
             context["max_tokens"] = max_tokens
             context["allow_tools"] = False
 
-        if strict_answer_contract:
+        if strict_answer_contract and strict_max_token_cap is not None:
             max_tokens = max(1, min(max_tokens, strict_max_token_cap))
             context["max_tokens"] = max_tokens
 
