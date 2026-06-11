@@ -548,10 +548,16 @@ class SafeMutationEvaluator:
                 diagnostics=diag,
             )
             diag.quarantine_path = str(entry)
-        except (RuntimeError, AttributeError, TypeError, ValueError):
-            # Quarantine failures must not change the outcome that the
-            # parent observed.  We swallow here so a malformed mutation
-            # cannot escalate via the quarantine layer.
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            diag.extra["quarantine_error"] = {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+            logger.warning(
+                "Mutation quarantine failed after %s outcome: %s",
+                diag.outcome.value,
+                exc,
+            )
             diag.quarantine_path = None
 
     # ------------------------------------------------------------------
@@ -562,7 +568,11 @@ class SafeMutationEvaluator:
         try:
             resource.setrlimit(resource.RLIMIT_AS, (bytes_limit, bytes_limit))
         except (ValueError, OSError) as _exc:
-            logger.debug("Suppressed %s in core.self_modification.mutation_safety: %s", type(_exc).__name__, _exc)
+            logger.debug(
+                "Mutation evaluator address-space rlimit unavailable: %s: %s",
+                type(_exc).__name__,
+                _exc,
+            )
         # CPU-time fence at 2x the wall-clock budget, in case wall-clock
         # measurement is unreliable (e.g. the host is suspended).
         try:
@@ -571,7 +581,11 @@ class SafeMutationEvaluator:
                 (int(self.timeout_seconds * 2) + 1, int(self.timeout_seconds * 2) + 2),
             )
         except (ValueError, OSError) as _exc:
-            logger.debug("Suppressed %s in core.self_modification.mutation_safety: %s", type(_exc).__name__, _exc)
+            logger.debug(
+                "Mutation evaluator CPU rlimit unavailable: %s: %s",
+                type(_exc).__name__,
+                _exc,
+            )
 
     @staticmethod
     def _safe_env() -> dict[str, str]:

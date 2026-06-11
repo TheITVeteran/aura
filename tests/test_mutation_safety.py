@@ -268,6 +268,30 @@ def test_passed_does_not_quarantine(evaluator):
     assert entries == []
 
 
+def test_quarantine_failure_is_visible_in_diagnostics():
+    class FailingQuarantine:
+        def quarantine(self, **_kwargs):
+            self.invoked = True
+            raise RuntimeError("quarantine disk unavailable")
+
+    quarantine = FailingQuarantine()
+    evaluator = SafeMutationEvaluator(
+        timeout_seconds=2.0,
+        memory_mb=128,
+        quarantine=quarantine,
+    )
+
+    diag = evaluator.evaluate("raise RuntimeError('candidate failed')\n")
+
+    assert quarantine.invoked is True
+    assert diag.outcome is MutationOutcome.RUNTIME_EXCEPTION
+    assert diag.quarantine_path is None
+    assert diag.extra["quarantine_error"] == {
+        "type": "RuntimeError",
+        "message": "quarantine disk unavailable",
+    }
+
+
 def test_import_free_mutations_skip_site_bootstrap():
     assert SafeMutationEvaluator._python_startup_flags("x = 1\n", None) == ["-S"]
 
