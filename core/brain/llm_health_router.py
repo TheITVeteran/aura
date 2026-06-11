@@ -69,13 +69,19 @@ logger = logging.getLogger("Brain.HealthRouter")
 # resource: callers either acquire a slot within the wait budget or get
 # a truthful saturation failure — stacking is the one outcome that can
 # never happen again.
-import threading as _threading
+import threading as _threading  # noqa: E402 - gate lives with its rationale block
 
 _GENERATION_GATE = _threading.BoundedSemaphore(
     max(1, int(os.environ.get("AURA_MAX_CONCURRENT_GENERATIONS", "2") or 2))
 )
+# Wait long enough to outlast one full serialized generation: gated
+# turns measure 31-46s live (2026-06-11), so the old 20s wait starved
+# any request arriving while both slots were mid-turn — external
+# validation's third coding repair died exactly that way while holding
+# an unused 240s budget. 75s covers one slow turn plus margin; callers
+# with shorter deadlines still bail via their own timeouts.
 _GENERATION_GATE_WAIT_S = float(
-    os.environ.get("AURA_GENERATION_GATE_WAIT_S", "20") or 20
+    os.environ.get("AURA_GENERATION_GATE_WAIT_S", "75") or 75
 )
 _GATE_SATURATION_RESULT = {
     "ok": False,
