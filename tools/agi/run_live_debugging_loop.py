@@ -20,6 +20,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core.governance_context import (
+    governance_runtime_active,
+    local_internal_governed_scope,
+)
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -73,22 +77,45 @@ class PatchProposal:
 PatchProvider = Callable[[DebugObservation], PatchProposal | Awaitable[PatchProposal | None] | None]
 
 
-async def run_terminal_command(cmd: list[str], cwd: Path) -> dict[str, Any]:
+async def run_terminal_command(
+    cmd: list[str], cwd: Path, timeout_s: float = 180.0
+) -> dict[str, Any]:
     """Execute a real terminal command inside the specified directory."""
     logger.info("Executing command: %s in %s", " ".join(cmd), cwd)
     try:
         env = os.environ.copy()
         env["PYTHONDONTWRITEBYTECODE"] = "1"
-        proc = await get_subprocess_gateway().spawn_async(
-            cmd,
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            offline_tooling=True,
-            source="proof_tooling:live_debugging_loop",
-        )
-        stdout, stderr = await proc.communicate()
+        # Offline claim is only honest when this loop runs as a CLI proof
+        # tool; embedded in a live runtime (external validation battery)
+        # the spawn must carry a local-internal receipt or the gateway
+        # rightly denies it and every repair round fails before pytest
+        # can run. Same contract as local_sandbox and the server spawn.
+        with local_internal_governed_scope(
+            "live_debugging_loop.run_terminal_command",
+            domain="tool_execution",
+        ):
+            proc = await get_subprocess_gateway().spawn_async(
+                cmd,
+                cwd=str(cwd),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+                offline_tooling=not governance_runtime_active(),
+                source="proof_tooling:live_debugging_loop",
+            )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout_s
+            )
+        except TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            logger.error("Command timed out after %.0fs: %s", timeout_s, " ".join(cmd))
+            return {
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": f"command timed out after {timeout_s:.0f}s",
+            }
         return {
             "exit_code": proc.returncode,
             "stdout": stdout.decode("utf-8", errors="replace"),
