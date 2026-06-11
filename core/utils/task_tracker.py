@@ -239,6 +239,21 @@ class TaskTracker:
         supervision: str,
         source: str,
     ) -> None:
+        # The tracked set is typed asyncio.Task and shutdown relies on
+        # .cancel()/awaitability. A non-Task slipping in (observed: a test
+        # double returned by a monkeypatched asyncio.create_task, with
+        # done() pinned False) poisons the global tracker permanently --
+        # every later shutdown raised AttributeError and erred ten
+        # unrelated teardowns in the chunked suite. Refuse loudly.
+        if not isinstance(task, asyncio.Task):
+            record_degradation(
+                "task_tracker",
+                TypeError(f"refused non-Task attach: {type(task).__name__}"),
+                severity="warning",
+                action="ignored non-Task object handed to tracker",
+                extra={"source": source, "name": str(name or "")},
+            )
+            return
         task_name = name or task.get_name()
         task_id = id(task)
         record = self._records.get(task_id)
@@ -350,7 +365,7 @@ class TaskTracker:
         """Number of currently active (not done) tasks."""
         return len(self.tasks)
 
-    async def shutdown(self, timeout: float = 5.0):
+    async def shutdown(self, timeout: float = 5.0):  # noqa: ASYNC109 - forwarded to asyncio.wait.
         """Cancel and wait for all tracked tasks.
 
         Tasks marked ``_aura_protected`` are cancelled after ordinary tracked
