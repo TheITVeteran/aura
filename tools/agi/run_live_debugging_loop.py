@@ -149,24 +149,28 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
 
 
 async def _default_patch_provider(observation: DebugObservation) -> PatchProposal | None:
-    """Ask the canonical cognitive engine for a repair proposal."""
+    """Ask the governed model router for a structured repair proposal.
+
+    This intentionally uses the router's proof-repair lane rather than a
+    full conversational cognitive cycle: the dialogue stack (persona,
+    reliability contracts, answer-quality gates, self-critique) is built
+    to judge conversational replies and rejects a raw JSON patch as a
+    non-answer. purpose="proof_evaluation_repair" is the recognized
+    isolated proof lane, still governed at the router/gate.
+    """
     try:
-        from core.container import ServiceContainer
+        from core.brain.llm_health_router import get_llm_router
     except (ImportError, AttributeError, RuntimeError):
         return None
 
     try:
-        engine = ServiceContainer.get("cognitive_engine", default=None)
+        router = get_llm_router()
     except _COMMAND_RECOVERABLE_ERRORS:
-        engine = None
-    if engine is None or not hasattr(engine, "think"):
+        router = None
+    if router is None or not hasattr(router, "think"):
         return None
 
-    prompt = (
-        "You are repairing a small local Python repository. Return only JSON "
-        "with keys path, content, rationale. The content must be the complete "
-        "replacement text for the file you edit. Do not invent test results; "
-        "the runner will apply your patch and rerun pytest.\n\n"
+    body = (
         f"Repository: {observation.repo_path}\n"
         f"Source file: {observation.code_file.relative_to(observation.repo_path)}\n"
         f"Test file: {observation.test_file.relative_to(observation.repo_path)}\n\n"
@@ -175,15 +179,37 @@ async def _default_patch_provider(observation: DebugObservation) -> PatchProposa
         f"Source content:\n```python\n{observation.code_content}\n```\n\n"
         f"Test content:\n```python\n{observation.test_content}\n```"
     )
-    # Budget must cover the generation gate queue (healthy gated turns
-    # measure 31-35s and the gate serializes at 2) plus the router's own
-    # 180s deliberate-lane budget; 60s predated the gate and cancelled
-    # generations mid-flight while they waited their turn.
-    thought = await asyncio.wait_for(
-        engine.think(objective=prompt, origin="external_live_debugging_loop"),
-        timeout=240.0,
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are repairing a small local Python repository. Return "
+                "only JSON with keys path, content, rationale. The content "
+                "must be the complete replacement text for the file you "
+                "edit. Do not invent test results; the runner will apply "
+                "your patch and rerun pytest."
+            ),
+        },
+        {"role": "user", "content": body},
+    ]
+    # Budget covers the generation gate queue (gated turns measure
+    # 31-35s, serialized at 2) plus a full-file generation at 32B speeds.
+    content = str(
+        await asyncio.wait_for(
+            router.think(
+                messages=messages,
+                origin="external_live_debugging_loop",
+                purpose="proof_evaluation_repair",
+                foreground_request=True,
+                protected_foreground_lane=True,
+                allow_cloud_fallback=False,
+                temperature=0.2,
+                max_tokens=4096,
+            ),
+            timeout=240.0,
+        )
+        or ""
     )
-    content = str(getattr(thought, "content", "") or "")
     payload = _extract_json_object(content)
     if not payload:
         return None
