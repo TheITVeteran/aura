@@ -1,8 +1,11 @@
 import asyncio
 import contextlib
+import ctypes
 import logging
 import os
+import sys
 from dataclasses import asdict, dataclass
+from typing import Any
 
 import psutil
 
@@ -18,6 +21,52 @@ _MEMORY_MONITOR_RECOVERABLE_ERRORS = (
     psutil.Error,
 )
 
+_GIB = float(1024**3)
+
+
+class _DarwinRUsageInfoV4(ctypes.Structure):
+    _fields_ = [
+        ("ri_uuid", ctypes.c_ubyte * 16),
+        ("ri_user_time", ctypes.c_uint64),
+        ("ri_system_time", ctypes.c_uint64),
+        ("ri_pkg_idle_wkups", ctypes.c_uint64),
+        ("ri_interrupt_wkups", ctypes.c_uint64),
+        ("ri_pageins", ctypes.c_uint64),
+        ("ri_wired_size", ctypes.c_uint64),
+        ("ri_resident_size", ctypes.c_uint64),
+        ("ri_phys_footprint", ctypes.c_uint64),
+        ("ri_proc_start_abstime", ctypes.c_uint64),
+        ("ri_proc_exit_abstime", ctypes.c_uint64),
+        ("ri_child_user_time", ctypes.c_uint64),
+        ("ri_child_system_time", ctypes.c_uint64),
+        ("ri_child_pkg_idle_wkups", ctypes.c_uint64),
+        ("ri_child_interrupt_wkups", ctypes.c_uint64),
+        ("ri_child_pageins", ctypes.c_uint64),
+        ("ri_child_elapsed_abstime", ctypes.c_uint64),
+        ("ri_diskio_bytesread", ctypes.c_uint64),
+        ("ri_diskio_byteswritten", ctypes.c_uint64),
+        ("ri_cpu_time_qos_default", ctypes.c_uint64),
+        ("ri_cpu_time_qos_maintenance", ctypes.c_uint64),
+        ("ri_cpu_time_qos_background", ctypes.c_uint64),
+        ("ri_cpu_time_qos_utility", ctypes.c_uint64),
+        ("ri_cpu_time_qos_legacy", ctypes.c_uint64),
+        ("ri_cpu_time_qos_user_initiated", ctypes.c_uint64),
+        ("ri_cpu_time_qos_user_interactive", ctypes.c_uint64),
+        ("ri_billed_system_time", ctypes.c_uint64),
+        ("ri_serviced_system_time", ctypes.c_uint64),
+        ("ri_logical_writes", ctypes.c_uint64),
+        ("ri_lifetime_max_phys_footprint", ctypes.c_uint64),
+        ("ri_instructions", ctypes.c_uint64),
+        ("ri_cycles", ctypes.c_uint64),
+        ("ri_billed_energy", ctypes.c_uint64),
+        ("ri_serviced_energy", ctypes.c_uint64),
+    ]
+
+
+_DARWIN_RUSAGE_INFO_V4 = 4
+_DARWIN_LIBPROC: Any | None = None
+_DARWIN_LIBPROC_UNAVAILABLE = False
+
 
 def _clamp_pressure(value: float) -> int:
     return max(0, min(100, int(value)))
@@ -30,12 +79,59 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def _darwin_phys_footprint_bytes(pid: int) -> int:
+    """Return macOS phys_footprint when available.
+
+    Activity Monitor's "Memory" column tracks process footprint more closely
+    than plain RSS for unified-memory-heavy MLX workers. RSS remains the
+    portable fallback, but on Darwin this catches the value that actually
+    forced the user's desktop into application-memory pressure.
+    """
+
+    global _DARWIN_LIBPROC, _DARWIN_LIBPROC_UNAVAILABLE
+    if sys.platform != "darwin" or _DARWIN_LIBPROC_UNAVAILABLE:
+        return 0
+    try:
+        if _DARWIN_LIBPROC is None:
+            _DARWIN_LIBPROC = ctypes.CDLL("/usr/lib/libproc.dylib")
+            _DARWIN_LIBPROC.proc_pid_rusage.argtypes = [
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_void_p,
+            ]
+            _DARWIN_LIBPROC.proc_pid_rusage.restype = ctypes.c_int
+        info = _DarwinRUsageInfoV4()
+        rc = _DARWIN_LIBPROC.proc_pid_rusage(
+            int(pid),
+            _DARWIN_RUSAGE_INFO_V4,
+            ctypes.byref(info),
+        )
+        if rc != 0:
+            return 0
+        return int(max(info.ri_phys_footprint, info.ri_lifetime_max_phys_footprint))
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, ctypes.ArgumentError):
+        _DARWIN_LIBPROC_UNAVAILABLE = True
+        return 0
+
+
+def _process_memory_bytes_from_process(process: psutil.Process) -> int:
+    rss_bytes = int(getattr(process.memory_info(), "rss", 0) or 0)
+    return max(rss_bytes, _darwin_phys_footprint_bytes(process.pid))
+
+
+def process_memory_bytes(pid: int | None = None) -> int:
+    """Return the strongest available per-process memory pressure estimate."""
+
+    process = psutil.Process(os.getpid() if pid is None else int(pid))
+    return _process_memory_bytes_from_process(process)
+
+
 def _process_tree_rss_gb() -> float:
-    """Return RSS for Aura plus child workers such as MLX inference processes."""
+    """Return memory footprint for Aura plus child MLX inference workers."""
 
     def _rss_bytes(process: psutil.Process) -> int:
         try:
-            return int(getattr(process.memory_info(), "rss", 0) or 0)
+            return _process_memory_bytes_from_process(process)
         except _MEMORY_MONITOR_RECOVERABLE_ERRORS:
             return 0
 
@@ -47,7 +143,7 @@ def _process_tree_rss_gb() -> float:
         children = []
     for child in children:
         total_bytes += _rss_bytes(child)
-    return float(total_bytes) / float(1024**3)
+    return float(total_bytes) / _GIB
 
 
 @dataclass(frozen=True)

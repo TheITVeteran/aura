@@ -1016,9 +1016,9 @@ class WorkerMemorySentinel(threading.Thread):
 
     def _sample_rss_gb(self) -> float:
         try:
-            import psutil
+            from core.utils.memory_monitor import process_memory_bytes
 
-            return float(psutil.Process(self._pid).memory_info().rss) / float(1024**3)
+            return float(process_memory_bytes(self._pid)) / float(1024**3)
         except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError):
             return 0.0
 

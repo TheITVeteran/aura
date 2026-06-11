@@ -1024,7 +1024,7 @@ def _install_systemwide_memory_protection() -> None:
             compute_mlx_memory_limit(int(total_mb * 1024 * 1024)) / float(1024**3),
         )
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
-        default_mlx_limit_gb = 40.0
+        default_mlx_limit_gb = 34.0
         record_degradation(
             _AURA_MAIN_DEGRADATION_KEY,
             exc,

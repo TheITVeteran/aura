@@ -208,7 +208,7 @@ def test_compute_mlx_memory_limit_uses_desktop_safe_active_memory_ceiling(monkey
     total = 64 * 1024 ** 3
     limit = compute_mlx_memory_limit(total)
 
-    assert limit == int(total * 0.62)
+    assert limit == int(total * 0.52)
 
 
 def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
@@ -225,7 +225,7 @@ def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
     assert env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] == "0.16"
     assert env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] == "10"
     assert env["AURA_FOREGROUND_CHAT_MAX_TOKENS"] == "3072"
-    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "40"
+    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "33"
 
 
 def test_live_boot_proof_preserves_operator_mlx_limit(monkeypatch):

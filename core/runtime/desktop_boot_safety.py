@@ -67,9 +67,9 @@ def compute_mlx_memory_limit(total_ram_bytes: int, env: Mapping[str, str] | None
 
     total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
     if desktop_safe_boot_enabled(env):
-        ratio = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_RATIO", "0.62"))
-        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "40"))
-        floor_gb = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB", "24"))
+        ratio = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_RATIO", "0.52"))
+        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "34"))
+        floor_gb = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB", "20"))
         limit = min(int(total_ram_bytes * ratio), int(hard_cap_gb * _GIB))
         return max(int(floor_gb * _GIB), limit)
 

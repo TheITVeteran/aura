@@ -72,9 +72,9 @@ def build_safe_boot_env(base_env: dict[str, str] | None = None) -> dict[str, str
             from core.runtime.desktop_boot_safety import compute_mlx_memory_limit
 
             limit_bytes = compute_mlx_memory_limit(psutil.virtual_memory().total, env)
-            limit_gb = max(1.0, min(40.0, limit_bytes / float(1024 ** 3)))
+            limit_gb = max(1.0, min(34.0, limit_bytes / float(1024 ** 3)))
         except (ImportError, RuntimeError, TypeError, ValueError, OSError, psutil.Error):
-            limit_gb = 40.0
+            limit_gb = 34.0
         env["AURA_MLX_MEMORY_LIMIT_GB"] = f"{limit_gb:.0f}"
     return env
 
@@ -119,11 +119,13 @@ class LiveProof:
         if self.proc is None:
             return 0.0
         try:
+            from core.utils.memory_monitor import process_memory_bytes
+
             root = psutil.Process(self.proc.pid)
-            total = root.memory_info().rss
+            total = process_memory_bytes(root.pid)
             for child in root.children(recursive=True):
                 try:
-                    total += child.memory_info().rss
+                    total += process_memory_bytes(child.pid)
                 except psutil.Error:
                     continue
             mb = total / (1024 * 1024)
