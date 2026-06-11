@@ -175,9 +175,13 @@ async def _default_patch_provider(observation: DebugObservation) -> PatchProposa
         f"Source content:\n```python\n{observation.code_content}\n```\n\n"
         f"Test content:\n```python\n{observation.test_content}\n```"
     )
+    # Budget must cover the generation gate queue (healthy gated turns
+    # measure 31-35s and the gate serializes at 2) plus the router's own
+    # 180s deliberate-lane budget; 60s predated the gate and cancelled
+    # generations mid-flight while they waited their turn.
     thought = await asyncio.wait_for(
         engine.think(objective=prompt, origin="external_live_debugging_loop"),
-        timeout=60.0,
+        timeout=240.0,
     )
     content = str(getattr(thought, "content", "") or "")
     payload = _extract_json_object(content)
@@ -294,7 +298,7 @@ async def run_debugging_loop(
     try:
         proposal = await _call_patch_provider(provider, observation)
     except _COMMAND_RECOVERABLE_ERRORS as exc:
-        logger.error("Patch provider failed: %s", exc)
+        logger.error("Patch provider failed: %s: %s", type(exc).__name__, exc)
         return {
             "ok": False,
             "error": f"Patch provider failed: {type(exc).__name__}: {exc}",
