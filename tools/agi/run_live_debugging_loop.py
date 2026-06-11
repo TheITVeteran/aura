@@ -253,6 +253,13 @@ async def run_debugging_loop(
     patch_provider: PatchProvider | None = None,
 ) -> dict[str, Any]:
     """Run a complete diagnostic, patching, and verification loop on the target repository."""
+    # Resolve once: macOS tempdirs live under the /var → /private/var
+    # symlink, and _validate_patch_target returns resolved paths. Mixing
+    # resolved and unresolved bases made patch_target.relative_to(repo_path)
+    # raise ValueError right after the patch write — an exception that
+    # asyncio.run never surfaced because runtime teardown hung on
+    # cancellation-ignoring loops. Three batteries froze on this line.
+    repo_path = await asyncio.to_thread(lambda: Path(repo_path).resolve())
     logger.info("Starting live debugging loop for repository: %s", repo_path)
     
     if not await asyncio.to_thread(_path_exists, repo_path):
