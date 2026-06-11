@@ -2124,9 +2124,9 @@ class InferenceGate:
         adapted = int(adapted * phi_scale)
 
         try:
-            foreground_cap = int(os.environ.get("AURA_FOREGROUND_CHAT_MAX_TOKENS", "8192"))
+            foreground_cap = int(os.environ.get("AURA_FOREGROUND_CHAT_MAX_TOKENS", "3072"))
         except (TypeError, ValueError):
-            foreground_cap = 8192
+            foreground_cap = 3072
         return min(max(512, foreground_cap), adapted)
 
     @staticmethod

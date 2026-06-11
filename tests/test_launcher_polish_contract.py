@@ -34,8 +34,8 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "AURA_DEFERRED_CORTEX_PREWARM" in swift
     assert "AURA_SAFE_BOOT_METAL_CACHE_RATIO" in swift
     assert "AURA_SAFE_BOOT_METAL_CACHE_CAP_GB" in swift
-    assert 'env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] = "0.30"' in swift
-    assert 'env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] = "18"' in swift
+    assert 'env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] = "0.16"' in swift
+    assert 'env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] = "10"' in swift
     assert "AURA_EXTERNAL_GUI_OWNER" in swift
     assert "export AURA_EXTERNAL_GUI_OWNER=1" in swift
     assert "spawnDetachedViaShell" in swift
@@ -60,8 +60,8 @@ def test_launch_script_supports_gui_window_mode():
     assert "AURA_DEFERRED_CORTEX_PREWARM" in shell
     assert "AURA_ENABLE_PERMANENT_SWARM:=0" in shell
     assert "AURA_EXTERNAL_GUI_OWNER:=1" in shell
-    assert "AURA_SAFE_BOOT_METAL_CACHE_RATIO:=0.30" in shell
-    assert "AURA_SAFE_BOOT_METAL_CACHE_CAP_GB:=18" in shell
+    assert "AURA_SAFE_BOOT_METAL_CACHE_RATIO:=0.16" in shell
+    assert "AURA_SAFE_BOOT_METAL_CACHE_CAP_GB:=10" in shell
     assert "resolve_launch_log()" in shell
     assert "ACTIVE_LAUNCH_LOG" in shell
     assert "aura-desktop-launch.log" in shell

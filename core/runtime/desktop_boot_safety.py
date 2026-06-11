@@ -37,9 +37,9 @@ def compute_mlx_cache_limit(total_ram_bytes: int, env: Mapping[str, str] | None 
     total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
 
     if desktop_safe_boot_enabled(env):
-        ratio = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_RATIO", "0.30"))
-        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", "18"))
-        floor_gb = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_FLOOR_GB", "8"))
+        ratio = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_RATIO", "0.16"))
+        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", "10"))
+        floor_gb = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_FLOOR_GB", "4"))
         limit = int(total_ram_bytes * ratio)
         limit = min(limit, int(hard_cap_gb * _GIB))
         return max(int(floor_gb * _GIB), limit)
@@ -47,6 +47,35 @@ def compute_mlx_cache_limit(total_ram_bytes: int, env: Mapping[str, str] | None 
     ratio = float(env.get("AURA_METAL_CACHE_RATIO", "0.75"))
     limit = int(total_ram_bytes * ratio)
     hard_cap_gb = float(env.get("AURA_METAL_CACHE_CAP_GB", "0"))
+    if hard_cap_gb > 0:
+        limit = min(limit, int(hard_cap_gb * _GIB))
+    return max(8 * _GIB, limit)
+
+
+def compute_mlx_memory_limit(total_ram_bytes: int, env: Mapping[str, str] | None = None) -> int:
+    """Return the active MLX memory ceiling for model/KV allocations."""
+
+    env = env or os.environ
+    configured = str(env.get("AURA_MLX_MEMORY_LIMIT_GB", "") or "").strip()
+    if configured:
+        try:
+            configured_gb = float(configured)
+        except (TypeError, ValueError, OverflowError):
+            configured_gb = 0.0
+        if configured_gb > 0.0:
+            return int(configured_gb * _GIB)
+
+    total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
+    if desktop_safe_boot_enabled(env):
+        ratio = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_RATIO", "0.62"))
+        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "40"))
+        floor_gb = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB", "24"))
+        limit = min(int(total_ram_bytes * ratio), int(hard_cap_gb * _GIB))
+        return max(int(floor_gb * _GIB), limit)
+
+    ratio = float(env.get("AURA_MLX_MEMORY_RATIO", "0.72"))
+    limit = int(total_ram_bytes * ratio)
+    hard_cap_gb = float(env.get("AURA_MLX_MEMORY_CAP_GB", "0"))
     if hard_cap_gb > 0:
         limit = min(limit, int(hard_cap_gb * _GIB))
     return max(8 * _GIB, limit)

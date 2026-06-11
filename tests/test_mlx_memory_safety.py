@@ -62,8 +62,24 @@ def test_worker_memory_sentinel_uses_bounded_heavy_lane_limits(monkeypatch):
     sentinel_32b = WorkerMemorySentinel(writer, "/models/Qwen2.5-32B-Instruct-8bit")
     sentinel_72b = WorkerMemorySentinel(writer, "/models/Qwen2.5-72B-Instruct-4bit")
 
-    assert sentinel_32b._worker_rss_limit_gb(64.0) <= 40.0
-    assert sentinel_72b._worker_rss_limit_gb(64.0) <= 44.0
+    assert sentinel_32b._worker_rss_limit_gb(64.0) <= 36.0
+    assert sentinel_72b._worker_rss_limit_gb(64.0) <= 40.0
 
     monkeypatch.setenv("AURA_MLX_WORKER_RSS_LIMIT_GB", "44")
     assert sentinel_32b._worker_rss_limit_gb(64.0) == 44.0
+
+
+def test_desktop_safe_boot_disables_primary_prompt_cache_retention(monkeypatch):
+    from core.brain.llm.mlx_worker import _prompt_cache_entry_budget_for_model
+
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+
+    assert _prompt_cache_entry_budget_for_model("/models/Qwen2.5-32B-Instruct-8bit") == 0
+
+
+def test_clean_user_surface_bypasses_worker_prompt_cache():
+    from core.brain.llm.mlx_worker import _job_requires_prompt_cache_bypass
+
+    assert _job_requires_prompt_cache_bypass({"clean_user_surface_contract": True}) is True
+    assert _job_requires_prompt_cache_bypass({"proof_evaluation_contract": True}) is True
+    assert _job_requires_prompt_cache_bypass({"action": "generate"}) is False

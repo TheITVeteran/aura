@@ -14,6 +14,7 @@ from core.container import ServiceContainer
 from core.runtime.boot_safety import main_process_camera_policy, uvloop_allowed
 from core.runtime.desktop_boot_safety import (
     compute_mlx_cache_limit,
+    compute_mlx_memory_limit,
     desktop_safe_boot_enabled,
     inprocess_mlx_metal_enabled,
 )
@@ -197,7 +198,17 @@ def test_compute_mlx_cache_limit_uses_safer_cap_for_desktop_safe_boot(monkeypatc
     total = 64 * 1024 ** 3
     limit = compute_mlx_cache_limit(total)
 
-    assert limit == 18 * 1024 ** 3
+    assert limit == 10 * 1024 ** 3
+
+
+def test_compute_mlx_memory_limit_uses_desktop_safe_active_memory_ceiling(monkeypatch):
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    monkeypatch.delenv("AURA_MLX_MEMORY_LIMIT_GB", raising=False)
+
+    total = 64 * 1024 ** 3
+    limit = compute_mlx_memory_limit(total)
+
+    assert limit == int(total * 0.62)
 
 
 def test_compute_mlx_cache_limit_defaults_to_standard_ratio_when_not_safe(monkeypatch):

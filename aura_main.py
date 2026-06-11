@@ -1003,7 +1003,25 @@ def _install_systemwide_memory_protection() -> None:
     # (platform_root defers exactly to protect spawn children) and is
     # the prime suspect in a silent native death mid-generation during
     # live proof round 5. Workers apply the limit on their side.
-    mlx_gb = str(os.environ.get("AURA_MLX_MEMORY_LIMIT_GB", "24") or "24")
+    try:
+        from core.runtime.desktop_boot_safety import compute_mlx_memory_limit
+
+        default_mlx_limit_gb = max(
+            8.0,
+            compute_mlx_memory_limit(int(total_mb * 1024 * 1024)) / float(1024**3),
+        )
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        default_mlx_limit_gb = 40.0
+        record_degradation(
+            _AURA_MAIN_DEGRADATION_KEY,
+            exc,
+            action="used conservative MLX worker memory ceiling after policy computation failed",
+            severity="warning",
+        )
+    mlx_gb = str(
+        os.environ.get("AURA_MLX_MEMORY_LIMIT_GB", f"{default_mlx_limit_gb:.0f}")
+        or f"{default_mlx_limit_gb:.0f}"
+    )
     os.environ.setdefault("AURA_MLX_MEMORY_LIMIT_GB", mlx_gb)
 
     if str(os.environ.get("AURA_MEMORY_SENTINEL", "1")).strip().lower() not in {"0", "false", "no", "off"}:

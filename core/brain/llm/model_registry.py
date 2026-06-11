@@ -31,7 +31,7 @@ FALLBACK_ENDPOINT = "Reflex"
 # representation instead of doing a single pass through all layers.
 RECURRENT_DEPTH_DEFAULTS = {
     PRIMARY_ENDPOINT:   2,   # Cortex (32B) — 2 loops, meaningful improvement
-    DEEP_ENDPOINT:      2,   # Solver (72B) — 2 loops, deep reasoning benefits most
+    DEEP_ENDPOINT:      1,   # Solver (72B) — standard pass by default on 64GB-class desktops
     BRAINSTEM_ENDPOINT: 1,   # Brainstem (7B) — standard pass, too small to benefit
     FALLBACK_ENDPOINT:  1,   # Reflex (1.5B) — standard pass, speed is priority
 }

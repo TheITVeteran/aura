@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from core.runtime.desktop_boot_safety import compute_mlx_cache_limit
+from core.runtime.desktop_boot_safety import compute_mlx_cache_limit, compute_mlx_memory_limit
 from core.runtime.errors import record_degradation
 
 from .model_registry import resolve_personality_adapter
@@ -84,6 +84,18 @@ def _surface_generation_contract_enabled(job: dict[str, Any]) -> bool:
     return bool(
         job.get("clean_user_surface_contract", False)
         or job.get("health_probe", False)
+        or job.get("operator_evidence_contract", False)
+    )
+
+
+def _job_requires_prompt_cache_bypass(job: dict[str, Any]) -> bool:
+    """Return True for jobs where KV-cache retention would hurt reliability."""
+
+    return bool(
+        job.get("clean_user_surface_contract", False)
+        or job.get("strict_answer_contract", False)
+        or job.get("strict_value_contract", False)
+        or job.get("proof_evaluation_contract", False)
         or job.get("operator_evidence_contract", False)
     )
 
@@ -853,10 +865,14 @@ def _should_emit_generation_progress(
 
 
 def _prompt_cache_entry_budget_for_model(model_path: str) -> int:
+    from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
+
     lowered = os.path.basename(str(model_path or "")).lower()
     if any(token in lowered for token in ("72b", "solver")):
         return 0
     if any(token in lowered for token in ("32b", "cortex", "zenith")):
+        if desktop_safe_boot_enabled():
+            return 0
         return 2
     if any(token in lowered for token in ("14b", "7b", "brainstem")):
         return 6
@@ -990,11 +1006,11 @@ class WorkerMemorySentinel(threading.Thread):
                 pass
         if any(token in self.model_path.lower() for token in ("72b", "solver")):
             if total_gb < 80.0:
-                return min(44.0, max(36.0, total_gb * 0.66))
+                return min(40.0, max(34.0, total_gb * 0.60))
             return min(64.0, max(48.0, total_gb * 0.55))
         if any(token in self.model_path.lower() for token in ("32b", "cortex", "zenith")):
             if total_gb < 80.0:
-                return min(40.0, max(30.0, total_gb * 0.62))
+                return min(36.0, max(28.0, total_gb * 0.56))
             return min(56.0, max(42.0, total_gb * 0.48))
         return min(24.0, max(10.0, total_gb * 0.45))
 
@@ -1429,6 +1445,9 @@ def _mlx_worker_loop(
             limit = compute_mlx_cache_limit(total_ram)
             mx.set_cache_limit(limit)
             logger.info("Metal cache limit set to %sMB", limit // (1024**2))
+            memory_limit = compute_mlx_memory_limit(total_ram)
+            mx.set_memory_limit(memory_limit)
+            logger.info("MLX active memory limit set to %sMB", memory_limit // (1024**2))
         except (ImportError, OSError, RuntimeError, AttributeError) as e:
             _record_mlx_degradation(
                 e,
@@ -1437,7 +1456,9 @@ def _mlx_worker_loop(
             )
             try:
                 mx.metal.set_cache_limit(1024 * 1024 * 1024 * 24)
-            except (AttributeError, RuntimeError) as fallback_exc:
+                if hasattr(mx, "set_memory_limit"):
+                    mx.set_memory_limit(1024 * 1024 * 1024 * 40)
+            except (AttributeError, RuntimeError, ValueError) as fallback_exc:
                 _record_mlx_degradation(
                     fallback_exc,
                     action="continued without explicit Metal cache limit after fallback failed",
@@ -1685,20 +1706,9 @@ def _mlx_worker_loop(
                 proof_evaluation_contract = bool(job.get("proof_evaluation_contract", False))
                 operator_evidence_contract = bool(job.get("operator_evidence_contract", False))
                 # disable_prompt_cache = bool(job.get("disable_prompt_cache", False)) or strict_answer_contract
-                disable_prompt_cache = (
-                    bool(job.get("disable_prompt_cache", False))
-                    or strict_answer_contract
-                    or strict_value_contract
-                    or proof_evaluation_contract
-                    or operator_evidence_contract
-                )
-                clear_prompt_cache = (
-                    bool(job.get("clear_prompt_cache", False))
-                    or strict_answer_contract
-                    or strict_value_contract
-                    or proof_evaluation_contract
-                    or operator_evidence_contract
-                )
+                prompt_cache_bypass = _job_requires_prompt_cache_bypass(job)
+                disable_prompt_cache = bool(job.get("disable_prompt_cache", False)) or prompt_cache_bypass
+                clear_prompt_cache = bool(job.get("clear_prompt_cache", False)) or prompt_cache_bypass
                 if clear_prompt_cache and prompt_cache_lru is not None:
                     prompt_cache_lru.clear()
 
