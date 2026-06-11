@@ -4224,6 +4224,73 @@ _CAPABILITY_EXAMPLE_PRIORITY = {
 }
 
 
+_CAPABILITY_CATALOG_MAX_ITEMS = 256
+_CAPABILITY_CATALOG_READ_BUDGET_S = 0.35
+
+
+def _capability_catalog_memory_block_reason() -> str:
+    try:
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        snapshot = get_memory_pressure_snapshot()
+        if bool(getattr(snapshot, "refuse_heavy_local_generation", False)):
+            return str(getattr(snapshot, "reason", "") or "critical_memory_pressure")
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        logger.debug("Capability catalog memory probe unavailable: %s", exc)
+    return ""
+
+
+def _bounded_capability_catalog_items(
+    raw_catalog: Any,
+    *,
+    started_at: float,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Return a small catalog sample without materializing unbounded registries."""
+    entries: list[dict[str, Any]] = []
+    truncated = False
+    if raw_catalog is None:
+        return entries, truncated
+
+    try:
+        if isinstance(raw_catalog, dict):
+            iterator = iter(raw_catalog.items())
+            legacy_mapping = True
+        else:
+            iterator = iter(raw_catalog)
+            legacy_mapping = False
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        logger.debug("Capability catalog is not iterable: %s", exc)
+        return entries, truncated
+
+    for index, item in enumerate(iterator):
+        if index >= _CAPABILITY_CATALOG_MAX_ITEMS:
+            truncated = True
+            break
+        if time.monotonic() - started_at > _CAPABILITY_CATALOG_READ_BUDGET_S:
+            truncated = True
+            break
+
+        if legacy_mapping:
+            name, value = item
+            if isinstance(value, dict):
+                entries.append(
+                    {
+                        "name": name,
+                        "available": str(value.get("status") or "").lower() != "unavailable",
+                        "description": value.get("description") or "",
+                        "route_class": value.get("route_class") or "",
+                        "risk_class": value.get("risk_class") or "",
+                        "effect_scope": value.get("effect_scope") or "",
+                    }
+                )
+            continue
+
+        if isinstance(item, dict):
+            entries.append(item)
+
+    return entries, truncated
+
+
 def _catalog_category_for_tool(item: dict[str, Any]) -> str:
     name = str(item.get("name") or "").strip().lower()
     if name in _CAPABILITY_CATEGORY_EXACT_SKILLS:
@@ -4245,29 +4312,27 @@ def _catalog_category_for_tool(item: dict[str, Any]) -> str:
     return "specialized governed skills"
 
 
-def _read_capability_catalog_snapshot() -> tuple[int, dict[str, list[str]], bool]:
+def _read_capability_catalog_snapshot() -> tuple[int, dict[str, list[str]], bool, bool]:
     categories: dict[str, list[str]] = {}
     available_count = 0
     governance_available = _runtime_tool_governance_available()
+    truncated = False
+    started_at = time.monotonic()
+    memory_block = _capability_catalog_memory_block_reason()
+    if memory_block:
+        logger.warning(
+            "Skipping optional capability catalog read under memory pressure: %s",
+            memory_block,
+        )
+        return available_count, categories, governance_available, True
     try:
         capability_engine = ServiceContainer.get("capability_engine", default=None)
-        catalog: list[dict[str, Any]] = []
+        raw_catalog: Any = None
         if capability_engine is not None and hasattr(capability_engine, "get_tool_catalog"):
-            catalog = list(capability_engine.get_tool_catalog(include_inactive=True) or [])
+            raw_catalog = capability_engine.get_tool_catalog(include_inactive=True)
         elif capability_engine is not None and hasattr(capability_engine, "get_catalog"):
-            legacy_catalog = capability_engine.get_catalog(include_inactive=True) or {}
-            if isinstance(legacy_catalog, dict):
-                catalog = [
-                    {
-                        "name": name,
-                        "available": isinstance(value, dict)
-                        and str(value.get("status") or "").lower() != "unavailable",
-                        "description": "",
-                        "route_class": value.get("route_class") if isinstance(value, dict) else "",
-                        "risk_class": value.get("risk_class") if isinstance(value, dict) else "",
-                    }
-                    for name, value in legacy_catalog.items()
-                ]
+            raw_catalog = capability_engine.get_catalog(include_inactive=True) or {}
+        catalog, truncated = _bounded_capability_catalog_items(raw_catalog, started_at=started_at)
 
         for item in catalog:
             if not isinstance(item, dict) or not bool(item.get("available")):
@@ -4288,11 +4353,11 @@ def _read_capability_catalog_snapshot() -> tuple[int, dict[str, list[str]], bool
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Capability catalog snapshot unavailable: %s", exc)
-    return available_count, categories, governance_available
+    return available_count, categories, governance_available, truncated
 
 
 def _build_grounded_capability_inventory_reply(user_message: str) -> str:
-    available_count, categories, governance_available = _read_capability_catalog_snapshot()
+    available_count, categories, governance_available, truncated = _read_capability_catalog_snapshot()
     ordered_labels = [label for label, _ in _CAPABILITY_CATEGORY_KEYWORDS if label in categories]
     ordered_labels.extend(label for label in categories if label not in ordered_labels)
 
@@ -4312,7 +4377,12 @@ def _build_grounded_capability_inventory_reply(user_message: str) -> str:
         if governance_available
         else "The governance probe is not currently green, so I should describe capabilities but fail closed on consequential execution until it is healthy."
     )
-    count_text = f"{available_count} available governed skill surfaces" if available_count else "the registered governed skill surfaces"
+    if available_count and truncated:
+        count_text = f"at least {available_count} available governed skill surfaces"
+    elif available_count:
+        count_text = f"{available_count} available governed skill surfaces"
+    else:
+        count_text = "the registered governed skill surfaces"
 
     reply = (
         f"I can use {count_text} through Aura's governed runtime. The practical categories are: {category_text}. "

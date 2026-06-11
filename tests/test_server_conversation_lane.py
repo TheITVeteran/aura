@@ -523,6 +523,90 @@ async def test_api_chat_desktop_capability_inventory_bypasses_model_allocation(m
     assert fake_kernel.process_calls == 0
 
 
+def test_capability_catalog_snapshot_caps_unbounded_catalog(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _FakeCapabilityEngine:
+        def get_tool_catalog(self, *, include_inactive: bool = True):
+            for index in range(chat_routes._CAPABILITY_CATALOG_MAX_ITEMS + 50):
+                yield {
+                    "name": f"tool_{index}",
+                    "available": True,
+                    "description": "Specialized governed skill surface.",
+                    "route_class": "specialized",
+                    "risk_class": "low",
+                    "effect_scope": "read_only",
+                }
+
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: _FakeCapabilityEngine() if name == "capability_engine" else default),
+    )
+
+    available_count, categories, governance_available, truncated = (
+        chat_routes._read_capability_catalog_snapshot()
+    )
+
+    assert available_count == chat_routes._CAPABILITY_CATALOG_MAX_ITEMS
+    assert truncated is True
+    assert governance_available is True
+    assert len(categories["specialized governed skills"]) == 12
+
+
+def test_capability_inventory_skips_catalog_under_memory_pressure(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _FakeCapabilityEngine:
+        def __init__(self):
+            self.catalog_calls = 0
+
+        def get_tool_catalog(self, *, include_inactive: bool = True):
+            self.catalog_calls += 1
+            raise AssertionError("optional catalog read must be skipped under critical memory pressure")
+
+        def execute(self, *_args, **_kwargs):
+            return None
+
+    class _FakeAuthority:
+        def is_ready(self):
+            return True
+
+    class _FakeWill:
+        def decide(self, *_args, **_kwargs):
+            return SimpleNamespace(allowed=True)
+
+    capability_engine = _FakeCapabilityEngine()
+
+    def _fake_get(name, default=None):
+        if name == "capability_engine":
+            return capability_engine
+        if name == "authority_gateway":
+            return _FakeAuthority()
+        if name == "unified_will":
+            return _FakeWill()
+        return default
+
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            max_token_cap=32,
+            refuse_heavy_local_generation=True,
+            reason="process_tree_rss:54GB/48GB",
+        ),
+    )
+
+    reply = chat_routes._build_grounded_capability_inventory_reply(
+        "What tools can you use externally?"
+    )
+
+    assert capability_engine.catalog_calls == 0
+    assert "registered governed skill surfaces" in reply
+    assert "Will/Authority approval" in reply
+
+
 @pytest.mark.asyncio
 async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(monkeypatch):
     from interface import server as server_module
