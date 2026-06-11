@@ -87,6 +87,11 @@ class BodyState:
     def pressure_vector(self) -> dict[str, float]:
         data = asdict(self)
         data.pop("telemetry_sources", None)
+        # Raw seconds, not a [0,1] pressure: leaking this into the
+        # interoceptive prediction-error vector inflated free_energy
+        # past 3.0 after ~30s idle, zeroing controllability and
+        # deferring legitimate consequential actions.
+        data.pop("time_since_last_turn_s", None)
         return {key: round(float(value), 4) for key, value in data.items() if isinstance(value, (int, float))}
 
     @property
@@ -270,7 +275,10 @@ class AuraNow:
         packet = {
             "tick": self.tick,
             "field_norm": round(math.sqrt(sum(x * x for x in self.continuous_field)), 4),
-            "body": self.body.pressure_vector(),
+            "body": {
+                **self.body.pressure_vector(),
+                "time_since_last_turn_s": round(float(self.body.time_since_last_turn_s), 3),
+            },
             "world": asdict(self.world),
             "attention": asdict(self.attention),
             "affect": asdict(self.affect),
