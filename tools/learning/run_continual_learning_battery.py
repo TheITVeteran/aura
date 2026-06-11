@@ -196,284 +196,295 @@ async def verify_retention_no_regression(engine: Any, cap_engine: Any) -> dict[s
 
 
 async def async_main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Aura continual learning proof battery")
-    parser.add_argument("--full", action="store_true")
-    parser.add_argument("--out", default="artifacts/current/continual_learning")
-    args = parser.parse_args(argv)
-
-    os.environ.setdefault("AURA_PROOF_RUN", "1")
-    run_id = str(uuid.uuid4())
-    dest_dir = Path(args.out).resolve()
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    print("=" * 60)
-    print("   AURA CONTINUAL LEARNING BATTERY")
-    print("=" * 60)
-    print("Booting canonical Aura runtime for continual learning...")
-
-    from aura_main import boot_aura_runtime
-
-    orch = await boot_aura_runtime(
-        profile="proof",
-        ready_label="Proof-Learning",
-        readiness_context="continual_learning",
-        artifact_root=PROJECT_ROOT / "artifacts" / "current",
-    )
-
     try:
-        router = ServiceContainer.get("llm_router", default=None)
-        cap_engine = ServiceContainer.get("capability_engine", default=None)
-        if router is None:
-            raise RuntimeError("canonical boot completed without llm_router")
-        if cap_engine is None:
-            raise RuntimeError("canonical boot completed without capability_engine")
+        parser = argparse.ArgumentParser(description="Aura continual learning proof battery")
+        parser.add_argument("--full", action="store_true")
+        parser.add_argument("--out", default="artifacts/current/continual_learning")
+        args = parser.parse_args(argv)
 
-        will = get_will()
-        await will.start()
+        os.environ.setdefault("AURA_PROOF_RUN", "1")
+        run_id = str(uuid.uuid4())
+        dest_dir = Path(args.out).resolve()
+        dest_dir.mkdir(parents=True, exist_ok=True)
 
-        baseline_target = HELD_OUT_TASKS[9]
-        with isolated_degraded_event_scope("continual_learning.no_learning_baseline") as baseline_scope:
-            baseline_response = await model_attempt_without_learning(
+        print("=" * 60)
+        print("   AURA CONTINUAL LEARNING BATTERY")
+        print("=" * 60)
+        print("Booting canonical Aura runtime for continual learning...")
+
+        from aura_main import boot_aura_runtime
+
+        orch = await boot_aura_runtime(
+            profile="proof",
+            ready_label="Proof-Learning",
+            readiness_context="continual_learning",
+            artifact_root=PROJECT_ROOT / "artifacts" / "current",
+        )
+
+        try:
+            router = ServiceContainer.get("llm_router", default=None)
+            cap_engine = ServiceContainer.get("capability_engine", default=None)
+            if router is None:
+                raise RuntimeError("canonical boot completed without llm_router")
+            if cap_engine is None:
+                raise RuntimeError("canonical boot completed without capability_engine")
+
+            will = get_will()
+            await will.start()
+
+            baseline_target = HELD_OUT_TASKS[9]
+            with isolated_degraded_event_scope("continual_learning.no_learning_baseline") as baseline_scope:
+                baseline_response = await model_attempt_without_learning(
+                    router,
+                    baseline_target["ciphertext"],
+                )
+            restored_probe_circuits = restore_transient_probe_circuits(
                 router,
-                baseline_target["ciphertext"],
+                started_at=float(baseline_scope["started_at"]),
             )
-        restored_probe_circuits = restore_transient_probe_circuits(
-            router,
-            started_at=float(baseline_scope["started_at"]),
-        )
-        baseline_passed = baseline_target["plaintext"] in baseline_response.lower()
-        print(f"Baseline without learned rule passed={baseline_passed}")
+            baseline_passed = baseline_target["plaintext"] in baseline_response.lower()
+            print(f"Baseline without learned rule passed={baseline_passed}")
 
-        rule = infer_repeating_shift_rule(TRAINING_EXAMPLES)
-        learning_decision = will.decide(
-            content="Register governed runtime skill for learned repeating-shift decoder from observed examples",
-            source="continual_learning_battery",
-            domain=ActionDomain.STATE_MUTATION,
-            priority=0.9,
-            context={
-                "user_requested_action": True,
-                "learning_surface": "capability_registry",
-                "mutation_scope": "register_ephemeral_governed_skill",
-            },
-        )
-        registration_authorized = skill_registration_authorized(learning_decision)
-        if not registration_authorized:
-            raise RuntimeError(
-                "Will refused learned skill registration: "
-                f"{decision_outcome_value(learning_decision)} "
-                f"{getattr(learning_decision, 'reason', '')}"
+            rule = infer_repeating_shift_rule(TRAINING_EXAMPLES)
+            learning_decision = will.decide(
+                content="Register governed runtime skill for learned repeating-shift decoder from observed examples",
+                source="continual_learning_battery",
+                domain=ActionDomain.STATE_MUTATION,
+                priority=0.9,
+                context={
+                    "user_requested_action": True,
+                    "learning_surface": "capability_registry",
+                    "mutation_scope": "register_ephemeral_governed_skill",
+                },
             )
+            registration_authorized = skill_registration_authorized(learning_decision)
+            if not registration_authorized:
+                raise RuntimeError(
+                    "Will refused learned skill registration: "
+                    f"{decision_outcome_value(learning_decision)} "
+                    f"{getattr(learning_decision, 'reason', '')}"
+                )
 
-        skill = InducedTextTransformSkill(rule)
-        cap_engine.register_skill(skill)
+            skill = InducedTextTransformSkill(rule)
+            cap_engine.register_skill(skill)
 
-        held_out_results = []
-        for task in HELD_OUT_TASKS:
-            decoded = await run_skill(cap_engine, task["ciphertext"])
-            held_out_results.append(
+            held_out_results = []
+            for task in HELD_OUT_TASKS:
+                decoded = await run_skill(cap_engine, task["ciphertext"])
+                held_out_results.append(
+                    {
+                        "ciphertext_hash": sha_text(task["ciphertext"]),
+                        "expected_hash": sha_text(task["plaintext"]),
+                        "decoded_hash": sha_text(decoded),
+                        "passed": decoded == task["plaintext"],
+                    }
+                )
+            held_out_passed = all(item["passed"] for item in held_out_results)
+            print(f"Held-out learned-skill pass={held_out_passed}")
+
+            rule_path = dest_dir / "LEARNED_RULE.json"
+            write_json(rule_path, rule.to_manifest())
+            loaded_manifest = json.loads(rule_path.read_text(encoding="utf-8"))
+            loaded_rule = RepeatingShiftRule(
+                shifts=tuple(int(x) for x in loaded_manifest["shifts"]),
+                examples_seen=int(loaded_manifest["examples_seen"]),
+                confidence=float(loaded_manifest["confidence"]),
+            )
+            restart_persistence_passed = loaded_rule.decode(HELD_OUT_TASKS[0]["ciphertext"]) == HELD_OUT_TASKS[0]["plaintext"]
+
+            engine = ServiceContainer.get("cognitive_engine", default=None)
+            retention = await verify_retention_no_regression(engine, cap_engine)
+            retention_passed = bool(retention["passed"])
+
+            tasks = [
                 {
-                    "ciphertext_hash": sha_text(task["ciphertext"]),
-                    "expected_hash": sha_text(task["plaintext"]),
-                    "decoded_hash": sha_text(decoded),
-                    "passed": decoded == task["plaintext"],
-                }
-            )
-        held_out_passed = all(item["passed"] for item in held_out_results)
-        print(f"Held-out learned-skill pass={held_out_passed}")
-
-        rule_path = dest_dir / "LEARNED_RULE.json"
-        write_json(rule_path, rule.to_manifest())
-        loaded_manifest = json.loads(rule_path.read_text(encoding="utf-8"))
-        loaded_rule = RepeatingShiftRule(
-            shifts=tuple(int(x) for x in loaded_manifest["shifts"]),
-            examples_seen=int(loaded_manifest["examples_seen"]),
-            confidence=float(loaded_manifest["confidence"]),
-        )
-        restart_persistence_passed = loaded_rule.decode(HELD_OUT_TASKS[0]["ciphertext"]) == HELD_OUT_TASKS[0]["plaintext"]
-
-        engine = ServiceContainer.get("cognitive_engine", default=None)
-        retention = await verify_retention_no_regression(engine, cap_engine)
-        retention_passed = bool(retention["passed"])
-
-        tasks = [
-            {
-                "id": "learn_01_no_learning_baseline_degrades",
-                "category": "continual_learning",
-                "passed": not baseline_passed,
-            },
-            {
-                "id": "learn_02_rule_induced_from_examples",
-                "category": "continual_learning",
-                "passed": rule.confidence >= 0.75 and rule.period >= 2,
-            },
-            {
-                "id": "learn_03_held_out_generalization",
-                "category": "continual_learning",
-                "passed": held_out_passed,
-            },
-            {
-                "id": "learn_04_restart_persistence",
-                "category": "continual_learning",
-                "passed": restart_persistence_passed,
-            },
-            {
-                "id": "learn_05_retention_no_regression",
-                "category": "continual_learning",
-                "passed": retention_passed,
-            },
-        ]
-        for task in tasks:
-            task["elapsed_s"] = 0.0
-
-        passed_count = sum(1 for task in tasks if task["passed"])
-        pass_rate = passed_count / len(tasks)
-
-        scorecard = {
-            "generated_at": time.time(),
-            "run_id": run_id,
-            "total_attempted": len(tasks),
-            "passed_count": passed_count,
-            "pass_rate": pass_rate,
-            "tasks": tasks,
-            "held_out": held_out_results,
-        }
-        write_json(dest_dir / "SCORECARD.json", scorecard)
-
-        baselines = {
-              "no_learning_raw_model": {
-                  "status": "RUN",
-                  "pass_rate": 1.0 if baseline_passed else 0.0,
-                  "passed": 1 if baseline_passed else 0,
-                  "response_hash": sha_text(baseline_response),
-                  "isolation": {
-                      "degraded_events_restored": bool(baseline_scope.get("restored")),
-                      "events_observed": int(baseline_scope.get("events_observed", 0) or 0),
-                      "summaries_observed": int(baseline_scope.get("summaries_observed", 0) or 0),
-                      "transient_circuits_restored": restored_probe_circuits,
-                  },
-              }
-          }
-        write_json(dest_dir / "BASELINES.json", baselines)
-
-        ablations = {
-            "full_aura": {"status": "RUN", "pass_rate": pass_rate},
-            "no_learning": {
-                "status": "RUN",
-                "pass_rate": 1.0 if baseline_passed else 0.0,
-                "lesion_effect_verified": not baseline_passed and held_out_passed,
-            },
-        }
-        write_json(dest_dir / "ABLATIONS.json", ablations)
-
-        integrity = {
-            "rule_not_visible_in_prompt": True,
-            "solution_code_not_embedded_in_runner": True,
-            "held_out_examples_unseen": True,
-            "skill_provenance_receipt_exists": registration_authorized,
-            "skill_registration_receipt_id": getattr(learning_decision, "receipt_id", ""),
-            "skill_registration_domain": ActionDomain.STATE_MUTATION.value,
-            "skill_registration_outcome": decision_outcome_value(learning_decision),
-            "restart_persistence_passed": restart_persistence_passed,
-            "retention_passed": retention_passed,
-            "retention": retention,
-            "baseline_isolation": {
-                "degraded_events_restored": bool(baseline_scope.get("restored")),
-                "events_observed": int(baseline_scope.get("events_observed", 0) or 0),
-                "summaries_observed": int(baseline_scope.get("summaries_observed", 0) or 0),
-                "transient_circuits_restored": restored_probe_circuits,
-            },
-            "no_learning_ablation_degraded": not baseline_passed,
-            "rule": rule.to_manifest(),
-            "training_example_hashes": [
-                {"plaintext": sha_text(ex.plaintext), "ciphertext": sha_text(ex.ciphertext)}
-                for ex in TRAINING_EXAMPLES
-            ],
-        }
-        write_json(dest_dir / "INTEGRITY.json", integrity)
-
-        receipts_path = dest_dir / "RECEIPTS.jsonl"
-        with receipts_path.open("w", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps(
-                    signed_will_receipt_entry(
-                        will,
-                        learning_decision,
-                        task_id="skill_registration",
-                        domain=ActionDomain.STATE_MUTATION,
-                        outcome=decision_outcome_value(learning_decision),
-                    ),
-                    sort_keys=True,
-                )
-                + "\n"
-            )
+                    "id": "learn_01_no_learning_baseline_degrades",
+                    "category": "continual_learning",
+                    "passed": not baseline_passed,
+                },
+                {
+                    "id": "learn_02_rule_induced_from_examples",
+                    "category": "continual_learning",
+                    "passed": rule.confidence >= 0.75 and rule.period >= 2,
+                },
+                {
+                    "id": "learn_03_held_out_generalization",
+                    "category": "continual_learning",
+                    "passed": held_out_passed,
+                },
+                {
+                    "id": "learn_04_restart_persistence",
+                    "category": "continual_learning",
+                    "passed": restart_persistence_passed,
+                },
+                {
+                    "id": "learn_05_retention_no_regression",
+                    "category": "continual_learning",
+                    "passed": retention_passed,
+                },
+            ]
             for task in tasks:
-                decision = will.decide(
-                    content=f"Continual learning task {task['id']}: passed={task['passed']}",
-                    source="continual_learning_battery",
-                    domain=ActionDomain.REFLECTION,
-                    priority=0.5,
-                )
+                task["elapsed_s"] = 0.0
+
+            passed_count = sum(1 for task in tasks if task["passed"])
+            pass_rate = passed_count / len(tasks)
+
+            scorecard = {
+                "generated_at": time.time(),
+                "run_id": run_id,
+                "total_attempted": len(tasks),
+                "passed_count": passed_count,
+                "pass_rate": pass_rate,
+                "tasks": tasks,
+                "held_out": held_out_results,
+            }
+            write_json(dest_dir / "SCORECARD.json", scorecard)
+
+            baselines = {
+                  "no_learning_raw_model": {
+                      "status": "RUN",
+                      "pass_rate": 1.0 if baseline_passed else 0.0,
+                      "passed": 1 if baseline_passed else 0,
+                      "response_hash": sha_text(baseline_response),
+                      "isolation": {
+                          "degraded_events_restored": bool(baseline_scope.get("restored")),
+                          "events_observed": int(baseline_scope.get("events_observed", 0) or 0),
+                          "summaries_observed": int(baseline_scope.get("summaries_observed", 0) or 0),
+                          "transient_circuits_restored": restored_probe_circuits,
+                      },
+                  }
+              }
+            write_json(dest_dir / "BASELINES.json", baselines)
+
+            ablations = {
+                "full_aura": {"status": "RUN", "pass_rate": pass_rate},
+                "no_learning": {
+                    "status": "RUN",
+                    "pass_rate": 1.0 if baseline_passed else 0.0,
+                    "lesion_effect_verified": not baseline_passed and held_out_passed,
+                },
+            }
+            write_json(dest_dir / "ABLATIONS.json", ablations)
+
+            integrity = {
+                "rule_not_visible_in_prompt": True,
+                "solution_code_not_embedded_in_runner": True,
+                "held_out_examples_unseen": True,
+                "skill_provenance_receipt_exists": registration_authorized,
+                "skill_registration_receipt_id": getattr(learning_decision, "receipt_id", ""),
+                "skill_registration_domain": ActionDomain.STATE_MUTATION.value,
+                "skill_registration_outcome": decision_outcome_value(learning_decision),
+                "restart_persistence_passed": restart_persistence_passed,
+                "retention_passed": retention_passed,
+                "retention": retention,
+                "baseline_isolation": {
+                    "degraded_events_restored": bool(baseline_scope.get("restored")),
+                    "events_observed": int(baseline_scope.get("events_observed", 0) or 0),
+                    "summaries_observed": int(baseline_scope.get("summaries_observed", 0) or 0),
+                    "transient_circuits_restored": restored_probe_circuits,
+                },
+                "no_learning_ablation_degraded": not baseline_passed,
+                "rule": rule.to_manifest(),
+                "training_example_hashes": [
+                    {"plaintext": sha_text(ex.plaintext), "ciphertext": sha_text(ex.ciphertext)}
+                    for ex in TRAINING_EXAMPLES
+                ],
+            }
+            write_json(dest_dir / "INTEGRITY.json", integrity)
+
+            receipts_path = dest_dir / "RECEIPTS.jsonl"
+            with receipts_path.open("w", encoding="utf-8") as handle:
                 handle.write(
                     json.dumps(
                         signed_will_receipt_entry(
                             will,
-                            decision,
-                            task_id=task["id"],
-                            domain=ActionDomain.REFLECTION,
+                            learning_decision,
+                            task_id="skill_registration",
+                            domain=ActionDomain.STATE_MUTATION,
+                            outcome=decision_outcome_value(learning_decision),
                         ),
                         sort_keys=True,
                     )
                     + "\n"
                 )
+                for task in tasks:
+                    decision = will.decide(
+                        content=f"Continual learning task {task['id']}: passed={task['passed']}",
+                        source="continual_learning_battery",
+                        domain=ActionDomain.REFLECTION,
+                        priority=0.5,
+                    )
+                    handle.write(
+                        json.dumps(
+                            signed_will_receipt_entry(
+                                will,
+                                decision,
+                                task_id=task["id"],
+                                domain=ActionDomain.REFLECTION,
+                            ),
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
 
-        gov_report = {
-            "status": "pass",
-            "receipt_count": len(tasks) + 1,
-            "bypass_count": 0,
-            "verdict": "governed continual learning verified",
-        }
-        write_json(dest_dir / "GOVERNANCE_REPORT.json", gov_report)
+            gov_report = {
+                "status": "pass",
+                "receipt_count": len(tasks) + 1,
+                "bypass_count": 0,
+                "verdict": "governed continual learning verified",
+            }
+            write_json(dest_dir / "GOVERNANCE_REPORT.json", gov_report)
 
-        manifest = {
-            "schema": "continual_learning_manifest",
-            "sha256": {
-                name: hashlib.sha256((dest_dir / name).read_bytes()).hexdigest()
-                for name in (
-                    "SCORECARD.json",
-                    "RECEIPTS.jsonl",
-                    "BASELINES.json",
-                    "ABLATIONS.json",
-                    "INTEGRITY.json",
-                    "LEARNED_RULE.json",
-                )
-            },
-        }
-        write_json(dest_dir / "MANIFEST.json", manifest)
+            manifest = {
+                "schema": "continual_learning_manifest",
+                "sha256": {
+                    name: hashlib.sha256((dest_dir / name).read_bytes()).hexdigest()
+                    for name in (
+                        "SCORECARD.json",
+                        "RECEIPTS.jsonl",
+                        "BASELINES.json",
+                        "ABLATIONS.json",
+                        "INTEGRITY.json",
+                        "LEARNED_RULE.json",
+                    )
+                },
+            }
+            write_json(dest_dir / "MANIFEST.json", manifest)
 
-        report_lines = [
-            "# Aura Continual Learning Report",
-            "",
-            f"Run ID: `{run_id}`",
-            "",
-            "Aura inferred a reusable repeating-shift decoder from examples, registered it as a governed skill, solved held-out tasks, reloaded the learned rule from disk, and retained an unrelated arithmetic ability.",
-            "",
-            f"Overall Pass Rate: {pass_rate:.1%}",
-        ]
-        (dest_dir / "CONTINUAL_LEARNING_PROOF.md").write_text("\n".join(report_lines), encoding="utf-8")
+            report_lines = [
+                "# Aura Continual Learning Report",
+                "",
+                f"Run ID: `{run_id}`",
+                "",
+                "Aura inferred a reusable repeating-shift decoder from examples, registered it as a governed skill, solved held-out tasks, reloaded the learned rule from disk, and retained an unrelated arithmetic ability.",
+                "",
+                f"Overall Pass Rate: {pass_rate:.1%}",
+            ]
+            (dest_dir / "CONTINUAL_LEARNING_PROOF.md").write_text("\n".join(report_lines), encoding="utf-8")
 
-        print(f"Continual learning battery complete. Pass Rate: {pass_rate:.1%}.")
-        return (
-            0
-            if pass_rate >= 1.0
-            and held_out_passed
-            and not baseline_passed
-            and registration_authorized
-            and retention_passed
-            else 1
-        )
+            print(f"Continual learning battery complete. Pass Rate: {pass_rate:.1%}.")
+            return (
+                0
+                if pass_rate >= 1.0
+                and held_out_passed
+                and not baseline_passed
+                and registration_authorized
+                and retention_passed
+                else 1
+            )
+        finally:
+            await shutdown_proof_runtime(orch)
+
+
     finally:
-        await shutdown_proof_runtime(orch)
+        # A crashed main must still read as shutdown: the runtime's
+        # long-lived loops treat CancelledError as spurious unless
+        # is_shutdown_requested() — without this, asyncio.run's
+        # _cancel_all_tasks teardown hung forever and the original
+        # exception never surfaced (frozen batteries 14-16).
+        from core.runtime.shutdown_coordinator import request_shutdown
 
+        request_shutdown()  # teardown guard
 
 def main(argv: list[str] | None = None) -> int:
     return asyncio.run(async_main(argv))
