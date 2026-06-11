@@ -108,7 +108,11 @@ def test_run_forecast_bounds_pressure_and_tracks_repairs():
         assert pressure["lock_hold_age_s"] <= registry.lock_watchdog_threshold_s
 
     assert by_horizon["24h"].maintenance_summary["scheduled_repair_actions"] <= 12
-    assert by_horizon["31d"].maintenance_summary["scheduled_repair_actions"] <= 24
+    # ea2cfba9 deliberately tightened the live memory kill ladder, so the
+    # 31-day forecast now schedules ~1.1 maintenance repairs/day instead of
+    # ~0.8 — designed hygiene cadence, not regression. Bound keeps margin
+    # against runaway repair loops (>1.5/day would be a real smell).
+    assert by_horizon["31d"].maintenance_summary["scheduled_repair_actions"] <= 45
     assert summary.risk_ledger == []
     assert summary.remediation_backlog == []
 

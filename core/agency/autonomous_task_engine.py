@@ -2757,7 +2757,7 @@ Respond ONLY with a JSON array, no other text:
             if goal_engine and hasattr(goal_engine, "sync_task_plan"):
                 goal_engine.sync_task_plan(plan, context=getattr(plan, "context", None))
 
-            state = self.kernel.state
+            state = getattr(self.kernel, "state", None)
             if state is None:
                 return
             cognition = getattr(state, "cognition", None)

@@ -29,6 +29,23 @@ class EnvironmentTraceReplay:
                 expected_prev = row.get("previous_hash", "")
                 if expected_prev != previous:
                     corrupt.append(idx)
+                if row.get("row_type") == "environment_event":
+                    # record_event rows chain via event_hash (writer hashes
+                    # the event dict with event_hash blanked, no default=str
+                    # — its payload is already _json_safe). Replay verified
+                    # only row_hash before, so every trace containing an
+                    # event row failed as corrupt.
+                    event_hash = row.get("event_hash", "")
+                    payload = dict(row)
+                    payload["event_hash"] = ""
+                    actual = hashlib.sha256(
+                        json.dumps(payload, sort_keys=True).encode("utf-8")
+                    ).hexdigest()
+                    if event_hash != actual:
+                        corrupt.append(idx)
+                    previous = event_hash
+                    rows.append(row)
+                    continue
                 row_hash = row.get("row_hash", "")
                 payload = dict(row)
                 payload["row_hash"] = ""
