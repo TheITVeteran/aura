@@ -1129,14 +1129,22 @@ class MLXLocalClient:
             # prompt.  The point of these SLAs is to catch WEDGED workers
             # (no heartbeats), not SLOW workers (heartbeats arriving).
             if foreground_request:
-                base = 75.0 if is_cold_start else 45.0
+                # Live measurement 2026-06-11: warm 32B first tokens at
+                # 46.4s under the macos26 guard + serialized lanes — the
+                # 45s base declared healthy generations wedged, and the
+                # lane recycle's cancellation swept well beyond the
+                # offending request (it killed the proof battery's repair
+                # coroutine mid-await). Wedge detection belongs to the
+                # heartbeat/stall checks; this SLA only needs to beat
+                # genuinely dead workers.
+                base = 120.0 if is_cold_start else 90.0
                 return _with_prompt_eval_headroom(
                     base,
                     threshold_tokens=512.0,
                     eval_seconds_per_token=0.015,
-                    cap_s=180.0,
+                    cap_s=240.0,
                 )
-            return 45.0
+            return 90.0
         return 8.0
 
     def _token_stall_after(self, *, foreground_request: bool = False) -> float:
@@ -1146,9 +1154,11 @@ class MLXLocalClient:
         if "32b" in lowered or "cortex" in lowered or "zenith" in lowered:
             # [RESILIENCE] Reverted from 10s — recurrent depth can cause
             # legitimate pauses between tokens during the recurrent block
-            # computation.  20s is generous enough to absorb Metal GC pauses
-            # and recurrent-loop overhead without declaring the worker dead.
-            return 20.0 if foreground_request else 30.0
+            # computation. Sized up with the 2026-06-11 first-token
+            # remeasurement: inter-token pauses stretch the same way under
+            # the macos26 guard, and a stall verdict triggers the same
+            # over-broad lane recycle as an SLA breach.
+            return 40.0 if foreground_request else 45.0
         return 8.0
 
     def _warmup_timeout(self) -> float:
