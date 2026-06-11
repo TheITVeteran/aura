@@ -480,11 +480,29 @@ class TaskCommitmentVerifier:
             )
 
         cap_engine = self._get_cap_engine()
+        task_engine = self._get_task_engine()
+        builtin_tools = (
+            list(getattr(task_engine, "_tool_registry", {}).keys())
+            if task_engine is not None
+            else []
+        )
         if cap_engine is None:
+            if builtin_tools:
+                return CapabilityAssessment(
+                    can_fulfil=True,
+                    matched_tools=builtin_tools,
+                    confidence=0.55,
+                    gap_description=(
+                        "CapabilityEngine unavailable; bounded fallback uses the task engine's "
+                        "registered built-in tools only."
+                    ),
+                )
             return CapabilityAssessment(
-                can_fulfil=True,   # Assume capable if engine unavailable — fail-safe not fail-silent
-                confidence=0.3,
-                gap_description="CapabilityEngine unavailable; proceeding with best effort.",
+                can_fulfil=False,
+                confidence=0.0,
+                gap_description=(
+                    "CapabilityEngine unavailable and no task-engine tool registry is available."
+                ),
             )
 
         # Pattern-match the objective against registered skills
@@ -501,6 +519,7 @@ class TaskCommitmentVerifier:
         if matched:
             # Filter out skills that require_approval (caller handles gating separately)
             executable = []
+            approval_required = []
             for sk in matched:
                 meta = cap_engine.get(sk) if hasattr(cap_engine, "get") else None
                 instance = getattr(meta, "instance", None) if meta else None
@@ -508,6 +527,7 @@ class TaskCommitmentVerifier:
                 if not needs_approval:
                     executable.append(sk)
                 else:
+                    approval_required.append(sk)
                     logger.debug(
                         "TaskCommitmentVerifier: skill '%s' requires approval — excluded from auto-execute", sk
                     )
@@ -518,19 +538,25 @@ class TaskCommitmentVerifier:
                     matched_skills=executable,
                     confidence=min(1.0, 0.5 + 0.1 * len(executable)),
                 )
+            if approval_required:
+                return CapabilityAssessment(
+                    can_fulfil=False,
+                    confidence=0.0,
+                    gap_description=(
+                        "Matched skill requires approval before autonomous execution."
+                    ),
+                    alternatives=approval_required[:5],
+                )
 
         # Check AutonomousTaskEngine's built-in tool registry
-        task_engine = self._get_task_engine()
-        if task_engine is not None:
-            builtin_tools = list(getattr(task_engine, "_tool_registry", {}).keys())
-            if builtin_tools:
-                # TaskEngine has built-in tools (think, web_search, etc.) that can
-                # handle generic goals even without a specific named skill.
-                return CapabilityAssessment(
-                    can_fulfil=True,
-                    matched_tools=builtin_tools,
-                    confidence=0.6,
-                )
+        if builtin_tools:
+            # TaskEngine has built-in tools (think, web_search, etc.) that can
+            # handle generic goals even without a specific named skill.
+            return CapabilityAssessment(
+                can_fulfil=True,
+                matched_tools=builtin_tools,
+                confidence=0.6,
+            )
 
         # Genuinely no coverage
         all_skills = cap_engine.list_skills() if hasattr(cap_engine, "list_skills") else []

@@ -122,6 +122,88 @@ def test_task_commitment_verifier_estimates_multistep_skill_request_as_long():
     assert steps > verifier.INLINE_STEP_THRESHOLD
 
 
+@pytest.mark.asyncio
+async def test_task_commitment_verifier_fails_closed_without_capability_or_task_registry(monkeypatch, tmp_path):
+    def _fake_get(name, default=None):
+        return default
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(_fake_get),
+    )
+
+    verifier = TaskCommitmentVerifier(kernel=None, persist_path=tmp_path / "task_commitment_state.json")
+
+    acceptance = await verifier.verify_and_dispatch("Open a browser and research climate news.", state=None)
+
+    assert acceptance.outcome == DispatchOutcome.CAPABILITY_GAP
+    assert "capabilityengine unavailable" in acceptance.summary.lower()
+    assert "no task-engine tool registry" in acceptance.summary.lower()
+
+
+@pytest.mark.asyncio
+async def test_task_commitment_verifier_uses_bounded_task_registry_when_capability_engine_unavailable(
+    monkeypatch,
+    tmp_path,
+):
+    task_engine = _FastTaskEngine()
+    task_engine._tool_registry = {"think": object(), "web_search": object()}
+
+    def _fake_get(name, default=None):
+        if name == "task_engine":
+            return task_engine
+        return default
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(_fake_get),
+    )
+    monkeypatch.setattr(TaskCommitmentVerifier, "_register_commitment", lambda self, objective: None)
+
+    verifier = TaskCommitmentVerifier(kernel=None, persist_path=tmp_path / "task_commitment_state.json")
+
+    acceptance = await verifier.verify_and_dispatch("Research three current climate articles.", state=None)
+
+    assert acceptance.outcome == DispatchOutcome.COMPLETED
+    assert task_engine.goals
+    assert task_engine.goals[0][1]["matched_tools"] == ["think", "web_search"]
+
+
+@pytest.mark.asyncio
+async def test_task_commitment_verifier_does_not_bypass_approval_required_skill_with_builtin_tools(
+    monkeypatch,
+    tmp_path,
+):
+    task_engine = _FastTaskEngine()
+    task_engine._tool_registry = {"desktop_task": object(), "web_search": object()}
+    capability_engine = SimpleNamespace(
+        detect_intent=lambda _objective: ["desktop_task"],
+        get=lambda _skill: SimpleNamespace(instance=SimpleNamespace(requires_approval=True)),
+        list_skills=lambda: ["desktop_task", "web_search"],
+    )
+
+    def _fake_get(name, default=None):
+        if name == "task_engine":
+            return task_engine
+        if name == "capability_engine":
+            return capability_engine
+        return default
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(_fake_get),
+    )
+
+    verifier = TaskCommitmentVerifier(kernel=None, persist_path=tmp_path / "task_commitment_state.json")
+
+    acceptance = await verifier.verify_and_dispatch("Open Notes and export a PDF.", state=None)
+
+    assert acceptance.outcome == DispatchOutcome.CAPABILITY_GAP
+    assert "requires approval" in acceptance.summary.lower()
+    assert "desktop_task" in acceptance.summary
+    assert task_engine.goals == []
+
+
 def test_task_commitment_verifier_keeps_learning_bundle_on_inline_deterministic_path(monkeypatch, tmp_path):
     verifier = TaskCommitmentVerifier(kernel=None, persist_path=tmp_path / "task_commitment_state.json")
     monkeypatch.setattr(
