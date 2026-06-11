@@ -567,6 +567,9 @@ class InferenceGate:
                 "reason": reason,
             }
         except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            force_admit = str(
+                os.environ.get("AURA_FORCE_FOREGROUND_HEADROOM_ON_PROBE_FAILURE", "")
+            ).strip().lower() in {"1", "true", "yes", "on"}
             return {
                 "tier": str(requested_tier or "primary"),
                 "pressure_pct": 0.0,
@@ -574,8 +577,8 @@ class InferenceGate:
                 "available_gb": 0.0,
                 "max_pressure_pct": 100.0,
                 "min_available_gb": 0.0,
-                "can_admit": True,
-                "reason": "",
+                "can_admit": force_admit,
+                "reason": "" if force_admit else "memory_probe_failed",
             }
 
     @staticmethod
