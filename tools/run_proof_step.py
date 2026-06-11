@@ -58,6 +58,22 @@ def main(argv: list[str] | None = None) -> int:
     if sys.platform == "darwin":
         command = ["/usr/bin/caffeinate", "-i", *command]
     proc = subprocess.Popen(command, cwd=ROOT, start_new_session=True)
+
+    # The child owns its session so timeout can SIGKILL its whole group
+    # without touching this wrapper. The flip side: kill THIS wrapper and
+    # the detached child survives as an orphan — every zombie battery on
+    # June 11 was born that way. Forward fatal signals to the child's
+    # group so wrapper death is child death.
+    def _reap_child(signum: int, _frame: object) -> None:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+        sys.exit(128 + signum)
+
+    for _sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(_sig, _reap_child)
+
     wall_deadline = started + args.timeout * 1.25 + 60.0
     try:
         # Bounded poll: the slice count is derived from the wall deadline,
