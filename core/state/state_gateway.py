@@ -175,9 +175,22 @@ async def _default_state_governance_decide(**kwargs: Any) -> Dict[str, Any]:
 
 
 def get_state_gateway(*, root: Optional[Path] = None) -> ConcreteStateGateway:
+    """Explicit roots are contracts — see get_memory_write_gateway.
+
+    Same latent flaw as the memory gateway (singleton silently ignored
+    a differing explicit root); it only ever passed scenarios by boot-
+    order luck. Explicit-root callers get a dedicated instance.
+    """
     global _global
+    if root is not None:
+        resolved = Path(root)
+        if _global is not None and Path(_global.root) == resolved:
+            return _global
+        return ConcreteStateGateway(
+            root=resolved, governance_decide=_default_state_governance_decide
+        )
     if _global is None:
-        _global = ConcreteStateGateway(root=root, governance_decide=_default_state_governance_decide)
+        _global = ConcreteStateGateway(root=None, governance_decide=_default_state_governance_decide)
     return _global
 
 

@@ -215,9 +215,26 @@ async def _default_memory_governance_decide(**kwargs: Any) -> Dict[str, Any]:
 
 
 def get_memory_write_gateway(*, root: Optional[Path] = None) -> ConcreteMemoryWriteGateway:
+    """Return the process gateway, honoring explicit roots as contracts.
+
+    A caller passing an explicit root (proof scenarios, sandboxes) must
+    get a gateway bound to THAT root — the old accessor silently
+    returned the pre-existing singleton, so a unified-scenario write
+    'succeeded' into ~/.aura/memory while the scenario's continuity
+    check correctly found its own root empty (fake-pass shape). Explicit
+    -root callers now get a dedicated instance; the global singleton
+    stays reserved for default-root callers and is never hijacked.
+    """
     global _global
+    if root is not None:
+        resolved = Path(root)
+        if _global is not None and Path(_global.root) == resolved:
+            return _global
+        return ConcreteMemoryWriteGateway(
+            root=resolved, governance_decide=_default_memory_governance_decide
+        )
     if _global is None:
-        _global = ConcreteMemoryWriteGateway(root=root, governance_decide=_default_memory_governance_decide)
+        _global = ConcreteMemoryWriteGateway(root=None, governance_decide=_default_memory_governance_decide)
     return _global
 
 
