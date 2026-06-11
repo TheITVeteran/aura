@@ -78,6 +78,13 @@ try:
             ("ri_cycles", ctypes.c_uint64),
             ("ri_billed_energy", ctypes.c_uint64),
             ("ri_serviced_energy", ctypes.c_uint64),
+            # Full rusage_info_v4 is 304 bytes; truncating here at 280 let
+            # the kernel write 24 bytes past the buffer on every snapshot.
+            ("ri_interval_max_phys_footprint", ctypes.c_uint64),
+            ("ri_runnable_time", ctypes.c_uint64),
+            ("ri_flags", ctypes.c_uint64),
+            # Spare capacity so a future flavor bump can never overrun.
+            ("_ri_spare", ctypes.c_uint64 * 16),
         ]
 
     _LIBPROC = ctypes.CDLL("/usr/lib/libproc.dylib")

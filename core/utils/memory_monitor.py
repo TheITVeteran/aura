@@ -60,6 +60,17 @@ class _DarwinRUsageInfoV4(ctypes.Structure):
         ("ri_cycles", ctypes.c_uint64),
         ("ri_billed_energy", ctypes.c_uint64),
         ("ri_serviced_energy", ctypes.c_uint64),
+        # The kernel writes sizeof(rusage_info_v4) == 304 bytes for flavor
+        # 4. The struct previously ended here at 280 bytes, so every call
+        # had the kernel write 24 bytes past the buffer — heap corruption
+        # on each memory snapshot (caught by PYTHONMALLOC=debug: trailing
+        # guard bytes overwritten with ri_interval_max_phys_footprint).
+        ("ri_interval_max_phys_footprint", ctypes.c_uint64),
+        ("ri_runnable_time", ctypes.c_uint64),
+        ("ri_flags", ctypes.c_uint64),
+        # Spare capacity: newer kernels must never write past us again,
+        # even if a future flavor is requested without updating fields.
+        ("_ri_spare", ctypes.c_uint64 * 16),
     ]
 
 
