@@ -12,7 +12,6 @@ from collections.abc import AsyncGenerator, Iterable
 from pathlib import Path
 from typing import Any
 
-import httpx
 import psutil
 
 from core.runtime.atomic_writer import atomic_write_text
@@ -644,7 +643,7 @@ class LocalServerClient:
         url: str,
         *,
         payload: dict[str, Any] | None = None,
-        timeout: float = 30.0,
+        timeout: float = 30.0,  # noqa: ASYNC109 - forwarded to network gateway request.
     ) -> tuple[int, dict[str, Any], str]:
         response = await asyncio.to_thread(
             get_network_gateway().request,
@@ -752,14 +751,26 @@ class LocalServerClient:
             logger.info("🧠 [%s] Loading personality LoRA adapter: %s", self._lane_name, lora_path)
 
         logger.info("📡 [%s] Spawning local runtime: %s", self._lane_name, " ".join(cmd))
-        process = get_subprocess_gateway().spawn(
-            cmd,
-            stdout=self._log_handle,
-            stderr=subprocess.STDOUT,
-            cwd=str(Path(__file__).resolve().parents[3]),
-            source="maintenance_tooling:local_server_runtime",
-            offline_tooling=True,
+        # Boot-time spawns are honestly offline; a mid-session respawn happens
+        # under live governance and must carry its own local-internal receipt
+        # or the health router could never restart a dead inference engine.
+        from core.governance_context import (
+            governance_runtime_active,
+            local_internal_governed_scope,
         )
+
+        with local_internal_governed_scope(
+            f"local_server_client.runtime_spawn:{self._lane_name}",
+            domain="environment_action",
+        ):
+            process = get_subprocess_gateway().spawn(
+                cmd,
+                stdout=self._log_handle,
+                stderr=subprocess.STDOUT,
+                cwd=str(Path(__file__).resolve().parents[3]),
+                source="maintenance_tooling:local_server_runtime",
+                offline_tooling=not governance_runtime_active(),
+            )
         self._process_started_at = time.time()
         return process
 

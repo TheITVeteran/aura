@@ -11,6 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from core.governance_context import governance_runtime_active
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -138,7 +139,10 @@ class LocalSandbox(Sandbox):
                 timeout=timeout,
                 cwd=str(self.work_path),
                 env=_sandbox_env(),
-                offline_tooling=True,
+                # The offline claim is only honest outside live governance;
+                # when she is live, this call must ride the caller's Will
+                # receipt (capability_engine wraps tool runs in governed_scope).
+                offline_tooling=not governance_runtime_active(),
                 source="maintenance_tooling:local_sandbox.run_code",
             )
             duration = time.monotonic() - start
@@ -191,7 +195,8 @@ class LocalSandbox(Sandbox):
                 timeout=timeout,
                 cwd=str(self.work_path),
                 env=_sandbox_env(),
-                offline_tooling=True,
+                # Same contract as run_code: offline only when not live.
+                offline_tooling=not governance_runtime_active(),
                 source="maintenance_tooling:local_sandbox.run_command",
             )
             duration = time.monotonic() - start
