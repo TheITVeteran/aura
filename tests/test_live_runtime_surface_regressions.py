@@ -2004,3 +2004,23 @@ def test_every_chokepoint_door_attaches_desktop_receipts():
         f"{doors} chokepoint doors but {attachments} receipt attachments — "
         "a reply exit is dropping desktop receipts"
     )
+
+def test_desktop_objective_execution_routes_through_tracked_gate():
+    """Visible-demo rounds 3-5: the pre-freeform desktop lane called
+    _execute_desktop_objective_from_chat directly, so the reply doors saw
+    attempted=False/result=None and served receipt-less replies. Every
+    execution must route through _run_desktop_objective_tracked — the only
+    caller of the raw executor is the tracked gate itself."""
+    import pathlib
+
+    src = pathlib.Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    direct_calls = src.count("await _execute_desktop_objective_from_chat(")
+    assert direct_calls == 1, (
+        f"{direct_calls} direct executor calls — all desktop objective "
+        "execution must go through _run_desktop_objective_tracked"
+    )
+    tracked_calls = src.count("await _run_desktop_objective_tracked(")
+    assert tracked_calls >= 3, (
+        f"expected the chokepoint + both desktop lanes on the tracked gate, "
+        f"found {tracked_calls}"
+    )

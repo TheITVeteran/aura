@@ -7865,6 +7865,26 @@ async def api_chat(
                 return value if not isinstance(value, str) else value[:2000]
             return str(value)[:500]
 
+        async def _run_desktop_objective_tracked(
+            message: str, *, cognitive_reply: str
+        ) -> dict[str, Any] | None:
+            """Single execution gate for desktop objectives.
+
+            EVERY caller routes here so the step receipts always land in
+            _desktop_exec_state (the reply doors attach them to the wire)
+            and the chokepoint cannot double-execute an objective another
+            lane already ran. Visible-demo rounds 3-5: the pre-freeform
+            desktop lane called the executor directly, so the doors saw
+            attempted=False/result=None and served receipt-less replies.
+            """
+            _desktop_exec_state["attempted"] = True
+            executed = await _execute_desktop_objective_from_chat(
+                message, cognitive_reply=cognitive_reply
+            )
+            if isinstance(executed, dict):
+                _desktop_exec_state["result"] = executed.get("result")
+            return executed
+
         async def _apply_desktop_objective_chokepoint(
             final_text: str, status: str
         ) -> tuple[str, str]:
@@ -7885,9 +7905,8 @@ async def api_chat(
                 or not _looks_like_desktop_objective(_semantic_user_message)
             ):
                 return final_text, status
-            _desktop_exec_state["attempted"] = True
             try:
-                _executed = await _execute_desktop_objective_from_chat(
+                _executed = await _run_desktop_objective_tracked(
                     _semantic_user_message,
                     cognitive_reply=final_text,
                 )
@@ -7895,15 +7914,6 @@ async def api_chat(
                 record_degradation('chat', _exec_exc)
                 _executed = None
             if isinstance(_executed, dict) and _executed.get("response"):
-                # Keep the skill result (step receipts, paths, verification
-                # evidence) so the response payload can carry it — receipts
-                # are surface-visible evidence, not internal bookkeeping.
-                _desktop_exec_state["result"] = _executed.get("result")
-                logger.info(
-                    "Desktop chokepoint stored receipts: keys=%s result_attached=%r",
-                    sorted(_executed.keys()),
-                    _desktop_exec_state["result"] is not None,
-                )
                 return (
                     _apply_aura_voice_shaping(str(_executed.get("response") or "")).strip()
                     or final_text,
@@ -8186,7 +8196,7 @@ async def api_chat(
                     status=str(explicit_file.get("status") or "file_operation"),
                 )
 
-            desktop_objective = await _execute_desktop_objective_from_chat(
+            desktop_objective = await _run_desktop_objective_tracked(
                 _semantic_user_message,
                 cognitive_reply=_build_desktop_objective_execution_brief(_semantic_user_message),
             )
@@ -8652,7 +8662,7 @@ async def api_chat(
                     status=str(explicit_file.get("status") or "file_operation"),
                 )
 
-            desktop_objective = await _execute_desktop_objective_from_chat(
+            desktop_objective = await _run_desktop_objective_tracked(
                 _semantic_user_message,
                 cognitive_reply=reply_text,
             )
