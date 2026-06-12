@@ -1075,12 +1075,20 @@ class SovereignVoiceEngine:
 
         def _play():
             try:
+                from core.governance_context import local_internal_governed_scope
+
                 temp_wav = self.data_dir / "tts_play_cache.wav"
-                get_file_write_gateway().write_bytes(
-                    temp_wav,
-                    audio_data,
-                    source="core.senses.voice_engine.play_locally",
-                )
+                # Governed scope must be established INSIDE this thread:
+                # run_in_executor does not propagate contextvars, so even a
+                # governed caller loses its scope crossing into the pool.
+                with local_internal_governed_scope(
+                    "voice_engine.play_locally", domain="file_write"
+                ):
+                    get_file_write_gateway().write_bytes(
+                        temp_wav,
+                        audio_data,
+                        source="core.senses.voice_engine.play_locally",
+                    )
 
                 self._current_afplay = get_subprocess_gateway().spawn(
                     ["afplay", str(temp_wav)],

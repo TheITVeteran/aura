@@ -287,6 +287,28 @@ class WakeWordDetector:
             except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("wake_word.world_state_event", exc)
 
+    @staticmethod
+    def _merge_transcript_chunk(existing: str, chunk: str) -> str:
+        """Merge a transcript chunk into the accumulated command.
+
+        The same utterance can arrive more than once through different
+        ingestion paths (direct file read, then the perceptual pump's
+        WorldState copy), possibly truncated differently. Re-deliveries
+        must never REPLACE the accumulated command — that is how a long
+        spoken objective got chopped to its tail mid-session. Substring
+        re-deliveries are ignored; overlapping continuations are joined
+        at the overlap; genuinely new speech is appended.
+        """
+        if not existing:
+            return chunk
+        if not chunk or chunk in existing:
+            return existing
+        max_k = min(len(existing), len(chunk))
+        for k in range(max_k, 7, -1):
+            if existing.endswith(chunk[:k]):
+                return existing + chunk[k:]
+        return f"{existing} {chunk}"
+
     async def _accumulate_command(self, transcript: str) -> None:
         """Accumulate spoken command after wake word."""
         now = time.time()
@@ -295,8 +317,14 @@ class WakeWordDetector:
             # Remove wake phrase from beginning
             command = WAKE_PATTERN.sub("", transcript).strip()
             if command:
-                self._accumulated_transcript = command
-                self._last_speech = now
+                merged = self._merge_transcript_chunk(
+                    self._accumulated_transcript, command
+                )
+                if merged != self._accumulated_transcript:
+                    self._accumulated_transcript = merged
+                    self._last_speech = now
+                # Re-delivered chunks do not reset the silence window —
+                # otherwise duplicate ingestion keeps the session open.
 
         # Check for end of command (silence timeout)
         silence_duration = now - self._last_speech

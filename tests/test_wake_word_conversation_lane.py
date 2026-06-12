@@ -222,6 +222,164 @@ class BargeInTest(unittest.TestCase):
         self.assertTrue(detector._dispatch_task.cancelled())
 
 
+class TranscriptMergeTest(unittest.TestCase):
+    """Re-delivered and truncated transcript chunks must never replace the
+    accumulated command. Live failure pinned here: the wake chunk seeded the
+    full objective from the direct file read, then the perceptual pump
+    re-delivered the SAME utterance truncated to its last 200 chars via
+    WorldState — the old replace-assignment chopped the command to its tail
+    and the lane received a fragment."""
+
+    def test_truncated_tail_redelivery_is_ignored(self):
+        full = (
+            "please create a new folder called 'Aura's Journal' in my "
+            "Documents folder and find an image of a robot online and "
+            "include it in the entry"
+        )
+        tail = full[-80:]
+        merged = WakeWordDetector._merge_transcript_chunk(full, tail)
+        self.assertEqual(merged, full)
+
+    def test_overlapping_continuation_joins_at_overlap(self):
+        first = "please create a new folder called"
+        second = "folder called 'Aura's Journal' in my Documents"
+        merged = WakeWordDetector._merge_transcript_chunk(first, second)
+        self.assertEqual(
+            merged,
+            "please create a new folder called 'Aura's Journal' in my Documents",
+        )
+
+    def test_new_speech_is_appended(self):
+        merged = WakeWordDetector._merge_transcript_chunk(
+            "open my notes app", "and write a journal entry"
+        )
+        self.assertEqual(merged, "open my notes app and write a journal entry")
+
+    def test_empty_existing_takes_chunk(self):
+        self.assertEqual(
+            WakeWordDetector._merge_transcript_chunk("", "open my notes"),
+            "open my notes",
+        )
+
+    def test_redelivery_does_not_reset_silence_window(self):
+        """A duplicate chunk must not keep the session alive forever."""
+        detector = WakeWordDetector()
+        detector.state = WakeState.LISTENING
+        detector._accumulated_transcript = "open my notes app please"
+        detector._session_start = detector._last_speech = 100.0
+        dispatched = []
+
+        async def fake_process(command):
+            dispatched.append(command)
+
+        detector._process_command = fake_process
+
+        async def scenario():
+            with mock.patch("core.voice.wake_word.time.time", return_value=102.0):
+                # Re-delivery of the tail: accumulated unchanged, last_speech
+                # NOT refreshed, so the 1.5s silence window has expired.
+                await detector._accumulate_command("notes app please")
+
+        asyncio.run(scenario())
+        self.assertEqual(dispatched, ["open my notes app please"])
+
+
+class PerceptualPumpTranscriptFidelityTest(unittest.TestCase):
+    """The pump's WorldState copy must carry the FULL utterance — its
+    200-char display snippet truncated long spoken commands."""
+
+    def test_update_world_state_prefers_full_transcript(self):
+        from core.perception.perceptual_pump import (
+            AudioState,
+            PerceptualFrame,
+            PerceptualPump,
+        )
+
+        long_utterance = "hey aura " + ("do the thing and then " * 30).strip()
+        frame = PerceptualFrame()
+        frame.audio = AudioState(
+            transcript_snippet=long_utterance[-200:],
+            transcript_full=long_utterance,
+            transcript_changed=True,
+            voice_activity=True,
+        )
+
+        class FakeWS:
+            last_voice_transcript = ""
+            voice_activity_detected = False
+            ambient_audio_level = 0.0
+            active_window_title = ""
+            screen_content_hash = ""
+            cpu_percent = 0.0
+            memory_percent = 0.0
+            thermal_pressure = "nominal"
+            battery_percent = 100.0
+            battery_charging = True
+
+            def record_event(self, *args, **kwargs):
+                pass
+
+        ws = FakeWS()
+        pump = PerceptualPump()
+        with mock.patch(
+            "core.perception.perceptual_pump.ServiceContainer.get",
+            staticmethod(lambda name, default=None: ws if name == "world_state" else default),
+        ):
+            pump._update_world_state(frame)
+
+        self.assertEqual(ws.last_voice_transcript, long_utterance)
+
+
+class PlayLocallyGovernanceTest(unittest.TestCase):
+    """TTS cache writes must be governed INSIDE the executor thread:
+    run_in_executor does not propagate contextvars, so even governed
+    callers lose their scope crossing into the pool. Live failure pinned
+    here: wake-word spoken replies died with GovernanceViolationError on
+    file_write_gateway.write_bytes from play_locally."""
+
+    def test_play_locally_write_runs_under_governance(self):
+        from pathlib import Path
+
+        from core.senses.voice_engine import SovereignVoiceEngine
+
+        seen = {}
+
+        class WriteRecorder:
+            def write_bytes(self, path, payload, *, source=""):
+                from core.governance_context import get_active_governance
+
+                seen["governed"] = get_active_governance() is not None
+                seen["source"] = source
+
+        class FakeProc:
+            def poll(self):
+                return 0
+
+            def wait(self, timeout=None):
+                return 0
+
+        class SpawnRecorder:
+            def spawn(self, argv, *, source=""):
+                return FakeProc()
+
+        engine = object.__new__(SovereignVoiceEngine)
+        engine.data_dir = Path("/tmp")
+
+        async def scenario():
+            with mock.patch(
+                "core.senses.voice_engine.get_file_write_gateway",
+                return_value=WriteRecorder(),
+            ), mock.patch(
+                "core.senses.voice_engine.get_subprocess_gateway",
+                return_value=SpawnRecorder(),
+            ):
+                await engine._play_locally(b"RIFF-fake-audio")
+
+        asyncio.run(scenario())
+        self.assertTrue(seen.get("governed"), f"write was not governed: {seen}")
+        self.assertEqual(seen.get("source"), "core.senses.voice_engine.play_locally")
+
+
 class SpokenReplyTest(unittest.TestCase):
     def test_reply_spoken_through_voice_engine(self):
         detector = WakeWordDetector()

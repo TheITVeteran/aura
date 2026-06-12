@@ -81,7 +81,8 @@ class AudioState:
     """What is happening on the mic right now."""
     rms_energy: float = 0.0         # 0-1, ambient sound level
     voice_activity: bool = False    # is someone speaking?
-    transcript_snippet: str = ""    # most recent speech (last ~5s)
+    transcript_snippet: str = ""    # most recent speech (last ~5s, display-bounded)
+    transcript_full: str = ""       # full utterance (command-fidelity, 4000-char bound)
     transcript_changed: bool = False
     timestamp: float = field(default_factory=time.time)
 
@@ -238,6 +239,10 @@ def _collect_audio_state() -> AudioState:
             transcript = str(data.get("transcript") or data.get("text") or "")
             if transcript.strip():
                 state.transcript_snippet = transcript.strip()[-200:]
+                # Command fidelity: the wake-word lane consumes the full
+                # utterance; the 200-char display snippet destroyed long
+                # spoken commands when it overwrote last_voice_transcript.
+                state.transcript_full = transcript.strip()[:4000]
                 state.transcript_changed = True
     except (OSError, ValueError, TypeError) as e:
         record_degradation("perceptual_pump.audio", e)
@@ -699,7 +704,12 @@ class PerceptualPump:
             if hasattr(ws, "voice_activity_detected"):
                 ws.voice_activity_detected = frame.audio.voice_activity
             if hasattr(ws, "last_voice_transcript") and frame.audio.transcript_snippet:
-                ws.last_voice_transcript = frame.audio.transcript_snippet
+                # Full fidelity here: the wake-word command lane reads this
+                # field, and the 200-char display snippet used to truncate
+                # long spoken commands mid-utterance.
+                ws.last_voice_transcript = (
+                    frame.audio.transcript_full or frame.audio.transcript_snippet
+                )
 
             # System telemetry — keep WorldState's own fields in sync
             ws.cpu_percent = frame.system.cpu_percent
