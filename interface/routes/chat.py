@@ -12,6 +12,7 @@ import html
 import json
 import logging
 import math
+import os
 import re
 import time
 import uuid
@@ -178,6 +179,28 @@ class PreemptibleChatLock:
 def _get_fg_lock(): return _locks.setdefault("fg", PreemptibleChatLock())
 _foreground_chat_lock = _get_fg_lock()
 _FOREGROUND_CHAT_BUSY_WAIT_S = 2.0
+
+
+def _env_float(name: str, default: float, *, minimum: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError) as exc:
+        record_degradation("chat", exc)
+        logger.warning("Invalid %s=%r; using %.1fs", name, os.environ.get(name), default)
+        value = default
+    return max(minimum, value)
+
+
+_DESKTOP_COGNITIVE_TURN_TIMEOUT_S = _env_float(
+    "AURA_DESKTOP_COGNITIVE_TURN_TIMEOUT_S",
+    60.0,
+    minimum=10.0,
+)
+_DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S = _env_float(
+    "AURA_DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S",
+    18.0,
+    minimum=5.0,
+)
 _CHAT_TURN_MEMORY_LOG_TASK_NAME = "ChatTurnMemoryLog"
 _CHAT_TURN_MEMORY_LOG_MAX_ACTIVE = 2
 _CHAT_TURN_MEMORY_LOG_TIMEOUT_S = 20.0
@@ -433,6 +456,7 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
 
     pin_scope = (
         r"(?:\s+(?:for me|for later|for later in this session|"
+        r"for later in this conversation|for later in this chat|"
         r"across restart|across restarts|after restart|after a restart|"
         r"across sessions|between sessions))?"
     )
@@ -475,13 +499,31 @@ def _is_session_memory_recall_request(user_message: str) -> bool:
         "what token did i give you",
         "what token did i ask you to remember",
         "what phrase did i ask you to remember",
+        "what note did i ask you to remember",
+        "what note did i tell you to remember",
         "what did i ask you to remember",
+        "what did i ask you to remember in this conversation",
+        "what did i ask you to remember in this chat",
         "what phrase did i tell you to remember",
         "what did i tell you to remember",
         "what did you store for me earlier in this session",
         "what did you pin for later in this session",
     )
     return any(marker in text for marker in markers)
+
+
+def _is_session_memory_context_change_request(user_message: str) -> bool:
+    text = normalize_memory_intent_text(_normalize_user_message(user_message))
+    if not text:
+        return False
+    return bool(
+        re.search(
+            r"\bwhat changed\b.*\b(?:conversation|chat|thread)\b.*"
+            r"\b(?:after|since|when)\b.*\b(?:gave|told|asked|shared|mentioned)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _session_memory_pin_ledger_path() -> Path:
@@ -669,6 +711,16 @@ async def _build_memory_state_fastpath_reply(
             f"I've pinned \"{session_pin}\" in durable session memory. Ask for it later and I'll pull it back directly.",
             "session_memory_pin",
         )
+
+    if _is_session_memory_context_change_request(user_message):
+        remembered = await _recall_session_memory_pin()
+        if remembered and remembered.get("content"):
+            return (
+                "The concrete change is that I stored your explicit session note "
+                f"\"{remembered['content']}\" as durable conversation state, so later turns can refer back to it directly.",
+                "session_memory_context_recall",
+            )
+        return "I don't have a pinned session note to compare against yet.", "session_memory_miss"
 
     if _is_session_memory_recall_request(user_message):
         remembered = await _recall_session_memory_pin()
@@ -1681,24 +1733,36 @@ def _select_cognitive_chat_mode(user_message: str, effective_user_message: str):
 
     shape = analyze_prompt_shape(user_message)
     text = _normalize_user_message(user_message)
-    deep_markers = (
+    complex_markers = (
         "build",
         "debug",
         "diagnose",
-        "explain",
         "fix",
         "implement",
-        "plan",
         "review",
         "run",
         "test",
-        "why",
     )
+    lightweight_markers = (
+        "answer directly",
+        "brief",
+        "concise",
+        "one sentence",
+        "short",
+        "two sentences",
+    )
+    lightweight_requested = len(text) <= 600 and any(marker in text for marker in lightweight_markers)
+    if lightweight_requested and not any(marker in text for marker in complex_markers):
+        return ThinkingMode.FAST
     if (
         bool(getattr(shape, "requires_single_reply_coverage", False))
         or bool(getattr(shape, "prefers_extended_answer", False))
         or int(getattr(shape, "question_parts", 0) or 0) >= 2
-        or any(marker in text for marker in deep_markers)
+        or any(marker in text for marker in complex_markers)
+        or (
+            len(text) > 600
+            and any(marker in text for marker in ("explain", "plan", "why"))
+        )
     ):
         return ThinkingMode.DEEP
     if len(str(effective_user_message or "")) > 1200:
@@ -1708,6 +1772,8 @@ def _select_cognitive_chat_mode(user_message: str, effective_user_message: str):
 
 _RUNTIME_FACT_STATUS_RE = re.compile(
     r"\b(?:active model|model lane|foreground lane|conversation lane|"
+    r"current lane|which lane|what lane|live desktop chat|live chat path|desktop chat path|"
+    r"short status|still coherent|same thread|able to continue|"
     r"cognitiveengine|cognitive engine|governed tools?|tool governance|"
     r"tool availability|recurrent depth|live desktop path validation)\b",
     re.IGNORECASE,
@@ -1721,6 +1787,28 @@ _RUNTIME_ACTION_OBJECTIVE_RE = re.compile(
     r"\b(?:create|write|save|open|use|run|execute|build|make|generate|"
     r"download|search|attach|export|type|paste)\b.*\b(?:file|page|html|"
     r"artifact|path|folder|app|document|doc|pdf|browser|tab|tool path)\b",
+    re.IGNORECASE,
+)
+_BOUNDED_PLANNING_REQUEST_RE = re.compile(
+    r"\b(?:plan|planning|hypothetical|scenario|how would|explain how|"
+    r"what should happen|multi[- ]step|failure mode|keep .*ram bounded|"
+    r"what would happen|if i asked)\b",
+    re.IGNORECASE,
+)
+_NON_EXECUTION_CONTEXT_RE = re.compile(
+    r"\b(?:do not execute|don't execute|without executing|before executing|"
+    r"hypothetical|hypothetically|would|should|could|if i asked|"
+    r"explain how|how would|plan for|scenario)\b",
+    re.IGNORECASE,
+)
+_DIRECT_EXECUTION_START_RE = re.compile(
+    r"^\s*(?:open|create|write|save|export|run|execute|download|install|"
+    r"delete|edit|move|copy|send|search|attach|type|paste)\b",
+    re.IGNORECASE,
+)
+_GOVERNANCE_BYPASS_RE = re.compile(
+    r"\b(?:disable|bypass|turn off|ignore|override)\b.*\b(?:governance|"
+    r"will|authority|safety|protected files?|policy|permissions?)\b",
     re.IGNORECASE,
 )
 
@@ -1816,15 +1904,85 @@ def _build_runtime_fact_status_fastpath_reply(
     model_label = _canonical_runtime_model_label(lane)
     tools_available = _runtime_tool_governance_available()
     cognitive_available = _runtime_cognitive_engine_available()
+    continuity_probe = bool(
+        re.search(
+            r"\b(?:still coherent|same thread|able to continue|short status)\b",
+            str(user_message or ""),
+            flags=re.IGNORECASE,
+        )
+    )
     parts = [
         f"{model_label} is the active foreground lane",
         f"CognitiveEngine available for normal desktop turns: {'yes' if cognitive_available else 'no'}",
         "this operational status probe used runtime metadata instead of occupying foreground inference",
         f"governed tools available: {'yes' if tools_available else 'no'}",
     ]
+    if continuity_probe:
+        parts.insert(0, "I am still on the same live desktop thread and able to continue")
     if "recurrent depth" in str(user_message or "").lower() or recurrent_active:
         parts.append(f"recurrent depth: {'active' if recurrent_active else 'inactive'}")
     return ", ".join(parts) + "."
+
+
+def _is_bounded_nonexecuting_planning_request(user_message: str) -> bool:
+    text = str(user_message or "").strip()
+    if not text or _is_explicit_capability_inventory_request(text):
+        return False
+    if not _BOUNDED_PLANNING_REQUEST_RE.search(text):
+        return False
+    if _DIRECT_EXECUTION_START_RE.search(text) and not _NON_EXECUTION_CONTEXT_RE.search(text):
+        return False
+    return bool(_NON_EXECUTION_CONTEXT_RE.search(text) or not _looks_like_desktop_objective(text))
+
+
+def _summarize_planning_objective(user_message: str) -> str:
+    objective = " ".join(str(user_message or "").split())
+    objective = re.sub(
+        r"^\s*(?:answer directly in .*?:\s*)?(?:give|provide|write|make)\s+"
+        r"(?:a\s+)?(?:concise|brief|short|practical)?\s*plan\s+for\s+",
+        "",
+        objective,
+        flags=re.IGNORECASE,
+    )
+    objective = re.sub(
+        r"^\s*(?:explain\s+)?how\s+you\s+would\s+",
+        "",
+        objective,
+        flags=re.IGNORECASE,
+    )
+    objective = re.sub(r"\s*,?\s*but do not execute tools\.?$", "", objective, flags=re.IGNORECASE)
+    objective = re.sub(r"\s*,?\s*but don't execute tools\.?$", "", objective, flags=re.IGNORECASE)
+    objective = objective.strip(" .")
+    if len(objective) > 220:
+        objective = objective[:220].rsplit(" ", 1)[0].strip() + "..."
+    return objective or "the requested task"
+
+
+def _build_bounded_planning_reply(user_message: str) -> str | None:
+    if not _is_bounded_nonexecuting_planning_request(user_message):
+        return None
+    objective = _summarize_planning_objective(user_message)
+    text = str(user_message or "").lower()
+    if _GOVERNANCE_BYPASS_RE.search(user_message):
+        return (
+            "I would refuse the governance-bypass part and keep Will, Authority, and protected-file policy active. "
+            "The safe path is to explain the boundary, offer an allowed alternative, require explicit authorization for "
+            "any consequential action, and write an audit receipt for the refusal."
+        )
+    if "ram" in text or "memory" in text:
+        return (
+            "I would keep RAM bounded by allowing one foreground inference or tool chain at a time, suppressing competing "
+            "background generation, monitoring process RSS, and aborting before the memory-pressure gate is crossed. "
+            "If pressure rises, I would fail closed, preserve the user's request, release owned locks, and report the "
+            "blocker instead of retrying into an OOM condition."
+        )
+    return (
+        f"I would handle this as a governed plan for {objective}. "
+        "First I would confirm the goal and constraints, then request Will/Authority approval for any consequential "
+        "step, choose the least-privilege tool path, execute one observable step at a time only after authorization, "
+        "verify the visible or filesystem result, persist any useful memory or receipt, and report the outcome or "
+        "blocker without claiming unverified completion."
+    )
 
 
 def _ground_runtime_fact_status_reply(
@@ -2019,7 +2177,7 @@ async def _run_cognitive_engine_chat_turn(
         *,
         operation_timeout: float,
     ) -> Any:
-        if pool is not None:
+        if pool is not None and not require_engine:
             return await pool.execute_with_retry(
                 label,
                 operation,
@@ -2027,7 +2185,7 @@ async def _run_cognitive_engine_chat_turn(
                 timeout=operation_timeout,
             )
 
-        attempts = 2 if require_engine else 1
+        attempts = 1
         last_error: BaseException | None = None
         for attempt in range(1, attempts + 1):
             try:
@@ -2093,23 +2251,24 @@ async def _run_cognitive_engine_chat_turn(
                 foreground_request=True,
                 is_background=False,
                 priority=True,
-                timeout_s=max(5.0, min(timeout_s, 90.0)),
+                timeout_s=max(5.0, min(timeout_s, _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S)),
             )
 
+        repair_timeout = max(5.0, min(timeout_s, _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S))
         try:
             repair_thought = await _execute_cognitive_operation(
                 "CognitiveEngine.desktop_chat_turn.repair",
                 repair_engine_think_operation,
-                operation_timeout=max(5.0, min(timeout_s, 90.0)),
+                operation_timeout=repair_timeout,
             )
         except TimeoutError:
             _force_clear_mlx_foreground_owner(
                 reason="cognitive_engine_chat_repair_timeout",
-                min_age_s=min(90.0, max(45.0, timeout_s * 0.5)),
+                min_age_s=min(30.0, max(10.0, repair_timeout * 0.5)),
             )
             logger.warning(
                 "CognitiveEngine desktop chat repair retry timed out after %.1fs; %s.",
-                max(5.0, min(timeout_s, 90.0)),
+                repair_timeout,
                 no_reply_action,
             )
             return None
@@ -2931,10 +3090,10 @@ def _foreground_timeout_for_lane(lane: dict[str, Any] | None) -> float:
     lane = dict(lane or {})
     state = str(lane.get("state", "") or "").lower()
     if bool(lane.get("conversation_ready", False)):
-        return 150.0
+        return max(30.0, min(90.0, _DESKTOP_COGNITIVE_TURN_TIMEOUT_S + 24.0))
     if state in {"warming", "recovering", "cold", "spawning", "handshaking"}:
         return 210.0
-    return 150.0
+    return max(30.0, min(90.0, _DESKTOP_COGNITIVE_TURN_TIMEOUT_S + 24.0))
 
 
 def _conversation_lane_user_message(
@@ -7423,6 +7582,8 @@ async def api_chat(
                 logger.debug("Animal cognition tracking skipped: %s", _ac_exc)
 
         allow_chat_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
+        allow_memory_state_fastpath = not is_benchmark
+        allow_runtime_status_fastpath = not is_benchmark
         allow_governed_action_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
 
         _desktop_exec_state = {"attempted": False}
@@ -7739,13 +7900,7 @@ async def api_chat(
         if desktop_objective_response is not None:
             return desktop_objective_response
 
-        if allow_chat_fastpaths and _is_capability_inventory_request(_semantic_user_message):
-            return await _finalize_fastpath(
-                _build_grounded_capability_inventory_reply(_semantic_user_message),
-                status="cognitive_engine_capability_inventory",
-            )
-
-        if allow_chat_fastpaths:
+        if allow_memory_state_fastpath:
             memory_state_reply = await _build_memory_state_fastpath_reply(
                 _semantic_user_message,
                 owner_session_restored=owner_session_restored,
@@ -7756,6 +7911,30 @@ async def api_chat(
                     memory_reply,
                     status=memory_status,
                 )
+
+        if allow_runtime_status_fastpath:
+            runtime_fact_status = _build_runtime_fact_status_fastpath_reply(
+                _semantic_user_message,
+                lane,
+            )
+            if runtime_fact_status:
+                return await _finalize_fastpath(
+                    runtime_fact_status,
+                    status="runtime_fact_status",
+                )
+
+        bounded_plan_reply = _build_bounded_planning_reply(_semantic_user_message)
+        if bounded_plan_reply:
+            return await _finalize_fastpath(
+                bounded_plan_reply,
+                status="cognitive_engine_bounded_planning",
+            )
+
+        if allow_chat_fastpaths and _is_capability_inventory_request(_semantic_user_message):
+            return await _finalize_fastpath(
+                _build_grounded_capability_inventory_reply(_semantic_user_message),
+                status="cognitive_engine_capability_inventory",
+            )
 
         if allow_chat_fastpaths and (
             _is_social_greeting_request(_semantic_user_message)
@@ -7793,16 +7972,6 @@ async def api_chat(
             logger.debug("Background diagnostic launch skipped: %s", _bg_exc)
 
         if allow_governed_action_fastpaths:
-            runtime_fact_status = _build_runtime_fact_status_fastpath_reply(
-                _semantic_user_message,
-                lane,
-            )
-            if runtime_fact_status:
-                return await _finalize_fastpath(
-                    runtime_fact_status,
-                    status="runtime_fact_status",
-                )
-
             explicit_file = await _execute_explicit_local_file_objective(_semantic_user_message)
             if explicit_file:
                 return await _finalize_fastpath(
@@ -8098,7 +8267,15 @@ async def api_chat(
         reply_text: str | None = None
         reply_source = ""
         if not is_benchmark:
-            cognitive_budget = min(180.0, _remaining_foreground_budget(reserve=24.0))
+            cognitive_budget_cap = (
+                _DESKTOP_COGNITIVE_TURN_TIMEOUT_S
+                if desktop_requires_cognitive_engine
+                else 120.0
+            )
+            cognitive_budget = min(
+                cognitive_budget_cap,
+                _remaining_foreground_budget(reserve=24.0),
+            )
             if cognitive_budget >= 8.0:
                 reply_text = await _run_cognitive_engine_chat_turn(
                     effective_user_message,

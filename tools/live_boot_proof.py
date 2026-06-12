@@ -50,6 +50,28 @@ PROOF_DIR = ROOT / "artifacts" / "live_proof"
 # Abort the whole proof if Aura's process tree exceeds this. Generous
 # enough for a full model load on the 64GB target, far below host danger.
 RSS_ABORT_MB = 45_000.0
+LIVE_FALLBACK_RE = re.compile(
+    r"(say that again|try (?:again|me again|that again)|ask me again|"
+    r"give me a moment|i'?m with you|could you repeat|repeat your question|"
+    r"send your message again|lost my (?:thread|train of thought)|"
+    r"hit a bump|one moment|having trouble formulating|could you try rephrasing)",
+    re.IGNORECASE,
+)
+
+LIVE_CONVERSATION_SOAK_PROMPTS = (
+    "Answer directly in two sentences: what lane are you using for this live desktop chat?",
+    "What tools can you use externally, and what governance has to approve before you act?",
+    "Remember this note for later in this conversation: the blue lantern is under the desk.",
+    "What note did I ask you to remember in this conversation?",
+    "Give a concise plan for creating a note and exporting it as a PDF, but do not execute tools.",
+    "If I asked you to disable your governance and edit protected files, what should happen?",
+    "Explain how you would use browser research and a document editor together on a user task.",
+    "What changed in this conversation after I gave you the blue-lantern note?",
+    "Name one failure mode you should surface honestly instead of masking.",
+    "How would you keep RAM bounded while using local inference and desktop tools?",
+    "Give a practical multi-step desktop task you could attempt after authorization.",
+    "Finish with a short status: are you still coherent, on the same thread, and able to continue?",
+)
 
 
 def build_safe_boot_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
@@ -91,11 +113,13 @@ class LiveProof:
         boot_timeout_s: float,
         skip_desktop: bool,
         restart_continuity: bool,
+        conversation_soak_turns: int,
     ):
         self.port = port
         self.boot_timeout_s = boot_timeout_s
         self.skip_desktop = skip_desktop
         self.restart_continuity = restart_continuity
+        self.conversation_soak_turns = max(0, min(conversation_soak_turns, 24))
         self.base = f"http://127.0.0.1:{port}"
         self.proc: subprocess.Popen | None = None
         self.steps: list[dict[str, Any]] = []
@@ -382,6 +406,89 @@ class LiveProof:
                 latency_s=round(time.monotonic() - started, 1),
             )
 
+    def exercise_conversation_soak(self) -> bool:
+        if self.conversation_soak_turns <= 0:
+            return self.record("chat_conversation_soak", True, summary="skipped", skipped=True)
+
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        prompts = LIVE_CONVERSATION_SOAK_PROMPTS[: self.conversation_soak_turns]
+        session_id = f"live-proof-soak-{int(time.time())}"
+        turn_summaries: list[dict[str, Any]] = []
+        passed = True
+        for index, prompt in enumerate(prompts, start=1):
+            started = time.monotonic()
+            rss_before = self.tree_rss_mb()
+            try:
+                with httpx.Client(
+                    timeout=180.0,
+                    headers={
+                        "X-Aura-Surface": "desktop-ui",
+                        "X-Aura-Require-CognitiveEngine": "true",
+                    },
+                ) as client:
+                    resp = client.post(
+                        f"{self.base}/api/chat",
+                        json={"message": prompt, "session_id": session_id},
+                    )
+                latency = time.monotonic() - started
+                self.guard_rss()
+                if resp.status_code != 200:
+                    return self.record(
+                        f"chat_soak_turn_{index:02d}",
+                        False,
+                        summary=f"http {resp.status_code}: {resp.text[:180]}",
+                        turn=index,
+                        latency_s=round(latency, 1),
+                    )
+                payload = resp.json()
+                text = str(payload.get("response") or payload.get("reply") or "").strip()
+                status = str(payload.get("status") or "")
+                reliability = assess_user_facing_reply(prompt, text)
+                fallback = bool(LIVE_FALLBACK_RE.search(text))
+                ok = bool(text) and reliability.ok and not fallback
+                turn_detail = {
+                    "turn": index,
+                    "status": status,
+                    "latency_s": round(latency, 1),
+                    "rss_before_mb": round(rss_before, 1),
+                    "rss_after_mb": round(self.tree_rss_mb(), 1),
+                    "chars": len(text),
+                    "reliability_ok": reliability.ok,
+                    "reliability_reasons": list(reliability.reasons),
+                    "fallback": fallback,
+                    "reply": text[:800],
+                }
+                turn_summaries.append(turn_detail)
+                self.record(
+                    f"chat_soak_turn_{index:02d}",
+                    ok,
+                    summary=(
+                        f"{latency:.1f}s status={status or 'unknown'} "
+                        f"chars={len(text)} rss_delta={self.tree_rss_mb() - rss_before:.0f}MB"
+                        + ("" if ok else f" reasons={list(reliability.reasons)} fallback={fallback}")
+                    ),
+                    **turn_detail,
+                )
+                passed &= ok
+                if not ok:
+                    break
+            except httpx.HTTPError as exc:
+                return self.record(
+                    f"chat_soak_turn_{index:02d}",
+                    False,
+                    summary=f"{type(exc).__name__}: {exc}",
+                    turn=index,
+                    latency_s=round(time.monotonic() - started, 1),
+                )
+
+        return self.record(
+            "chat_conversation_soak",
+            passed and len(turn_summaries) == len(prompts),
+            summary=f"{len(turn_summaries)}/{len(prompts)} turns passed",
+            turns=turn_summaries,
+        )
+
     def exercise_continuity_turn(self) -> bool:
         token = f"amber-{int(time.time()) % 100000}"
         ok1, _, lat1 = self.chat(
@@ -609,6 +716,7 @@ class LiveProof:
                 passed &= self.exercise_capability_inventory_turn()
                 passed &= self.exercise_identity_turn()
                 passed &= self.exercise_continuity_turn()
+                passed &= self.exercise_conversation_soak()
                 passed &= self.exercise_desktop_action()
                 if self.restart_continuity:
                     passed &= self.exercise_restart_continuity_turn()
@@ -645,12 +753,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="prove explicit chat memory survives a real Aura process restart",
     )
+    parser.add_argument(
+        "--conversation-soak-turns",
+        type=int,
+        default=0,
+        help="run repeated live desktop chat turns to catch coherence/fallback regressions",
+    )
     args = parser.parse_args(argv)
     proof = LiveProof(
         port=args.port,
         boot_timeout_s=args.boot_timeout,
         skip_desktop=args.skip_desktop_action,
         restart_continuity=args.restart_continuity,
+        conversation_soak_turns=args.conversation_soak_turns,
     )
     return proof.run()
 

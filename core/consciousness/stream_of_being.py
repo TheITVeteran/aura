@@ -54,6 +54,19 @@ MAX_PERSISTED_TEXT_CHARS = 2000
 MAX_STATE_AGE_S = 7200.0
 MAX_REPORTED_GAP_S = 86400.0
 CONTINUOUS_EXPERIENCE_FAILURE_LIMIT = 3
+_AUXILIARY_FAULT_STAGES = frozenset(
+    {
+        "background_llm_memory_pressure",
+        "continuous_experience_append",
+        "continuous_experience_disable",
+        "deep_narrative",
+        "deep_narrative_identity",
+        "deep_narrative_quality_gate",
+        "deep_narrative_router_contract",
+        "deep_narrative_timeout",
+        "stop_task_timeout",
+    }
+)
 
 
 def _emit_stream_fault(
@@ -63,22 +76,38 @@ def _emit_stream_fault(
     severity: str = "degraded",
     stage: str = "",
     extra: dict[str, Any] | None = None,
+    enforce_failure_policy: bool | None = None,
 ) -> None:
     """Record a StreamOfBeing fault with explicit recovery semantics."""
     metadata = dict(extra or {})
     if stage:
         metadata["stage"] = stage
+    subsystem = "stream_of_being_auxiliary" if stage in _AUXILIARY_FAULT_STAGES else "stream_of_being"
+    enforce = bool(severity == "critical") if enforce_failure_policy is None else enforce_failure_policy
     try:
         record_degradation(
-            "stream_of_being",
+            subsystem,
             error,
             severity=severity,  # type: ignore[arg-type]
             action=action,
             classification=FallbackClassification.SAFE_FALLBACK,
             extra=metadata or None,
+            enforce_failure_policy=enforce,
         )
     except TypeError:
-        record_degradation("stream_of_being", error)
+        record_degradation(
+            subsystem,
+            error,
+            enforce_failure_policy=enforce,
+        )
+    except RuntimeError:
+        if enforce:
+            raise
+        logger.debug(
+            "Stream fault recorded without propagating fail-closed policy: stage=%s error=%s",
+            stage,
+            error,
+        )
 
 
 def _finite_float(
@@ -944,7 +973,13 @@ class StreamOfBeing:
         # Register in ServiceContainer
         try:
             from core.container import ServiceContainer
-            ServiceContainer.register_instance("stream_of_being", self)
+            ServiceContainer.register_instance(
+                "stream_of_being",
+                self,
+                required=False,
+                required_for="continuous experiential telemetry",
+                failure_policy="degrade_with_receipt",
+            )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
             _emit_stream_fault(
                 e,
@@ -997,6 +1032,21 @@ class StreamOfBeing:
         if (now - self._boot_started_at) < BOOT_GRACE_PERIOD_S:
             return False
         if (now - self._last_user_interaction) < 60.0:
+            return False
+        try:
+            from core.runtime.background_policy import background_activity_reason
+
+            if background_activity_reason(
+                min_idle_seconds=max(60.0, NARRATIVE_MIN_INTERVAL_DURING_CHAT_S),
+            ):
+                return False
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+            _emit_stream_fault(
+                _exc,
+                action="deferred background narrative because foreground-activity policy was unavailable",
+                severity="debug",
+                stage="background_llm_memory_pressure",
+            )
             return False
 
         try:
@@ -1092,8 +1142,9 @@ class StreamOfBeing:
         _emit_stream_fault(
             exc,
             action="marked stream offline after existence loop task failed",
-            severity="degraded",
+            severity="critical",
             stage="background_task_failure",
+            enforce_failure_policy=False,
         )
 
     # ── The Existence Loop ────────────────────────────────────────────────────

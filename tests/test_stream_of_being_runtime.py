@@ -116,6 +116,58 @@ def test_rejected_deep_narrative_backs_off_instead_of_hammering_llm(
     assert stream._deep_narrative_timestamp > 0.0
 
 
+def test_deep_narrative_timeout_is_auxiliary_not_core_stream_failure(
+    tmp_path,
+    monkeypatch,
+    service_container,
+):
+    class SlowRouter:
+        async def think(self, **_kwargs):
+            await asyncio.sleep(1.0)
+            return "too late"
+
+    import core.consciousness.stream_of_being as stream_module
+
+    service_container.register_instance("llm_router", SlowRouter(), required=False)
+    monkeypatch.setattr(stream_module, "NARRATIVE_TIMEOUT_S", 0.001)
+    stream = stream_module.StreamOfBeing(save_dir=tmp_path)
+    moment = stream_module.NowMoment()
+    stream._thread.add(moment)
+    get_degradation_tracker().reset()
+
+    asyncio.run(stream._run_deep_narrative(moment))
+
+    assert get_degradation_tracker().count("stream_of_being_auxiliary", "warning") >= 1
+    assert get_degradation_tracker().count("stream_of_being", "critical") == 0
+
+
+def test_stream_background_task_observer_records_without_callback_exception(
+    tmp_path,
+    service_container,
+):
+    from core.consciousness.stream_of_being import StreamOfBeing
+
+    stream = StreamOfBeing(save_dir=tmp_path)
+    service_container.register_instance(
+        "stream_of_being",
+        stream,
+        required=True,
+        failure_policy="fail-closed",
+    )
+    get_degradation_tracker().reset()
+
+    async def scenario():
+        task = asyncio.get_running_loop().create_future()
+        task.set_exception(RuntimeError("stream task failed"))
+        stream._running = True
+        stream._observe_background_task(task)
+
+    asyncio.run(scenario())
+
+    assert stream.get_status()["running"] is False
+    assert get_degradation_tracker().count("stream_of_being", "critical") >= 1
+
+
 def test_stream_start_fails_closed_when_task_tracker_cannot_supervise(
     tmp_path,
     monkeypatch,
