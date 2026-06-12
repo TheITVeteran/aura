@@ -744,3 +744,78 @@ async def test_open_url_refuses_unknown_browser(monkeypatch):
     result = await skill.execute({"action": "open_url", "target": target}, {})
     assert result["ok"] is False
     assert "not in the allowed browser set" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_set_wallpaper_verifies_via_readback(monkeypatch, tmp_path):
+    """set_wallpaper applies through System Events and only claims ok
+    when the read-back names the requested file; previous wallpaper is
+    recorded for reversibility."""
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    img = tmp_path / "squid_wallpaper.png"
+    img.write_bytes(b"\x89PNG fake")
+    monkeypatch.setattr(
+        skill, "_resolve_allowed_desktop_path", lambda raw, must_exist=False: img
+    )
+
+    state = {"current": "/Library/Desktop Pictures/Sonoma.heic"}
+
+    def fake_applescript(script, *, timeout=10):
+        if "set picture of every desktop" in script:
+            state["current"] = str(img)
+            return ""
+        return state["current"]
+
+    monkeypatch.setattr(skill, "_run_applescript", fake_applescript)
+
+    result = await skill.execute(
+        {"action": "set_wallpaper", "target": json.dumps({"path": str(img)})}, {}
+    )
+    assert result["ok"] is True
+    assert result["effect_verified"] is True
+    assert result["previous"].endswith("Sonoma.heic")
+    assert result["applied"].endswith("squid_wallpaper.png")
+
+    from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
+
+    step = DesktopTaskStep(
+        action="set_wallpaper",
+        target={"path": str(img)},
+        reason="set wallpaper",
+        expect="Wallpaper read-back names the fetched image file.",
+    )
+    verified, evidence = DesktopTaskSkill()._verify_step_effect(step, result)
+    assert verified, evidence
+
+
+@pytest.mark.asyncio
+async def test_set_wallpaper_readback_mismatch_fails_closed(monkeypatch, tmp_path):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    img = tmp_path / "squid_wallpaper.png"
+    img.write_bytes(b"\x89PNG fake")
+    monkeypatch.setattr(
+        skill, "_resolve_allowed_desktop_path", lambda raw, must_exist=False: img
+    )
+    monkeypatch.setattr(
+        skill,
+        "_run_applescript",
+        lambda script, timeout=10: "/Library/Desktop Pictures/Sonoma.heic",
+    )
+
+    result = await skill.execute(
+        {"action": "set_wallpaper", "target": json.dumps({"path": str(img)})}, {}
+    )
+    assert result["ok"] is False
+    assert "does not match" in result["error"]

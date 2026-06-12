@@ -13,6 +13,11 @@ from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
 
+# Placeholder URL resolved at execution time from the most recent
+# fetch_topic_image receipt — derivation cannot know the source page
+# before the fetch runs ("show me where you found it").
+FETCHED_IMAGE_SOURCE_TOKEN = "aura://fetched-image-source"
+
 
 class DesktopTaskStep(BaseModel):
     action: str = Field(
@@ -53,6 +58,7 @@ class DesktopTaskStep(BaseModel):
             "move_file",
             "create_folder",
             "fetch_topic_image",
+            "set_wallpaper",
         }
         if action not in allowed:
             raise ValueError(f"Unsupported desktop action: {value}")
@@ -312,6 +318,33 @@ class DesktopTaskSkill(BaseSkill):
                 if query:
                     return query[:240]
         return ""
+
+    @staticmethod
+    def _extract_wallpaper_query(objective: str) -> str:
+        """Topic for a wallpaper-change request ('change my wallpaper to a
+        squid' → 'squid'); empty when no wallpaper change is asked for."""
+        text = str(objective or "").strip()
+        match = re.search(
+            r"\b(?:change|set|update|make)\b[^.;\n]{0,40}?\bwallpaper\b"
+            r"(?:\s+(?:to|into|with)\b)?(?:\s+(?:a|an|the)\b)?\s*([^.;,\n]+)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return ""
+        query = re.sub(
+            r"\b(?:and|then|also|please)\b.*$", "", match.group(1), flags=re.IGNORECASE
+        )
+        query = re.sub(r"\b(?:image|picture|photo)\b.*$", "", query, flags=re.IGNORECASE)
+        return query.strip(" ,")[:120]
+
+    @staticmethod
+    def _wants_image_source_shown(objective: str) -> bool:
+        lowered = str(objective or "").lower()
+        return bool(
+            re.search(r"\bshow\b[^.;\n]{0,40}\b(?:where|source|found)\b", lowered)
+            or "where you found" in lowered
+        )
 
     @staticmethod
     def _extract_apps(objective: str) -> list[str]:
@@ -789,6 +822,16 @@ class DesktopTaskSkill(BaseSkill):
             if not isinstance(img_bytes, int) or img_bytes <= 0:
                 return False, "missing fetched image byte count"
             return True, f"path={img_path};bytes={img_bytes};source={page_url}"
+        if action == "set_wallpaper":
+            applied = str(result.get("applied") or "").strip()
+            wp_path = str(result.get("path") or "").strip()
+            verified = bool(result.get("effect_verified")) and bool(wp_path)
+            return (
+                verified,
+                f"applied={applied};path={wp_path}"
+                if verified
+                else "missing wallpaper read-back evidence",
+            )
         if action == "move_file":
             destination = str(result.get("destination") or "").strip()
             bytes_moved = result.get("bytes")
@@ -1045,6 +1088,37 @@ class DesktopTaskSkill(BaseSkill):
                     expect="Image file exists with a recorded source page URL.",
                 )
             )
+
+        wallpaper_query = self._extract_wallpaper_query(text)
+        if wallpaper_query:
+            wallpaper_path = (
+                f"~/Documents/{self._safe_filename(wallpaper_query)[:40] or 'wallpaper'}_wallpaper.png"
+            )
+            steps.append(
+                DesktopTaskStep(
+                    action="fetch_topic_image",
+                    target={"topic": wallpaper_query, "path": wallpaper_path},
+                    reason="Fetch the requested wallpaper image through the governed network gateway, with source-page evidence.",
+                    expect="Image file exists with a recorded source page URL.",
+                )
+            )
+            steps.append(
+                DesktopTaskStep(
+                    action="set_wallpaper",
+                    target={"path": wallpaper_path},
+                    reason="Set the desktop wallpaper to the fetched image, recording the previous wallpaper for reversibility.",
+                    expect="Wallpaper read-back names the fetched image file.",
+                )
+            )
+            if self._wants_image_source_shown(text):
+                steps.append(
+                    DesktopTaskStep(
+                        action="open_url",
+                        target=_open_url_target(FETCHED_IMAGE_SOURCE_TOKEN),
+                        reason="Show the user where the wallpaper image was found (source page from the fetch receipt).",
+                        expect=f"{browser_label} accepts the image source page URL.",
+                    )
+                )
 
         if wants_document and wants_artifact_file:
             body = self._document_body_with_references(
@@ -1319,8 +1393,36 @@ class DesktopTaskSkill(BaseSkill):
                 context=task_context,
             )
 
+        last_image_page_url = ""
         for index, step in enumerate(steps, start=1):
             target = step.target
+            if step.action == "open_url":
+                # Resolve the fetched-image source placeholder from the
+                # fetch receipt — the source page is only known at runtime.
+                if isinstance(target, dict) and target.get("url") == FETCHED_IMAGE_SOURCE_TOKEN:
+                    if not last_image_page_url:
+                        failures.append(
+                            {
+                                "index": index,
+                                "action": step.action,
+                                "ok": False,
+                                "error": "no fetched-image source URL available to show",
+                            }
+                        )
+                        break
+                    target = dict(target, url=last_image_page_url)
+                elif target == FETCHED_IMAGE_SOURCE_TOKEN:
+                    if not last_image_page_url:
+                        failures.append(
+                            {
+                                "index": index,
+                                "action": step.action,
+                                "ok": False,
+                                "error": "no fetched-image source URL available to show",
+                            }
+                        )
+                        break
+                    target = last_image_page_url
             if isinstance(target, dict):
                 target = json.dumps(target)
             payload = {
@@ -1358,6 +1460,8 @@ class DesktopTaskSkill(BaseSkill):
                 "result": result,
             }
             receipts.append(receipt)
+            if step.action == "fetch_topic_image" and receipt["ok"]:
+                last_image_page_url = str(result.get("page_url") or "") or last_image_page_url
             if not receipt["ok"]:
                 failures.append(receipt)
                 if params.stop_on_error:

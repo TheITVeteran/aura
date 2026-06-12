@@ -861,3 +861,92 @@ def test_derivation_honors_safari_and_neutral_defaults():
     neutral_urls = [s for s in neutral_steps if s.action == "open_url"]
     assert neutral_urls and all(isinstance(s.target, str) for s in neutral_urls)
     assert all("duckduckgo.com" in s.target for s in neutral_urls)
+
+
+def test_wallpaper_query_extraction():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    extract = DesktopTaskSkill._extract_wallpaper_query
+    assert extract("Please change my wallpaper to a squid, and show me where you found it") == "squid"
+    assert extract("Set the wallpaper to an octopus please") == "octopus"
+    assert extract("Write a note about squids") == ""
+    assert DesktopTaskSkill._wants_image_source_shown(
+        "change my wallpaper to a squid, and show me where you found it"
+    )
+    assert not DesktopTaskSkill._wants_image_source_shown("change my wallpaper to a squid")
+
+
+def test_wallpaper_derivation_fetches_sets_and_shows_source():
+    """Bryan's part-2 closer: 'change my wallpaper to a squid, and show
+    me where you found it' derives fetch → set_wallpaper → source tab,
+    with the source URL resolved at runtime from the fetch receipt."""
+    from core.skills.desktop_task import FETCHED_IMAGE_SOURCE_TOKEN, DesktopTaskSkill
+
+    skill = DesktopTaskSkill()
+    steps = skill._derive_steps_from_objective(
+        "Change my wallpaper to a squid, and show me where you found it.", {}
+    )
+    actions = [s.action for s in steps]
+    fetch_idx = actions.index("fetch_topic_image")
+    set_idx = actions.index("set_wallpaper")
+    assert fetch_idx < set_idx
+    assert steps[fetch_idx].target["topic"] == "squid"
+    assert steps[set_idx].target["path"] == steps[fetch_idx].target["path"]
+    source_steps = [
+        s for s in steps
+        if s.action == "open_url"
+        and FETCHED_IMAGE_SOURCE_TOKEN in str(s.target)
+    ]
+    assert source_steps, actions
+
+
+@pytest.mark.asyncio
+async def test_wallpaper_chain_substitutes_source_url_at_runtime(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            if params["action"] == "set_wallpaper":
+                payload = json.loads(params["target"])
+                return {
+                    "ok": True,
+                    "action": "set_wallpaper",
+                    "path": payload["path"],
+                    "applied": payload["path"],
+                    "effect_verified": True,
+                }
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    skill = DesktopTaskSkill()
+    result = await skill.execute(
+        {
+            "objective": "Change my wallpaper to a squid, and show me where you found it.",
+            "steps": [],
+        },
+        {"origin": "desktop_ui"},
+    )
+
+    assert result["ok"] is True, result.get("failures")
+    open_url_targets = [
+        json.loads(call[1]["target"]) if call[1]["target"].startswith("{") else call[1]["target"]
+        for call in calls
+        if call[1]["action"] == "open_url"
+    ]
+    source_urls = [
+        t["url"] if isinstance(t, dict) else t
+        for t in open_url_targets
+    ]
+    assert any(u == "https://en.wikipedia.org/wiki/Robot" for u in source_urls), (
+        f"source tab did not receive the fetch receipt page_url: {source_urls}"
+    )

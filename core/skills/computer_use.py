@@ -99,7 +99,7 @@ class ComputerUseParams(BaseModel):
         description=(
             "click|type|hotkey|scroll|read_screen_text|read_menu_clock|open_app|open_url|"
             "run_command|set_clipboard|get_clipboard|wait|run_applescript|write_text_file|"
-            "render_text_pdf|move_file|create_folder|fetch_topic_image"
+            "render_text_pdf|move_file|create_folder|fetch_topic_image|set_wallpaper"
         ),
     )
     target: str = Field(
@@ -522,6 +522,49 @@ class ComputerUseSkill(BaseSkill):
             "path": str(path),
             "existed": existed,
         }
+
+    def _set_wallpaper(self, target: str) -> dict[str, Any]:
+        """Set the desktop wallpaper to an image inside the allowed
+        artifact roots, with read-back verification and the previous
+        wallpaper recorded so the change is reversible."""
+        payload = self._target_json(target)
+        path = self._resolve_allowed_desktop_path(payload.get("path"), must_exist=True)
+        if not path.is_file():
+            return {"ok": False, "error": f"Wallpaper image is not a file: {path}"}
+        try:
+            previous = self._run_applescript(
+                'tell application "System Events" to get picture of first desktop',
+                timeout=8,
+            )
+        except (TimeoutError, RuntimeError) as exc:
+            previous = f"[unreadable: {exc}]"
+        escaped = str(path).replace("\\", "\\\\").replace('"', '\\"')
+        try:
+            self._run_applescript(
+                'tell application "System Events" to set picture of every desktop '
+                f'to POSIX file "{escaped}"',
+                timeout=10,
+            )
+            applied = self._run_applescript(
+                'tell application "System Events" to get picture of first desktop',
+                timeout=8,
+            )
+        except (TimeoutError, RuntimeError) as exc:
+            return {"ok": False, "error": f"wallpaper change failed: {exc}"}
+        verified = applied.strip().endswith(path.name)
+        result = {
+            "ok": verified,
+            "action": "set_wallpaper",
+            "path": str(path),
+            "previous": previous.strip()[:300],
+            "applied": applied.strip()[:300],
+            "effect_verified": verified,
+        }
+        if not verified:
+            result["error"] = (
+                f"wallpaper read-back '{applied.strip()[:120]}' does not match {path.name}"
+            )
+        return result
 
     def _fetch_topic_image(self, target: str) -> dict[str, Any]:
         """Fetch a representative image for a topic via Wikipedia's REST
@@ -1418,6 +1461,15 @@ end tell
                 return await asyncio.to_thread(self._create_folder, params.target)
             elif action == "fetch_topic_image":
                 return await asyncio.to_thread(self._fetch_topic_image, params.target)
+
+            elif action == "set_wallpaper":
+                blocked = await self._require_permissions(
+                    "changing the desktop wallpaper through System Events",
+                    "AUTOMATION",
+                )
+                if blocked:
+                    return blocked
+                return await asyncio.to_thread(self._set_wallpaper, params.target)
 
             elif action == "render_text_pdf":
                 return await asyncio.to_thread(self._render_text_pdf, params.target)
