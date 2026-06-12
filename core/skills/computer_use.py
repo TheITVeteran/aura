@@ -605,32 +605,56 @@ class ComputerUseSkill(BaseSkill):
             doc = json.loads(raw_meta or "{}")
         except (TypeError, ValueError):
             doc = {}
-        image_url = str(
-            ((doc.get("originalimage") or {}).get("source"))
-            or ((doc.get("thumbnail") or {}).get("source"))
-            or ""
-        )
+        original_url = str(((doc.get("originalimage") or {}).get("source")) or "")
+        thumbnail_url = str(((doc.get("thumbnail") or {}).get("source")) or "")
         page_url = str(
             ((doc.get("content_urls") or {}).get("desktop") or {}).get("page")
             or f"https://en.wikipedia.org/wiki/{quote(topic.replace(' ', '_'))}"
         )
-        if not image_url:
+        # Candidate order: original (full quality, e.g. wallpaper use),
+        # then a 1600px rendition of the thumbnail, then the raw thumbnail.
+        # Each is size-bounded; oversized candidates fall through instead
+        # of failing the whole step (live failure: squid original > 8MB).
+        candidates = [u for u in (original_url, thumbnail_url) if u]
+        if thumbnail_url and "px-" in thumbnail_url:
+            import re as _re
+
+            wide = _re.sub(r"/(\d+)px-", "/1600px-", thumbnail_url, count=1)
+            if wide != thumbnail_url:
+                candidates.insert(1, wide)
+        if not candidates:
             return {"ok": False, "error": f"no image available for topic '{topic}'", "page_url": page_url}
-        img = gateway.request(
-            "GET",
-            image_url,
-            headers=ua,
-            timeout=30.0,
-            source="computer_use:fetch_topic_image",
-            read_only=True,
-        )
-        raw = img.get("content") or img.get("body_bytes")
-        if isinstance(raw, str):
-            raw = raw.encode("latin-1", errors="ignore")
-        if not img.get("ok") or not raw:
-            return {"ok": False, "error": "image download failed", "image_url": image_url}
-        if len(raw) > 8 * 1024 * 1024:
-            return {"ok": False, "error": "image exceeds 8MB bound"}
+        max_bytes = 24 * 1024 * 1024
+        raw = b""
+        image_url = ""
+        last_error = ""
+        for candidate in candidates:
+            img = gateway.request(
+                "GET",
+                candidate,
+                headers=ua,
+                timeout=30.0,
+                source="computer_use:fetch_topic_image",
+                read_only=True,
+            )
+            body = img.get("content") or img.get("body_bytes")
+            if isinstance(body, str):
+                body = body.encode("latin-1", errors="ignore")
+            if not img.get("ok") or not body:
+                last_error = f"download failed: {img.get('error') or img.get('status_code')}"
+                continue
+            if len(body) > max_bytes:
+                last_error = f"candidate exceeds {max_bytes // (1024 * 1024)}MB bound"
+                continue
+            raw, image_url = body, candidate
+            break
+        if not raw:
+            return {
+                "ok": False,
+                "error": f"image download failed for all candidates ({last_error})",
+                "image_url": candidates[0],
+                "page_url": page_url,
+            }
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_bytes(path, raw)
         return {
