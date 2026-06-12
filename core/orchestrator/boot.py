@@ -972,15 +972,32 @@ class OrchestratorBootMixin(
                 # Evaluate the formal health contract that defines what
                 # MUST be alive vs what's optional enrichment.
                 try:
-                    from core.runtime.health_contract import HealthLevel, log_health_report
+                    from core.runtime.health_contract import (
+                        HealthLevel,
+                        evaluate_health,
+                        log_health_report,
+                    )
 
-                    verdict = log_health_report()
+                    runtime_ready_for_health_log = bool(
+                        getattr(self.status, "initialized", False)
+                        and getattr(self.status, "running", False)
+                    )
+                    verdict = log_health_report() if runtime_ready_for_health_log else evaluate_health()
                     log_level, message = _health_contract_boot_log(
                         verdict.level,
                         initialized=bool(getattr(self.status, "initialized", False)),
                         running=bool(getattr(self.status, "running", False)),
                     )
                     logger.log(log_level, message)
+                    if not runtime_ready_for_health_log and verdict.critical_failures:
+                        pending = [
+                            status.requirement.container_key
+                            for status in verdict.critical_failures
+                        ]
+                        logger.info(
+                            "⏳ HEALTH CONTRACT DETAIL: boot pending critical liveness=%s",
+                            pending,
+                        )
                     if verdict.level in (HealthLevel.DEAD, HealthLevel.CRITICAL):
                         self.status.healthy = False
                 except (ImportError, AttributeError, RuntimeError) as hc_err:
@@ -1009,7 +1026,7 @@ class OrchestratorBootMixin(
                     self.status.healthy = False
                     # Continue — do NOT return. Deadlocking here blocks the entire system.
                 else:
-                    logger.info("✅ BOOT COMPLETE: System fully initialized.")
+                    logger.info("✅ Startup validation complete; final runtime health check pending.")
 
                 # --- UPSO Phase 1: Post-Boot State Commit ---
                 try:
@@ -1077,10 +1094,38 @@ class OrchestratorBootMixin(
 
                 # ── Final Success State ──────────────────────────
                 self.status.initialized = True
+                try:
+                    self.status.healthy = bool(self.health_check())
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as final_health_err:
+                    _record_boot_degradation(
+                        final_health_err,
+                        action="marked boot unhealthy because final runtime health check failed",
+                        severity="critical",
+                    )
+                    self.status.healthy = False
+                    logger.error("Final boot health check failed: %s", final_health_err)
+
                 if self.status.healthy:
                     logger.info("✅ BOOT COMPLETE: System fully initialized.")
                 else:
-                    logger.warning("⚠️ BOOT COMPLETE: System initialized in degraded mode.")
+                    try:
+                        from core.runtime.health_contract import runtime_health_report
+
+                        contract = runtime_health_report()
+                        critical_keys = [
+                            str(item.get("container_key") or "")
+                            for item in contract.get("failures", {}).get("critical", [])
+                            if isinstance(item, dict)
+                        ]
+                    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+                        critical_keys = []
+                    if critical_keys == ["inference_gate"]:
+                        logger.info(
+                            "⏳ BOOT CORE COMPLETE: core systems initialized; Cortex prewarm "
+                            "is still pending, so launcher readiness remains gated."
+                        )
+                    else:
+                        logger.warning("⚠️ BOOT COMPLETE: System initialized in degraded mode.")
 
             except (ImportError, AttributeError, RuntimeError) as e:
                 _record_boot_degradation(

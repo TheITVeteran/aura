@@ -611,15 +611,15 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
         )
         if len(_session_memory_pins) > 100:
             _session_memory_pins.pop(0)
-    ledger_ok = await asyncio.to_thread(
-        _append_session_memory_pin_ledger,
-        pinned,
-        source,
-        timestamp,
-    )
     try:
         memory_facade = ServiceContainer.get("memory_facade", default=None)
         if memory_facade is None or not hasattr(memory_facade, "add_memory"):
+            ledger_ok = await asyncio.to_thread(
+                _append_session_memory_pin_ledger,
+                pinned,
+                source,
+                timestamp,
+            )
             return bool(ledger_ok)
         result = memory_facade.add_memory(
             f"Session memory pin: {pinned[:240]}",
@@ -640,7 +640,20 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
         )
         if hasattr(result, "__await__"):
             result = await result
-        return bool(result) or bool(ledger_ok)
+        if not bool(result):
+            return False
+        ledger_ok = await asyncio.to_thread(
+            _append_session_memory_pin_ledger,
+            pinned,
+            source,
+            timestamp,
+        )
+        if not ledger_ok:
+            logger.warning(
+                "Session memory pin accepted by memory facade but ledger append failed; "
+                "canonical memory remains authoritative."
+            )
+        return True
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.session_memory_pin", exc)
         logger.debug("Durable session memory pin write skipped: %s", exc)
@@ -2176,6 +2189,17 @@ async def _run_cognitive_engine_chat_turn(
             ),
         },
     }
+    if require_engine:
+        context.update(
+            {
+                "desktop_cognitive_engine_required": True,
+                "protected_foreground_lane": True,
+                "prefer_tier": "primary",
+                "deep_handoff": False,
+                "allow_deep_handoff": False,
+                "allow_cloud_fallback": False,
+            }
+        )
     if capability_inventory_contract:
         context.update(
             {
@@ -2335,6 +2359,11 @@ async def _run_cognitive_engine_chat_turn(
                 "user_facing": True,
                 "cognitive_engine_required": bool(require_engine),
                 "desktop_cognitive_engine_required": bool(require_engine),
+                "protected_foreground_lane": bool(require_engine),
+                "prefer_tier": "primary",
+                "deep_handoff": False,
+                "allow_deep_handoff": False,
+                "allow_cloud_fallback": False,
                 "original_visible_user_message": visible[:1000],
                 "response_repair_directive": repair_directive,
                 "failed_reply_reasons": tuple(reasons or ()),
@@ -2394,6 +2423,8 @@ async def _run_cognitive_engine_chat_turn(
                 stale=False,
                 same_diff=False,
                 off_topic=False,
+                desktop_cognitive_engine_required=bool(require_engine),
+                protected_foreground_lane=bool(require_engine),
             )
         )
         retry_assessment = assess_user_facing_reply(visible, retry_repaired)
@@ -2558,6 +2589,8 @@ async def _run_cognitive_engine_chat_turn(
                     stale=False,
                     same_diff=False,
                     off_topic=False,
+                    desktop_cognitive_engine_required=bool(require_engine),
+                    protected_foreground_lane=bool(require_engine),
                 )
             )
             repaired_assessment = assess_user_facing_reply(visible, repaired)
@@ -3158,6 +3191,17 @@ def _status_represents_governed_action_result(status: str | None) -> bool:
         "desktop_task",
         "computer_use",
         "file_operation",
+    }
+
+
+def _status_represents_memory_state_result(status: str | None) -> bool:
+    return str(status or "").strip() in {
+        "owner_identity_recall",
+        "session_memory_pin",
+        "session_memory_pin_transient",
+        "session_memory_recall",
+        "session_memory_context_recall",
+        "conversation_recall",
     }
 
 
@@ -5238,7 +5282,13 @@ def _bound_stabilizer_generation_budget(requested_max_tokens: int) -> tuple[int,
     return max_tokens, ""
 
 
-async def _stabilize_user_facing_reply(user_message: str, reply_text: Any) -> str:
+async def _stabilize_user_facing_reply(
+    user_message: str,
+    reply_text: Any,
+    *,
+    desktop_cognitive_engine_required: bool = False,
+    protected_foreground_lane: bool = False,
+) -> str:
     frame = _build_aura_expression_frame(user_message)
     contract = frame.get("contract")
     prompt_shape = analyze_prompt_shape(user_message)
@@ -5537,6 +5587,8 @@ async def _stabilize_user_facing_reply(user_message: str, reply_text: Any) -> st
                 # the warm 32B time to rewrite without making the chat feel
                 # frozen, and the original text is still preferred over a
                 # static reflex if this fires the timeout path.
+                strict_desktop_repair = bool(desktop_cognitive_engine_required)
+                stabilizer_timeout = 28.0 if strict_desktop_repair else 12.0
                 corrected = await asyncio.wait_for(
                     inference_gate.think(
                         correction_prompt,
@@ -5546,10 +5598,18 @@ async def _stabilize_user_facing_reply(user_message: str, reply_text: Any) -> st
                         origin="api_stabilizer",
                         foreground_request=True,
                         is_background=False,
+                        protected_foreground_lane=bool(protected_foreground_lane or strict_desktop_repair),
+                        cognitive_engine_required=strict_desktop_repair,
+                        desktop_cognitive_engine_required=strict_desktop_repair,
+                        deep_handoff=False,
+                        allow_deep_handoff=False,
                         allow_cloud_fallback=False,
+                        skip_runtime_payload=True,
+                        disable_prompt_cache=True,
+                        clear_prompt_cache=True,
                         max_tokens=stabilizer_max_tokens,
                     ),
-                    timeout=12.0,
+                    timeout=stabilizer_timeout,
                 )
                 corrected_text = _apply_aura_voice_shaping_compat(str(corrected or "").strip(), user_message)
                 if corrected_text and len(corrected_text) > 10:
@@ -5600,7 +5660,8 @@ async def _stabilize_user_facing_reply(user_message: str, reply_text: Any) -> st
                         )
             except TimeoutError:
                 logger.warning(
-                    "Identity re-generation timed out (12s). Preferring original LLM text over static fallback."
+                    "Identity re-generation timed out (%.0fs). Preferring original LLM text over static fallback.",
+                    stabilizer_timeout,
                 )
                 # When the rewrite times out we should actually mean what the
                 # log says: ship the cortex's original reply instead of falling
@@ -5715,6 +5776,8 @@ async def _repair_final_degraded_reply(
     same_diff: bool,
     off_topic: bool,
     off_topic_reason: str = "",
+    desktop_cognitive_engine_required: bool = False,
+    protected_foreground_lane: bool = False,
 ) -> tuple[str, bool, bool, bool, str, bool]:
     """Final user-facing gate: degraded text must be repaired or replaced."""
     try:
@@ -5787,7 +5850,15 @@ async def _repair_final_degraded_reply(
                     True,
                 )
 
-    repaired = await _stabilize_user_facing_reply(user_message, reply_text)
+    if desktop_cognitive_engine_required or protected_foreground_lane:
+        repaired = await _stabilize_user_facing_reply(
+            user_message,
+            reply_text,
+            desktop_cognitive_engine_required=desktop_cognitive_engine_required,
+            protected_foreground_lane=protected_foreground_lane,
+        )
+    else:
+        repaired = await _stabilize_user_facing_reply(user_message, reply_text)
     recent_user_messages = await _gather_recent_user_messages_for_relevance(user_message)
     repaired_stale = _is_stale_repeated_response(repaired)
     repaired_same_diff = _is_same_answer_different_prompt(user_message, repaired)
@@ -5835,6 +5906,19 @@ async def _repair_final_degraded_reply(
             or (floor_assessment is not None and floor_assessment.retryable)
         ):
             return floor, floor_stale, floor_same_diff, floor_off_topic, floor_off_topic_reason, True
+
+    if desktop_cognitive_engine_required:
+        logger.warning(
+            "🛡️ Final reply quality gate refused freeform reflex fallback for desktop-required CognitiveEngine turn."
+        )
+        return (
+            repaired,
+            repaired_stale,
+            repaired_same_diff,
+            True,
+            repaired_off_topic_reason or "desktop_cognitive_engine_repair_failed",
+            bool(repaired != str(reply_text or "").strip()),
+        )
 
     frame = _build_aura_expression_frame(user_message)
     reflex = _build_stateful_voice_reflex(frame, user_message)
@@ -7809,6 +7893,7 @@ async def api_chat(
             response_confidence = "high"
             proof_status = str(status or "")
             is_governed_action_status = _status_represents_governed_action_result(proof_status)
+            is_memory_state_status = _status_represents_memory_state_result(proof_status)
 
             _new_text, _new_status = await _apply_desktop_objective_chokepoint(
                 final_text, proof_status
@@ -7820,6 +7905,7 @@ async def api_chat(
                 # Receipt summaries are evidence, not prose: skip the
                 # conversational staleness/topicality reshaping below.
                 is_governed_action_status = _status_represents_governed_action_result(proof_status)
+                is_memory_state_status = _status_represents_memory_state_result(proof_status)
 
             if is_benchmark:
                 blocked_reply = (
@@ -7842,7 +7928,7 @@ async def api_chat(
                 )
 
             try:
-                if not is_governed_action_status:
+                if not (is_governed_action_status or is_memory_state_status):
                     recent_user_messages = await _gather_recent_user_messages_for_relevance(_semantic_user_message)
                     is_stale = _is_stale_repeated_response(final_text)
                     is_same_diff = _is_same_answer_different_prompt(_semantic_user_message, final_text)

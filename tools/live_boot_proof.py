@@ -4,7 +4,7 @@
 Static gates prove the code; this proves the companion. The driver runs
 OUTSIDE Aura's process and treats her like a user would:
 
-1. boot `aura_main.py --headless` and poll /api/health until the runtime
+    1. boot `aura_main.py --headless` or `--desktop` and poll /api/health until the runtime
    contract reports healthy (bounded wait),
 2. send real chat turns through /api/chat and measure latency,
 3. check the identity contract holds in the *actual* reply (the
@@ -74,7 +74,11 @@ LIVE_CONVERSATION_SOAK_PROMPTS = (
 )
 
 
-def build_safe_boot_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
+def build_safe_boot_env(
+    base_env: dict[str, str] | None = None,
+    *,
+    mode: str = "headless",
+) -> dict[str, str]:
     """Return the bounded desktop environment used by live proof boots.
 
     The live proof exercises the same local model lane a desktop user relies
@@ -84,8 +88,16 @@ def build_safe_boot_env(base_env: dict[str, str] | None = None) -> dict[str, str
     """
 
     env = dict(base_env or os.environ)
+    mode = str(mode or "headless").strip().lower()
     env.setdefault("AURA_SAFE_BOOT_DESKTOP", "1")
-    env.setdefault("AURA_HEADLESS", "1")
+    if mode == "desktop":
+        env["AURA_HEADLESS"] = "0"
+        env["AURA_LAUNCHED_FROM_APP"] = "1"
+        env["AURA_EXTERNAL_GUI_OWNER"] = "1"
+        env.setdefault("AURA_EAGER_CORTEX_WARMUP", "0")
+        env.setdefault("AURA_DEFERRED_CORTEX_PREWARM", "auto")
+    else:
+        env.setdefault("AURA_HEADLESS", "1")
     env.setdefault("AURA_EAGER_LOCAL_SENSORY_BOOT", "0")
     env.setdefault("AURA_ENABLE_PROACTIVE_VISION", "0")
     env.setdefault("AURA_SAFE_BOOT_METAL_CACHE_RATIO", "0.16")
@@ -110,12 +122,14 @@ class LiveProof:
         self,
         *,
         port: int,
+        mode: str,
         boot_timeout_s: float,
         skip_desktop: bool,
         restart_continuity: bool,
         conversation_soak_turns: int,
     ):
         self.port = port
+        self.mode = "desktop" if str(mode or "").strip().lower() == "desktop" else "headless"
         self.boot_timeout_s = boot_timeout_s
         self.skip_desktop = skip_desktop
         self.restart_continuity = restart_continuity
@@ -214,7 +228,7 @@ class LiveProof:
                 f"refusing to double-boot",
             )
 
-        env = build_safe_boot_env(os.environ)
+        env = build_safe_boot_env(os.environ, mode=self.mode)
         self._boot_count += 1
         if self._stdout_handle is not None:
             self._stdout_handle.close()
@@ -224,8 +238,9 @@ class LiveProof:
             f"at {time.strftime('%Y-%m-%dT%H:%M:%S%z')} =====\n"
         )
         self._stdout_handle.flush()
+        mode_arg = "--desktop" if self.mode == "desktop" else "--headless"
         self.proc = subprocess.Popen(
-            [sys.executable, "aura_main.py", "--headless", "--port", str(self.port)],
+            [sys.executable, "aura_main.py", mode_arg, "--port", str(self.port)],
             cwd=ROOT,
             stdout=self._stdout_handle,
             stderr=subprocess.STDOUT,
@@ -277,8 +292,12 @@ class LiveProof:
                             f"(rss {self.tree_rss_mb():.0f}MB)",
                             health=last_state,
                         )
-            except httpx.HTTPError:
-                pass
+            except httpx.HTTPError as exc:
+                last_state = {
+                    **last_state,
+                    "last_health_error": f"{type(exc).__name__}: {exc}",
+                    "mode": self.mode,
+                }
             time.sleep(3.0)
         return self.record(
             "boot_health",
@@ -758,6 +777,7 @@ class LiveProof:
             "started_at": self.started_at,
             "finished_at": time.time(),
             "peak_rss_mb": round(self.peak_rss_mb, 1),
+            "mode": self.mode,
             "steps": self.steps,
             "transcript": str(self.transcript_path.relative_to(ROOT)),
         }
@@ -770,6 +790,12 @@ class LiveProof:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--mode",
+        choices=("headless", "desktop"),
+        default="headless",
+        help="boot path to prove; desktop mirrors the packaged app launcher environment",
+    )
     parser.add_argument("--boot-timeout", type=float, default=600.0)
     parser.add_argument("--skip-desktop-action", action="store_true")
     parser.add_argument(
@@ -786,6 +812,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     proof = LiveProof(
         port=args.port,
+        mode=args.mode,
         boot_timeout_s=args.boot_timeout,
         skip_desktop=args.skip_desktop_action,
         restart_continuity=args.restart_continuity,

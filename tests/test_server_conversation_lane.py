@@ -1402,6 +1402,9 @@ async def test_api_chat_desktop_surface_allows_memory_fastpath_without_cognitive
     assert stored_payload["status"] == "session_memory_pin"
     assert recalled_payload["status"] == "session_memory_recall"
     assert changed_payload["status"] == "session_memory_context_recall"
+    assert "blue lantern is under the desk" in stored_payload["response"]
+    assert "failed the final reliability checks" not in stored_payload["response"]
+    assert stored_payload["response_confidence"] == "high"
     assert "blue lantern is under the desk" in recalled_payload["response"]
     assert "blue lantern is under the desk" in changed_payload["response"]
     assert cognitive_calls == []
@@ -3480,6 +3483,76 @@ async def test_stabilizer_skips_second_generation_under_critical_memory_pressure
 
     assert inference_gate.calls == []
     assert result == "I should not launch a second model pass while memory is unsafe."
+
+
+@pytest.mark.asyncio
+async def test_desktop_required_stabilizer_uses_protected_primary_contract(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _Gate:
+        def validate_output(self, text, enforce_supervision=False):
+            if "ai language model" in str(text).lower():
+                return False, "assistant_disclaimer", 0.0
+            return True, "ok", 1.0
+
+        def sanitize(self, _text):
+            return ""
+
+    class _InferenceGate:
+        def __init__(self):
+            self.calls = []
+
+        async def think(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return "I'm on the protected desktop CognitiveEngine lane and answering directly."
+
+    inference_gate = _InferenceGate()
+
+    monkeypatch.setattr(chat_routes, "_resolve_live_aura_state", lambda: None)
+    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
+    monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping", lambda text: str(text))
+    monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping_compat", lambda text, _msg: str(text))
+    monkeypatch.setattr(
+        chat_routes,
+        "_looks_generic_assistantish",
+        lambda _msg, text: ("ai language model" in str(text).lower(), "assistant_disclaimer"),
+    )
+    monkeypatch.setattr(chat_routes, "_is_objective_parrot_reply", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
+    monkeypatch.setattr(chat_routes, "_evaluate_reply_topicality", lambda *_args, **_kwargs: (False, ""))
+    monkeypatch.setattr(chat_routes, "_is_stale_repeated_response", lambda _text: False)
+    monkeypatch.setattr(chat_routes, "_is_same_answer_different_prompt", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(chat_routes, "_looks_truncated_tail", lambda _text: False)
+    monkeypatch.setattr(chat_routes, "_looks_semantically_glitched", lambda *_args, **_kwargs: (False, ""))
+    monkeypatch.setattr(chat_routes, "_record_recent_response", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("core.identity.identity_guard.PersonaEnforcementGate", lambda: _Gate())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: inference_gate if name == "inference_gate" else default),
+    )
+
+    result = await chat_routes._stabilize_user_facing_reply(
+        "You ok?",
+        "As an AI language model, I do not have feelings.",
+        desktop_cognitive_engine_required=True,
+        protected_foreground_lane=True,
+    )
+
+    assert result.startswith("I'm on the protected desktop CognitiveEngine lane")
+    assert inference_gate.calls
+    kwargs = inference_gate.calls[0][1]
+    assert kwargs["prefer_tier"] == "primary"
+    assert kwargs["foreground_request"] is True
+    assert kwargs["protected_foreground_lane"] is True
+    assert kwargs["cognitive_engine_required"] is True
+    assert kwargs["desktop_cognitive_engine_required"] is True
+    assert kwargs["allow_cloud_fallback"] is False
+    assert kwargs["allow_deep_handoff"] is False
+    assert kwargs["skip_runtime_payload"] is True
+    assert kwargs["disable_prompt_cache"] is True
 
 
 @pytest.mark.asyncio

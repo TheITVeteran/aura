@@ -219,15 +219,15 @@ async def orchestrator_shutdown(orch: RobustOrchestrator) -> None:
 
     try:
         state = await orch.state_repo.get_current()
-        transport_ready = True
-        transport_probe = getattr(orch.state_repo, "_transport_has_vault", None)
-        if callable(transport_probe) and not getattr(orch.state_repo, "is_vault_owner", False):
-            transport_ready = transport_probe()
-        if state is not None and transport_ready:
+        if state is not None:
             await orch.state_repo.commit(state.derive("shutdown"), "shutdown")
-            logger.info("💾 UPSO: Shutdown state committed.")
+            pending = getattr(orch.state_repo, "_pending_proxy_commit_payload", None)
+            if isinstance(pending, dict) and pending.get("cause") == "shutdown":
+                logger.info("💾 UPSO: Shutdown state queued for boot replay.")
+            else:
+                logger.info("💾 UPSO: Shutdown state committed.")
         else:
-            logger.info("💾 UPSO: Skipping shutdown state commit; state transport unavailable.")
+            logger.info("💾 UPSO: Skipping shutdown state commit; no current state available.")
     except asyncio.CancelledError as exc:
         _record_shutdown_degradation(
             exc,

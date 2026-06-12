@@ -151,6 +151,8 @@ def _should_start_keep_awake_controller() -> bool:
     shutdown, so the controller is root-process only.
     """
 
+    if any(arg in {"-h", "--help", "--stop"} for arg in sys.argv[1:]):
+        return False
     try:
         process_name = multiprocessing.current_process().name
     except _AURA_MAIN_BOUNDARY_ERRORS:

@@ -384,14 +384,15 @@ class InferenceGate:
             available_gb = float(vm.available) / float(1024**3)
             pressure_pct = float(vm.percent)
 
-            # [v57-CORTEX] Relaxed memory constraints: cortex is PRIORITY
-            # Foreground always admits, background is less strict
             if total_gb >= 60.0:
-                default_max_pressure = 80.0 if context_key == "FOREGROUND" else 75.0
-                default_min_available = 16.0 if context_key == "FOREGROUND" else 20.0
+                # Cold-loading Cortex is a host-survival decision, not a normal
+                # generation decision. The 32B lane is the user-facing default,
+                # but it must not be admitted while macOS is close to swap/jetsam.
+                default_max_pressure = 72.0 if context_key == "FOREGROUND" else 58.0
+                default_min_available = 24.0 if context_key == "FOREGROUND" else 30.0
             else:
-                default_max_pressure = 72.0 if context_key == "FOREGROUND" else 68.0
-                default_min_available = 12.0 if context_key == "FOREGROUND" else 16.0
+                default_max_pressure = 68.0 if context_key == "FOREGROUND" else 54.0
+                default_min_available = 14.0 if context_key == "FOREGROUND" else 18.0
 
             max_pressure = InferenceGate._env_float(
                 f"AURA_CORTEX_{context_key}_WARMUP_MAX_PRESSURE_PCT",
@@ -506,16 +507,35 @@ class InferenceGate:
 
     @staticmethod
     def _boot_should_schedule_deferred_prewarm() -> bool:
-        setting = str(os.environ.get("AURA_DEFERRED_CORTEX_PREWARM", "auto")).strip().lower()
+        explicit_setting = os.environ.get("AURA_DEFERRED_CORTEX_PREWARM")
+        setting = str(explicit_setting if explicit_setting is not None else "auto").strip().lower()
         if setting in {"1", "true", "yes", "on"}:
+            snapshot = InferenceGate._cortex_warmup_admission_snapshot("background")
+            if not snapshot["can_admit"] and str(
+                os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")
+            ).strip().lower() not in {"1", "true", "yes", "on"}:
+                logger.warning(
+                    "⏸️ Explicit deferred Cortex prewarm refused to protect RAM: %s",
+                    snapshot["reason"],
+                )
+                return False
             return True
         if setting in {"0", "false", "no", "off"}:
             return False
         if InferenceGate._desktop_safe_boot_enabled():
-            logger.info(
-                "🛡️ Desktop safe boot active — skipping deferred 32B prewarm during launch."
-            )
-            return False
+            if explicit_setting is None:
+                logger.info(
+                    "🛡️ Desktop safe boot active — skipping implicit deferred 32B prewarm during launch."
+                )
+                return False
+            snapshot = InferenceGate._cortex_warmup_admission_snapshot("background")
+            if not snapshot["can_admit"]:
+                logger.warning(
+                    "⏸️ Safe desktop deferred Cortex prewarm deferred to protect RAM: %s",
+                    snapshot["reason"],
+                )
+                return False
+            return True
         return True
 
     @staticmethod

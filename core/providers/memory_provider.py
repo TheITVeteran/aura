@@ -1,9 +1,10 @@
 """core/providers/memory_provider.py — Memory & Storage Registration
 """
 
-from core.runtime.errors import record_degradation
 import logging
+
 from core.container import ServiceLifetime
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Providers.Memory")
 
@@ -54,8 +55,8 @@ def register_memory_services(container):
     # 24. Black Hole Vault (The Unified Semantic Memory)
     def create_vector_memory():
         try:
-            from core.memory.black_hole_vault import BlackHoleVault
             from core.config import config
+            from core.memory.black_hole_vault import BlackHoleVault
             # Store in ~/.aura/vault as specified in Phase 4 plan
             vault_path = config.paths.data_dir / "vault"
             vault_path.mkdir(parents=True, exist_ok=True)

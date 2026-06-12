@@ -160,7 +160,7 @@ def check_optional_packages() -> list[ValidationResult]:
 
     backend = get_local_backend()
     optional = [
-        ("pyaudio",      "pip install pyaudio",           "Voice input unavailable"),
+        ("sounddevice",  "pip install sounddevice",       "Voice capture unavailable"),
         ("webrtcvad",    "pip install webrtcvad-wheels",  "Voice activity detection unavailable"),
         ("cryptography", "pip install cryptography",      "Ed25519 signatures unavailable (using HMAC fallback)"),
         ("astor",        "pip install astor",             "Fictional Engine Synthesis unavailable"),
@@ -243,11 +243,19 @@ def check_audio_device() -> ValidationResult:
         )
 
     try:
-        import pyaudio
-        p = pyaudio.PyAudio()
-        count = p.get_device_count()
-        p.terminate()
-        if count == 0:
+        import sounddevice as sd
+
+        devices = sd.query_devices()
+        if isinstance(devices, dict):
+            device_list = [devices]
+        else:
+            device_list = list(devices or [])
+        input_count = sum(
+            1
+            for device in device_list
+            if int(device.get("max_input_channels", 0) or 0) > 0
+        )
+        if input_count == 0:
             return ValidationResult(
                 name="Audio input device",
                 passed=False,
@@ -258,7 +266,7 @@ def check_audio_device() -> ValidationResult:
         return ValidationResult(
             name="Audio input device",
             passed=True,
-            message=f"{count} audio device(s) found",
+            message=f"{input_count} audio input device(s) found",
         )
     except (ImportError, AttributeError, RuntimeError) as e:
         if voice_required:

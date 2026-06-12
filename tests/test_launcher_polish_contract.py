@@ -42,6 +42,8 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert 'env["AURA_SAFE_BOOT_MLX_MEMORY_RATIO"] = "0.52"' in swift
     assert 'env["AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB"] = "34"' in swift
     assert 'env["AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB"] = "20"' in swift
+    assert 'env["AURA_EAGER_CORTEX_WARMUP"] = "0"' in swift
+    assert 'env["AURA_DEFERRED_CORTEX_PREWARM"] = "auto"' in swift
     assert "AURA_EXTERNAL_GUI_OWNER" in swift
     assert "export AURA_EXTERNAL_GUI_OWNER=1" in swift
     assert "spawnDetachedViaShell" in swift

@@ -309,6 +309,62 @@ async def test_cognitive_engine_user_recovery_uses_bounded_primary_router(monkey
 
 
 @pytest.mark.asyncio
+async def test_cognitive_engine_desktop_quick_reply_uses_governed_primary_router(monkeypatch):
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    repo = StateRepositoryFixture(state)
+    engine.state_repository = repo
+    engine._phases = [
+        SimpleNamespace(
+            execute=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("compact desktop quick reply should not enter phase loop")
+            )
+        )
+    ]
+    captured = {}
+
+    class _Router:
+        async def think(self, **kwargs):
+            captured.update(kwargs)
+            return "I am on the live desktop path and answering this turn directly."
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router() if name == "llm_router" else default
+        ),
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "You ok?",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "visible_user_message": "You ok?",
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "max_tokens": 512,
+        },
+        is_background=False,
+        timeout_s=42.0,
+    )
+
+    assert thought.content.startswith("I am on the live desktop path")
+    assert captured["prefer_tier"] == "primary"
+    assert captured["protected_foreground_lane"] is True
+    assert captured["desktop_cognitive_engine_required"] is True
+    assert captured["allow_cloud_fallback"] is False
+    assert captured["allow_deep_handoff"] is False
+    assert captured["skip_runtime_payload"] is True
+    assert repo.commits
+    committed = repo.commits[-1][0]
+    assert committed.cognition.working_memory[-2]["role"] == "user"
+    assert committed.cognition.working_memory[-1]["role"] == "assistant"
+
+
+@pytest.mark.asyncio
 async def test_cognitive_engine_strict_answer_recovery_propagates_cancellation(monkeypatch):
     import core.brain.llm_health_router as router_module
 

@@ -5,11 +5,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.orchestrator.handlers.shutdown import _gracefully_stop_actor_via_bus, orchestrator_shutdown
-from core.runtime.errors import get_degradation_tracker
+from core.orchestrator.handlers.shutdown import (
+    _gracefully_stop_actor_via_bus,
+    orchestrator_shutdown,
+)
 from core.orchestrator.mixins.boot.boot_cognitive import BootCognitiveMixin
 from core.orchestrator.mixins.boot.boot_resilience import BootResilienceMixin
 from core.orchestrator.mixins.output_formatter import OutputFormatterMixin
+from core.runtime.errors import get_degradation_tracker
 
 
 class _BootProbe(BootCognitiveMixin):
@@ -126,7 +129,7 @@ async def test_start_state_vault_actor_uses_actor_bus_request_for_handshake(monk
         def add_actor(self, name, connection):
             self.actors[name] = connection
 
-        async def request(self, actor, msg_type, payload, timeout=0):
+        async def request(self, actor, msg_type, payload, timeout=0):  # noqa: ASYNC109
             self.requests.append((actor, msg_type, payload, timeout))
             return {"type": "pong", "ts": 123.0}
 
@@ -354,7 +357,7 @@ async def test_orchestrator_shutdown_requests_graceful_state_vault_stop_before_b
         def has_actor(self, name):
             return name == "state_vault"
 
-        async def request(self, actor, msg_type, payload, timeout=0):
+        async def request(self, actor, msg_type, payload, timeout=0):  # noqa: ASYNC109
             self.calls.append(("request", actor, msg_type, payload, timeout))
             return None
 
@@ -429,6 +432,78 @@ async def test_orchestrator_shutdown_requests_graceful_state_vault_stop_before_b
     service_shutdown.assert_awaited_once()
     event_bus_shutdown.assert_awaited_once()
     assert supervisor.stop_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_shutdown_queues_state_commit_when_vault_transport_unavailable(
+    monkeypatch,
+    caplog,
+):
+    class _State:
+        def derive(self, cause):
+            return SimpleNamespace(cause=cause)
+
+    class _StateRepo:
+        is_vault_owner = False
+
+        def __init__(self):
+            self.get_current = AsyncCallFixture(return_value=_State())
+            self.close = AsyncCallFixture()
+            self.commit_calls = []
+            self._pending_proxy_commit_payload = None
+
+        def _transport_has_vault(self):
+            return False
+
+        async def commit(self, state, cause):
+            self.commit_calls.append((state, cause))
+            self._pending_proxy_commit_payload = {"cause": cause}
+            return state
+
+    class _Bus:
+        def has_actor(self, name):
+            return name == "state_vault"
+
+        async def request(self, actor, msg_type, payload, timeout=0):  # noqa: ASYNC109
+            return None
+
+        async def stop(self):
+            return None
+
+    monkeypatch.setattr(
+        "core.resilience.snapshot_manager.SnapshotManager",
+        lambda _orch: SimpleNamespace(freeze=lambda: None),
+    )
+    monkeypatch.setattr("core.container.ServiceContainer.shutdown", AsyncCallFixture())
+    monkeypatch.setattr(
+        "core.event_bus.get_event_bus",
+        lambda: SimpleNamespace(shutdown=AsyncCallFixture()),
+    )
+    monkeypatch.setattr(
+        "core.utils.task_tracker.get_task_tracker",
+        lambda: SimpleNamespace(shutdown=lambda timeout=3.0: None),
+    )
+
+    state_repo = _StateRepo()
+    orch = SimpleNamespace(
+        status=SimpleNamespace(running=True, is_processing=True),
+        state_repo=state_repo,
+        _actor_bus=_Bus(),
+        _supervisor_tree=SimpleNamespace(is_actor_running=lambda _name: False),
+        _publish_status=lambda _payload: None,
+        _save_state=lambda _cause: None,
+        _stop_event=None,
+        kernel_interface=None,
+    )
+
+    with caplog.at_level("INFO", logger="core.orchestrator.handlers.shutdown"):
+        await orchestrator_shutdown(orch)
+
+    assert len(state_repo.commit_calls) == 1
+    assert state_repo.commit_calls[0][1] == "shutdown"
+    messages = "\n".join(record.message for record in caplog.records)
+    assert "Shutdown state queued for boot replay" in messages
+    assert "state transport unavailable" not in messages
 
 
 def test_graceful_state_vault_stop_continues_when_bus_already_closed():

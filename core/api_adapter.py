@@ -128,7 +128,7 @@ class APIAdapter:
                 logger.info("✅ APIAdapter: Gemini enabled (%s)", GEMINI_MODELS["api_fast"])
             except ImportError:
                 logger.warning("APIAdapter: 'google-genai' package not installed.")
-            except (ImportError, AttributeError, RuntimeError) as e:
+            except (AttributeError, RuntimeError) as e:
                 _record_api_degradation(
                     e,
                     action="disabled Gemini backend for this adapter instance; local runtime remains available for failover",
@@ -164,7 +164,7 @@ class APIAdapter:
                 logger.info("✅ AgencyFacade registered for MemoryFacade")
         except ImportError:
             logger.warning("⚠️ [BOOT] Early Facade registration deferred: AgencyFacade missing.")
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except (AttributeError, RuntimeError) as e:
             _record_api_degradation(
                 e,
                 action="deferred AgencyFacade registration; memory facade setup can retry after container boot",

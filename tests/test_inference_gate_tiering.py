@@ -1995,7 +1995,7 @@ def test_cortex_cold_warmup_requires_real_available_memory(monkeypatch):
     snapshot = InferenceGate._cortex_warmup_admission_snapshot("background")
 
     assert snapshot["can_admit"] is False
-    assert snapshot["min_available_gb"] == 20.0
+    assert snapshot["min_available_gb"] == 30.0
     assert "memory_pressure" in snapshot["reason"]
 
 
@@ -2086,6 +2086,46 @@ def test_desktop_safe_boot_skips_deferred_cortex_prewarm(monkeypatch):
 def test_desktop_safe_boot_respects_deferred_cortex_prewarm_opt_out(monkeypatch):
     monkeypatch.setenv("AURA_DEFERRED_CORTEX_PREWARM", "0")
     monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: True))
+
+    assert InferenceGate._boot_should_schedule_deferred_prewarm() is False
+
+
+def test_desktop_safe_boot_allows_explicit_auto_deferred_prewarm_when_admitted(monkeypatch):
+    monkeypatch.setenv("AURA_DEFERRED_CORTEX_PREWARM", "auto")
+    monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: True))
+    monkeypatch.setattr(
+        InferenceGate,
+        "_cortex_warmup_admission_snapshot",
+        staticmethod(
+            lambda _context: {
+                "can_admit": True,
+                "reason": "",
+                "pressure_pct": 40.0,
+                "available_gb": 36.0,
+                "total_gb": 64.0,
+            }
+        ),
+    )
+
+    assert InferenceGate._boot_should_schedule_deferred_prewarm() is True
+
+
+def test_desktop_safe_boot_refuses_explicit_auto_deferred_prewarm_under_pressure(monkeypatch):
+    monkeypatch.setenv("AURA_DEFERRED_CORTEX_PREWARM", "auto")
+    monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: True))
+    monkeypatch.setattr(
+        InferenceGate,
+        "_cortex_warmup_admission_snapshot",
+        staticmethod(
+            lambda _context: {
+                "can_admit": False,
+                "reason": "memory_pressure:77.0%/12.0GB",
+                "pressure_pct": 77.0,
+                "available_gb": 12.0,
+                "total_gb": 64.0,
+            }
+        ),
+    )
 
     assert InferenceGate._boot_should_schedule_deferred_prewarm() is False
 

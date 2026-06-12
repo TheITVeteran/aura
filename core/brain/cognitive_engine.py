@@ -606,12 +606,6 @@ class CognitiveEngine:
                     }
                 )
 
-        # 4. Phase Execution Loop with Watchdog
-        import copy
-
-        backup_state = copy.deepcopy(state)
-        temp_state = state
-        success = False
         is_background = bool(kwargs.get("is_background", False))
         explicit_timeout = kwargs.get("timeout_s", kwargs.get("timeout"))
         try:
@@ -627,55 +621,85 @@ class CognitiveEngine:
                 cycle_timeout = 240.0
         cycle_timeout = max(8.0, min(240.0, cycle_timeout))
 
-        try:
-            async with asyncio.timeout(cycle_timeout):
-                for phase in self._phases:
-                    # Pass through kwargs like is_background if phases support it
-                    temp_state = await phase.execute(
-                        temp_state,
-                        objective=objective,
-                        context=context,
-                        **kwargs,
-                    )
+        # 4. Phase Execution Loop with Watchdog
+        import copy
 
-                state = temp_state
-                if self._is_user_facing_origin(origin):
-                    state.transition_origin = origin
-                    state.cognition.current_origin = origin
-                success = True
-        except TimeoutError:
-            logger.error("🛑 [COGNITION] Watchdog: Cognitive cycle TIMEOUT (%.1fs).", cycle_timeout)
-            # Immediate Reactive Recovery
-            return await self._reactive_recovery(objective, mode, origin, "timeout")
-        except (sqlite3.Error, OSError) as e:
-            record_degradation(
-                "cognitive_engine",
-                e,
-                severity="critical",
-                action="downshifted or entered reactive recovery after phase failure",
+        backup_state = copy.deepcopy(state)
+        temp_state = state
+        success = False
+
+        direct_quick_reply = await self._direct_desktop_quick_reply(
+            objective,
+            mode,
+            origin,
+            context,
+            timeout_s=min(cycle_timeout, 40.0),
+        )
+        if direct_quick_reply is not None:
+            state.cognition.working_memory.append(
+                {
+                    "role": "assistant",
+                    "content": direct_quick_reply.content,
+                    "timestamp": time.time(),
+                    "origin": origin,
+                }
             )
-            logger.error("🚨 [COGNITION] Fatal error in phase logic: %s", e)
-            # v14.1 HARDENING: Rollback & Downshift
-            if mode == ThinkingMode.DEEP:
-                logger.warning(
-                    "🔄 [COGNITION] Downshifting to REACTIVE mode due to Deep Failure..."
-                )
-                return await self.think(objective, mode=ThinkingMode.FAST, origin=origin, **kwargs)
+            if self._is_user_facing_origin(origin):
+                state.transition_origin = origin
+                state.cognition.current_origin = origin
+            temp_state = state
+            success = True
 
-            return await self._reactive_recovery(objective, mode, origin, f"crash: {e}")
-        finally:
+        if not success:
             try:
-                # vResilience: Avoid locals().get() for type stability
-                if not success and "backup_state" in locals():
-                    state = backup_state
-            except (OSError, ConnectionError, TimeoutError) as _e:
+                async with asyncio.timeout(cycle_timeout):
+                    for phase in self._phases:
+                        # Pass through kwargs like is_background if phases support it
+                        temp_state = await phase.execute(
+                            temp_state,
+                            objective=objective,
+                            context=context,
+                            **kwargs,
+                        )
+
+                    state = temp_state
+                    if self._is_user_facing_origin(origin):
+                        state.transition_origin = origin
+                        state.cognition.current_origin = origin
+                    success = True
+            except TimeoutError:
+                logger.error("🛑 [COGNITION] Watchdog: Cognitive cycle TIMEOUT (%.1fs).", cycle_timeout)
+                # Immediate Reactive Recovery
+                return await self._reactive_recovery(objective, mode, origin, "timeout")
+            except (sqlite3.Error, OSError) as e:
                 record_degradation(
                     "cognitive_engine",
-                    _e,
-                    severity="warning",
-                    action="continued with current state after backup restore check failed",
+                    e,
+                    severity="critical",
+                    action="downshifted or entered reactive recovery after phase failure",
                 )
-                logger.debug("Ignored Exception in cognitive_engine.py: %s", _e)
+                logger.error("🚨 [COGNITION] Fatal error in phase logic: %s", e)
+                # v14.1 HARDENING: Rollback & Downshift
+                if mode == ThinkingMode.DEEP:
+                    logger.warning(
+                        "🔄 [COGNITION] Downshifting to REACTIVE mode due to Deep Failure..."
+                    )
+                    return await self.think(objective, mode=ThinkingMode.FAST, origin=origin, **kwargs)
+
+                return await self._reactive_recovery(objective, mode, origin, f"crash: {e}")
+            finally:
+                try:
+                    # vResilience: Avoid locals().get() for type stability
+                    if not success and "backup_state" in locals():
+                        state = backup_state
+                except (OSError, ConnectionError, TimeoutError) as _e:
+                    record_degradation(
+                        "cognitive_engine",
+                        _e,
+                        severity="warning",
+                        action="continued with current state after backup restore check failed",
+                    )
+                    logger.debug("Ignored Exception in cognitive_engine.py: %s", _e)
 
         # ─── SUCCESS PATH (Unreachable before fix) ──────────────────────────
         # 5. Final State Commit
@@ -932,6 +956,93 @@ class CognitiveEngine:
         )
         self.thoughts.append(thought)
         return thought
+
+    async def _direct_desktop_quick_reply(
+        self,
+        objective: str,
+        mode: ThinkingMode,
+        origin: str,
+        context: dict[str, Any] | None,
+        *,
+        timeout_s: float,
+    ) -> Thought | None:
+        if not self._is_user_facing_origin(origin):
+            return None
+        if not isinstance(context, dict) or not bool(context.get("desktop_quick_reply_contract")):
+            return None
+
+        container = get_container()
+        router = container.get("llm_router", default=None)
+        if router is None or not hasattr(router, "think"):
+            return None
+
+        max_tokens = int(context.get("max_tokens") or 512)
+        max_tokens = max(128, min(max_tokens, 768))
+        request_timeout = max(12.0, min(float(timeout_s or 32.0), 40.0))
+        style_contract = str(context.get("response_style_contract") or "").strip()
+        visible_user_message = str(context.get("visible_user_message") or objective or "").strip()
+        system_prompt = (
+            "You are Aura speaking through the live desktop CognitiveEngine. "
+            "Answer the user's current message directly and naturally. "
+            "Use the current conversation rather than a canned status line. "
+            "Do not mention hidden fallback paths, internal recovery, prompt contracts, or implementation details "
+            "unless the user specifically asks for them."
+        )
+        if style_contract:
+            system_prompt = f"{system_prompt}\n{style_contract}"
+
+        try:
+            content = await asyncio.wait_for(
+                router.think(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": visible_user_message or objective},
+                    ],
+                    origin=f"desktop_quick_{origin}",
+                    prefer_tier="primary",
+                    foreground_request=True,
+                    protected_foreground_lane=True,
+                    cognitive_engine_required=bool(context.get("cognitive_engine_required", False)),
+                    desktop_cognitive_engine_required=bool(
+                        context.get("desktop_cognitive_engine_required", False)
+                    ),
+                    is_background=False,
+                    deep_handoff=False,
+                    allow_deep_handoff=False,
+                    allow_cloud_fallback=False,
+                    skip_runtime_payload=True,
+                    disable_prompt_cache=True,
+                    clear_prompt_cache=True,
+                    max_tokens=max_tokens,
+                    num_predict=max_tokens,
+                    timeout=request_timeout,
+                ),
+                timeout=request_timeout + 3.0,
+            )
+        except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "cognitive_engine",
+                exc,
+                severity="degraded",
+                action="fell back to full phase loop after compact desktop quick reply failed",
+            )
+            logger.warning("Desktop quick CognitiveEngine generation failed: %s", exc)
+            return None
+
+        text = str(content or "").strip()
+        if not text or text == "…" or text.startswith("background_thought_suppressed"):
+            return None
+
+        return Thought(
+            id=str(uuid.uuid4()),
+            content=text,
+            mode=mode,
+            confidence=0.72,
+            reasoning=[
+                "Desktop quick reply used the governed primary router through CognitiveEngine.",
+                "The compact path disabled deep handoff, cloud fallback, and prompt-cache reuse.",
+            ],
+        )
 
     async def _reactive_recovery(
         self, objective: str, mode: ThinkingMode, origin: str, reason: str

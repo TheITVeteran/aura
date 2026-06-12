@@ -17,6 +17,7 @@ pybreaker>=1.2.0
 pyautogui
 Pillow
 requests
+google-genai>=1.0.0
 idna>=3.15
 urllib3>=2.7.0
 opencv-python-headless
@@ -31,6 +32,7 @@ tweepy
 praw
 pydantic-settings
 aiosqlite
+sqlalchemy>=2.0.35
 PyYAML
 tenacity
 prometheus-client

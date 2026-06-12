@@ -1,10 +1,12 @@
 import logging
-from datetime import datetime, timezone
-from typing import Optional, List, Any
-
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON, Float
-from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from contextlib import contextmanager
+from datetime import UTC, datetime
+from typing import Any
+from urllib.parse import urlparse, urlunparse
+
+from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+
 from core.config import config
 
 logger = logging.getLogger("Aura.ORM")
@@ -16,7 +18,7 @@ class SkillExecutionLog(Base):
     
     id = Column(Integer, primary_key=True)
     skill_name = Column(String, index=True, nullable=False)
-    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True)
     params = Column(JSON)
     status = Column(String, index=True) # SUCCESS, FAILURE, TIMEOUT
     duration_ms = Column(Float)
@@ -28,7 +30,7 @@ class PersistentState:
     Enterprise-grade state manager using SQLAlchemy.
     Provides a durable backbone for Aura's long-term memory and audit logs.
     """
-    def __init__(self, db_url: Optional[str] = None):
+    def __init__(self, db_url: str | None = None):
         if not db_url:
             db_path = config.paths.data_dir / "zenith_state.db"
             db_url = f"sqlite:///{db_path}"
@@ -38,7 +40,6 @@ class PersistentState:
         Base.metadata.create_all(bind=self.engine)
         
         # Redact db_url for logging
-        from urllib.parse import urlparse, urlunparse
         try:
             parsed = urlparse(db_url)
             if parsed.password:
@@ -51,7 +52,7 @@ class PersistentState:
         except (RuntimeError, AttributeError, TypeError, ValueError):
             safe_db_url = "[REDACTED DB URL]"
             
-        logger.info("Durable ORM substrate initialized", db=safe_db_url)
+        logger.info("Durable ORM substrate initialized (db=%s)", safe_db_url)
 
     @contextmanager
     def _session_scope(self):

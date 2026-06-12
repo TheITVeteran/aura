@@ -232,6 +232,24 @@ def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
     assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "33"
 
 
+def test_live_boot_proof_desktop_mode_mirrors_packaged_launcher(monkeypatch):
+    from tools.live_boot_proof import build_safe_boot_env
+
+    monkeypatch.setattr(
+        "tools.live_boot_proof.psutil.virtual_memory",
+        lambda: SimpleNamespace(total=64 * 1024 ** 3),
+    )
+
+    env = build_safe_boot_env({}, mode="desktop")
+
+    assert env["AURA_SAFE_BOOT_DESKTOP"] == "1"
+    assert env["AURA_HEADLESS"] == "0"
+    assert env["AURA_LAUNCHED_FROM_APP"] == "1"
+    assert env["AURA_EXTERNAL_GUI_OWNER"] == "1"
+    assert env["AURA_EAGER_CORTEX_WARMUP"] == "0"
+    assert env["AURA_DEFERRED_CORTEX_PREWARM"] == "auto"
+
+
 def test_live_boot_proof_preserves_operator_mlx_limit(monkeypatch):
     from tools.live_boot_proof import build_safe_boot_env
 

@@ -12,7 +12,13 @@ def test_foreground_budgets_are_bounded_for_live_desktop_lane():
 
     kernel_probe = SimpleNamespace(state=SimpleNamespace(response_modifiers={}))
 
-    assert chat_routes._foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 150.0
+    ready_route_timeout = chat_routes._foreground_timeout_for_lane(
+        {"conversation_ready": True, "state": "ready"}
+    )
+    assert ready_route_timeout == 108.0
+    assert ready_route_timeout < chat_routes._foreground_timeout_for_lane(
+        {"conversation_ready": False, "state": "warming"}
+    )
     assert AuraKernel._phase_timeout_seconds(kernel_probe, "UnitaryResponsePhase", priority=True) == 180.0
     total = InferenceGate._default_timeout_for_request("user", "primary", deep_handoff=False, is_background=False)
     primary, fallback = InferenceGate._split_attempt_timeouts(total, "primary")

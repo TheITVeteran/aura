@@ -1103,7 +1103,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         env["AURA_LAUNCHED_FROM_APP"] = "1"
         env["AURA_SAFE_BOOT_DESKTOP"] = "1"
         env["AURA_EAGER_CORTEX_WARMUP"] = "0"
-        env["AURA_DEFERRED_CORTEX_PREWARM"] = "0"
+        env["AURA_DEFERRED_CORTEX_PREWARM"] = "auto"
         env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] = "0.16"
         env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] = "10"
         env["AURA_SAFE_BOOT_MLX_MEMORY_RATIO"] = "0.52"

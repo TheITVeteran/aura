@@ -12,11 +12,11 @@ Strategy: Use Flash for streaming chat (250 RPD budget), Pro for deep
 reasoning only when explicitly requested (100 RPD budget). Automatic
 fallback to local models when daily quota is exhausted.
 """
+import asyncio
 import json
 import logging
 import os
 import re
-import asyncio
 import time
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
@@ -315,6 +315,10 @@ class GeminiAdapter:
     async def close(self):
         return None
 
+    def _get_client(self) -> Any | None:
+        """Optional test/diagnostic client seam; production uses NetworkGateway."""
+        return None
+
     async def _post_json(self, url: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any], str]:
         response = await asyncio.to_thread(
             get_network_gateway().request,
@@ -414,6 +418,28 @@ class GeminiAdapter:
             return
 
         try:
+            injected_client = self._get_client()
+            if injected_client is not None and hasattr(injected_client, "stream"):
+                url = f"{self.BASE_URL}/models/{self.model}:streamGenerateContent?alt=sse&key={self.api_key}"
+                stream_payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+                if system_prompt:
+                    stream_payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+                async with injected_client.stream(
+                    "POST",
+                    url,
+                    json=stream_payload,
+                    timeout=self.timeout,
+                ) as response:
+                    if getattr(response, "status_code", 200) != 200:
+                        await self._handle_error(response)
+                    if hasattr(response, "aiter_lines"):
+                        async for line in response.aiter_lines():
+                            if cancel_event and cancel_event.is_set():
+                                return
+                            if line:
+                                yield line
+                    self.rate_limiter.record_call(self.model)
+                    return
             ok, text, metadata = await self.call(prompt, system_prompt=system_prompt, **kwargs)
             if not ok:
                 raise GeminiProviderUnavailable(str(metadata.get("error") or "gemini_stream_call_failed"))
@@ -423,6 +449,15 @@ class GeminiAdapter:
         except GeminiProviderUnavailable as e:
             logger.warning("Gemini stream unavailable: %s", e)
             raise
+        except httpx.TimeoutException as e:
+            self._mark_provider_unavailable("gemini_stream_timeout", cooldown_s=300.0)
+            _record_gemini_degradation(
+                e,
+                action="raised provider-unavailable signal so router can fail over after Gemini stream timeout",
+                extra={"model": self.model},
+            )
+            logger.error("Gemini stream timeout: %s", e)
+            raise GeminiProviderUnavailable(str(e)) from e
         except GEMINI_RECOVERABLE_ERRORS as e:
             _record_gemini_degradation(
                 e,
@@ -530,21 +565,42 @@ class GeminiAdapter:
         t0 = time.monotonic()
         
         try:
-            status_code, data, body_text = await self._post_json(url, payload)
-            metadata["latency_ms"] = int((time.monotonic() - t0) * 1000)
-            
-            if status_code != 200:
+            injected_client = self._get_client()
+            if injected_client is not None and hasattr(injected_client, "post"):
+                response = await injected_client.post(url, json=payload, timeout=self.timeout)
+                metadata["latency_ms"] = int((time.monotonic() - t0) * 1000)
+                if response.status_code != 200:
+                    try:
+                        await self._handle_error(response)
+                    except GeminiProviderUnavailable as e:
+                        return False, "", {"error": str(e)}
+                    except GEMINI_RECOVERABLE_ERRORS as e:
+                        _record_gemini_degradation(
+                            e,
+                            action="returned failed Gemini call result after provider error handler failed",
+                            extra={"model": self.model, "status_code": response.status_code},
+                        )
+                        return False, "", {"error": str(e)}
                 try:
-                    await self._handle_error_payload(status_code, body_text)
-                except GeminiProviderUnavailable as e:
+                    data = response.json()
+                except (json.JSONDecodeError, ValueError, AttributeError) as e:
                     return False, "", {"error": str(e)}
-                except GEMINI_RECOVERABLE_ERRORS as e:
-                    _record_gemini_degradation(
-                        e,
-                        action="returned failed Gemini call result after provider error handler failed",
-                        extra={"model": self.model, "status_code": status_code},
-                    )
-                    return False, "", {"error": str(e)}
+            else:
+                status_code, data, body_text = await self._post_json(url, payload)
+                metadata["latency_ms"] = int((time.monotonic() - t0) * 1000)
+
+                if status_code != 200:
+                    try:
+                        await self._handle_error_payload(status_code, body_text)
+                    except GeminiProviderUnavailable as e:
+                        return False, "", {"error": str(e)}
+                    except GEMINI_RECOVERABLE_ERRORS as e:
+                        _record_gemini_degradation(
+                            e,
+                            action="returned failed Gemini call result after provider error handler failed",
+                            extra={"model": self.model, "status_code": status_code},
+                        )
+                        return False, "", {"error": str(e)}
             
             self.rate_limiter.record_call(self.model)
             

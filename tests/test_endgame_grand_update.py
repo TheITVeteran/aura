@@ -250,6 +250,26 @@ def test_keep_awake_controller_does_not_start_from_spawn_child(monkeypatch):
     assert aura_main._should_start_keep_awake_controller() is False
 
 
+def test_keep_awake_controller_does_not_start_for_help_or_stop(monkeypatch):
+    import aura_main
+
+    monkeypatch.setattr(
+        aura_main.multiprocessing,
+        "current_process",
+        lambda: SimpleNamespace(name="MainProcess"),
+    )
+    monkeypatch.setattr(aura_main, "__name__", "__main__")
+
+    monkeypatch.setattr(aura_main.sys, "argv", ["aura_main.py", "--help"])
+    assert aura_main._should_start_keep_awake_controller() is False
+
+    monkeypatch.setattr(aura_main.sys, "argv", ["aura_main.py", "--stop"])
+    assert aura_main._should_start_keep_awake_controller() is False
+
+    monkeypatch.setattr(aura_main.sys, "argv", ["aura_main.py", "--desktop"])
+    assert aura_main._should_start_keep_awake_controller() is True
+
+
 def test_root_runtime_hard_exit_predicate_excludes_cli_and_spawn(monkeypatch):
     import aura_main
 
