@@ -82,7 +82,13 @@ def _pdf_has_image(path: Path) -> bool:
 
 class JournalDemoProof(LiveProof):
     def __init__(self, *, port: int, boot_timeout_s: float):
-        super().__init__(port=port, boot_timeout_s=boot_timeout_s, skip_desktop=False)
+        super().__init__(
+            port=port,
+            boot_timeout_s=boot_timeout_s,
+            skip_desktop=False,
+            restart_continuity=False,
+            conversation_soak_turns=0,
+        )
 
     def chat_full(self, message: str, *, timeout_s: float) -> tuple[bool, str, float, dict]:
         """Like LiveProof.chat but preserves the full response payload —

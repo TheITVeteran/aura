@@ -62,6 +62,16 @@ def test_desktop_origins_are_foreground_across_live_response_stack():
         assert controller.admit(orch, origin=origin, priority=1).allow is True
 
 
+def test_journal_demo_proof_stays_aligned_with_live_proof_contract():
+    from tools.journal_demo_proof import JournalDemoProof
+
+    proof = JournalDemoProof(port=8999, boot_timeout_s=1.0)
+
+    assert proof.skip_desktop is False
+    assert proof.restart_continuity is False
+    assert proof.conversation_soak_turns == 0
+
+
 def test_user_visible_will_refusal_is_substantive_identity_boundary():
     from core.orchestrator.mixins.message_handling import _user_visible_will_refusal
 
