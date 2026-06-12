@@ -950,3 +950,14 @@ async def test_wallpaper_chain_substitutes_source_url_at_runtime(monkeypatch):
     assert any(u == "https://en.wikipedia.org/wiki/Robot" for u in source_urls), (
         f"source tab did not receive the fetch receipt page_url: {source_urls}"
     )
+
+
+def test_folder_extraction_handles_name_first_phrasing():
+    """Part-2 phrasing: 'inside the 'Aura's Journal' folder' — quoted name
+    BEFORE the word folder, with a possessive apostrophe inside."""
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    extract = DesktopTaskSkill._extract_folder_name
+    assert extract("Save it inside the 'Aura's Journal' folder in Documents") == "Aura's Journal"
+    assert extract('Put it in the "Research Notes" folder please') == "Research Notes"
+    assert extract("a folder called 'Aura's Journal' in Documents") == "Aura's Journal"

@@ -125,6 +125,17 @@ class DesktopTaskSkill(BaseSkill):
         if match:
             name = str(match.group(1) or match.group(2) or match.group(3) or "").strip()
             return name.strip("'\"")[:100]
+        # Name-first phrasing: "the 'Aura's Journal' folder" — quoted name
+        # immediately before the word folder/directory.
+        name_first = re.search(
+            r"(?:'((?:[^']|'(?=\w))+)'|\"([^\"]+)\")\s+(?:folder|directory)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if name_first:
+            name = str(name_first.group(1) or name_first.group(2) or "").strip()
+            if name:
+                return name.strip("'\"")[:100]
         return f"Aura Desktop Task {int(time.time())}"
 
     @staticmethod
