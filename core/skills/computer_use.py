@@ -42,6 +42,16 @@ def _quartz_error_types() -> tuple[type[BaseException], ...]:
 
 _QUARTZ_RENDER_ERRORS = _quartz_error_types()
 
+# Browsers open_url may target explicitly ("open -a <browser> <url>") —
+# bounded so a derived step can never launch an arbitrary application.
+_ALLOWED_URL_BROWSERS = {
+    "Google Chrome",
+    "Safari",
+    "Firefox",
+    "Microsoft Edge",
+    "Arc",
+}
+
 
 _COMPUTER_USE_RECOVERABLE_ERRORS = (
     ImportError,
@@ -307,6 +317,49 @@ class ComputerUseSkill(BaseSkill):
                 raise TimeoutError(f"AppleScript timed out after {timeout_s}s.")
             raise RuntimeError(self._normalize_script_error(stderr))
         return str(result.get("stdout") or "").strip()
+
+    _HOTKEY_MODIFIERS = {
+        "command": "command down",
+        "cmd": "command down",
+        "shift": "shift down",
+        "option": "option down",
+        "alt": "option down",
+        "control": "control down",
+        "ctrl": "control down",
+    }
+    _HOTKEY_KEY_CODES = {
+        "return": 36,
+        "enter": 36,
+        "tab": 48,
+        "space": 49,
+        "escape": 53,
+        "esc": 53,
+        "delete": 51,
+        "left": 123,
+        "right": 124,
+        "down": 125,
+        "up": 126,
+    }
+
+    def _send_hotkey_system_events(self, keys: list[str]) -> str:
+        """Send a keyboard shortcut via System Events; raise with the real
+        error on refusal (e.g. missing Automation/Accessibility grants)."""
+        mods = [self._HOTKEY_MODIFIERS[k] for k in keys if k in self._HOTKEY_MODIFIERS]
+        plains = [k for k in keys if k not in self._HOTKEY_MODIFIERS]
+        if len(plains) != 1:
+            raise RuntimeError(f"unsupported hotkey combination: {'+'.join(keys)}")
+        key = plains[0]
+        if key in self._HOTKEY_KEY_CODES:
+            stroke = f"key code {self._HOTKEY_KEY_CODES[key]}"
+        elif len(key) == 1 and (key.isalnum() or key in ".,;/-=[]'\\`"):
+            stroke = f'keystroke "{key}"'
+        else:
+            raise RuntimeError(f"unsupported hotkey key: {key}")
+        using = f" using {{{', '.join(mods)}}}" if mods else ""
+        self._run_applescript(
+            f'tell application "System Events" to {stroke}{using}', timeout=8
+        )
+        return f"system_events:{stroke}{using}"
 
     @staticmethod
     def _normalize_open_url_target(target: str) -> str:
@@ -1226,8 +1279,22 @@ end tell
                     subprocess.SubprocessError,
                 ) as exc:
                     logger.debug("Pre-state screen read failed before hotkey: %s", exc)
-                keys = params.target.split("+")
-                await asyncio.to_thread(pyautogui.hotkey, *keys)
+                keys = [k.strip().lower() for k in params.target.split("+") if k.strip()]
+                # System Events dispatch, not pyautogui: CGEvent posts are
+                # silently dropped without Accessibility grants, which left
+                # failures with no error text ("unknown") and no receipt.
+                try:
+                    dispatch_receipt = await asyncio.to_thread(
+                        self._send_hotkey_system_events, keys
+                    )
+                except (TimeoutError, RuntimeError) as exc:
+                    return {
+                        "ok": False,
+                        "action": "hotkey",
+                        "hotkey": params.target,
+                        "effect_verified": False,
+                        "error": f"keystroke dispatch failed: {exc}",
+                    }
                 await asyncio.sleep(0.4)
                 post_state = ""
                 try:
@@ -1242,15 +1309,38 @@ end tell
                     subprocess.SubprocessError,
                 ) as exc:
                     logger.debug("Post-state screen read failed after hotkey: %s", exc)
-                effect_verified = bool(pre_state or post_state) and post_state != pre_state
-                return {
-                    "ok": effect_verified,
+                screen_verifiable = not (
+                    self._screen_text_unavailable(pre_state)
+                    and self._screen_text_unavailable(post_state)
+                )
+                effect_verified = screen_verifiable and post_state != pre_state
+                if effect_verified:
+                    ok, verification = True, "State shifted."
+                elif not screen_verifiable:
+                    # The keystroke went through the governed gateway with
+                    # rc=0; the screen layer simply cannot testify here.
+                    ok = True
+                    verification = (
+                        "Keystroke dispatched through System Events without "
+                        "error; screen-text verification unavailable on this "
+                        "surface."
+                    )
+                else:
+                    ok = False
+                    verification = (
+                        "Hotkey dispatched but no visible state shift was verified."
+                    )
+                result = {
+                    "ok": ok,
+                    "action": "hotkey",
                     "hotkey": params.target,
                     "effect_verified": effect_verified,
-                    "verification": "State shifted."
-                    if effect_verified
-                    else "Hotkey sent but no visible state shift was verified.",
+                    "dispatch": dispatch_receipt,
+                    "verification": verification,
                 }
+                if not ok:
+                    result["error"] = verification
+                return result
 
             elif action == "scroll":
                 # Issue 88: Use x/y correctly
@@ -1422,15 +1512,38 @@ end tell
                 return {"ok": True, "opened": params.target, "returncode": result.returncode}
 
             elif action == "open_url":
-                target_url = self._normalize_open_url_target(params.target)
+                raw_target = str(params.target or "").strip()
+                browser = ""
+                url_text = raw_target
+                if raw_target.startswith("{"):
+                    try:
+                        spec = json.loads(raw_target)
+                        url_text = str(spec.get("url") or spec.get("target") or "")
+                        browser = str(spec.get("browser") or "").strip()
+                    except (ValueError, TypeError, AttributeError):
+                        url_text = raw_target
+                if browser and browser not in _ALLOWED_URL_BROWSERS:
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"Browser '{browser}' is not in the allowed browser set "
+                            f"{sorted(_ALLOWED_URL_BROWSERS)}."
+                        ),
+                    }
+                target_url = self._normalize_open_url_target(url_text)
                 if not target_url:
                     return {"ok": False, "error": "No URL or search query provided."}
                 if target_url.startswith("file:"):
                     return {"ok": False, "error": "Refusing to open local file URLs from chat."}
                 if shutil.which("open"):
+                    argv = (
+                        ["open", "-a", browser, target_url]
+                        if browser
+                        else ["open", target_url]
+                    )
                     result = await asyncio.to_thread(
                         get_subprocess_gateway().run,
-                        ["open", target_url],
+                        argv,
                         capture_output=True,
                         timeout=10,
                         source="computer_use",
@@ -1442,11 +1555,13 @@ end tell
                     opened = await asyncio.to_thread(webbrowser.open, target_url, 2)
                     if not opened:
                         return {"ok": False, "error": "The default browser did not accept the URL."}
+                surface = f" in {browser}" if browser else ""
                 return {
                     "ok": True,
                     "action": "open_url",
                     "url": target_url,
-                    "summary": f"I opened a browser tab for {target_url}.",
+                    "browser": browser,
+                    "summary": f"I opened a browser tab for {target_url}{surface}.",
                 }
 
             else:

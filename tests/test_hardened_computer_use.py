@@ -599,3 +599,148 @@ def test_write_text_file_overwrite_flag_still_overwrites(tmp_path, monkeypatch):
     )
     assert result["ok"] and result["versioned"] is False
     assert (tmp_path / "note.txt").read_text() == "two"
+
+
+@pytest.mark.asyncio
+async def test_hotkey_dispatch_failure_carries_real_error(monkeypatch):
+    """Visible-demo regression: a refused keystroke surfaced as 'unknown'
+    because the failure receipt had no error text. Dispatch now goes
+    through System Events and refusals carry the real message."""
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    def refusing_applescript(script, *, timeout=10):
+        raise RuntimeError("osascript is not allowed to send keystrokes")
+
+    monkeypatch.setattr(skill, "_run_applescript", refusing_applescript)
+
+    result = await skill.execute({"action": "hotkey", "target": "command+n"}, {})
+    assert result["ok"] is False
+    assert "not allowed to send keystrokes" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_hotkey_dispatch_receipt_accepted_when_screen_unverifiable(monkeypatch):
+    """When the screen layer cannot testify (Accessibility text unavailable
+    before AND after), a clean System Events dispatch is honest evidence —
+    the step must not fail closed on a working keystroke."""
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    scripts = []
+
+    def recording_applescript(script, *, timeout=10):
+        scripts.append(script)
+        if "System Events" in script and "keystroke" in script:
+            return ""
+        return "[Accessibility error or UI unresponsive]"
+
+    monkeypatch.setattr(skill, "_run_applescript", recording_applescript)
+
+    async def controlled_sleep(secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    result = await skill.execute({"action": "hotkey", "target": "command+v"}, {})
+    assert result["ok"] is True
+    assert result["effect_verified"] is False
+    assert result["dispatch"].startswith("system_events:")
+    assert "verification unavailable" in result["verification"].lower()
+    assert any('keystroke "v" using {command down}' in s for s in scripts)
+
+    from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
+
+    step = DesktopTaskStep(
+        action="hotkey",
+        target="command+v",
+        reason="paste staged body",
+        expect="The focused writing surface accepts the paste shortcut.",
+    )
+    verified, evidence = DesktopTaskSkill()._verify_step_effect(step, result)
+    assert verified, evidence
+
+
+@pytest.mark.asyncio
+async def test_hotkey_screen_shift_still_required_when_screen_readable(monkeypatch):
+    """With a readable screen and NO state shift, the step stays red —
+    the dispatch-receipt fallback must not soften real verification."""
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    def stable_screen_applescript(script, *, timeout=10):
+        if "System Events" in script and "keystroke" in script:
+            return ""
+        return "Notes: same visible text"
+
+    monkeypatch.setattr(skill, "_run_applescript", stable_screen_applescript)
+
+    async def controlled_sleep(secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    result = await skill.execute({"action": "hotkey", "target": "command+n"}, {})
+    assert result["ok"] is False
+    assert "no visible state shift" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_open_url_targets_named_browser(monkeypatch):
+    """Bryan's Google session lives in Chrome: open_url honors a browser
+    in the step target via 'open -a', bounded to a known browser set."""
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    argv_seen = []
+
+    class FakeSubprocessGateway:
+        def run(self, argv, **kwargs):
+            argv_seen.append(argv)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+
+    target = json.dumps(
+        {"url": "https://docs.google.com/document/u/0/create", "browser": "Google Chrome"}
+    )
+    result = await skill.execute({"action": "open_url", "target": target}, {})
+    assert result["ok"] is True
+    assert result["browser"] == "Google Chrome"
+    assert argv_seen == [
+        ["open", "-a", "Google Chrome", "https://docs.google.com/document/u/0/create"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_open_url_refuses_unknown_browser(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    target = json.dumps({"url": "https://example.com", "browser": "Calculator"})
+    result = await skill.execute({"action": "open_url", "target": target}, {})
+    assert result["ok"] is False
+    assert "not in the allowed browser set" in result["error"]

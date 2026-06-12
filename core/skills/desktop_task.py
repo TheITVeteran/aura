@@ -253,13 +253,41 @@ class DesktopTaskSkill(BaseSkill):
         return wants_research and wants_written_output
 
     @staticmethod
-    def _search_url(query: str, *, images: bool = False) -> str:
+    def _search_url(query: str, *, images: bool = False, engine: str = "") -> str:
         encoded = urllib.parse.quote_plus(str(query or "").strip())
         if not encoded:
             return ""
+        if engine == "google":
+            # The user said Google — honor it (their sessions and habits
+            # live there); DuckDuckGo stays the neutral default otherwise.
+            if images:
+                return f"https://www.google.com/search?q={encoded}&tbm=isch"
+            return f"https://www.google.com/search?q={encoded}"
         if images:
             return f"https://duckduckgo.com/?q={encoded}&iax=images&ia=images"
         return f"https://duckduckgo.com/?q={encoded}"
+
+    @staticmethod
+    def _preferred_browser(objective: str) -> str:
+        """Which browser the user's phrasing points at, if any.
+
+        Google-account surfaces (Docs/Drive/Gmail) route to Chrome because
+        that is where the user's signed-in session lives; an explicitly
+        named browser always wins; otherwise the OS default is honored.
+        """
+        lowered = str(objective or "").lower()
+        if "safari" in lowered:
+            return "Safari"
+        if "chrome" in lowered or re.search(
+            r"\bgoogle\s+(?:docs?|drive|sheets?|slides|gmail|account)\b", lowered
+        ):
+            return "Google Chrome"
+        return ""
+
+    @staticmethod
+    def _search_engine_hint(objective: str) -> str:
+        lowered = str(objective or "").lower()
+        return "google" if "google" in lowered else ""
 
     @staticmethod
     def _extract_image_query(objective: str) -> str:
@@ -784,7 +812,19 @@ class DesktopTaskSkill(BaseSkill):
         if action == "hotkey":
             hotkey = str(result.get("hotkey") or "").strip()
             verification = str(result.get("verification") or "").strip()
-            verified = bool(result.get("effect_verified")) or "state shifted" in verification.lower()
+            dispatch = str(result.get("dispatch") or "").strip()
+            # Screen-shift is the strong evidence; when the screen layer
+            # cannot testify (no Accessibility text on this surface), the
+            # governed System Events dispatch receipt is the honest fallback.
+            verified = (
+                bool(result.get("effect_verified"))
+                or "state shifted" in verification.lower()
+                or (
+                    bool(result.get("ok"))
+                    and dispatch.startswith("system_events:")
+                    and "verification unavailable" in verification.lower()
+                )
+            )
             return (
                 bool(hotkey) and verified,
                 f"hotkey={hotkey};{verification}" if hotkey and verification else "missing hotkey effect evidence",
@@ -894,34 +934,47 @@ class DesktopTaskSkill(BaseSkill):
                 )
             )
 
+        preferred_browser = self._preferred_browser(text)
+        engine_hint = self._search_engine_hint(text)
+        browser_label = preferred_browser or "Default browser"
+
+        def _open_url_target(url: str):
+            if preferred_browser:
+                return {"url": url, "browser": preferred_browser}
+            return url
+
         query = self._extract_search_query(text)
-        search_url = self._search_url(query) if query else ""
+        search_url = self._search_url(query, engine=engine_hint) if query else ""
         if wants_search and query:
             steps.append(
                 DesktopTaskStep(
                     action="open_url",
-                    target=search_url,
+                    target=_open_url_target(search_url),
                     reason="Open a browser/search tab for the requested live research topic.",
-                    expect="Default browser accepts the search URL.",
+                    expect=f"{browser_label} accepts the search URL.",
                 )
             )
         if web_document_url:
             steps.append(
                 DesktopTaskStep(
                     action="open_url",
-                    target=web_document_url,
+                    target=_open_url_target(web_document_url),
                     reason="Open the requested web document surface.",
-                    expect="Default browser accepts the document URL.",
+                    expect=f"{browser_label} accepts the document URL.",
                 )
             )
-        image_search_url = self._search_url(image_query or text, images=True) if wants_image else ""
+        image_search_url = (
+            self._search_url(image_query or text, images=True, engine=engine_hint)
+            if wants_image
+            else ""
+        )
         if image_search_url and image_search_url != search_url:
             steps.append(
                 DesktopTaskStep(
                     action="open_url",
-                    target=image_search_url,
+                    target=_open_url_target(image_search_url),
                     reason="Open an image-search surface for the requested visual reference.",
-                    expect="Default browser accepts the image search URL.",
+                    expect=f"{browser_label} accepts the image search URL.",
                 )
             )
 

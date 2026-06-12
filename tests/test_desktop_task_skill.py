@@ -17,7 +17,12 @@ def _fake_computer_use_result(params):
     if action == "open_app":
         return {"ok": True, "opened": target, "returncode": 0}
     if action == "open_url":
-        return {"ok": True, "action": action, "url": target}
+        return {
+            "ok": True,
+            "action": action,
+            "url": payload.get("url", target),
+            "browser": payload.get("browser", ""),
+        }
     if action == "write_text_file":
         content = str(payload.get("content") or "")
         return {
@@ -421,7 +426,12 @@ async def test_desktop_task_derives_generic_web_document_plan_without_demo_short
     assert "write_text_file" not in actions
     assert "render_text_pdf" not in actions
     open_urls = [call[1]["target"] for call in calls if call[1]["action"] == "open_url"]
-    assert open_urls == ["https://docs.google.com/document/u/0/create"]
+    # Google Docs routes to Chrome where the user's signed-in session lives.
+    assert len(open_urls) == 1
+    assert json.loads(open_urls[0]) == {
+        "url": "https://docs.google.com/document/u/0/create",
+        "browser": "Google Chrome",
+    }
     assert not any("duckduckgo.com" in url for url in open_urls)
     clipboard_payload = calls[1][1]["target"]
     assert "Essay body from CognitiveEngine." in clipboard_payload
@@ -807,3 +817,47 @@ def test_real_prose_reply_still_qualifies_as_body():
         "write a note about the tides", {"cognitive_reply": prose}
     )
     assert body == prose
+
+
+def test_derivation_routes_google_surfaces_to_chrome():
+    """'I'm signed into Google Docs in Chrome, not DuckDuckGo': google
+    phrasing selects the google engine and Google-account surfaces route
+    to Chrome where the user's session lives."""
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    skill = DesktopTaskSkill()
+    objective = (
+        "Search Google for three recent climate change articles, then open "
+        "Google Docs and summarize them in a new document."
+    )
+    steps = skill._derive_steps_from_objective(objective, {})
+    open_urls = [s for s in steps if s.action == "open_url"]
+    assert open_urls, [s.action for s in steps]
+    for step in open_urls:
+        assert isinstance(step.target, dict), step.target
+        assert step.target["browser"] == "Google Chrome"
+    urls = [s.target["url"] for s in open_urls]
+    assert any("google.com/search?q=" in u for u in urls), urls
+    assert any("docs.google.com/document" in u for u in urls), urls
+
+
+def test_derivation_honors_safari_and_neutral_defaults():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    skill = DesktopTaskSkill()
+
+    safari_steps = skill._derive_steps_from_objective(
+        "Search for hiking trails in Safari.", {}
+    )
+    safari_urls = [s for s in safari_steps if s.action == "open_url"]
+    assert safari_urls and all(
+        isinstance(s.target, dict) and s.target["browser"] == "Safari"
+        for s in safari_urls
+    )
+
+    neutral_steps = skill._derive_steps_from_objective(
+        "Search for hiking trails near me.", {}
+    )
+    neutral_urls = [s for s in neutral_steps if s.action == "open_url"]
+    assert neutral_urls and all(isinstance(s.target, str) for s in neutral_urls)
+    assert all("duckduckgo.com" in s.target for s in neutral_urls)
