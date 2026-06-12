@@ -25,6 +25,24 @@ from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger("Skills.ComputerUse")
 
+def _quartz_error_types() -> tuple[type[BaseException], ...]:
+    """PyObjC bridges ObjC failures as objc.error; resolve it lazily so
+    non-darwin platforms never import the bridge."""
+    errors: list[type[BaseException]] = [
+        AttributeError, OSError, RuntimeError, TypeError, ValueError,
+    ]
+    try:
+        import objc
+
+        errors.append(objc.error)
+    except ImportError:
+        pass
+    return tuple(errors)
+
+
+_QUARTZ_RENDER_ERRORS = _quartz_error_types()
+
+
 _COMPUTER_USE_RECOVERABLE_ERRORS = (
     ImportError,
     AttributeError,
@@ -649,7 +667,7 @@ class ComputerUseSkill(BaseSkill):
                     break
                 consumed += advanced
             Quartz.CGPDFContextClose(ctx)
-        except Exception as exc:  # noqa: BLE001 - fall back to raster renderer
+        except _QUARTZ_RENDER_ERRORS as exc:
             record_degradation(
                 "computer_use",
                 exc,

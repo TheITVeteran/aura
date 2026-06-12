@@ -66,7 +66,8 @@ def _pdf_text(path: Path) -> str:
         if doc is None:
             return ""
         return str(doc.string() or "")
-    except Exception:  # noqa: BLE001 - verification helper must never crash the proof
+    except (ImportError, AttributeError, TypeError, ValueError, OSError) as exc:
+        print(f"[journal-proof] PDF text extraction unavailable: {exc}", file=sys.stderr)
         return ""
 
 
@@ -83,10 +84,29 @@ class JournalDemoProof(LiveProof):
     def __init__(self, *, port: int, boot_timeout_s: float):
         super().__init__(port=port, boot_timeout_s=boot_timeout_s, skip_desktop=False)
 
+    def chat_full(self, message: str, *, timeout_s: float) -> tuple[bool, str, float, dict]:
+        """Like LiveProof.chat but preserves the full response payload —
+        the desktop lane embeds its complete skill result dict there, which
+        is the only place failures carry their real status/receipts."""
+        import httpx
+
+        started = time.time()
+        try:
+            with httpx.Client(timeout=timeout_s) as client:
+                resp = client.post(
+                    f"{self.base}/api/chat", json={"message": message}
+                )
+            latency = time.time() - started
+            payload = resp.json() if resp.status_code == 200 else {}
+            text = str(payload.get("response", "") or "")
+            return resp.status_code == 200 and bool(text), text, latency, payload
+        except httpx.HTTPError as exc:
+            return False, f"http_error: {exc}", time.time() - started, {}
+
     def exercise_journal_chain(self) -> bool:
         journal_dir = Path.home() / "Documents" / "Aura's Journal"
         step_started = time.time()
-        ok, reply, latency = self.chat(JOURNAL_OBJECTIVE, timeout_s=600.0)
+        ok, reply, latency, payload = self.chat_full(JOURNAL_OBJECTIVE, timeout_s=600.0)
         self.guard_rss()
         time.sleep(2.0)
 
@@ -126,6 +146,8 @@ class JournalDemoProof(LiveProof):
             ),
             latency_s=round(latency, 1),
             reply=reply[:1200],
+            lane_data=payload.get("data"),
+            lane_status=payload.get("status"),
             folder=str(journal_dir),
             folder_fresh=folder_fresh,
             pdf_path=str(pdf) if pdf else "",
