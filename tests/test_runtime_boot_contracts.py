@@ -137,38 +137,46 @@ def test_memory_provider_accepts_legacy_knowledge_graph_file(tmp_path, monkeypat
 
 @pytest.mark.asyncio
 async def test_boot_identity_reuses_existing_fictional_engines(monkeypatch):
-    from core.orchestrator.mixins.boot.boot_identity import BootIdentityMixin
     import core.agency.latent_distiller as latent_distiller_module
     import core.fictional_ai_synthesis as fictional_synthesis_module
     import core.memory.snap_kv_evictor as snap_evictor_module
     import core.self_modification.shadow_ast_healer as shadow_healer_module
+    from core.orchestrator.mixins.boot.boot_identity import BootIdentityMixin
 
     engines = {"jarvis": object()}
     harness = SimpleNamespace(fictional_engines=engines)
     duplicate_registration_calls = 0
+    component_constructions = 0
 
     def record_duplicate_registration(*_args, **_kwargs):
         nonlocal duplicate_registration_calls
         duplicate_registration_calls += 1
         return {}
 
+    def component():
+        nonlocal component_constructions
+        component_constructions += 1
+        return object()
+
     monkeypatch.setattr(
         fictional_synthesis_module,
         "register_all_fictional_engines",
         record_duplicate_registration,
     )
-    monkeypatch.setattr(shadow_healer_module, "ShadowASTHealer", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr(snap_evictor_module, "SnapKVEvictor", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(shadow_healer_module, "ShadowASTHealer", lambda *_args, **_kwargs: component())
+    monkeypatch.setattr(snap_evictor_module, "SnapKVEvictor", lambda *_args, **_kwargs: component())
     monkeypatch.setattr(
         latent_distiller_module,
         "LatentSpaceDistiller",
-        lambda *_args, **_kwargs: object(),
+        lambda *_args, **_kwargs: component(),
     )
 
+    await BootIdentityMixin._init_fictional_synthesis(harness)
     await BootIdentityMixin._init_fictional_synthesis(harness)
 
     assert harness.fictional_engines is engines
     assert duplicate_registration_calls == 0
+    assert component_constructions == 3
 
 
 def test_final_engines_create_persistence_dirs_without_generated_gateways(tmp_path):
@@ -222,8 +230,8 @@ async def test_performance_guard_start_uses_task_tracker():
 
 @pytest.mark.asyncio
 async def test_performance_guard_persists_reports_off_event_loop():
-    from core.runtime.performance_guard import PerformanceGuard
     import core.runtime.performance_guard as performance_guard_module
+    from core.runtime.performance_guard import PerformanceGuard
 
     guard = PerformanceGuard()
     release = asyncio.Event()

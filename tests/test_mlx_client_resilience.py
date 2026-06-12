@@ -173,7 +173,7 @@ class MPContextProbe:
     def __init__(self, *queues):
         self.queues = list(queues)
 
-    def Queue(self, **_kwargs):
+    def Queue(self, **_kwargs):  # noqa: N802 - mirrors multiprocessing context API.
         if not self.queues:
             raise AssertionError("No queued IPC probe available")
         return self.queues.pop(0)
@@ -915,7 +915,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
         with replace_dotted(
             "core.brain.llm.mlx_client.asyncio.wait_for",
-            SyncCallProbe(side_effect=asyncio.TimeoutError()),
+            SyncCallProbe(side_effect=TimeoutError()),
         ):
             with replace_dotted(
                 "core.brain.llm.mlx_client.time.time",
@@ -990,6 +990,44 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(warm_long_prompt_sla, 22.0)
         self.assertGreater(warm_long_prompt_sla, cold_sla)
 
+    async def test_generation_waiter_caps_heartbeat_only_first_token_livelock(self):
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        proc = ProcessProbe(alive=True)
+        client._process = proc
+        client._init_done = True
+        client._set_lane_state("ready")
+        req_id = "req-heartbeat-no-token"
+        future = asyncio.get_running_loop().create_future()
+        client._pending_generations[req_id] = future
+        client._current_request_id = req_id
+        client._current_request_started_at = 100.0
+        client._last_generation_completed_at = 1.0
+        client._current_request_prompt_chars = 24_740
+        hard_ceiling = client._first_token_absolute_ceiling(foreground_request=True)
+        now = 100.0 + hard_ceiling + 1.0
+        client._last_heartbeat = now - 0.5
+        client._last_progress_at = now - 0.5
+        client._last_ready_at = now - 0.5
+
+        self.assertLess(hard_ceiling, client._first_token_sla(foreground_request=True))
+
+        with replace_dotted(
+            "core.brain.llm.mlx_client.asyncio.wait_for",
+            SyncCallProbe(side_effect=TimeoutError()),
+        ):
+            with replace_dotted("core.brain.llm.mlx_client.time.time", lambda: now):
+                result = await client._wait_for_generation_result(
+                    req_id,
+                    future,
+                    get_deadline(None),
+                    foreground_request=True,
+                )
+
+        self.assertIsNone(result)
+        self.assertEqual(client._deferred_reboot_reason, "recoverable_first_token_sla_exceeded")
+        self.assertTrue(future.cancelled())
+        self.assertNotIn(req_id, client._pending_generations)
+
     async def test_generation_waiter_flags_token_progress_stall(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
         proc = ProcessProbe(alive=True)
@@ -1006,7 +1044,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
         with replace_dotted(
             "core.brain.llm.mlx_client.asyncio.wait_for",
-            SyncCallProbe(side_effect=asyncio.TimeoutError()),
+            SyncCallProbe(side_effect=TimeoutError()),
         ):
             with replace_dotted("core.brain.llm.mlx_client.time.time", lambda: 105.0 + client._token_stall_after() + 1.0):
                 result = await client._wait_for_generation_result(
@@ -1037,7 +1075,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
         with replace_dotted(
             "core.brain.llm.mlx_client.asyncio.wait_for",
-            SyncCallProbe(side_effect=asyncio.TimeoutError()),
+            SyncCallProbe(side_effect=TimeoutError()),
         ):
             with replace_dotted("core.brain.llm.mlx_client.time.time", lambda: now):
                 result = await client._wait_for_generation_result(

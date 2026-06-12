@@ -16,7 +16,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
@@ -56,6 +56,95 @@ class ScreenPerception:
         self._capture_count: int = 0
         self._started = False
 
+    @staticmethod
+    def _prepare_screenshot_path(capture_count: int) -> str:
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        save_dir = Path.home() / ".aura" / "data" / "screenshots"
+        save_dir.mkdir(parents=True, exist_ok=True)
+        return str(save_dir / f"screen_{ts}_{capture_count}.png")
+
+    @staticmethod
+    def _path_exists(path: str) -> bool:
+        return Path(path).exists()
+
+    @staticmethod
+    def _compare_screenshot_files(before_path: str, after_path: str) -> dict[str, Any]:
+        before = Path(before_path)
+        after = Path(after_path)
+
+        if not before.exists() or not after.exists():
+            return {"error": "Screenshot not found", "change_magnitude": 1.0}
+
+        before_bytes = before.read_bytes()
+        after_bytes = after.read_bytes()
+        before_hash = hashlib.sha256(before_bytes).hexdigest()
+        after_hash = hashlib.sha256(after_bytes).hexdigest()
+
+        if before_hash == after_hash:
+            return {"change_magnitude": 0.0, "identical": True}
+
+        before_size = len(before_bytes)
+        after_size = len(after_bytes)
+        size_diff = abs(before_size - after_size)
+        magnitude = min(1.0, size_diff / max(1, max(before_size, after_size)))
+
+        return {
+            "change_magnitude": magnitude,
+            "identical": False,
+            "before_size": before_size,
+            "after_size": after_size,
+        }
+
+    @staticmethod
+    def _ocr_screenshot_sync(screenshot_path: str) -> str:
+        if not screenshot_path or not Path(screenshot_path).exists():
+            return ""
+
+        try:
+            import pytesseract
+            from PIL import Image
+
+            img = Image.open(screenshot_path)
+            text = pytesseract.image_to_string(img)
+            return text.strip()
+        except ImportError:
+            return "[OCR not available — install pytesseract for screen text extraction]"
+
+    async def _run_osascript(
+        self,
+        script: str,
+        *,
+        source: str,
+        timeout_s: float = 3.0,
+    ) -> str:
+        """Run a bounded, read-only AppleScript probe and always reap it."""
+
+        proc = None
+        try:
+            proc = await get_subprocess_gateway().spawn_async(
+                ["osascript", "-e", script],
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                read_only=True,
+                source=source,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+            if proc.returncode == 0 and stdout:
+                return stdout.decode("utf-8", errors="replace").strip()
+            return ""
+        except TimeoutError as exc:
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.kill()
+                    await asyncio.wait_for(proc.wait(), timeout=1.0)
+                except (TimeoutError, OSError, RuntimeError) as kill_exc:
+                    record_degradation(f"{source}.reap", kill_exc)
+            record_degradation(source, exc)
+            return ""
+        except (OSError, RuntimeError) as exc:
+            record_degradation(source, exc)
+            return ""
+
     async def start(self) -> None:
         if self._started:
             return
@@ -69,43 +158,19 @@ class ScreenPerception:
         self._capture_count += 1
 
         # Get active app and window title (fast, via AppleScript)
-        try:
-            proc = await get_subprocess_gateway().spawn_async(
-                [
-                    "osascript",
-                    "-e",
-                    'tell application "System Events" to get name of first application process whose frontmost is true',
-                ],
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                read_only=True,
-                source="screen_perception.active_app",
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
-            if proc.returncode == 0 and stdout:
-                snap.active_app = stdout.decode("utf-8", errors="replace").strip()
-        except (OSError, RuntimeError, asyncio.TimeoutError) as exc:
-            record_degradation("screen_perception.active_app", exc)
+        snap.active_app = await self._run_osascript(
+            'tell application "System Events" to get name of first application process whose frontmost is true',
+            source="screen_perception.active_app",
+        )
 
         if snap.active_app:
-            try:
-                app_name = snap.active_app.replace("\\", "\\\\").replace('"', '\\"')
-                proc = await get_subprocess_gateway().spawn_async(
-                    [
-                        "osascript",
-                        "-e",
-                        f'tell application "System Events" to get name of front window of process "{app_name}"',
-                    ],
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    read_only=True,
+            app_name = snap.active_app.replace("\\", "\\\\").replace('"', '\\"')
+            snap.window_title = (
+                await self._run_osascript(
+                    f'tell application "System Events" to get name of front window of process "{app_name}"',
                     source="screen_perception.window_title",
                 )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
-                if proc.returncode == 0 and stdout:
-                    snap.window_title = stdout.decode("utf-8", errors="replace").strip()[:200]
-            except (OSError, RuntimeError, asyncio.TimeoutError) as exc:
-                record_degradation("screen_perception.window_title", exc)
+            )[:200]
 
         # Take screenshot
         if save_screenshot:
@@ -129,35 +194,24 @@ class ScreenPerception:
         self._last_hash = snap.text_hash
         return snap
 
-    async def get_active_window(self) -> Dict[str, str]:
+    async def get_active_window(self) -> dict[str, str]:
         """Get just the active window info (fast, no screenshot)."""
         result = {"app": "", "title": "", "bounds": ""}
-        try:
-            proc = await get_subprocess_gateway().spawn_async(
-                [
-                    "osascript",
-                    "-e",
-                    '''tell application "System Events"
+        output = await self._run_osascript(
+            '''tell application "System Events"
                     set frontApp to name of first application process whose frontmost is true
                     set winTitle to name of front window of process frontApp
                     return frontApp & "|" & winTitle
                 end tell''',
-                ],
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                read_only=True,
-                source="screen_perception.active_window",
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
-            if proc.returncode == 0 and stdout:
-                parts = stdout.decode("utf-8", errors="replace").strip().split("|", 1)
-                result["app"] = parts[0] if parts else ""
-                result["title"] = parts[1] if len(parts) > 1 else ""
-        except (OSError, RuntimeError, asyncio.TimeoutError) as exc:
-            record_degradation("screen_perception.active_window", exc)
+            source="screen_perception.active_window",
+        )
+        if output:
+            parts = output.split("|", 1)
+            result["app"] = parts[0] if parts else ""
+            result["title"] = parts[1] if len(parts) > 1 else ""
         return result
 
-    async def find_text_on_screen(self, target: str) -> Dict[str, Any]:
+    async def find_text_on_screen(self, target: str) -> dict[str, Any]:
         """Check if specific text appears on screen (via OCR)."""
         screenshot = await self._take_screenshot()
         if not screenshot:
@@ -171,7 +225,7 @@ class ScreenPerception:
             "screenshot": screenshot,
         }
 
-    async def detect_change(self, previous_hash: str = "") -> Dict[str, Any]:
+    async def detect_change(self, previous_hash: str = "") -> dict[str, Any]:
         """Detect if the screen content changed since a previous capture."""
         if not previous_hash:
             previous_hash = self._last_hash
@@ -191,40 +245,20 @@ class ScreenPerception:
 
     async def compare_screenshots(
         self, before_path: str, after_path: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Compare two screenshots for differences."""
-        before = Path(before_path)
-        after = Path(after_path)
-
-        if not before.exists() or not after.exists():
-            return {"error": "Screenshot not found", "change_magnitude": 1.0}
-
-        # Simple byte comparison
-        before_hash = hashlib.sha256(before.read_bytes()).hexdigest()
-        after_hash = hashlib.sha256(after.read_bytes()).hexdigest()
-
-        if before_hash == after_hash:
-            return {"change_magnitude": 0.0, "identical": True}
-
-        # Size-based heuristic for change magnitude
-        before_size = before.stat().st_size
-        after_size = after.stat().st_size
-        size_diff = abs(before_size - after_size)
-        magnitude = min(1.0, size_diff / max(1, max(before_size, after_size)))
-
-        return {
-            "change_magnitude": magnitude,
-            "identical": False,
-            "before_size": before_size,
-            "after_size": after_size,
-        }
+        return await asyncio.to_thread(
+            self._compare_screenshot_files,
+            before_path,
+            after_path,
+        )
 
     async def _take_screenshot(self) -> str:
         """Take a screenshot and return the file path."""
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        save_dir = Path.home() / ".aura" / "data" / "screenshots"
-        save_dir.mkdir(parents=True, exist_ok=True)
-        save_path = str(save_dir / f"screen_{ts}_{self._capture_count}.png")
+        save_path = await asyncio.to_thread(
+            self._prepare_screenshot_path,
+            self._capture_count,
+        )
 
         try:
             proc = await get_subprocess_gateway().spawn_async(
@@ -234,26 +268,16 @@ class ScreenPerception:
                 source="screen_perception.take_screenshot",
             )
             await asyncio.wait_for(proc.communicate(), timeout=5.0)
-            if proc.returncode == 0 and Path(save_path).exists():
+            if proc.returncode == 0 and await asyncio.to_thread(self._path_exists, save_path):
                 return save_path
-        except (OSError, RuntimeError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, OSError, RuntimeError) as exc:
             record_degradation("screen_perception.take_screenshot", exc)
         return ""
 
     async def _ocr_screenshot(self, screenshot_path: str) -> str:
         """Extract text from a screenshot via OCR."""
-        if not screenshot_path or not Path(screenshot_path).exists():
-            return ""
-
-        # Try pytesseract
         try:
-            import pytesseract
-            from PIL import Image
-            img = Image.open(screenshot_path)
-            text = pytesseract.image_to_string(img)
-            return text.strip()
-        except ImportError:
-            return "[OCR not available — install pytesseract for screen text extraction]"
+            return await asyncio.to_thread(self._ocr_screenshot_sync, screenshot_path)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
             record_degradation("screen_perception.ocr", e)
             logger.debug("pytesseract OCR failed: %s", e)
@@ -262,14 +286,14 @@ class ScreenPerception:
         # (limited but better than nothing)
         return "[OCR not available — install pytesseract for screen text extraction]"
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "captures": self._capture_count,
             "last_hash": self._last_hash,
         }
 
 
-_instance: Optional[ScreenPerception] = None
+_instance: ScreenPerception | None = None
 
 
 def get_screen_perception() -> ScreenPerception:

@@ -336,6 +336,13 @@ class BootAutonomyMixin:
 
     async def _init_final_foundations(self):
         """Initialize World Model, Narrative Identity, and Metacognitive Calibrator."""
+        if getattr(self, "_final_foundations_initialized", False):
+            logger.info("🏛️ Final Foundations already initialized; reusing canonical services.")
+            return
+        if getattr(self, "_final_foundations_initializing", False):
+            logger.info("🏛️ Final Foundations initialization already in progress.")
+            return
+        self._final_foundations_initializing = True
         try:
             from core.final_engines import register_final_engines
 
@@ -347,7 +354,11 @@ class BootAutonomyMixin:
             )
             logger.error("🏛️ Final Foundations failed: %s", e)
 
-        await self._init_salvaged_subsystems()
+        try:
+            await self._init_salvaged_subsystems()
+            self._final_foundations_initialized = True
+        finally:
+            self._final_foundations_initializing = False
 
     async def _init_salvaged_subsystems(self):
         """Wire in fully-implemented subsystems that were previously unregistered."""

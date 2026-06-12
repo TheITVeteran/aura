@@ -13,13 +13,13 @@ import time
 import uuid
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core.container import ServiceContainer
+from core.event_bus import EventPriority, get_event_bus
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
-from core.event_bus import get_event_bus, EventPriority
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.PerceptionDaemon")
@@ -39,21 +39,21 @@ _PERCEPTION_DAEMON_RECOVERABLE_ERRORS = (
 class PerceptionDaemon:
     """Always-on perception loop and rolling short/medium term memory."""
 
-    _instance: Optional[PerceptionDaemon] = None
+    _instance: PerceptionDaemon | None = None
     _lock = asyncio.Lock()
 
     def __init__(self, *, check_interval_s: float = 2.0):
         self.check_interval = check_interval_s
         self.running = False
-        self._tasks: List[asyncio.Task] = []
+        self._tasks: list[asyncio.Task] = []
 
         # Rolling buffers (thread-safe deques)
         self._short_term_buffer: deque[dict[str, Any]] = deque(maxlen=200)   # last ~5-10 mins
         self._medium_term_buffer: deque[dict[str, Any]] = deque(maxlen=2000) # last ~24 hours
 
         # Entity tracking
-        self._entities: Dict[str, Dict[str, Any]] = {}
-        self._entity_aliases: Dict[str, str] = {}
+        self._entities: dict[str, dict[str, Any]] = {}
+        self._entity_aliases: dict[str, str] = {}
 
         # Attention state
         self.user_focus = "unknown"
@@ -113,13 +113,17 @@ class PerceptionDaemon:
 
     async def stop(self) -> None:
         self.running = False
+        pending: list[asyncio.Task] = []
         for task in self._tasks:
             if not task.done():
                 task.cancel()
+                pending.append(task)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         self._tasks.clear()
         logger.info("📡 PerceptionDaemon is OFFLINE.")
 
-    def register_moment(self, source: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def register_moment(self, source: str, content: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         """Insert a perceptual moment, apply privacy filters, and publish to the EventBus."""
         now = time.time()
         meta = dict(metadata or {})
@@ -216,7 +220,9 @@ class PerceptionDaemon:
                         )
                     if proc.returncode == 0:
                         lines = proc.stdout.splitlines()
-                        running_shells = [l for l in lines if any(s in l for s in ("zsh", "bash", "sh"))]
+                        running_shells = [
+                            line for line in lines if any(shell in line for shell in ("zsh", "bash", "sh"))
+                        ]
                         if running_shells:
                             self.register_moment(
                                 source="terminal",
@@ -244,26 +250,7 @@ class PerceptionDaemon:
                     record_degradation("perception_daemon.file_system", e)
                     logger.debug("File system check failed: %s", e)
 
-                # 6. Ambient Screen OCR & Modal Detection
-                try:
-                    from core.perception.screen_perception import get_screen_perception
-                    sp = get_screen_perception()
-                    if sp and getattr(sp, "_started", False):
-                        snap = await sp.capture(save_screenshot=False)
-                        if snap.screen_text and len(snap.screen_text) > 10:
-                            scr_hash = hashlib.sha256(snap.screen_text.encode("utf-8")).hexdigest()[:16]
-                            if scr_hash != self._last_screen_hash:
-                                self._last_screen_hash = scr_hash
-                                self.register_moment(
-                                    source="screen_ocr",
-                                    content=f"Screen text: {snap.screen_text[:150]}",
-                                    metadata={"full_text": snap.screen_text, "has_modal": snap.has_modal}
-                                )
-                except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as e:
-                    record_degradation("perception_daemon.screen_ocr", e)
-                    logger.debug("Screen OCR loop failed: %s", e)
-
-                # 7. Ambient Microphone Status Check
+                # 6. Ambient Microphone Status Check
                 try:
                     ears = ServiceContainer.get("ears", default=None)
                     if ears:
@@ -276,7 +263,7 @@ class PerceptionDaemon:
                     record_degradation("perception_daemon.microphone_status", e)
                     logger.debug("Microphone loop failed: %s", e)
 
-                # 8. User Idle State Assessment
+                # 7. User Idle State Assessment
                 idle_time = time.time() - self.last_user_activity
                 if idle_time > 120.0 and self.user_active:
                     self.user_active = False
@@ -404,7 +391,14 @@ class PerceptionDaemon:
 
         return recent_files
 
-    async def _check_clipboard(self) -> Optional[str]:
+    @staticmethod
+    def _describe_file_status(path: Path) -> str | None:
+        if not path.exists():
+            return None
+        stat = path.stat()
+        return f"File {path.name} exists, size={stat.st_size} bytes, modified={stat.st_mtime}"
+
+    async def _check_clipboard(self) -> str | None:
         try:
             with local_internal_governed_scope("perception_daemon.clipboard", domain="tool_execution"):
                 proc = await get_subprocess_gateway().run_async(
@@ -420,7 +414,7 @@ class PerceptionDaemon:
             logger.debug("Clipboard check failed: %s", e)
             return None
 
-    async def _check_active_window(self) -> Optional[str]:
+    async def _check_active_window(self) -> str | None:
         try:
             with local_internal_governed_scope("perception_daemon.active_window", domain="tool_execution"):
                 cmd = ["osascript", "-e", 'tell application "System Events" to get name of first application process whose frontmost is true']
@@ -439,7 +433,7 @@ class PerceptionDaemon:
 
     # --- Public API surface ------------------------------------------------
 
-    def get_recent_moments(self, source: Optional[str] = None, duration_seconds: float = 300.0) -> List[Dict[str, Any]]:
+    def get_recent_moments(self, source: str | None = None, duration_seconds: float = 300.0) -> list[dict[str, Any]]:
         now = time.time()
         cutoff = now - duration_seconds
         res = [m for m in self._short_term_buffer if m["timestamp"] >= cutoff]
@@ -450,7 +444,7 @@ class PerceptionDaemon:
             res = [m for m in res if m["source"] == source]
         return res
 
-    def track_entity(self, entity_type: str, name: str, metadata: Optional[Dict[str, Any]] = None) -> str:
+    def track_entity(self, entity_type: str, name: str, metadata: dict[str, Any] | None = None) -> str:
         """Track/retrieve stable ID for files, browser tabs, tasks, users, etc."""
         alias_key = f"{entity_type}::{name}".lower()
         if alias_key in self._entity_aliases:
@@ -473,7 +467,7 @@ class PerceptionDaemon:
         logger.info("🆕 Tracking entity: %s (type=%s, ID=%s)", name, entity_type, entity_id)
         return entity_id
 
-    async def active_perceive(self, probe_type: str, query: Optional[str] = None) -> Dict[str, Any]:
+    async def active_perceive(self, probe_type: str, query: str | None = None) -> dict[str, Any]:
         """Force a perception probe like a manual screen capture or file verification."""
         logger.info("🔍 Active perception triggered: probe_type=%s, query=%s", probe_type, query)
         
@@ -493,9 +487,8 @@ class PerceptionDaemon:
             if not query:
                 return {"ok": False, "error": "missing file path query"}
             p = Path(query)
-            if p.exists():
-                stat = p.stat()
-                desc = f"File {p.name} exists, size={stat.st_size} bytes, modified={stat.st_mtime}"
+            desc = await asyncio.to_thread(self._describe_file_status, p)
+            if desc:
                 self.register_moment(source="active_file_check", content=desc, metadata={"path": str(p)})
                 return {"ok": True, "result": desc}
             return {"ok": False, "error": "file_not_found"}

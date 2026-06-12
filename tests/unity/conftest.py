@@ -4,13 +4,31 @@ from pathlib import Path
 
 from core.unity.unity_receipts import write_unity_results_artifact
 
-
 _UNITY_RESULTS = {
     "tests_total": 0,
     "tests_passed": 0,
     "tests_failed": 0,
     "outcomes": {},
 }
+
+_PUBLISHED_PROOF_CASES = (
+    "test_low_unity_blocks_external_tool_action",
+    "test_low_unity_allows_stabilization",
+    "test_low_unity_defers_memory_write_when_drafts_are_unstable",
+    "test_temporal_binding_lesion_changes_behavior",
+    "test_self_world_lesion_reduces_authorship_confidence",
+    "test_draft_lesion_removes_conflict_preservation",
+    "test_fragmented_unity_reports_measurable_cause",
+    "test_projected_repair_improves_unity_without_faking_resolution",
+    "test_end_to_end_unity_changes_tool_decision",
+    "test_integrated_frame_warns_against_false_clarity",
+    "test_nominal_state_does_not_force_fragmentation_language",
+    "test_conflicting_drafts_become_conflicted_memory",
+    "test_memory_metadata_carries_unity_fields",
+    "test_mind_moment_binds_active_present_and_causal_closure",
+    "test_mind_moment_lesion_specific_degradation",
+    "test_will_blocks_external_action_when_mind_moment_closure_collapses",
+)
 
 
 def pytest_configure(config):
@@ -37,6 +55,11 @@ def pytest_runtest_logreport(report):
 def pytest_sessionfinish(session, exitstatus):
     outcomes = dict(_UNITY_RESULTS.get("outcomes", {}) or {})
     if not outcomes:
+        return
+    if not all(any(case in nodeid for nodeid in outcomes) for case in _PUBLISHED_PROOF_CASES):
+        # Focused test runs are useful during development but do not establish
+        # the complete unity proof contract. Never let a partial run overwrite
+        # the last full-suite artifact with false lesion/gating regressions.
         return
 
     def _passed(fragment: str) -> bool:

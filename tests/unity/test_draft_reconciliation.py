@@ -27,3 +27,32 @@ def test_similar_drafts_remain_clean():
 
     assert result.memory_commit_mode == "clean"
     assert result.consensus_score > 0.7
+
+
+def test_distinct_interpretive_lenses_do_not_create_false_contradiction():
+    result = DraftReconciliationEngine().reconcile(
+        [
+            {
+                "draft_id": "literal",
+                "content": "Straightforward request. Surface intent: answer the literal content.",
+                "coherence": 0.82,
+                "valence": -0.1,
+            },
+            {
+                "draft_id": "inferential",
+                "content": "Reading between lines: possible implicit request beneath the stated content.",
+                "coherence": 0.74,
+                "valence": 0.1,
+            },
+            {
+                "draft_id": "associative",
+                "content": "Associative connections link the input to broader context and thematic threads.",
+                "coherence": 0.68,
+                "valence": 0.0,
+            },
+        ]
+    )
+
+    assert result.memory_commit_mode == "clean"
+    assert result.contradiction_score < 0.1
+    assert result.consensus_score > 0.9

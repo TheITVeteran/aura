@@ -6491,9 +6491,28 @@ def _extract_explicit_local_file_path(user_message: str) -> str | None:
 
 def _build_explicit_local_file_artifact(user_message: str, path: str) -> str | None:
     text = str(user_message or "").strip()
+    lowered = text.lower()
     suffix = Path(path).suffix.lower()
     generated_at = _utc_now_iso()
     if suffix == ".html":
+        if "snake" in lowered and any(token in lowered for token in ("game", "playable", "snake")):
+            try:
+                from core.cognitive.state_machine import StateMachine
+
+                return StateMachine._snake_html_template()
+            except (ImportError, AttributeError, RuntimeError, TypeError) as exc:
+                record_degradation("chat.explicit_local_file_objective", exc)
+                return (
+                    "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+                    "<title>Aura Snake</title></head><body>"
+                    "<canvas id='board' width='320' height='320'></canvas>"
+                    "<p>Score: <span id='score'>0</span></p><script>"
+                    "const canvas=document.getElementById('board');"
+                    "const ctx=canvas.getContext('2d');let score=0;"
+                    "function tick(){ctx.fillRect(0,0,320,320);requestAnimationFrame(tick)};"
+                    "document.addEventListener('keydown',()=>{score+=1;document.getElementById('score').textContent=score;});"
+                    "tick();</script></body></html>"
+                )
         title = "Aura Generated Page"
         title_match = re.search(
             r"\btitle(?:d)?\s+(?:['\"]([^'\"]+)['\"]|([^,.;\n]+))",
@@ -7101,7 +7120,7 @@ async def api_chat_regenerate(
         lane = _collect_conversation_lane_status()
 
         cognitive_budget = min(180.0, max(2.0, foreground_timeout - 24.0))
-        if cognitive_budget >= 8.0:
+        if desktop_requires_cognitive_engine and cognitive_budget >= 8.0:
             reply_text = await _run_cognitive_engine_chat_turn(
                 user_msg,
                 visible_user_message=user_msg,
@@ -8266,14 +8285,9 @@ async def api_chat(
 
         reply_text: str | None = None
         reply_source = ""
-        if not is_benchmark:
-            cognitive_budget_cap = (
-                _DESKTOP_COGNITIVE_TURN_TIMEOUT_S
-                if desktop_requires_cognitive_engine
-                else 120.0
-            )
+        if not is_benchmark and desktop_requires_cognitive_engine:
             cognitive_budget = min(
-                cognitive_budget_cap,
+                _DESKTOP_COGNITIVE_TURN_TIMEOUT_S,
                 _remaining_foreground_budget(reserve=24.0),
             )
             if cognitive_budget >= 8.0:
@@ -8284,8 +8298,8 @@ async def api_chat(
                     origin=chat_origin,
                     timeout_s=cognitive_budget,
                     lane=dict(lane or {}),
-                    source="desktop_ui" if desktop_requires_cognitive_engine else "chat_api",
-                    require_engine=desktop_requires_cognitive_engine,
+                    source="desktop_ui",
+                    require_engine=True,
                 )
                 if reply_text:
                     reply_source = "cognitive_engine"

@@ -1,10 +1,64 @@
 from __future__ import annotations
 
 import itertools
+import re
 from collections.abc import Iterable
 from typing import Any
 
 from .unity_state import DraftBinding, ReconciledDraftSet
+
+_NEGATION_RE = re.compile(
+    r"\b(?:no|not|never|neither|without|refuse|refused|block|blocked|deny|denied|"
+    r"avoid|stop|cannot|can't|won't|shouldn't|don't|do not)\b",
+    re.IGNORECASE,
+)
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_PROPOSITION_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "beneath",
+    "but",
+    "by",
+    "can",
+    "could",
+    "for",
+    "from",
+    "has",
+    "have",
+    "in",
+    "input",
+    "interpretation",
+    "intent",
+    "is",
+    "it",
+    "may",
+    "of",
+    "on",
+    "or",
+    "other",
+    "response",
+    "something",
+    "surface",
+    "that",
+    "the",
+    "this",
+    "to",
+    "under",
+    "was",
+    "were",
+    "with",
+}
+_OPPOSITION_PAIRS = (
+    ({"allow", "approve", "proceed", "publish", "push", "send"}, {"block", "deny", "refuse", "stop"}),
+    ({"safe", "valid", "verified"}, {"danger", "dangerous", "invalid", "unsafe", "unverified"}),
+    ({"increase", "raise"}, {"decrease", "lower", "reduce"}),
+    ({"true", "yes"}, {"false", "no"}),
+)
 
 
 def _normalize_text(value: Any) -> str:
@@ -51,13 +105,65 @@ def _valence_value(draft: Any) -> float:
         return 0.0
 
 
-def _text_distance(left: str, right: str) -> float:
-    left_tokens = set(left.lower().split())
-    right_tokens = set(right.lower().split())
+def _stem_token(token: str) -> str:
+    value = str(token or "").lower()
+    for suffix in ("ing", "ied", "ed", "es", "s"):
+        if value.endswith(suffix) and len(value) > len(suffix) + 3:
+            if suffix == "ied":
+                return value[:-3] + "y"
+            return value[: -len(suffix)]
+    return value
+
+
+def _proposition_tokens(text: str) -> set[str]:
+    return {
+        stemmed
+        for token in _TOKEN_RE.findall(str(text or "").lower())
+        if (stemmed := _stem_token(token))
+        and stemmed not in _PROPOSITION_STOPWORDS
+        and not stemmed.isdigit()
+    }
+
+
+def _contains_opposition(left_tokens: set[str], right_tokens: set[str]) -> bool:
+    for positive, negative in _OPPOSITION_PAIRS:
+        if (left_tokens & positive and right_tokens & negative) or (
+            left_tokens & negative and right_tokens & positive
+        ):
+            return True
+    return False
+
+
+def _pair_contradiction(left: dict[str, Any], right: dict[str, Any]) -> float:
+    """Estimate logical opposition without treating mere diversity as conflict."""
+
+    left_claim = str(left.get("claim") or "")
+    right_claim = str(right.get("claim") or "")
+    left_tokens = _proposition_tokens(left_claim)
+    right_tokens = _proposition_tokens(right_claim)
     if not left_tokens or not right_tokens:
-        return 0.0 if left == right else 1.0
-    overlap = len(left_tokens & right_tokens) / max(1, len(left_tokens | right_tokens))
-    return max(0.0, min(1.0, 1.0 - overlap))
+        return 0.0
+
+    shared = left_tokens & right_tokens
+    shared_ratio = len(shared) / max(1, min(len(left_tokens), len(right_tokens)))
+    negation_mismatch = bool(_NEGATION_RE.search(left_claim)) != bool(
+        _NEGATION_RE.search(right_claim)
+    )
+    explicit_opposition = _contains_opposition(left_tokens, right_tokens)
+    valence_delta = min(
+        1.0,
+        abs(float(left.get("valence", 0.0)) - float(right.get("valence", 0.0))) / 2.0,
+    )
+
+    if negation_mismatch and shared_ratio >= 0.2:
+        return min(1.0, 0.7 + (shared_ratio * 0.2) + (valence_delta * 0.1))
+    if explicit_opposition and shared_ratio >= 0.1:
+        return min(1.0, 0.65 + (shared_ratio * 0.2) + (valence_delta * 0.15))
+
+    # Emotional coloration may create mild tension when drafts address the
+    # same proposition, but it cannot alone make distinct perspectives a
+    # logical contradiction.
+    return min(0.2, shared_ratio * valence_delta * 0.2)
 
 
 class DraftReconciliationEngine:
@@ -91,18 +197,23 @@ class DraftReconciliationEngine:
                 }
             )
 
+        pair_conflicts: dict[tuple[str, str], float] = {}
         contradiction_samples: list[float] = []
         for left, right in itertools.combinations(extracted, 2):
-            text_distance = _text_distance(left["claim"], right["claim"])
-            valence_delta = min(1.0, abs(float(left["valence"]) - float(right["valence"])) / 2.0)
-            contradiction_samples.append((text_distance * 0.75) + (valence_delta * 0.25))
+            conflict = _pair_contradiction(left, right)
+            pair_conflicts[(str(left["draft_id"]), str(right["draft_id"]))] = conflict
+            pair_conflicts[(str(right["draft_id"]), str(left["draft_id"]))] = conflict
+            contradiction_samples.append(conflict)
         contradiction_score = sum(contradiction_samples) / max(1, len(contradiction_samples))
         consensus_score = max(0.0, min(1.0, 1.0 - contradiction_score))
 
         scored = []
         for item in extracted:
             local_conflict = sum(
-                _text_distance(item["claim"], other["claim"])
+                pair_conflicts.get(
+                    (str(item["draft_id"]), str(other["draft_id"])),
+                    0.0,
+                )
                 for other in extracted
                 if other["draft_id"] != item["draft_id"]
             ) / max(1, len(extracted) - 1)

@@ -621,12 +621,6 @@ class OrchestratorBootMixin(
                 _spawn_boot_task(
                     self._init_proactive_systems(), "orchestrator.init_proactive_systems"
                 )
-                _spawn_boot_task(
-                    self._init_fictional_synthesis(), "orchestrator.init_fictional_synthesis"
-                )
-                _spawn_boot_task(
-                    self._init_final_foundations(), "orchestrator.init_final_foundations"
-                )
                 # Phase 32: Lazarus Protocol Heartbeat
                 _spawn_boot_task(
                     self._cognitive_heartbeat_task(), "orchestrator.cognitive_heartbeat"

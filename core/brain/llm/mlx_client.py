@@ -1147,6 +1147,30 @@ class MLXLocalClient:
             return 90.0
         return 8.0
 
+    def _first_token_absolute_ceiling(self, *, foreground_request: bool = False) -> float:
+        """Return the non-negotiable no-token ceiling for one generation.
+
+        Heartbeats prove that the worker process is alive; they do not prove
+        that the active model request is making useful progress. The primary
+        lane previously allowed a heartbeating but tokenless request to run
+        beyond the endpoint deadline, after which the inference layer could
+        start additional retries. Keep this ceiling below the foreground API
+        envelope so the caller still has time to recover or use another lane.
+        """
+
+        lowered = os.path.basename(self.model_path).lower()
+        if "72b" in lowered or "solver" in lowered:
+            default = 165.0 if foreground_request else 120.0
+        elif "32b" in lowered or "cortex" in lowered or "zenith" in lowered:
+            default = 120.0 if foreground_request else 90.0
+        else:
+            default = 30.0 if foreground_request else 20.0
+        configured = os.environ.get("AURA_FIRST_TOKEN_ABSOLUTE_CEILING_S")
+        try:
+            return max(10.0, float(configured)) if configured is not None else default
+        except (TypeError, ValueError):
+            return default
+
     def _token_stall_after(self, *, foreground_request: bool = False) -> float:
         lowered = os.path.basename(self.model_path).lower()
         if "72b" in lowered or "solver" in lowered:
@@ -2529,6 +2553,12 @@ class MLXLocalClient:
                 hard_first_token_ceiling = first_token_sla * float(
                     os.environ.get("AURA_FIRST_TOKEN_HARD_MULT", "1.8") or 1.8
                 ) + float(os.environ.get("AURA_FIRST_TOKEN_HARD_PAD_S", "20") or 20)
+                hard_first_token_ceiling = min(
+                    hard_first_token_ceiling,
+                    self._first_token_absolute_ceiling(
+                        foreground_request=foreground_request
+                    ),
+                )
                 elapsed_without_token = time.time() - request_started_at
                 if (
                     req_id == self._current_request_id

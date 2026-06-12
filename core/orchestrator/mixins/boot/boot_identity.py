@@ -50,6 +50,13 @@ class BootIdentityMixin:
 
     async def _init_fictional_synthesis(self):
         """Initialize the JARVIS, Cortana, EDI, Ava, Skynet, and MIST engines."""
+        if getattr(self, "_fictional_synthesis_initialized", False):
+            logger.info("🎬 Fictional Engine Synthesis already initialized.")
+            return
+        if getattr(self, "_fictional_synthesis_initializing", False):
+            logger.info("🎬 Fictional Engine Synthesis initialization already in progress.")
+            return
+        self._fictional_synthesis_initializing = True
         try:
             from core.fictional_ai_synthesis import register_all_fictional_engines
 
@@ -74,9 +81,12 @@ class BootIdentityMixin:
             )
 
             logger.info("🎬 Fictional Engine Synthesis Complete (JARVIS-class online)")
+            self._fictional_synthesis_initialized = True
         except _BOOT_IDENTITY_BOUNDARY_ERRORS as e:
             _record_identity_degradation(e, action="continued boot without registering JARVIS-class fictional engines", severity="error")
             logger.error("🎬 Fictional Engine Synthesis failed: %s", e)
+        finally:
+            self._fictional_synthesis_initializing = False
 
     async def _init_self_modification_engine(self):
         """Initialize the Self-Modification Engine."""

@@ -22,13 +22,13 @@ import json
 import os
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
 import websockets
-
 
 BANNED_REPLY_RE = re.compile(
     r"(say that again|try (?:again|me again|that again)|ask me again|"
@@ -49,10 +49,18 @@ class ProbeResult:
 
 
 class LiveRuntimeProbe:
-    def __init__(self, base_url: str, *, timeout_s: float = 420.0, probe_timeout_s: float | None = None):
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout_s: float = 420.0,
+        probe_timeout_s: float | None = None,
+        artifact_path: Path | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.timeout_s = timeout_s
         self.probe_timeout_s = float(probe_timeout_s or min(timeout_s, 180.0))
+        self.artifact_path = artifact_path
         self.events: list[dict[str, Any]] = []
         self.results: list[ProbeResult] = []
         self.headers: dict[str, str] = {}
@@ -82,14 +90,17 @@ class LiveRuntimeProbe:
                     pass
 
         self._print_summary()
-        return 0 if all(r.ok for r in self.results) else 1
+        passed = bool(self.results) and all(result.ok for result in self.results)
+        if self.artifact_path is not None:
+            await self._write_artifact(passed)
+        return 0 if passed else 1
 
     async def _probe(self, name: str, fn) -> None:
         start = time.monotonic()
         try:
             detail, data = await asyncio.wait_for(fn(), timeout=self.probe_timeout_s)
             self.results.append(ProbeResult(name, True, detail, time.monotonic() - start, data or {}))
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.results.append(ProbeResult(name, False, f"TimeoutError: exceeded {self.probe_timeout_s:.0f}s", time.monotonic() - start))
         except (AssertionError, httpx.HTTPError, OSError, RuntimeError, TypeError, ValueError) as exc:
             self.results.append(ProbeResult(name, False, f"{type(exc).__name__}: {exc}", time.monotonic() - start))
@@ -202,21 +213,22 @@ class LiveRuntimeProbe:
     async def _chat_coding_snake(self) -> tuple[str, dict[str, Any]]:
         path = "artifacts/live_runtime/generated/live_snake.html"
         target = Path(path)
-        if target.exists():
-            target.unlink()
+        if await asyncio.to_thread(target.exists):
+            await asyncio.to_thread(target.unlink)
         response = await self._chat(
             "Create a simple game of Snake and save it as "
             f"{path}. Use your own live coding and file tools; don't just describe it."
         )
-        if not target.exists():
+        if not await asyncio.to_thread(target.exists):
             raise AssertionError(f"chat did not create {path}; reply={response.get('response')[:300]}")
-        content = target.read_text(encoding="utf-8", errors="replace")
+        content = await asyncio.to_thread(target.read_text, encoding="utf-8", errors="replace")
         required = ("<canvas", "function tick", "addEventListener", "Score")
         missing = [needle for needle in required if needle not in content]
         if missing:
             raise AssertionError(f"snake artifact missing {missing}")
+        resolved = await asyncio.to_thread(target.resolve)
         return "chat-created Snake artifact exists and is runnable HTML", {
-            "path": str(target.resolve()),
+            "path": str(resolved),
             "bytes": len(content.encode("utf-8")),
             "reply": response.get("response"),
         }
@@ -264,30 +276,34 @@ tell application "System Events"
             if (count of windows) > 0 then exit repeat
             delay 0.2
         end repeat
+        keystroke "2"
+        delay 0.1
+        keystroke "+"
+        delay 0.1
+        keystroke "3"
+        delay 0.1
+        keystroke "="
+        delay 0.3
         set g to UI element 1 of UI element 1 of UI element 1 of UI element 1 of window 1
-        set minX to 10000
-        set minY to 10000
-        repeat with e in UI elements of g
-            try
-                if role of e is "AXButton" then
-                    set p to position of e
-                    if item 1 of p < minX then set minX to item 1 of p
-                    if item 2 of p < minY then set minY to item 2 of p
-                end if
-            end try
-        end repeat
-        set stepSize to 54
-        set clickPoints to {{minX + stepSize + 24, minY + (stepSize * 3) + 24}, {minX + (stepSize * 3) + 24, minY + (stepSize * 3) + 24}, {minX + (stepSize * 2) + 24, minY + (stepSize * 3) + 24}, {minX + (stepSize * 3) + 24, minY + (stepSize * 4) + 24}}
-        repeat with pt in clickPoints
-            click at pt
-            delay 0.15
-        end repeat
-        delay 0.2
         set displayText to ""
         repeat with e in UI elements of g
             try
                 if role of e is "AXScrollArea" and description of e is "Edit field" then
-                    set displayText to value of UI element 1 of e as string
+                    repeat with c in UI elements of e
+                        try
+                            if role of c is "AXStaticText" then
+                                set displayText to value of c as string
+                                if displayText is not "" then return displayText
+                            end if
+                        end try
+                    end repeat
+                end if
+            end try
+        end repeat
+        repeat with e in UI elements of g
+            try
+                if role of e is "AXScrollArea" and description of e is "Edit field" then
+                    set displayText to name of UI element 1 of e as string
                 end if
             end try
         end repeat
@@ -473,17 +489,35 @@ end tell
         )
         reply = str(response.get("response") or "")
         status = str(response.get("status") or "")
+        if status == "desktop_objective_completed":
+            lane = response.get("conversation_lane") or {}
+            if not isinstance(lane, dict) or lane.get("governed_action_result") is not True:
+                raise AssertionError(f"regular chat desktop task lacked governed-action lane evidence: {response}")
+            if "Desktop task completed" not in reply or "governed desktop steps" not in reply:
+                raise AssertionError(f"regular chat desktop task reply lacked verified receipt summary: {reply[:400]}")
+            return "regular Aura chat routed the desktop request through generic governed desktop_task", {
+                "response": reply,
+                "status": status,
+                "conversation_lane": lane,
+            }
         if status != "live_proof_desktop_chain":
-            raise AssertionError(f"regular chat did not route to desktop chain status={status}; reply={reply[:400]}")
+            raise AssertionError(f"regular chat did not route to a governed desktop chain status={status}; reply={reply[:400]}")
         final_match = re.search(r"Final PDF:\s*`([^`]+\.pdf)`", reply)
         receipt_match = re.search(r"Receipt:\s*`([^`]+\.txt)`", reply)
         if not final_match or not receipt_match:
             raise AssertionError(f"regular chat desktop chain did not report final paths: {reply}")
         final_pdf = Path(final_match.group(1))
         receipt_file = Path(receipt_match.group(1))
-        if not final_pdf.exists() or not final_pdf.read_bytes().startswith(b"%PDF"):
+        final_exists = await asyncio.to_thread(final_pdf.exists)
+        final_header = await asyncio.to_thread(final_pdf.read_bytes) if final_exists else b""
+        if not final_exists or not final_header.startswith(b"%PDF"):
             raise AssertionError(f"regular chat final PDF did not verify: {final_pdf}")
-        receipt_text = receipt_file.read_text(errors="replace") if receipt_file.exists() else ""
+        receipt_exists = await asyncio.to_thread(receipt_file.exists)
+        receipt_text = (
+            await asyncio.to_thread(receipt_file.read_text, errors="replace")
+            if receipt_exists
+            else ""
+        )
         if "regular chat desktop chain proof" not in receipt_text.lower():
             raise AssertionError(f"regular chat receipt did not verify: {receipt_file}")
         return "regular Aura chat completed the desktop chain and reported durable artifacts", {
@@ -536,10 +570,10 @@ return "dismissed"
             await self._skill("computer_use", {"action": "run_applescript", "target": cleanup})
             return {"ok": False, "result": result}
         for _ in range(10):
-            if staged_pdf.exists():
+            if await asyncio.to_thread(staged_pdf.exists):
                 break
             await asyncio.sleep(0.5)
-        return {"ok": staged_pdf.exists(), "result": result, "path": str(staged_pdf)}
+        return {"ok": await asyncio.to_thread(staged_pdf.exists), "result": result, "path": str(staged_pdf)}
 
     async def _telemetry_neural_stream(self) -> tuple[str, dict[str, Any]]:
         await asyncio.sleep(2.0)
@@ -576,14 +610,40 @@ return "dismissed"
             print(f"[{mark}] {result.name} ({result.elapsed_s:.1f}s): {result.detail}")
         print(f"events_collected={len(self.events)}")
 
+    async def _write_artifact(self, passed: bool) -> None:
+        path = Path(self.artifact_path or "")
+        payload = {
+            "schema_version": 1,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "base_url": self.base_url,
+            "passed": passed,
+            "probe_timeout_s": self.probe_timeout_s,
+            "events_collected": len(self.events),
+            "recent_event_types": [
+                str(event.get("type") or "") for event in self.events[-80:]
+            ],
+            "results": [asdict(result) for result in self.results],
+        }
+        serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+        await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(path.write_text, serialized, encoding="utf-8")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--timeout", type=float, default=420.0)
     parser.add_argument("--probe-timeout", type=float, default=None)
+    parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
-    return asyncio.run(LiveRuntimeProbe(args.base_url, timeout_s=args.timeout, probe_timeout_s=args.probe_timeout).run())
+    return asyncio.run(
+        LiveRuntimeProbe(
+            args.base_url,
+            timeout_s=args.timeout,
+            probe_timeout_s=args.probe_timeout,
+            artifact_path=args.out,
+        ).run()
+    )
 
 
 if __name__ == "__main__":

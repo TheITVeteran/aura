@@ -1075,7 +1075,9 @@ class CapabilityEngine(AuraBaseModule):
                 r"(?:calculate|compute)\s+[-+*/%().,\d\s]+(?:$|[?.!])",
                 r"what is\s+[-+*/%().,\d\s]+(?:$|[?.!])",
                 r"what(?:'s| is) (?:the )?(?:square root|cube root|sqrt|factorial|product|sum|difference|quotient) of\b",
-                r"(?:multiply|divide|add|subtract)\b.+\b(?:by|from|and)\b",
+                r"(?:multiply|divide)\s+[-+]?\d+(?:\.\d+)?\s+by\s+[-+]?\d+(?:\.\d+)?",
+                r"add\s+[-+]?\d+(?:\.\d+)?\s+(?:and|to)\s+[-+]?\d+(?:\.\d+)?",
+                r"subtract\s+[-+]?\d+(?:\.\d+)?\s+from\s+[-+]?\d+(?:\.\d+)?",
                 r"\b(?:square root|cube root|sqrt|factorial)\b\s*(?:of)?\s*\d+",
                 r"solve (?:this )?(?:equation|formula)",
                 r"execute (?:this )?(?:code|script|python)",
@@ -2306,7 +2308,7 @@ class CapabilityEngine(AuraBaseModule):
         # Phase 22: Metabolic Throttling
         allowed_max_cost = self._allowed_max_tool_cost()
         tools = []
-        for skill_name, meta in self.skills.items():
+        for skill_name, _meta in self.skills.items():
             tool = self._tool_definition_for_skill(
                 skill_name,
                 allowed_max_cost=allowed_max_cost,

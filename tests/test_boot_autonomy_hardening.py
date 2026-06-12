@@ -72,6 +72,46 @@ async def test_autonomous_evolution_continues_after_failed_boot_step():
 
 
 @pytest.mark.asyncio
+async def test_final_foundations_initialization_is_idempotent(monkeypatch):
+    registrations: list[object] = []
+    salvaged_calls = 0
+
+    class Harness(BootAutonomyMixin):
+        async def _init_salvaged_subsystems(self):
+            nonlocal salvaged_calls
+            salvaged_calls += 1
+
+    sentinel = object()
+    monkeypatch.setitem(
+        sys.modules,
+        "core.final_engines",
+        _module(
+            "core.final_engines",
+            register_final_engines=lambda **_kwargs: registrations.append(sentinel) or sentinel,
+        ),
+    )
+    harness = Harness()
+
+    await harness._init_final_foundations()
+    await harness._init_final_foundations()
+
+    assert registrations == [sentinel]
+    assert salvaged_calls == 1
+    assert harness.final_engines is sentinel
+
+
+def test_boot_has_one_owner_for_autonomy_substeps():
+    from pathlib import Path
+
+    boot_source = (
+        Path(__file__).parents[1] / "core" / "orchestrator" / "boot.py"
+    ).read_text(encoding="utf-8")
+
+    assert "_spawn_boot_task(self._init_fictional_synthesis()" not in boot_source
+    assert "_spawn_boot_task(self._init_final_foundations()" not in boot_source
+
+
+@pytest.mark.asyncio
 async def test_singularity_loop_disable_still_wires_tier4_boot(monkeypatch):
     starts: list[str] = []
     registered: dict[str, object] = {}

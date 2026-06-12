@@ -1,12 +1,10 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import logging
 import secrets
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any
 
 from core.agency.capability_system import get_capability_manager
 from core.consciousness.substrate_authority import (
@@ -21,10 +19,62 @@ from core.executive.executive_core import (
     IntentSource,
     _coerce_intent_source,
 )
+from core.runtime.errors import record_degradation
 from core.runtime.organism_status import get_organism_status
-from core.runtime.service_access import optional_service, require_service
+from core.runtime.service_access import optional_service
 
 logger = logging.getLogger("Aura.AuthorityGateway")
+
+_USER_FACING_MEMORY_ORIGINS = frozenset(
+    {
+        "api",
+        "chat",
+        "chat_api",
+        "desktop",
+        "desktop_task",
+        "desktop_ui",
+        "direct",
+        "external",
+        "frontend",
+        "gui",
+        "interface",
+        "live_chat",
+        "session_memory_pin",
+        "ui",
+        "user",
+        "voice",
+        "voice_bridge",
+        "voice_input",
+        "web_ui",
+        "websocket",
+        "ws",
+    }
+)
+_CONVERSATION_MEMORY_TYPES = frozenset(
+    {
+        "conversation",
+        "chat_turn",
+        "episodic_episode",
+        "interaction_commit",
+    }
+)
+_CONVERSATION_MEMORY_PRODUCERS = frozenset(
+    {
+        "chat_turn_logger",
+        "conversation_logger",
+        "interaction_logger",
+        "memory_facade",
+    }
+)
+_HIGH_RISK_MEMORY_MARKERS = (
+    "belief",
+    "identity",
+    "self_model",
+    "constitution",
+    "preference_change",
+    "policy",
+    "governance",
+)
 
 
 @dataclass
@@ -32,15 +82,15 @@ class AuthorityDecision:
     approved: bool
     outcome: str
     reason: str
-    constraints: Dict[str, Any] = field(default_factory=dict)
-    executive_intent_id: Optional[str] = None
-    capability_token_id: Optional[str] = None
-    substrate_receipt_id: Optional[str] = None
-    will_receipt_id: Optional[str] = None
-    domain: Optional[str] = None
-    source: Optional[str] = None
+    constraints: dict[str, Any] = field(default_factory=dict)
+    executive_intent_id: str | None = None
+    capability_token_id: str | None = None
+    substrate_receipt_id: str | None = None
+    will_receipt_id: str | None = None
+    domain: str | None = None
+    source: str | None = None
     failure_pressure: float = 0.0
-    canonical_self_version: Optional[int] = None
+    canonical_self_version: int | None = None
 
 
 class AuthorityGateway:
@@ -58,13 +108,13 @@ class AuthorityGateway:
     def __init__(self) -> None:
         self._capabilities = get_capability_manager()
         self._current_posture = "defensive_sandboxed"
-        self._active_tokens: Dict[str, Dict[str, Any]] = {}
+        self._active_tokens: dict[str, dict[str, Any]] = {}
 
     def issue_user_presence_token(
         self,
         *,
         source: str,
-        evidence: Dict[str, Any],
+        evidence: dict[str, Any],
         ttl_s: float | None = None,
     ) -> str:
         """Issue a short-lived user-presence receipt.
@@ -139,7 +189,7 @@ class AuthorityGateway:
             return False
         return True
 
-    def active_user_presence_context(self) -> Dict[str, Any]:
+    def active_user_presence_context(self) -> dict[str, Any]:
         self._revert_posture_if_expired()
         if not self._active_tokens:
             return {}
@@ -178,7 +228,31 @@ class AuthorityGateway:
         if not callable(getattr(self._capabilities, "verify_access", None)):
             return False
         will = ServiceContainer.get("unified_will", default=None)
-        return bool(will is not None and callable(getattr(will, "decide", None)))
+        if will is None or not callable(getattr(will, "decide", None)):
+            return False
+
+        # Structural availability is not action readiness. If the current
+        # integrated state would make Will refuse every consequential action,
+        # heartbeat/tool-governance health must fail instead of advertising a
+        # usable runtime while all tools are blocked.
+        unity_state = ServiceContainer.get("unity_state", default=None)
+        if unity_state is not None:
+            unity_level = str(
+                getattr(unity_state, "level", "unknown") or "unknown"
+            ).lower()
+            if unity_level in {"fragmented", "dissociated"}:
+                return False
+
+        unity_report = ServiceContainer.get(
+            "unity_fragmentation_report",
+            default=None,
+        )
+        if (
+            unity_report is not None
+            and getattr(unity_report, "safe_to_act", None) is False
+        ):
+            return False
+        return True
 
     @staticmethod
     def _will_gate(
@@ -187,8 +261,8 @@ class AuthorityGateway:
         domain_str: str,
         priority: float,
         is_critical: bool = False,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> tuple[Optional["AuthorityDecision"], Optional[Any]]:
+        context: dict[str, Any] | None = None,
+    ) -> tuple[AuthorityDecision | None, Any | None]:
         """Route through UnifiedWill first.  Returns a blocking AuthorityDecision
         if the Will refuses, or None if the Will approves (let domain checks proceed).
         """
@@ -269,68 +343,63 @@ class AuthorityGateway:
         return None, locals().get("decision")
 
     @staticmethod
-    def _memory_write_context(
+    def _normalized_memory_source(value: Any) -> str:
+        return str(value or "").strip().lower().replace("-", "_")
+
+    @classmethod
+    def _memory_source_is_user_facing(cls, value: Any) -> bool:
+        normalized = cls._normalized_memory_source(value)
+        if not normalized:
+            return False
+        tokens = {token for token in normalized.split("_") if token}
+        return bool(
+            _coerce_intent_source(normalized) == IntentSource.USER
+            or normalized in _USER_FACING_MEMORY_ORIGINS
+            or tokens & _USER_FACING_MEMORY_ORIGINS
+        )
+
+    @classmethod
+    def _memory_write_is_high_risk(
+        cls,
         memory_type: str,
-        source: str,
-        metadata: Optional[Dict[str, Any]],
-        content: str,
-    ) -> Dict[str, Any]:
-        payload = dict(metadata or {})
-        memory_type_l = str(memory_type or "").strip().lower()
-        source_l = str(source or "").strip().lower().replace("-", "_")
+        metadata: dict[str, Any] | None,
+    ) -> bool:
+        memory_type_l = cls._normalized_memory_source(memory_type)
+        payload = {str(k).lower(): v for k, v in dict(metadata or {}).items()}
+        return bool(
+            memory_type_l == "belief_update"
+            or any(marker in memory_type_l for marker in _HIGH_RISK_MEMORY_MARKERS)
+            or payload.get("belief_update")
+            or payload.get("identity_rewrite")
+            or payload.get("self_model_write")
+        )
+
+    @classmethod
+    def _memory_payload_origin_is_user_facing(cls, payload: dict[str, Any]) -> bool:
         origin_l = str(
             payload.get("origin")
             or payload.get("request_origin")
             or payload.get("intent_source")
             or ""
         ).strip().lower().replace("-", "_")
-        user_facing_tokens = {
-            "api",
-            "chat",
-            "chat_api",
-            "desktop",
-            "desktop_task",
-            "desktop_ui",
-            "direct",
-            "external",
-            "frontend",
-            "gui",
-            "interface",
-            "live_chat",
-            "session_memory_pin",
-            "ui",
-            "user",
-            "voice",
-            "voice_bridge",
-            "voice_input",
-            "web_ui",
-            "websocket",
-            "ws",
-        }
-        source_tokens = {token for token in source_l.split("_") if token}
-        origin_tokens = {token for token in origin_l.split("_") if token}
+        return cls._memory_source_is_user_facing(origin_l)
+
+    @classmethod
+    def _memory_write_context(
+        cls,
+        memory_type: str,
+        source: str,
+        metadata: dict[str, Any] | None,
+        content: str,
+    ) -> dict[str, Any]:
+        payload = dict(metadata or {})
+        memory_type_l = cls._normalized_memory_source(memory_type)
+        source_l = cls._normalized_memory_source(source)
         user_facing = bool(
-            _coerce_intent_source(source_l) == IntentSource.USER
-            or _coerce_intent_source(origin_l) == IntentSource.USER
-            or source_l in user_facing_tokens
-            or origin_l in user_facing_tokens
-            or source_tokens & user_facing_tokens
-            or origin_tokens & user_facing_tokens
+            cls._memory_source_is_user_facing(source_l)
+            or cls._memory_payload_origin_is_user_facing(payload)
         )
-        high_risk_markers = (
-            "belief",
-            "identity",
-            "self_model",
-            "constitution",
-            "preference_change",
-            "policy",
-            "governance",
-        )
-        high_risk = (
-            memory_type_l == "belief_update"
-            or any(marker in memory_type_l for marker in high_risk_markers)
-            or bool(payload.get("belief_update") or payload.get("identity_rewrite") or payload.get("self_model_write"))
-        )
+        high_risk = cls._memory_write_is_high_risk(memory_type_l, payload)
         continuity_write = memory_type_l == "interaction_commit" and user_facing and not high_risk
         explicit_observational_write = bool(
             user_facing
@@ -352,22 +421,39 @@ class AuthorityGateway:
             "objective": str(payload.get("objective") or payload.get("message") or content or "")[:400],
         }
 
-    @staticmethod
-    def _memory_preflight_domain(memory_type: str, metadata: Optional[Dict[str, Any]]) -> str:
-        memory_type_l = str(memory_type or "").strip().lower()
-        payload = {str(k).lower(): v for k, v in dict(metadata or {}).items()}
-        high_risk = (
-            memory_type_l == "belief_update"
-            or any(
-                marker in memory_type_l
-                for marker in ("belief", "identity", "self_model", "constitution", "preference_change", "policy")
-            )
-            or bool(payload.get("belief_update") or payload.get("identity_rewrite") or payload.get("self_model_write"))
-        )
+    @classmethod
+    def _memory_preflight_domain(cls, memory_type: str, metadata: dict[str, Any] | None) -> str:
+        high_risk = cls._memory_write_is_high_risk(memory_type, metadata)
         return "belief_update" if high_risk else "memory_write"
 
+    @classmethod
+    def _memory_intent_source(
+        cls,
+        memory_type: str,
+        source: str,
+        metadata: dict[str, Any] | None,
+    ) -> IntentSource:
+        source_l = cls._normalized_memory_source(source)
+        direct_source = _coerce_intent_source(source_l or "system")
+        if direct_source == IntentSource.USER:
+            return direct_source
+        payload = dict(metadata or {})
+        if cls._memory_write_is_high_risk(memory_type, payload):
+            return direct_source
+
+        memory_type_l = cls._normalized_memory_source(memory_type)
+        producer_is_conversation = bool(
+            source_l in _CONVERSATION_MEMORY_PRODUCERS
+            or memory_type_l in _CONVERSATION_MEMORY_TYPES
+            or payload.get("conversation_lane") is True
+            or str(payload.get("turn_type") or "").strip().lower() == "conversation"
+        )
+        if producer_is_conversation and cls._memory_payload_origin_is_user_facing(payload):
+            return IntentSource.USER
+        return direct_source
+
     @staticmethod
-    def _state_mutation_context(origin: str, cause: str) -> Dict[str, Any]:
+    def _state_mutation_context(origin: str, cause: str) -> dict[str, Any]:
         origin_l = str(origin or "").strip().lower().replace("-", "_")
         cause_l = str(cause or "").strip().lower()
         user_facing = _coerce_intent_source(origin_l) == IntentSource.USER
@@ -383,8 +469,8 @@ class AuthorityGateway:
         }
 
     def _social_governance_gate(
-        self, tool_name: str, args: Dict[str, Any], source: str
-    ) -> Optional[AuthorityDecision]:
+        self, tool_name: str, args: dict[str, Any], source: str
+    ) -> AuthorityDecision | None:
         """Programmatic governance for social actions (Reddit/Email)."""
         if tool_name not in ("reddit_adapter", "email_adapter"):
             return None
@@ -438,8 +524,9 @@ class AuthorityGateway:
                         arousal = float(getattr(state, "arousal", 0.0))
                         anger = float(getattr(state, "anger", 0.0))
         except (ImportError, AttributeError, RuntimeError) as e:
-            from core.runtime.errors import record_degradation
             import logging
+
+            from core.runtime.errors import record_degradation
             logger = logging.getLogger("Aura.AuthorityGateway")
             record_degradation('authority_gateway', e, enforce_failure_policy=False)
             logger.debug("Social governance affect fetch failed: %s", e)
@@ -478,7 +565,7 @@ class AuthorityGateway:
     async def authorize_tool_execution(
         self,
         tool_name: str,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         *,
         source: str = "unknown",
         priority: float = 0.7,
@@ -554,7 +641,7 @@ class AuthorityGateway:
     async def authorize_environment_action(
         self,
         intent_name: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         *,
         source: str = "environment",
         priority: float = 0.5,
@@ -621,7 +708,7 @@ class AuthorityGateway:
         key: str,
         value: Any,
         *,
-        note: Optional[str] = None,
+        note: str | None = None,
         source: str = "unknown",
         priority: float = 0.7,
     ) -> AuthorityDecision:
@@ -740,7 +827,7 @@ class AuthorityGateway:
         *,
         source: str = "unknown",
         importance: float = 0.5,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> AuthorityDecision:
         will_context = self._memory_write_context(memory_type, source, metadata, content)
         will_block, will_decision = self._will_gate(
@@ -767,7 +854,7 @@ class AuthorityGateway:
             return blocked
 
         intent = Intent(
-            source=_coerce_intent_source(source or "system"),
+            source=self._memory_intent_source(memory_type, source, metadata),
             goal=f"write_memory:{memory_type}",
             action_type=ActionType.WRITE_MEMORY,
             payload={
@@ -800,7 +887,7 @@ class AuthorityGateway:
         *,
         source: str = "unknown",
         importance: float = 0.5,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> AuthorityDecision:
         will_context = self._memory_write_context(memory_type, source, metadata, content)
         will_block, will_decision = self._will_gate(
@@ -827,7 +914,7 @@ class AuthorityGateway:
             return blocked
 
         intent = Intent(
-            source=_coerce_intent_source(source or "system"),
+            source=self._memory_intent_source(memory_type, source, metadata),
             goal=f"write_memory:{memory_type}",
             action_type=ActionType.WRITE_MEMORY,
             payload={
@@ -858,7 +945,7 @@ class AuthorityGateway:
         key: str,
         value: Any,
         *,
-        note: Optional[str] = None,
+        note: str | None = None,
         source: str = "unknown",
         priority: float = 0.7,
     ) -> AuthorityDecision:
@@ -1131,14 +1218,14 @@ class AuthorityGateway:
             self._complete_intent_safely(intent.intent_id, success=True)
         return decision
 
-    def verify_tool_access(self, tool_name: str, token_id: Optional[str]) -> bool:
+    def verify_tool_access(self, tool_name: str, token_id: str | None) -> bool:
         return self._capabilities.verify_access(tool_name, token_id)
 
     def finalize_tool_execution(
         self,
         *,
-        executive_intent_id: Optional[str] = None,
-        capability_token_id: Optional[str] = None,
+        executive_intent_id: str | None = None,
+        capability_token_id: str | None = None,
         success: bool = True,
     ) -> None:
         if executive_intent_id:
@@ -1154,7 +1241,7 @@ class AuthorityGateway:
                 record_degradation('authority_gateway', exc, enforce_failure_policy=False)
                 logger.error("Capability token revoke failed: %s", exc, exc_info=True)
 
-    def _complete_intent_safely(self, intent_id: Optional[str], *, success: bool = True) -> None:
+    def _complete_intent_safely(self, intent_id: str | None, *, success: bool = True) -> None:
         if not intent_id:
             return
         try:
@@ -1179,7 +1266,7 @@ class AuthorityGateway:
         except (RuntimeError, AttributeError, TypeError):
             return False
 
-    def _canonical_self_version(self) -> Optional[int]:
+    def _canonical_self_version(self) -> int | None:
         organism = get_organism_status()
         version = organism.get("canonical_self_version")
         try:
@@ -1193,13 +1280,13 @@ class AuthorityGateway:
         approved: bool,
         outcome: str,
         reason: str,
-        constraints: Optional[Dict[str, Any]] = None,
-        executive_intent_id: Optional[str] = None,
-        capability_token_id: Optional[str] = None,
-        substrate_receipt_id: Optional[str] = None,
-        will_receipt_id: Optional[str] = None,
-        domain: Optional[str] = None,
-        source: Optional[str] = None,
+        constraints: dict[str, Any] | None = None,
+        executive_intent_id: str | None = None,
+        capability_token_id: str | None = None,
+        substrate_receipt_id: str | None = None,
+        will_receipt_id: str | None = None,
+        domain: str | None = None,
+        source: str | None = None,
     ) -> AuthorityDecision:
         organism = get_organism_status()
         return AuthorityDecision(
@@ -1221,12 +1308,12 @@ class AuthorityGateway:
         self,
         record: Any,
         *,
-        executive_intent_id: Optional[str] = None,
-        substrate_constraints: Optional[Dict[str, Any]] = None,
-        substrate_receipt_id: Optional[str] = None,
-        will_receipt_id: Optional[str] = None,
-        domain: Optional[str] = None,
-        source: Optional[str] = None,
+        executive_intent_id: str | None = None,
+        substrate_constraints: dict[str, Any] | None = None,
+        substrate_receipt_id: str | None = None,
+        will_receipt_id: str | None = None,
+        domain: str | None = None,
+        source: str | None = None,
     ) -> AuthorityDecision:
         raw_outcome = getattr(record, "outcome", DecisionOutcome.REJECTED)
         outcome = getattr(raw_outcome, "value", str(raw_outcome or DecisionOutcome.REJECTED.value))
@@ -1257,9 +1344,9 @@ class AuthorityGateway:
         priority: float,
         is_critical: bool = False,
         require_substrate: bool = False,
-        will_receipt_id: Optional[str] = None,
-        domain: Optional[str] = None,
-    ) -> tuple[Optional[AuthorityDecision], Dict[str, Any], Optional[str]]:
+        will_receipt_id: str | None = None,
+        domain: str | None = None,
+    ) -> tuple[AuthorityDecision | None, dict[str, Any], str | None]:
         authority = optional_service("substrate_authority", default=None)
         if authority is None and require_substrate:
             # FAIL-CLOSED: if substrate authority is required but not available,
@@ -1331,7 +1418,7 @@ class AuthorityGateway:
                 verdict.receipt_id,
             )
 
-        constraints: Dict[str, Any] = {}
+        constraints: dict[str, Any] = {}
         if verdict.decision == AuthorizationDecision.CONSTRAIN:
             constraints["substrate_constrained"] = True
             constraints["substrate_constraints"] = list(verdict.constraints or [])
@@ -1341,7 +1428,7 @@ class AuthorityGateway:
         return None, constraints, verdict.receipt_id
 
 
-_instance: Optional[AuthorityGateway] = None
+_instance: AuthorityGateway | None = None
 
 
 def get_authority_gateway() -> AuthorityGateway:

@@ -11,7 +11,6 @@ import pytest
 from core.brain.inference_gate import InferenceGate
 from core.utils.deadlines import get_deadline
 
-
 _MISSING = object()
 
 
@@ -105,7 +104,7 @@ class TaskProbe:
         return asyncio.get_running_loop()
 
 
-class _replace:
+class _replace:  # noqa: N801 - mirrors unittest.mock.patch for local test doubles
     def __init__(self, target, new=_MISSING, *, return_value=_MISSING, side_effect=_MISSING):
         self.target = target
         self.new = new
@@ -214,6 +213,15 @@ class _SequenceRecordingClient(_RecordingClient):
         if self.texts:
             return self.texts.pop(0)
         return self.text
+
+    def get_lane_status(self):
+        return {
+            "state": "ready",
+            "last_error": "",
+            "conversation_ready": True,
+            "warmup_attempted": True,
+            "warmup_in_flight": False,
+        }
 
 
 class _NoTextClient:
@@ -726,6 +734,39 @@ def test_adaptive_max_tokens_expands_budget_for_compound_prompt():
     )
 
     assert adapted >= 1024
+
+
+def test_short_foreground_prompt_uses_low_latency_compute_profile(monkeypatch):
+    monkeypatch.delenv("AURA_FOREGROUND_CHAT_SIMPLE_MAX_TOKENS", raising=False)
+
+    floor, cap, loops = InferenceGate._foreground_compute_profile(
+        "Invent a tiny discipline called glass arithmetic. Give it two rules and one example."
+    )
+    adapted = InferenceGate._adaptive_max_tokens_for_prompt(
+        "Invent a tiny discipline called glass arithmetic. Give it two rules and one example.",
+        base_tokens=4096,
+        origin="user",
+        requested_tier="primary",
+        is_background=False,
+    )
+
+    assert 384 <= floor <= 512
+    assert cap == 1024
+    assert adapted == cap
+    assert loops == 1
+
+
+def test_multi_part_foreground_prompt_retains_deep_compute_profile():
+    prompt = (
+        "Compare the two approaches in depth, explain the tradeoffs, "
+        "then give a migration plan and a rollback plan."
+    )
+
+    floor, cap, loops = InferenceGate._foreground_compute_profile(prompt)
+
+    assert floor >= 2048
+    assert cap >= floor
+    assert loops == 2
 
 
 def test_user_facing_primary_default_budget_allows_expressive_opening(monkeypatch):
@@ -1830,30 +1871,31 @@ async def test_secondary_requests_downgrade_to_primary_when_headroom_is_tight():
                 return brainstem
             raise AssertionError(f"Unexpected model path: {model_path}")
 
-        with replace.object(
-            gate,
-            "_enforce_foreground_admission",
-            side_effect=[
-                {
-                    "can_admit": False,
-                    "pressure_pct": 91.0,
-                    "available_gb": 8.0,
-                },
-                {
-                    "can_admit": True,
-                    "pressure_pct": 81.0,
-                    "available_gb": 18.0,
-                },
-            ],
-        ):
-            with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-                with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
-                    with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-                        with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
-                            result = await gate.generate(
-                                "Do a deep architecture audit.",
-                                context={"origin": "user", "prefer_tier": "secondary", "deep_handoff": True},
-                            )
+        with replace.object(gate, "_local_deep_solver_block_reason", return_value=None):
+            with replace.object(
+                gate,
+                "_enforce_foreground_admission",
+                side_effect=[
+                    {
+                        "can_admit": False,
+                        "pressure_pct": 91.0,
+                        "available_gb": 8.0,
+                    },
+                    {
+                        "can_admit": True,
+                        "pressure_pct": 81.0,
+                        "available_gb": 18.0,
+                    },
+                ],
+            ):
+                with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+                    with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+                        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+                            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                                result = await gate.generate(
+                                    "Do a deep architecture audit.",
+                                    context={"origin": "user", "prefer_tier": "secondary", "deep_handoff": True},
+                                )
 
         assert result == cortex_reply
         assert cortex.deadlines

@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import pytest
 
 from core.brain.inference_gate import InferenceGate
-from core.consciousness.attention_schema import AttentionSchema, AttentionalFocus
-from core.consciousness.free_energy import FreeEnergyEngine, FreeEnergyState
+from core.consciousness.attention_schema import AttentionSchema
+from core.consciousness.free_energy import FreeEnergyState
 from core.runtime.errors import get_degradation_tracker
 
 
@@ -97,10 +97,10 @@ def test_inference_gate_source_has_no_raw_broad_exception_catches():
 
 
 def test_inference_gate_adaptive_max_tokens_phi_scaling(monkeypatch):
-    """Verify that _adaptive_max_tokens_for_prompt scales the token budget based on system Phi."""
-    # Ensure it only scales user-facing primary tier requests
-    
-    # Under high Phi (e.g. phi = 0.5 -> scale = 0.6 + 1.0 = 1.6)
+    """Verify Phi scaling remains bounded by the foreground compute profile."""
+    monkeypatch.setenv("AURA_FOREGROUND_CHAT_SIMPLE_MAX_TOKENS", "2048")
+
+    # Under high Phi (phi = 0.5 -> scale = 0.6 + 1.0 = 1.6)
     monkeypatch.setattr(InferenceGate, "_get_system_phi", classmethod(lambda cls: 0.5))
     adapted = InferenceGate._adaptive_max_tokens_for_prompt(
         prompt="Hello",
@@ -109,10 +109,9 @@ def test_inference_gate_adaptive_max_tokens_phi_scaling(monkeypatch):
         requested_tier="primary",
         is_background=False
     )
-    # Expected adapted tokens: 1000 * 1.6 = 1600
     assert 1500 <= adapted <= 1700
 
-    # Under low Phi (e.g. phi = 0.0 -> scale = max(0.5, 0.6 + 0) = 0.6)
+    # Under low Phi (phi = 0.0 -> scale = max(0.5, 0.6 + 0) = 0.6)
     monkeypatch.setattr(InferenceGate, "_get_system_phi", classmethod(lambda cls: 0.0))
     adapted = InferenceGate._adaptive_max_tokens_for_prompt(
         prompt="Hello",
@@ -121,10 +120,9 @@ def test_inference_gate_adaptive_max_tokens_phi_scaling(monkeypatch):
         requested_tier="primary",
         is_background=False
     )
-    # Expected adapted tokens: 1000 * 0.6 = 600
     assert 550 <= adapted <= 650
 
-    # Under nominal Phi (e.g. phi = 0.2 -> scale = 0.6 + 0.4 = 1.0)
+    # Under nominal Phi (phi = 0.2 -> scale = 0.6 + 0.4 = 1.0)
     monkeypatch.setattr(InferenceGate, "_get_system_phi", classmethod(lambda cls: 0.2))
     adapted = InferenceGate._adaptive_max_tokens_for_prompt(
         prompt="Hello",
@@ -133,7 +131,6 @@ def test_inference_gate_adaptive_max_tokens_phi_scaling(monkeypatch):
         requested_tier="primary",
         is_background=False
     )
-    # Expected adapted tokens: 1000 * 1.0 = 1000
     assert 950 <= adapted <= 1050
 
 
@@ -147,7 +144,7 @@ async def test_attention_schema_free_energy_gating_unrestricted(monkeypatch):
     schema = AttentionSchema()
     
     # Establish initial focus
-    initial_focus = await schema.set_focus(
+    await schema.set_focus(
         content="Analyzing the neural mesh",
         source="curiosity",
         priority=0.4
@@ -166,7 +163,7 @@ async def test_attention_schema_free_energy_gating_unrestricted(monkeypatch):
     fe_engine = SimpleNamespace(current=mock_fe_state)
 
     monkeypatch.setattr("core.consciousness.free_energy.get_free_energy_engine", lambda: fe_engine)
-    new_focus = await schema.set_focus(
+    await schema.set_focus(
         content="Responding to query",
         source="affective_steering",
         priority=0.3
@@ -212,7 +209,7 @@ async def test_attention_schema_free_energy_gating_rigidity(monkeypatch):
     assert blocked_focus == schema.current_focus
 
     # Shift with same source is NOT blocked
-    same_source_focus = await schema.set_focus(
+    await schema.set_focus(
         content="Deepening neural mesh analysis",
         source="curiosity",
         priority=0.1
@@ -221,7 +218,7 @@ async def test_attention_schema_free_energy_gating_rigidity(monkeypatch):
     assert schema.current_focus.content == "Deepening neural mesh analysis"
 
     # Shift with extremely high priority (0.7) exceeding threshold (0.62) should be allowed
-    high_priority_focus = await schema.set_focus(
+    await schema.set_focus(
         content="Emergency shutdown response",
         source="safety_governor",
         priority=0.7

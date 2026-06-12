@@ -443,6 +443,66 @@ async def test_api_chat_continues_to_kernel_when_lane_warmup_times_out(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_api_chat_uses_single_canonical_kernel_cognitive_path(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    kernel_calls = []
+    direct_cognitive_calls = []
+
+    async def _unexpected_direct_cognitive_turn(*_args, **_kwargs):
+        direct_cognitive_calls.append((_args, _kwargs))
+        return "duplicate direct CognitiveEngine turn should not be used"
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, message, *_args, **_kwargs):
+            kernel_calls.append(message)
+            return "Kernel kept enough foreground budget to answer."
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_log_exchange", AsyncCallFixture())
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncCallFixture())
+    monkeypatch.setattr(
+        chat_routes,
+        "_run_cognitive_engine_chat_turn",
+        _unexpected_direct_cognitive_turn,
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="Invent a tiny symbolic arithmetic and give one example."),
+        SimpleNamespace(headers={}, client=SimpleNamespace(host="test")),
+        None,
+        None,
+    )
+
+    assert response.status_code == 200
+    assert b"Kernel kept enough foreground budget" in response.body
+    assert kernel_calls
+    assert direct_cognitive_calls == []
+
+
+@pytest.mark.asyncio
 async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
@@ -517,7 +577,10 @@ async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch
 
     response = await server_module.api_chat(
         server_module.ChatRequest(message="Why the interest in aquariums?"),
-        SimpleNamespace(headers={}, client=SimpleNamespace(host="test")),
+        SimpleNamespace(
+            headers={"X-Aura-Surface": "desktop"},
+            client=SimpleNamespace(host="test"),
+        ),
         None,
         None,
     )
@@ -528,8 +591,8 @@ async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch
     assert calls
     assert calls[0]["origin"] == "user"
     assert calls[0]["context"]["route"] == "desktop_chat"
-    assert calls[0]["context"]["source"] == "chat_api"
-    assert calls[0]["context"]["cognitive_engine_required"] is False
+    assert calls[0]["context"]["source"] == "desktop_ui"
+    assert calls[0]["context"]["cognitive_engine_required"] is True
     assert calls[0]["kwargs"]["foreground_request"] is True
     assert calls[0]["kwargs"]["is_background"] is False
     assert not any("kernel_interface" in call for call in calls)

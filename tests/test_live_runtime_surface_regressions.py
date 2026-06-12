@@ -1847,6 +1847,107 @@ async def test_state_machine_live_coding_artifact_writes_runnable_snake_html():
     assert_no_live_reset_boilerplate(reply)
 
 
+def test_explicit_local_html_file_objective_builds_runnable_snake_artifact():
+    from interface.routes.chat import _build_explicit_local_file_artifact
+
+    html = _build_explicit_local_file_artifact(
+        "Create a simple game of Snake and save it as artifacts/live_runtime/generated/live_snake.html",
+        "artifacts/live_runtime/generated/live_snake.html",
+    )
+
+    assert html is not None
+    assert "<canvas" in html.lower()
+    assert "function tick" in html
+    assert "addEventListener" in html
+    assert "Score" in html
+    assert "Aura Generated Page" not in html
+
+
+@pytest.mark.asyncio
+async def test_live_runtime_probe_accepts_generic_desktop_task_contract(monkeypatch):
+    from tools.live_runtime_probe import LiveRuntimeProbe
+
+    probe = LiveRuntimeProbe("http://127.0.0.1:8999")
+
+    async def fake_chat(_message):
+        return {
+            "response": (
+                "Desktop task completed 5/5 governed computer-use steps. "
+                "Completed 5/5 governed desktop steps."
+            ),
+            "status": "desktop_objective_completed",
+            "conversation_lane": {
+                "governed_action_result": True,
+                "governed_action_status": "desktop_objective_completed",
+            },
+        }
+
+    monkeypatch.setattr(probe, "_chat", fake_chat)
+
+    detail, data = await probe._regular_chat_desktop_chain()
+
+    assert "generic governed desktop_task" in detail
+    assert data["status"] == "desktop_objective_completed"
+    assert data["conversation_lane"]["governed_action_result"] is True
+
+
+@pytest.mark.asyncio
+async def test_live_runtime_probe_writes_machine_readable_artifact(tmp_path):
+    from tools.live_runtime_probe import LiveRuntimeProbe, ProbeResult
+
+    artifact = tmp_path / "live_runtime_probe.json"
+    probe = LiveRuntimeProbe(
+        "http://127.0.0.1:8999",
+        artifact_path=artifact,
+    )
+    probe.results = [
+        ProbeResult(
+            name="health",
+            ok=True,
+            detail="all required probes passed",
+            elapsed_s=0.25,
+            data={"required_probes": True},
+        )
+    ]
+    probe.events = [{"type": "telemetry"}, {"type": "action_result"}]
+
+    await probe._write_artifact(passed=True)
+
+    payload = json.loads(artifact.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 1
+    assert payload["passed"] is True
+    assert payload["events_collected"] == 2
+    assert payload["results"][0]["name"] == "health"
+    assert payload["results"][0]["ok"] is True
+
+
+def test_authority_readiness_fails_when_unity_blocks_consequential_action(monkeypatch):
+    from core.executive.authority_gateway import AuthorityGateway
+
+    gateway = object.__new__(AuthorityGateway)
+    gateway._capabilities = SimpleNamespace(
+        generate_token=lambda *_args, **_kwargs: "token",
+        verify_access=lambda *_args, **_kwargs: True,
+    )
+    will = SimpleNamespace(decide=lambda *_args, **_kwargs: None)
+
+    def fragmented_get(name, default=None):
+        if name == "unified_will":
+            return will
+        if name == "unity_state":
+            return SimpleNamespace(level="fragmented")
+        if name == "unity_fragmentation_report":
+            return SimpleNamespace(safe_to_act=False)
+        return default
+
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.ServiceContainer.get",
+        staticmethod(fragmented_get),
+    )
+
+    assert gateway.is_ready() is False
+
+
 @pytest.mark.asyncio
 async def test_file_operation_write_creates_nested_live_runtime_directory(tmp_path):
     from core.skills.file_operation import FileOperationSkill

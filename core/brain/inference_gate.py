@@ -16,6 +16,7 @@ import gc
 import inspect
 import logging
 import os
+import re
 import threading as _threading
 import time
 import weakref
@@ -52,6 +53,15 @@ from core.utils.deadlines import Deadline, get_deadline
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.InferenceGate")
+
+_LONG_FORM_REQUEST_RE = re.compile(
+    r"\b(?:"
+    r"\d{3,5}\s*(?:-|to)?\s*(?:word|token)s?|"
+    r"comprehensive|detailed|fully|in[- ]depth|long[- ]form|"
+    r"step[- ]by[- ]step|thorough|every part|essay|report"
+    r")\b",
+    re.IGNORECASE,
+)
 
 _STATE_SIGNAL_REWRITES = (
     ("phenomenological", "state-grounded"),
@@ -2109,25 +2119,96 @@ class InferenceGate:
         ):
             return int(base_tokens)
 
-        shape = analyze_prompt_shape(prompt)
+        floor, cap, _loops = cls._foreground_compute_profile(prompt)
         adapted = int(base_tokens)
-        if shape.prefers_extended_answer:
-            adapted = max(adapted, 6144)
-        if shape.question_parts >= 3:
-            adapted = max(adapted, 6144)
-        elif shape.requires_single_reply_coverage:
-            adapted = max(adapted, 4096)
 
         # Scale the token budget based on system coherence/integration level (Phi)
         phi = cls._get_system_phi()
         phi_scale = max(0.5, min(1.6, 0.6 + phi * 2.0))
         adapted = int(adapted * phi_scale)
+        return max(floor, min(cap, adapted))
 
+    @staticmethod
+    def _configured_token_bound(name: str, default: int, *, minimum: int = 128) -> int:
         try:
-            foreground_cap = int(os.environ.get("AURA_FOREGROUND_CHAT_MAX_TOKENS", "3072"))
+            configured = int(os.environ.get(name, str(default)))
         except (TypeError, ValueError):
-            foreground_cap = 3072
-        return min(max(512, foreground_cap), adapted)
+            configured = default
+        return max(minimum, configured)
+
+    @classmethod
+    def _foreground_compute_profile(cls, prompt: str) -> tuple[int, int, int]:
+        """Return the token floor, token cap, and recurrent loops for a live turn.
+
+        Foreground inference used to force every primary-lane turn to a
+        long-form 3,072-token budget. On local 32B inference that made a short
+        conversational request cost as much as a multi-part analysis and could
+        overrun the API deadline despite producing a valid answer seconds later.
+        One prompt-shape policy now controls both output budget and recurrent
+        depth so latency and reasoning depth scale together.
+        """
+
+        text = str(prompt or "").strip()
+        shape = analyze_prompt_shape(text)
+        word_count = len(text.split())
+        long_form_requested = bool(_LONG_FORM_REQUEST_RE.search(text))
+        extended = bool(
+            long_form_requested
+            or shape.prefers_extended_answer
+            or shape.requires_single_reply_coverage
+            or shape.question_parts >= 2
+        )
+
+        if extended:
+            floor = cls._configured_token_bound(
+                "AURA_FOREGROUND_CHAT_MIN_TOKENS",
+                3072,
+                minimum=512,
+            )
+            cap = cls._configured_token_bound(
+                "AURA_FOREGROUND_CHAT_MAX_TOKENS",
+                3072,
+                minimum=floor,
+            )
+            loops = 2
+        elif word_count > 45 or len(text) > 320:
+            floor = cls._configured_token_bound(
+                "AURA_FOREGROUND_CHAT_STANDARD_MIN_TOKENS",
+                768,
+                minimum=384,
+            )
+            cap = cls._configured_token_bound(
+                "AURA_FOREGROUND_CHAT_STANDARD_MAX_TOKENS",
+                2048,
+                minimum=floor,
+            )
+            loops = 1
+        else:
+            floor = cls._configured_token_bound(
+                "AURA_FOREGROUND_CHAT_SIMPLE_MIN_TOKENS",
+                512,
+                minimum=384,
+            )
+            cap = cls._configured_token_bound(
+                "AURA_FOREGROUND_CHAT_SIMPLE_MAX_TOKENS",
+                1024,
+                minimum=floor,
+            )
+            loops = 1
+
+        # Preserve the legacy operator override as a universal floor when it is
+        # explicitly configured. The default no longer forces simple turns into
+        # the long-form profile.
+        if not extended and "AURA_FOREGROUND_CHAT_MIN_TOKENS" in os.environ:
+            operator_floor = cls._configured_token_bound(
+                "AURA_FOREGROUND_CHAT_MIN_TOKENS",
+                floor,
+                minimum=384,
+            )
+            floor = max(floor, operator_floor)
+            cap = max(cap, floor)
+
+        return floor, max(floor, cap), loops
 
     @staticmethod
     def _split_attempt_timeouts(total_timeout: float, requested_tier: str) -> tuple[float, float]:
@@ -2160,6 +2241,18 @@ class InferenceGate:
 
         fallback_budget = max(15.0, total_timeout - primary_budget)
         return primary_budget, fallback_budget
+
+    @staticmethod
+    def _foreground_retry_schedule(
+        primary_attempt_elapsed: float,
+        primary_timeout: float,
+    ) -> tuple[float, ...]:
+        """Return bounded retry delays for a failed foreground Cortex call."""
+
+        retry_cutoff = min(45.0, max(0.0, float(primary_timeout)) * 0.4)
+        if max(0.0, float(primary_attempt_elapsed)) <= retry_cutoff:
+            return (2.0,)
+        return ()
 
     @asynccontextmanager
     async def _resource_context(
@@ -4143,7 +4236,7 @@ class InferenceGate:
         )
         if "max_tokens" not in context:
             max_tokens = self._adaptive_max_tokens_for_prompt(
-                prompt,
+                initial_visible_user_prompt,
                 base_tokens=max_tokens,
                 origin=origin,
                 requested_tier=requested_tier,
@@ -4212,7 +4305,7 @@ class InferenceGate:
                 )
                 if "max_tokens" not in context:
                     max_tokens = self._adaptive_max_tokens_for_prompt(
-                        prompt,
+                        initial_visible_user_prompt,
                         base_tokens=max_tokens,
                         origin=origin,
                         requested_tier=requested_tier,
@@ -4578,15 +4671,18 @@ class InferenceGate:
             and not isolated_generation_contract
             and not health_probe
         ):
-            foreground_floor = max(
-                384,
-                int(os.environ.get("AURA_FOREGROUND_CHAT_MIN_TOKENS", "3072")),
+            foreground_floor, foreground_cap, _foreground_loops = (
+                self._foreground_compute_profile(initial_visible_user_prompt)
             )
+            max_tokens = min(max_tokens, foreground_cap)
             if max_tokens < foreground_floor:
                 logger.info(
-                    "🧠 Foreground chat token floor raised budget %d→%d for origin=%s.",
+                    "🧠 Foreground chat compute profile raised budget %d→%d "
+                    "(cap=%d, loops=%d, origin=%s).",
                     max_tokens,
                     foreground_floor,
+                    foreground_cap,
+                    _foreground_loops,
                     origin or "unknown",
                 )
                 max_tokens = foreground_floor
@@ -4888,8 +4984,14 @@ class InferenceGate:
             and not strict_answer_contract
             and not strict_value_contract
         ):
+            _foreground_floor, _foreground_cap, foreground_loops = (
+                self._foreground_compute_profile(initial_visible_user_prompt)
+            )
             morpho_kwargs.setdefault("clean_user_surface_contract", True)
-            morpho_kwargs.setdefault("clean_user_surface_recurrent_loops", 1)
+            morpho_kwargs.setdefault(
+                "clean_user_surface_recurrent_loops",
+                foreground_loops,
+            )
         client_foreground_request = (
             bool(_is_user_facing or explicit_foreground) and not is_background and not benchmark_request
         )
@@ -5023,6 +5125,7 @@ class InferenceGate:
                         _is_user_facing,
                     )
                     primary_deadline = get_deadline(primary_timeout)
+                    primary_attempt_started = time.monotonic()
                     if skip_initial_primary_attempt:
                         text = None
                     else:
@@ -5047,6 +5150,10 @@ class InferenceGate:
                                 foreground_request=client_foreground_request,
                                 **morpho_kwargs,
                             )
+                    primary_attempt_elapsed = max(
+                        0.0,
+                        time.monotonic() - primary_attempt_started,
+                    )
                     if text:
                         repairable_draft = self._repairable_user_facing_draft_for_downstream(
                             text,
@@ -5069,22 +5176,33 @@ class InferenceGate:
                             local_label,
                         )
                         return None
-                        if (
-                            proof_evaluation_contract
-                            or strict_primary_proof_lane
-                            or desktop_cognitive_engine_contract
-                        ):
-                            logger.warning(
-                                "🧠 Proof/evaluation request requires a valid Cortex response; refusing retry/fallback cascade after no text."
-                            )
+                    if (
+                        proof_evaluation_contract
+                        or strict_primary_proof_lane
+                        or desktop_cognitive_engine_contract
+                    ):
+                        logger.warning(
+                            "🧠 Proof/evaluation request requires a valid Cortex response; refusing retry/fallback cascade after no text."
+                        )
                         return None
 
                     # ── CORTEX RETRY: For user-facing requests, retry the primary model
-                    # The stall detector reboots the worker, so we wait for recovery.
-                    # [RESILIENCE] We now retry TWICE. Recurrent loops + context building
-                    # can easily trip a single timeout. We give it 3s, then 6s to settle.
+                    # only when the first attempt failed quickly and the lane
+                    # remains ready. Long stalls must preserve the remaining
+                    # response budget for a governed recovery lane.
                     if _is_user_facing and local_label == PRIMARY_ENDPOINT:
-                        for retry_attempt, wait_sec in enumerate([3.0, 6.0], 1):
+                        retry_schedule = self._foreground_retry_schedule(
+                            primary_attempt_elapsed,
+                            primary_timeout,
+                        )
+                        if not retry_schedule:
+                            logger.warning(
+                                "🧠 %s consumed %.1fs without usable text; skipping repeated "
+                                "same-lane retries.",
+                                local_label,
+                                primary_attempt_elapsed,
+                            )
+                        for retry_attempt, wait_sec in enumerate(retry_schedule, 1):
                             if is_shutdown_requested():
                                 logger.info(
                                     "🛑 %s retry loop aborted: runtime is shutting down.",
@@ -5094,27 +5212,13 @@ class InferenceGate:
                             lane_status = self.get_conversation_status()
                             if not lane_status.get("conversation_ready"):
                                 logger.warning(
-                                    "🧠 %s returned no text before the conversation lane was ready (state=%s). Forcing foreground warmup before retry %d.",
+                                    "🧠 %s is not ready after the failed attempt (state=%s); "
+                                    "skipping same-lane retry %d.",
                                     local_label,
                                     lane_status.get("state", "unknown"),
                                     retry_attempt,
                                 )
-                                try:
-                                    # [STABILITY v56] Same as above, don't cap at 60s.
-                                    await self.ensure_foreground_ready(
-                                        timeout=max(180.0, primary_timeout)
-                                    )
-                                except _INFERENCE_RECOVERABLE_ERRORS as warmup_exc:
-                                    record_degradation(
-                                        "inference_gate",
-                                        warmup_exc,
-                                        severity="degraded",
-                                        action="continued cortex retry path after foreground warmup retry failure",
-                                    )
-                                    logger.warning(
-                                        "🧠 Foreground warmup retry did not complete cleanly: %s",
-                                        warmup_exc,
-                                    )
+                                break
                             if is_shutdown_requested():
                                 logger.info(
                                     "🛑 %s retry wait skipped: runtime is shutting down.",
@@ -5123,9 +5227,9 @@ class InferenceGate:
                                 return ""
 
                             logger.warning(
-                                "🧠 %s returned no text on user-facing request. Retrying (attempt %d/2) after %ds pause...",
+                                "🧠 %s returned no text on user-facing request. "
+                                "Retrying once after %ds pause...",
                                 local_label,
-                                retry_attempt,
                                 wait_sec,
                             )
                             await asyncio.sleep(wait_sec)
@@ -5136,8 +5240,10 @@ class InferenceGate:
                                 )
                                 return ""
 
-                            # Give the retry MORE time than the initial attempt
-                            retry_timeout = primary_timeout * 1.5
+                            retry_timeout = min(
+                                60.0,
+                                max(30.0, primary_timeout * 0.4),
+                            )
                             retry_deadline = get_deadline(retry_timeout)
                             retry_messages = self._build_primary_repair_messages(
                                 visible_user_prompt,
@@ -5180,7 +5286,7 @@ class InferenceGate:
                                     retry_deadline,
                                     f"{local_label}-RETRY-{retry_attempt}",
                                     messages=retry_messages,
-                                    max_tokens=max(max_tokens, 768),
+                                    max_tokens=max_tokens,
                                     temperature=retry_temperature,
                                     origin=origin,
                                     is_background=is_background,
@@ -5210,7 +5316,8 @@ class InferenceGate:
                                     is_user_facing=_is_user_facing,
                                 )
 
-                        logger.warning("🧠 %s all retries failed.", local_label)
+                        if retry_schedule:
+                            logger.warning("🧠 %s bounded retry failed.", local_label)
                         if (
                             proof_evaluation_contract
                             or strict_primary_proof_lane
@@ -5227,18 +5334,6 @@ class InferenceGate:
                                 "🧠 Escalating to cloud before brainstem for user-facing request."
                             )
                             raise _UserFacingCortexError()
-                        lane_status = self.get_conversation_status()
-                        if (
-                            not protected_deep_fallback
-                            and not lane_status.get("conversation_ready")
-                            and str(lane_status.get("state", "") or "").lower() != "failed"
-                        ):
-                            logger.warning(
-                                "🧠 %s is still not ready (state=%s). Refusing local fallback until the primary lane actually finishes recovery.",
-                                local_label,
-                                lane_status.get("state", "unknown"),
-                            )
-                            return None
                         logger.warning(
                             "🧠 %s is still recovering. Falling back to %s for this %s foreground turn.",
                             local_label,

@@ -605,6 +605,36 @@ async def test_websocket_manager_skips_serialization_without_clients(monkeypatch
     assert serialized is False
 
 
+def test_perception_daemon_does_not_run_ambient_screen_capture_loop():
+    source = (PROJECT_ROOT / "core/perception/perception_daemon.py").read_text()
+
+    assert "sp.capture(save_screenshot=False)" not in source
+    assert "source=\"screen_ocr\"" not in source
+
+
+def test_perception_daemon_awaits_cancelled_background_tasks():
+    source = (PROJECT_ROOT / "core/perception/perception_daemon.py").read_text()
+
+    assert "asyncio.gather(*pending, return_exceptions=True)" in source
+
+
+def test_screen_perception_reaps_timed_out_osascript_processes():
+    source = (PROJECT_ROOT / "core/perception/screen_perception.py").read_text()
+
+    assert "async def _run_osascript" in source
+    assert "proc.kill()" in source
+    assert "await asyncio.wait_for(proc.wait(), timeout=1.0)" in source
+
+
+def test_live_runtime_probe_calculator_chain_uses_semantic_keystrokes():
+    source = (PROJECT_ROOT / "tools/live_runtime_probe.py").read_text()
+
+    assert 'keystroke "2"' in source
+    assert 'description of e is "Edit field"' in source
+    assert "clickPoints" not in source
+    assert "click at pt" not in source
+
+
 @pytest.mark.asyncio
 async def test_websocket_manager_uses_task_spawner_for_disconnect_on_overflow(monkeypatch):
     scheduled = {}

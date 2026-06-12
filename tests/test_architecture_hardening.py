@@ -343,6 +343,41 @@ def test_substrate_authority_still_blocks_autonomous_memory_write_during_cortiso
     assert "neurochemical_cortisol_crisis: category=MEMORY_WRITE blocked" == verdict.reason
 
 
+def test_authority_gateway_classifies_chat_turn_memory_as_user_continuity():
+    from core.executive.authority_gateway import AuthorityGateway
+    from core.executive.executive_core import IntentSource
+
+    source = AuthorityGateway._memory_intent_source(
+        "episodic_episode",
+        "chat_turn_logger",
+        {
+            "conversation_lane": True,
+            "origin": "desktop_ui",
+            "turn_type": "conversation",
+        },
+    )
+
+    assert source == IntentSource.USER
+
+
+def test_authority_gateway_keeps_high_risk_chat_memory_governed():
+    from core.executive.authority_gateway import AuthorityGateway
+    from core.executive.executive_core import IntentSource
+
+    source = AuthorityGateway._memory_intent_source(
+        "belief_update",
+        "chat_turn_logger",
+        {
+            "conversation_lane": True,
+            "origin": "desktop_ui",
+            "turn_type": "conversation",
+            "belief_update": True,
+        },
+    )
+
+    assert source == IntentSource.AUTONOMOUS
+
+
 def test_capability_engine_prefers_clock_for_time_queries():
     engine = CapabilityEngine()
 
@@ -376,6 +411,23 @@ def test_capability_engine_detects_research_about_as_web_search():
     matched = engine.detect_intent("research about Python 3.12 release notes key improvements")
 
     assert matched[0] == "web_search"
+
+
+def test_capability_engine_does_not_treat_conversational_add_as_arithmetic():
+    engine = CapabilityEngine()
+
+    matched = engine.detect_intent(
+        "Stay with glass arithmetic. Add one limitation and connect it to the example."
+    )
+
+    assert "run_code" not in matched
+
+
+def test_capability_engine_still_detects_explicit_numeric_arithmetic():
+    engine = CapabilityEngine()
+
+    assert "run_code" in engine.detect_intent("Add 41 and 1.")
+    assert "run_code" in engine.detect_intent("Multiply 6 by 7.")
 
 
 def test_social_imagination_links_private_trouble_to_public_issue(tmp_path):

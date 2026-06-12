@@ -40,3 +40,14 @@ def test_generate_with_client_aborts_when_client_ignores_deadline() -> None:
         assert client.abort_reasons[0].startswith("inference_gate_generation_timeout:Cortex:")
 
     asyncio.run(run())
+
+
+def test_foreground_retry_schedule_only_retries_fast_failures() -> None:
+    assert InferenceGate._foreground_retry_schedule(
+        primary_attempt_elapsed=10.0,
+        primary_timeout=150.0,
+    ) == (2.0,)
+    assert InferenceGate._foreground_retry_schedule(
+        primary_attempt_elapsed=61.0,
+        primary_timeout=150.0,
+    ) == ()
