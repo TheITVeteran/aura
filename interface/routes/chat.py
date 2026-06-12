@@ -3074,7 +3074,7 @@ def _request_requires_cognitive_engine(request: Request, *, is_benchmark: bool =
     requires = (
         not is_benchmark
         and (
-            request_surface in {"desktop", "desktop-ui", "native-shell", "tauri"}
+            request_surface in {"desktop", "desktop-ui", "native-shell", "tauri", "voice"}
             or require_cognitive_header in {"1", "true", "yes", "required"}
         )
     )

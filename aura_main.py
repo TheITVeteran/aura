@@ -2376,6 +2376,10 @@ def main():
     
     args = parser.parse_args()
 
+    # Publish the serving port for in-process surfaces (voice wake-word
+    # dispatch) that route through the canonical /api/chat loopback lane.
+    os.environ["AURA_SERVER_PORT"] = str(args.port)
+
     # Desktop/headless live sessions run alongside the GUI, browser probes, and
     # other macOS apps. Default them into safe boot so Cortex warmup is admitted
     # by live RAM headroom instead of being scheduled optimistically during boot.

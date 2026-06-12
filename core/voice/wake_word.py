@@ -1,8 +1,12 @@
 """core/voice/wake_word.py — Always-Listening Wake Word Detection
 =================================================================
 Runs as a background thread, minimal CPU. On detection of "Hey Aura",
-raises foreground priority, starts a command session, and submits a
-high-priority impulse to InitiativeSynthesizer.
+raises foreground priority, starts a command session, and routes the
+spoken command through the canonical conversation lane (/api/chat).
+
+Voice is a surface, not a separate runtime: a spoken command enters the
+exact same governed lane the desktop UI uses, so it gets identical
+contracts, receipts, and capability dispatch.
 
 Uses the existing Whisper transcript stream from the audio service.
 Pattern-matches for wake phrases in transcript chunks.
@@ -10,7 +14,9 @@ Pattern-matches for wake phrases in transcript chunks.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import re
 import time
 from enum import Enum
@@ -65,11 +71,16 @@ class WakeWordDetector:
     SILENCE_TIMEOUT_S = 1.5      # silence after this = end of command
     SESSION_TIMEOUT_S = 30.0     # max session length
     POLL_INTERVAL_S = 0.2        # check transcript this often
-    MAX_MISSION_STEPS = 200
+    # Voice commands can trigger multi-step desktop chains; the lane call
+    # is bounded so a wedged turn cannot strand the detector forever.
+    COMMAND_TIMEOUT_S = float(os.environ.get("AURA_VOICE_COMMAND_TIMEOUT_S", "240") or 240)
+    SPEAK_TIMEOUT_S = 60.0
+    SPOKEN_REPLY_CHAR_BUDGET = 600
 
     def __init__(self) -> None:
         self.state = WakeState.IDLE
         self._task: Optional[asyncio.Task] = None
+        self._dispatch_task: asyncio.Task | None = None
         self._session_start: float = 0.0
         self._last_speech: float = 0.0
         self._accumulated_transcript: str = ""
@@ -90,12 +101,13 @@ class WakeWordDetector:
 
     async def stop(self) -> None:
         self._started = False
-        if self._task and not self._task.done():
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        for task in (self._dispatch_task, self._task):
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         logger.info("WakeWordDetector OFFLINE (detected %d wake events)", self._wake_count)
 
     async def _detection_loop(self) -> None:
@@ -227,12 +239,18 @@ class WakeWordDetector:
         if not transcript:
             return
 
-        if WAKE_PATTERN.search(transcript):
+        match = WAKE_PATTERN.search(transcript)
+        if match:
             self._wake_count += 1
             self.state = WakeState.LISTENING
             self._session_start = time.time()
             self._last_speech = time.time()
-            self._accumulated_transcript = ""
+            # Single-utterance support: "Hey Aura, open my notes" arrives as
+            # one transcript chunk. The dedup in _get_latest_transcript means
+            # this chunk will never be seen again, so the command portion must
+            # be captured NOW or it is lost and the session times out empty.
+            remainder = transcript[match.end():].lstrip(" ,.!?;:-—").strip()
+            self._accumulated_transcript = remainder
 
             logger.info("🎤 Wake word detected! Starting command session #%d", self._wake_count)
 
@@ -297,77 +315,128 @@ class WakeWordDetector:
                 self.state = WakeState.IDLE
 
     async def _process_command(self, command: str) -> None:
-        """Process a spoken command into a mission."""
+        """Hand a spoken command to the canonical conversation lane.
+
+        Execution runs as a tracked background task so the detection loop
+        keeps polling while the command executes — that is what keeps
+        barge-in ("stop", "cancel") live during execution. The previous
+        design awaited execution inline, which blocked the loop and made
+        the interrupt branch unreachable for in-flight commands.
+        """
         self.state = WakeState.PROCESSING
+        self._accumulated_transcript = ""
         logger.info("🎤 Voice command received: '%s'", command[:100])
 
+        if self._dispatch_task and not self._dispatch_task.done():
+            logger.info("🎤 Superseding still-running voice command")
+            self._dispatch_task.cancel()
+
+        self.state = WakeState.EXECUTING
+        self._dispatch_task = create_tracked_task(
+            self._execute_command(command),
+            name="Aura.VoiceCommandDispatch",
+        )
+
+    async def _execute_command(self, command: str) -> None:
+        """Run one voice command through /api/chat and report the result."""
         try:
-            # Submit as high-priority initiative impulse
-            synthesizer = ServiceContainer.get("initiative_synthesizer", default=None)
-            if synthesizer and hasattr(synthesizer, "submit_impulse"):
-                synthesizer.submit_impulse({
-                    "source": "voice_command",
-                    "content": command,
-                    "priority": 0.95,  # Voice commands are highest priority
-                    "salience": 1.0,
-                    "metadata": {
-                        "session_id": self._wake_count,
-                        "session_duration": time.time() - self._session_start,
-                    },
-                })
+            ok, reply = await self._dispatch_to_conversation_lane(command)
+            self.state = WakeState.REPORTING
+            try:
+                ws = ServiceContainer.get("world_state", default=None)
+                if ws:
+                    ws.record_event(
+                        f"Voice command {'completed' if ok else 'failed'}: {reply[:160]}",
+                        source="voice",
+                        salience=0.8,
+                        ttl=300,
+                        command=command[:200],
+                        ok=ok,
+                    )
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation("wake_word.command_event", exc)
+            if ok and reply:
+                await self._speak_reply(reply)
+            logger.info("🎤 Voice command %s", "completed" if ok else "failed")
+        except asyncio.CancelledError:
+            logger.info("🎤 Voice command cancelled mid-execution")
+            raise
+        finally:
+            self._accumulated_transcript = ""
+            self.state = WakeState.IDLE
 
-            # Also create a mission directly
-            mission_state = ServiceContainer.get("mission_state", default=None)
-            if mission_state:
-                self.state = WakeState.EXECUTING
-                mission = await mission_state.create_mission(
-                    command, source="voice", priority=0.9,
-                )
-                # Execute the mission with a hard step cap so voice cannot loop forever.
-                step_count = 0
-                while mission.graph and not mission.graph.is_complete:
-                    if step_count >= self.MAX_MISSION_STEPS:
-                        raise RuntimeError("voice mission exceeded step cap")
-                    step_count += 1
-                    node = await mission_state.advance_mission(mission.mission_id)
-                    if node is None:
-                        break
+    async def _dispatch_to_conversation_lane(self, command: str) -> tuple[bool, str]:
+        """POST the command to the local /api/chat surface via the gateway.
 
-                self.state = WakeState.REPORTING
-                # Narrate result
-                if mission.graph and mission.graph.is_successful:
-                    logger.info("🎤 Voice mission completed successfully")
-                else:
-                    failure = mission.graph.get_failure_summary() if mission.graph else "Unknown"
-                    logger.info("🎤 Voice mission had issues: %s", failure[:100])
-            else:
-                logger.info("MissionState not available for voice command processing")
+        Loopback-only by construction; the transport hop runs under a local
+        internal governed scope, and the governed effects (capability
+        dispatch, desktop actions) are gated inside the lane itself.
+        """
+        from core.governance_context import local_internal_governed_scope
+        from core.runtime.network_gateway import get_network_gateway
 
-        except (ImportError, AttributeError, RuntimeError, TypeError) as e:
-            record_degradation("wake_word.process", e)
-            logger.warning("Voice command processing failed: %s", e)
+        try:
+            port = int(os.environ.get("AURA_SERVER_PORT", "8000") or 8000)
+        except ValueError:
+            port = 8000
+        with local_internal_governed_scope(
+            "wake_word.conversation_lane", domain="tool_execution"
+        ):
+            response = await get_network_gateway().request_async(
+                "POST",
+                f"http://127.0.0.1:{port}/api/chat",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Aura-Surface": "voice",
+                },
+                data=json.dumps(
+                    {"message": command, "session_id": "voice-wake"}
+                ).encode("utf-8"),
+                timeout=self.COMMAND_TIMEOUT_S,
+                source="wake_word:conversation_lane",
+            )
+        if not response.get("ok") or int(response.get("status_code") or 0) != 200:
+            detail = str(response.get("error") or response.get("status_code") or "unknown")
+            record_degradation(
+                "wake_word.conversation_lane",
+                RuntimeError(f"conversation lane dispatch failed: {detail}"),
+            )
+            return False, f"conversation lane dispatch failed: {detail}"
+        try:
+            payload = json.loads(response.get("content") or b"{}")
+        except (ValueError, TypeError) as exc:
+            record_degradation("wake_word.conversation_lane_payload", exc)
+            return False, "conversation lane returned an unreadable payload"
+        reply = str(payload.get("response") or "").strip()
+        return bool(reply), reply
 
-        # Return to idle
-        self._accumulated_transcript = ""
-        self.state = WakeState.IDLE
+    async def _speak_reply(self, reply: str) -> None:
+        """Speak a bounded portion of the reply if a voice engine is live."""
+        spoken = reply[: self.SPOKEN_REPLY_CHAR_BUDGET]
+        if len(reply) > self.SPOKEN_REPLY_CHAR_BUDGET:
+            cut = spoken.rfind(". ")
+            if cut > 200:
+                spoken = spoken[: cut + 1]
+        try:
+            voice = ServiceContainer.get("voice_engine", default=None)
+            speak = getattr(voice, "speak", None) if voice is not None else None
+            if not callable(speak):
+                return
+            result = speak(spoken)
+            if hasattr(result, "__await__"):
+                await asyncio.wait_for(result, timeout=self.SPEAK_TIMEOUT_S)
+        except TimeoutError as exc:
+            record_degradation("wake_word.speak_timeout", exc)
+        except (AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+            record_degradation("wake_word.speak", exc)
 
     async def _handle_interrupt(self) -> None:
         """Handle a spoken interrupt ("stop", "cancel", etc.)."""
         logger.info("🎤 Voice interrupt received — cancelling current action")
+        if self._dispatch_task and not self._dispatch_task.done():
+            self._dispatch_task.cancel()
         self.state = WakeState.IDLE
         self._accumulated_transcript = ""
-
-        # Try to cancel current mission
-        try:
-            mission_state = ServiceContainer.get("mission_state", default=None)
-            if mission_state:
-                active = mission_state.list_active_missions()
-                for m in active:
-                    if m.source == "voice":
-                        from core.planning.mission_state import MissionStatus
-                        mission_state.update_mission_status(m.mission_id, MissionStatus.CANCELLED)
-        except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation("wake_word.interrupt_cancel", exc)
 
     def get_status(self) -> Dict[str, Any]:
         return {
