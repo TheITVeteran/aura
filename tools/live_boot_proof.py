@@ -62,6 +62,9 @@ def build_safe_boot_env(base_env: dict[str, str] | None = None) -> dict[str, str
 
     env = dict(base_env or os.environ)
     env.setdefault("AURA_SAFE_BOOT_DESKTOP", "1")
+    env.setdefault("AURA_HEADLESS", "1")
+    env.setdefault("AURA_EAGER_LOCAL_SENSORY_BOOT", "0")
+    env.setdefault("AURA_ENABLE_PROACTIVE_VISION", "0")
     env.setdefault("AURA_SAFE_BOOT_METAL_CACHE_RATIO", "0.16")
     env.setdefault("AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", "10")
     env.setdefault("AURA_FOREGROUND_CHAT_MAX_TOKENS", "3072")
@@ -274,8 +277,8 @@ class LiveProof:
             return self.record(
                 "chat_identity", False, summary=text[:200], latency_s=round(latency, 1)
             )
-        from core.conversation.self_claim_verifier import verify_self_claims
         from core.conversation.response_reliability import assess_user_facing_reply
+        from core.conversation.self_claim_verifier import verify_self_claims
 
         verdict = verify_self_claims(text)
         reliability = assess_user_facing_reply(

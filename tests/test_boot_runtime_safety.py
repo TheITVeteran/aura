@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 import tempfile
@@ -222,6 +223,9 @@ def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
     env = build_safe_boot_env({})
 
     assert env["AURA_SAFE_BOOT_DESKTOP"] == "1"
+    assert env["AURA_HEADLESS"] == "1"
+    assert env["AURA_EAGER_LOCAL_SENSORY_BOOT"] == "0"
+    assert env["AURA_ENABLE_PROACTIVE_VISION"] == "0"
     assert env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] == "0.16"
     assert env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] == "10"
     assert env["AURA_FOREGROUND_CHAT_MAX_TOKENS"] == "3072"
@@ -366,13 +370,13 @@ async def test_chaos_fill_disk_creates_bounded_pressure_file(monkeypatch, tmp_pa
     pressure_file = Path(result["target"])
     assert result["applied"] is True
     assert result["bytes_written"] == 1024 * 1024
-    assert pressure_file.exists()
+    assert await asyncio.to_thread(pressure_file.exists)
     assert scheduled and scheduled[0][1] == "chaos.fill_disk.restore_pressure_file"
 
     await scheduled[0][0]
 
-    assert not pressure_file.exists()
-    assert not pressure_file.parent.exists()
+    assert not await asyncio.to_thread(pressure_file.exists)
+    assert not await asyncio.to_thread(pressure_file.parent.exists)
 
 
 def test_inprocess_mlx_metal_disabled_during_safe_boot(monkeypatch):

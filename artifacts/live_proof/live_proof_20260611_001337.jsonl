@@ -1,0 +1,2 @@
+{"at": 1781162017.4272509, "elapsed_s": 0.05, "step": "boot_spawn", "ok": true, "peak_rss_mb": 0.0, "summary": "pid 90850"}
+{"at": 1781162026.471328, "elapsed_s": 9.1, "step": "boot_health", "ok": false, "peak_rss_mb": 1175.0, "summary": "process exited during boot (rc=-11)"}

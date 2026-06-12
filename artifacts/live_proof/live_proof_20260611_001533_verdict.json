@@ -1,0 +1,26 @@
+{
+  "schema": "aura.live_boot_proof.v1",
+  "passed": false,
+  "started_at": 1781162133.9123762,
+  "finished_at": 1781162139.980489,
+  "peak_rss_mb": 1108.8,
+  "steps": [
+    {
+      "at": 1781162133.9531221,
+      "elapsed_s": 0.04,
+      "step": "boot_spawn",
+      "ok": true,
+      "peak_rss_mb": 0.0,
+      "summary": "pid 97648"
+    },
+    {
+      "at": 1781162139.980027,
+      "elapsed_s": 6.07,
+      "step": "boot_health",
+      "ok": false,
+      "peak_rss_mb": 1108.8,
+      "summary": "process exited during boot (rc=-11)"
+    }
+  ],
+  "transcript": "artifacts/live_proof/live_proof_20260611_001533.jsonl"
+}

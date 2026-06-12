@@ -28,8 +28,8 @@ if sys.version_info < (3, 12):  # noqa: UP036 - boot contract asserts a clear ru
 
 import httpx
 
-from core.runtime.errors import record_degradation
 from core.governance_context import local_internal_governed_scope
+from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested, request_shutdown
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.singleton import (
@@ -69,6 +69,9 @@ except _AURA_MAIN_BOUNDARY_ERRORS as exc:
 # Phase 31: Native Apple Silicon Resilience Fixes
 # 0. Force 'spawn' on macOS to prevent Cocoa/XPC deadlocks in child actors
 if sys.platform == "darwin":
+    os.environ["OPENCV_VIDEOIO_AVFOUNDATION_USE_FRAME_RECEIVER"] = "0"
+    os.environ["PYAV_SKIP_AVF_FRAME_RECEIVER"] = "1"
+
     with contextlib.suppress(RuntimeError):
         multiprocessing.set_start_method("spawn", force=True)
 
@@ -82,22 +85,38 @@ if sys.platform == "darwin":
     # eagerly load both libraries here with stderr muted, which absorbs the
     # one-shot duplicate-class notice and leaves subsequent transitive imports
     # silent.
-    try:
-        _devnull_fd = os.open(os.devnull, os.O_WRONLY)
-        _saved_stderr = os.dup(2)
+    native_media_preload = os.environ.get("AURA_PRELOAD_NATIVE_MEDIA", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    safe_desktop_context = any(
+        os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+        for name in ("AURA_SAFE_BOOT_DESKTOP", "AURA_LAUNCHED_FROM_APP", "AURA_HEADLESS")
+    ) or any(arg in sys.argv for arg in ("--headless", "--desktop", "--gui-window"))
+
+    if native_media_preload and not safe_desktop_context:
         try:
-            os.dup2(_devnull_fd, 2)
-            import av as _av  # noqa: F401  (ordering matters — av first)
-            import cv2 as _cv2  # noqa: F401  (eager load to absorb dup warning)
-        finally:
-            os.dup2(_saved_stderr, 2)
-            os.close(_devnull_fd)
-            os.close(_saved_stderr)
-    except ImportError as exc:
-        logger.debug("Optional AV/OpenCV preload skipped: %s", exc)
-    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
-        # Never let the dylib suppression block boot.
-        record_degradation("aura_main", exc)
+            _devnull_fd = os.open(os.devnull, os.O_WRONLY)
+            _saved_stderr = os.dup(2)
+            try:
+                os.dup2(_devnull_fd, 2)
+                import av as _av  # noqa: F401  (ordering matters — av first)
+                import cv2 as _cv2  # noqa: F401  (eager load to absorb dup warning)
+            finally:
+                os.dup2(_saved_stderr, 2)
+                os.close(_devnull_fd)
+                os.close(_saved_stderr)
+        except ImportError as exc:
+            logger.debug("Optional AV/OpenCV preload skipped: %s", exc)
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+            # Never let the dylib suppression block boot.
+            record_degradation("aura_main", exc)
+    else:
+        logger.debug(
+            "Optional AV/OpenCV preload skipped: disabled for stable desktop boot."
+        )
 
 # Early .env loading — ensures AURA_LOCAL_BACKEND and other env vars are
 # available BEFORE module-level code in model_registry.py reads os.getenv().
@@ -1003,7 +1022,7 @@ def _install_systemwide_memory_protection() -> None:
                 action="continued boot without RLIMIT_DATA heap ceiling",
                 severity="warning",
             )
-    except (OSError, resource.error) as exc:
+    except OSError as exc:
         record_degradation(
             _AURA_MAIN_DEGRADATION_KEY,
             exc,
@@ -2391,8 +2410,13 @@ def main():
         args.server = True
         args.desktop = False
         args.gui_window = False
+        os.environ["AURA_HEADLESS"] = "1"
+        os.environ.setdefault("AURA_EAGER_LOCAL_SENSORY_BOOT", "0")
+        os.environ.setdefault("AURA_ENABLE_PROACTIVE_VISION", "0")
         # Headless demo mode should stay local even when public API mode is enabled.
         args.host = "127.0.0.1"
+    elif args.desktop:
+        os.environ.setdefault("AURA_EAGER_LOCAL_SENSORY_BOOT", "0")
 
     if not args.gui_window:
         check_environment()

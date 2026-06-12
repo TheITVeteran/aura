@@ -3,18 +3,17 @@ Pre-flight startup validation.
 Checks every hard dependency before accepting any user input.
 Fails fast with actionable error messages.
 """
-import inspect
-from core.runtime.errors import record_degradation
-import asyncio
 import importlib
+import importlib.util
+import inspect
 import logging
 import os
-import shutil
 import sys
-import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.StartupValidator")
 
@@ -35,7 +34,7 @@ class StartupValidator:
     """
 
     def __init__(self):
-        self._checks: List[Callable] = []
+        self._checks: list[Callable] = []
 
     def check(self, fn: Callable):
         """Decorator: register a validation check."""
@@ -48,7 +47,7 @@ class StartupValidator:
         Returns True if all CRITICAL checks passed.
         Prints a formatted report regardless.
         """
-        results: List[ValidationResult] = []
+        results: list[ValidationResult] = []
 
         for check_fn in self._checks:
             try:
@@ -124,7 +123,7 @@ def check_python_version() -> ValidationResult:
 
 
 @validator.check
-def check_required_packages() -> List[ValidationResult]:
+def check_required_packages() -> list[ValidationResult]:
     required = [
         ("numpy",           "pip install numpy"),
         ("pydantic",        "pip install pydantic>=2.0"),
@@ -149,8 +148,15 @@ def check_required_packages() -> List[ValidationResult]:
 
 
 @validator.check
-def check_optional_packages() -> List[ValidationResult]:
+def check_optional_packages() -> list[ValidationResult]:
     from core.brain.llm.model_registry import find_llama_server_bin, get_local_backend
+
+    def _module_available(module_name: str) -> bool:
+        """Check optional package presence without executing native imports."""
+        try:
+            return importlib.util.find_spec(module_name) is not None
+        except (ImportError, AttributeError, ModuleNotFoundError, ValueError):
+            return False
 
     backend = get_local_backend()
     optional = [
@@ -165,19 +171,9 @@ def check_optional_packages() -> List[ValidationResult]:
         optional.append(("mlx", "pip install mlx", "Local MLX inference unavailable"))
     results = []
     for pkg, fix, impact in optional:
-        try:
-            if pkg == "webrtcvad":
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore",
-                        message=r"pkg_resources is deprecated as an API.*",
-                        category=UserWarning,
-                    )
-                    importlib.import_module(pkg)
-            else:
-                importlib.import_module(pkg)
+        if _module_available(pkg):
             results.append(ValidationResult(name=f"Optional: {pkg}", passed=True, message=""))
-        except ImportError:
+        else:
             results.append(ValidationResult(
                 name=f"Optional: {pkg}",
                 passed=False,
@@ -203,7 +199,7 @@ def check_optional_packages() -> List[ValidationResult]:
 
 
 @validator.check
-def check_data_directories() -> List[ValidationResult]:
+def check_data_directories() -> list[ValidationResult]:
     # Dynamic import to avoid circularity during early boot
     from core.config import config
     results = []

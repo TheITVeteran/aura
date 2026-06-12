@@ -336,6 +336,115 @@ def test_health_pulse_cannot_claim_healthy_when_conversation_lane_failed(monkeyp
     assert "desktop_cognitive_engine_required_no_reply" in pulse
 
 
+def test_health_pulse_reports_booting_during_boot_grace(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+    from core.subsystem_audit import SubsystemAudit
+
+    required_probes = {
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["inference"]["ok"] = False
+    required_probes["inference"]["components"]["inference_gate"] = False
+    required_probes["all_passed"] = False
+    monkeypatch.setenv("AURA_HEALTH_PULSE_BOOT_GRACE_S", "120")
+    monkeypatch.setattr("core.subsystem_audit.is_shutdown_requested", lambda: False)
+    monkeypatch.setattr(
+        "core.runtime.health_contract.runtime_health_report",
+        lambda: {
+            "healthy": False,
+            "status": "critical",
+            "required_probes": required_probes,
+            "failures": {
+                "critical": [
+                    {
+                        "container_key": "inference_gate",
+                        "error": "is_inference_ready() returned False",
+                    }
+                ],
+                "important": [],
+                "optional": [],
+            },
+        },
+    )
+
+    class WarmingConversationGate:
+        @staticmethod
+        def get_conversation_status():
+            return {
+                "conversation_ready": False,
+                "state": "warming",
+                "warmup_in_flight": True,
+            }
+
+    ServiceContainer.register_instance("inference_gate", WarmingConversationGate())
+    try:
+        audit = SubsystemAudit()
+        for name in audit.SUBSYSTEMS:
+            audit.heartbeat(name)
+
+        pulse = audit.emit_pulse()
+    finally:
+        ServiceContainer.clear()
+
+    assert "Runtime: BOOTING" in pulse
+    assert "Required probes: WARMING" in pulse
+    assert "Runtime: CRITICAL" not in pulse
+    assert "❌ contract/critical" not in pulse
+
+
+def test_health_pulse_reports_shutdown_without_failure_noise(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+    from core.subsystem_audit import SubsystemAudit
+
+    required_probes = {
+        group: {"ok": False, "components": {key: False for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = False
+    monkeypatch.setattr("core.subsystem_audit.is_shutdown_requested", lambda: True)
+    monkeypatch.setattr(
+        "core.runtime.health_contract.runtime_health_report",
+        lambda: {
+            "healthy": False,
+            "status": "critical",
+            "required_probes": required_probes,
+            "failures": {
+                "critical": [{"container_key": "kernel_interface", "error": "stopping"}],
+                "important": [],
+                "optional": [],
+            },
+        },
+    )
+
+    class StoppingConversationGate:
+        @staticmethod
+        def get_conversation_status():
+            return {
+                "conversation_ready": False,
+                "state": "failed",
+                "last_failure_reason": "conversation lane unavailable",
+            }
+
+    ServiceContainer.register_instance("inference_gate", StoppingConversationGate())
+    try:
+        audit = SubsystemAudit()
+        for name in audit.SUBSYSTEMS:
+            audit.heartbeat(name)
+
+        pulse = audit.emit_pulse()
+    finally:
+        ServiceContainer.clear()
+
+    assert "Runtime: SHUTTING_DOWN" in pulse
+    assert "Required probes: SHUTDOWN" in pulse
+    assert "Conversation: STOPPING" in pulse
+    assert "❌ contract/critical" not in pulse
+    assert "❌ conversation_lane" not in pulse
+
+
 def test_joy_social_background_tick_does_not_start_during_proof(monkeypatch):
     from skills.joy_social_integration import JoySocialCoordinator
 

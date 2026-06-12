@@ -1,11 +1,24 @@
-from core.runtime.errors import record_degradation
 import logging
-import time
 import os
+import time
+from typing import Any
+
 import psutil
-from typing import Any, Dict, List
+
+from core.runtime.errors import record_degradation
+from core.runtime.shutdown_coordinator import is_shutdown_requested
 
 logger = logging.getLogger("Aura.SubsystemAudit")
+
+
+def _health_pulse_boot_grace_s() -> float:
+    raw = os.getenv("AURA_HEALTH_PULSE_BOOT_GRACE_S") or os.getenv(
+        "AURA_WATCHDOG_BOOT_GRACE_S", "120"
+    )
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError, OverflowError):
+        return 120.0
 
 
 def _conversation_lane_is_standby(lane: dict[str, Any] | None) -> bool:
@@ -78,8 +91,8 @@ class SubsystemAudit:
     }
     
     def __init__(self):
-        self._heartbeats: Dict[str, float] = {}
-        self._failures: Dict[str, List[Dict[str, Any]]] = {}
+        self._heartbeats: dict[str, float] = {}
+        self._failures: dict[str, list[dict[str, Any]]] = {}
         self._last_health_pulse = time.time()
         self._health_pulse_interval = 15  # TEMPORARY TEST: Emit full health report every 15s
         self._cycle_counts = 0
@@ -105,7 +118,7 @@ class SubsystemAudit:
             self._failures[subsystem_name] = history[-5:]
         logger.error("🚨 Subsystem [%s] reported failure: %s", subsystem_name, error)
 
-    def get_status(self, subsystem_name: str | None = None) -> Dict[str, Any]:
+    def get_status(self, subsystem_name: str | None = None) -> dict[str, Any]:
         """Get subsystem health.
 
         With a name, returns that subsystem's health. Without a name, returns
@@ -146,7 +159,7 @@ class SubsystemAudit:
             "last_error": failures[-1]["error"] if failures else None
         }
     
-    def check_health(self) -> Dict[str, Any]:
+    def check_health(self) -> dict[str, Any]:
         """Check all subsystems and return their status."""
         now = time.time()
         report = {}
@@ -265,13 +278,34 @@ class SubsystemAudit:
         conversation_ok = bool(conversation_ready or conversation_standby)
         conversation_state = str(conversation_lane.get("state", "unknown") or "unknown").lower()
         contract_status = str(contract.get("status", "unknown") if isinstance(contract, dict) else "unknown")
-        probe_status = "PASS" if required_ok else "FAIL"
-        conversation_status = (
-            "PASS" if conversation_ready else "STANDBY" if conversation_standby else "FAIL"
+        shutdown_active = is_shutdown_requested()
+        boot_grace_active = uptime <= _health_pulse_boot_grace_s()
+        boot_warming = (
+            boot_grace_active
+            and not required_ok
+            and not shutdown_active
+            and conversation_state in {"cold", "warming", "recovering", "standby", "unknown", ""}
         )
+        if shutdown_active:
+            probe_status = "SHUTDOWN"
+            conversation_status = "STOPPING"
+        elif boot_warming:
+            probe_status = "WARMING"
+            conversation_status = "STANDBY" if conversation_standby else "WARMING"
+        else:
+            probe_status = "PASS" if required_ok else "FAIL"
+            conversation_status = (
+                "PASS" if conversation_ready else "STANDBY" if conversation_standby else "FAIL"
+            )
         if contract_healthy and required_ok and subsystem_ok and conversation_ok:
             runtime_status = contract_status.upper()
             subsystem_status = "PASS"
+        elif shutdown_active:
+            runtime_status = "SHUTTING_DOWN"
+            subsystem_status = "PASS" if subsystem_ok else "STOPPING"
+        elif boot_warming:
+            runtime_status = "BOOTING"
+            subsystem_status = "PASS" if subsystem_ok else "WARMING"
         elif not required_ok:
             runtime_status = "CRITICAL"
             subsystem_status = "FAIL" if not subsystem_ok else "PASS"
@@ -286,25 +320,22 @@ class SubsystemAudit:
             f"Subsystem audit: {subsystem_status} | Conversation: {conversation_status} | "
             f"Heartbeats: {active_count}/{len(self.SUBSYSTEMS)} ACTIVE"
         )
-        if not contract_healthy or not required_ok:
+        if boot_warming:
+            lines.append("  ⏳ boot: required runtime probes are still warming.")
+        if not shutdown_active and not boot_warming and (not contract_healthy or not required_ok):
             failures = contract.get("failures", {}) if isinstance(contract, dict) else {}
             for tier in ("critical", "important"):
                 for failure in failures.get(tier, [])[:3]:
                     if not isinstance(failure, dict):
                         continue
-                    lines.append(
-                        "  ❌ contract/%s: %s (%s)"
-                        % (
-                            tier,
-                            failure.get("container_key") or failure.get("name") or "unknown",
-                            failure.get("error") or failure.get("liveness") or "failed",
-                        )
-                    )
-        if required_ok and contract_healthy and not subsystem_ok:
+                    name = failure.get("container_key") or failure.get("name") or "unknown"
+                    reason = failure.get("error") or failure.get("liveness") or "failed"
+                    lines.append(f"  ❌ contract/{tier}: {name} ({reason})")
+        if required_ok and contract_healthy and not subsystem_ok and not shutdown_active:
             lines.append(
                 "  ❌ subsystem_audit: required subsystem heartbeat contract not satisfied"
             )
-        if not conversation_ok:
+        if not conversation_ok and not shutdown_active and not boot_warming:
             reason = str(conversation_lane.get("last_failure_reason", "") or "conversation lane unavailable")
             lines.append(
                 f"  ❌ conversation_lane: {conversation_state} ({reason})"

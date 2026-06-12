@@ -1,8 +1,11 @@
 """Runtime contract tests for MLX client/worker hardening."""
 
+import asyncio
 import os
 import sys
 import types
+
+import pytest
 
 
 def test_setup_worker_env_not_called_at_import():
@@ -113,6 +116,37 @@ def test_record_mlx_degradation_preserves_action_and_severity():
     assert recent
     assert recent[0].severity == "error"
     assert recent[0].action == "marked lane failed and applied spawn backoff"
+
+
+@pytest.mark.asyncio
+async def test_warmup_precompile_shutdown_cancellation_is_not_degradation(monkeypatch):
+    from core.brain.llm import mlx_client
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = MLXLocalClient.__new__(MLXLocalClient)
+    client.model_path = "/models/Aura-32B"
+
+    async def cancelled_generation(*_args, **_kwargs):
+        await asyncio.sleep(0)
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(client, "_generate_inner", cancelled_generation)
+    monkeypatch.setattr(mlx_client, "is_shutdown_requested", lambda: True)
+    monkeypatch.setattr(
+        mlx_client,
+        "_record_mlx_degradation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("shutdown cancellation must not record MLX degradation")
+        ),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await client._run_warmup_precompile(
+            request_is_background=False,
+            foreground_request=True,
+            owner_name="warmup:Aura-32B",
+            warmup_timeout=1.0,
+        )
 
 
 def _install_worker_fakes(monkeypatch, mlx_worker, *, load_impl, steering_engine=None):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -22,9 +23,40 @@ _BOOT_SENSORY_RECOVERABLE_ERRORS = (
     ValueError,
 )
 
+_TRUE_VALUES = {"1", "true", "yes", "on", "enabled"}
+_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
+
 
 def _error_summary(error: BaseException) -> str:
     return f"{type(error).__qualname__}: {error}"[:240]
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in _TRUE_VALUES
+
+
+def _explicit_env_flag(name: str) -> bool | None:
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    normalized = raw.strip().lower()
+    if normalized in _TRUE_VALUES:
+        return True
+    if normalized in _FALSE_VALUES:
+        return False
+    return None
+
+
+def _eager_local_sensory_boot_enabled() -> bool:
+    explicit = _explicit_env_flag("AURA_EAGER_LOCAL_SENSORY_BOOT")
+    if explicit is not None:
+        return explicit
+    if _env_flag("AURA_HEADLESS") or _env_flag("AURA_SAFE_BOOT_DESKTOP"):
+        return False
+    return True
 
 
 class BootSensoryMixin:
@@ -37,14 +69,29 @@ class BootSensoryMixin:
     def _sensory_boot_report(self) -> dict[str, Any]:
         report = getattr(self, "sensory_boot", None)
         if not isinstance(report, dict):
-            report = {"completed": [], "degraded": {}, "registered": {}, "scheduled": []}
+            report = {
+                "completed": [],
+                "degraded": {},
+                "registered": {},
+                "scheduled": [],
+                "skipped": [],
+            }
             self.sensory_boot = report
         else:
             report.setdefault("completed", [])
             report.setdefault("degraded", {})
             report.setdefault("registered", {})
             report.setdefault("scheduled", [])
+            report.setdefault("skipped", [])
         return report
+
+    def _skip_boot_sensory_lane(self, lane: str, reason: str) -> None:
+        report = self._sensory_boot_report()
+        skipped = report.setdefault("skipped", [])
+        if lane not in skipped:
+            skipped.append(lane)
+        report.setdefault("skip_reasons", {})[lane] = reason
+        logger.info("%s sensory boot lane deferred: %s", lane, reason)
 
     def _record_boot_sensory_degradation(
         self,
@@ -103,6 +150,7 @@ class BootSensoryMixin:
 
     async def _init_sensory_systems(self):
         """Initialize ears and other sensory inputs."""
+        eager_local_sensory = _eager_local_sensory_boot_enabled()
 
         async def _init_ears():
             from core.senses.ears import SovereignEars
@@ -119,20 +167,28 @@ class BootSensoryMixin:
             self._register_sensory_service("vision", vision)
             logger.info("👁️  Sovereign Vision Active")
 
-        await asyncio.gather(
-            self._run_sensory_lane(
-                "ears",
-                "Skipped hearing lane; sensory boot continues with remaining modalities",
-                _init_ears,
-                severity="warning",
-            ),
-            self._run_sensory_lane(
-                "vision",
-                "Skipped vision lane; sensory boot continues with remaining modalities",
-                _init_vision,
-                severity="warning",
-            ),
-        )
+        if eager_local_sensory:
+            await asyncio.gather(
+                self._run_sensory_lane(
+                    "ears",
+                    "Skipped hearing lane; sensory boot continues with remaining modalities",
+                    _init_ears,
+                    severity="warning",
+                ),
+                self._run_sensory_lane(
+                    "vision",
+                    "Skipped vision lane; sensory boot continues with remaining modalities",
+                    _init_vision,
+                    severity="warning",
+                ),
+            )
+        else:
+            reason = (
+                "local audio/screen adapters are lazy in headless or desktop-safe boot "
+                "to keep native media imports out of the main cognitive runtime"
+            )
+            self._skip_boot_sensory_lane("ears", reason)
+            self._skip_boot_sensory_lane("vision", reason)
 
         async def _terminal_monitor():
             from core.terminal_monitor import get_terminal_monitor

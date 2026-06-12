@@ -3254,6 +3254,7 @@ class MLXLocalClient:
                 origin_label.strip().lower() == "baseline"
                 or purpose_label.strip().lower().endswith("_baseline")
             )
+            shutdown_cancel = _runtime_shutdown_requested()
             if expected_cancel_reason:
                 logger.info(
                     "🧹 [MLX] Generation cancelled for %s during expected reboot (%s).",
@@ -3265,13 +3266,18 @@ class MLXLocalClient:
                     "🧪 [MLX] Baseline generation cancelled for %s by benchmark timeout.",
                     os.path.basename(self.model_path),
                 )
+            elif shutdown_cancel:
+                logger.info(
+                    "🛑 [MLX] Generation cancelled for %s during runtime shutdown.",
+                    os.path.basename(self.model_path),
+                )
             else:
                 logger.warning(
                     "🛑 [MLX] Generation cancelled for %s. Preserving worker unless it is unhealthy.",
                     os.path.basename(self.model_path),
                 )
             self._pending_generations.pop(req_id, None)
-            if not expected_cancel_reason and not benchmark_baseline_cancel and (
+            if not expected_cancel_reason and not benchmark_baseline_cancel and not shutdown_cancel and (
                 foreground_request
                 or (
                     self._is_primary_or_deep_lane()
@@ -3284,7 +3290,7 @@ class MLXLocalClient:
                     severity="warning",
                     foreground_request=foreground_request,
                 )
-            if not expected_cancel_reason and self._worker_unhealthy():
+            if not expected_cancel_reason and not shutdown_cancel and self._worker_unhealthy():
                 self._deferred_reboot_reason = "cancelled_unhealthy"
             raise
         except TimeoutError:
@@ -3496,7 +3502,20 @@ class MLXLocalClient:
                 self._last_ready_at = time.time()
                 logger.info("🔥 [MLX] Warmup complete — Metal shaders compiled.")
                 return
-            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
+            except asyncio.CancelledError as exc:
+                last_exc = exc
+                if _runtime_shutdown_requested():
+                    logger.info(
+                        "🛑 [MLX] Warmup pre-compile cancelled for %s during runtime shutdown.",
+                        os.path.basename(self.model_path),
+                    )
+                    raise
+                _record_mlx_degradation(
+                    exc,
+                    action="retried or recycled warmup precompile after cancellation",
+                )
+                raise
+            except (RuntimeError, TimeoutError, AttributeError) as exc:
                 last_exc = exc
                 _record_mlx_degradation(
                     exc,

@@ -1,3 +1,4 @@
+import builtins
 import sys
 import types
 from pathlib import Path
@@ -79,6 +80,40 @@ async def test_sensory_boot_records_failed_modality_and_keeps_other_lanes(monkey
     assert "terminal_monitor" in registered
     assert host.terminal_monitor is registered["terminal_monitor"]
     assert host.instincts is not None
+
+
+@pytest.mark.asyncio
+async def test_safe_desktop_sensory_boot_defers_native_audio_and_screen_imports(monkeypatch):
+    from core.orchestrator.mixins.boot.boot_sensory import BootSensoryMixin
+
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    monkeypatch.delenv("AURA_EAGER_LOCAL_SENSORY_BOOT", raising=False)
+
+    original_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name in {"core.senses.ears", "core.senses.screen_vision"}:
+            raise AssertionError(f"{name} should be lazy during safe desktop boot")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    _install_module(monkeypatch, "core.terminal_monitor", get_terminal_monitor=lambda: Service())
+    _install_module(monkeypatch, "core.adaptation.immune_system", ImmuneSystem=Service)
+    _install_module(monkeypatch, "core.utils.sanitizer", BloodBrainBarrier=Service)
+    _install_module(monkeypatch, "core.brain.reasoning_queue", get_reasoning_queue=lambda: Service())
+    _install_module(monkeypatch, "core.senses.sensory_instincts", SensoryInstincts=Service)
+    registered = _patch_container(monkeypatch)
+    host = type("Host", (BootSensoryMixin,), {})()
+
+    await host._init_sensory_systems()
+
+    report = host.sensory_boot
+    assert set(report["skipped"]) >= {"ears", "vision"}
+    assert "ears" not in report["degraded"]
+    assert "vision" not in report["degraded"]
+    assert "vision_engine" not in registered
+    assert "terminal_monitor" in registered
+    assert "immune_barriers" in report["completed"]
 
 
 @pytest.mark.asyncio

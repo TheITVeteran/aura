@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v2`
 Root: `<AURA_ROOT>`
-Generated: `1781192427.307542`
+Generated: `1781225437.2764091`
 
 ## Summary
 
 - Subsystems: 146
 - Python files: 1913
-- Python lines: 515772
+- Python lines: 516112
 - Dependency edges: 798
 - ServiceContainer `.get()` calls: 1560
 - ServiceContainer registrations: 379
@@ -18,8 +18,8 @@ Generated: `1781192427.307542`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>104 files, 24225 lines"]
-    utils["utils<br/>43 files, 5730 lines"]
+    runtime["runtime<br/>104 files, 24238 lines"]
+    utils["utils<br/>43 files, 5751 lines"]
     brain["brain<br/>116 files, 44735 lines"]
     memory["memory<br/>88 files, 19919 lines"]
     consciousness["consciousness<br/>128 files, 59952 lines"]
@@ -51,7 +51,7 @@ graph TD
     autonomy["autonomy<br/>22 files, 7721 lines"]
     reasoning["reasoning<br/>7 files, 3893 lines"]
     self["self<br/>7 files, 2094 lines"]
-    skills["skills<br/>78 files, 17932 lines"]
+    skills["skills<br/>78 files, 18221 lines"]
     autonomic["autonomic<br/>4 files, 882 lines"]
     capabilities["capabilities<br/>13 files, 5036 lines"]
     coordinators["coordinators<br/>9 files, 4247 lines"]
@@ -91,7 +91,7 @@ graph TD
     architect["architect<br/>25 files, 5737 lines"]
     coherence["coherence<br/>2 files, 397 lines"]
     discovery["discovery<br/>4 files, 579 lines"]
-    environment["environment<br/>82 files, 8500 lines"]
+    environment["environment<br/>82 files, 8517 lines"]
     environments["environments<br/>7 files, 748 lines"]
     evolution["evolution<br/>6 files, 1896 lines"]
     introspection["introspection<br/>3 files, 743 lines"]
@@ -971,22 +971,22 @@ graph TD
 | consciousness | 128 | 59952 | 2523064 | 39 | 29 |
 | core_root | 178 | 55054 | 2239510 | 100 | 0 |
 | brain | 116 | 44735 | 1932420 | 42 | 39 |
-| runtime | 104 | 24225 | 857759 | 43 | 124 |
+| runtime | 104 | 24238 | 858444 | 43 | 124 |
 | memory | 88 | 19919 | 799891 | 18 | 34 |
 | orchestrator | 42 | 19040 | 840352 | 125 | 9 |
-| skills | 78 | 17932 | 724244 | 31 | 6 |
+| skills | 78 | 18221 | 736698 | 31 | 6 |
 | phases | 29 | 17721 | 803849 | 33 | 7 |
-| agency | 36 | 14766 | 598168 | 29 | 18 |
+| agency | 36 | 14766 | 598186 | 29 | 18 |
 | adaptation | 26 | 12319 | 492341 | 21 | 14 |
 | resilience | 54 | 12120 | 487531 | 17 | 27 |
 | self_modification | 30 | 11172 | 444320 | 13 | 14 |
-| environment | 82 | 8500 | 331426 | 11 | 2 |
+| environment | 82 | 8517 | 332342 | 11 | 2 |
 | cognitive | 11 | 8106 | 330255 | 9 | 4 |
 | autonomy | 22 | 7721 | 317011 | 17 | 6 |
 | learning | 28 | 7271 | 287595 | 15 | 7 |
 | kernel | 11 | 6152 | 257270 | 25 | 4 |
+| utils | 43 | 5751 | 223418 | 17 | 50 |
 | architect | 25 | 5737 | 239735 | 9 | 2 |
-| utils | 43 | 5730 | 222259 | 17 | 50 |
 | being | 25 | 5394 | 208739 | 4 | 7 |
 | conversation | 9 | 5394 | 199133 | 12 | 7 |
 | senses | 24 | 5258 | 220564 | 19 | 14 |
@@ -1433,8 +1433,8 @@ Review candidates:
 
 ## Degradation Handling
 
-- Total `record_degradation()` calls: 2991
-- Log-and-limp candidates: 2761
+- Total `record_degradation()` calls: 2993
+- Log-and-limp candidates: 2763
 - Nearby fail-closed candidates: 230
 
 Top limp-on files:
