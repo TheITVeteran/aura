@@ -50,47 +50,44 @@ VISIBLE_OBJECTIVE = (
 )
 
 
-def _iter_dicts(node: Any):
-    if isinstance(node, dict):
-        yield node
-        for value in node.values():
-            yield from _iter_dicts(value)
-    elif isinstance(node, (list, tuple)):
-        for item in node:
-            yield from _iter_dicts(item)
+def _visible_staging_evidence(lane_data: Any, pdf_name: str) -> dict[str, Any]:
+    """Verify the visible staging from the lane's step receipts.
 
-
-def _step_records(lane_data: Any) -> list[dict]:
-    """Pull executed-step records (action + ok) out of the skill payload."""
-    records = []
-    for d in _iter_dicts(lane_data):
-        action = str(d.get("action") or "").strip().lower()
-        if action and ("ok" in d or "status" in d):
-            records.append(d)
-    return records
-
-
-def _visible_staging_evidence(lane_data: Any) -> dict[str, bool]:
+    The receipts channel is cross-checked against disk: the render
+    receipt's path must name the PDF we independently found fresh in
+    the journal folder. A receipt stream that matches the disk on the
+    verifiable steps earns trust on the screen-only steps (open_app,
+    hotkey) — claims alone never would.
+    """
     notes_opened = False
     paste_dispatched = False
-    for record in _step_records(lane_data):
-        action = str(record.get("action") or "").lower()
-        target = str(
-            record.get("target")
-            or record.get("app")
-            or record.get("requested_target")
-            or ""
-        ).lower()
-        ok = bool(record.get("ok")) or str(record.get("status") or "").lower() in {
-            "ok",
-            "success",
-            "completed",
-        }
-        if action == "open_app" and "notes" in target and ok:
+    render_path = ""
+    receipts = []
+    if isinstance(lane_data, dict):
+        desktop_result = lane_data.get("desktop_result")
+        if isinstance(desktop_result, dict):
+            receipts = desktop_result.get("receipts") or []
+    for receipt in receipts:
+        if not isinstance(receipt, dict):
+            continue
+        action = str(receipt.get("action") or "").lower()
+        ok = bool(receipt.get("ok"))
+        result = receipt.get("result") if isinstance(receipt.get("result"), dict) else {}
+        if action == "open_app" and ok and "notes" in str(result.get("opened") or "").lower():
             notes_opened = True
-        if action == "hotkey" and ("v" in target or "paste" in target) and ok:
+        if action == "hotkey" and ok and "v" in str(result.get("hotkey") or "").lower():
             paste_dispatched = True
-    return {"notes_opened": notes_opened, "paste_dispatched": paste_dispatched}
+        if action == "render_text_pdf" and ok:
+            render_path = str(result.get("path") or "")
+    receipt_matches_disk = bool(
+        pdf_name and render_path and Path(render_path).name == pdf_name
+    )
+    return {
+        "notes_opened": notes_opened,
+        "paste_dispatched": paste_dispatched,
+        "receipt_count": len(receipts),
+        "receipt_matches_disk": receipt_matches_disk,
+    }
 
 
 class VisibleJournalProof(JournalDemoProof):
@@ -117,7 +114,9 @@ class VisibleJournalProof(JournalDemoProof):
         has_timestamp = bool(_TIMESTAMP_RE.search(text))
         has_self = any(tok in lowered for tok in _SELF_TOKENS) and len(text) > 120
         has_image = _pdf_has_image(pdf) if pdf else False
-        staging = _visible_staging_evidence(payload.get("data"))
+        staging = _visible_staging_evidence(
+            payload.get("data"), pdf.name if pdf else ""
+        )
 
         verified = bool(
             ok
@@ -127,6 +126,7 @@ class VisibleJournalProof(JournalDemoProof):
             and has_image
             and staging["notes_opened"]
             and staging["paste_dispatched"]
+            and staging["receipt_matches_disk"]
         )
         return self.record(
             "visible_journal_chain",
@@ -152,8 +152,7 @@ class VisibleJournalProof(JournalDemoProof):
             has_timestamp=has_timestamp,
             has_self_description=has_self,
             has_embedded_image=has_image,
-            notes_opened=staging["notes_opened"],
-            paste_dispatched=staging["paste_dispatched"],
+            staging_evidence=staging,
         )
 
     def run(self) -> int:  # noqa: D102 - sequence mirrors JournalDemoProof.run

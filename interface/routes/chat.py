@@ -7848,7 +7848,22 @@ async def api_chat(
         allow_runtime_status_fastpath = not is_benchmark and not desktop_requires_cognitive_engine
         allow_governed_action_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
 
-        _desktop_exec_state = {"attempted": False}
+        _desktop_exec_state = {"attempted": False, "result": None}
+
+        def _json_safe_payload(value: Any, *, _depth: int = 0) -> Any:
+            """Bounded JSON-safe projection of a skill result for the wire."""
+            if _depth > 6:
+                return str(value)[:200]
+            if isinstance(value, dict):
+                return {
+                    str(k)[:80]: _json_safe_payload(v, _depth=_depth + 1)
+                    for k, v in list(value.items())[:40]
+                }
+            if isinstance(value, (list, tuple)):
+                return [_json_safe_payload(v, _depth=_depth + 1) for v in list(value)[:40]]
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                return value if not isinstance(value, str) else value[:2000]
+            return str(value)[:500]
 
         async def _apply_desktop_objective_chokepoint(
             final_text: str, status: str
@@ -7880,6 +7895,10 @@ async def api_chat(
                 record_degradation('chat', _exec_exc)
                 _executed = None
             if isinstance(_executed, dict) and _executed.get("response"):
+                # Keep the skill result (step receipts, paths, verification
+                # evidence) so the response payload can carry it — receipts
+                # are surface-visible evidence, not internal bookkeeping.
+                _desktop_exec_state["result"] = _executed.get("result")
                 return (
                     _apply_aura_voice_shaping(str(_executed.get("response") or "")).strip()
                     or final_text,
@@ -8016,6 +8035,12 @@ async def api_chat(
                 "conversation_lane": lane_status,
                 "response_confidence": response_confidence,
             }
+            if _desktop_exec_state.get("result") is not None and str(status).startswith(
+                "desktop_objective"
+            ):
+                response_data["data"] = {
+                    "desktop_result": _json_safe_payload(_desktop_exec_state["result"])
+                }
             if pending_exchange_id:
                 await _complete_logged_exchange(
                     pending_exchange_id,
