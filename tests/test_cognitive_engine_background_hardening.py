@@ -279,6 +279,36 @@ async def test_cognitive_engine_defaults_missing_origin_to_system(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cognitive_engine_user_recovery_uses_bounded_primary_router(monkeypatch):
+    engine = CognitiveEngine()
+    captured = {}
+
+    class _Router:
+        async def think(self, **kwargs):
+            captured.update(kwargs)
+            return "I am still on the live desktop thread and answering the user directly."
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(get=lambda name, default=None: _Router() if name == "llm_router" else default),
+    )
+
+    thought = await engine._reactive_recovery(
+        "Answer directly: are you still on the live desktop thread?",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        "timeout",
+    )
+
+    assert thought.content.startswith("I am still on the live desktop thread")
+    assert captured["prefer_tier"] == "primary"
+    assert captured["foreground_request"] is True
+    assert captured["skip_runtime_payload"] is True
+    assert captured["allow_deep_handoff"] is False
+    assert captured["max_tokens"] <= 384
+
+
+@pytest.mark.asyncio
 async def test_cognitive_engine_strict_answer_recovery_propagates_cancellation(monkeypatch):
     import core.brain.llm_health_router as router_module
 

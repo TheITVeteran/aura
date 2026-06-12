@@ -282,6 +282,26 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertIn("worker_progress_stale", lane["readiness_blockers"])
         self.assertGreaterEqual(lane["heartbeat_age_s"], 100.0)
 
+    def test_ready_lane_with_warmup_foreground_owner_is_not_conversation_ready(self):
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        client._process = ProcessProbe(alive=True)
+        client._init_done = True
+        client._set_lane_state("ready")
+        client._last_heartbeat = 1000.0
+        client._last_progress_at = 1000.0
+        client._last_ready_at = 1000.0
+        client._warmup_in_flight = True
+        client._active_generations = 1
+
+        with replace_dotted("core.brain.llm.mlx_client.time.time", lambda: 1001.0):
+            with replace_dotted("core.brain.llm.mlx_client._foreground_owner_active", lambda: True):
+                with replace_dotted("core.brain.llm.mlx_client._FOREGROUND_OWNER_NAME", "warmup:test"):
+                    lane = client.get_lane_status()
+
+        self.assertFalse(lane["conversation_ready"])
+        self.assertIn("warmup_in_flight", lane["readiness_blockers"])
+        self.assertIn("warmup_foreground_owner", lane["readiness_blockers"])
+
     def test_replace_ipc_queues_closes_previous_queues_before_recreation(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
         old_req_q = self._FakeQueue()
@@ -512,6 +532,8 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["message"], "unit_test_generation_timeout")
         self.assertTrue(payload["force_aborted"])
         self.assertFalse(future.cancelled())
+        self.assertEqual(client._last_generation_completed_at, 0.0)
+        self.assertEqual(client._first_token_sla(foreground_request=True), 120.0)
 
     async def test_worker_sanitizer_finishes_current_request_for_caller_recovery(self):
         worker_source = await asyncio.to_thread(
@@ -1181,6 +1203,12 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
         self.assertEqual(client._deferred_reboot_reason, "recoverable_empty_generation")
+        self.assertEqual(client._last_generation_completed_at, 0.0)
+        self.assertEqual(client._last_user_facing_completed_at, 0.0)
+        self.assertEqual(client._last_visible_readiness_at, 0.0)
+        lane = client.get_lane_status()
+        self.assertFalse(lane["conversation_ready"])
+        self.assertIn("visible_conversation_probe_missing", lane["readiness_blockers"])
 
     async def test_generate_reboots_recoverable_empty_generation_without_failed_lane(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)

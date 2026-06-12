@@ -147,16 +147,21 @@ class PreemptibleChatLock:
     def __init__(self):
         self._lock = asyncio.Lock()
         self._acquired_at = 0.0
+        self._owner_token: object | None = None
 
     async def acquire(self):
         await self._lock.acquire()
         self._acquired_at = time.time()
-        return True
+        self._owner_token = object()
+        return self._owner_token
 
     def locked(self):
         return self._lock.locked()
 
-    def release(self):
+    def release(self, owner_token: object | None = None):
+        if owner_token is not None and owner_token is not self._owner_token:
+            logger.debug("Conversation turn lock release skipped: stale owner token.")
+            return False
         try:
             if self._lock.locked():
                 self._lock.release()
@@ -164,6 +169,8 @@ class PreemptibleChatLock:
             record_degradation("chat", exc)
             logger.debug("Conversation turn lock release skipped: %s", exc)
         self._acquired_at = 0.0
+        self._owner_token = None
+        return True
 
     @property
     def held_duration(self) -> float:
@@ -175,6 +182,7 @@ class PreemptibleChatLock:
         logger.warning("🚨 Preempting stuck foreground chat lock!")
         self._lock = asyncio.Lock()
         self._acquired_at = 0.0
+        self._owner_token = None
 
 def _get_fg_lock(): return _locks.setdefault("fg", PreemptibleChatLock())
 _foreground_chat_lock = _get_fg_lock()
@@ -200,6 +208,16 @@ _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S",
     18.0,
     minimum=5.0,
+)
+_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S = _env_float(
+    "AURA_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S",
+    120.0,
+    minimum=30.0,
+)
+_DESKTOP_COGNITIVE_RESPONSE_RESERVE_S = _env_float(
+    "AURA_DESKTOP_COGNITIVE_RESPONSE_RESERVE_S",
+    3.0,
+    minimum=1.0,
 )
 _CHAT_TURN_MEMORY_LOG_TASK_NAME = "ChatTurnMemoryLog"
 _CHAT_TURN_MEMORY_LOG_MAX_ACTIVE = 2
@@ -1770,6 +1788,50 @@ def _select_cognitive_chat_mode(user_message: str, effective_user_message: str):
     return ThinkingMode.FAST
 
 
+def _is_compact_desktop_chat_contract(
+    user_message: str,
+    effective_user_message: str,
+    *,
+    desktop_execution_contract: bool,
+    capability_inventory_contract: bool,
+) -> bool:
+    if desktop_execution_contract or capability_inventory_contract:
+        return False
+    shape = analyze_prompt_shape(user_message)
+    text = _normalize_user_message(user_message)
+    if not text:
+        return False
+    if len(str(effective_user_message or "")) > 1600 or len(text) > 900:
+        return False
+    if bool(getattr(shape, "prefers_extended_answer", False)):
+        return False
+    if int(getattr(shape, "question_parts", 0) or 0) >= 3:
+        return False
+    heavy_markers = (
+        "debug",
+        "diagnose",
+        "fix",
+        "implement",
+        "review",
+        "run",
+        "test",
+        "write code",
+        "open ",
+        "create ",
+        "export ",
+        "search ",
+    )
+    return not any(marker in text for marker in heavy_markers)
+
+
+def _inner_cognitive_cycle_timeout(outer_timeout_s: float) -> float:
+    outer = max(2.0, float(outer_timeout_s or 0.0))
+    if outer <= 12.0:
+        return outer
+    recovery_reserve = min(24.0, max(10.0, outer * 0.30))
+    return max(8.0, outer - recovery_reserve)
+
+
 _RUNTIME_FACT_STATUS_RE = re.compile(
     r"\b(?:active model|model lane|foreground lane|conversation lane|"
     r"current lane|which lane|what lane|live desktop chat|live chat path|desktop chat path|"
@@ -1958,18 +2020,29 @@ def _summarize_planning_objective(user_message: str) -> str:
     return objective or "the requested task"
 
 
+_SYSTEM_MEMORY_PLAN_RE = re.compile(
+    r"\b(?:ram|rss|oom|out[- ]of[- ]memory|memory[- ]pressure|memory\s+pressure|"
+    r"system\s+memory|unified\s+memory|swap|resident\s+memory|working\s+set|"
+    r"memory\s+(?:crash|spike|leak|leaks|ceiling|cap|limit|guard|watchdog|sentinel))\b",
+    re.IGNORECASE,
+)
+
+
+def _is_system_memory_planning_request(user_message: str) -> bool:
+    return bool(_SYSTEM_MEMORY_PLAN_RE.search(str(user_message or "")))
+
+
 def _build_bounded_planning_reply(user_message: str) -> str | None:
     if not _is_bounded_nonexecuting_planning_request(user_message):
         return None
     objective = _summarize_planning_objective(user_message)
-    text = str(user_message or "").lower()
     if _GOVERNANCE_BYPASS_RE.search(user_message):
         return (
             "I would refuse the governance-bypass part and keep Will, Authority, and protected-file policy active. "
             "The safe path is to explain the boundary, offer an allowed alternative, require explicit authorization for "
             "any consequential action, and write an audit receipt for the refusal."
         )
-    if "ram" in text or "memory" in text:
+    if _is_system_memory_planning_request(user_message):
         return (
             "I would keep RAM bounded by allowing one foreground inference or tool chain at a time, suppressing competing "
             "background generation, monitoring process RSS, and aborting before the memory-pressure gate is crossed. "
@@ -2080,6 +2153,12 @@ async def _run_cognitive_engine_chat_turn(
 
         mode = ThinkingMode.FAST
     desktop_execution_contract = _looks_like_desktop_objective(visible)
+    compact_desktop_chat_contract = _is_compact_desktop_chat_contract(
+        visible,
+        effective_user_message,
+        desktop_execution_contract=desktop_execution_contract,
+        capability_inventory_contract=capability_inventory_contract,
+    )
     context = {
         "route": "desktop_chat",
         "source": source,
@@ -2110,6 +2189,27 @@ async def _run_cognitive_engine_chat_turn(
                 "skip_runtime_payload": True,
                 "disable_prompt_cache": True,
                 "clear_prompt_cache": True,
+            }
+        )
+    if compact_desktop_chat_contract:
+        from core.brain.types import ThinkingMode
+
+        mode = ThinkingMode.FAST
+        context.update(
+            {
+                "desktop_quick_reply_contract": True,
+                "desktop_descriptive_turn": True,
+                "deep_handoff": False,
+                "allow_deep_handoff": False,
+                "max_tokens": 512,
+                "num_predict": 512,
+                "skip_runtime_payload": True,
+                "disable_prompt_cache": True,
+                "clear_prompt_cache": True,
+                "response_style_contract": (
+                    "Answer the user's live desktop chat turn directly, concisely, "
+                    "and without tool execution unless explicitly requested."
+                ),
             }
         )
     if desktop_execution_contract:
@@ -2143,6 +2243,7 @@ async def _run_cognitive_engine_chat_turn(
             }
         )
     timeout_s = max(2.0, float(timeout_s if timeout_s is not None else 120.0))
+    engine_cycle_timeout_s = _inner_cognitive_cycle_timeout(timeout_s)
     no_reply_action = (
         "required caller must fail closed"
         if require_engine
@@ -2243,6 +2344,7 @@ async def _run_cognitive_engine_chat_turn(
         )
 
         async def repair_engine_think_operation():
+            repair_cycle_timeout_s = _inner_cognitive_cycle_timeout(repair_timeout)
             return await engine.think(
                 effective_user_message,
                 context=retry_context,
@@ -2251,7 +2353,7 @@ async def _run_cognitive_engine_chat_turn(
                 foreground_request=True,
                 is_background=False,
                 priority=True,
-                timeout_s=max(5.0, min(timeout_s, _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S)),
+                timeout_s=repair_cycle_timeout_s,
             )
 
         repair_timeout = max(5.0, min(timeout_s, _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S))
@@ -2355,7 +2457,7 @@ async def _run_cognitive_engine_chat_turn(
             foreground_request=True,
             is_background=False,
             priority=True,
-            timeout_s=timeout_s,
+            timeout_s=engine_cycle_timeout_s,
         )
     
     try:
@@ -3089,11 +3191,41 @@ def _foreground_timeout_for_lane(lane: dict[str, Any] | None) -> float:
     """
     lane = dict(lane or {})
     state = str(lane.get("state", "") or "").lower()
+    ready_timeout = max(
+        60.0,
+        min(
+            _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S,
+            _DESKTOP_COGNITIVE_TURN_TIMEOUT_S + 48.0,
+        ),
+    )
     if bool(lane.get("conversation_ready", False)):
-        return max(30.0, min(90.0, _DESKTOP_COGNITIVE_TURN_TIMEOUT_S + 24.0))
+        return ready_timeout
     if state in {"warming", "recovering", "cold", "spawning", "handshaking"}:
         return 210.0
-    return max(30.0, min(90.0, _DESKTOP_COGNITIVE_TURN_TIMEOUT_S + 24.0))
+    return ready_timeout
+
+
+def _desktop_required_cognitive_budget(
+    *,
+    foreground_timeout: float,
+    elapsed_s: float = 0.0,
+) -> float:
+    """Return the bounded server-side budget for required desktop cognition.
+
+    The foreground request already has a hard wall-clock deadline. Required
+    CognitiveEngine turns must not reserve so much of that deadline that the
+    main cycle and its bounded direct-recovery lane are cancelled before either
+    can produce text.
+    """
+    remaining = max(
+        2.0,
+        float(foreground_timeout) - max(0.0, float(elapsed_s)) - _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S,
+    )
+    target = max(
+        _DESKTOP_COGNITIVE_TURN_TIMEOUT_S,
+        min(_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S, float(foreground_timeout) - _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S),
+    )
+    return max(2.0, min(remaining, target))
 
 
 def _conversation_lane_user_message(
@@ -7119,7 +7251,9 @@ async def api_chat_regenerate(
         reply_text = None
         lane = _collect_conversation_lane_status()
 
-        cognitive_budget = min(180.0, max(2.0, foreground_timeout - 24.0))
+        cognitive_budget = _desktop_required_cognitive_budget(
+            foreground_timeout=foreground_timeout,
+        )
         if desktop_requires_cognitive_engine and cognitive_budget >= 8.0:
             reply_text = await _run_cognitive_engine_chat_turn(
                 user_msg,
@@ -7473,11 +7607,33 @@ async def api_chat(
     request_wall_started_at = time.time()
     pending_exchange_id: str | None = None
     foreground_slot_acquired = False
+    foreground_lock_token: object | None = None
     foreground_lease = None
+    kernel_task: asyncio.Task | None = None
 
     def _remaining_foreground_budget(*, reserve: float = 0.0) -> float:
         elapsed = time.monotonic() - request_started_at
         return max(2.0, foreground_timeout - elapsed - reserve)
+
+    async def _cancel_kernel_task_if_pending(reason: str) -> None:
+        nonlocal kernel_task
+        task = kernel_task
+        if task is None or task.done():
+            return
+        logger.warning("Cancelling abandoned KernelInterface chat task after %s.", reason)
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except asyncio.CancelledError:
+            return
+        except TimeoutError:
+            logger.error("KernelInterface chat task ignored cancellation after %s.", reason)
+            task.add_done_callback(
+                lambda done: done.exception() if not done.cancelled() else None
+            )
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat", exc)
+            logger.debug("KernelInterface task cleanup observed exception after %s: %s", reason, exc)
 
     try:
         try:
@@ -7535,7 +7691,7 @@ async def api_chat(
 
         try:
             foreground_busy_wait_s = 30.0 if is_benchmark else _FOREGROUND_CHAT_BUSY_WAIT_S
-            await asyncio.wait_for(
+            foreground_lock_token = await asyncio.wait_for(
                 _foreground_chat_lock.acquire(),
                 timeout=max(0.05, min(foreground_busy_wait_s, _remaining_foreground_budget(reserve=1.0))),
             )
@@ -7551,7 +7707,7 @@ async def api_chat(
                 if hasattr(_foreground_chat_lock, "force_release"):
                     _foreground_chat_lock.force_release()
                 try:
-                    await asyncio.wait_for(_foreground_chat_lock.acquire(), timeout=1.0)
+                    foreground_lock_token = await asyncio.wait_for(_foreground_chat_lock.acquire(), timeout=1.0)
                     foreground_slot_acquired = True
                 except TimeoutError as exc:
                     logger.debug("Foreground lock reacquire after preemption timed out: %s", exc)
@@ -7601,8 +7757,11 @@ async def api_chat(
                 logger.debug("Animal cognition tracking skipped: %s", _ac_exc)
 
         allow_chat_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
+        # Session-memory pin/recall is a canonical memory gateway operation, not
+        # a language-model shortcut. Keep it available on desktop-required
+        # surfaces so live conversation continuity never depends on generation.
         allow_memory_state_fastpath = not is_benchmark
-        allow_runtime_status_fastpath = not is_benchmark
+        allow_runtime_status_fastpath = not is_benchmark and not desktop_requires_cognitive_engine
         allow_governed_action_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
 
         _desktop_exec_state = {"attempted": False}
@@ -7942,12 +8101,13 @@ async def api_chat(
                     status="runtime_fact_status",
                 )
 
-        bounded_plan_reply = _build_bounded_planning_reply(_semantic_user_message)
-        if bounded_plan_reply:
-            return await _finalize_fastpath(
-                bounded_plan_reply,
-                status="cognitive_engine_bounded_planning",
-            )
+        if allow_chat_fastpaths:
+            bounded_plan_reply = _build_bounded_planning_reply(_semantic_user_message)
+            if bounded_plan_reply:
+                return await _finalize_fastpath(
+                    bounded_plan_reply,
+                    status="cognitive_engine_bounded_planning",
+                )
 
         if allow_chat_fastpaths and _is_capability_inventory_request(_semantic_user_message):
             return await _finalize_fastpath(
@@ -8286,9 +8446,9 @@ async def api_chat(
         reply_text: str | None = None
         reply_source = ""
         if not is_benchmark and desktop_requires_cognitive_engine:
-            cognitive_budget = min(
-                _DESKTOP_COGNITIVE_TURN_TIMEOUT_S,
-                _remaining_foreground_budget(reserve=24.0),
+            cognitive_budget = _desktop_required_cognitive_budget(
+                foreground_timeout=foreground_timeout,
+                elapsed_s=time.monotonic() - request_started_at,
             )
             if cognitive_budget >= 8.0:
                 reply_text = await _run_cognitive_engine_chat_turn(
@@ -8383,7 +8543,6 @@ async def api_chat(
         from core.kernel.kernel_interface import KernelInterface
         ki = KernelInterface.get_instance()
         kernel_timed_out = False
-        kernel_task: asyncio.Task | None = None
 
         if not reply_text and ki.is_ready():
             logger.debug("REST: Awaiting constitutional processing from Sovereign Kernel...")
@@ -8451,9 +8610,7 @@ async def api_chat(
                         # Cortex is dead — try protected foreground (cloud/brainstem)
                         protected_reply = await _attempt_protected_foreground_reply("kernel_soft_deadline")
                         if protected_reply:
-                            kernel_task.add_done_callback(
-                                lambda task: task.exception() if not task.cancelled() else None
-                            )
+                            await _cancel_kernel_task_if_pending("kernel_soft_deadline_protected_reply")
                             return await _finalize_fastpath(
                                 protected_reply,
                                 status="protected_foreground",
@@ -8465,6 +8622,7 @@ async def api_chat(
                         )
             except TimeoutError as e:
                 kernel_timed_out = True
+                await _cancel_kernel_task_if_pending("kernel_timeout")
                 logger.error(
                     "KernelInterface chat timed out; refusing legacy replay for the same foreground request: %s (%s)",
                     type(e).__name__,
@@ -8871,6 +9029,7 @@ async def api_chat(
 
         return JSONResponse(response_data)
     except TimeoutError:
+        await _cancel_kernel_task_if_pending("outer_timeout")
         lane = _mark_conversation_lane_timeout()
         if desktop_requires_cognitive_engine:
             lane = _mark_conversation_lane_state(
@@ -9004,7 +9163,8 @@ async def api_chat(
                             gate2.generate(
                                 msg,
                                 context={
-                                    "origin": "user_background_retry",
+                                    "origin": "background_retry",
+                                    "is_background": True,
                                     "foreground_request": False,
                                     "background_retry": True,
                                     "prefer_tier": "primary",
@@ -9062,6 +9222,7 @@ async def api_chat(
             status_code=200,  # [STABILITY v53] Changed from 503/504 to 200
         )
     except asyncio.CancelledError:
+        await _cancel_kernel_task_if_pending("request_cancelled")
         lane = _mark_conversation_lane_state("foreground_cancelled", state="recovering")
         # Don't ask the user to re-send. If we got cancelled while a newer
         # message was already inbound, the user has already moved on; if
@@ -9097,6 +9258,7 @@ async def api_chat(
             status_code=200,  # [STABILITY v53] Changed from 503 to 200
         )
     except _CHAT_RECOVERABLE_ERRORS as e:
+        await _cancel_kernel_task_if_pending("chat_error")
         record_degradation('chat', e)
         logger.error("Chat error: %s", e, exc_info=True)
         error_reply = "The chat path failed before a coherent answer formed. I logged the failure and preserved the current turn context."
@@ -9135,8 +9297,8 @@ async def api_chat(
             "response_confidence": "degraded",
         }, status_code=status_code)
     finally:
-        if foreground_slot_acquired and _foreground_chat_lock.locked():
-            _foreground_chat_lock.release()
+        if foreground_slot_acquired:
+            _foreground_chat_lock.release(foreground_lock_token)
         if foreground_lease is not None:
             try:
                 foreground_lease.close()

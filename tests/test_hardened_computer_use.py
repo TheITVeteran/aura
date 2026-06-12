@@ -154,6 +154,60 @@ async def test_computer_use_type_pre_clicks_and_retries(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_computer_use_click_without_effect_evidence_is_not_success(monkeypatch):
+    skill = ComputerUseSkill()
+
+    class TestPyAutoGUI:
+        def click(self, x, y):
+            return None
+
+    monkeypatch.setattr("core.skills.computer_use.get_pyautogui", lambda: (TestPyAutoGUI(), None))
+    monkeypatch.setattr(skill, "_read_screen_text_macos", lambda: "unchanged")
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    async def controlled_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    result = await skill.execute({"action": "click", "x": 100, "y": 200}, {})
+
+    assert result["ok"] is False
+    assert result["effect_verified"] is False
+    assert result["verification"] == "No obvious state shift detected after retries."
+
+
+@pytest.mark.asyncio
+async def test_computer_use_type_without_effect_evidence_is_not_success(monkeypatch):
+    skill = ComputerUseSkill()
+
+    class TestPyAutoGUI:
+        def typewrite(self, text, interval):
+            return None
+
+    monkeypatch.setattr("core.skills.computer_use.get_pyautogui", lambda: (TestPyAutoGUI(), None))
+    monkeypatch.setattr(skill, "_read_screen_text_macos", lambda: "unchanged")
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    async def controlled_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    result = await skill.execute({"action": "type", "target": "invisible"}, {})
+
+    assert result["ok"] is False
+    assert result["effect_verified"] is False
+    assert result["verification"] == "Typed but could not verify visibility."
+
+
+@pytest.mark.asyncio
 async def test_computer_use_run_command_intercepts(monkeypatch, tmp_path):
     skill = ComputerUseSkill()
 

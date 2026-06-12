@@ -901,6 +901,7 @@ class MLXLocalClient:
         self._last_ready_at = 0.0
         self._last_generation_completed_at = 0.0
         self._last_user_facing_completed_at = 0.0
+        self._last_visible_readiness_at = 0.0
         self._current_gen_future: SharedFuture | None = None
         self._init_future: SharedFuture | None = None
         self._pending_generations: dict[str, SharedFuture] = {}
@@ -1004,9 +1005,7 @@ class MLXLocalClient:
             self._current_first_token_at = now
         self._mark_progress()
 
-    def _mark_generation_completed(self) -> None:
-        now = time.time()
-        self._last_generation_completed_at = now
+    def _clear_active_generation_tracking(self) -> None:
         self._current_request_started_at = 0.0
         self._current_first_token_at = 0.0
         self._last_token_progress_at = 0.0
@@ -1016,6 +1015,12 @@ class MLXLocalClient:
         self._current_requested_max_tokens = 0
         self._current_request_prompt_chars = 0
         self._mark_progress()
+
+    def _mark_generation_completed(self, *, user_facing: bool = False) -> None:
+        self._last_generation_completed_at = time.time()
+        if user_facing:
+            self._last_user_facing_completed_at = self._last_generation_completed_at
+        self._clear_active_generation_tracking()
 
     def _set_lane_state(self, state: str, error: str = "") -> None:
         if state != self._lane_state:
@@ -1240,6 +1245,10 @@ class MLXLocalClient:
             self._last_token_progress_at,
             self._last_generation_completed_at,
         )
+        visible_conversation_anchor = max(
+            float(getattr(self, "_last_visible_readiness_at", 0.0) or 0.0),
+            float(getattr(self, "_last_user_facing_completed_at", 0.0) or 0.0),
+        )
         progress_age_s = max(0.0, now - progress_anchor) if progress_anchor > 0.0 else None
         heartbeat_age_s = (
             max(0.0, now - self._last_heartbeat) if self._last_heartbeat > 0.0 else None
@@ -1257,6 +1266,8 @@ class MLXLocalClient:
             readiness_blockers.append("no_worker_progress")
         elif progress_age_s is not None and progress_age_s > self._stale_after():
             readiness_blockers.append("worker_progress_stale")
+        if self._is_primary_or_deep_lane() and visible_conversation_anchor <= 0.0:
+            readiness_blockers.append("visible_conversation_probe_missing")
         if lane_state == "ready" and not worker_alive:
             lane_state = "cold"
             lane_error = "worker_not_alive"
@@ -1281,6 +1292,15 @@ class MLXLocalClient:
                 lane_state = "recovering"
                 lane_error = recurrent_depth_blocker
                 self._set_lane_state(lane_state, lane_error)
+        foreground_owned = _foreground_owner_active()
+        foreground_owner = _FOREGROUND_OWNER_NAME
+        if self._warmup_in_flight:
+            readiness_blockers.append("warmup_in_flight")
+        if foreground_owned and foreground_owner.startswith("warmup:"):
+            readiness_blockers.append("warmup_foreground_owner")
+        elif foreground_owned and self._active_generations > 0:
+            readiness_blockers.append("active_generation_in_flight")
+        readiness_blockers = list(dict.fromkeys(readiness_blockers))
 
         conversation_ready = not readiness_blockers
         return {
@@ -1289,8 +1309,8 @@ class MLXLocalClient:
             "last_error": lane_error,
             "conversation_ready": conversation_ready,
             "readiness_blockers": readiness_blockers,
-            "foreground_owned": _foreground_owner_active(),
-            "foreground_owner": _FOREGROUND_OWNER_NAME,
+            "foreground_owned": foreground_owned,
+            "foreground_owner": foreground_owner,
             "foreground_owned_at": _FOREGROUND_OWNER_ACQUIRED_AT,
             "last_heartbeat": self._last_heartbeat,
             "heartbeat_age_s": heartbeat_age_s,
@@ -1299,6 +1319,8 @@ class MLXLocalClient:
             "last_token_progress_at": self._last_token_progress_at,
             "last_ready_at": self._last_ready_at,
             "last_generation_completed_at": self._last_generation_completed_at,
+            "last_user_facing_completed_at": self._last_user_facing_completed_at,
+            "last_visible_readiness_at": self._last_visible_readiness_at,
             "last_transition_at": self._lane_transition_at,
             "warmup_attempted": self._warmup_attempted,
             "warmup_in_flight": self._warmup_in_flight,
@@ -1712,8 +1734,9 @@ class MLXLocalClient:
             self._last_token_progress_at = 0.0
             self._last_generation_completed_at = 0.0
             self._last_user_facing_completed_at = 0.0
+            self._last_visible_readiness_at = 0.0
             self._process_started_at = 0.0
-            self._mark_generation_completed()
+            self._clear_active_generation_tracking()
             if self._init_future is not None:
                 _cancel_shared_future(self._init_future)
             self._init_future = None
@@ -3203,7 +3226,6 @@ class MLXLocalClient:
             if res.get("status") == "ok":
                 text = res.get("text", "").strip()
                 self._mark_progress()
-                self._last_generation_completed_at = time.time()
                 if not text:
                     # Empty warmup can prove process/shader liveness, but it
                     # cannot prove conversation readiness. Keep the lane out of
@@ -3261,11 +3283,7 @@ class MLXLocalClient:
                     return None
                 self._consecutive_empty = 0
                 self._set_lane_state("ready")
-                # Record user-facing completions so the cross-client yield
-                # loop knows to keep this worker warm across conversation
-                # turns (see _ensure_worker_alive yield guard).
-                if foreground_request:
-                    self._last_user_facing_completed_at = time.time()
+                self._mark_generation_completed(user_facing=foreground_request)
                 _notify_closed_loop_output(text)
                 return text
             reason = str(res.get("message") or res.get("status") or "generation_failed")
@@ -3354,7 +3372,7 @@ class MLXLocalClient:
                 self._current_gen_future = None
             self._active_generations = max(0, self._active_generations - 1)
             if self._current_request_id == req_id:
-                self._mark_generation_completed()
+                self._clear_active_generation_tracking()
 
     async def think_and_act(
         self,
@@ -3530,6 +3548,9 @@ class MLXLocalClient:
                         raise RuntimeError("warmup_readiness_no_text")
                 self._set_lane_state("ready")
                 self._last_ready_at = time.time()
+                self._last_visible_readiness_at = self._last_ready_at
+                self._warmup_in_flight = False
+                _clear_matching_foreground_owner(owner_name)
                 logger.info("🔥 [MLX] Warmup complete — Metal shaders compiled.")
                 return
             except asyncio.CancelledError as exc:
@@ -3722,6 +3743,7 @@ class MLXLocalClient:
             # includes Metal shader recompile, KV rebuild, and weight reload.
             self._last_generation_completed_at = 0.0
             self._last_user_facing_completed_at = 0.0
+            self._last_visible_readiness_at = 0.0
             self._process_started_at = 0.0
             self._current_request_started_at = 0.0
             self._current_first_token_at = 0.0

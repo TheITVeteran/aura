@@ -1679,6 +1679,16 @@ class HealthAwareLLMRouter:
         # request can slip through the lower MLX guards and re-spawn Brainstem
         # while a protected foreground turn is active.
         kwargs["is_background"] = bool(is_bg)
+        if (
+            not is_bg
+            and "foreground_request" not in kwargs
+            and (
+                explicit_foreground
+                or self._is_user_facing_origin(origin)
+                or purpose in _USER_FACING_PURPOSES
+            )
+        ):
+            kwargs["foreground_request"] = True
         prefer_endpoint = normalize_endpoint_name(kwargs.get("prefer_endpoint"))
         deep_handoff = bool(kwargs.get("deep_handoff") or kwargs.get("allow_deep_handoff"))
         cloud_fallback_explicit = "allow_cloud_fallback" in kwargs

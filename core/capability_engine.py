@@ -1944,21 +1944,26 @@ class CapabilityEngine(AuraBaseModule):
                 argv = shlex.split(str((params or {}).get("target") or ""))
             except ValueError:
                 return None
-            if argv and argv[0] in {
-                "cat",
-                "echo",
-                "find",
-                "git",
-                "grep",
-                "ls",
-                "mkdir",
-                "pip",
-                "pwd",
-                "python3",
-                "touch",
-                "tree",
-            }:
+            if not argv:
+                return None
+            binary = Path(argv[0]).name
+            if binary in {"cat", "echo", "find", "grep", "ls", "pwd", "tree"}:
                 return "sandboxed_compute"
+            if binary == "git":
+                subcommand = argv[1] if len(argv) > 1 else ""
+                if subcommand in {"branch", "diff", "log", "rev-parse", "show", "status"}:
+                    return "sandboxed_compute"
+                return "subprocess"
+            if binary == "python3":
+                if len(argv) == 2 and argv[1] in {"--version", "-V"}:
+                    return "sandboxed_compute"
+                return "subprocess"
+            if binary == "pip":
+                if len(argv) == 2 and argv[1] in {"--version", "-V"}:
+                    return "sandboxed_compute"
+                return "subprocess"
+            if binary in {"mkdir", "touch"}:
+                return "subprocess"
         return None
 
     def _effect_scope_for_execution(
@@ -2029,6 +2034,8 @@ class CapabilityEngine(AuraBaseModule):
             return "critical" if stateful else "high"
         if skill_name in _CRITICAL_ACTION_SKILLS:
             return "critical"
+        if effect_scope == "subprocess":
+            return "high"
         if effect_scope in {"external_io", "state_mutation"}:
             return "medium"
         if meta.metabolic_cost >= 3:

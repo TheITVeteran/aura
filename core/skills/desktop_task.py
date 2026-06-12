@@ -774,9 +774,25 @@ class DesktopTaskSkill(BaseSkill):
             if not isinstance(chars, int) or chars < 0:
                 return False, "missing clipboard character count"
             return True, f"clipboard_chars={chars}"
+        if action == "click":
+            verification = str(result.get("verification") or "").strip()
+            verified = bool(result.get("effect_verified")) or "state shifted" in verification.lower()
+            return (
+                verified,
+                verification or "missing click effect evidence",
+            )
         if action == "hotkey":
             hotkey = str(result.get("hotkey") or "").strip()
-            return (bool(hotkey), f"hotkey={hotkey}" if hotkey else "missing hotkey evidence")
+            verification = str(result.get("verification") or "").strip()
+            verified = bool(result.get("effect_verified")) or "state shifted" in verification.lower()
+            return (
+                bool(hotkey) and verified,
+                f"hotkey={hotkey};{verification}" if hotkey and verification else "missing hotkey effect evidence",
+            )
+        if action == "scroll":
+            verification = str(result.get("verification") or "").strip()
+            verified = bool(result.get("effect_verified")) or "state shifted" in verification.lower()
+            return (verified, verification or "missing scroll effect evidence")
         if action == "wait":
             seconds = result.get("seconds")
             if not isinstance(seconds, int | float):
@@ -785,11 +801,18 @@ class DesktopTaskSkill(BaseSkill):
         if action == "type":
             verification = str(result.get("verification") or "").strip()
             typed = str(result.get("typed") or "").strip()
-            return (bool(typed or verification), verification or f"typed_prefix={typed}")
+            verified = bool(result.get("effect_verified")) or (
+                "confirmed" in verification.lower() or "state shifted" in verification.lower()
+            )
+            evidence = verification or (f"typed_prefix={typed}" if typed else "missing typed text evidence")
+            return (
+                bool(typed) and verified,
+                evidence,
+            )
         if action == "read_screen_text":
             text = str(result.get("text") or "").strip()
             return (bool(text), "screen_text_returned" if text else "missing screen text evidence")
-        return True, "child action reported ok"
+        return False, f"unsupported effect evidence for desktop action {action}"
 
     @staticmethod
     def _generic_open_app_mentions(objective: str) -> list[str]:
@@ -1040,11 +1063,30 @@ class DesktopTaskSkill(BaseSkill):
         return bool(
             re.search(
                 r"\b(?:arrange|resize|drag|focus|select|switch|close|"
-                r"minimi[sz]e|maximi[sz]e|organize)\b",
+                r"minimi[sz]e|maximi[sz]e|organize|click|press|type|paste|"
+                r"enter|fill|choose)\b",
                 str(objective or ""),
                 flags=re.IGNORECASE,
             )
         )
+
+    @staticmethod
+    def _steps_cover_general_os_intent(objective: str, steps: list[DesktopTaskStep]) -> bool:
+        lowered = str(objective or "").lower()
+        actions = {step.action for step in steps}
+        if re.search(r"\b(?:click|press|choose|select|enter)\b", lowered):
+            if not actions & {"click", "hotkey", "run_applescript"}:
+                return False
+        if re.search(r"\b(?:type|paste|fill|write)\b", lowered):
+            if not actions & {"type", "set_clipboard", "hotkey", "run_applescript", "write_text_file"}:
+                return False
+        if re.search(r"\b(?:arrange|resize|drag|minimi[sz]e|maximi[sz]e|organize)\b", lowered):
+            if "run_applescript" not in actions:
+                return False
+        if re.search(r"\b(?:focus|switch|close)\b", lowered):
+            if not actions & {"open_app", "hotkey", "run_applescript"}:
+                return False
+        return True
 
     @classmethod
     def _should_escalate_to_os_automation(
@@ -1061,7 +1103,11 @@ class DesktopTaskSkill(BaseSkill):
         if cls._objective_needs_general_os_automation(objective) and not any(
             step.action == "run_applescript" for step in steps
         ):
-            return looks_like_desktop_objective(objective)
+            if cls._steps_cover_general_os_intent(objective, steps):
+                return False
+            return looks_like_desktop_objective(objective) or any(
+                step.action in {"open_app", "open_url"} for step in steps
+            )
         if not cls._primitive_steps_are_only_observational(steps):
             return False
         return looks_like_desktop_objective(objective)

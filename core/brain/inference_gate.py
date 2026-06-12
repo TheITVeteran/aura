@@ -989,6 +989,7 @@ class InferenceGate:
             ),
         }
         raw_ready = False
+        raw_readiness_blockers: list[str] = []
         if self._mlx_client and hasattr(self._mlx_client, "get_lane_status"):
             raw = self._mlx_client.get_lane_status()
             lane["state"] = str(raw.get("state", lane["state"]) or lane["state"])
@@ -996,7 +997,15 @@ class InferenceGate:
                 raw.get("last_error", "") or lane["last_failure_reason"]
             )
             raw_ready = bool(raw.get("conversation_ready", False))
+            raw_readiness_blockers = [
+                str(blocker)
+                for blocker in (raw.get("readiness_blockers") or [])
+                if str(blocker or "").strip()
+            ]
             lane["conversation_ready"] = raw_ready
+            lane["readiness_blockers"] = raw_readiness_blockers
+            if raw_readiness_blockers and not lane["last_failure_reason"]:
+                lane["last_failure_reason"] = ",".join(raw_readiness_blockers[:3])
             lane["last_transition_at"] = float(raw.get("last_transition_at", 0.0) or 0.0)
             lane["last_ready_at"] = float(raw.get("last_ready_at", 0.0) or 0.0)
             lane["last_progress_at"] = float(raw.get("last_progress_at", 0.0) or 0.0)
@@ -1015,6 +1024,8 @@ class InferenceGate:
                 "last_heartbeat",
                 "last_token_progress_at",
                 "last_generation_completed_at",
+                "last_user_facing_completed_at",
+                "last_visible_readiness_at",
                 "process_started_at",
             ):
                 if telemetry_key in raw:
@@ -1069,7 +1080,12 @@ class InferenceGate:
                 float(lane.get("last_progress_at", 0.0) or 0.0),
             )
         )
-        if raw_ready or (lane_state == "ready" and (recent_success or recent_ready)):
+        if raw_ready:
+            lane["conversation_ready"] = True
+            lane["foreground_endpoint"] = PRIMARY_ENDPOINT
+        elif raw_readiness_blockers:
+            lane["conversation_ready"] = False
+        elif lane_state == "ready" and (recent_success or recent_ready):
             lane["conversation_ready"] = True
             lane["foreground_endpoint"] = PRIMARY_ENDPOINT
         elif lane_state != "ready":

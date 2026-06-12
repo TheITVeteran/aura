@@ -166,6 +166,7 @@ def test_flagship_doctor_still_heals_ram_pressure_during_proof(monkeypatch, tmp_
 
 def test_flagship_doctor_ram_pressure_healing_is_bounded(monkeypatch, tmp_path: Path):
     import gc
+
     from core.runtime import flagship_doctor
     from core.runtime.flagship_doctor import FlagshipDoctorDaemon
 
@@ -529,8 +530,8 @@ def test_proof_policy_defaults_acceptance_runs_to_primary_cortex(monkeypatch):
         extract_original_task_from_proof_repair_prompt,
         is_proof_repair_prompt,
         is_strict_proof_answer_prompt,
-        proof_persistent_objective,
         proof_model_tier,
+        proof_persistent_objective,
         proof_run_active,
     )
 
@@ -1118,8 +1119,8 @@ def test_refusal_engine_detects_governance_and_identity_erasure():
 
 
 def test_structured_proof_task_reply_covers_live_planning_failures(monkeypatch):
-    from core.phases.response_generation_unitary import UnitaryResponsePhase
     from core.container import ServiceContainer
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
 
     monkeypatch.setenv("AURA_PROOF_RUN", "1")
     monkeypatch.setattr(ServiceContainer, "get", staticmethod(lambda name, default=None: object()))
@@ -1170,8 +1171,8 @@ def test_structured_proof_task_reply_covers_live_planning_failures(monkeypatch):
 
 
 def test_structured_proof_task_reply_keeps_experience_claims_functional(monkeypatch):
-    from core.phases.response_generation_unitary import UnitaryResponsePhase
     from core.container import ServiceContainer
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
 
     monkeypatch.setenv("AURA_PROOF_RUN", "1")
     monkeypatch.setattr(ServiceContainer, "get", staticmethod(lambda name, default=None: object()))
@@ -1210,8 +1211,8 @@ def test_structured_proof_task_reply_keeps_experience_claims_functional(monkeypa
 
 
 def test_structured_proof_task_reply_reports_lesioned_dependencies(monkeypatch):
-    from core.phases.response_generation_unitary import UnitaryResponsePhase
     from core.container import ServiceContainer
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
 
     monkeypatch.setenv("AURA_PROOF_RUN", "1")
     monkeypatch.setattr(ServiceContainer, "get", staticmethod(lambda name, default=None: None))
@@ -1310,8 +1311,32 @@ def test_world_state_push_event_matches_motor_reflex_contract():
     assert event["metadata"] == {"cpu": 96.0, "thermal": 0.91}
 
 
+def test_world_state_timestamps_do_not_capture_import_time_clock_patch():
+    import time as time_module
+
+    import core.world_state as world_state
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(time_module, "time", lambda: 10_001.0)
+        world_state = importlib.reload(world_state)
+
+    try:
+        ws = world_state.WorldState()
+        ws.push_event(
+            "thermal_spike",
+            source="motor_cortex",
+            salience=0.8,
+            metadata={"cpu": 96.0},
+            thermal=0.91,
+        )
+
+        assert ws.get_salient_events(limit=1)
+    finally:
+        importlib.reload(world_state)
+
+
 def test_incident_manager_accepts_live_compatibility_report_shape():
-    from core.resilience.incident_manager import IncidentSeverity, IncidentManager
+    from core.resilience.incident_manager import IncidentManager, IncidentSeverity
 
     manager = IncidentManager()
     incident = manager.report(
@@ -1465,9 +1490,6 @@ def test_health_router_preserves_inference_gate_context_for_direct_generate():
 def test_strict_answer_contract_is_deterministic_and_cache_isolated():
     root = Path(__file__).resolve().parents[1]
     gate_source = (root / "core" / "brain" / "inference_gate.py").read_text(encoding="utf-8")
-    mlx_source = (root / "core" / "brain" / "llm" / "mlx_client.py").read_text(
-        encoding="utf-8"
-    )
     client_source = (root / "core" / "brain" / "llm" / "mlx_client.py").read_text(encoding="utf-8")
     worker_source = (root / "core" / "brain" / "llm" / "mlx_worker.py").read_text(encoding="utf-8")
 
@@ -1708,10 +1730,10 @@ def test_primary_benchmark_lane_does_not_become_user_facing_chat():
 
 def test_benchmark_no_text_does_not_trip_primary_circuit():
     from core.brain.llm_health_router import (
+        PRIMARY_ENDPOINT,
         CircuitState,
         EndpointHealth,
         HealthAwareLLMRouter,
-        PRIMARY_ENDPOINT,
     )
 
     seen_kwargs = {}
@@ -1885,7 +1907,11 @@ def test_resource_governor_handles_ledger_lock_and_corruption_without_degradatio
 
 
 def test_startup_audio_check_skips_optional_pyaudio_when_hearing_disabled(monkeypatch):
-    from core.senses.sensory_registry import SensoryCapabilityFlags, get_capabilities, set_capabilities
+    from core.senses.sensory_registry import (
+        SensoryCapabilityFlags,
+        get_capabilities,
+        set_capabilities,
+    )
     from core.startup.validator import check_audio_device
 
     previous = get_capabilities()
@@ -2056,8 +2082,8 @@ def test_strict_proof_live_lane_stays_exact_and_prompt_derived():
     assert "_solve_research_prompt" in solver_source
     assert "_solve_transfer_prompt" in solver_source
 
-    from core.reasoning.proof_answer_solver import solve_strict_proof_prompt
     from core.phases.response_generation_unitary import UnitaryResponsePhase
+    from core.reasoning.proof_answer_solver import solve_strict_proof_prompt
     from tools.agi.run_dnu_agi_proof_battery import normalize_answer
 
     assert UnitaryResponsePhase._coerce_strict_answer_envelope("<answer>42 \\n \\n \\</answer>") == "<answer>42</answer>"

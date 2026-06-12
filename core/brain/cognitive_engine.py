@@ -859,6 +859,80 @@ class CognitiveEngine:
         )
         return self._empty_thought(mode, "user_cycle_no_response")
 
+    async def _direct_user_facing_recovery(
+        self,
+        objective: str,
+        mode: ThinkingMode,
+        origin: str,
+        reason: str,
+    ) -> Thought | None:
+        if not self._is_user_facing_origin(origin):
+            return None
+
+        container = get_container()
+        router = container.get("llm_router", default=None)
+        if router is None or not hasattr(router, "think"):
+            return None
+
+        max_tokens = 384 if len(str(objective or "")) <= 900 else 640
+        system_prompt = (
+            "You are Aura's live CognitiveEngine recovery path. The main phase loop "
+            "timed out or failed, but the user still needs one coherent answer. "
+            "Answer the current user request directly and honestly. Do not mention "
+            "reactive recovery, fallback, internal errors, hidden gates, or implementation "
+            "details unless the user specifically asked for them."
+        )
+        try:
+            content = await asyncio.wait_for(
+                router.think(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": objective},
+                    ],
+                    origin=f"recovery_{origin}",
+                    prefer_tier="primary",
+                    foreground_request=True,
+                    protected_foreground_lane=True,
+                    is_background=False,
+                    deep_handoff=False,
+                    allow_deep_handoff=False,
+                    allow_cloud_fallback=False,
+                    skip_runtime_payload=True,
+                    disable_prompt_cache=True,
+                    clear_prompt_cache=True,
+                    max_tokens=max_tokens,
+                    num_predict=max_tokens,
+                    timeout=15.0,
+                ),
+                timeout=17.0,
+            )
+        except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as rec_err:
+            record_degradation(
+                "cognitive_engine",
+                rec_err,
+                severity="degraded",
+                action="continued after bounded user-facing direct recovery failed",
+            )
+            logger.warning("Bounded CognitiveEngine direct recovery failed (%s): %s", reason, rec_err)
+            return None
+
+        text = str(content or "").strip()
+        if not text or text == "…" or text.startswith("background_thought_suppressed"):
+            return None
+
+        thought = Thought(
+            id=str(uuid.uuid4()),
+            content=text,
+            mode=mode,
+            confidence=0.65,
+            reasoning=[
+                f"Bounded user-facing direct recovery succeeded after cognitive failure: {reason}",
+                "Recovery used the governed primary router with compact payload and no deep handoff.",
+            ],
+        )
+        self.thoughts.append(thought)
+        return thought
+
     async def _reactive_recovery(
         self, objective: str, mode: ThinkingMode, origin: str, reason: str
     ) -> Thought:
@@ -941,6 +1015,15 @@ class CognitiveEngine:
             )
             if structured is not None:
                 return structured
+
+            direct_recovery = await self._direct_user_facing_recovery(
+                objective,
+                mode,
+                origin,
+                reason,
+            )
+            if direct_recovery is not None:
+                return direct_recovery
 
             # 3. Last-resort fallback (natural, human-sounding)
             fallback_msg = "Reactive recovery reached its hard fallback before a coherent answer formed; the degraded turn was logged."

@@ -56,11 +56,38 @@ def _fake_computer_use_result(params):
     if action == "set_clipboard":
         return {"ok": True, "action": action, "chars": len(str(target))}
     if action == "hotkey":
-        return {"ok": True, "action": action, "hotkey": target}
+        return {
+            "ok": True,
+            "action": action,
+            "hotkey": target,
+            "effect_verified": True,
+            "verification": "State shifted.",
+        }
+    if action == "scroll":
+        return {
+            "ok": True,
+            "action": action,
+            "scrolled": int(target or 3),
+            "effect_verified": True,
+            "verification": "State shifted.",
+        }
+    if action == "click":
+        return {
+            "ok": True,
+            "action": action,
+            "verification": "State shifted.",
+            "effect_verified": True,
+        }
     if action == "wait":
         return {"ok": True, "action": action, "seconds": float(target or 1.0)}
     if action == "type":
-        return {"ok": True, "action": action, "typed": str(target)[:50], "verification": "state shifted"}
+        return {
+            "ok": True,
+            "action": action,
+            "typed": str(target)[:50],
+            "verification": "Text confirmed on screen or state shifted.",
+            "effect_verified": True,
+        }
     return {"ok": True, "action": action, "summary": f"{action} ok"}
 
 
@@ -546,6 +573,78 @@ async def test_desktop_task_escalates_unrepresented_desktop_workflow_to_os_autom
     assert receipt["action"] == "os_automation"
     assert receipt["effect_verified"] is True
     assert receipt["effect_evidence"] == "receipt_id=receipt-os-1"
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_escalates_app_plus_unrepresented_action(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            if skill_name == "os_automation":
+                return {
+                    "ok": True,
+                    "result": "pressed calculator keys and verified result",
+                    "receipt_id": "receipt-os-calculator",
+                    "adapter": "applescript",
+                }
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    skill = DesktopTaskSkill()
+    result = await skill.execute(
+        {
+            "objective": "Open Calculator and click 2 plus 3 equals.",
+            "steps": [],
+        },
+        {"origin": "desktop_ui"},
+    )
+
+    assert result["ok"] is True
+    assert result["planner"] == "os_automation_escalation"
+    assert [call[0] for call in calls] == ["os_automation"]
+    assert result["receipts"][0]["effect_evidence"] == "receipt_id=receipt-os-calculator"
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_rejects_unverified_type_claim(monkeypatch):
+    from core.container import ServiceContainer
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            return {
+                "ok": True,
+                "typed": "hello",
+                "verification": "Typed but could not verify visibility.",
+            }
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    skill = DesktopTaskSkill()
+    result = await skill.execute(
+        {
+            "objective": "Type into the current app.",
+            "steps": [{"action": "type", "target": "hello"}],
+        },
+        {"origin": "desktop_ui"},
+    )
+
+    assert result["ok"] is False
+    assert result["steps_completed"] == 0
+    assert result["failures"][0]["effect_verified"] is False
+    assert result["failures"][0]["effect_evidence"] == "Typed but could not verify visibility."
 
 
 def test_desktop_task_discovered_and_ranked_for_chained_desktop_prompt(monkeypatch):

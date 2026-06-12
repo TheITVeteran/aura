@@ -629,6 +629,7 @@ from interface.routes import dashboard as dashboard_routes
 from interface.routes import inner_state as inner_state_routes
 from interface.routes import interaction_signals as interaction_signal_routes
 from interface.routes import memory as memory_routes
+from interface.routes import mission_control as mission_control_routes
 from interface.routes import multimodal as multimodal_routes
 from interface.routes import performance as performance_routes
 from interface.routes import privacy as privacy_routes
@@ -636,7 +637,6 @@ from interface.routes import rpc as rpc_routes
 from interface.routes import settings as settings_routes
 from interface.routes import subsystems as subsystem_routes
 from interface.routes import system as system_routes
-from interface.routes import mission_control as mission_control_routes
 
 checkpoint_service = CheckpointService()
 
@@ -720,6 +720,7 @@ def _collect_legacy_shell_status() -> dict[str, Any]:
 ChatRequest = chat_routes.ChatRequest
 api_chat = chat_routes.api_chat
 _foreground_timeout_for_lane = chat_routes._foreground_timeout_for_lane
+_desktop_required_cognitive_budget = chat_routes._desktop_required_cognitive_budget
 _conversation_lane_user_message = chat_routes._conversation_lane_user_message
 _log_exchange = chat_routes._log_exchange
 api_action_log = subsystem_routes.api_action_log

@@ -348,6 +348,26 @@ def test_capability_engine_edi_scopes_live_user_file_and_desktop_actions():
         desktop_meta,
         {"action": "run_command", "target": "pwd"},
     ) == "sandboxed_compute"
+    assert engine._effect_scope_for_execution(
+        "computer_use",
+        desktop_meta,
+        {"action": "run_command", "target": "git status --short"},
+    ) == "sandboxed_compute"
+    assert engine._effect_scope_for_execution(
+        "computer_use",
+        desktop_meta,
+        {"action": "run_command", "target": "git checkout main"},
+    ) == "subprocess"
+    assert engine._effect_scope_for_execution(
+        "computer_use",
+        desktop_meta,
+        {"action": "run_command", "target": "python3 -c 'print(1)'"},
+    ) == "subprocess"
+    assert engine._effect_scope_for_execution(
+        "computer_use",
+        desktop_meta,
+        {"action": "run_command", "target": "pip install example"},
+    ) == "subprocess"
 
 
 def test_capability_engine_edi_governance_requires_verified_capability_token():

@@ -14,19 +14,22 @@ This feeds into initiative scoring: Aura acts based on what's
 happening in the world, not just internal timers.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import logging
-import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any
 
 from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.WorldState")
+
+
+def _now() -> float:
+    """Read the live wall clock without binding to a patched time function."""
+    return time.time()
 
 
 # ---------------------------------------------------------------------------
@@ -39,9 +42,9 @@ class SalientEvent:
     description: str
     source: str              # "system", "user", "perception", "terminal"
     salience: float = 0.5    # 0-1, how important
-    timestamp: float = field(default_factory=time.time)
+    timestamp: float = field(default_factory=_now)
     ttl: float = 3600.0      # expires after 1h by default
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def expired(self) -> bool:
@@ -57,13 +60,13 @@ class GameState:
     hp_max: int = 0
     hunger: str = "neutral"
     level: int = 1
-    coordinates: Tuple[int, int] = (0, 0)
-    inventory: List[Dict[str, Any]] = field(default_factory=list)
+    coordinates: tuple[int, int] = (0, 0)
+    inventory: list[dict[str, Any]] = field(default_factory=list)
     map_hash: str = ""
     last_action: str = ""
-    salient_changes: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    updated_at: float = field(default_factory=time.time)
+    salient_changes: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    updated_at: float = field(default_factory=_now)
 
 
 @dataclass
@@ -73,7 +76,7 @@ class EnvironmentBelief:
     value: Any
     confidence: float = 0.7
     source: str = "inferred"
-    updated_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=_now)
     ttl: float = 1800.0      # 30 min default
 
     @property
@@ -129,8 +132,8 @@ class WorldState:
         self.ambient_audio_level: float = 0.0      # 0-1 mic RMS energy
         self.voice_activity_detected: bool = False  # VAD flag
         self.last_voice_transcript: str = ""       # most recent speech snippet
-        self.installed_apps: List[str] = []        # discovered installed applications
-        self.automation_permissions: Dict[str, bool] = {
+        self.installed_apps: list[str] = []        # discovered installed applications
+        self.automation_permissions: dict[str, bool] = {
             "accessibility": False,
             "screen_recording": False,
             "microphone": False,
@@ -139,10 +142,10 @@ class WorldState:
         }
 
         # Event queue (salient changes)
-        self._events: Deque[SalientEvent] = deque(maxlen=self._MAX_EVENTS)
+        self._events: deque[SalientEvent] = deque(maxlen=self._MAX_EVENTS)
 
         # Standing beliefs
-        self._beliefs: Dict[str, EnvironmentBelief] = {}
+        self._beliefs: dict[str, EnvironmentBelief] = {}
 
         # Game/Stress-test state
         self.game_state = GameState()
@@ -255,7 +258,7 @@ class WorldState:
         source: str = "system",
         salience: float = 0.5,
         ttl: float = 3600.0,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         **extra_metadata: Any,
     ) -> None:
         """Compatibility event ingress for motor/somatic reflex producers."""
@@ -265,7 +268,7 @@ class WorldState:
 
     def _add_event(self, description: str, source: str,
                    salience: float = 0.5, ttl: float = 3600.0,
-                   metadata: Optional[Dict] = None) -> None:
+                   metadata: dict | None = None) -> None:
         # Dedup: don't add identical events within 60s
         for existing in self._events:
             if (existing.description == description and
@@ -278,7 +281,7 @@ class WorldState:
             metadata=metadata or {},
         ))
 
-    def get_salient_events(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_salient_events(self, limit: int = 10) -> list[dict[str, Any]]:
         """Get most salient non-expired events."""
         self._evict_expired()
         events = sorted(self._events, key=lambda e: e.salience, reverse=True)
@@ -327,7 +330,7 @@ class WorldState:
             source=source, ttl=ttl,
         )
 
-    def get_belief(self, key: str) -> Optional[Any]:
+    def get_belief(self, key: str) -> Any | None:
         belief = self._beliefs.get(key)
         if belief and not belief.expired:
             return belief.value
@@ -361,7 +364,7 @@ class WorldState:
     # Status
     # ------------------------------------------------------------------
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         self.update()
         return {
             "user_idle_s": round(self.user_idle_seconds, 1),
@@ -414,7 +417,7 @@ class WorldState:
 # Singleton
 # ---------------------------------------------------------------------------
 
-_ws_instance: Optional[WorldState] = None
+_ws_instance: WorldState | None = None
 
 
 def get_world_state() -> WorldState:

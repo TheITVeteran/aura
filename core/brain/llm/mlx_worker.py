@@ -1058,6 +1058,7 @@ class WorkerMemorySentinel(threading.Thread):
 def _setup_worker_env():
     import os
     import platform
+
     from core.runtime.subprocess_gateway import get_subprocess_gateway
 
     # [PERFORMANCE] Fast-path: Use environment if already probed by parent
@@ -1584,7 +1585,7 @@ def _mlx_worker_loop(
                 logger.info("🧠 Recurrent Depth ACTIVE — model now thinks before answering.")
             else:
                 recurrent_depth_status["reason"] = "patch_not_applied"
-        except (ImportError, AttributeError, RuntimeError) as rd_exc:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as rd_exc:
             explicit_disable = str(os.environ.get("AURA_RECURRENT_LOOPS", "")).strip() == "0"
             size_disable = str(os.environ.get("AURA_RECURRENT_LOOPS_32B", "")).strip() == "0"
             recurrent_depth_status["required"] = (
@@ -1609,7 +1610,7 @@ def _mlx_worker_loop(
                 "recurrent_depth": recurrent_depth_status,
             }
         )
-    except (ImportError, AttributeError, RuntimeError) as e:
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
         _record_mlx_degradation(
             e,
             action="reported initialization error and exited worker loop before accepting jobs",

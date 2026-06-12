@@ -129,6 +129,9 @@ class LiveProof:
         stamp = time.strftime("%Y%m%d_%H%M%S")
         self.transcript_path = PROOF_DIR / f"live_proof_{stamp}.jsonl"
         self.verdict_path = PROOF_DIR / f"live_proof_{stamp}_verdict.json"
+        self.stdout_path = PROOF_DIR / f"live_proof_{stamp}_stdout.log"
+        self._stdout_handle = None
+        self._boot_count = 0
 
     # ── recording ─────────────────────────────────────────────────────
 
@@ -212,10 +215,19 @@ class LiveProof:
             )
 
         env = build_safe_boot_env(os.environ)
+        self._boot_count += 1
+        if self._stdout_handle is not None:
+            self._stdout_handle.close()
+        self._stdout_handle = open(self.stdout_path, "a", encoding="utf-8")
+        self._stdout_handle.write(
+            f"\n\n===== live_boot_proof boot {self._boot_count} "
+            f"at {time.strftime('%Y-%m-%dT%H:%M:%S%z')} =====\n"
+        )
+        self._stdout_handle.flush()
         self.proc = subprocess.Popen(
             [sys.executable, "aura_main.py", "--headless", "--port", str(self.port)],
             cwd=ROOT,
-            stdout=open(PROOF_DIR / "live_boot_stdout.log", "w"),
+            stdout=self._stdout_handle,
             stderr=subprocess.STDOUT,
             env=env,
             start_new_session=True,
@@ -375,6 +387,8 @@ class LiveProof:
                     False,
                     summary=f"http {resp.status_code}: {resp.text[:200]}",
                     latency_s=round(latency, 1),
+                    response_status_code=resp.status_code,
+                    response_body=resp.text,
                 )
             payload = resp.json()
             text = str(payload.get("response") or "").strip()
@@ -440,6 +454,8 @@ class LiveProof:
                         summary=f"http {resp.status_code}: {resp.text[:180]}",
                         turn=index,
                         latency_s=round(latency, 1),
+                        response_status_code=resp.status_code,
+                        response_body=resp.text,
                     )
                 payload = resp.json()
                 text = str(payload.get("response") or payload.get("reply") or "").strip()
@@ -667,6 +683,10 @@ class LiveProof:
             self.kill_hard()
 
         time.sleep(2.0)
+        if self._stdout_handle is not None:
+            self._stdout_handle.flush()
+            self._stdout_handle.close()
+            self._stdout_handle = None
         orphans = [
             p.pid
             for p in psutil.process_iter(["cmdline"])
@@ -703,6 +723,10 @@ class LiveProof:
                 self.proc.kill()
             except OSError:
                 pass
+        if self._stdout_handle is not None:
+            self._stdout_handle.flush()
+            self._stdout_handle.close()
+            self._stdout_handle = None
 
     # ── orchestration ─────────────────────────────────────────────────
 

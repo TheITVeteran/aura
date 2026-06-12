@@ -1448,6 +1448,36 @@ def test_conversation_status_respects_ready_lane_even_without_recent_generation(
     assert lane["conversation_ready"] is True
 
 
+def test_conversation_status_does_not_promote_ready_lane_with_readiness_blockers():
+    gate = InferenceGate()
+    gate._last_successful_generation_at = time.time()
+
+    class _BlockedReadyLane:
+        def get_lane_status(self):
+            return {
+                "state": "ready",
+                "last_error": "",
+                "conversation_ready": False,
+                "readiness_blockers": ["visible_conversation_probe_missing"],
+                "last_ready_at": time.time(),
+                "last_progress_at": time.time(),
+                "warmup_attempted": True,
+                "warmup_in_flight": False,
+            }
+
+        def is_alive(self):
+            return True
+
+    gate._mlx_client = _BlockedReadyLane()
+
+    lane = gate.get_conversation_status()
+
+    assert lane["state"] == "ready"
+    assert lane["conversation_ready"] is False
+    assert lane["readiness_blockers"] == ["visible_conversation_probe_missing"]
+    assert lane["last_failure_reason"] == "visible_conversation_probe_missing"
+
+
 def test_note_foreground_timeout_schedules_fast_reprewarm(monkeypatch):
     monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
     gate = InferenceGate()

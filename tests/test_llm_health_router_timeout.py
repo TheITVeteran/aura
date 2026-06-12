@@ -384,6 +384,32 @@ async def test_router_stamps_inferred_background_for_local_runtime_client(monkey
 
 
 @pytest.mark.asyncio
+async def test_router_stamps_inferred_foreground_for_user_local_runtime_client(monkeypatch):
+    router = HealthAwareLLMRouter()
+    client = _KwargRecordingGenerateClient()
+    router.register(
+        name="Cortex",
+        url="internal",
+        model="local-primary-test",
+        is_local=True,
+        tier="local",
+        client=client,
+    )
+
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "0")
+    result = await router.think(
+        prompt="Answer the user directly.",
+        origin="user",
+        prefer_tier="primary",
+    )
+
+    assert result == "ready"
+    assert client.calls
+    assert client.calls[0]["is_background"] is False
+    assert client.calls[0]["foreground_request"] is True
+
+
+@pytest.mark.asyncio
 async def test_router_defers_background_local_runtime_during_foreground_quiet_window():
     router = HealthAwareLLMRouter()
     client = _KwargRecordingGenerateClient()
