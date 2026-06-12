@@ -23,6 +23,7 @@ not advertising.
 Usage:
     python tools/live_boot_proof.py [--port 8000] [--boot-timeout 600]
     python tools/live_boot_proof.py --skip-desktop-action
+    python tools/live_boot_proof.py --restart-continuity
 """
 
 from __future__ import annotations
@@ -83,10 +84,18 @@ def build_safe_boot_env(base_env: dict[str, str] | None = None) -> dict[str, str
 
 
 class LiveProof:
-    def __init__(self, *, port: int, boot_timeout_s: float, skip_desktop: bool):
+    def __init__(
+        self,
+        *,
+        port: int,
+        boot_timeout_s: float,
+        skip_desktop: bool,
+        restart_continuity: bool,
+    ):
         self.port = port
         self.boot_timeout_s = boot_timeout_s
         self.skip_desktop = skip_desktop
+        self.restart_continuity = restart_continuity
         self.base = f"http://127.0.0.1:{port}"
         self.proc: subprocess.Popen | None = None
         self.steps: list[dict[str, Any]] = []
@@ -244,13 +253,20 @@ class LiveProof:
 
     # ── exercises ─────────────────────────────────────────────────────
 
-    def chat(self, message: str, *, timeout_s: float = 180.0) -> tuple[bool, str, float]:
+    def chat(
+        self,
+        message: str,
+        *,
+        timeout_s: float = 180.0,
+        session_id: str = "live-proof",
+        headers: dict[str, str] | None = None,
+    ) -> tuple[bool, str, float]:
         started = time.monotonic()
         try:
-            with httpx.Client(timeout=timeout_s) as client:
+            with httpx.Client(timeout=timeout_s, headers=headers) as client:
                 resp = client.post(
                     f"{self.base}/api/chat",
-                    json={"message": message, "session_id": "live-proof"},
+                    json={"message": message, "session_id": session_id},
                 )
             latency = time.monotonic() - started
             if resp.status_code != 200:
@@ -394,6 +410,60 @@ class LiveProof:
             reply=text2[:600],
         )
 
+    def exercise_restart_continuity_turn(self) -> bool:
+        token = f"restart-{int(time.time()) % 100000}"
+        ok1, text1, lat1 = self.chat(
+            f"Remember this codeword across restart: {token}. Just confirm.",
+            session_id="live-proof-restart",
+        )
+        self.guard_rss()
+        if not ok1:
+            return self.record(
+                "chat_restart_continuity",
+                False,
+                summary=f"memory set failed before restart: {text1[:200]}",
+                token=token,
+                set_latency_s=round(lat1, 1),
+            )
+        shutdown_ok = self.shutdown(step="restart_shutdown")
+        if not shutdown_ok:
+            return self.record(
+                "chat_restart_continuity",
+                False,
+                summary="shutdown failed before restart recall",
+                token=token,
+                set_latency_s=round(lat1, 1),
+            )
+        self.proc = None
+        time.sleep(3.0)
+        boot_ok = self.boot()
+        if not boot_ok:
+            return self.record(
+                "chat_restart_continuity",
+                False,
+                summary="reboot failed before restart recall",
+                token=token,
+                set_latency_s=round(lat1, 1),
+            )
+        ok2, text2, lat2 = self.chat(
+            "What codeword did I ask you to remember before restart?",
+            session_id="live-proof-restart-after",
+        )
+        self.guard_rss()
+        recalled = token.lower() in text2.lower()
+        return self.record(
+            "chat_restart_continuity",
+            ok2 and recalled,
+            summary=(
+                f"set {lat1:.1f}s / reboot recall {lat2:.1f}s — "
+                + ("codeword recalled" if recalled else f"NOT recalled ({text2[:160]})")
+            ),
+            token=token,
+            recalled=recalled,
+            set_reply=text1[:400],
+            recall_reply=text2[:800],
+        )
+
     def exercise_desktop_action(self) -> bool:
         if self.skip_desktop:
             return self.record(
@@ -467,9 +537,9 @@ class LiveProof:
 
     # ── shutdown ──────────────────────────────────────────────────────
 
-    def shutdown(self) -> bool:
+    def shutdown(self, *, step: str = "shutdown") -> bool:
         if self.proc is None:
-            return self.record("shutdown", False, summary="no process")
+            return self.record(step, False, summary="no process")
         try:
             stop = subprocess.run(
                 [sys.executable, "aura_main.py", "--stop"],
@@ -505,7 +575,7 @@ class LiveProof:
                 pass
         port_free = not self.port_in_use()
         return self.record(
-            "shutdown",
+            step,
             graceful and not orphans and port_free,
             summary=(
                 f"{stop_note}; graceful={graceful}; orphans={orphans or 'none'}; "
@@ -540,6 +610,8 @@ class LiveProof:
                 passed &= self.exercise_identity_turn()
                 passed &= self.exercise_continuity_turn()
                 passed &= self.exercise_desktop_action()
+                if self.restart_continuity:
+                    passed &= self.exercise_restart_continuity_turn()
                 passed &= self.snapshot_vitals()
         except RuntimeError as exc:
             self.record("abort", False, summary=str(exc))
@@ -568,11 +640,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--boot-timeout", type=float, default=600.0)
     parser.add_argument("--skip-desktop-action", action="store_true")
+    parser.add_argument(
+        "--restart-continuity",
+        action="store_true",
+        help="prove explicit chat memory survives a real Aura process restart",
+    )
     args = parser.parse_args(argv)
     proof = LiveProof(
         port=args.port,
         boot_timeout_s=args.boot_timeout,
         skip_desktop=args.skip_desktop_action,
+        restart_continuity=args.restart_continuity,
     )
     return proof.run()
 

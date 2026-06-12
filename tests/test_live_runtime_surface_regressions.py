@@ -172,6 +172,30 @@ def test_omni_tracer_downgrades_optional_dependency_logs():
     assert classification == "background_degraded"
 
 
+def test_boot_health_contract_reports_booting_before_runtime_ready():
+    from core.orchestrator.boot import _health_contract_boot_log
+    from core.runtime.health_contract import HealthLevel
+
+    level, message = _health_contract_boot_log(
+        HealthLevel.CRITICAL,
+        initialized=False,
+        running=False,
+    )
+
+    assert level == logging.WARNING
+    assert "BOOTING" in message
+    assert "CRITICAL" not in message
+
+    level, message = _health_contract_boot_log(
+        HealthLevel.CRITICAL,
+        initialized=True,
+        running=True,
+    )
+
+    assert level == logging.CRITICAL
+    assert "CRITICAL" in message
+
+
 def test_background_policy_defers_work_during_boot_grace(monkeypatch):
     from core.runtime.background_policy import background_activity_reason
 

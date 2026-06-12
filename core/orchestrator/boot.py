@@ -45,6 +45,28 @@ def _record_boot_degradation(
     record_degradation("boot", exc, severity=severity, action=action)
 
 
+def _health_contract_boot_log(level: Any, *, initialized: bool, running: bool) -> tuple[int, str]:
+    level_name = str(getattr(level, "value", level)).lower()
+    runtime_ready = bool(initialized and running)
+    if level_name == "dead":
+        if not runtime_ready:
+            return (
+                logging.WARNING,
+                "⏳ HEALTH CONTRACT: BOOTING — critical services are still registering",
+            )
+        return logging.CRITICAL, "🚨 HEALTH CONTRACT: DEAD — no critical services alive"
+    if level_name == "critical":
+        if not runtime_ready:
+            return (
+                logging.WARNING,
+                "⏳ HEALTH CONTRACT: BOOTING — critical services are still registering",
+            )
+        return logging.CRITICAL, "🚨 HEALTH CONTRACT: CRITICAL — some critical services missing"
+    if level_name == "degraded":
+        return logging.WARNING, "⚠️ HEALTH CONTRACT: DEGRADED — important services missing"
+    return logging.INFO, "✅ HEALTH CONTRACT: All critical + important services online"
+
+
 class OrchestratorBootMixin(
     BootSensoryMixin,
     BootCognitiveMixin,
@@ -236,8 +258,8 @@ class OrchestratorBootMixin(
 
         # v5.0.1 FIX: Register Facades early so coordinators can resolve them immediately
         try:
-            from core.memory.memory_write_gateway import get_memory_write_gateway
             from core.memory.memory_facade import MemoryFacade
+            from core.memory.memory_write_gateway import get_memory_write_gateway
 
             ServiceContainer.register_instance(
                 "memory_write_gateway",
@@ -959,18 +981,14 @@ class OrchestratorBootMixin(
                     from core.runtime.health_contract import HealthLevel, log_health_report
 
                     verdict = log_health_report()
-                    if verdict.level == HealthLevel.DEAD:
-                        logger.critical("🚨 HEALTH CONTRACT: DEAD — no critical services alive")
+                    log_level, message = _health_contract_boot_log(
+                        verdict.level,
+                        initialized=bool(getattr(self.status, "initialized", False)),
+                        running=bool(getattr(self.status, "running", False)),
+                    )
+                    logger.log(log_level, message)
+                    if verdict.level in (HealthLevel.DEAD, HealthLevel.CRITICAL):
                         self.status.healthy = False
-                    elif verdict.level == HealthLevel.CRITICAL:
-                        logger.critical(
-                            "🚨 HEALTH CONTRACT: CRITICAL — some critical services missing"
-                        )
-                        self.status.healthy = False
-                    elif verdict.level == HealthLevel.DEGRADED:
-                        logger.warning("⚠️ HEALTH CONTRACT: DEGRADED — important services missing")
-                    else:
-                        logger.info("✅ HEALTH CONTRACT: All critical + important services online")
                 except (ImportError, AttributeError, RuntimeError) as hc_err:
                     _record_boot_degradation(
                         hc_err,

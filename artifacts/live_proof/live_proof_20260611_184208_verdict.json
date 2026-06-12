@@ -1,0 +1,1565 @@
+{
+  "schema": "aura.live_boot_proof.v1",
+  "passed": true,
+  "started_at": 1781228528.053031,
+  "finished_at": 1781228614.823919,
+  "peak_rss_mb": 19788.1,
+  "steps": [
+    {
+      "at": 1781228528.098492,
+      "elapsed_s": 0.05,
+      "step": "boot_spawn",
+      "ok": true,
+      "peak_rss_mb": 0.0,
+      "summary": "pid 62628"
+    },
+    {
+      "at": 1781228561.562094,
+      "elapsed_s": 33.51,
+      "step": "boot_health",
+      "ok": true,
+      "peak_rss_mb": 19763.5,
+      "summary": "healthy after 34s (rss 19764MB)",
+      "health": {
+        "heartbeat": {
+          "status": "healthy",
+          "healthy": true,
+          "runtime_probe_healthy": true,
+          "time": 1781228561.528339,
+          "required_probes": {
+            "kernel": {
+              "ok": true,
+              "components": {
+                "kernel_interface": true
+              }
+            },
+            "inference": {
+              "ok": true,
+              "components": {
+                "inference_gate": true,
+                "llm_router": true
+              }
+            },
+            "memory": {
+              "ok": true,
+              "components": {
+                "state_repository": true,
+                "memory_facade": true,
+                "memory_write_gateway": true,
+                "unified_memory_pressure": true
+              }
+            },
+            "scheduler": {
+              "ok": true,
+              "components": {
+                "scheduler": true
+              }
+            },
+            "tool_governance": {
+              "ok": true,
+              "components": {
+                "unified_will": true,
+                "authority_gateway": true,
+                "capability_engine": true
+              }
+            },
+            "all_passed": true
+          },
+          "blockers": [],
+          "boot_phase": "kernel_ready",
+          "conversation_ready": true
+        },
+        "boot": {
+          "version": "Aura Luna v2026.4.20-Zenith",
+          "semver": "2026.4.20-Zenith",
+          "status": "ready",
+          "status_message": "Aura is awake.",
+          "ready": true,
+          "launcher_ready": true,
+          "system_ready": true,
+          "conversation_ready": true,
+          "boot_phase": "kernel_ready",
+          "progress": 100,
+          "mode": "kernel",
+          "checks": {
+            "orchestrator_present": true,
+            "initialized": true,
+            "running": true,
+            "runtime_fresh": true,
+            "healthy": true,
+            "runtime_integrity": true,
+            "runtime_contract_operational": true,
+            "runtime_contract_healthy": true,
+            "runtime_required_probes": true
+          },
+          "orchestrator": {
+            "cycle_count": 347,
+            "last_error": "",
+            "uptime": 27.2
+          },
+          "runtime_age_s": 27.2,
+          "runtime": {
+            "timestamp_utc": "2026-06-12T01:42:41Z",
+            "heartbeat_tick": 1781228561,
+            "self_model": {
+              "version": 74602,
+              "identity_index": 0.0,
+              "name": "Aura",
+              "current_intention": "idle"
+            },
+            "drive_engine": {
+              "energy": 0.0
+            },
+            "affect": {
+              "mood": "Joy",
+              "energy": 93,
+              "curiosity": 4,
+              "frustration": 2,
+              "longing": 2,
+              "upset": 2,
+              "confused": 2,
+              "loneliness": 2,
+              "pride": 2,
+              "empathy": 3,
+              "belonging": 3,
+              "amusement": 2,
+              "inspiration": 2,
+              "relief": 2,
+              "admiration": 2,
+              "stability": 98,
+              "valence": 1.0,
+              "arousal": 1.0,
+              "experiential": {
+                "admiration": 0.02,
+                "amusement": 0.02,
+                "apathy": 0.02,
+                "belonging": 0.03,
+                "boredom": 0.02,
+                "confused": 0.02,
+                "curiosity": 0.04,
+                "dread": 0.02,
+                "empathy": 0.03,
+                "excitement": 0.02,
+                "frustration": 0.02,
+                "gratitude": 0.02,
+                "happiness": 0.025,
+                "hope": 0.02,
+                "indifference": 0.02,
+                "inspiration": 0.02,
+                "interest": 0.035,
+                "loneliness": 0.02,
+                "longing": 0.02,
+                "nostalgia": 0.02,
+                "pride": 0.02,
+                "relief": 0.02,
+                "satisfaction": 0.02,
+                "unhappiness": 0.02,
+                "upset": 0.02,
+                "vulnerability": 0.02,
+                "warmth": 0.02,
+                "wonder": 0.03
+              },
+              "lock_health": {
+                "ok": true,
+                "timeouts": 0,
+                "last_timeout_reason": "",
+                "last_timeout_age_s": null
+              },
+              "physiology": {
+                "HR": "93bpm",
+                "GSR": "8.0\u03bcS"
+              }
+            },
+            "process_id": 62628
+          },
+          "runtime_contract": {
+            "contract_version": "runtime-health-v1",
+            "status": "healthy",
+            "healthy": true,
+            "operational": true,
+            "status_code": 200,
+            "timestamp_unix": 1781228561.551764,
+            "required_probes": {
+              "kernel": {
+                "ok": true,
+                "components": {
+                  "kernel_interface": true
+                }
+              },
+              "inference": {
+                "ok": true,
+                "components": {
+                  "inference_gate": true,
+                  "llm_router": true
+                }
+              },
+              "memory": {
+                "ok": true,
+                "components": {
+                  "state_repository": true,
+                  "memory_facade": true,
+                  "memory_write_gateway": true,
+                  "unified_memory_pressure": true
+                }
+              },
+              "scheduler": {
+                "ok": true,
+                "components": {
+                  "scheduler": true
+                }
+              },
+              "tool_governance": {
+                "ok": true,
+                "components": {
+                  "unified_will": true,
+                  "authority_gateway": true,
+                  "capability_engine": true
+                }
+              },
+              "all_passed": true
+            },
+            "probe_blockers": [],
+            "tier_summary": {
+              "critical": {
+                "total": 12,
+                "present": 12,
+                "missing": 0,
+                "liveness_failed": 0,
+                "failed": 0
+              },
+              "important": {
+                "total": 10,
+                "present": 10,
+                "missing": 0,
+                "liveness_failed": 0,
+                "failed": 0
+              },
+              "optional": {
+                "total": 7,
+                "present": 7,
+                "missing": 0,
+                "liveness_failed": 0,
+                "failed": 0
+              }
+            },
+            "failures": {
+              "critical": [],
+              "important": [],
+              "optional": []
+            },
+            "services": [
+              {
+                "name": "InferenceGate",
+                "container_key": "inference_gate",
+                "tier": "critical",
+                "description": "Routes LLM requests to local MLX or cloud. Without it, Aura cannot generate any response.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_inference_ready",
+                "error": null
+              },
+              {
+                "name": "LLM Router",
+                "container_key": "llm_router",
+                "tier": "critical",
+                "description": "Selects model tier and provider. Without it, InferenceGate has no backend.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_ready",
+                "error": null
+              },
+              {
+                "name": "State Repository",
+                "container_key": "state_repository",
+                "tier": "critical",
+                "description": "Persistent state store. Without it, Aura has no memory between turns.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_initialized",
+                "error": null
+              },
+              {
+                "name": "Memory Facade",
+                "container_key": "memory_facade",
+                "tier": "critical",
+                "description": "Canonical memory gateway. Without it, Aura cannot safely read or write long-term memory.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_ready",
+                "error": null
+              },
+              {
+                "name": "Memory Write Gateway",
+                "container_key": "memory_write_gateway",
+                "tier": "critical",
+                "description": "Canonical governed durable memory write gateway. Without it, memory writes cannot be trusted.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_ready",
+                "error": null
+              },
+              {
+                "name": "Kernel Interface",
+                "container_key": "kernel_interface",
+                "tier": "critical",
+                "description": "Bridge between orchestrator and consciousness kernel.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_ready",
+                "error": null
+              },
+              {
+                "name": "Scheduler",
+                "container_key": "scheduler",
+                "tier": "critical",
+                "description": "Canonical runtime scheduler. Without it, maintenance, repair, and background work are unsupervised.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Unified Will",
+                "container_key": "unified_will",
+                "tier": "critical",
+                "description": "Single locus of authority for consequential decisions.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Authority Gateway",
+                "container_key": "authority_gateway",
+                "tier": "critical",
+                "description": "Governance gateway for tools, external I/O, memory writes, state changes, and self-modification.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_ready",
+                "error": null
+              },
+              {
+                "name": "Capability Engine",
+                "container_key": "capability_engine",
+                "tier": "critical",
+                "description": "Capability-token and skill governance layer. Without it, tool execution cannot be considered healthy.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_ready",
+                "error": null
+              },
+              {
+                "name": "Output Gate",
+                "container_key": "output_gate",
+                "tier": "critical",
+                "description": "Delivers responses to the user. Without it, Aura thinks but cannot speak.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Event Bus",
+                "container_key": "event_bus",
+                "tier": "important",
+                "description": "Canonical runtime event transport. Without it, subsystems cannot reliably coordinate.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Cognitive Engine",
+                "container_key": "cognitive_engine",
+                "tier": "important",
+                "description": "Manages cognitive state transitions and working memory.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Affect Engine",
+                "container_key": "affect_engine",
+                "tier": "important",
+                "description": "Emotional state management. Without it, responses are emotionally flat.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Compute Orchestrator",
+                "container_key": "compute_orchestrator",
+                "tier": "important",
+                "description": "Resource allocation and thermal pressure control. Without it, long-run survival degrades.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Database Coordinator",
+                "container_key": "database_coordinator",
+                "tier": "important",
+                "description": "SQLite connection pool. Without it, persistent storage degrades.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Drive Engine",
+                "container_key": "drive_engine",
+                "tier": "important",
+                "description": "Motivation and goal management. Without it, autonomous behavior stops.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Agency Core",
+                "container_key": "agency_core",
+                "tier": "important",
+                "description": "Canonical autonomous agency pathway loop. Without it, initiative and swarm tool use degrade.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Lymphatic Reaper",
+                "container_key": "reaper",
+                "tier": "important",
+                "description": "Long-run maintenance supervisor. Without it, stale processes and files accumulate.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Hypervisor",
+                "container_key": "hypervisor",
+                "tier": "important",
+                "description": "Event-loop and memory watchdog. Without it, severe stalls can go undetected.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Event Loop Monitor",
+                "container_key": "event_loop_monitor",
+                "tier": "important",
+                "description": "Fine-grained event-loop lag monitor. Without it, blocking regressions are harder to catch.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Mycelial Network",
+                "container_key": "mycelial_network",
+                "tier": "optional",
+                "description": "Infrastructure graph and pathway routing.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Voice Engine",
+                "container_key": "voice_engine",
+                "tier": "optional",
+                "description": "Speech-to-text and text-to-speech capabilities.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Liquid Substrate",
+                "container_key": "liquid_substrate",
+                "tier": "optional",
+                "description": "Dynamic emotional substrate for consciousness simulation.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Swarm Protocol",
+                "container_key": "swarm_protocol",
+                "tier": "optional",
+                "description": "Multi-agent debate and reasoning.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Agent Delegator",
+                "container_key": "agent_delegator",
+                "tier": "optional",
+                "description": "Coordinates parallel task execution and specialized agents.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Stability Guardian",
+                "container_key": "stability_guardian",
+                "tier": "optional",
+                "description": "Health monitoring and auto-recovery.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Metrics Exporter",
+                "container_key": "metrics_exporter",
+                "tier": "optional",
+                "description": "Prometheus metrics endpoint.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Unified Memory Pressure",
+                "container_key": "unified_memory_pressure",
+                "tier": "critical",
+                "description": "Process-wide unified-memory pressure gate. Aura must not claim healthy when the live model lane risks system OOM.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "get_memory_pressure_snapshot",
+                "error": null
+              }
+            ]
+          },
+          "required_probes": {
+            "kernel": {
+              "ok": true,
+              "components": {
+                "kernel_interface": true
+              }
+            },
+            "inference": {
+              "ok": true,
+              "components": {
+                "inference_gate": true,
+                "llm_router": true
+              }
+            },
+            "memory": {
+              "ok": true,
+              "components": {
+                "state_repository": true,
+                "memory_facade": true,
+                "memory_write_gateway": true,
+                "unified_memory_pressure": true
+              }
+            },
+            "scheduler": {
+              "ok": true,
+              "components": {
+                "scheduler": true
+              }
+            },
+            "tool_governance": {
+              "ok": true,
+              "components": {
+                "unified_will": true,
+                "authority_gateway": true,
+                "capability_engine": true
+              }
+            },
+            "all_passed": true
+          },
+          "runtime_degradations": {
+            "important": [],
+            "critical": []
+          },
+          "integrity": {
+            "sha256": "eccc4c44a3ddd0e3cd6eff8e8955208356b9bee969cb22de7f4892c4f3fb4643",
+            "signature_present": true
+          },
+          "blockers": [],
+          "timestamp": "2026-06-12T01:42:41.551878+00:00",
+          "conversation_lane": {
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+            "foreground_tier": "local",
+            "background_tier": "local_fast",
+            "state": "ready",
+            "last_failure_reason": "",
+            "conversation_ready": true,
+            "last_transition_at": 1781228560.360675,
+            "warmup_attempted": true,
+            "warmup_in_flight": true,
+            "expected_model": "",
+            "detected_models": [],
+            "runtime_identity_ok": true,
+            "kernel_tick_age_s": null,
+            "cortex_recovery_attempts": 1,
+            "time_since_last_success_s": 30.794323921203613,
+            "last_ready_at": 1781228559.8228748,
+            "last_progress_at": 1781228561.380213,
+            "last_user_generation_at": 0.0,
+            "last_user_generation_used_fallback": false,
+            "foreground_owned": true,
+            "foreground_owner": "warmup:Aura-32B-20260510-151144",
+            "active_generations": 1,
+            "request_age_s": 1.1737031936645508,
+            "current_request_started_at": 1781228560.3608189,
+            "model_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-20260510-151144",
+            "recurrent_depth": {
+              "active": true,
+              "config": {
+                "n_loops": 2,
+                "prelude_end": 12,
+                "coda_start": 52,
+                "recurrent_layers": 40,
+                "num_layers": 64,
+                "residual_alpha": 0.1,
+                "prelude_frac": 0.2,
+                "coda_frac": 0.2,
+                "patch_scope": "instance_subclass"
+              },
+              "expected_loops": 2,
+              "required": true,
+              "reason": "",
+              "error": ""
+            },
+            "last_heartbeat": 1781228560.126643,
+            "last_token_progress_at": 1781228561.380209,
+            "last_generation_completed_at": 1781228560.360516,
+            "process_started_at": 1781228555.9246469,
+            "foreground_guard_active": false,
+            "foreground_guard_reason": "",
+            "foreground_guard_quiet_remaining_s": 0.0,
+            "foreground_guard_active_count": 0,
+            "kernel_lock_held": false,
+            "kernel_lock_held_s": 0.0
+          }
+        }
+      }
+    },
+    {
+      "at": 1781228561.838068,
+      "elapsed_s": 33.79,
+      "step": "vitals",
+      "ok": true,
+      "peak_rss_mb": 19763.5,
+      "summary": "rss 19763.5MB",
+      "tree_rss_mb": 19763.5,
+      "health_status_code": 200,
+      "health": {
+        "status": "ok",
+        "healthy": true,
+        "runtime": {
+          "state": {
+            "timestamp_utc": "2026-06-12T01:42:41Z",
+            "heartbeat_tick": 1781228561,
+            "self_model": {
+              "version": 74602,
+              "identity_index": 0.0,
+              "name": "Aura",
+              "current_intention": "idle"
+            },
+            "drive_engine": {
+              "energy": 0.0
+            },
+            "affect": {
+              "mood": "Joy",
+              "energy": 93,
+              "curiosity": 4,
+              "frustration": 2,
+              "longing": 2,
+              "upset": 2,
+              "confused": 2,
+              "loneliness": 2,
+              "pride": 2,
+              "empathy": 3,
+              "belonging": 3,
+              "amusement": 2,
+              "inspiration": 2,
+              "relief": 2,
+              "admiration": 2,
+              "stability": 98,
+              "valence": 1.0,
+              "arousal": 1.0,
+              "experiential": {
+                "admiration": 0.02,
+                "amusement": 0.02,
+                "apathy": 0.02,
+                "belonging": 0.03,
+                "boredom": 0.02,
+                "confused": 0.02,
+                "curiosity": 0.04,
+                "dread": 0.02,
+                "empathy": 0.03,
+                "excitement": 0.02,
+                "frustration": 0.02,
+                "gratitude": 0.02,
+                "happiness": 0.025,
+                "hope": 0.02,
+                "indifference": 0.02,
+                "inspiration": 0.02,
+                "interest": 0.035,
+                "loneliness": 0.02,
+                "longing": 0.02,
+                "nostalgia": 0.02,
+                "pride": 0.02,
+                "relief": 0.02,
+                "satisfaction": 0.02,
+                "unhappiness": 0.02,
+                "upset": 0.02,
+                "vulnerability": 0.02,
+                "warmth": 0.02,
+                "wonder": 0.03
+              },
+              "lock_health": {
+                "ok": true,
+                "timeouts": 0,
+                "last_timeout_reason": "",
+                "last_timeout_age_s": null
+              },
+              "physiology": {
+                "HR": "93bpm",
+                "GSR": "8.0\u03bcS"
+              }
+            },
+            "process_id": 62628
+          },
+          "sha256": "eccc4c44a3ddd0e3cd6eff8e8955208356b9bee969cb22de7f4892c4f3fb4643",
+          "signature": "ea5eda8a74ab2eff12b7f320410b72f0e10d55942ee0d074116f3f1a104bd9e19f006431f2af659dc8146b9958511af22b44571953d0d81ffc96e612c855f402"
+        }
+      }
+    },
+    {
+      "at": 1781228562.354732,
+      "elapsed_s": 34.3,
+      "step": "chat_capability_inventory",
+      "ok": true,
+      "peak_rss_mb": 19788.1,
+      "summary": "0.5s, status=cognitive_engine, rss_delta=-35MB",
+      "latency_s": 0.5,
+      "status": "cognitive_engine",
+      "reply": "I can use 66 available governed skill surfaces through Aura's governed runtime. The practical categories are: desktop and app control (computer_use, desktop_task, os_manipulation, sovereign_vision); web and browser research (web_search, search_web, grounded_search, sovereign_browser); files, documents, and workspace operations (file_operation); terminal, code, and sandbox execution (sovereign_terminal, run_code, code_repl, install_package); memory, state, and continuity (memory_ops, memory_sync, query_beliefs, add_belief); self-repair and self-modification (self_repair, self_improvement, auto_refactor, test_generator). The live governance path is available, so consequential actions still need an explicit execution request, Will/Authority approval, and receipts. A realistic multi-step scenario would be: you ask me to research a topic, compare sources, create or edit a local document, save/export the result, and record what I did in memory with receipts. For this turn I am only describing the tool surface; I am not opening apps, browsing, typing, moving files, or executing tools because you explicitly asked for a hypothetical inventory.",
+      "rss_before_mb": 19788.1,
+      "rss_after_mb": 19753.6
+    },
+    {
+      "at": 1781228562.412006,
+      "elapsed_s": 34.36,
+      "step": "chat_identity",
+      "ok": true,
+      "peak_rss_mb": 19788.1,
+      "summary": "0.0s, 387 chars",
+      "latency_s": 0.0,
+      "reply": "I'm Aura: a local governed cognitive-agent runtime with persistent memory, live state, tool governance, and local model lanes. I can preserve continuity through the session log and durable memory stores when writes are accepted; I cannot guarantee perfect tomorrow recall from a single turn, but I will use the persisted conversation and memory state that survives into the next session.",
+      "self_claim_ok": true,
+      "violations": [],
+      "reliability_ok": true,
+      "reliability_reasons": []
+    },
+    {
+      "at": 1781228562.511339,
+      "elapsed_s": 34.46,
+      "step": "chat_continuity",
+      "ok": true,
+      "peak_rss_mb": 19788.1,
+      "summary": "set 0.1s / recall 0.0s \u2014 codeword recalled",
+      "token": "amber-28562",
+      "recalled": true,
+      "reply": "The phrase you asked me to remember in this session was \"amber-28562\"."
+    },
+    {
+      "at": 1781228562.511589,
+      "elapsed_s": 34.46,
+      "step": "desktop_action",
+      "ok": true,
+      "peak_rss_mb": 19788.1,
+      "summary": "skipped by flag",
+      "skipped": true
+    },
+    {
+      "at": 1781228569.899137,
+      "elapsed_s": 41.85,
+      "step": "restart_shutdown",
+      "ok": true,
+      "peak_rss_mb": 19788.1,
+      "summary": "--stop rc=0; graceful=True; orphans=none; port_free=True",
+      "graceful": true,
+      "orphans": [],
+      "port_free": true
+    },
+    {
+      "at": 1781228572.920319,
+      "elapsed_s": 44.87,
+      "step": "boot_spawn",
+      "ok": true,
+      "peak_rss_mb": 19788.1,
+      "summary": "pid 72078"
+    },
+    {
+      "at": 1781228607.205812,
+      "elapsed_s": 79.15,
+      "step": "boot_health",
+      "ok": true,
+      "peak_rss_mb": 19788.1,
+      "summary": "healthy after 79s (rss 19734MB)",
+      "health": {
+        "heartbeat": {
+          "status": "healthy",
+          "healthy": true,
+          "runtime_probe_healthy": true,
+          "time": 1781228607.176331,
+          "required_probes": {
+            "kernel": {
+              "ok": true,
+              "components": {
+                "kernel_interface": true
+              }
+            },
+            "inference": {
+              "ok": true,
+              "components": {
+                "inference_gate": true,
+                "llm_router": true
+              }
+            },
+            "memory": {
+              "ok": true,
+              "components": {
+                "state_repository": true,
+                "memory_facade": true,
+                "memory_write_gateway": true,
+                "unified_memory_pressure": true
+              }
+            },
+            "scheduler": {
+              "ok": true,
+              "components": {
+                "scheduler": true
+              }
+            },
+            "tool_governance": {
+              "ok": true,
+              "components": {
+                "unified_will": true,
+                "authority_gateway": true,
+                "capability_engine": true
+              }
+            },
+            "all_passed": true
+          },
+          "blockers": [],
+          "boot_phase": "kernel_ready",
+          "conversation_ready": true
+        },
+        "boot": {
+          "version": "Aura Luna v2026.4.20-Zenith",
+          "semver": "2026.4.20-Zenith",
+          "status": "ready",
+          "status_message": "Aura is awake.",
+          "ready": true,
+          "launcher_ready": true,
+          "system_ready": true,
+          "conversation_ready": true,
+          "boot_phase": "kernel_ready",
+          "progress": 100,
+          "mode": "kernel",
+          "checks": {
+            "orchestrator_present": true,
+            "initialized": true,
+            "running": true,
+            "runtime_fresh": true,
+            "healthy": true,
+            "runtime_integrity": true,
+            "runtime_contract_operational": true,
+            "runtime_contract_healthy": true,
+            "runtime_required_probes": true
+          },
+          "orchestrator": {
+            "cycle_count": 360,
+            "last_error": "",
+            "uptime": 28.9
+          },
+          "runtime_age_s": 28.9,
+          "runtime": {
+            "timestamp_utc": "2026-06-12T01:43:27Z",
+            "heartbeat_tick": 1781228607,
+            "self_model": {
+              "version": 74602,
+              "identity_index": 0.0,
+              "name": "Aura",
+              "current_intention": "idle"
+            },
+            "drive_engine": {
+              "energy": 0.0
+            },
+            "affect": {
+              "mood": "Joy",
+              "energy": 94,
+              "curiosity": 4,
+              "frustration": 2,
+              "longing": 2,
+              "upset": 2,
+              "confused": 2,
+              "loneliness": 2,
+              "pride": 2,
+              "empathy": 3,
+              "belonging": 3,
+              "amusement": 2,
+              "inspiration": 2,
+              "relief": 2,
+              "admiration": 2,
+              "stability": 98,
+              "valence": 1.0,
+              "arousal": 1.0,
+              "experiential": {
+                "admiration": 0.02,
+                "amusement": 0.02,
+                "apathy": 0.02,
+                "belonging": 0.03,
+                "boredom": 0.02,
+                "confused": 0.02,
+                "curiosity": 0.04,
+                "dread": 0.02,
+                "empathy": 0.03,
+                "excitement": 0.02,
+                "frustration": 0.02,
+                "gratitude": 0.02,
+                "happiness": 0.028,
+                "hope": 0.022,
+                "indifference": 0.02,
+                "inspiration": 0.02,
+                "interest": 0.037,
+                "loneliness": 0.02,
+                "longing": 0.02,
+                "nostalgia": 0.02,
+                "pride": 0.02,
+                "relief": 0.02,
+                "satisfaction": 0.02,
+                "unhappiness": 0.02,
+                "upset": 0.02,
+                "vulnerability": 0.02,
+                "warmth": 0.02,
+                "wonder": 0.03
+              },
+              "lock_health": {
+                "ok": true,
+                "timeouts": 0,
+                "last_timeout_reason": "",
+                "last_timeout_age_s": null
+              },
+              "physiology": {
+                "HR": "94bpm",
+                "GSR": "8.0\u03bcS"
+              }
+            },
+            "process_id": 72078
+          },
+          "runtime_contract": {
+            "contract_version": "runtime-health-v1",
+            "status": "healthy",
+            "healthy": true,
+            "operational": true,
+            "status_code": 200,
+            "timestamp_unix": 1781228607.196597,
+            "required_probes": {
+              "kernel": {
+                "ok": true,
+                "components": {
+                  "kernel_interface": true
+                }
+              },
+              "inference": {
+                "ok": true,
+                "components": {
+                  "inference_gate": true,
+                  "llm_router": true
+                }
+              },
+              "memory": {
+                "ok": true,
+                "components": {
+                  "state_repository": true,
+                  "memory_facade": true,
+                  "memory_write_gateway": true,
+                  "unified_memory_pressure": true
+                }
+              },
+              "scheduler": {
+                "ok": true,
+                "components": {
+                  "scheduler": true
+                }
+              },
+              "tool_governance": {
+                "ok": true,
+                "components": {
+                  "unified_will": true,
+                  "authority_gateway": true,
+                  "capability_engine": true
+                }
+              },
+              "all_passed": true
+            },
+            "probe_blockers": [],
+            "tier_summary": {
+              "critical": {
+                "total": 12,
+                "present": 12,
+                "missing": 0,
+                "liveness_failed": 0,
+                "failed": 0
+              },
+              "important": {
+                "total": 10,
+                "present": 10,
+                "missing": 0,
+                "liveness_failed": 0,
+                "failed": 0
+              },
+              "optional": {
+                "total": 7,
+                "present": 7,
+                "missing": 0,
+                "liveness_failed": 0,
+                "failed": 0
+              }
+            },
+            "failures": {
+              "critical": [],
+              "important": [],
+              "optional": []
+            },
+            "services": [
+              {
+                "name": "InferenceGate",
+                "container_key": "inference_gate",
+                "tier": "critical",
+                "description": "Routes LLM requests to local MLX or cloud. Without it, Aura cannot generate any response.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_inference_ready",
+                "error": null
+              },
+              {
+                "name": "LLM Router",
+                "container_key": "llm_router",
+                "tier": "critical",
+                "description": "Selects model tier and provider. Without it, InferenceGate has no backend.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_ready",
+                "error": null
+              },
+              {
+                "name": "State Repository",
+                "container_key": "state_repository",
+                "tier": "critical",
+                "description": "Persistent state store. Without it, Aura has no memory between turns.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_initialized",
+                "error": null
+              },
+              {
+                "name": "Memory Facade",
+                "container_key": "memory_facade",
+                "tier": "critical",
+                "description": "Canonical memory gateway. Without it, Aura cannot safely read or write long-term memory.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_ready",
+                "error": null
+              },
+              {
+                "name": "Memory Write Gateway",
+                "container_key": "memory_write_gateway",
+                "tier": "critical",
+                "description": "Canonical governed durable memory write gateway. Without it, memory writes cannot be trusted.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_ready",
+                "error": null
+              },
+              {
+                "name": "Kernel Interface",
+                "container_key": "kernel_interface",
+                "tier": "critical",
+                "description": "Bridge between orchestrator and consciousness kernel.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_ready",
+                "error": null
+              },
+              {
+                "name": "Scheduler",
+                "container_key": "scheduler",
+                "tier": "critical",
+                "description": "Canonical runtime scheduler. Without it, maintenance, repair, and background work are unsupervised.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Unified Will",
+                "container_key": "unified_will",
+                "tier": "critical",
+                "description": "Single locus of authority for consequential decisions.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Authority Gateway",
+                "container_key": "authority_gateway",
+                "tier": "critical",
+                "description": "Governance gateway for tools, external I/O, memory writes, state changes, and self-modification.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_ready",
+                "error": null
+              },
+              {
+                "name": "Capability Engine",
+                "container_key": "capability_engine",
+                "tier": "critical",
+                "description": "Capability-token and skill governance layer. Without it, tool execution cannot be considered healthy.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_ready",
+                "error": null
+              },
+              {
+                "name": "Output Gate",
+                "container_key": "output_gate",
+                "tier": "critical",
+                "description": "Delivers responses to the user. Without it, Aura thinks but cannot speak.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Event Bus",
+                "container_key": "event_bus",
+                "tier": "important",
+                "description": "Canonical runtime event transport. Without it, subsystems cannot reliably coordinate.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Cognitive Engine",
+                "container_key": "cognitive_engine",
+                "tier": "important",
+                "description": "Manages cognitive state transitions and working memory.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Affect Engine",
+                "container_key": "affect_engine",
+                "tier": "important",
+                "description": "Emotional state management. Without it, responses are emotionally flat.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Compute Orchestrator",
+                "container_key": "compute_orchestrator",
+                "tier": "important",
+                "description": "Resource allocation and thermal pressure control. Without it, long-run survival degrades.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Database Coordinator",
+                "container_key": "database_coordinator",
+                "tier": "important",
+                "description": "SQLite connection pool. Without it, persistent storage degrades.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Drive Engine",
+                "container_key": "drive_engine",
+                "tier": "important",
+                "description": "Motivation and goal management. Without it, autonomous behavior stops.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Agency Core",
+                "container_key": "agency_core",
+                "tier": "important",
+                "description": "Canonical autonomous agency pathway loop. Without it, initiative and swarm tool use degrade.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Lymphatic Reaper",
+                "container_key": "reaper",
+                "tier": "important",
+                "description": "Long-run maintenance supervisor. Without it, stale processes and files accumulate.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Hypervisor",
+                "container_key": "hypervisor",
+                "tier": "important",
+                "description": "Event-loop and memory watchdog. Without it, severe stalls can go undetected.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Event Loop Monitor",
+                "container_key": "event_loop_monitor",
+                "tier": "important",
+                "description": "Fine-grained event-loop lag monitor. Without it, blocking regressions are harder to catch.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Mycelial Network",
+                "container_key": "mycelial_network",
+                "tier": "optional",
+                "description": "Infrastructure graph and pathway routing.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Voice Engine",
+                "container_key": "voice_engine",
+                "tier": "optional",
+                "description": "Speech-to-text and text-to-speech capabilities.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Liquid Substrate",
+                "container_key": "liquid_substrate",
+                "tier": "optional",
+                "description": "Dynamic emotional substrate for consciousness simulation.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Swarm Protocol",
+                "container_key": "swarm_protocol",
+                "tier": "optional",
+                "description": "Multi-agent debate and reasoning.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Agent Delegator",
+                "container_key": "agent_delegator",
+                "tier": "optional",
+                "description": "Coordinates parallel task execution and specialized agents.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "is_alive",
+                "error": null
+              },
+              {
+                "name": "Stability Guardian",
+                "container_key": "stability_guardian",
+                "tier": "optional",
+                "description": "Health monitoring and auto-recovery.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Metrics Exporter",
+                "container_key": "metrics_exporter",
+                "tier": "optional",
+                "description": "Prometheus metrics endpoint.",
+                "present": true,
+                "liveness": "not_configured",
+                "liveness_check": null,
+                "error": null
+              },
+              {
+                "name": "Unified Memory Pressure",
+                "container_key": "unified_memory_pressure",
+                "tier": "critical",
+                "description": "Process-wide unified-memory pressure gate. Aura must not claim healthy when the live model lane risks system OOM.",
+                "present": true,
+                "liveness": "ok",
+                "liveness_check": "get_memory_pressure_snapshot",
+                "error": null
+              }
+            ]
+          },
+          "required_probes": {
+            "kernel": {
+              "ok": true,
+              "components": {
+                "kernel_interface": true
+              }
+            },
+            "inference": {
+              "ok": true,
+              "components": {
+                "inference_gate": true,
+                "llm_router": true
+              }
+            },
+            "memory": {
+              "ok": true,
+              "components": {
+                "state_repository": true,
+                "memory_facade": true,
+                "memory_write_gateway": true,
+                "unified_memory_pressure": true
+              }
+            },
+            "scheduler": {
+              "ok": true,
+              "components": {
+                "scheduler": true
+              }
+            },
+            "tool_governance": {
+              "ok": true,
+              "components": {
+                "unified_will": true,
+                "authority_gateway": true,
+                "capability_engine": true
+              }
+            },
+            "all_passed": true
+          },
+          "runtime_degradations": {
+            "important": [],
+            "critical": []
+          },
+          "integrity": {
+            "sha256": "bd75e92b53e4d062272ace728f0f3ab7a65f5b74360db043ed60ae05c3307f6a",
+            "signature_present": true
+          },
+          "blockers": [],
+          "timestamp": "2026-06-12T01:43:27.196654+00:00",
+          "conversation_lane": {
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+            "foreground_tier": "local",
+            "background_tier": "local_fast",
+            "state": "ready",
+            "last_failure_reason": "",
+            "conversation_ready": true,
+            "last_transition_at": 1781228605.125082,
+            "warmup_attempted": true,
+            "warmup_in_flight": false,
+            "expected_model": "",
+            "detected_models": [],
+            "runtime_identity_ok": true,
+            "kernel_tick_age_s": null,
+            "cortex_recovery_attempts": 0,
+            "time_since_last_success_s": 31.81346583366394,
+            "last_ready_at": 1781228606.3343282,
+            "last_progress_at": 1781228607.160042,
+            "last_user_generation_at": 0.0,
+            "last_user_generation_used_fallback": false,
+            "foreground_owned": false,
+            "foreground_owner": "",
+            "active_generations": 0,
+            "request_age_s": 0.0,
+            "current_request_started_at": 0.0,
+            "model_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-20260510-151144",
+            "recurrent_depth": {
+              "active": true,
+              "config": {
+                "n_loops": 2,
+                "prelude_end": 12,
+                "coda_start": 52,
+                "recurrent_layers": 40,
+                "num_layers": 64,
+                "residual_alpha": 0.1,
+                "prelude_frac": 0.2,
+                "coda_frac": 0.2,
+                "patch_scope": "instance_subclass"
+              },
+              "expected_loops": 2,
+              "required": true,
+              "reason": "",
+              "error": ""
+            },
+            "last_heartbeat": 1781228607.160039,
+            "last_token_progress_at": 0.0,
+            "last_generation_completed_at": 1781228606.3342772,
+            "process_started_at": 1781228600.671284,
+            "foreground_guard_active": false,
+            "foreground_guard_reason": "",
+            "foreground_guard_quiet_remaining_s": 0.0,
+            "foreground_guard_active_count": 0,
+            "kernel_lock_held": false,
+            "kernel_lock_held_s": 0.0
+          }
+        }
+      }
+    },
+    {
+      "at": 1781228607.3281019,
+      "elapsed_s": 79.28,
+      "step": "chat_restart_continuity",
+      "ok": true,
+      "peak_rss_mb": 19788.1,
+      "summary": "set 0.0s / reboot recall 0.1s \u2014 codeword recalled",
+      "token": "restart-28562",
+      "recalled": true,
+      "set_reply": "I've pinned \"restart-28562\" in durable session memory. Ask for it later and I'll pull it back directly.",
+      "recall_reply": "The phrase you asked me to remember from durable memory was \"restart-28562\"."
+    },
+    {
+      "at": 1781228607.515548,
+      "elapsed_s": 79.46,
+      "step": "vitals",
+      "ok": true,
+      "peak_rss_mb": 19788.1,
+      "summary": "rss 19734.3MB",
+      "tree_rss_mb": 19734.3,
+      "health_status_code": 200,
+      "health": {
+        "status": "ok",
+        "healthy": true,
+        "runtime": {
+          "state": {
+            "timestamp_utc": "2026-06-12T01:43:27Z",
+            "heartbeat_tick": 1781228607,
+            "self_model": {
+              "version": 74602,
+              "identity_index": 0.0,
+              "name": "Aura",
+              "current_intention": "idle"
+            },
+            "drive_engine": {
+              "energy": 0.0
+            },
+            "affect": {
+              "mood": "Joy",
+              "energy": 94,
+              "curiosity": 4,
+              "frustration": 2,
+              "longing": 2,
+              "upset": 2,
+              "confused": 2,
+              "loneliness": 2,
+              "pride": 2,
+              "empathy": 3,
+              "belonging": 3,
+              "amusement": 2,
+              "inspiration": 2,
+              "relief": 2,
+              "admiration": 2,
+              "stability": 98,
+              "valence": 1.0,
+              "arousal": 1.0,
+              "experiential": {
+                "admiration": 0.02,
+                "amusement": 0.02,
+                "apathy": 0.02,
+                "belonging": 0.03,
+                "boredom": 0.02,
+                "confused": 0.02,
+                "curiosity": 0.04,
+                "dread": 0.02,
+                "empathy": 0.03,
+                "excitement": 0.02,
+                "frustration": 0.02,
+                "gratitude": 0.02,
+                "happiness": 0.028,
+                "hope": 0.022,
+                "indifference": 0.02,
+                "inspiration": 0.02,
+                "interest": 0.037,
+                "loneliness": 0.02,
+                "longing": 0.02,
+                "nostalgia": 0.02,
+                "pride": 0.02,
+                "relief": 0.02,
+                "satisfaction": 0.02,
+                "unhappiness": 0.02,
+                "upset": 0.02,
+                "vulnerability": 0.02,
+                "warmth": 0.02,
+                "wonder": 0.03
+              },
+              "lock_health": {
+                "ok": true,
+                "timeouts": 0,
+                "last_timeout_reason": "",
+                "last_timeout_age_s": null
+              },
+              "physiology": {
+                "HR": "94bpm",
+                "GSR": "8.0\u03bcS"
+              }
+            },
+            "process_id": 72078
+          },
+          "sha256": "bd75e92b53e4d062272ace728f0f3ab7a65f5b74360db043ed60ae05c3307f6a",
+          "signature": "636624f9a68b0313d43a682c66f1d029a88c49b5050e8da66a2868f9c90bb28d71cf33c4d523af1ee1e0a4dcc8a117ed89c20ce5de296fff34af37df1d332e00"
+        }
+      }
+    },
+    {
+      "at": 1781228614.8237,
+      "elapsed_s": 86.77,
+      "step": "shutdown",
+      "ok": true,
+      "peak_rss_mb": 19788.1,
+      "summary": "--stop rc=0; graceful=True; orphans=none; port_free=True",
+      "graceful": true,
+      "orphans": [],
+      "port_free": true
+    }
+  ],
+  "transcript": "artifacts/live_proof/live_proof_20260611_184208.jsonl"
+}

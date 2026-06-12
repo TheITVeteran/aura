@@ -15,9 +15,10 @@ import math
 import re
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import psutil
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -140,6 +141,7 @@ def _get_convo_lock(): return _locks.setdefault("convo", asyncio.Lock())
 _conversation_log_lock = _get_convo_lock()
 _session_memory_pins: list[dict] = []
 _MAX_CONVERSATION_LOG_EXCHANGES = 500
+_SESSION_MEMORY_PIN_LEDGER_LIMIT = 500
 class PreemptibleChatLock:
     def __init__(self):
         self._lock = asyncio.Lock()
@@ -429,18 +431,25 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
         else normalize_memory_intent_text(text)
     )
 
+    pin_scope = (
+        r"(?:\s+(?:for me|for later|for later in this session|"
+        r"across restart|across restarts|after restart|after a restart|"
+        r"across sessions|between sessions))?"
+    )
+    memory_object = r"(?:(?:this|the)\s+)?(?:phrase|codeword|word|token|detail|note|fact)?"
     patterns = (
-        r"^remember this (?:phrase|codeword|word|token)(?: for me| for later in this session)?\s*:\s*(.+)$",
-        r"^remember this(?: for me| for later in this session)?\s*:\s*(.+)$",
-        r"^don't forget(?: this)?\s*:\s*(.+)$",
-        r"^make note of this(?: for later in this session)?\s*:\s*(.+)$",
+        rf"^(?:please\s+)?remember\s+{memory_object}{pin_scope}\s*:\s*(.+)$",
+        rf"^(?:please\s+)?remember\s+this{pin_scope}\s*:\s*(.+)$",
+        rf"^don't forget(?:\s+this)?{pin_scope}\s*:\s*(.+)$",
+        rf"^make note of this{pin_scope}\s*:\s*(.+)$",
     )
     for pattern in patterns:
         match = re.match(pattern, normalized, flags=re.IGNORECASE | re.DOTALL)
         if match:
             pinned = match.group(1).strip().strip("\"'“”")
             pinned = re.sub(
-                r"\s*\.\s*(?:just\s+)?(?:confirm|acknowledge|say\s+ok|reply\s+ok)\b.*$",
+                r"(?:\s*[.!?]\s*|\s+)(?:just\s+)?"
+                r"(?:confirm|acknowledge|say\s+ok|reply\s+ok)\b.*$",
                 "",
                 pinned,
                 flags=re.IGNORECASE | re.DOTALL,
@@ -459,10 +468,12 @@ def _is_session_memory_recall_request(user_message: str) -> bool:
         "what codeword did i give you",
         "what was the codeword i gave you",
         "what is the codeword i gave you",
+        "what codeword did i ask you to remember",
         "what was the codeword",
         "what is the codeword",
         "what token did i just give you",
         "what token did i give you",
+        "what token did i ask you to remember",
         "what phrase did i ask you to remember",
         "what did i ask you to remember",
         "what phrase did i tell you to remember",
@@ -471,6 +482,58 @@ def _is_session_memory_recall_request(user_message: str) -> bool:
         "what did you pin for later in this session",
     )
     return any(marker in text for marker in markers)
+
+
+def _session_memory_pin_ledger_path() -> Path:
+    from core.config import config
+
+    return config.paths.data_dir / "memory" / "session_memory_pins.jsonl"
+
+
+def _append_session_memory_pin_ledger(content: str, source: str, timestamp: str) -> bool:
+    try:
+        from core.runtime.atomic_writer import atomic_append_text
+
+        path = _session_memory_pin_ledger_path()
+        record = {
+            "schema": "aura.session_memory_pin.v1",
+            "content": str(content or "").strip()[:240],
+            "source": str(source or "").strip()[:512],
+            "timestamp": str(timestamp or ""),
+            "session_memory_pin": True,
+            "kind": "explicit_user_memory_pin",
+        }
+        if not record["content"]:
+            return False
+        atomic_append_text(path, json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+        return True
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.session_memory_pin", exc)
+        logger.debug("Durable session memory pin ledger write skipped: %s", exc)
+        return False
+
+
+def _recall_session_memory_pin_from_ledger() -> dict[str, str] | None:
+    try:
+        path = _session_memory_pin_ledger_path()
+        if not path.exists():
+            return None
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in reversed(lines[-_SESSION_MEMORY_PIN_LEDGER_LIMIT:]):
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            recalled = _session_memory_pin_from_record(raw)
+            if recalled:
+                recalled["storage"] = "durable"
+                return recalled
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.session_memory_pin", exc)
+        logger.debug("Durable session memory pin ledger recall skipped: %s", exc)
+    return None
 
 
 async def _store_session_memory_pin(content: str, source: str) -> bool:
@@ -488,10 +551,16 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
         )
         if len(_session_memory_pins) > 100:
             _session_memory_pins.pop(0)
+    ledger_ok = await asyncio.to_thread(
+        _append_session_memory_pin_ledger,
+        pinned,
+        source,
+        timestamp,
+    )
     try:
         memory_facade = ServiceContainer.get("memory_facade", default=None)
         if memory_facade is None or not hasattr(memory_facade, "add_memory"):
-            return False
+            return bool(ledger_ok)
         result = memory_facade.add_memory(
             f"Session memory pin: {pinned[:240]}",
             metadata={
@@ -511,11 +580,11 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
         )
         if hasattr(result, "__await__"):
             result = await result
-        return bool(result)
+        return bool(result) or bool(ledger_ok)
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.session_memory_pin", exc)
         logger.debug("Durable session memory pin write skipped: %s", exc)
-        return False
+        return bool(ledger_ok)
 
 
 def _session_memory_pin_from_record(item: Any) -> dict[str, str] | None:
@@ -524,8 +593,14 @@ def _session_memory_pin_from_record(item: Any) -> dict[str, str] | None:
     metadata = item.get("metadata")
     if not isinstance(metadata, dict):
         metadata = {}
-    content = str(metadata.get("session_memory_pin_content") or "").strip()
+    content = str(
+        metadata.get("session_memory_pin_content")
+        or item.get("session_memory_pin_content")
+        or ""
+    ).strip()
     raw = str(item.get("content") or item.get("text") or "").strip()
+    if not content and bool(item.get("session_memory_pin")):
+        content = raw
     if not content:
         match = re.search(r"\bSession memory pin:\s*(.+)$", raw, flags=re.IGNORECASE | re.DOTALL)
         if match:
@@ -541,6 +616,9 @@ def _session_memory_pin_from_record(item: Any) -> dict[str, str] | None:
 
 
 async def _recall_durable_session_memory_pin() -> dict[str, str] | None:
+    ledger_recall = await asyncio.to_thread(_recall_session_memory_pin_from_ledger)
+    if ledger_recall:
+        return ledger_recall
     try:
         memory_facade = ServiceContainer.get("memory_facade", default=None)
         if memory_facade is None:
@@ -1362,7 +1440,6 @@ def _is_referential_followup_request(user_message: str) -> bool:
         if looks_like_deep_mind_probe(user_message):
             return False
     except _CHAT_RECOVERABLE_ERRORS as exc:
-        pool = None
         record_degradation("chat", exc)
         logger.debug("Deep mind probe classifier unavailable: %s", exc)
     if any(marker in text for marker in _REFERENTIAL_FOLLOWUP_MARKERS):
@@ -1691,7 +1768,6 @@ def _runtime_tool_governance_available() -> bool:
         will_ready = bool(will is not None and callable(getattr(will, "decide", None)))
         return authority_ready and capability_ready and will_ready
     except _CHAT_RECOVERABLE_ERRORS as exc:
-        pool = None
         record_degradation("chat", exc)
         logger.debug("Runtime tool-governance status probe failed: %s", exc)
         return False
@@ -6844,7 +6920,7 @@ async def api_chat_regenerate(
 ):
     """Regenerate the last Aura response by replaying the last user message.
     Every flagship AI product supports response regeneration."""
-    owner_session_restored = bool(_restore_owner_session_from_request(request))
+    _restore_owner_session_from_request(request)
     desktop_requires_cognitive_engine, request_surface = _request_requires_cognitive_engine(request)
     foreground_timeout = _foreground_timeout_for_lane(_collect_conversation_lane_status())
     try:

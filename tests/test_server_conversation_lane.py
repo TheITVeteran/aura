@@ -698,9 +698,9 @@ def test_chat_turn_memory_log_scheduler_skips_when_active_limit_reached(monkeypa
 
 @pytest.mark.asyncio
 async def test_chat_turn_memory_log_scheduler_uses_bounded_track(monkeypatch):
-    from interface.routes import chat as chat_routes
-    from core.memory import chat_turn_logger
     from core.consciousness import coordinator as consciousness_coordinator
+    from core.memory import chat_turn_logger
+    from interface.routes import chat as chat_routes
 
     log_calls = []
     consciousness_calls = []
@@ -753,8 +753,8 @@ async def test_chat_turn_memory_log_scheduler_uses_bounded_track(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_turn_memory_log_scheduler_times_out_slow_logger(monkeypatch):
-    from interface.routes import chat as chat_routes
     from core.memory import chat_turn_logger
+    from interface.routes import chat as chat_routes
 
     async def _slow_log_chat_turn_auto(**_kwargs):
         await asyncio.sleep(1.0)
@@ -786,10 +786,68 @@ async def test_chat_turn_memory_log_scheduler_times_out_slow_logger(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_session_memory_pin_recall_survives_process_memory_clear(monkeypatch, tmp_path):
+    from interface.routes import chat as chat_routes
+
+    ledger_path = tmp_path / "session_memory_pins.jsonl"
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: ledger_path)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda _name, default=None: default),
+    )
+    chat_routes._session_memory_pins.clear()
+
+    stored = await chat_routes._build_memory_state_fastpath_reply(
+        "Remember this codeword for me: restart-ledger-417. Just confirm."
+    )
+    chat_routes._session_memory_pins.clear()
+    recalled = await chat_routes._build_memory_state_fastpath_reply(
+        "What codeword did I give you?"
+    )
+    chat_routes._session_memory_pins.clear()
+
+    assert stored is not None
+    assert stored[1] == "session_memory_pin"
+    assert recalled is not None
+    assert recalled[1] == "session_memory_recall"
+    assert "restart-ledger-417" in recalled[0]
+
+
+@pytest.mark.asyncio
+async def test_session_memory_pin_restart_wording_stays_on_fastpath(monkeypatch, tmp_path):
+    from interface.routes import chat as chat_routes
+
+    ledger_path = tmp_path / "session_memory_pins.jsonl"
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: ledger_path)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda _name, default=None: default),
+    )
+    chat_routes._session_memory_pins.clear()
+
+    stored = await chat_routes._build_memory_state_fastpath_reply(
+        "Remember this codeword across restart: restart-ledger-921. Just confirm."
+    )
+    chat_routes._session_memory_pins.clear()
+    recalled = await chat_routes._build_memory_state_fastpath_reply(
+        "What codeword did I ask you to remember before restart?"
+    )
+    chat_routes._session_memory_pins.clear()
+
+    assert stored is not None
+    assert stored[1] == "session_memory_pin"
+    assert recalled is not None
+    assert recalled[1] == "session_memory_recall"
+    assert "restart-ledger-921" in recalled[0]
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(monkeypatch):
+    import core.utils.memory_monitor as memory_monitor
     from interface import server as server_module
     from interface.routes import chat as chat_routes
-    import core.utils.memory_monitor as memory_monitor
 
     gib = 1024**3
     calls = []
@@ -851,9 +909,9 @@ async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(
 
 @pytest.mark.asyncio
 async def test_api_chat_desktop_surface_blocks_process_tree_memory_before_cognition(monkeypatch):
+    import core.utils.memory_monitor as memory_monitor
     from interface import server as server_module
     from interface.routes import chat as chat_routes
-    import core.utils.memory_monitor as memory_monitor
 
     gib = 1024**3
     calls = []
