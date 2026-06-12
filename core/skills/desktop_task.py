@@ -52,6 +52,7 @@ class DesktopTaskStep(BaseModel):
             "render_text_pdf",
             "move_file",
             "create_folder",
+            "fetch_topic_image",
         }
         if action not in allowed:
             raise ValueError(f"Unsupported desktop action: {value}")
@@ -103,13 +104,21 @@ class DesktopTaskSkill(BaseSkill):
     @staticmethod
     def _extract_folder_name(objective: str) -> str:
         text = str(objective or "")
+        # Quoted names may contain possessive apostrophes ("Aura's
+        # Journal"); the close-quote is the one followed by a boundary,
+        # not the first internal apostrophe (which truncated the name to
+        # "Aura" and broke the journal demo's folder).
         match = re.search(
-            r"\b(?:folder|directory)\s+(?:named|called|titled)\s+(?:['\"]([^'\"]+)['\"]|([^.,;\n]+))",
+            r"\b(?:folder|directory)\s+(?:named|called|titled)\s+"
+            r"(?:'((?:[^']|'(?=\w))+)'(?=[\s.,;)]|$)"
+            r"|\"([^\"]+)\""
+            r"|([^.,;\n]+?)(?=\s+(?:in|inside|under|on)\s+(?:my\s+)?\w|[.,;\n]|$))",
             text,
             flags=re.IGNORECASE,
         )
         if match:
-            return str(match.group(1) or match.group(2) or "").strip()[:100]
+            name = str(match.group(1) or match.group(2) or match.group(3) or "").strip()
+            return name.strip("'\"")[:100]
         return f"Aura Desktop Task {int(time.time())}"
 
     @staticmethod
@@ -264,6 +273,13 @@ class DesktopTaskSkill(BaseSkill):
             match = re.search(pattern, text, flags=re.IGNORECASE)
             if match:
                 query = re.sub(r"\b(?:and|then|also)\b.*$", "", match.group(1), flags=re.IGNORECASE)
+                query = re.sub(
+                    r"\b(?:online|on\s+the\s+(?:internet|web)|from\s+the\s+(?:internet|web))\b.*$",
+                    "",
+                    query,
+                    flags=re.IGNORECASE,
+                )
+                query = re.sub(r"^(?:a|an|the)\s+", "", query.strip(" ,"), flags=re.IGNORECASE)
                 query = query.strip(" ,")
                 if query:
                     return query[:240]
@@ -284,10 +300,13 @@ class DesktopTaskSkill(BaseSkill):
             "textedit": "TextEdit",
             "pages": "Pages",
             "microsoft word": "Microsoft Word",
-            "word": "Microsoft Word",
+            "ms word": "Microsoft Word",
         }
+        # Word-boundary matching: the bare substring scan opened
+        # Microsoft Word because the objective said "in your own words"
+        # — a fatal launch on Macs without Word. Apps must be NAMED.
         for marker, app in app_markers.items():
-            if marker in text and app not in apps:
+            if re.search(rf"\b{re.escape(marker)}\b", text) and app not in apps:
                 if marker == "browser" and "chrome" in text:
                     continue
                 apps.append(app)
@@ -733,6 +752,15 @@ class DesktopTaskSkill(BaseSkill):
             if not isinstance(chars, int) or chars <= 0:
                 return False, "missing rendered PDF character count"
             return True, f"path={path};bytes={bytes_written};pages={pages};chars={chars}"
+        if action == "fetch_topic_image":
+            img_path = str(result.get("path") or "").strip()
+            img_bytes = result.get("bytes")
+            page_url = str(result.get("page_url") or "").strip()
+            if not img_path:
+                return False, "missing fetched image path"
+            if not isinstance(img_bytes, int) or img_bytes <= 0:
+                return False, "missing fetched image byte count"
+            return True, f"path={img_path};bytes={img_bytes};source={page_url}"
         if action == "move_file":
             destination = str(result.get("destination") or "").strip()
             bytes_moved = result.get("bytes")
@@ -917,6 +945,18 @@ class DesktopTaskSkill(BaseSkill):
                 )
             )
 
+        artifact_image_path = ""
+        if wants_image and wants_artifact_file and image_query:
+            artifact_image_path = f"{folder_path}/{self._safe_filename(image_query)[:40] or 'reference'}_image.png"
+            steps.append(
+                DesktopTaskStep(
+                    action="fetch_topic_image",
+                    target={"topic": image_query, "path": artifact_image_path},
+                    reason="Fetch a representative image for the requested visual through the governed network gateway, with source-page evidence.",
+                    expect="Image file exists with a recorded source page URL.",
+                )
+            )
+
         if wants_document and wants_artifact_file:
             body = self._document_body_with_references(
                 text,
@@ -953,6 +993,7 @@ class DesktopTaskSkill(BaseSkill):
                             "title": "Aura Desktop Task",
                             "body": body,
                             "overwrite": False,
+                            **({"image_path": artifact_image_path} if artifact_image_path else {}),
                         },
                         reason="Render the same verified text body into a PDF artifact.",
                         expect="PDF artifact exists and starts with a PDF header.",

@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 import urllib.parse
 import webbrowser
@@ -21,9 +22,6 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.skills._pyautogui_runtime import get_pyautogui
 from core.skills.base_skill import BaseSkill
 from core.utils.exceptions import capture_and_log
-
-from core.runtime.action_executor import ActionExecutor
-from core.governance.will import ActionDomain
 
 logger = logging.getLogger("Skills.ComputerUse")
 
@@ -73,7 +71,7 @@ class ComputerUseParams(BaseModel):
         description=(
             "click|type|hotkey|scroll|read_screen_text|read_menu_clock|open_app|open_url|"
             "run_command|set_clipboard|get_clipboard|wait|run_applescript|write_text_file|"
-            "render_text_pdf|move_file|create_folder"
+            "render_text_pdf|move_file|create_folder|fetch_topic_image"
         ),
     )
     target: str = Field(
@@ -454,6 +452,83 @@ class ComputerUseSkill(BaseSkill):
             "existed": existed,
         }
 
+    def _fetch_topic_image(self, target: str) -> dict[str, Any]:
+        """Fetch a representative image for a topic via Wikipedia's REST
+        summary API, through the governed network gateway. General by
+        construction: any topic, deterministic endpoint, no scraping —
+        and the page URL comes back as evidence of where it was found.
+        """
+        payload = self._target_json(target)
+        topic = str(payload.get("topic") or "").strip()
+        if not topic:
+            return {"ok": False, "error": "fetch_topic_image requires a topic."}
+        path = self._resolve_allowed_desktop_path(payload.get("path"))
+        from urllib.parse import quote
+
+        from core.runtime.network_gateway import get_network_gateway
+
+        gateway = get_network_gateway()
+        normalized_topic = topic[:1].upper() + topic[1:]
+        summary_url = (
+            "https://en.wikipedia.org/api/rest_v1/page/summary/"
+            + quote(normalized_topic.replace(" ", "_"))
+        )
+        ua = {"User-Agent": "AuraDigitalEntity/1.0 (local desktop runtime)"}
+        meta = gateway.request(
+            "GET",
+            summary_url,
+            headers=ua,
+            timeout=20.0,
+            source="computer_use:fetch_topic_image",
+            read_only=True,
+        )
+        if not meta.get("ok"):
+            return {"ok": False, "error": f"topic lookup failed: {meta.get('error') or meta.get('status_code')}"}
+        raw_meta = meta.get("content") or meta.get("text") or b"{}"
+        if isinstance(raw_meta, bytes):
+            raw_meta = raw_meta.decode("utf-8", errors="replace")
+        try:
+            doc = json.loads(raw_meta or "{}")
+        except (TypeError, ValueError):
+            doc = {}
+        image_url = str(
+            ((doc.get("originalimage") or {}).get("source"))
+            or ((doc.get("thumbnail") or {}).get("source"))
+            or ""
+        )
+        page_url = str(
+            ((doc.get("content_urls") or {}).get("desktop") or {}).get("page")
+            or f"https://en.wikipedia.org/wiki/{quote(topic.replace(' ', '_'))}"
+        )
+        if not image_url:
+            return {"ok": False, "error": f"no image available for topic '{topic}'", "page_url": page_url}
+        img = gateway.request(
+            "GET",
+            image_url,
+            headers=ua,
+            timeout=30.0,
+            source="computer_use:fetch_topic_image",
+            read_only=True,
+        )
+        raw = img.get("content") or img.get("body_bytes")
+        if isinstance(raw, str):
+            raw = raw.encode("latin-1", errors="ignore")
+        if not img.get("ok") or not raw:
+            return {"ok": False, "error": "image download failed", "image_url": image_url}
+        if len(raw) > 8 * 1024 * 1024:
+            return {"ok": False, "error": "image exceeds 8MB bound"}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        return {
+            "ok": True,
+            "action": "fetch_topic_image",
+            "path": str(path),
+            "bytes": len(raw),
+            "image_url": image_url,
+            "page_url": page_url,
+            "topic": topic,
+        }
+
     def _move_file(self, target: str) -> dict[str, Any]:
         payload = self._target_json(target)
         source = self._resolve_allowed_desktop_path(payload.get("source"), must_exist=True)
@@ -472,6 +547,131 @@ class ComputerUseSkill(BaseSkill):
             "bytes": final_path.stat().st_size,
         }
 
+    def _render_text_pdf_quartz(
+        self, path: Any, title: str, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Render a searchable-text PDF via CoreGraphics; None = fall back."""
+        try:
+            import Quartz
+            from CoreText import (
+                CTFontCreateWithName,
+                CTFrameDraw,
+                CTFramesetterCreateFrame,
+                CTFramesetterCreateWithAttributedString,
+                kCTFontAttributeName,
+            )
+            from Foundation import NSURL
+            from Quartz import CoreGraphics as CG  # noqa: N817 - Apple framework convention
+        except ImportError:
+            return None
+
+        body = str(payload.get("body") or "")[:9000]
+        image_path = str(payload.get("image_path") or "").strip()
+        width, height, margin = 612.0, 792.0, 54.0
+        image_drawn = False
+        image_error = ""
+
+        try:
+            url = NSURL.fileURLWithPath_(str(path))
+            rect = CG.CGRectMake(0, 0, width, height)
+            ctx = Quartz.CGPDFContextCreateWithURL(url, rect, None)
+            if ctx is None:
+                return None
+
+            from Foundation import (
+                NSAttributedString,
+                NSMutableAttributedString,
+            )
+
+            title_font = CTFontCreateWithName("Helvetica-Bold", 17.0, None)
+            body_font = CTFontCreateWithName("Helvetica", 12.0, None)
+            text = NSMutableAttributedString.alloc().initWithString_attributes_(
+                title + "\n\n", {kCTFontAttributeName: title_font}
+            )
+            text.appendAttributedString_(
+                NSAttributedString.alloc().initWithString_attributes_(
+                    body, {kCTFontAttributeName: body_font}
+                )
+            )
+            framesetter = CTFramesetterCreateWithAttributedString(text)
+
+            image = None
+            img_h = 0.0
+            if image_path:
+                try:
+                    img_file = self._resolve_allowed_desktop_path(
+                        image_path, must_exist=True
+                    )
+                    img_url = NSURL.fileURLWithPath_(str(img_file))
+                    source = Quartz.CGImageSourceCreateWithURL(img_url, None)
+                    if source is not None:
+                        image = Quartz.CGImageSourceCreateImageAtIndex(source, 0, None)
+                except (OSError, ValueError) as exc:
+                    image_error = str(exc)
+                if image is not None:
+                    iw = float(CG.CGImageGetWidth(image))
+                    ih = float(CG.CGImageGetHeight(image))
+                    max_w, max_h = width - 2 * margin, 260.0
+                    scale = min(max_w / max(iw, 1.0), max_h / max(ih, 1.0), 1.0)
+                    img_w, img_h = iw * scale, ih * scale
+
+            consumed = 0
+            total = text.length()
+            first_page = True
+            page_count = 0
+            while consumed < total or first_page:
+                Quartz.CGPDFContextBeginPage(ctx, None)
+                top = height - margin
+                if first_page and image is not None:
+                    CG.CGContextDrawImage(
+                        ctx,
+                        CG.CGRectMake(margin, top - img_h, img_w, img_h),
+                        image,
+                    )
+                    image_drawn = True
+                    top -= img_h + 14.0
+                frame_rect = CG.CGRectMake(
+                    margin, margin, width - 2 * margin, top - margin
+                )
+                frame_path = CG.CGPathCreateWithRect(frame_rect, None)
+                frame = CTFramesetterCreateFrame(
+                    framesetter, (consumed, 0), frame_path, None
+                )
+                CTFrameDraw(frame, ctx)
+                from CoreText import CTFrameGetVisibleStringRange
+
+                visible = CTFrameGetVisibleStringRange(frame)
+                advanced = int(visible.length)
+                Quartz.CGPDFContextEndPage(ctx)
+                page_count += 1
+                first_page = False
+                if advanced <= 0:
+                    break
+                consumed += advanced
+            Quartz.CGPDFContextClose(ctx)
+        except Exception as exc:  # noqa: BLE001 - fall back to raster renderer
+            record_degradation(
+                "computer_use",
+                exc,
+                action="fell back to raster PDF after Quartz text rendering failed",
+                severity="warning",
+            )
+            return None
+
+        result: dict[str, Any] = {
+            "ok": True,
+            "action": "render_text_pdf",
+            "path": str(path),
+            "renderer": "quartz_text_layer",
+            "image_embedded": image_drawn,
+            "bytes": path.stat().st_size if path.exists() else 0,
+            "pages": max(1, page_count),
+            "chars": len(title) + len(body),
+        }
+        if image_error:
+            result["image_error"] = image_error
+        return result
+
     def _render_text_pdf(self, target: str) -> dict[str, Any]:
         payload = self._target_json(target)
         path = self._resolve_allowed_desktop_path(payload.get("path"))
@@ -484,6 +684,16 @@ class ComputerUseSkill(BaseSkill):
             path = self._versioned_path(path)
         if path.suffix.lower() != ".pdf":
             return {"ok": False, "error": "PDF path must end with .pdf."}
+
+        # Native Quartz rendering produces a REAL text layer (searchable,
+        # extractable, hostile-verifiable). The previous Pillow renderer
+        # rasterized every page into one big image: zero extractable
+        # text, and an /Image XObject on every page that made embedded-
+        # image evidence vacuous.
+        if sys.platform == "darwin":
+            quartz_result = self._render_text_pdf_quartz(path, title, payload)
+            if quartz_result is not None:
+                return quartz_result
 
         try:
             from PIL import Image, ImageDraw, ImageFont
@@ -532,6 +742,24 @@ class ComputerUseSkill(BaseSkill):
             return page, draw, margin + title_height + 14
 
         page, draw, y = new_page()
+
+        image_path = str(payload.get("image_path") or "").strip()
+        if image_path:
+            try:
+                resolved_img = self._resolve_allowed_desktop_path(image_path, must_exist=True)
+                with Image.open(resolved_img) as embedded:
+                    embedded = embedded.convert("RGB")
+                    max_w = width - (2 * margin)
+                    max_h = 260
+                    embedded.thumbnail((max_w, max_h))
+                    page.paste(embedded, (margin, y))
+                    y += embedded.height + 14
+            except (OSError, ValueError) as exc:
+                # The image is an enhancement; the document must still
+                # render — but record the miss honestly in the body.
+                draw.text((margin, y), f"[image unavailable: {exc}]", fill=(120, 0, 0), font=font)
+                y += line_height + 6
+
         for paragraph in safe_body.splitlines():
             for line in wrap_line(draw, paragraph):
                 if y + line_height > height - margin:
@@ -1008,6 +1236,8 @@ end tell
 
             elif action == "create_folder":
                 return await asyncio.to_thread(self._create_folder, params.target)
+            elif action == "fetch_topic_image":
+                return await asyncio.to_thread(self._fetch_topic_image, params.target)
 
             elif action == "render_text_pdf":
                 return await asyncio.to_thread(self._render_text_pdf, params.target)

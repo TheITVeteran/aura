@@ -26,6 +26,16 @@ def _fake_computer_use_result(params):
             "path": payload.get("path", "Aura Proof/receipt.txt"),
             "bytes": len(content.encode("utf-8")),
         }
+    if action == "fetch_topic_image":
+        return {
+            "ok": True,
+            "action": action,
+            "path": payload.get("path", "Aura Proof/image.png"),
+            "bytes": 4096,
+            "image_url": "https://upload.wikimedia.org/example.png",
+            "page_url": "https://en.wikipedia.org/wiki/Robot",
+            "topic": payload.get("topic", ""),
+        }
     if action == "render_text_pdf":
         body = str(payload.get("body") or "")
         return {
