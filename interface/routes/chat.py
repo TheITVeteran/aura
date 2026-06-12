@@ -7899,6 +7899,11 @@ async def api_chat(
                 # evidence) so the response payload can carry it — receipts
                 # are surface-visible evidence, not internal bookkeeping.
                 _desktop_exec_state["result"] = _executed.get("result")
+                logger.info(
+                    "Desktop chokepoint stored receipts: keys=%s result_attached=%r",
+                    sorted(_executed.keys()),
+                    _desktop_exec_state["result"] is not None,
+                )
                 return (
                     _apply_aura_voice_shaping(str(_executed.get("response") or "")).strip()
                     or final_text,
@@ -8041,6 +8046,13 @@ async def api_chat(
                 response_data["data"] = {
                     "desktop_result": _json_safe_payload(_desktop_exec_state["result"])
                 }
+            elif str(status).startswith("desktop_objective"):
+                logger.warning(
+                    "Desktop receipts NOT attached at fastpath door: "
+                    "result_present=%r attempted=%r",
+                    _desktop_exec_state.get("result") is not None,
+                    _desktop_exec_state.get("attempted"),
+                )
             if pending_exchange_id:
                 await _complete_logged_exchange(
                     pending_exchange_id,
