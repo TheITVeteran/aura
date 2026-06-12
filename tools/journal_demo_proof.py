@@ -81,9 +81,10 @@ def _pdf_has_image(path: Path) -> bool:
 
 
 class JournalDemoProof(LiveProof):
-    def __init__(self, *, port: int, boot_timeout_s: float):
+    def __init__(self, *, port: int, boot_timeout_s: float, mode: str = "headless"):
         super().__init__(
             port=port,
+            mode=mode,
             boot_timeout_s=boot_timeout_s,
             skip_desktop=False,
             restart_continuity=False,
