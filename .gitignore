@@ -157,3 +157,4 @@ test_vdb/
 
 # Generated release artifacts (manifest lives in the release bundle, not the repo)
 artifacts/release/
+sensory_audio.json
