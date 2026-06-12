@@ -1987,3 +1987,20 @@ async def test_computer_use_clock_returns_limited_payload_when_permissions_block
     assert result["ok"] is True
     assert result["status"] == "limited"
     assert result["clock_text"]
+
+
+def test_every_chokepoint_door_attaches_desktop_receipts():
+    """Round-10 lesson, receipts edition: the desktop chokepoint guards
+    every reply exit, and every exit that applies it must also attach the
+    step receipts to the wire payload. Visible-demo round 3 failed because
+    the kernel/deep door applied the chokepoint but dropped the receipts."""
+    import pathlib
+
+    src = pathlib.Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    doors = src.count("await _apply_desktop_objective_chokepoint(")
+    attachments = src.count('"desktop_result": _json_safe_payload')
+    assert doors >= 2, f"expected both reply doors, found {doors}"
+    assert attachments == doors, (
+        f"{doors} chokepoint doors but {attachments} receipt attachments — "
+        "a reply exit is dropping desktop receipts"
+    )

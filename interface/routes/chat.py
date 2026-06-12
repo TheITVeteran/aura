@@ -9110,6 +9110,14 @@ async def api_chat(
             "conversation_lane": lane_status,
             "response_confidence": response_confidence,
         }
+        # Same receipts contract as the fastpath door: desktop objectives
+        # carry their step receipts on the wire from EVERY reply exit.
+        if _desktop_exec_state.get("result") is not None and str(
+            _final_status
+        ).startswith("desktop_objective"):
+            response_data["data"] = {
+                "desktop_result": _json_safe_payload(_desktop_exec_state["result"])
+            }
 
         _record_recent_response(_final_reply or "…", _semantic_user_message)
         if pending_exchange_id:
