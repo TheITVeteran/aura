@@ -951,6 +951,19 @@ class DesktopTaskSkill(BaseSkill):
                     )
                 )
             if "notes" in lowered:
+                if any(step.action == "open_app" for step in steps):
+                    steps.append(
+                        DesktopTaskStep(
+                            action="wait",
+                            target="2",
+                            reason=(
+                                "Allow the writing app to finish launching and take "
+                                "focus before keyboard staging — a cold launch loses "
+                                "the shortcuts to whatever currently has focus."
+                            ),
+                            expect="Wait completes within the bounded desktop-task budget.",
+                        )
+                    )
                 steps.append(
                     DesktopTaskStep(
                         action="hotkey",

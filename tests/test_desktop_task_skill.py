@@ -712,6 +712,44 @@ def test_derived_steps_honor_explicit_root_and_filename():
     assert str(write_path).startswith("~/Documents/"), write_path
 
 
+def test_visible_notes_staging_derives_watchable_plan_with_artifacts():
+    """Bryan's 'and I want to see you do it' clause: opening Notes and
+    staging the entry visibly (open_app → launch wait → ⌘N → ⌘V) must
+    coexist with the durable artifact chain (folder, image, text, PDF).
+    The wait is load-bearing: a cold Notes launch loses the shortcuts
+    to whatever currently has focus."""
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    skill = DesktopTaskSkill()
+    objective = (
+        "Please open up my Notes app and write a short journal entry in "
+        "your own words describing who and what you are — I want to see "
+        "you do it. Include the current date and time inside the entry "
+        "text. Find an image of a robot online and include it in the "
+        "entry. Then save the finished entry as a PDF inside a new folder "
+        "called 'Aura's Journal' in my Documents folder."
+    )
+    steps = skill._derive_steps_from_objective(objective, {})
+    actions = [s.action for s in steps]
+
+    # Visible staging, in order: Notes opens, launch wait, new note, paste.
+    open_idx = actions.index("open_app")
+    assert "notes" in str(steps[open_idx].target).lower()
+    hotkeys = [i for i, s in enumerate(steps) if s.action == "hotkey"]
+    assert hotkeys, actions
+    waits = [i for i, s in enumerate(steps) if s.action == "wait"]
+    assert any(open_idx < w < hotkeys[0] for w in waits), (
+        f"no launch wait between open_app and first hotkey: {actions}"
+    )
+    hotkey_targets = [str(steps[i].target) for i in hotkeys]
+    assert any("v" in t for t in hotkey_targets), hotkey_targets
+
+    # Durable artifacts still land: folder, fetched image, PDF render.
+    assert "create_folder" in actions
+    assert "fetch_topic_image" in actions
+    assert "render_text_pdf" in actions
+
+
 def test_derived_steps_keep_defaults_without_explicit_parameters():
     from core.skills.desktop_task import DesktopTaskSkill
 
