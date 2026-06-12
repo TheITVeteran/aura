@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import atomic_write_bytes, atomic_write_text
 from core.runtime.desktop_action_gateway import get_desktop_action_gateway
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -536,7 +536,7 @@ class ComputerUseSkill(BaseSkill):
         if len(raw) > 8 * 1024 * 1024:
             return {"ok": False, "error": "image exceeds 8MB bound"}
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(raw)
+        atomic_write_bytes(path, raw)
         return {
             "ok": True,
             "action": "fetch_topic_image",
@@ -1135,9 +1135,10 @@ end tell
                     else "No obvious state shift detected after retries."
                 )
                 return {
-                    "ok": True,
+                    "ok": clicked_successfully,
                     "action": f"clicked ({params.x},{params.y})",
                     "attempts": attempt,
+                    "effect_verified": clicked_successfully,
                     "verification": verification,
                 }
 
@@ -1202,24 +1203,95 @@ end tell
                         break
 
                 return {
-                    "ok": True,
+                    "ok": typed_successfully,
                     "typed": params.target[:50],
                     "attempts": attempt,
+                    "effect_verified": typed_successfully,
                     "verification": "Text confirmed on screen or state shifted."
                     if typed_successfully
                     else "Typed but could not verify visibility.",
                 }
 
             elif action == "hotkey":
+                pre_state = ""
+                try:
+                    pre_state = await asyncio.to_thread(self._read_screen_text_macos)
+                except (
+                    TimeoutError,
+                    RuntimeError,
+                    OSError,
+                    AttributeError,
+                    TypeError,
+                    ValueError,
+                    subprocess.SubprocessError,
+                ) as exc:
+                    logger.debug("Pre-state screen read failed before hotkey: %s", exc)
                 keys = params.target.split("+")
                 await asyncio.to_thread(pyautogui.hotkey, *keys)
-                return {"ok": True, "hotkey": params.target}
+                await asyncio.sleep(0.4)
+                post_state = ""
+                try:
+                    post_state = await asyncio.to_thread(self._read_screen_text_macos)
+                except (
+                    TimeoutError,
+                    RuntimeError,
+                    OSError,
+                    AttributeError,
+                    TypeError,
+                    ValueError,
+                    subprocess.SubprocessError,
+                ) as exc:
+                    logger.debug("Post-state screen read failed after hotkey: %s", exc)
+                effect_verified = bool(pre_state or post_state) and post_state != pre_state
+                return {
+                    "ok": effect_verified,
+                    "hotkey": params.target,
+                    "effect_verified": effect_verified,
+                    "verification": "State shifted."
+                    if effect_verified
+                    else "Hotkey sent but no visible state shift was verified.",
+                }
 
             elif action == "scroll":
                 # Issue 88: Use x/y correctly
+                pre_state = ""
+                try:
+                    pre_state = await asyncio.to_thread(self._read_screen_text_macos)
+                except (
+                    TimeoutError,
+                    RuntimeError,
+                    OSError,
+                    AttributeError,
+                    TypeError,
+                    ValueError,
+                    subprocess.SubprocessError,
+                ) as exc:
+                    logger.debug("Pre-state screen read failed before scroll: %s", exc)
                 clicks = int(params.target or "3")
                 await asyncio.to_thread(pyautogui.scroll, clicks, x=params.x, y=params.y)
-                return {"ok": True, "scrolled": clicks}
+                await asyncio.sleep(0.4)
+                post_state = ""
+                try:
+                    post_state = await asyncio.to_thread(self._read_screen_text_macos)
+                except (
+                    TimeoutError,
+                    RuntimeError,
+                    OSError,
+                    AttributeError,
+                    TypeError,
+                    ValueError,
+                    subprocess.SubprocessError,
+                ) as exc:
+                    logger.debug("Post-state screen read failed after scroll: %s", exc)
+                effect_verified = bool(pre_state or post_state) and post_state != pre_state
+                return {
+                    "ok": effect_verified,
+                    "scrolled": clicks,
+                    "effect_verified": effect_verified,
+                    "verification": "State shifted."
+                    if effect_verified
+                    else "Scroll sent but no visible state shift was verified.",
+                }
 
             elif action == "set_clipboard":
                 return await asyncio.to_thread(self._set_clipboard, params.target)
