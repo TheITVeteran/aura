@@ -198,13 +198,25 @@ class MemoryRetrievalPhase(BasePhase):
                 action="used neutral affect signature after affect state read failed",
                 stage="affect_signature",
             )
-        contract = (
-            dict(getattr(state, "response_modifiers", {}) or {}).get("response_contract", {}) or {}
+        response_modifiers = dict(getattr(state, "response_modifiers", {}) or {})
+        contract = response_modifiers.get("response_contract", {}) or {}
+        imagination_memory_pressure = _safe_float(
+            response_modifiers.get("imagination_memory_pressure")
+        )
+        imagination_verification_pressure = _safe_float(
+            response_modifiers.get("imagination_verification_pressure")
+            or response_modifiers.get("verification_pressure")
+        )
+        effective_memory_salience = max(
+            _safe_float(affect_signature.get("memory_salience")),
+            imagination_memory_pressure,
         )
         retrieval_limit = 5
-        if contract.get("requires_memory_grounding"):
+        if contract.get("requires_memory_grounding") or imagination_memory_pressure > 0.55:
             retrieval_limit += 2
-        if _safe_float(affect_signature.get("memory_salience")) > 0.65:
+        if effective_memory_salience > 0.65:
+            retrieval_limit += 1
+        if imagination_verification_pressure > 0.55:
             retrieval_limit += 1
         hot_limit = 4 if _safe_float(affect_signature.get("social_hunger")) > 0.65 else 3
 
@@ -373,7 +385,7 @@ class MemoryRetrievalPhase(BasePhase):
         if dual_res:
             memory_candidates.append(
                 (
-                    0.45 + _safe_float(affect_signature.get("memory_salience")) * 0.1,
+                    0.45 + effective_memory_salience * 0.1,
                     _safe_text(dual_res, max_chars=2_000),
                 )
             )
@@ -391,7 +403,7 @@ class MemoryRetrievalPhase(BasePhase):
                         0.3
                         + (importance * 0.3)
                         + (valence_alignment * 0.2)
-                        + (_safe_float(affect_signature.get("memory_salience")) * 0.2)
+                        + (effective_memory_salience * 0.2)
                     )
                     content = _safe_text(km.get("content"), max_chars=2_000)
                     if content:
@@ -413,7 +425,7 @@ class MemoryRetrievalPhase(BasePhase):
                         emotional_valence = _safe_float(metadata.get("emotional_valence"))
                         importance = _safe_float(metadata.get("importance"))
                         score = _safe_float(item.get("score"))
-                        salience = _safe_float(affect_signature.get("memory_salience"))
+                        salience = effective_memory_salience
                         valence_alignment = 1.0 - min(
                             1.0,
                             abs(
@@ -512,5 +524,7 @@ class MemoryRetrievalPhase(BasePhase):
             "retrieval_limit": retrieval_limit,
             "hot_limit": hot_limit,
             "affect": affect_signature,
+            "imagination_memory_pressure": round(imagination_memory_pressure, 4),
+            "imagination_verification_pressure": round(imagination_verification_pressure, 4),
         }
         return new_state

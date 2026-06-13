@@ -87,6 +87,57 @@ async def test_memory_retrieval_includes_memory_facade_results():
 
 
 @pytest.mark.asyncio
+async def test_memory_retrieval_uses_imagination_pressure_for_grounding_depth():
+    memory_manager = SimpleNamespace()
+    knowledge_graph = SimpleNamespace(search_knowledge=lambda query, limit=3: [])
+    captured = {}
+
+    async def _search(query, limit=5):
+        captured["query"] = query
+        captured["limit"] = limit
+        return [{"content": "Imagined workflow should be checked against prior governed tool use."}]
+
+    async def _get_hot_memory(limit=3):
+        captured["hot_limit"] = limit
+        return {"recent_episodes": []}
+
+    memory_facade = SimpleNamespace(search=_search, get_hot_memory=_get_hot_memory)
+    container = SimpleNamespace(
+        get=lambda name, default=None: (
+            memory_manager
+            if name == "memory_manager"
+            else knowledge_graph
+            if name == "knowledge_graph"
+            else memory_facade
+            if name == "memory_facade"
+            else default
+        )
+    )
+    phase = MemoryRetrievalPhase(container)
+
+    state = AuraState.default()
+    state.response_modifiers["imagination_memory_pressure"] = 0.74
+    state.response_modifiers["imagination_verification_pressure"] = 0.62
+    state.cognition.working_memory.append(
+        {
+            "role": "user",
+            "content": "What would a governed visible workflow look like?",
+        }
+    )
+
+    new_state = await phase.execute(state)
+
+    assert new_state is not state
+    assert captured["limit"] >= 9
+    assert new_state.response_modifiers["memory_retrieval_signature"][
+        "imagination_memory_pressure"
+    ] == pytest.approx(0.74)
+    assert new_state.response_modifiers["memory_retrieval_signature"][
+        "imagination_verification_pressure"
+    ] == pytest.approx(0.62)
+
+
+@pytest.mark.asyncio
 async def test_memory_retrieval_prioritizes_affect_aligned_memories():
     memory_manager = SimpleNamespace()
     knowledge_graph = SimpleNamespace(search_knowledge=lambda query, limit=3: [])
@@ -359,4 +410,3 @@ async def test_memory_retrieval_retains_recent_episodes_score_and_metadata():
     # Because hot episode has score=0.85 and metadata set properly, it won't be pruned.
     assert any("Bryan works at Stanford" in item for item in new_state.cognition.long_term_memory)
     assert any("high scoring semantic fact" in item for item in new_state.cognition.long_term_memory)
-

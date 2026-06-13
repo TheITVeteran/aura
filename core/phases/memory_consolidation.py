@@ -60,6 +60,16 @@ class MemoryConsolidationPhase(BasePhase):
     def __init__(self, container: Any):
         self.container = container
 
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+        if parsed != parsed:
+            return default
+        return max(0.0, min(1.0, parsed))
+
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
         """
         Persist recent interactions to long-term storage and prune working memory.
@@ -111,7 +121,18 @@ class MemoryConsolidationPhase(BasePhase):
         # ISSUE-81: Consolidation Skip Fix
         # Allow consolidation if there's high arousal or a pending action,
         # even if the turn is not strictly completed.
-        force_consolidation = new_state.affect.arousal > 0.8 or (len(new_state.cognition.working_memory) > 0 and new_state.cognition.working_memory[-1].get("action"))
+        response_modifiers = dict(getattr(new_state, "response_modifiers", {}) or {})
+        imagination_memory_pressure = self._safe_float(
+            response_modifiers.get("imagination_memory_pressure")
+        )
+        force_consolidation = (
+            new_state.affect.arousal > 0.8
+            or imagination_memory_pressure > 0.72
+            or (
+                len(new_state.cognition.working_memory) > 0
+                and new_state.cognition.working_memory[-1].get("action")
+            )
+        )
 
         # ── Consciousness-driven consolidation triggers ──
         # GWT ignition (high-priority broadcast) → force consolidation (significant event)
@@ -280,7 +301,10 @@ class MemoryConsolidationPhase(BasePhase):
                     if hasattr(new_state.affect, "get_cognitive_signature")
                     else {}
                 )
-                salience = float(affect_signature.get("memory_salience", 0.0) or 0.0)
+                salience = max(
+                    float(affect_signature.get("memory_salience", 0.0) or 0.0),
+                    imagination_memory_pressure,
+                )
                 complexity = float(affect_signature.get("affective_complexity", 0.0) or 0.0)
                 importance = 0.85 if is_completed_turn else 0.65
                 importance = max(
@@ -304,6 +328,12 @@ class MemoryConsolidationPhase(BasePhase):
                         "physiological_strain": float(affect_signature.get("physiological_strain", 0.0) or 0.0),
                         "affective_complexity": complexity,
                         "memory_salience": salience,
+                        "affective_memory_salience": float(affect_signature.get("memory_salience", 0.0) or 0.0),
+                        "imagination_memory_pressure": imagination_memory_pressure,
+                        "imagination_verification_pressure": self._safe_float(
+                            response_modifiers.get("imagination_verification_pressure")
+                            or response_modifiers.get("verification_pressure")
+                        ),
                         "resonance": affect_signature.get("resonance", getattr(new_state.affect, "get_resonance_string", lambda: "")()),
                     },
                 )

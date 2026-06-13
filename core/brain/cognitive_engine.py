@@ -65,6 +65,16 @@ _COGNITIVE_ENGINE_RECOVERABLE_ERRORS = (
 )
 
 
+def _bounded_float(value: Any, default: float = 0.0, *, lower: float = 0.0, upper: float = 1.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if parsed != parsed:
+        return default
+    return max(lower, min(upper, parsed))
+
+
 def _record_objective_binding(
     state: AuraState, objective: str, *, source: str, mode: Any, reason: str
 ) -> None:
@@ -162,6 +172,19 @@ def _compact_imagination_directive(frame: dict[str, Any] | None) -> str:
         rendered = " | ".join(str(item)[:120] for item in novel_thoughts[:2] if item)
         if rendered:
             directives.append(f"Novel thought candidates: {rendered}")
+    causal_effects = frame.get("causal_effects") or {}
+    if isinstance(causal_effects, dict):
+        attention = causal_effects.get("attention_focus") or []
+        if isinstance(attention, list) and attention:
+            rendered_attention = ", ".join(str(item)[:40] for item in attention[:4] if item)
+            if rendered_attention:
+                directives.append(f"Attention targets: {rendered_attention}.")
+        memory_priority = _bounded_float(causal_effects.get("memory_priority"), 0.0)
+        if memory_priority >= 0.45:
+            directives.append("Let the model influence what should be remembered or compared against prior context.")
+        verify_pressure = _bounded_float(causal_effects.get("verification_pressure"), 0.0)
+        if verify_pressure >= 0.35:
+            directives.append("Mark which parts are hypothetical versus verified before acting.")
     if bool(routing.get("seek_verification")):
         directives.append("If the request needs real-world effects or facts, route through governed tools before claiming completion.")
     return " ".join(directives)
@@ -529,11 +552,32 @@ class CognitiveEngine:
         state.response_modifiers["novelty_pressure"] = frame.novelty_pressure
         state.response_modifiers["imagination_sampling_bias"] = dict(frame.sampling_bias)
         state.response_modifiers["imagination_routing_bias"] = dict(frame.routing_bias)
+        state.response_modifiers["imagination_memory_pressure"] = frame.memory_pressure
+        state.response_modifiers["imagination_verification_pressure"] = frame.verification_pressure
+        state.response_modifiers["verification_pressure"] = max(
+            _bounded_float(state.response_modifiers.get("verification_pressure"), 0.0),
+            frame.verification_pressure,
+        )
+        if frame.routing_bias.get("seek_verification") or frame.routing_bias.get("raise_metacognition"):
+            state.response_modifiers["tool_governance_pressure"] = True
+            state.response_modifiers["metacognition_depth"] = max(
+                _bounded_float(state.response_modifiers.get("metacognition_depth"), 0.35),
+                _bounded_float(frame.causal_effects.get("metacognition_depth"), 0.35),
+            )
 
         cognition_mods = dict(getattr(state.cognition, "modifiers", {}) or {})
         cognition_mods["imagination_workspace"] = frame_dict
         cognition_mods["imagination_prompt_block_available"] = True
+        cognition_mods["imagination_attention_targets"] = list(frame.attention_targets)
+        cognition_mods["imagination_causal_effects"] = dict(frame.causal_effects)
+        cognition_mods["imagination_ablation_predictions"] = dict(frame.ablation_predictions)
+        if frame.routing_bias.get("requires_memory_grounding"):
+            cognition_mods["requires_memory_grounding"] = True
         state.cognition.modifiers = cognition_mods
+        if frame.attention_targets and not is_background:
+            state.cognition.attention_focus = (
+                f"{objective[:120]} | imagined focus: {', '.join(frame.attention_targets[:3])}"
+            )
 
         merged_context = dict(context or {})
         merged_context["imagination_workspace"] = frame_dict

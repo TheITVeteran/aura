@@ -36,9 +36,12 @@ def test_imagination_engine_models_visual_counterfactual_and_connections():
 
     assert frame.salience > 0.5
     assert replay_frame.frame_id == frame.frame_id
+    assert frame.memory_pressure > 0.45
+    assert frame.verification_pressure > 0.15
     assert "visual" in frame.modalities
     assert "counterfactual" in frame.modalities
     assert "conceptual" in frame.modalities
+    assert "memory" in frame.attention_targets
     assert frame.visual_model
     assert frame.mental_canvas["modality"] == "visual"
     assert frame.mental_canvas["image_prompt"]
@@ -46,6 +49,10 @@ def test_imagination_engine_models_visual_counterfactual_and_connections():
     assert frame.associative_links
     assert frame.novel_thoughts
     assert frame.simulation_steps
+    assert frame.action_affordances
+    assert frame.ablation_predictions["no_imagination"]
+    assert frame.causal_effects["memory_priority"] == pytest.approx(frame.memory_pressure)
+    assert "memory_retrieval_bias" in frame.causal_effects["expected_downstream"]
     assert frame.conceptual_bridge
     assert frame.counterfactuals
     assert frame.governance["advisory_only"] is True
@@ -58,6 +65,12 @@ def test_cognitive_engine_records_imagination_workspace_as_state_and_context():
     engine = CognitiveEngine()
     state = AuraState.default()
     state.affect.curiosity = 0.8
+    state.cognition.working_memory.append(
+        {
+            "role": "user",
+            "content": "Earlier we were discussing how desktop actions should stay governed.",
+        }
+    )
 
     context = engine._apply_imagination_workspace(
         state,
@@ -72,7 +85,15 @@ def test_cognitive_engine_records_imagination_workspace_as_state_and_context():
     assert state.response_modifiers["creative_pressure"] > 0.0
     assert state.response_modifiers["novelty_pressure"] > 0.0
     assert "imagination_sampling_bias" in state.response_modifiers
+    assert state.response_modifiers["imagination_memory_pressure"] == frame["memory_pressure"]
+    assert state.response_modifiers["imagination_verification_pressure"] == frame["verification_pressure"]
+    assert state.response_modifiers["verification_pressure"] == frame["verification_pressure"]
+    assert state.response_modifiers["tool_governance_pressure"] is True
     assert state.cognition.modifiers["imagination_workspace"]["frame_id"] == frame["frame_id"]
+    assert state.cognition.modifiers["imagination_attention_targets"] == frame["attention_targets"]
+    assert state.cognition.modifiers["imagination_causal_effects"]["memory_priority"] == frame["memory_pressure"]
+    assert state.cognition.modifiers["requires_memory_grounding"] is True
+    assert "imagined focus" in state.cognition.attention_focus
     assert context["imagination_workspace"]["frame_id"] == frame["frame_id"]
     assert ServiceContainer.get("imagination_engine", default=None) is get_imagination_engine()
 
@@ -200,6 +221,7 @@ def test_imagination_prompt_block_exports_canvas_without_claiming_perception():
     assert "Mental canvas" in block
     assert "Novel thought candidates" in block
     assert "Association map" in block
+    assert "Causal effects" in block
     assert "not as evidence" in block
     assert frame.mental_canvas["externalization_path"].endswith("otherwise keep it private.")
 

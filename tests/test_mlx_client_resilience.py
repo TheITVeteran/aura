@@ -1148,7 +1148,8 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
             "required": True,
         }
 
-        with ReplaceAttr(client, "_generate_inner", AsyncCallProbe(side_effect=["", "ready"])):
+        probe = AsyncCallProbe(side_effect=["", "ready"])
+        with ReplaceAttr(client, "_generate_inner", probe):
             await client._run_warmup_precompile(
                 request_is_background=False,
                 foreground_request=True,
@@ -1158,6 +1159,11 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(client.get_lane_status()["state"], "ready")
         self.assertTrue(client.get_lane_status()["conversation_ready"])
+        self.assertEqual(len(probe.await_args_list), 2)
+        readiness_kwargs = probe.await_args_list[1].kwargs
+        self.assertTrue(readiness_kwargs["health_probe"])
+        self.assertTrue(readiness_kwargs["disable_prompt_cache"])
+        self.assertEqual(readiness_kwargs["max_tokens"], 3)
 
     async def test_warmup_precompile_rejects_empty_readiness_probe(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)

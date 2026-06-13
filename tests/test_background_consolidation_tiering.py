@@ -140,6 +140,36 @@ async def test_memory_consolidation_commits_completed_turn_to_memory_facade():
 
 
 @pytest.mark.asyncio
+async def test_memory_consolidation_includes_imagination_memory_pressure():
+    commit_interaction = AsyncCallRecorder()
+    memory_facade = SimpleNamespace(commit_interaction=commit_interaction)
+    container = SimpleNamespace(
+        get=lambda name, default=None: memory_facade if name == "memory_facade" else default
+    )
+    phase = MemoryConsolidationPhase(container)
+
+    state = AuraState.default()
+    state.response_modifiers["imagination_memory_pressure"] = 0.82
+    state.response_modifiers["imagination_verification_pressure"] = 0.67
+    state.cognition.current_origin = "desktop"
+    state.cognition.working_memory.extend(
+        [
+            {"role": "user", "content": "Imagine the workflow, then verify it.", "timestamp": 1.0},
+            {"role": "assistant", "content": "I modeled it and separated imagined steps from verified ones.", "timestamp": 2.0},
+        ]
+    )
+
+    await phase.execute(state, objective="Imagine the workflow, then verify it.")
+
+    assert len(commit_interaction.calls) == 1
+    _, kwargs = commit_interaction.calls[0]
+    metadata = kwargs["metadata"]
+    assert metadata["memory_salience"] == pytest.approx(0.82)
+    assert metadata["imagination_memory_pressure"] == pytest.approx(0.82)
+    assert metadata["imagination_verification_pressure"] == pytest.approx(0.67)
+
+
+@pytest.mark.asyncio
 async def test_memory_consolidation_queues_failed_facade_commit_for_retry():
     class _MemoryFacade:
         async def commit_interaction(self, **kwargs):

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 import time
 
 import pytest
@@ -375,6 +376,55 @@ async def test_boot_health_probe_times_out_instead_of_hanging_http_loop(monkeypa
     assert payload["required_probes"]["all_passed"] is False
     assert payload["blockers"] == ["health_probe_timeout"]
     await asyncio.sleep(0.25)
+
+
+@pytest.mark.asyncio
+async def test_boot_health_probe_reports_single_flight_while_prior_probe_is_wedged(monkeypatch):
+    from interface.routes import system as system_routes
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_snapshot(*_args, **_kwargs):
+        started.set()
+        release.wait(0.3)
+        return (
+            {
+                "ready": True,
+                "system_ready": True,
+                "required_probes": {"all_passed": True},
+                "blockers": [],
+                "conversation_ready": True,
+            },
+            200,
+        )
+
+    monkeypatch.setattr(system_routes, "_HEALTH_PROBE_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+    monkeypatch.setattr(system_routes, "_get_runtime_state_safe", lambda: {})
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_conversation_lane_status_resilient",
+        lambda: {"conversation_ready": True, "state": "ready"},
+    )
+    monkeypatch.setattr(system_routes, "build_boot_health_snapshot", slow_snapshot)
+
+    first_probe = asyncio.create_task(
+        system_routes._build_boot_health_payload_bounded(is_gui_proxy=False)
+    )
+    assert await asyncio.to_thread(started.wait, 0.2)
+    await asyncio.sleep(0.08)
+
+    payload, status_code = await system_routes._build_boot_health_payload_bounded(
+        is_gui_proxy=False
+    )
+    release.set()
+    first_payload, first_status_code = await first_probe
+
+    assert status_code == 503
+    assert payload["blockers"] == ["health_probe_already_running"]
+    assert first_status_code == 503
+    assert first_payload["blockers"] == ["health_probe_timeout"]
 
 
 def test_boot_health_probe_single_flight_fails_closed_instead_of_stacking():

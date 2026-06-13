@@ -42,7 +42,8 @@ _CREATIVE_RE = re.compile(
 )
 _TOOL_OR_REALITY_RE = re.compile(
     r"\b(open|click|type|write|save|export|search|download|run|execute|install|"
-    r"modify|delete|commit|push|send|email|browse)\b",
+    r"modify|delete|commit|push|send|email|browse|tool|tools|workflow|desktop|"
+    r"browser|app|application|external|real-world|real world|visible action)\b",
     re.IGNORECASE,
 )
 
@@ -150,8 +151,11 @@ class ImaginationFrame:
     novelty_pressure: float
     curiosity_pressure: float
     affective_pressure: float
+    memory_pressure: float
+    verification_pressure: float
     modalities: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
+    attention_targets: list[str] = field(default_factory=list)
     visual_model: str = ""
     phrase_model: str = ""
     conceptual_bridge: str = ""
@@ -161,6 +165,9 @@ class ImaginationFrame:
     simulation_steps: list[str] = field(default_factory=list)
     counterfactuals: list[str] = field(default_factory=list)
     experiments: list[str] = field(default_factory=list)
+    action_affordances: list[str] = field(default_factory=list)
+    ablation_predictions: dict[str, str] = field(default_factory=dict)
+    causal_effects: dict[str, Any] = field(default_factory=dict)
     verification_boundary: str = (
         "This is an internal hypothetical model, not external perception or proof."
     )
@@ -185,19 +192,24 @@ class ImaginationFrame:
             parts = [
                 "## IMAGINATION WORKSPACE",
                 "Private hypothetical model; do not claim it as observed reality.",
-                f"Mode={self.mode} novelty={self.novelty_pressure:.2f} curiosity={self.curiosity_pressure:.2f}",
+                f"Mode={self.mode} novelty={self.novelty_pressure:.2f} curiosity={self.curiosity_pressure:.2f} "
+                f"memory={self.memory_pressure:.2f} verify={self.verification_pressure:.2f}",
             ]
             if self.visual_model:
                 parts.append(f"Imagined visual: {self.visual_model[:220]}")
             if self.conceptual_bridge:
                 parts.append(f"Connection: {self.conceptual_bridge[:220]}")
+            if self.attention_targets:
+                parts.append("Attention targets: " + ", ".join(self.attention_targets[:4]))
             return "\n".join(parts) + "\n\n"
 
         lines = [
             "## IMAGINATION WORKSPACE",
             "- Use this as a private generative scratchpad, not as evidence.",
-            f"- Mode: {self.mode} | salience={self.salience:.2f} | novelty={self.novelty_pressure:.2f} | curiosity={self.curiosity_pressure:.2f}",
+            f"- Mode: {self.mode} | salience={self.salience:.2f} | novelty={self.novelty_pressure:.2f} | curiosity={self.curiosity_pressure:.2f} | memory={self.memory_pressure:.2f} | verify={self.verification_pressure:.2f}",
         ]
+        if self.attention_targets:
+            lines.append("- Attention targets: " + ", ".join(self.attention_targets[:5]))
         if self.visual_model:
             lines.append(f"- Imagined visual model: {self.visual_model}")
         canvas = self.mental_canvas if isinstance(self.mental_canvas, dict) else {}
@@ -224,6 +236,21 @@ class ImaginationFrame:
             lines.append("- Internal simulation steps: " + " | ".join(self.simulation_steps[:3]))
         if self.experiments:
             lines.append("- Useful next experiments: " + " | ".join(self.experiments[:3]))
+        if self.action_affordances:
+            lines.append("- Action affordances: " + " | ".join(self.action_affordances[:3]))
+        if self.causal_effects:
+            effects = []
+            for key in (
+                "attention_focus",
+                "memory_priority",
+                "verification_pressure",
+                "metacognition_depth",
+                "tool_governance",
+            ):
+                if key in self.causal_effects:
+                    effects.append(f"{key}={self.causal_effects.get(key)}")
+            if effects:
+                lines.append("- Causal effects: " + " | ".join(effects))
         lines.append("- Boundary: if real-world facts, files, tools, or screen state matter, verify through governed tools before claiming completion.")
         return "\n".join(lines) + "\n\n"
 
@@ -304,6 +331,20 @@ class ImaginationEngine:
             + (0.12 if memories else 0.0)
             - (0.10 if is_background else 0.0)
         )
+        memory_pressure = _clamp(
+            (salience * 0.32)
+            + (novelty_pressure * 0.26)
+            + (curiosity * 0.18)
+            + (affective_pressure * 0.14)
+            + (0.10 if memories else 0.0)
+        )
+        verification_pressure = _clamp(
+            (0.46 if tool_or_reality else 0.0)
+            + (0.20 if counterfactual else 0.0)
+            + (0.16 if confusion >= 0.25 else 0.0)
+            + (novelty_pressure * 0.12)
+            + (0.06 if visual else 0.0)
+        )
 
         modalities: list[str] = []
         if visual:
@@ -345,6 +386,28 @@ class ImaginationEngine:
         )
         counterfactuals = self._build_counterfactuals(keywords, text, tool_or_reality)
         experiments = self._build_experiments(keywords, tool_or_reality)
+        attention_targets = self._build_attention_targets(keywords, text)
+        action_affordances = self._build_action_affordances(
+            keywords,
+            tool_or_reality=tool_or_reality,
+            visual=visual,
+            linguistic=linguistic,
+            counterfactual=counterfactual,
+        )
+        ablation_predictions = self._build_ablation_predictions(
+            memory_pressure=memory_pressure,
+            verification_pressure=verification_pressure,
+            novelty_pressure=novelty_pressure,
+            tool_or_reality=tool_or_reality,
+        )
+        causal_effects = self._build_causal_effects(
+            attention_targets=attention_targets,
+            memory_pressure=memory_pressure,
+            verification_pressure=verification_pressure,
+            curiosity=curiosity,
+            confusion=confusion,
+            tool_or_reality=tool_or_reality,
+        )
 
         mode = "visual_simulation" if visual else "counterfactual" if counterfactual else "creative_synthesis" if creative else "associative"
         seed = f"{text}|{keywords}|{origin}|{memories}".encode("utf-8", errors="ignore")
@@ -359,6 +422,9 @@ class ImaginationEngine:
             "model_visual_form": bool(visual_model),
             "generate_alternatives": novelty_pressure >= 0.34 or counterfactual,
             "seek_verification": tool_or_reality,
+            "requires_memory_grounding": memory_pressure >= 0.55,
+            "raise_metacognition": verification_pressure >= 0.45 or confusion >= 0.25,
+            "consolidate_if_success": memory_pressure >= 0.50,
             "avoid_claiming_observation": True,
         }
         frame = ImaginationFrame(
@@ -369,8 +435,11 @@ class ImaginationEngine:
             novelty_pressure=round(novelty_pressure, 4),
             curiosity_pressure=round(curiosity, 4),
             affective_pressure=round(affective_pressure, 4),
+            memory_pressure=round(memory_pressure, 4),
+            verification_pressure=round(verification_pressure, 4),
             modalities=modalities,
             keywords=keywords,
+            attention_targets=attention_targets,
             visual_model=visual_model,
             phrase_model=phrase_model,
             conceptual_bridge=conceptual_bridge,
@@ -380,6 +449,9 @@ class ImaginationEngine:
             simulation_steps=simulation_steps,
             counterfactuals=counterfactuals,
             experiments=experiments,
+            action_affordances=action_affordances,
+            ablation_predictions=ablation_predictions,
+            causal_effects=causal_effects,
             sampling_bias=sampling_bias,
             routing_bias=routing_bias,
         )
@@ -629,6 +701,91 @@ class ImaginationEngine:
         else:
             experiments.append("Keep it as a mental model unless the user asks for action.")
         return experiments[:3]
+
+    @staticmethod
+    def _build_attention_targets(keywords: list[str], text: str) -> list[str]:
+        targets = list(keywords[:5])
+        lowered = text.lower()
+        if "tool" in lowered and "governed_tools" not in targets:
+            targets.append("governed_tools")
+        if ("remember" in lowered or "memory" in lowered) and "memory_continuity" not in targets:
+            targets.append("memory_continuity")
+        if any(token in lowered for token in ("verify", "proof", "evidence")) and "verification" not in targets:
+            targets.append("verification")
+        return targets[:6]
+
+    @staticmethod
+    def _build_action_affordances(
+        keywords: list[str],
+        *,
+        tool_or_reality: bool,
+        visual: bool,
+        linguistic: bool,
+        counterfactual: bool,
+    ) -> list[str]:
+        focus = keywords[0] if keywords else "the model"
+        affordances = [f"hold {focus} as an internal model before answering"]
+        if counterfactual:
+            affordances.append("compare at least two possible futures")
+        if visual:
+            affordances.append("model spatial/visual structure privately before describing it")
+        if linguistic:
+            affordances.append("search for a concise surface phrase after the model is stable")
+        if tool_or_reality:
+            affordances.append("route any external effect through governed tools and receipts")
+        return affordances[:5]
+
+    @staticmethod
+    def _build_ablation_predictions(
+        *,
+        memory_pressure: float,
+        verification_pressure: float,
+        novelty_pressure: float,
+        tool_or_reality: bool,
+    ) -> dict[str, str]:
+        predictions: dict[str, str] = {
+            "no_imagination": "fewer alternatives and weaker counterfactual framing",
+        }
+        if memory_pressure >= 0.50:
+            predictions["no_memory_continuity"] = "recent context should anchor less of the response"
+        if verification_pressure >= 0.45:
+            predictions["no_governance_or_tools"] = "real-world claims should lose verification pressure"
+        if novelty_pressure >= 0.35:
+            predictions["no_novelty_drive"] = "creative synthesis should collapse toward a safer default framing"
+        if tool_or_reality:
+            predictions["no_authority_gateway"] = "external action must block rather than proceed directly"
+        return predictions
+
+    @staticmethod
+    def _build_causal_effects(
+        *,
+        attention_targets: list[str],
+        memory_pressure: float,
+        verification_pressure: float,
+        curiosity: float,
+        confusion: float,
+        tool_or_reality: bool,
+    ) -> dict[str, Any]:
+        metacognition_depth = _clamp(0.30 + verification_pressure * 0.45 + confusion * 0.35 + curiosity * 0.20)
+        return {
+            "attention_focus": attention_targets[:4],
+            "memory_priority": round(memory_pressure, 4),
+            "verification_pressure": round(verification_pressure, 4),
+            "metacognition_depth": round(metacognition_depth, 4),
+            "tool_governance": bool(tool_or_reality or verification_pressure >= 0.45),
+            "external_effects_allowed": False,
+            "expected_downstream": [
+                effect
+                for effect, active in (
+                    ("attention_bias", bool(attention_targets)),
+                    ("memory_retrieval_bias", memory_pressure >= 0.45),
+                    ("memory_consolidation_bias", memory_pressure >= 0.50),
+                    ("verification_bias", verification_pressure >= 0.35),
+                    ("governed_tool_boundary", tool_or_reality),
+                )
+                if active
+            ],
+        }
 
 
 _INSTANCE: ImaginationEngine | None = None

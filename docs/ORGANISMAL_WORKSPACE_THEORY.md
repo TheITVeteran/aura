@@ -60,6 +60,16 @@ permission confidence, higher verification pressure, and changed action policy.
   before generation.
 - `InferenceGate` consumes bounded cognitive and imagination sampling biases on
   ordinary live user turns, while excluding proof, benchmark, and health lanes.
+- `core/brain/imagination.py` builds side-effect-free mental models with
+  explicit causal affordances: attention targets, memory pressure, verification
+  pressure, metacognition pressure, action boundaries, and ablation predictions.
+- `CognitiveEngine` applies those imagination affordances to response modifiers,
+  attention focus, memory grounding pressure, verification pressure, and
+  governed-tool caution on the normal desktop/user path.
+- Memory retrieval and consolidation read the imagination pressures so novel or
+  counterfactual thought can change what prior context is pulled and what
+  successful turns become durable, without fabricating memories or bypassing
+  memory governance.
 - Context assembly may include a compact evidence-bounded workspace block, while
   black-box steering tests can hide the text and still exercise the structural
   bridge.

@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -88,6 +89,10 @@ _SSE_IDLE_HEARTBEAT_S = _env_positive_float("AURA_SSE_IDLE_HEARTBEAT_S", 15.0)
 _SSE_QUEUE_BACKLOG_LIMIT = max(1, _safe_int(os.getenv("AURA_SSE_QUEUE_BACKLOG_LIMIT", ""), 100))
 _HEALTH_PROBE_TIMEOUT_S = _env_positive_float("AURA_HEALTH_PROBE_TIMEOUT_S", 2.5)
 _HEALTH_PROBE_LOCK = threading.Lock()
+_HEALTH_PROBE_EXECUTOR = ThreadPoolExecutor(
+    max_workers=max(2, min(4, _safe_int(os.getenv("AURA_HEALTH_PROBE_WORKERS", ""), 2))),
+    thread_name_prefix="AuraHealthProbe",
+)
 _desktop_access_cache: dict[str, Any] = {
     "captured_at": 0.0,
     "payload": None,
@@ -266,9 +271,13 @@ def _build_boot_health_payload_sync(*, is_gui_proxy: bool) -> tuple[dict[str, An
 async def _build_boot_health_payload_bounded(*, is_gui_proxy: bool) -> tuple[dict[str, Any], int]:
     """Return a boot-health snapshot without allowing probes to hang the HTTP loop."""
 
+    loop = asyncio.get_running_loop()
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(_build_boot_health_payload_sync, is_gui_proxy=is_gui_proxy),
+            loop.run_in_executor(
+                _HEALTH_PROBE_EXECUTOR,
+                lambda: _build_boot_health_payload_sync(is_gui_proxy=is_gui_proxy),
+            ),
             timeout=_HEALTH_PROBE_TIMEOUT_S,
         )
     except TimeoutError as exc:

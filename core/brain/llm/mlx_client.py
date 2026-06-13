@@ -3081,6 +3081,7 @@ class MLXLocalClient:
             or kwargs.get("proof_evaluation_contract", False)
             or kwargs.get("operator_evidence_contract", False)
             or kwargs.get("benchmark_request", False)
+            or kwargs.get("health_probe", False)
             or kwargs.get("schema") is not None
         )
         if pinned_generation_contract:
@@ -3538,8 +3539,13 @@ class MLXLocalClient:
                             request_is_background=request_is_background,
                             foreground_request=foreground_request,
                             owner_label=owner_name,
-                            max_tokens=8,
+                            max_tokens=3,
                             temp=0.0,
+                            top_p=1.0,
+                            min_p=0.0,
+                            repetition_penalty=1.0,
+                            health_probe=True,
+                            disable_prompt_cache=True,
                         ),
                         timeout=min(max(10.0, warmup_timeout), 60.0),
                     )
