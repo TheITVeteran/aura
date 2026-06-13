@@ -41,3 +41,21 @@ def test_chat_and_voice_use_the_shared_desktop_objective_detector() -> None:
 
     for prompt in prompts:
         assert _looks_like_desktop_objective(prompt) is VoiceConversationBridge._looks_like_desktop_objective(prompt)
+
+
+def test_screen_observation_requests_route_to_desktop_body() -> None:
+    """Asking Aura to read the screen needs the desktop body
+    (read_screen_text) even though it carries no action+surface verb pair —
+    'what's on my screen' used to silently do nothing."""
+    from core.runtime.desktop_objective_intent import looks_like_desktop_objective
+
+    assert looks_like_desktop_objective("Read my screen and tell me what text you see.")
+    assert looks_like_desktop_objective("What's on my screen right now?")
+    assert looks_like_desktop_objective("What do you see on my screen?")
+    assert looks_like_desktop_objective("Look at the screen and describe it.")
+    assert looks_like_desktop_objective("Take a screenshot.")
+    assert looks_like_desktop_objective("Read the text on my screen, word for word.")
+
+    # Must not over-trigger on unrelated 'screen' / 'read' mentions.
+    assert not looks_like_desktop_objective("Read me a poem.")
+    assert not looks_like_desktop_objective("I watched a movie on the big screen last night.")

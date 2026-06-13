@@ -90,6 +90,17 @@ _EXPLANATORY_DESKTOP_QUESTION_RE = re.compile(
     r"close|minimi[sz]e|maximi[sz]e|organize)\b",
     re.IGNORECASE,
 )
+# Screen-observation requests need the desktop BODY (read_screen_text), but
+# they carry no action+surface verb pair, so the generic classifier missed
+# them and "what's on my screen" silently did nothing. Treat them as desktop
+# objectives directly. Kept in sync with desktop_task's observation markers.
+_SCREEN_OBSERVATION_RE = re.compile(
+    r"\b(?:read|look\s+at|inspect|describe|check|examine|capture|view)\b"
+    r"[^.?!]{0,40}\bscreen\b"
+    r"|\bwhat(?:'s|\s+is|\s+are|\s+do\s+you\s+see)\b[^.?!]{0,40}\bscreen\b"
+    r"|\bscreenshot\b",
+    re.IGNORECASE,
+)
 
 
 def _contains_desktop_objective_term(text: str, terms: tuple[str, ...]) -> bool:
@@ -123,6 +134,10 @@ def looks_like_desktop_objective(user_message: str) -> bool:
     sanitized_text = _WEB_SEARCH_REQUEST_SPAN_RE.sub(" ", sanitized_text)
     if looks_like_capability_inventory_dialogue_request(user_message):
         return False
+    # Screen observation ("read my screen", "what's on my screen") needs the
+    # desktop body even though it carries no action+surface verb pair.
+    if _SCREEN_OBSERVATION_RE.search(sanitized_text):
+        return True
     if _EXPLANATORY_DESKTOP_QUESTION_RE.search(text):
         return False
     if not _contains_desktop_objective_term(sanitized_text, _DESKTOP_OBJECTIVE_ACTION_TERMS):
