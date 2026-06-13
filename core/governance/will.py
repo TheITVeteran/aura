@@ -505,6 +505,56 @@ class UnifiedWill:
             self._record(decision)
             return decision
 
+        # ── 0. EXISTENTIAL STAKES CHECK: Is the system under severe resource threat? ──
+        survival_veto = False
+        survival_reason = ""
+        try:
+            stakes = ServiceContainer.get("existential_stakes", default=None)
+            if stakes:
+                threat = stakes.get_existential_threat()
+                # If threat exceeds 0.75, we trigger survival veto for non-critical/heavy actions
+                if threat > 0.75 and not is_critical:
+                    # Heavy action domains or non-critical sources
+                    if domain.value in {
+                        "tool_execution",
+                        "self_modification",
+                        "external_action",
+                        "network_call",
+                        "cloud_call",
+                        "file_write",
+                        "ci_cd"
+                    } or source in {"explore", "proactive_agent", "initiative_loop"}:
+                        survival_veto = True
+                        survival_reason = f"survival_inhibition: existential threat level critical ({threat:.2f})"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+            record_degradation(
+                "will.existential_stakes",
+                e,
+                severity="warning",
+                action="continued decision check without existential stakes veto",
+            )
+
+        if survival_veto:
+            decision = WillDecision(
+                receipt_id=receipt_id,
+                outcome=WillOutcome.REFUSE,
+                domain=domain,
+                reason=survival_reason,
+                constraints=["survival_inhibition"],
+                source=source,
+                content_hash=content_hash,
+                aura_now_hash=aura_now_hash,
+                aura_now_tick=aura_now_tick,
+                aura_now_policy=aura_now_policy,
+                aura_now_constraints=list(aura_now_constraints),
+                aura_now_evidence=aura_now_evidence,
+                latency_ms=(time.time() - t0) * 1000,
+            )
+            self._update_will_state(decision)
+            self._record(decision)
+            logger.info("WILL REFUSED: %s/%s -- %s", source, domain.value, survival_reason)
+            return decision
+
         # ── 1. IDENTITY CHECK: Does this align with who I am? ───────
         identity_alignment = self._check_identity_alignment(content, source, domain)
 

@@ -39,6 +39,12 @@ def test_imagination_engine_models_visual_counterfactual_and_connections():
     assert "counterfactual" in frame.modalities
     assert "conceptual" in frame.modalities
     assert frame.visual_model
+    assert frame.mental_canvas["modality"] == "visual"
+    assert frame.mental_canvas["image_prompt"]
+    assert frame.mental_canvas["externalization_path"].startswith("If the user asks")
+    assert frame.associative_links
+    assert frame.novel_thoughts
+    assert frame.simulation_steps
     assert frame.conceptual_bridge
     assert frame.counterfactuals
     assert frame.governance["advisory_only"] is True
@@ -128,9 +134,27 @@ async def test_desktop_quick_path_consumes_imagination_workspace():
     assert thought is not None
     assert thought.metadata["imagination_workspace"]["frame_id"] == frame["frame_id"]
     assert "Imagination workspace" in captured["messages"][0]["content"]
+    assert "Mental canvas" in captured["messages"][0]["content"]
+    assert "Novel thought candidates" in captured["messages"][0]["content"]
     assert captured["kwargs"]["protected_foreground_lane"] is True
     assert captured["kwargs"]["allow_cloud_fallback"] is False
     assert 512 < captured["kwargs"]["max_tokens"] <= 768
+
+
+def test_imagination_prompt_block_exports_canvas_without_claiming_perception():
+    frame = ImaginationEngine().imagine(
+        "Invent a new phrase and picture for curiosity connected to memory.",
+        state=AuraState.default(),
+        origin="desktop",
+    )
+
+    block = frame.prompt_block()
+
+    assert "Mental canvas" in block
+    assert "Novel thought candidates" in block
+    assert "Association map" in block
+    assert "not as evidence" in block
+    assert frame.mental_canvas["externalization_path"].endswith("otherwise keep it private.")
 
 
 def test_response_generation_sampling_combines_imagination_and_load_biases():

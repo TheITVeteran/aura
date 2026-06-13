@@ -53,6 +53,16 @@ class DatabaseCoordinator:
         self._connections.clear()
         logger.info("🗄️ DatabaseCoordinator stopped.")
 
+    def is_alive(self) -> bool:
+        """Synchronous liveness probe for the runtime health contract."""
+        worker = self._worker_task
+        return bool(
+            self._running
+            and worker is not None
+            and not worker.done()
+            and isinstance(self._write_queue, asyncio.Queue)
+        )
+
     async def execute_write(self, db_path: str, query: str, params: Tuple = ()) -> asyncio.Future:
         """Enqueue a write operation and return a future for the result."""
         result_future = asyncio.get_running_loop().create_future()

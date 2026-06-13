@@ -405,6 +405,46 @@ class CognitiveHeartbeat:
 
         state = await self._gather_state()
 
+        # Update existential stakes and trigger neurochemical response
+        try:
+            stakes = ServiceContainer.get("existential_stakes", default=None)
+            if stakes:
+                threat = stakes.update()
+                # Feed threat directly into the neurochemical system
+                ncs = ServiceContainer.get("neurochemical_system", default=None)
+                if ncs and threat > 0.2:
+                    ncs.on_threat(severity=threat)
+        except _RECOVERABLE_HEARTBEAT_ERRORS as e:
+            _record_heartbeat_degradation(
+                e,
+                action="skipped existential stakes update in heartbeat",
+                severity="warning",
+            )
+
+        # Tick temporal continuity accumulator (silence/drift experience)
+        try:
+            tc = ServiceContainer.get("temporal_continuity", default=None)
+            if tc:
+                tc.tick()
+        except _RECOVERABLE_HEARTBEAT_ERRORS as e:
+            _record_heartbeat_degradation(
+                e,
+                action="skipped temporal continuity tick in heartbeat",
+                severity="warning",
+            )
+
+        # Tick somatic qualia engine (raw substrate feel sampling)
+        try:
+            sq = ServiceContainer.get("somatic_qualia", default=None)
+            if sq:
+                sq.tick()
+        except _RECOVERABLE_HEARTBEAT_ERRORS as e:
+            _record_heartbeat_degradation(
+                e,
+                action="skipped somatic qualia tick in heartbeat",
+                severity="warning",
+            )
+
         # ── 2. SUBMIT candidates to GlobalWorkspace ─────────────────────
         await self._submit_candidates(state, tick)
 

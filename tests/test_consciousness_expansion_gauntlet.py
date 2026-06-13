@@ -22,6 +22,7 @@ import math
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -267,6 +268,123 @@ def test_gauntlet_combined_latency_budget():
     assert elapsed < 20.0, f"combined tick too slow: {elapsed:.1f}ms (> 20ms)"
 
 
+def test_gauntlet_existential_stakes():
+    from core.consciousness.existential_stakes import ExistentialStakes
+    stakes = ExistentialStakes(memory_limit_bytes=1000)
+    # Ticking should compute active threat
+    threat = stakes.update()
+    assert threat == 1.0
+    status = stakes.get_status()
+    assert status["memory_threat"] == 1.0
+    assert "SYSTEM RESOURCE WARNING" in stakes.get_context_block()
+
+
+def test_gauntlet_temporal_continuity_accumulates_silence_residue():
+    from core.consciousness.temporal_continuity import TemporalContinuityEngine
+
+    engine = TemporalContinuityEngine()
+    with engine._lock:
+        engine._anchor_time = time.time() - 180.0
+
+    engine.tick()
+    residue = engine.get_residue()
+    modulation = engine.compute_modulation()
+
+    assert engine.is_ready() is True
+    assert residue.silence_duration_s >= 170.0
+    assert residue.silence_pressure > 0.5
+    assert modulation["temperature_delta"] > 0.0
+    assert modulation["token_budget_multiplier"] > 1.0
+
+
+def test_gauntlet_synaptic_plasticity_learns_and_modulates(tmp_path, monkeypatch):
+    from core.consciousness import synaptic_plasticity as plasticity_module
+
+    monkeypatch.setattr(
+        plasticity_module,
+        "PERSIST_PATH",
+        tmp_path / "synaptic_plasticity_state.json",
+    )
+    engine = plasticity_module.SynapticPlasticityEngine()
+    substrate = np.linspace(-1.0, 1.0, plasticity_module.PROJECTION_DIM, dtype=np.float32)
+
+    before = engine.get_status()["total_updates"]
+    engine.pre_inference_capture(substrate, hedonic_score=0.2)
+    engine.post_inference_learn(
+        "A concrete response that improves task progress.",
+        hedonic_after=0.8,
+        surprise=0.1,
+    )
+    modulation = engine.compute_modulation(substrate)
+
+    assert engine.is_ready() is True
+    assert engine.get_status()["total_updates"] == before + 1
+    assert set(modulation) == {
+        "temperature_delta",
+        "top_p_delta",
+        "repetition_penalty_delta",
+    }
+
+
+def test_gauntlet_attention_gate_causally_prunes_context():
+    from core.consciousness.attention_gate import AttentionGate
+    from core.container import ServiceContainer
+
+    ServiceContainer.register_instance(
+        "attention_schema",
+        SimpleNamespace(
+            current_focus=SimpleNamespace(content="climate research browser tools"),
+            salience_map={"climate": 0.9, "tools": 0.8},
+        ),
+    )
+    gate = AttentionGate()
+    messages = [
+        {"role": "system", "content": "System policy stays visible."},
+        {"role": "user", "content": "Please research climate change articles."},
+        {"role": "assistant", "content": "I will use browser tools for climate research."},
+        {"role": "user", "content": "An unrelated grocery list with apples and cereal."},
+        {"role": "assistant", "content": "A short unrelated aside."},
+        {"role": "user", "content": "Now summarize climate findings with citations."},
+    ]
+
+    gated = gate.gate_context(messages)
+    status = gate.get_status()
+
+    assert gate.is_ready() is True
+    assert len(gated) >= 4
+    assert gated[0]["role"] == "system"
+    assert status["total_calls"] == 1
+    assert status["total_gated"] >= 1
+    assert any("[gated:" in item["content"] for item in gated)
+
+
+def test_gauntlet_somatic_qualia_produces_bounded_sampling_perturbation():
+    from core.consciousness.somatic_qualia import SomaticQualiaEngine
+    from core.container import ServiceContainer
+
+    substrate = SimpleNamespace(
+        x=np.linspace(-0.8, 0.9, 96, dtype=np.float32),
+        idx_valence=5,
+    )
+    mesh = SimpleNamespace(
+        get_global_synchrony=lambda: 0.42,
+        get_status=lambda: {"tier_energies": {"EXECUTIVE": 0.7, "SENSORY": 0.3}},
+    )
+    ServiceContainer.register_instance("conscious_substrate", substrate)
+    ServiceContainer.register_instance("neural_mesh", mesh)
+
+    engine = SomaticQualiaEngine()
+    for _ in range(4):
+        engine.tick()
+    perturbation = engine.compute_perturbation()
+
+    assert engine.is_ready() is True
+    assert perturbation
+    assert all(math.isfinite(float(value)) for value in perturbation.values())
+    assert abs(perturbation.get("temperature_perturbation", 0.0)) <= 0.1
+    assert abs(perturbation.get("repetition_penalty_perturbation", 0.0)) <= 0.08
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -282,6 +400,11 @@ if __name__ == "__main__":
         test_gauntlet_unified_bias_composes_all_three_sources,
         test_gauntlet_biases_remain_bounded_across_many_iterations,
         test_gauntlet_combined_latency_budget,
+        test_gauntlet_existential_stakes,
+        test_gauntlet_temporal_continuity_accumulates_silence_residue,
+        test_gauntlet_synaptic_plasticity_learns_and_modulates,
+        test_gauntlet_attention_gate_causally_prunes_context,
+        test_gauntlet_somatic_qualia_produces_bounded_sampling_perturbation,
     ]
     passed, failed = 0, []
     t0 = time.time()

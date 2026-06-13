@@ -848,10 +848,16 @@ class StateRepository:
             self._pending_proxy_commit_count = 0
             await self._clear_pending_proxy_commit()
             self._last_proxy_commit_error = ""
+            if isinstance(error, (BrokenPipeError, BusDegraded, ConnectionError)):
+                source = "vault_transport_closed"
+            elif error is not None:
+                source = type(error).__name__
+            else:
+                source = "transport_unavailable"
             logger.info(
                 "✅ [STATE] Shutdown state committed via direct snapshot (cause=%s, source=%s).",
                 getattr(state, "transition_cause", "shutdown"),
-                type(error).__name__ if error is not None else "transport_unavailable",
+                source,
             )
             return True
         except _STATE_BOUNDARY_ERRORS as exc:

@@ -703,6 +703,21 @@ class AffectEngineV2:
         """Graceful shutdown for affect engine."""
         logger.info("Affect Engine shutting down.")
 
+    def is_ready(self) -> bool:
+        """Synchronous liveness probe for runtime health checks."""
+        markers = getattr(self, "markers", None)
+        if markers is None or getattr(self, "_lock", None) is None:
+            return False
+        status = self.get_status()
+        lock_health = status.get("lock_health", {})
+        return (
+            isinstance(status.get("experiential"), dict)
+            and bool(lock_health.get("ok", False))
+            and 0 <= int(status.get("stability", 0)) <= 100
+            and -1.0 <= float(status.get("valence", 0.0)) <= 1.0
+            and 0.0 <= float(status.get("arousal", 0.0)) <= 1.0
+        )
+
     def get_snapshot(self) -> Dict[str, Any]:
         """Synchronous snapshot of emotional state for persistence."""
         w = self.markers.get_wheel()

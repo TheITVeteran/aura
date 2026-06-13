@@ -54,6 +54,18 @@ class AffectEngine:
         self._last_decay_time: float = time.time()
         logger.info("Affect Engine (PAD + decay) initialized.")
 
+    def is_ready(self) -> bool:
+        """Synchronous liveness probe for the runtime health contract."""
+        state = getattr(self, "state", None)
+        return (
+            isinstance(state, AffectState)
+            and getattr(self, "_lock", None) is not None
+            and isinstance(getattr(self, "_last_decay_time", None), (int, float))
+            and -1.0 <= float(state.valence) <= 1.0
+            and 0.0 <= float(state.arousal) <= 1.0
+            and 0.0 <= float(state.engagement) <= 1.0
+        )
+
     async def modify(
         self,
         dv: float,

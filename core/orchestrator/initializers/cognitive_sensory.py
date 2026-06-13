@@ -149,10 +149,15 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         from core.managers.drive_controller import DriveController
 
         if hasattr(orchestrator, "affect") and orchestrator.affect:
-            if not hasattr(orchestrator.affect, "drive_controller") or not orchestrator.affect.drive_controller:
-                orchestrator.affect.drive_controller = DriveController()
-            _register(report, "drive_engine", orchestrator.affect.drive_controller)
-            _register(report, "drives", orchestrator.affect.drive_controller)
+            controller = getattr(orchestrator.affect, "_drive_controller", None)
+            if controller is None:
+                controller = getattr(orchestrator, "drive_controller", None)
+            if controller is None or not callable(getattr(controller, "is_alive", None)):
+                controller = DriveController(orchestrator)
+            orchestrator.affect.drive_controller = controller
+            orchestrator.drive_controller = controller
+            _register(report, "drive_engine", controller)
+            _register(report, "drives", controller)
             logger.info("🚗 Drive Engine registered via AffectCoordinator")
             return
         raise RuntimeError("affect system unavailable; drive controller deferred")

@@ -75,6 +75,9 @@ class ConsciousnessSystem:
         self._task: asyncio.Task | None = None
         self.phi_core = None
         self.closed_loop = None
+        self.existential_stakes = None
+        self.synaptic_plasticity = None
+        self.temporal_continuity = None
         self.layer_status: dict[str, str] = {}
         self._degraded_layers: dict[str, str] = {}
 
@@ -386,6 +389,86 @@ class ConsciousnessSystem:
                 action="continued consciousness start without absorbed voices layer",
             )
             logger.warning("Could not initialize AbsorbedVoices: %s", e)
+
+        # Layer 5i: ExistentialStakes — physical & runtime survival stakes
+        try:
+            from .existential_stakes import get_existential_stakes
+
+            self.existential_stakes = get_existential_stakes()
+            ServiceContainer.register_instance("existential_stakes", self.existential_stakes)
+            self._mark_layer_online("existential_stakes")
+            logger.info("🧠 Layer 5i: ExistentialStakes ONLINE (memory limit monitoring active)")
+        except (ImportError, AttributeError, RuntimeError) as e:
+            self._mark_layer_degraded(
+                "existential_stakes",
+                e,
+                action="continued consciousness start without existential stakes layer",
+            )
+            logger.warning("Could not initialize ExistentialStakes: %s", e)
+
+        # Layer 5j: SynapticPlasticity — bounded online generation-style learning
+        try:
+            from .synaptic_plasticity import get_synaptic_plasticity
+
+            self.synaptic_plasticity = get_synaptic_plasticity()
+            ServiceContainer.register_instance("synaptic_plasticity", self.synaptic_plasticity)
+            self._mark_layer_online("synaptic_plasticity")
+            logger.info("🧠 Layer 5j: SynapticPlasticity ONLINE (bounded projection learning)")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+            self._mark_layer_degraded(
+                "synaptic_plasticity",
+                e,
+                action="continued consciousness start without synaptic plasticity layer",
+            )
+            logger.warning("Could not initialize SynapticPlasticity: %s", e)
+
+        # Layer 5k: TemporalContinuity — accumulated silence and drift residue
+        try:
+            from .temporal_continuity import get_temporal_continuity
+
+            self.temporal_continuity = get_temporal_continuity()
+            ServiceContainer.register_instance("temporal_continuity", self.temporal_continuity)
+            self._mark_layer_online("temporal_continuity")
+            logger.info("🧠 Layer 5k: TemporalContinuity ONLINE (silence residue active)")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+            self._mark_layer_degraded(
+                "temporal_continuity",
+                e,
+                action="continued consciousness start without temporal continuity layer",
+            )
+            logger.warning("Could not initialize TemporalContinuity: %s", e)
+
+        # Layer 5l: AttentionGate — causal context pruning
+        try:
+            from .attention_gate import get_attention_gate
+
+            self.attention_gate = get_attention_gate()
+            ServiceContainer.register_instance("attention_gate", self.attention_gate)
+            self._mark_layer_online("attention_gate")
+            logger.info("🧠 Layer 5l: AttentionGate ONLINE (causal context pruning active)")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+            self._mark_layer_degraded(
+                "attention_gate",
+                e,
+                action="continued consciousness start without attention gate layer",
+            )
+            logger.warning("Could not initialize AttentionGate: %s", e)
+
+        # Layer 5m: SomaticQualia — raw non-symbolic feel perturbation
+        try:
+            from .somatic_qualia import get_somatic_qualia
+
+            self.somatic_qualia = get_somatic_qualia()
+            ServiceContainer.register_instance("somatic_qualia", self.somatic_qualia)
+            self._mark_layer_online("somatic_qualia")
+            logger.info("🧠 Layer 5m: SomaticQualia ONLINE (raw felt perturbation active)")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+            self._mark_layer_degraded(
+                "somatic_qualia",
+                e,
+                action="continued consciousness start without somatic qualia layer",
+            )
+            logger.warning("Could not initialize SomaticQualia: %s", e)
 
         # Layer 6: Consciousness Bridge — Neural Mesh, Neurochemicals,
         # Embodied Interoception, Oscillatory Binding, Somatic Gate,

@@ -27,6 +27,19 @@ class DriveController:
             return self.orchestrator.liquid_state.get_status()
         return {"energy": 100, "frustration": 0, "curiosity": 50, "focus": 50, "mood": "STABLE"}
 
+    def is_alive(self) -> bool:
+        """Synchronous liveness probe for the runtime health contract."""
+        try:
+            status = self.get_status()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+        return (
+            self.orchestrator is not None
+            and isinstance(status, dict)
+            and "energy" in status
+            and isinstance(getattr(self, "_tasks", None), set)
+        )
+
     def update(self):
         """Main update loop for drives."""
         if not hasattr(self.orchestrator, 'liquid_state') or not self.orchestrator.liquid_state:

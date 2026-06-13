@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import types
 from types import SimpleNamespace
@@ -109,6 +110,42 @@ def test_boot_has_one_owner_for_autonomy_substeps():
 
     assert "_spawn_boot_task(self._init_fictional_synthesis()" not in boot_source
     assert "_spawn_boot_task(self._init_final_foundations()" not in boot_source
+
+
+@pytest.mark.asyncio
+async def test_motivation_boot_rebinds_drive_aliases_to_started_engine(monkeypatch):
+    from core.motivation import engine as motivation_module
+    from core.orchestrator.mixins.boot import boot_autonomy
+
+    registered: dict[str, object] = {}
+
+    def _register(name, instance, *args, **kwargs):
+        registered[name] = instance
+
+    monkeypatch.setattr(
+        boot_autonomy.ServiceContainer,
+        "register_instance",
+        staticmethod(_register),
+    )
+    monkeypatch.setattr(
+        motivation_module,
+        "_background_autonomy_block_reason",
+        lambda _orchestrator: "unit_test_hold",
+    )
+
+    class Harness(BootAutonomyMixin):
+        pass
+
+    harness = Harness()
+    await harness._init_motivation_engine()
+    try:
+        assert registered["motivation_engine"] is harness.motivation
+        assert registered["drive_engine"] is harness.motivation
+        assert registered["drives"] is harness.motivation
+        assert harness.motivation.is_alive() is True
+    finally:
+        await harness.motivation.stop()
+        await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio

@@ -139,6 +139,7 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "output_gate",
         ServiceTier.CRITICAL,
         "Delivers responses to the user. Without it, Aura thinks but cannot speak.",
+        liveness_check="is_ready",
     ),
     # ── IMPORTANT: Aura works but is impaired without these ──
     ServiceRequirement(
@@ -153,12 +154,14 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "cognitive_engine",
         ServiceTier.IMPORTANT,
         "Manages cognitive state transitions and working memory.",
+        liveness_check="is_ready",
     ),
     ServiceRequirement(
         "Affect Engine",
         "affect_engine",
         ServiceTier.IMPORTANT,
         "Emotional state management. Without it, responses are emotionally flat.",
+        liveness_check="is_ready",
     ),
     ServiceRequirement(
         "Compute Orchestrator",
@@ -172,18 +175,21 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "database_coordinator",
         ServiceTier.IMPORTANT,
         "SQLite connection pool. Without it, persistent storage degrades.",
+        liveness_check="is_alive",
     ),
     ServiceRequirement(
         "Drive Engine",
         "drive_engine",
         ServiceTier.IMPORTANT,
         "Motivation and goal management. Without it, autonomous behavior stops.",
+        liveness_check="is_alive",
     ),
     ServiceRequirement(
         "Agency Core",
         "agency_core",
         ServiceTier.IMPORTANT,
         "Canonical autonomous agency pathway loop. Without it, initiative and swarm tool use degrade.",
+        liveness_check="is_alive",
     ),
     ServiceRequirement(
         "Lymphatic Reaper",
@@ -224,6 +230,34 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "liquid_substrate",
         ServiceTier.OPTIONAL,
         "Dynamic emotional substrate for consciousness simulation.",
+    ),
+    ServiceRequirement(
+        "Synaptic Plasticity",
+        "synaptic_plasticity",
+        ServiceTier.OPTIONAL,
+        "Bounded online projection learning for generation-style modulation.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Temporal Continuity",
+        "temporal_continuity",
+        ServiceTier.OPTIONAL,
+        "Accumulated silence and drift residue for temporal presence.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Attention Gate",
+        "attention_gate",
+        ServiceTier.OPTIONAL,
+        "Causal context pruning for focused cognition.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Somatic Qualia",
+        "somatic_qualia",
+        ServiceTier.OPTIONAL,
+        "Non-symbolic substrate perturbation for generation controls.",
+        liveness_check="is_ready",
     ),
     ServiceRequirement(
         "Swarm Protocol",

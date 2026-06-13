@@ -4644,6 +4644,29 @@ class InferenceGate:
                         max_tokens = int(max_tokens * (1.0 - (_resource_pressure * 0.5)))
                         max_tokens = max(128, max_tokens)
 
+                    # Inject Existential Stakes physical parameter coupling
+                    try:
+                        from core.container import ServiceContainer
+                        stakes = ServiceContainer.get("existential_stakes", default=None)
+                        if stakes:
+                            threat = stakes.get_existential_threat()
+                            if threat > 0.2:
+                                # Scale token limit down based on threat
+                                max_tokens = int(max_tokens * (1.0 - threat * 0.7))
+                                max_tokens = max(96, max_tokens)
+                                # Decrease temperature to make generation fast/deterministic
+                                if somatic_temperature is not None:
+                                    somatic_temperature = somatic_temperature * (1.0 - threat * 0.5)
+                                else:
+                                    somatic_temperature = 0.72 * (1.0 - threat * 0.5)
+                                # Clamp parameters
+                                if "temperature" in morpho_kwargs:
+                                    morpho_kwargs["temperature"] = max(0.1, morpho_kwargs["temperature"] * (1.0 - threat * 0.5))
+                                if "max_tokens" in morpho_kwargs:
+                                    morpho_kwargs["max_tokens"] = max_tokens
+                    except _INFERENCE_RECOVERABLE_ERRORS as _st_err:
+                        record_degradation("inference_gate.existential_stakes", _st_err)
+
                     if somatic_temperature is not None:
                         somatic_temperature = max(0.1, min(1.5, somatic_temperature))
 
@@ -4663,6 +4686,129 @@ class InferenceGate:
                     action="continued without morphogenetic generation-parameter coupling",
                 )
                 logger.debug("Morphogenetic coupling unavailable: %s", _m_e)
+
+            # ── Synaptic Plasticity: Learned generation-style modulation ──
+            # The projection matrix was updated after previous inferences via
+            # reward-modulated Hebbian learning. Now it transforms the current
+            # substrate state into sampling parameter adjustments.
+            try:
+                _plasticity = ServiceContainer.get("synaptic_plasticity", default=None)
+                if _plasticity is not None:
+                    _substrate = ServiceContainer.get("conscious_substrate", default=None)
+                    if _substrate is not None and hasattr(_substrate, "x"):
+                        import numpy as _np_plast
+                        _sub_state = _np_plast.asarray(_substrate.x, dtype=_np_plast.float32)
+                        _plast_mod = _plasticity.compute_modulation(_sub_state)
+                        if _plast_mod:
+                            _p_temp_d = _plast_mod.get("temperature_delta", 0.0)
+                            _p_topp_d = _plast_mod.get("top_p_delta", 0.0)
+                            _p_rep_d = _plast_mod.get("repetition_penalty_delta", 0.0)
+                            if somatic_temperature is not None:
+                                somatic_temperature = max(0.1, min(1.5, somatic_temperature + _p_temp_d))
+                            else:
+                                somatic_temperature = max(0.1, min(1.5, 0.72 + _p_temp_d))
+                            if "top_p" in morpho_kwargs:
+                                morpho_kwargs["top_p"] = max(0.3, min(0.98, morpho_kwargs["top_p"] + _p_topp_d))
+                            if "repetition_penalty" in morpho_kwargs:
+                                morpho_kwargs["repetition_penalty"] = max(0.9, min(1.4, morpho_kwargs["repetition_penalty"] + _p_rep_d))
+                            logger.debug(
+                                "🧬 SynapticPlasticity: temp_d=%.3f topp_d=%.3f rep_d=%.3f",
+                                _p_temp_d, _p_topp_d, _p_rep_d,
+                            )
+                        # Pre-inference capture for post-inference learning
+                        _hedonic = 0.0
+                        try:
+                            from core.consciousness.hedonic_gradient import get_hedonic_gradient
+                            _hedonic = get_hedonic_gradient().score
+                        except _INFERENCE_RECOVERABLE_ERRORS as _hedonic_exc:
+                            record_degradation(
+                                "inference_gate",
+                                _hedonic_exc,
+                                severity="warning",
+                                action="continued synaptic plasticity capture without hedonic score",
+                            )
+                            logger.debug(
+                                "SynapticPlasticity hedonic capture unavailable: %s",
+                                _hedonic_exc,
+                            )
+                        _plasticity.pre_inference_capture(_sub_state, _hedonic)
+            except _INFERENCE_RECOVERABLE_ERRORS as _sp_e:
+                record_degradation(
+                    "inference_gate",
+                    _sp_e,
+                    severity="warning",
+                    action="continued without synaptic plasticity generation modulation",
+                )
+                logger.debug("SynapticPlasticity coupling unavailable: %s", _sp_e)
+
+            # ── Temporal Continuity: Silence-accumulated modulation ──
+            # The temporal residue from accumulated silence directly adjusts
+            # generation parameters — the system speaks differently after long
+            # silences because real drift accumulated.
+            try:
+                _tc = ServiceContainer.get("temporal_continuity", default=None)
+                if _tc is not None:
+                    _tc.on_inference_start()
+                    _tc_mod = _tc.compute_modulation()
+                    if _tc_mod:
+                        _tc_temp_d = _tc_mod.get("temperature_delta", 0.0)
+                        _tc_topp_d = _tc_mod.get("top_p_delta", 0.0)
+                        _tc_rep_d = _tc_mod.get("repetition_penalty_delta", 0.0)
+                        _tc_token_mult = _tc_mod.get("token_budget_multiplier", 1.0)
+                        if somatic_temperature is not None:
+                            somatic_temperature = max(0.1, min(1.5, somatic_temperature + _tc_temp_d))
+                        if _tc_topp_d and "top_p" in morpho_kwargs:
+                            morpho_kwargs["top_p"] = max(0.3, min(0.98, morpho_kwargs["top_p"] + _tc_topp_d))
+                        if _tc_rep_d and "repetition_penalty" in morpho_kwargs:
+                            morpho_kwargs["repetition_penalty"] = max(0.9, min(1.4, morpho_kwargs["repetition_penalty"] + _tc_rep_d))
+                        if _tc_token_mult > 1.0:
+                            max_tokens = int(min(max_tokens * _tc_token_mult, 4096))
+                        logger.debug(
+                            "🕐 TemporalContinuity: temp_d=%.3f token_mult=%.2f",
+                            _tc_temp_d, _tc_token_mult,
+                        )
+            except _INFERENCE_RECOVERABLE_ERRORS as _tc_e:
+                record_degradation(
+                    "inference_gate",
+                    _tc_e,
+                    severity="warning",
+                    action="continued without temporal continuity generation modulation",
+                )
+                logger.debug("TemporalContinuity coupling unavailable: %s", _tc_e)
+
+            # ── Somatic Qualia: Raw felt perturbation of sampling ──
+            # Not text. Not descriptions. Direct numerical deformation of the
+            # generation distribution based on substrate energy patterns,
+            # synchrony, and valence gradient.
+            try:
+                _sq = ServiceContainer.get("somatic_qualia", default=None)
+                if _sq is not None:
+                    _sq_pert = _sq.compute_perturbation()
+                    if _sq_pert:
+                        _sq_temp = _sq_pert.get("temperature_perturbation", 0.0)
+                        _sq_rep = _sq_pert.get("repetition_penalty_perturbation", 0.0)
+                        _sq_topp = _sq_pert.get("top_p_perturbation", 0.0)
+                        _sq_freq = _sq_pert.get("frequency_penalty_perturbation", 0.0)
+                        if somatic_temperature is not None:
+                            somatic_temperature = max(0.1, min(1.5, somatic_temperature + _sq_temp))
+                        if "repetition_penalty" in morpho_kwargs:
+                            morpho_kwargs["repetition_penalty"] = max(0.9, min(1.4, morpho_kwargs["repetition_penalty"] + _sq_rep))
+                        if "top_p" in morpho_kwargs:
+                            morpho_kwargs["top_p"] = max(0.3, min(0.98, morpho_kwargs["top_p"] + _sq_topp))
+                        if _sq_freq:
+                            morpho_kwargs["frequency_penalty"] = max(0.0, min(0.5, morpho_kwargs.get("frequency_penalty", 0.0) + _sq_freq))
+                        logger.debug(
+                            "🫀 SomaticQualia: temp=%.4f rep=%.4f topp=%.4f freq=%.4f",
+                            _sq_temp, _sq_rep, _sq_topp, _sq_freq,
+                        )
+            except _INFERENCE_RECOVERABLE_ERRORS as _sq_e:
+                record_degradation(
+                    "inference_gate",
+                    _sq_e,
+                    severity="warning",
+                    action="continued without somatic qualia generation perturbation",
+                )
+                logger.debug("SomaticQualia coupling unavailable: %s", _sq_e)
 
             # ── Free Energy: Urgency-based tier escalation ──
             # When FE is high and rising, prefer deeper model for better reasoning
@@ -5807,6 +5953,65 @@ class InferenceGate:
                 action="skipped unavailable post-inference update hook after response delivery",
             )
             logger.debug("Suppressed Exception in world model feedback: %s", _exc)
+
+        # ── Synaptic Plasticity: Post-inference weight update ─────────────
+        # This is where true online learning happens. The reward signal from
+        # hedonic gradient + CRSM surprise modulates the Hebbian update.
+        try:
+            _plasticity = ServiceContainer.get("synaptic_plasticity", default=None)
+            if _plasticity is not None:
+                _hg_score = 0.0
+                _surprise = 0.0
+                try:
+                    from core.consciousness.hedonic_gradient import get_hedonic_gradient
+                    _hg_score = get_hedonic_gradient().score
+                except _INFERENCE_RECOVERABLE_ERRORS as _hedonic_exc:
+                    _record_inference_degradation(
+                        _hedonic_exc,
+                        action="continued synaptic plasticity post-inference update without hedonic score",
+                    )
+                    logger.debug(
+                        "SynapticPlasticity post-inference hedonic score unavailable: %s",
+                        _hedonic_exc,
+                    )
+                try:
+                    from core.consciousness.crsm import get_crsm
+                    _crsm = get_crsm()
+                    _surprise = getattr(_crsm, "surprise", 0.0)
+                except _INFERENCE_RECOVERABLE_ERRORS as _crsm_exc:
+                    _record_inference_degradation(
+                        _crsm_exc,
+                        action="continued synaptic plasticity post-inference update without CRSM surprise",
+                    )
+                    logger.debug(
+                        "SynapticPlasticity post-inference CRSM surprise unavailable: %s",
+                        _crsm_exc,
+                    )
+                _plasticity.post_inference_learn(
+                    response_text=response_text,
+                    hedonic_after=_hg_score,
+                    surprise=_surprise,
+                )
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
+            _record_inference_degradation(
+                _exc,
+                action="skipped synaptic plasticity post-inference learning",
+            )
+            logger.debug("Suppressed Exception in plasticity feedback: %s", _exc)
+
+        # ── Temporal Continuity: Reset silence accumulator ────────────────
+        # The inference just completed — reset the temporal residue so the
+        # next silence period starts accumulating from a fresh anchor.
+        try:
+            _tc = ServiceContainer.get("temporal_continuity", default=None)
+            if _tc is not None:
+                _tc.on_inference_complete()
+        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
+            _record_inference_degradation(
+                _exc,
+                action="skipped temporal continuity post-inference reset",
+            )
+            logger.debug("Suppressed Exception in temporal continuity reset: %s", _exc)
 
     async def think(self, prompt: str, system_prompt: str = "", **kwargs) -> str | None:
         """Unified thinking interface for cognitive components.

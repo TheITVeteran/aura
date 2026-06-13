@@ -62,6 +62,16 @@ class AutonomousOutputGate:
             r"Reconcile continuity gap",
         ]
 
+    def is_ready(self) -> bool:
+        """Synchronous liveness probe for the runtime health contract."""
+        return (
+            isinstance(self.secondary_queue, asyncio.Queue)
+            and isinstance(self._blocked_patterns, list)
+            and callable(getattr(self, "emit", None))
+            and callable(getattr(self, "_foreground_policy", None))
+            and callable(getattr(self, "_sanitize_autonomous_output", None))
+        )
+
     def _sanitize_autonomous_output(self, text: str) -> str:
         """Unified scrubber for all outgoing text."""
         import re

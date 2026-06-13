@@ -155,6 +155,10 @@ class ImaginationFrame:
     visual_model: str = ""
     phrase_model: str = ""
     conceptual_bridge: str = ""
+    mental_canvas: dict[str, Any] = field(default_factory=dict)
+    associative_links: list[dict[str, str]] = field(default_factory=list)
+    novel_thoughts: list[str] = field(default_factory=list)
+    simulation_steps: list[str] = field(default_factory=list)
     counterfactuals: list[str] = field(default_factory=list)
     experiments: list[str] = field(default_factory=list)
     verification_boundary: str = (
@@ -196,12 +200,28 @@ class ImaginationFrame:
         ]
         if self.visual_model:
             lines.append(f"- Imagined visual model: {self.visual_model}")
+        canvas = self.mental_canvas if isinstance(self.mental_canvas, dict) else {}
+        image_prompt = _normalize_text(canvas.get("image_prompt"), 260) if canvas else ""
+        if image_prompt:
+            lines.append(f"- Mental canvas: {image_prompt}")
         if self.phrase_model:
             lines.append(f"- Linguistic model: {self.phrase_model}")
         if self.conceptual_bridge:
             lines.append(f"- Novel connection: {self.conceptual_bridge}")
+        if self.novel_thoughts:
+            lines.append("- Novel thought candidates: " + " | ".join(self.novel_thoughts[:3]))
+        if self.associative_links:
+            rendered_links = [
+                f"{link.get('source')} -> {link.get('relation')} -> {link.get('target')}"
+                for link in self.associative_links[:3]
+                if isinstance(link, dict)
+            ]
+            if rendered_links:
+                lines.append("- Association map: " + " | ".join(rendered_links))
         if self.counterfactuals:
             lines.append("- Counterfactual probes: " + " | ".join(self.counterfactuals[:3]))
+        if self.simulation_steps:
+            lines.append("- Internal simulation steps: " + " | ".join(self.simulation_steps[:3]))
         if self.experiments:
             lines.append("- Useful next experiments: " + " | ".join(self.experiments[:3]))
         lines.append("- Boundary: if real-world facts, files, tools, or screen state matter, verify through governed tools before claiming completion.")
@@ -300,6 +320,29 @@ class ImaginationEngine:
         visual_model = self._build_visual_model(keywords, memories, text) if visual or novelty_pressure >= 0.38 else ""
         phrase_model = self._build_phrase_model(keywords, text) if linguistic or creative else ""
         conceptual_bridge = self._build_conceptual_bridge(keywords, memories, text)
+        mental_canvas = self._build_mental_canvas(
+            keywords,
+            memories,
+            text,
+            visual=visual,
+            linguistic=linguistic,
+            counterfactual=counterfactual,
+            creative=creative,
+        )
+        associative_links = self._build_associative_links(keywords, memories, text)
+        novel_thoughts = self._build_novel_thoughts(
+            keywords,
+            memories,
+            text,
+            creative=creative,
+            counterfactual=counterfactual,
+        )
+        simulation_steps = self._build_simulation_steps(
+            keywords,
+            visual=visual,
+            counterfactual=counterfactual,
+            tool_or_reality=tool_or_reality,
+        )
         counterfactuals = self._build_counterfactuals(keywords, text, tool_or_reality)
         experiments = self._build_experiments(keywords, tool_or_reality)
 
@@ -331,6 +374,10 @@ class ImaginationEngine:
             visual_model=visual_model,
             phrase_model=phrase_model,
             conceptual_bridge=conceptual_bridge,
+            mental_canvas=mental_canvas,
+            associative_links=associative_links,
+            novel_thoughts=novel_thoughts,
+            simulation_steps=simulation_steps,
             counterfactuals=counterfactuals,
             experiments=experiments,
             sampling_bias=sampling_bias,
@@ -391,6 +438,169 @@ class ImaginationEngine:
         if memories:
             bridge += " Compare it against recent continuity instead of starting from a blank slate."
         return bridge[:360]
+
+    @staticmethod
+    def _build_mental_canvas(
+        keywords: list[str],
+        memories: list[str],
+        text: str,
+        *,
+        visual: bool,
+        linguistic: bool,
+        counterfactual: bool,
+        creative: bool,
+    ) -> dict[str, Any]:
+        focus = keywords[:5] or ["request"]
+        primary = focus[0]
+        secondary = focus[1] if len(focus) > 1 else "context"
+        modality = (
+            "visual"
+            if visual
+            else "linguistic"
+            if linguistic
+            else "counterfactual"
+            if counterfactual
+            else "conceptual"
+            if creative
+            else "associative"
+        )
+        objects = [
+            {"id": token, "role": "focus" if index == 0 else "support"}
+            for index, token in enumerate(focus[:4])
+        ]
+        relations = [
+            {
+                "source": primary,
+                "target": secondary,
+                "relation": "pressures" if creative or counterfactual else "clarifies",
+            }
+        ]
+        if len(focus) >= 3:
+            relations.append(
+                {
+                    "source": focus[2],
+                    "target": primary,
+                    "relation": "reframes",
+                }
+            )
+        memory_anchor = _normalize_text(memories[-1], 120) if memories else ""
+        image_prompt = (
+            f"Internal {modality} canvas: {primary} in the foreground, {secondary} as "
+            "the shaping constraint, with tensions, missing evidence, and next affordances "
+            "made spatially visible."
+        )
+        if memory_anchor:
+            image_prompt += f" Continuity anchor: {memory_anchor}."
+        thought_form = (
+            f"Ask what {primary} becomes when {secondary} is treated as a live constraint, "
+            "then compare that model against evidence before acting."
+        )
+        linguistic_surface = (
+            f"{primary} under {secondary}"
+            if len(focus) >= 2
+            else f"{primary} made inspectable"
+        )
+        return {
+            "modality": modality,
+            "image_prompt": image_prompt[:500],
+            "objects": objects,
+            "relations": relations,
+            "sensory_style": "clear edges, low ornament, constraints visible as structure",
+            "linguistic_surface": linguistic_surface[:160],
+            "thought_form": thought_form[:280],
+            "memory_anchor": memory_anchor,
+            "externalization_path": (
+                "If the user asks to see or generate this, request governed image/tool execution; "
+                "otherwise keep it private."
+            ),
+        }
+
+    @staticmethod
+    def _build_associative_links(
+        keywords: list[str], memories: list[str], text: str
+    ) -> list[dict[str, str]]:
+        links: list[dict[str, str]] = []
+        if len(keywords) >= 2:
+            links.append(
+                {
+                    "source": keywords[0],
+                    "relation": "constrains",
+                    "target": keywords[1],
+                }
+            )
+        if len(keywords) >= 3:
+            links.append(
+                {
+                    "source": keywords[2],
+                    "relation": "reframes",
+                    "target": keywords[0],
+                }
+            )
+        if memories and keywords:
+            links.append(
+                {
+                    "source": "recent_memory",
+                    "relation": "anchors",
+                    "target": keywords[0],
+                }
+            )
+        if "tool" in text.lower() and keywords:
+            links.append(
+                {
+                    "source": keywords[0],
+                    "relation": "requires_verification_through",
+                    "target": "governed_tools",
+                }
+            )
+        return links[:4]
+
+    @staticmethod
+    def _build_novel_thoughts(
+        keywords: list[str],
+        memories: list[str],
+        text: str,
+        *,
+        creative: bool,
+        counterfactual: bool,
+    ) -> list[str]:
+        focus = keywords[0] if keywords else "the idea"
+        secondary = keywords[1] if len(keywords) > 1 else "its constraint"
+        candidates = [
+            f"What if {focus} is not the object, but the lens for seeing {secondary}?",
+            f"The useful novelty may be the smallest testable form of {focus}, not the largest imagined one.",
+        ]
+        if creative:
+            candidates.append(
+                f"Combine {focus} with an opposing pressure and look for the behavior neither has alone."
+            )
+        if counterfactual:
+            candidates.append(f"Invert the premise: what would make {focus} fail gracefully?")
+        if memories:
+            candidates.append(
+                "Use recent continuity as material, then deliberately rotate it into a new frame."
+            )
+        return candidates[:4]
+
+    @staticmethod
+    def _build_simulation_steps(
+        keywords: list[str],
+        *,
+        visual: bool,
+        counterfactual: bool,
+        tool_or_reality: bool,
+    ) -> list[str]:
+        focus = keywords[0] if keywords else "the premise"
+        steps = [
+            f"Render {focus} as concrete constraints instead of a label.",
+            "Generate at least two alternate forms before settling on one.",
+        ]
+        if visual:
+            steps.append("Place actors, constraints, and missing evidence in the imagined scene.")
+        if counterfactual:
+            steps.append("Run the premise forward, then invert it and compare behavior.")
+        if tool_or_reality:
+            steps.append("Stop at the boundary where real-world verification or authority is required.")
+        return steps[:4]
 
     @staticmethod
     def _build_counterfactuals(keywords: list[str], text: str, tool_or_reality: bool) -> list[str]:

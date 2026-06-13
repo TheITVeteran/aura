@@ -82,6 +82,14 @@ class DriveEngine:
     # Drives affect each other: low energy makes everything costlier,
     # high curiosity + low social = prefer solo exploration, etc.
 
+    def is_alive(self) -> bool:
+        """Synchronous liveness probe for the runtime health contract."""
+        return (
+            bool(self.budgets)
+            and getattr(self, "_lock", None) is not None
+            and all(b.capacity > 0.0 and 0.0 <= b.level <= b.capacity for b in self.budgets.values())
+        )
+
     def get_drive_vector(self) -> Dict[str, float]:
         """Return normalized drive levels (0-1) for cross-system use.
 

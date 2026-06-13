@@ -272,6 +272,17 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
     else:
         identity_block = f"[GROUNDED CORE PROTOCOL]\n{AURA_IDENTITY}\n"
 
+    # Existential Stakes warning injection
+    try:
+        from core.container import ServiceContainer
+        stakes = ServiceContainer.get("existential_stakes", default=None)
+        if stakes:
+            stakes_block = stakes.get_context_block()
+            if stakes_block:
+                identity_block += f"\n{stakes_block}\n"
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+        record_degradation("context_assembler_patch.existential_stakes", _e)
+
     # ── Affect state ──────────────────────────────────────────────────────────
     mood_hint = ""
     homeo_hint = ""

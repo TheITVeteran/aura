@@ -129,6 +129,22 @@ class MotivationEngine:
             self._task.cancel()
         logger.info("💤 Motivation Engine DORMANT.")
 
+    def is_alive(self) -> bool:
+        """Synchronous liveness probe for the runtime health contract."""
+        task = self._task
+        budgets_ok = (
+            isinstance(self.budgets, dict)
+            and bool(self.budgets)
+            and all(
+                isinstance(budget, ResourceBudget)
+                and budget.capacity > 0
+                and 0.0 <= budget.level <= budget.capacity
+                for budget in self.budgets.values()
+            )
+        )
+        task_ok = task is not None and not task.done()
+        return bool(self.running and task_ok and budgets_ok)
+
     async def _motivation_loop(self):
         """The heartbeat of Aura's autonomy."""
         while self.running:

@@ -1474,6 +1474,8 @@ async def test_state_repository_shutdown_pipe_close_defers_without_degradation(
         assert repo.get_runtime_status()["pending_proxy_commit"] is False
         assert len(transport.request_calls) == 1
         assert "Shutdown state committed via direct snapshot" in caplog.text
+        assert "source=vault_transport_closed" in caplog.text
+        assert "BrokenPipeError" not in caplog.text
         assert "Vault transport closed during shutdown" not in caplog.text
         assert "using shutdown snapshot fallback" not in caplog.text
         assert "commit will be queued for boot replay" not in caplog.text

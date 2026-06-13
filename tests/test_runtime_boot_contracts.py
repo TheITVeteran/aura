@@ -64,6 +64,33 @@ def test_motivation_engine_drive_vector_contract():
     assert engine.get_dominant_motivation() in vector or engine.get_dominant_motivation() == "at_rest"
 
 
+@pytest.mark.asyncio
+async def test_motivation_engine_liveness_requires_running_loop(monkeypatch):
+    from core.container import ServiceContainer
+    from core.motivation import engine as motivation_module
+
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("orchestrator", SimpleNamespace(), required=False)
+    monkeypatch.setattr(
+        motivation_module,
+        "_background_autonomy_block_reason",
+        lambda _orchestrator: "unit_test_hold",
+    )
+    engine = motivation_module.MotivationEngine()
+
+    assert engine.is_alive() is False
+
+    await engine.start()
+    try:
+        await asyncio.sleep(0)
+        assert engine.is_alive() is True
+    finally:
+        await engine.stop()
+        await asyncio.sleep(0)
+
+    assert engine.is_alive() is False
+
+
 def test_provider_constructors_accept_boot_time_defaults():
     from core.curiosity_engine import CuriosityEngine
     from core.ops.singularity_monitor import SingularityMonitor

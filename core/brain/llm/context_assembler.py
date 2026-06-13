@@ -361,6 +361,50 @@ class ContextAssembler:
         # 1. Identity Core — always inject full AURA_IDENTITY so voice doesn't regress in casual chat
         identity_block = f"{IDENTITY_LOCK}\n\n[GROUNDED CORE PROTOCOL]\n{AURA_IDENTITY}\n"
 
+        # Existential Stakes warning injection
+        try:
+            from core.container import ServiceContainer
+            stakes = ServiceContainer.get("existential_stakes", default=None)
+            if stakes:
+                stakes_block = stakes.get_context_block()
+                if stakes_block:
+                    identity_block += f"\n{stakes_block}\n"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+            record_degradation("context_assembler.existential_stakes", _e)
+
+        # Temporal Continuity context injection
+        try:
+            from core.container import ServiceContainer
+            tc = ServiceContainer.get("temporal_continuity", default=None)
+            if tc:
+                tc_block = tc.get_context_block()
+                if tc_block:
+                    identity_block += f"\n{tc_block}\n"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+            record_degradation("context_assembler.temporal_continuity", _e)
+
+        # Synaptic Plasticity context injection
+        try:
+            from core.container import ServiceContainer
+            sp = ServiceContainer.get("synaptic_plasticity", default=None)
+            if sp:
+                sp_block = sp.get_context_block()
+                if sp_block:
+                    identity_block += f"\n{sp_block}\n"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+            record_degradation("context_assembler.synaptic_plasticity", _e)
+
+        # Somatic Qualia context injection
+        try:
+            from core.container import ServiceContainer
+            sq = ServiceContainer.get("somatic_qualia", default=None)
+            if sq:
+                sq_block = sq.get_context_block()
+                if sq_block:
+                    identity_block += f"\n{sq_block}\n"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+            record_degradation("context_assembler.somatic_qualia", _e)
+
         # 2. Affective State — SUBSTRATE-DRIVEN HARD CONSTRAINTS
         # The old approach: prose hints like "You're carrying friction."
         # The new approach: the SubstrateVoiceEngine compiles hard constraints
@@ -1366,6 +1410,23 @@ class ContextAssembler:
             logger.debug("Suppressed Exception: %s", _exc)
 
         logger.debug("🧠 ContextAssembler: Built strictly budgeted message array (len=%d, chars=%d)", len(messages), current_chars + input_chars + history_chars)
+
+        # ── CAUSAL ATTENTION GATE ─────────────────────────────────────────
+        # The attention gate actively prunes context based on attentional focus.
+        # Messages below the attention threshold are compressed or removed.
+        # This is not descriptive — the LLM literally cannot see gated content.
+        try:
+            from core.container import ServiceContainer
+            _gate = ServiceContainer.get("attention_gate", default=None)
+            if _gate is not None:
+                messages = _gate.gate_context(messages)
+                logger.debug(
+                    "🔍 AttentionGate applied: %d messages after gating",
+                    len(messages),
+                )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _gate_exc:
+            record_degradation("context_assembler.attention_gate", _gate_exc)
+
         return messages
     @staticmethod
     def _filter_memories_by_topic(memories: list[str], topic: str | None) -> list[str]:

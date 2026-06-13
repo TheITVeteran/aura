@@ -145,12 +145,23 @@ def _compact_imagination_directive(frame: dict[str, Any] | None) -> str:
     visual = str(frame.get("visual_model") or "").strip()
     bridge = str(frame.get("conceptual_bridge") or "").strip()
     phrase = str(frame.get("phrase_model") or "").strip()
+    canvas = frame.get("mental_canvas") or {}
+    if not isinstance(canvas, dict):
+        canvas = {}
+    image_prompt = str(canvas.get("image_prompt") or "").strip()
+    novel_thoughts = frame.get("novel_thoughts") or []
     if visual:
         directives.append(f"Imagined visual model: {visual[:220]}")
+    if image_prompt:
+        directives.append(f"Mental canvas: {image_prompt[:220]}")
     if bridge:
         directives.append(f"Novel connection: {bridge[:220]}")
     if phrase:
         directives.append(f"Linguistic seed: {phrase[:160]}")
+    if isinstance(novel_thoughts, list) and novel_thoughts:
+        rendered = " | ".join(str(item)[:120] for item in novel_thoughts[:2] if item)
+        if rendered:
+            directives.append(f"Novel thought candidates: {rendered}")
     if bool(routing.get("seek_verification")):
         directives.append("If the request needs real-world effects or facts, route through governed tools before claiming completion.")
     return " ".join(directives)
@@ -207,6 +218,15 @@ class CognitiveEngine:
     def lobotomized(self) -> bool:
         """True if the engine has no usable cognitive pathway."""
         return self.state_repository is None and len(self._phases) == 0
+
+    def is_ready(self) -> bool:
+        """Synchronous liveness probe for user-facing cognition."""
+        return (
+            callable(getattr(self, "think", None))
+            and isinstance(self.thoughts, deque)
+            and getattr(self, "_recovery_lock", None) is not None
+            and not self.lobotomized
+        )
 
     def setup(self, registry=None, router=None, event_bus=None):
         """Initialize components and phases."""

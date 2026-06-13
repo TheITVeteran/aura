@@ -233,6 +233,53 @@ def test_compute_orchestrator_is_liveness_checked_by_runtime_health_contract():
     assert required["compute_orchestrator"].liveness_check == "is_alive"
 
 
+def test_user_facing_runtime_services_have_explicit_liveness_checks():
+    required = {
+        requirement.container_key: requirement
+        for requirement in RUNTIME_CONTRACT
+        if requirement.container_key
+        in {
+            "output_gate",
+            "cognitive_engine",
+            "affect_engine",
+            "database_coordinator",
+            "drive_engine",
+            "agency_core",
+        }
+    }
+
+    assert required["output_gate"].tier == ServiceTier.CRITICAL
+    assert required["output_gate"].liveness_check == "is_ready"
+    assert required["cognitive_engine"].liveness_check == "is_ready"
+    assert required["affect_engine"].liveness_check == "is_ready"
+    assert required["database_coordinator"].liveness_check == "is_alive"
+    assert required["drive_engine"].liveness_check == "is_alive"
+    assert required["agency_core"].liveness_check == "is_alive"
+
+
+def test_consciousness_enrichment_services_have_explicit_liveness_checks():
+    required = {
+        requirement.container_key: requirement
+        for requirement in RUNTIME_CONTRACT
+        if requirement.container_key
+        in {
+            "synaptic_plasticity",
+            "temporal_continuity",
+            "attention_gate",
+            "somatic_qualia",
+        }
+    }
+
+    assert required["synaptic_plasticity"].tier == ServiceTier.OPTIONAL
+    assert required["synaptic_plasticity"].liveness_check == "is_ready"
+    assert required["temporal_continuity"].tier == ServiceTier.OPTIONAL
+    assert required["temporal_continuity"].liveness_check == "is_ready"
+    assert required["attention_gate"].tier == ServiceTier.OPTIONAL
+    assert required["attention_gate"].liveness_check == "is_ready"
+    assert required["somatic_qualia"].tier == ServiceTier.OPTIONAL
+    assert required["somatic_qualia"].liveness_check == "is_ready"
+
+
 def test_runtime_contract_requires_kernel_inference_memory_scheduler_and_tool_governance():
     required = {
         requirement.container_key: requirement
@@ -256,6 +303,7 @@ def test_runtime_contract_requires_kernel_inference_memory_scheduler_and_tool_go
     assert required["unified_will"].liveness_check == "is_alive"
     assert required["authority_gateway"].liveness_check == "is_ready"
     assert required["capability_engine"].liveness_check == "is_ready"
+    assert required["output_gate"].liveness_check == "is_ready"
 
 
 def test_runtime_contract_fails_closed_on_critical_unified_memory_pressure(monkeypatch):

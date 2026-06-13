@@ -1,0 +1,2 @@
+{"at": 1781336841.9951098, "elapsed_s": 0.06, "step": "boot_spawn", "ok": true, "peak_rss_mb": 0.0, "summary": "pid 66487"}
+{"at": 1781337085.486992, "elapsed_s": 243.55, "step": "shutdown", "ok": true, "peak_rss_mb": 19958.2, "summary": "--stop rc=0; graceful=True; orphans=none; port_free=True", "graceful": true, "orphans": [], "port_free": true}

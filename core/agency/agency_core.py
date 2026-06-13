@@ -2559,3 +2559,16 @@ class AgencyCore:
             "last_tool_routing_error": self._last_tool_routing_error,
         })
         return data
+
+    def is_alive(self) -> bool:
+        """Synchronous liveness probe for the runtime health contract."""
+        try:
+            status = self.get_status()
+        except _AGENCY_BOUNDARY_ERRORS:
+            return False
+        return (
+            bool(status.get("alive", False))
+            and int(status.get("pathways_active", 0) or 0) >= 1
+            and isinstance(getattr(self, "_pathway_registry", None), dict)
+            and isinstance(getattr(self, "_action_queue", None), list)
+        )

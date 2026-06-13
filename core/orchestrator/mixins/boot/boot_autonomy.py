@@ -817,6 +817,8 @@ class BootAutonomyMixin:
             ServiceContainer.register_instance("motivation_engine", mot)
             if mot is not None:
                 await mot.start()
+                ServiceContainer.register_instance("drive_engine", mot)
+                ServiceContainer.register_instance("drives", mot)
             logger.info("✨ Motivation Engine Active: Aura is now self-directed.")
         except _BOOT_AUTONOMY_BOUNDARY_ERRORS as e:
             _record_boot_autonomy_degradation(

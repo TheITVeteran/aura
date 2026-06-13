@@ -44,6 +44,18 @@ class SelfModelService(Service):
         return cls()
 
 
+class DriveControllerService(Service):
+    def __init__(self, orchestrator, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.orchestrator = orchestrator
+
+    def is_alive(self):
+        return self.orchestrator is not None
+
+    def get_status(self):
+        return {"energy": 100, "curiosity": 50, "focus": 50}
+
+
 def test_cognitive_sensory_initializer_degradation_audit_is_clean():
     from tools.audit_degradation import analyze_file
 
@@ -68,7 +80,7 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
         register_all_fictional_engines=lambda orchestrator: {"registered": True},
     )
     _install_module(monkeypatch, "core.brain.personality_engine", PersonalityEngine=Service)
-    _install_module(monkeypatch, "core.managers.drive_controller", DriveController=Service)
+    _install_module(monkeypatch, "core.managers.drive_controller", DriveController=DriveControllerService)
     _install_module(monkeypatch, "core.senses.voice_engine", get_voice_engine=lambda: Service())
     _install_module(monkeypatch, "core.brain.multimodal_orchestrator", MultimodalOrchestrator=Service)
     _install_module(monkeypatch, "core.brain.composer_node", ComposerNode=Service)
@@ -121,7 +133,28 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert "cellular_substrate" in report["completed"]
     assert registered["self_model"] is orchestrator.self_model
     assert registered["drive_engine"] is orchestrator.affect.drive_controller
+    assert registered["drive_engine"] is orchestrator.drive_controller
+    assert registered["drive_engine"].is_alive() is True
     assert registered["cellular_substrate"] is orchestrator.cellular_substrate
+
+
+@pytest.mark.asyncio
+async def test_cognitive_sensory_initializer_replaces_nonlive_drive_placeholder(monkeypatch):
+    from core.orchestrator.initializers.cognitive_sensory import init_cognitive_sensory_layer
+
+    _install_success_modules(monkeypatch)
+    registered = _patch_container(monkeypatch)
+    stale_controller = SimpleNamespace(get_status=lambda: {"energy": 100})
+    orchestrator = SimpleNamespace(
+        affect=SimpleNamespace(_drive_controller=stale_controller, drive_controller=stale_controller)
+    )
+
+    report = await init_cognitive_sensory_layer(orchestrator)
+
+    assert report["degraded"] == {}
+    assert registered["drive_engine"] is not stale_controller
+    assert registered["drive_engine"].orchestrator is orchestrator
+    assert registered["drive_engine"].is_alive() is True
 
 
 @pytest.mark.asyncio
