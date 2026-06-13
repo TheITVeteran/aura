@@ -291,23 +291,7 @@ class BeingRuntime:
         self._last_welfare = welfare_outputs
         self._last_blind_report = blind_report
         self._last_body_snapshot = body_snapshot
-        try:
-            from core.being.causal_self_state import vector_from_aura_now
-
-            causal_vector = vector_from_aura_now(
-                now,
-                welfare_outputs=welfare_outputs,
-                blind_report=blind_report,
-            )
-            self._last_causal_self_vector = causal_vector
-            self._last_causal_valenced_workspace = causal_vector.causal_valenced_workspace
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            record_degradation(
-                "being_runtime",
-                exc,
-                severity="warning",
-                action="continued without causal valenced workspace vector for this sample",
-            )
+        self._refresh_causal_self_vector(now)
         self._publish(now)
         return now
 
@@ -501,7 +485,7 @@ class BeingRuntime:
         last_body_snapshot = getattr(self, "_last_body_snapshot", None)
         body_fatigue = float(getattr(last_body_snapshot, "fatigue", 0.0) or 0.0)
 
-        return {
+        policy = {
             "outcome": outcome,
             "constraints": constraints,
             "blocks": blocks,
@@ -527,6 +511,54 @@ class BeingRuntime:
                 "body_fatigue": round(body_fatigue, 4),
             },
         }
+        causal_vector = self._refresh_causal_self_vector(now, action_policy=policy)
+        if causal_vector is not None:
+            workspace = getattr(causal_vector, "causal_valenced_workspace", None)
+            policy["evidence"]["causal_vector"] = {
+                "organismal_coherence": round(causal_vector.value("organismal_coherence"), 4),
+                "experience_candidate_strength": round(
+                    causal_vector.value("experience_candidate_strength"),
+                    6,
+                ),
+                "sentience_candidate_strength": round(
+                    causal_vector.value("sentience_candidate_strength"),
+                    6,
+                ),
+                "verification_need": round(causal_vector.value("verification_need"), 4),
+                "governance_pressure": round(causal_vector.value("governance_pressure"), 4),
+            }
+            if workspace is not None:
+                policy["evidence"]["causal_valenced_workspace"] = workspace.to_dict()
+        return policy
+
+    def _refresh_causal_self_vector(
+        self,
+        now: AuraNow,
+        *,
+        action_policy: dict[str, Any] | None = None,
+    ) -> Any | None:
+        """Publish the latest causal self vector from live runtime evidence."""
+
+        try:
+            from core.being.causal_self_state import vector_from_aura_now
+
+            causal_vector = vector_from_aura_now(
+                now,
+                welfare_outputs=getattr(self, "_last_welfare", None),
+                blind_report=getattr(self, "_last_blind_report", None),
+                action_policy=action_policy,
+            )
+            self._last_causal_self_vector = causal_vector
+            self._last_causal_valenced_workspace = causal_vector.causal_valenced_workspace
+            return causal_vector
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "being_runtime",
+                exc,
+                severity="warning",
+                action="continued without causal valenced workspace vector for this sample",
+            )
+            return None
 
     def _build_self_state(self, state: Any | None, lesions: set[str]) -> SelfState:
         identity = getattr(state, "identity", None)

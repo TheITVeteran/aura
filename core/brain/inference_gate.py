@@ -2217,6 +2217,78 @@ class InferenceGate:
             configured = default
         return max(minimum, configured)
 
+    @staticmethod
+    def _safe_sampling_float(value: Any, default: float = 0.0) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+        return parsed if parsed == parsed else default
+
+    @classmethod
+    def _apply_runtime_sampling_biases(
+        cls,
+        *,
+        base_temperature: float | None,
+        max_tokens: int,
+        context: dict[str, Any],
+        state: Any,
+        allow_token_scaling: bool,
+    ) -> tuple[float | None, int, dict[str, float]]:
+        """Apply bounded cognitive sampling bias from runtime state.
+
+        Biases are advisory state outputs, not caller authority. They are
+        intentionally narrow so imagination/active-inference can shape normal
+        user-facing speech without destabilizing proof, health, or benchmark
+        lanes.
+        """
+
+        biases: list[Any] = [
+            context.get("sampling_bias"),
+            context.get("imagination_sampling_bias"),
+        ]
+        modifiers = getattr(state, "response_modifiers", None)
+        if isinstance(modifiers, dict):
+            biases.extend(
+                [
+                    modifiers.get("sampling_bias"),
+                    modifiers.get("imagination_sampling_bias"),
+                ]
+            )
+
+        temperature = base_temperature
+        token_factor = 1.0
+        applied_temperature_delta = 0.0
+        applied_token_factor = 1.0
+        for bias in biases:
+            if not isinstance(bias, dict):
+                continue
+            temp_delta = max(
+                -0.18,
+                min(0.18, cls._safe_sampling_float(bias.get("temperature_delta"), 0.0)),
+            )
+            if temp_delta:
+                base = 0.72 if temperature is None else temperature
+                temperature = max(0.1, min(1.5, base + temp_delta))
+                applied_temperature_delta += temp_delta
+
+            factor = cls._safe_sampling_float(bias.get("max_tokens_factor"), 1.0)
+            if allow_token_scaling and 0.40 <= factor <= 1.20:
+                token_factor *= factor
+                applied_token_factor *= factor
+
+        if allow_token_scaling and token_factor != 1.0:
+            max_tokens = max(128, min(4096, int(max_tokens * token_factor)))
+
+        return (
+            temperature,
+            max_tokens,
+            {
+                "temperature_delta": round(applied_temperature_delta, 4),
+                "max_tokens_factor": round(applied_token_factor, 4),
+            },
+        )
+
     @classmethod
     def _foreground_compute_profile(cls, prompt: str) -> tuple[int, int, int]:
         """Return the token floor, token cap, and recurrent loops for a live turn.
@@ -4917,6 +4989,30 @@ class InferenceGate:
         if (
             not is_background
             and self._origin_is_user_facing(origin)
+            and not isolated_generation_contract
+            and not health_probe
+            and not benchmark_request
+            and not proof_evaluation_contract
+            and not strict_answer_contract
+        ):
+            somatic_temperature, max_tokens, applied_bias = self._apply_runtime_sampling_biases(
+                base_temperature=somatic_temperature,
+                max_tokens=max_tokens,
+                context=context,
+                state=state,
+                allow_token_scaling="max_tokens" not in context,
+            )
+            if applied_bias["temperature_delta"] or applied_bias["max_tokens_factor"] != 1.0:
+                logger.debug(
+                    "🧠 Runtime sampling bias: temp_delta=%.3f token_factor=%.3f max_tokens=%d",
+                    applied_bias["temperature_delta"],
+                    applied_bias["max_tokens_factor"],
+                    max_tokens,
+                )
+
+        if (
+            not is_background
+            and self._origin_is_user_facing(origin)
             and requested_tier == "primary"
             and not isolated_generation_contract
             and not health_probe
@@ -6122,6 +6218,8 @@ class InferenceGate:
             "health_probe",
             "allow_tools",
             "state",
+            "sampling_bias",
+            "imagination_sampling_bias",
             "skip_runtime_payload",
         ):
             if key in kwargs:

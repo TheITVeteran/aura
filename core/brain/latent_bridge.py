@@ -82,6 +82,11 @@ def _read_substrate() -> dict[str, float]:
         "active_error_pressure": 0.0,
         "active_reduce_load": 0.0,
         "active_seek_information": 0.0,
+        "organismal_coherence": 0.6,
+        "causal_verification_need": 0.0,
+        "causal_governance_pressure": 0.0,
+        "causal_metabolic_budget": 0.7,
+        "sentience_candidate_strength": 0.0,
     }
     try:
         from core.container import ServiceContainer
@@ -121,6 +126,24 @@ def _read_substrate() -> dict[str, float]:
                 out["active_tool_pressure"] = float(features.get("tool_pressure", 0.0) or 0.0)
                 out["active_error_pressure"] = float(features.get("error_pressure", 0.0) or 0.0)
             out["active_uncertainty"] = float(active.get("uncertainty", 0.0) or 0.0)
+        being_runtime = ServiceContainer.get("being_runtime", default=None)
+        causal_vector = getattr(being_runtime, "_last_causal_self_vector", None)
+        if causal_vector is not None and hasattr(causal_vector, "value"):
+            out["organismal_coherence"] = float(
+                causal_vector.value("organismal_coherence", out["organismal_coherence"])
+            )
+            out["causal_verification_need"] = float(
+                causal_vector.value("verification_need", out["causal_verification_need"])
+            )
+            out["causal_governance_pressure"] = float(
+                causal_vector.value("governance_pressure", out["causal_governance_pressure"])
+            )
+            out["causal_metabolic_budget"] = float(
+                causal_vector.value("metabolic_budget", out["causal_metabolic_budget"])
+            )
+            out["sentience_candidate_strength"] = float(
+                causal_vector.value("sentience_candidate_strength", out["sentience_candidate_strength"])
+            )
     except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('latent_bridge', exc)
         logger.debug("latent_bridge substrate read failed: %s", exc)
@@ -186,13 +209,16 @@ def compute_inference_params(
     temp -= 0.15 * (s["cortisol"] - 0.3)
     temp -= 0.10 * s["active_uncertainty"]
     temp -= 0.08 * s["active_error_pressure"]
+    temp -= 0.10 * s["causal_verification_need"]
+    temp -= 0.08 * max(0.0, 0.55 - s["organismal_coherence"])
     temp += 0.20 * (s["curiosity"] - 0.5)
     temp += 0.04 * s["active_seek_information"]
     temp_ceiling = 0.85 if foreground else 0.90
     temp = max(0.15, min(temp_ceiling, temp))
     rationale.append(
         f"temp={temp:.2f} (ach={s['acetylcholine']:.2f}, corts={s['cortisol']:.2f}, "
-        f"curio={s['curiosity']:.2f}, active_uncert={s['active_uncertainty']:.2f})"
+        f"curio={s['curiosity']:.2f}, active_uncert={s['active_uncertainty']:.2f}, "
+        f"cvw={s['organismal_coherence']:.2f}, verify={s['causal_verification_need']:.2f})"
     )
 
     # ─── top_p ─────────────────────────────────────────────────────────
@@ -203,10 +229,12 @@ def compute_inference_params(
     top_p -= 0.08 * s["active_uncertainty"]
     top_p -= 0.06 * s["active_error_pressure"]
     top_p -= 0.05 * max(0.0, s["arousal"] - 0.65)
+    top_p -= 0.08 * s["causal_governance_pressure"]
+    top_p -= 0.07 * s["causal_verification_need"]
     top_p = max(0.55, min(0.99, top_p))
     rationale.append(
         f"top_p={top_p:.2f} (phi={s['phi']:.2f}, frust={s['frustration']:.2f}, "
-        f"active_error={s['active_error_pressure']:.2f})"
+        f"active_error={s['active_error_pressure']:.2f}, governance={s['causal_governance_pressure']:.2f})"
     )
 
     # ─── top_k ─────────────────────────────────────────────────────────
@@ -227,6 +255,9 @@ def compute_inference_params(
     cap = max(1, int(cap * max(0.55, 1.0 - 0.4 * max(0.0, s["cortisol"] - 0.5))))
     if s["active_reduce_load"] > 0.0:
         cap = max(1, int(cap * 0.62))
+    cap = max(1, int(cap * max(0.45, s["causal_metabolic_budget"])))
+    if s["organismal_coherence"] < 0.45:
+        cap = max(1, int(cap * 0.82))
     rationale.append(f"max_tokens={cap} (vitality={s['vitality']:.2f}, cap={cap})")
 
     # ─── repetition penalty ────────────────────────────────────────────
@@ -236,6 +267,8 @@ def compute_inference_params(
         + 0.10 * max(0.0, temp - 0.80)
         + 0.04 * s["active_uncertainty"]
         + 0.06 * s["active_error_pressure"]
+        + 0.05 * s["causal_verification_need"]
+        + 0.04 * max(0.0, 0.55 - s["organismal_coherence"])
     )
     rep = 1.05 + 0.05 * s["frustration"] + loop_pressure
     rep_floor = 1.05 if foreground else 1.02
@@ -245,9 +278,17 @@ def compute_inference_params(
     )
 
     # ─── presence penalty ─────────────────────────────────────────────
-    pres = 0.0 + 0.30 * s["curiosity"] + 0.08 * s["active_tool_pressure"]
+    pres = (
+        0.0
+        + 0.30 * s["curiosity"]
+        + 0.08 * s["active_tool_pressure"]
+        + 0.05 * max(0.0, s["organismal_coherence"] - 0.55)
+        - 0.08 * s["causal_governance_pressure"]
+    )
     pres = max(0.0, min(0.8, pres))
-    rationale.append(f"presence={pres:.2f} (curio={s['curiosity']:.2f})")
+    rationale.append(
+        f"presence={pres:.2f} (curio={s['curiosity']:.2f}, cvw={s['organismal_coherence']:.2f})"
+    )
 
     # ─── early-stop sequences when degraded ────────────────────────────
     extra_stops: list[str] = []

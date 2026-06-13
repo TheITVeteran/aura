@@ -374,3 +374,36 @@ def test_latent_bridge_sampling_consumes_spiking_active_inference():
     assert steered.max_tokens < base.max_tokens
     assert steered.presence_penalty > base.presence_penalty
     assert any("active_uncert" in item for item in steered.rationale)
+
+
+def test_latent_bridge_sampling_consumes_causal_valenced_workspace():
+    ServiceContainer.clear()
+
+    class Vector:
+        values = {
+            "organismal_coherence": 0.22,
+            "verification_need": 0.86,
+            "governance_pressure": 0.74,
+            "metabolic_budget": 0.48,
+            "sentience_candidate_strength": 0.04,
+        }
+
+        def value(self, name, default=0.0):
+            return self.values.get(name, default)
+
+    ServiceContainer.register_instance(
+        "being_runtime",
+        SimpleNamespace(_last_causal_self_vector=Vector()),
+        required=False,
+    )
+
+    steered = compute_inference_params(base_max_tokens=1000, base_temperature=0.70)
+
+    ServiceContainer.clear()
+    base = compute_inference_params(base_max_tokens=1000, base_temperature=0.70)
+
+    assert steered.temperature < base.temperature
+    assert steered.top_p < base.top_p
+    assert steered.max_tokens < base.max_tokens
+    assert steered.repetition_penalty > base.repetition_penalty
+    assert any("cvw=" in item and "verify=" in item for item in steered.rationale)

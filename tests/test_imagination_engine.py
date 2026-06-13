@@ -2,6 +2,7 @@ import pytest
 
 from core.brain.cognitive_engine import CognitiveEngine
 from core.brain.imagination import ImaginationEngine, get_imagination_engine
+from core.brain.inference_gate import InferenceGate
 from core.brain.llm.context_assembler import ContextAssembler
 from core.brain.types import ThinkingMode
 from core.container import ServiceContainer
@@ -138,7 +139,53 @@ async def test_desktop_quick_path_consumes_imagination_workspace():
     assert "Novel thought candidates" in captured["messages"][0]["content"]
     assert captured["kwargs"]["protected_foreground_lane"] is True
     assert captured["kwargs"]["allow_cloud_fallback"] is False
+    assert captured["kwargs"]["imagination_sampling_bias"] == frame["sampling_bias"]
     assert 512 < captured["kwargs"]["max_tokens"] <= 768
+
+
+def test_inference_gate_applies_bounded_runtime_imagination_sampling_bias():
+    state = AuraState.default()
+    state.response_modifiers["imagination_sampling_bias"] = {
+        "temperature_delta": 0.11,
+        "max_tokens_factor": 1.1,
+    }
+    state.response_modifiers["sampling_bias"] = {
+        "temperature_delta": -0.02,
+        "max_tokens_factor": 0.8,
+    }
+
+    temperature, tokens, applied = InferenceGate._apply_runtime_sampling_biases(
+        base_temperature=0.70,
+        max_tokens=1000,
+        context={},
+        state=state,
+        allow_token_scaling=True,
+    )
+
+    assert temperature == pytest.approx(0.79)
+    assert tokens == 880
+    assert applied["temperature_delta"] == pytest.approx(0.09)
+    assert applied["max_tokens_factor"] == pytest.approx(0.88)
+
+
+def test_inference_gate_rejects_unbounded_runtime_sampling_bias_values():
+    temperature, tokens, applied = InferenceGate._apply_runtime_sampling_biases(
+        base_temperature=0.70,
+        max_tokens=1000,
+        context={
+            "imagination_sampling_bias": {
+                "temperature_delta": 9.0,
+                "max_tokens_factor": 99.0,
+            }
+        },
+        state=None,
+        allow_token_scaling=True,
+    )
+
+    assert temperature == pytest.approx(0.88)
+    assert tokens == 1000
+    assert applied["temperature_delta"] == pytest.approx(0.18)
+    assert applied["max_tokens_factor"] == pytest.approx(1.0)
 
 
 def test_imagination_prompt_block_exports_canvas_without_claiming_perception():

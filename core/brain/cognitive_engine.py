@@ -1292,6 +1292,12 @@ class CognitiveEngine:
                     clear_prompt_cache=True,
                     max_tokens=max_tokens,
                     num_predict=max_tokens,
+                    sampling_bias=advice.get("sampling_bias") if isinstance(advice, dict) else None,
+                    imagination_sampling_bias=(
+                        imagination_frame.get("sampling_bias")
+                        if isinstance(imagination_frame, dict)
+                        else None
+                    ),
                     timeout=request_timeout,
                 ),
                 timeout=request_timeout + 3.0,

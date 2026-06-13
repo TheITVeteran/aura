@@ -132,6 +132,7 @@ def test_policy_coupler_uses_weak_causal_valenced_workspace_as_constraint():
     )
     action_policy = controller.being_runtime.action_policy(now, domain="tool_execution", priority=0.8)
     vector = controller.being_runtime._last_causal_self_vector
+    workspace = vector.causal_valenced_workspace
     self_state = FunctionalIAttractor().update(now=now, vector=vector, action_policy=action_policy)
     policy = ClosedLoopPolicyCoupler(production_mode=True).modulate(
         vector=vector,
@@ -141,6 +142,14 @@ def test_policy_coupler_uses_weak_causal_valenced_workspace_as_constraint():
     )
 
     assert vector.value("organismal_coherence") < 0.45
+    assert "action_policy_changed" in workspace.downstream_effects
+    assert action_policy["evidence"]["causal_vector"]["organismal_coherence"] == pytest.approx(
+        vector.value("organismal_coherence"),
+        abs=1e-4,
+    )
+    assert action_policy["evidence"]["causal_valenced_workspace"]["boundary"] == (
+        "functional_evidence_only_not_phenomenal_proof"
+    )
     assert policy.tool_risk_budget <= 0.20
     assert policy.verification_threshold > 0.55
     assert any("causal-valenced workspace weak" in reason for reason in policy.reasons)
