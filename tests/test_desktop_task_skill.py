@@ -1031,11 +1031,9 @@ async def test_collect_research_synthesizes_first_person_opinion(monkeypatch):
     routed = {}
 
     class FakeRouter:
-        async def route(self, *, prompt, **kwargs):
+        async def generate(self, *, prompt, **kwargs):
             routed["prompt"] = prompt
-            return SimpleNamespace(
-                text="Three articles converge on rising risk. In my view, the evidence is compelling."
-            )
+            return "Three articles converge on rising risk. In my view, the evidence is compelling."
 
     monkeypatch.setattr(
         ServiceContainer, "get",

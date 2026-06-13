@@ -726,8 +726,8 @@ class DesktopTaskSkill(BaseSkill):
         from core.container import ServiceContainer
 
         router = ServiceContainer.get("llm_router", default=None)
-        route = getattr(router, "route", None) if router is not None else None
-        if not callable(route):
+        generate = getattr(router, "generate", None) if router is not None else None
+        if not callable(generate):
             return ""
         source_lines = "\n".join(
             f"- {str(item.get('title') or item.get('url') or 'source')}: {str(item.get('snippet') or '')[:300]}"
@@ -751,12 +751,14 @@ class DesktopTaskSkill(BaseSkill):
             "reader will see, not a status update."
         )
         try:
-            response = await asyncio.wait_for(
-                route(
+            text = await asyncio.wait_for(
+                generate(
                     prompt=prompt,
+                    timeout=80.0,
                     temperature=0.6,
                     max_tokens=480,
-                    route_hint="summarization",
+                    origin="desktop_task",
+                    purpose="research_document_synthesis",
                 ),
                 timeout=90.0,
             )
@@ -768,12 +770,13 @@ class DesktopTaskSkill(BaseSkill):
                 severity="warning",
             )
             return ""
-        text = getattr(response, "text", None)
-        if not text:
-            text = str(response) if response else ""
-        text = str(text).strip()
-        # A synthesis that echoes dispatch narration is not document content.
-        if self._looks_like_dispatch_narration(text):
+        text = str(text or "").strip()
+        # The router guarantees non-empty (diagnostic fallback); a synthesis
+        # that is a diagnostic stub or dispatch narration is not document
+        # content, so fall back to the raw research section.
+        if not text or self._looks_like_dispatch_narration(text):
+            return ""
+        if re.search(r"\b(?:diagnostic|fallback|unavailable|all (?:remote )?endpoints? failed)\b", text.lower()) and len(text) < 200:
             return ""
         return text[:4000]
 
