@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v2`
 Root: `<AURA_ROOT>`
-Generated: `1781350846.522207`
+Generated: `1781351141.574229`
 
 ## Summary
 
 - Subsystems: 146
 - Python files: 1922
-- Python lines: 523545
+- Python lines: 523568
 - Dependency edges: 797
 - ServiceContainer `.get()` calls: 1596
 - ServiceContainer registrations: 386
@@ -20,7 +20,7 @@ Generated: `1781350846.522207`
 graph TD
     runtime["runtime<br/>105 files, 24339 lines"]
     utils["utils<br/>43 files, 5761 lines"]
-    brain["brain<br/>117 files, 46529 lines"]
+    brain["brain<br/>117 files, 46552 lines"]
     memory["memory<br/>88 files, 19919 lines"]
     consciousness["consciousness<br/>133 files, 62020 lines"]
     resilience["resilience<br/>54 files, 12130 lines"]
@@ -969,7 +969,7 @@ graph TD
 | --- | ---: | ---: | ---: | ---: | ---: |
 | consciousness | 133 | 62020 | 2611224 | 39 | 29 |
 | core_root | 178 | 55289 | 2249064 | 100 | 0 |
-| brain | 117 | 46529 | 2009846 | 42 | 39 |
+| brain | 117 | 46552 | 2010705 | 42 | 39 |
 | runtime | 105 | 24339 | 862138 | 43 | 124 |
 | memory | 88 | 19919 | 799891 | 18 | 34 |
 | orchestrator | 42 | 19212 | 848184 | 125 | 9 |

@@ -53,6 +53,7 @@ from core.runtime.proof_policy import (
     is_strict_proof_answer_prompt,
     mlx_strict_answer_contract_enabled,
     proof_model_tier,
+    proof_run_active,
 )
 from core.runtime.turn_analysis import analyze_turn
 from core.utils.concurrency import RobustLock
@@ -131,6 +132,19 @@ def _endpoint_call_timeout(timeout: float) -> float:
     timeout_s = max(0.1, timeout_s)
     grace_s = min(5.0, max(0.25, timeout_s * 0.1))
     return timeout_s + grace_s
+
+
+def _proof_primary_lane_active(*, origin: str) -> bool:
+    """Return whether this router build/call must expose only the primary lane."""
+    try:
+        return bool(proof_run_active(origin=origin) and proof_model_tier() == "primary")
+    except _ROUTER_CLIENT_ERRORS as exc:
+        _record_router_degradation(
+            exc,
+            action="failed closed while resolving proof-primary lane policy",
+            severity="degraded",
+        )
+        return True
 
 
 def _force_abort_endpoint_client(client: Any, *, reason: str) -> bool:
@@ -2526,6 +2540,7 @@ class HealthAwareLLMRouter:
 def build_router_from_config(config) -> HealthAwareLLMRouter:
     """Build and return a properly configured router."""
     router = HealthAwareLLMRouter()
+    primary_proof_lane = _proof_primary_lane_active(origin="llm_health_router_build")
 
     # [PIPELINE HARDENING] Lazy local-runtime client wrapper.
     # Prevents all managed lanes from spawning and loading into RAM at boot.
@@ -2621,6 +2636,14 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
             failure_threshold=5,
             recovery_timeout=10.0,
         )
+
+    if primary_proof_lane:
+        logger.info(
+            "🛡️ Proof-primary lane active — HealthRouter exposing only %s; "
+            "Solver, Brainstem, Reflex, and cloud endpoints are not registered.",
+            PRIMARY_ENDPOINT,
+        )
+        return router
 
     # Deep solver (72B) — on-demand secondary lane.
     try:

@@ -178,6 +178,24 @@ async def test_lazy_local_client_initializes_off_event_loop(monkeypatch):
     assert generate_text_async.calls == [(("hello",), {})]
 
 
+def test_health_router_exposes_only_cortex_during_primary_proof(monkeypatch):
+    sentinel_gate = object()
+    monkeypatch.setattr("core.brain.llm_health_router.proof_run_active", lambda **_kwargs: True)
+    monkeypatch.setattr("core.brain.llm_health_router.proof_model_tier", lambda: "primary")
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        classmethod(lambda cls, name, default="_SENTINEL": sentinel_gate if name == "inference_gate" else default),
+    )
+
+    router = build_router_from_config(config)
+
+    from core.brain.llm.model_registry import PRIMARY_ENDPOINT
+
+    assert list(router.endpoints) == [PRIMARY_ENDPOINT]
+    assert router.endpoints[PRIMARY_ENDPOINT].client is sentinel_gate
+
+
 def test_desktop_safe_boot_tracks_app_launch_context(monkeypatch):
     monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
     monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
