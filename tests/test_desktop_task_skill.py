@@ -863,23 +863,25 @@ def test_derivation_honors_safari_and_neutral_defaults():
     assert all("duckduckgo.com" in s.target for s in neutral_urls)
 
 
-def test_wallpaper_query_extraction():
-    from core.skills.desktop_task import DesktopTaskSkill
+def test_os_setting_detection_is_general():
+    """Detection lives in the affordance registry and is domain-agnostic:
+    wallpaper, dark mode, and volume all fall out of one generic scan."""
+    from core.skills.os_affordances import detect_os_settings
 
-    extract = DesktopTaskSkill._extract_wallpaper_query
-    assert extract("Please change my wallpaper to a squid, and show me where you found it") == "squid"
-    assert extract("Set the wallpaper to an octopus please") == "octopus"
-    assert extract("Write a note about squids") == ""
-    assert DesktopTaskSkill._wants_image_source_shown(
-        "change my wallpaper to a squid, and show me where you found it"
-    )
-    assert not DesktopTaskSkill._wants_image_source_shown("change my wallpaper to a squid")
+    assert detect_os_settings(
+        "Please change my wallpaper to a squid, and show me where you found it"
+    ) == [("wallpaper", "squid")]
+    assert detect_os_settings("Set the wallpaper to an octopus please") == [("wallpaper", "octopus")]
+    assert detect_os_settings("Turn on dark mode") == [("dark_mode", "true")]
+    assert detect_os_settings("turn off dark mode") == [("dark_mode", "false")]
+    assert detect_os_settings("set the volume to 30%") == [("volume", "30")]
+    assert detect_os_settings("Write a note about squids") == []
 
 
-def test_wallpaper_derivation_fetches_sets_and_shows_source():
-    """Bryan's part-2 closer: 'change my wallpaper to a squid, and show
-    me where you found it' derives fetch → set_wallpaper → source tab,
-    with the source URL resolved at runtime from the fetch receipt."""
+def test_wallpaper_derivation_fetches_controls_and_shows_source():
+    """Bryan's part-2 closer derives fetch → system_control(wallpaper) →
+    source tab through the GENERAL affordance loop — no wallpaper-specific
+    code — with the source URL resolved at runtime from the fetch receipt."""
     from core.skills.desktop_task import FETCHED_IMAGE_SOURCE_TOKEN, DesktopTaskSkill
 
     skill = DesktopTaskSkill()
@@ -888,16 +890,28 @@ def test_wallpaper_derivation_fetches_sets_and_shows_source():
     )
     actions = [s.action for s in steps]
     fetch_idx = actions.index("fetch_topic_image")
-    set_idx = actions.index("set_wallpaper")
-    assert fetch_idx < set_idx
+    control_idx = actions.index("system_control")
+    assert fetch_idx < control_idx
     assert steps[fetch_idx].target["topic"] == "squid"
-    assert steps[set_idx].target["path"] == steps[fetch_idx].target["path"]
+    assert steps[control_idx].target["domain"] == "wallpaper"
+    assert steps[control_idx].target["value"] == steps[fetch_idx].target["path"]
     source_steps = [
         s for s in steps
         if s.action == "open_url"
         and FETCHED_IMAGE_SOURCE_TOKEN in str(s.target)
     ]
     assert source_steps, actions
+
+
+def test_non_image_setting_derives_single_control_step():
+    """Dark mode needs no image fetch — just one general system_control step."""
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    steps = DesktopTaskSkill()._derive_steps_from_objective("Turn on dark mode.", {})
+    control = [s for s in steps if s.action == "system_control"]
+    assert len(control) == 1
+    assert control[0].target == {"domain": "dark_mode", "value": "true"}
+    assert not any(s.action == "fetch_topic_image" for s in steps)
 
 
 @pytest.mark.asyncio
@@ -909,13 +923,14 @@ async def test_wallpaper_chain_substitutes_source_url_at_runtime(monkeypatch):
     class FakeCapabilityEngine:
         async def execute(self, skill_name, params, context=None):
             calls.append((skill_name, params, context or {}))
-            if params["action"] == "set_wallpaper":
+            if params["action"] == "system_control":
                 payload = json.loads(params["target"])
                 return {
                     "ok": True,
-                    "action": "set_wallpaper",
-                    "path": payload["path"],
-                    "applied": payload["path"],
+                    "action": "system_control",
+                    "domain": payload["domain"],
+                    "value": payload["value"],
+                    "applied": payload["value"],
                     "effect_verified": True,
                 }
             return _fake_computer_use_result(params)

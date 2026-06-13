@@ -91,9 +91,14 @@ def _receipt_evidence(lane_data: Any, pdf_name: str) -> dict[str, Any]:
             evidence["google_docs_in_chrome"] = True
         if action == "open_url" and ok and "wikipedia.org" in url:
             evidence["source_tab_opened"] = True
-        if action == "set_wallpaper" and ok and result.get("effect_verified"):
+        if (
+            action == "system_control"
+            and str(result.get("domain") or "") == "wallpaper"
+            and ok
+            and result.get("effect_verified")
+        ):
             evidence["wallpaper_set"] = True
-            evidence["wallpaper_path"] = str(result.get("path") or "")
+            evidence["wallpaper_path"] = str(result.get("value") or "")
             evidence["wallpaper_previous"] = str(result.get("previous") or "")
         if action == "render_text_pdf" and ok:
             render_path = str(result.get("path") or "")

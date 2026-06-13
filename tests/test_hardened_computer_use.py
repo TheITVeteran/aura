@@ -784,76 +784,176 @@ async def test_open_url_refuses_unknown_browser(monkeypatch):
     assert "not in the allowed browser set" in result["error"]
 
 
+class _FakeOSSettingsAdapter:
+    """Stand-in for the canonical OSSettingsAdapter — records delegated
+    set calls and serves a goal-state read-back."""
+
+    def __init__(self, wallpaper="/Library/Desktop Pictures/Sonoma.heic",
+                 appearance="light", volume=10, drop_first_readback=False):
+        self._wallpaper = wallpaper
+        self._appearance = appearance
+        self._volume = volume
+        self.calls = []
+        self._set_done = False
+        self._readbacks_after_set = 0
+        self._drop_first = drop_first_readback
+
+    async def get_wallpaper(self):
+        # Simulate the modern-macOS race: the first read-back AFTER a set
+        # returns `missing value` (empty) before the store propagates.
+        if self._set_done:
+            self._readbacks_after_set += 1
+            if self._drop_first and self._readbacks_after_set == 1:
+                return ""
+        return self._wallpaper
+
+    async def set_wallpaper(self, path):
+        self.calls.append(("set_wallpaper", path))
+        self._wallpaper = str(path)
+        self._set_done = True
+        return SimpleNamespace(success=True)
+
+    async def get_appearance_mode(self):
+        return self._appearance
+
+    async def set_appearance_mode(self, mode):
+        self.calls.append(("set_appearance_mode", mode))
+        self._appearance = mode
+        return True
+
+    async def get_volume(self):
+        return self._volume
+
+    async def set_volume(self, level):
+        self.calls.append(("set_volume", level))
+        self._volume = int(level)
+        return True
+
+
+def _patch_adapter(monkeypatch, adapter):
+    from core.container import ServiceContainer
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: adapter if name == "os_settings" else default),
+    )
+
+
 @pytest.mark.asyncio
-async def test_set_wallpaper_verifies_via_readback(monkeypatch, tmp_path):
-    """set_wallpaper applies through System Events and only claims ok
-    when the read-back names the requested file; previous wallpaper is
-    recorded for reversibility."""
+async def test_system_control_wallpaper_delegates_to_adapter(monkeypatch, tmp_path):
+    """system_control routes execution through the canonical
+    OSSettingsAdapter (no parallel AppleScript), confirms the goal-state
+    via the adapter's getter, and survives the modern-macOS read-back race."""
     skill = ComputerUseSkill()
 
     async def controlled_permission_pass(capability, *permission_names):
         return None
 
     monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(ComputerUseSkill, "_SETTING_READBACK_INTERVAL_S", 0.0)
 
     img = tmp_path / "squid_wallpaper.png"
     img.write_bytes(b"\x89PNG fake")
     monkeypatch.setattr(
         skill, "_resolve_allowed_desktop_path", lambda raw, must_exist=False: img
     )
-
-    state = {"current": "/Library/Desktop Pictures/Sonoma.heic"}
-
-    def fake_applescript(script, *, timeout=10):
-        if "set picture of every desktop" in script:
-            state["current"] = str(img)
-            return ""
-        return state["current"]
-
-    monkeypatch.setattr(skill, "_run_applescript", fake_applescript)
+    adapter = _FakeOSSettingsAdapter(drop_first_readback=True)
+    _patch_adapter(monkeypatch, adapter)
 
     result = await skill.execute(
-        {"action": "set_wallpaper", "target": json.dumps({"path": str(img)})}, {}
+        {"action": "system_control", "target": json.dumps({"domain": "wallpaper", "value": str(img)})},
+        {},
     )
     assert result["ok"] is True
     assert result["effect_verified"] is True
+    assert result["domain"] == "wallpaper"
+    assert ("set_wallpaper", str(img)) in adapter.calls
     assert result["previous"].endswith("Sonoma.heic")
-    assert result["applied"].endswith("squid_wallpaper.png")
 
     from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
 
     step = DesktopTaskStep(
-        action="set_wallpaper",
-        target={"path": str(img)},
+        action="system_control",
+        target={"domain": "wallpaper", "value": str(img)},
         reason="set wallpaper",
-        expect="Wallpaper read-back names the fetched image file.",
+        expect="Read-back confirms the wallpaper goal-state.",
     )
     verified, evidence = DesktopTaskSkill()._verify_step_effect(step, result)
     assert verified, evidence
 
 
 @pytest.mark.asyncio
-async def test_set_wallpaper_readback_mismatch_fails_closed(monkeypatch, tmp_path):
+async def test_system_control_dark_mode_and_volume_delegate(monkeypatch):
+    """Same general action drives dark mode and volume — proof the
+    registry is general, not wallpaper-shaped."""
     skill = ComputerUseSkill()
 
     async def controlled_permission_pass(capability, *permission_names):
         return None
 
     monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(ComputerUseSkill, "_SETTING_READBACK_INTERVAL_S", 0.0)
+
+    adapter = _FakeOSSettingsAdapter()
+    _patch_adapter(monkeypatch, adapter)
+
+    dark = await skill.execute(
+        {"action": "system_control", "target": json.dumps({"domain": "dark_mode", "value": "true"})}, {}
+    )
+    assert dark["ok"] is True
+    assert ("set_appearance_mode", "dark") in adapter.calls
+
+    vol = await skill.execute(
+        {"action": "system_control", "target": json.dumps({"domain": "volume", "value": "30"})}, {}
+    )
+    assert vol["ok"] is True
+    assert ("set_volume", 30) in adapter.calls
+
+
+@pytest.mark.asyncio
+async def test_system_control_readback_mismatch_fails_closed(monkeypatch, tmp_path):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(ComputerUseSkill, "_SETTING_READBACK_INTERVAL_S", 0.0)
 
     img = tmp_path / "squid_wallpaper.png"
     img.write_bytes(b"\x89PNG fake")
     monkeypatch.setattr(
         skill, "_resolve_allowed_desktop_path", lambda raw, must_exist=False: img
     )
-    monkeypatch.setattr(
-        skill,
-        "_run_applescript",
-        lambda script, timeout=10: "/Library/Desktop Pictures/Sonoma.heic",
-    )
+
+    class StubbornAdapter(_FakeOSSettingsAdapter):
+        async def set_wallpaper(self, path):  # set silently no-ops
+            self.calls.append(("set_wallpaper", path))
+            return SimpleNamespace(success=False)
+
+    adapter = StubbornAdapter()  # get_wallpaper keeps returning the old one
+    _patch_adapter(monkeypatch, adapter)
 
     result = await skill.execute(
-        {"action": "set_wallpaper", "target": json.dumps({"path": str(img)})}, {}
+        {"action": "system_control", "target": json.dumps({"domain": "wallpaper", "value": str(img)})}, {}
     )
     assert result["ok"] is False
-    assert "does not match" in result["error"]
+    assert "does not confirm" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_system_control_unavailable_adapter_fails_closed(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    _patch_adapter(monkeypatch, None)
+
+    result = await skill.execute(
+        {"action": "system_control", "target": json.dumps({"domain": "dark_mode", "value": "true"})}, {}
+    )
+    assert result["ok"] is False
+    assert "unavailable" in result["error"]

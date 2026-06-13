@@ -99,7 +99,7 @@ class ComputerUseParams(BaseModel):
         description=(
             "click|type|hotkey|scroll|read_screen_text|read_menu_clock|open_app|open_url|"
             "run_command|set_clipboard|get_clipboard|wait|run_applescript|write_text_file|"
-            "render_text_pdf|move_file|create_folder|fetch_topic_image|set_wallpaper"
+            "render_text_pdf|move_file|create_folder|fetch_topic_image|system_control"
         ),
     )
     target: str = Field(
@@ -318,6 +318,10 @@ class ComputerUseSkill(BaseSkill):
             raise RuntimeError(self._normalize_script_error(stderr))
         return str(result.get("stdout") or "").strip()
 
+    # Read-back poll interval after an OS setting change (overridable so
+    # tests don't pay the propagation wait).
+    _SETTING_READBACK_INTERVAL_S = 0.5
+
     _HOTKEY_MODIFIERS = {
         "command": "command down",
         "cmd": "command down",
@@ -535,46 +539,84 @@ class ComputerUseSkill(BaseSkill):
             "existed": existed,
         }
 
-    def _set_wallpaper(self, target: str) -> dict[str, Any]:
-        """Set the desktop wallpaper to an image inside the allowed
-        artifact roots, with read-back verification and the previous
-        wallpaper recorded so the change is reversible."""
+    async def _apply_system_control(self, target: str) -> dict[str, Any]:
+        """Drive a known OS setting to a goal-state.
+
+        Domain-agnostic and unified: WHICH settings exist and how to
+        recognize/translate them comes from the OS-affordance registry;
+        EXECUTION is delegated to the one canonical owner, OSSettingsAdapter
+        (rollback + governed receipts). This method neither composes
+        AppleScript nor knows any specific setting — adding wallpaper,
+        dark mode, volume, or a future setting is a registry entry. The
+        prior state is recorded and the goal-state is confirmed by
+        read-back through the adapter's own getter, never assumed.
+        """
+        from core.container import ServiceContainer
+        from core.skills.os_affordances import get_affordance, validate_value
+
         payload = self._target_json(target)
-        path = self._resolve_allowed_desktop_path(payload.get("path"), must_exist=True)
-        if not path.is_file():
-            return {"ok": False, "error": f"Wallpaper image is not a file: {path}"}
+        domain = str(payload.get("domain") or "").strip().lower()
+        raw_value = str(payload.get("value") or "").strip()
+        affordance = get_affordance(domain)
+        if affordance is None:
+            return {"ok": False, "error": f"No known OS affordance for '{domain}'."}
+        value = validate_value(affordance, raw_value)
+        if value is None:
+            return {"ok": False, "error": f"Invalid value for {domain}: {raw_value!r}"}
+        # Image-valued settings (wallpaper) take a file that must live in
+        # the allowed artifact roots; resolve and use the real path.
+        if affordance.value_kind == "image":
+            path = self._resolve_allowed_desktop_path(value, must_exist=True)
+            if not path.is_file():
+                return {"ok": False, "error": f"{domain} image is not a file: {path}"}
+            value = str(path)
+
+        adapter = ServiceContainer.get("os_settings", default=None)
+        getter = getattr(adapter, affordance.getter, None) if adapter else None
+        setter = getattr(adapter, affordance.setter, None) if adapter else None
+        if not callable(getter) or not callable(setter):
+            return {
+                "ok": False,
+                "error": "os_settings capability unavailable for system_control",
+                "domain": domain,
+            }
+
+        async def _read() -> str:
+            try:
+                return str(await getter())
+            except (RuntimeError, OSError, TypeError, ValueError, TimeoutError) as exc:
+                return f"[unreadable: {exc}]"
+
+        previous = await _read()
         try:
-            previous = self._run_applescript(
-                'tell application "System Events" to get picture of first desktop',
-                timeout=8,
-            )
-        except (TimeoutError, RuntimeError) as exc:
-            previous = f"[unreadable: {exc}]"
-        escaped = str(path).replace("\\", "\\\\").replace('"', '\\"')
-        try:
-            self._run_applescript(
-                'tell application "System Events" to set picture of every desktop '
-                f'to POSIX file "{escaped}"',
-                timeout=10,
-            )
-            applied = self._run_applescript(
-                'tell application "System Events" to get picture of first desktop',
-                timeout=8,
-            )
-        except (TimeoutError, RuntimeError) as exc:
-            return {"ok": False, "error": f"wallpaper change failed: {exc}"}
-        verified = applied.strip().endswith(path.name)
+            await setter(affordance.to_setter_arg(value))
+        except (RuntimeError, OSError, TypeError, ValueError, TimeoutError) as exc:
+            return {"ok": False, "error": f"{domain} change failed: {exc}", "domain": domain}
+
+        # Goal-state read-back. It is racy on modern macOS (e.g. the
+        # wallpaper store reports `missing value` for a moment after a
+        # set), so poll until the adapter's getter confirms or the budget
+        # elapses — the set already ran; this only proves it.
+        applied = previous
+        verified = False
+        for _attempt in range(8):
+            await asyncio.sleep(self._SETTING_READBACK_INTERVAL_S)
+            applied = await _read()
+            if affordance.confirms(applied, value):
+                verified = True
+                break
         result = {
             "ok": verified,
-            "action": "set_wallpaper",
-            "path": str(path),
-            "previous": previous.strip()[:300],
-            "applied": applied.strip()[:300],
+            "action": "system_control",
+            "domain": domain,
+            "value": value,
+            "previous": str(previous)[:300],
+            "applied": str(applied)[:300],
             "effect_verified": verified,
         }
         if not verified:
             result["error"] = (
-                f"wallpaper read-back '{applied.strip()[:120]}' does not match {path.name}"
+                f"{domain} read-back '{str(applied)[:120]}' does not confirm the goal-state"
             )
         return result
 
@@ -1507,14 +1549,14 @@ end tell
             elif action == "fetch_topic_image":
                 return await asyncio.to_thread(self._fetch_topic_image, params.target)
 
-            elif action == "set_wallpaper":
+            elif action == "system_control":
                 blocked = await self._require_permissions(
-                    "changing the desktop wallpaper through System Events",
+                    "changing a system setting through System Events",
                     "AUTOMATION",
                 )
                 if blocked:
                     return blocked
-                return await asyncio.to_thread(self._set_wallpaper, params.target)
+                return await self._apply_system_control(params.target)
 
             elif action == "render_text_pdf":
                 return await asyncio.to_thread(self._render_text_pdf, params.target)

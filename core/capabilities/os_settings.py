@@ -63,7 +63,7 @@ class OSSettingsAdapter:
                 [
                     "osascript",
                     "-e",
-                    'tell application "System Events" to get picture of current desktop',
+                    'tell application "System Events" to get picture of first desktop',
                 ],
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -99,27 +99,19 @@ class OSSettingsAdapter:
         # Save current wallpaper for rollback
         previous = await self.get_wallpaper()
 
-        # Set wallpaper via AppleScript
-        script = f'''
-            tell application "System Events"
-                tell every desktop
-                    set picture to "{path}"
-                end tell
-            end tell
-        '''
+        # Set wallpaper via AppleScript. The POSIX file form is the
+        # reliable one on modern macOS (Sonoma+/Tahoe); the bare path
+        # string form silently no-ops on some versions.
+        escaped = str(path).replace("\\", "\\\\").replace('"', '\\"')
+        script = (
+            'tell application "System Events" to set picture of every desktop '
+            f'to POSIX file "{escaped}"'
+        )
         receipt = await AppleScriptRunner.run(script, timeout=10.0)
         receipt.action = "set_wallpaper"
         receipt.target = str(path)
 
         if receipt.success:
-            # Also try via osascript -e for Finder (more reliable on some macOS versions)
-            finder_script = f'''
-                tell application "Finder"
-                    set desktop picture to POSIX file "{path}"
-                end tell
-            '''
-            await AppleScriptRunner.run(finder_script, timeout=5.0)
-
             # Record for rollback
             self._changes.append(SettingChange(
                 setting="wallpaper",
@@ -130,13 +122,22 @@ class OSSettingsAdapter:
             if len(self._changes) > self._max_changes:
                 self._changes = self._changes[-self._max_changes:]
 
-            # Verify
-            await asyncio.sleep(1.0)
-            current = await self.get_wallpaper()
-            if str(path) in current or path.name in current:
+            # Verify — read-back is racy on modern macOS (the wallpaper
+            # store reports `missing value` for a moment after a set), so
+            # poll until it names our file or the bounded budget elapses.
+            current = ""
+            confirmed = False
+            for _ in range(8):
+                await asyncio.sleep(0.5)
+                current = await self.get_wallpaper()
+                if str(path) in current or path.name in current:
+                    confirmed = True
+                    break
+            if confirmed:
                 receipt.result = f"Wallpaper set to {path.name}"
             else:
-                receipt.result = f"Wallpaper command sent (verification: current={current})"
+                receipt.success = False
+                receipt.error = f"Wallpaper read-back did not confirm (current={current})"
 
         # Log receipt
         try:

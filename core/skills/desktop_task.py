@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
+from core.skills.os_affordances import detect_os_settings, get_affordance
 
 # Placeholder URL resolved at execution time from the most recent
 # fetch_topic_image receipt — derivation cannot know the source page
@@ -58,7 +59,7 @@ class DesktopTaskStep(BaseModel):
             "move_file",
             "create_folder",
             "fetch_topic_image",
-            "set_wallpaper",
+            "system_control",
         }
         if action not in allowed:
             raise ValueError(f"Unsupported desktop action: {value}")
@@ -329,25 +330,6 @@ class DesktopTaskSkill(BaseSkill):
                 if query:
                     return query[:240]
         return ""
-
-    @staticmethod
-    def _extract_wallpaper_query(objective: str) -> str:
-        """Topic for a wallpaper-change request ('change my wallpaper to a
-        squid' → 'squid'); empty when no wallpaper change is asked for."""
-        text = str(objective or "").strip()
-        match = re.search(
-            r"\b(?:change|set|update|make)\b[^.;\n]{0,40}?\bwallpaper\b"
-            r"(?:\s+(?:to|into|with)\b)?(?:\s+(?:a|an|the)\b)?\s*([^.;,\n]+)",
-            text,
-            flags=re.IGNORECASE,
-        )
-        if not match:
-            return ""
-        query = re.sub(
-            r"\b(?:and|then|also|please)\b.*$", "", match.group(1), flags=re.IGNORECASE
-        )
-        query = re.sub(r"\b(?:image|picture|photo)\b.*$", "", query, flags=re.IGNORECASE)
-        return query.strip(" ,")[:120]
 
     @staticmethod
     def _wants_image_source_shown(objective: str) -> bool:
@@ -833,15 +815,16 @@ class DesktopTaskSkill(BaseSkill):
             if not isinstance(img_bytes, int) or img_bytes <= 0:
                 return False, "missing fetched image byte count"
             return True, f"path={img_path};bytes={img_bytes};source={page_url}"
-        if action == "set_wallpaper":
+        if action == "system_control":
+            domain = str(result.get("domain") or "").strip()
             applied = str(result.get("applied") or "").strip()
-            wp_path = str(result.get("path") or "").strip()
-            verified = bool(result.get("effect_verified")) and bool(wp_path)
+            expected = str(result.get("expected") or "").strip()
+            verified = bool(result.get("effect_verified")) and bool(domain)
             return (
                 verified,
-                f"applied={applied};path={wp_path}"
+                f"domain={domain};applied={applied};expected={expected}"
                 if verified
-                else "missing wallpaper read-back evidence",
+                else f"missing {domain or 'setting'} read-back confirmation",
             )
         if action == "move_file":
             destination = str(result.get("destination") or "").strip()
@@ -1100,33 +1083,44 @@ class DesktopTaskSkill(BaseSkill):
                 )
             )
 
-        wallpaper_query = self._extract_wallpaper_query(text)
-        if wallpaper_query:
-            wallpaper_path = (
-                f"~/Documents/{self._safe_filename(wallpaper_query)[:40] or 'wallpaper'}_wallpaper.png"
-            )
+        # General OS-setting control. The affordance registry is the single
+        # source of truth for which settings Aura can drive and how; this
+        # loop never names a specific setting, so a new one (volume, dark
+        # mode, …) is recognized for free. Image-valued settings (wallpaper)
+        # fetch their image first, through the same governed image gateway.
+        for domain, value in detect_os_settings(text):
+            affordance = get_affordance(domain)
+            if affordance is None:
+                continue
+            if affordance.needs_image:
+                image_path = (
+                    f"~/Documents/{self._safe_filename(value)[:40] or 'image'}_{domain}.png"
+                )
+                steps.append(
+                    DesktopTaskStep(
+                        action="fetch_topic_image",
+                        target={"topic": value, "path": image_path},
+                        reason=f"Fetch the image for the requested {domain} through the governed network gateway, with source-page evidence.",
+                        expect="Image file exists with a recorded source page URL.",
+                    )
+                )
+                control_value = image_path
+            else:
+                control_value = value
             steps.append(
                 DesktopTaskStep(
-                    action="fetch_topic_image",
-                    target={"topic": wallpaper_query, "path": wallpaper_path},
-                    reason="Fetch the requested wallpaper image through the governed network gateway, with source-page evidence.",
-                    expect="Image file exists with a recorded source page URL.",
+                    action="system_control",
+                    target={"domain": domain, "value": control_value},
+                    reason=f"Drive the {domain} setting to the requested value through governed System Events, recording the prior state for reversibility.",
+                    expect=f"Read-back confirms the {domain} goal-state.",
                 )
             )
-            steps.append(
-                DesktopTaskStep(
-                    action="set_wallpaper",
-                    target={"path": wallpaper_path},
-                    reason="Set the desktop wallpaper to the fetched image, recording the previous wallpaper for reversibility.",
-                    expect="Wallpaper read-back names the fetched image file.",
-                )
-            )
-            if self._wants_image_source_shown(text):
+            if affordance.needs_image and self._wants_image_source_shown(text):
                 steps.append(
                     DesktopTaskStep(
                         action="open_url",
                         target=_open_url_target(FETCHED_IMAGE_SOURCE_TOKEN),
-                        reason="Show the user where the wallpaper image was found (source page from the fetch receipt).",
+                        reason="Show the user where the image was found (source page from the fetch receipt).",
                         expect=f"{browser_label} accepts the image source page URL.",
                     )
                 )
