@@ -96,6 +96,10 @@ ALLOW_SUBPROCESS = {
     # Aura's gateways on purpose — independent verification must not route
     # through the runtime it is verifying.
     "tools/browser_research_demo_proof.py",
+    # Vision proof driver: places a unique marker on screen (open -a
+    # TextEdit) and reads it back via osascript — the scene setup and
+    # independent verification must sit outside Aura's gateways.
+    "tools/vision_screen_proof.py",
     # Legitimate production modules requiring OS/subprocess interface
     "core/architect/safety_gate.py",
     "core/architect/shadow_workspace.py",
