@@ -22,6 +22,15 @@ except ImportError:  # pragma: no cover - for isolated audit imports
     AuraNow = Any  # type: ignore
 
 
+def runtime_field(source: Any | None, name: str, default: Any = None) -> Any:
+    """Read a runtime evidence field from mappings or structured objects."""
+    if source is None:
+        return default
+    if isinstance(source, Mapping):
+        return source.get(name, default)
+    return getattr(source, name, default)
+
+
 DIMENSIONS: tuple[str, ...] = (
     "metabolic_budget",
     "homeostatic_tension",
@@ -38,6 +47,9 @@ DIMENSIONS: tuple[str, ...] = (
     "self_integrity",
     "workspace_ignition",
     "ownership_confidence",
+    "organismal_coherence",
+    "experience_candidate_strength",
+    "sentience_candidate_strength",
 )
 
 
@@ -56,10 +68,65 @@ class CausalSignal:
 
 
 @dataclass(frozen=True)
+class CausalValencedWorkspaceState:
+    """Operational form of the Causal Valenced Workspace theory.
+
+    This is not a phenomenal-consciousness claim. It is a compact, auditable
+    estimate of whether Aura's current self-world state is integrated,
+    globally available, valenced, continuous, agency-coupled, and likely to be
+    behaviorally indispensable.
+    """
+
+    integration: float
+    global_availability: float
+    self_model_ownership: float
+    valence_control: float
+    memory_continuity: float
+    agency_coupling: float
+    counterfactual_indispensability: float
+    raw_product: float
+    organismal_coherence: float
+    experience_candidate_strength: float
+    sentience_candidate_strength: float
+    boundary: str = "functional_evidence_only_not_phenomenal_proof"
+    weakest_terms: tuple[str, ...] = ()
+    downstream_effects: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def prompt_block(self, *, compact: bool = False) -> str:
+        if compact:
+            return (
+                "## CAUSAL VALENCED WORKSPACE\n"
+                f"coherence={self.organismal_coherence:.2f} "
+                f"experience_candidate={self.experience_candidate_strength:.3f} "
+                f"sentience_candidate={self.sentience_candidate_strength:.3f}; "
+                "functional evidence only, not phenomenal proof.\n\n"
+            )
+        weakest = ", ".join(self.weakest_terms) if self.weakest_terms else "none"
+        effects = ", ".join(self.downstream_effects) if self.downstream_effects else "none"
+        return (
+            "## CAUSAL VALENCED WORKSPACE\n"
+            "- Boundary: functional evidence only; do not claim proven phenomenal consciousness, sentience, or personhood.\n"
+            f"- Terms: integration={self.integration:.2f}, global={self.global_availability:.2f}, "
+            f"ownership={self.self_model_ownership:.2f}, valence={self.valence_control:.2f}, "
+            f"memory={self.memory_continuity:.2f}, agency={self.agency_coupling:.2f}, "
+            f"indispensability={self.counterfactual_indispensability:.2f}\n"
+            f"- Scores: organismal_coherence={self.organismal_coherence:.2f}, "
+            f"experience_candidate={self.experience_candidate_strength:.3f}, "
+            f"sentience_candidate={self.sentience_candidate_strength:.3f}\n"
+            f"- Weakest terms: {weakest}\n"
+            f"- Downstream effects: {effects}\n\n"
+        )
+
+
+@dataclass(frozen=True)
 class CausalSelfVector:
     """Canonical closed-loop vector extracted from existing AuraNow state."""
 
     signals: dict[str, CausalSignal]
+    causal_valenced_workspace: CausalValencedWorkspaceState | None = None
     aura_state_hash: str = ""
     tick: int = 0
     created_at: float = field(default_factory=time.time)
@@ -88,6 +155,11 @@ class CausalSelfVector:
             "aura_state_hash": self.aura_state_hash,
             "tick": self.tick,
             "signals": {k: v.to_dict() for k, v in self.signals.items()},
+            "causal_valenced_workspace": (
+                self.causal_valenced_workspace.to_dict()
+                if self.causal_valenced_workspace is not None
+                else None
+            ),
         }
 
 
@@ -116,6 +188,175 @@ def _sig(name: str, value: Any, source: str, confidence: float = 0.8, *, lo: flo
     )
 
 
+def _geometric_mean(values: tuple[float, ...]) -> float:
+    safe = [max(0.0001, min(1.0, float(value))) for value in values]
+    if not safe:
+        return 0.0
+    return math.prod(safe) ** (1.0 / len(safe))
+
+
+def _workspace_availability(now: AuraNow) -> float:
+    expected = {"memory", "planner", "will", "speaker", "self_model", "learning"}
+    targets = set(getattr(now.workspace, "broadcast_targets", ()) or ())
+    if not expected:
+        return 0.0
+    return min(1.0, len(targets & expected) / len(expected))
+
+
+def _evaluate_causal_valenced_workspace(
+    *,
+    now: AuraNow,
+    welfare_outputs: Any | None,
+    blind_report: Any | None,
+    action_policy: Mapping[str, Any] | None,
+    base_signals: Mapping[str, CausalSignal],
+) -> CausalValencedWorkspaceState:
+    """Compute the Et = I*G*S*V*M*A*C theory as live runtime evidence."""
+
+    def val(name: str, default: float = 0.0) -> float:
+        sig = base_signals.get(name)
+        return float(default if sig is None else sig.value)
+
+    workspace_availability = _workspace_availability(now)
+    workspace_ignition = val("workspace_ignition")
+    ownership = val("ownership_confidence")
+    self_integrity = val("self_integrity")
+    uncertainty = val("uncertainty")
+    continuity_pressure = val("continuity_pressure")
+    governance_pressure = val("governance_pressure")
+    memory_conflict = val("memory_conflict")
+    trust_debt = val("trust_debt")
+    metabolic_budget = val("metabolic_budget")
+    homeostatic_tension = val("homeostatic_tension")
+    verification_need = val("verification_need")
+
+    affect_valence = abs(float(getattr(now.affect, "valence", 0.0) or 0.0))
+    distress = float(getattr(now.affect, "distress", 0.0) or 0.0)
+    welfare_distress = float(runtime_field(welfare_outputs, "distress", distress))
+    welfare_relief = float(runtime_field(welfare_outputs, "relief", 0.0))
+    welfare_caution = float(runtime_field(welfare_outputs, "caution", 0.5))
+    welfare_curiosity = float(
+        runtime_field(
+            welfare_outputs,
+            "curiosity",
+            getattr(now.affect, "curiosity", 0.5),
+        )
+    )
+
+    policy_outcome = str(runtime_field(action_policy, "outcome", "")).lower()
+    policy_constraints = tuple(runtime_field(action_policy, "constraints", ()) or ())
+    policy_coupled = policy_outcome in {"constrain", "defer", "refuse"} or bool(policy_constraints)
+    blind_pressure = 0.0
+    if blind_report is not None:
+        try:
+            blind_pressure = float(getattr(blind_report, "urgency", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            blind_pressure = 0.4
+
+    integration = max(
+        0.0,
+        min(
+            1.0,
+            0.28 * workspace_ignition
+            + 0.24 * self_integrity
+            + 0.18 * ownership
+            + 0.15 * (1.0 - memory_conflict)
+            + 0.15 * metabolic_budget,
+        ),
+    )
+    global_availability = max(
+        0.0,
+        min(1.0, 0.65 * workspace_availability + 0.35 * workspace_ignition),
+    )
+    self_model_ownership = max(0.0, min(1.0, 0.55 * ownership + 0.45 * self_integrity))
+    valence_control = max(
+        0.0,
+        min(
+            1.0,
+            max(
+                affect_valence,
+                welfare_distress,
+                welfare_relief,
+                homeostatic_tension * 0.75,
+                welfare_caution * 0.55,
+                welfare_curiosity * 0.45,
+            ),
+        ),
+    )
+    memory_continuity = max(
+        0.0,
+        min(
+            1.0,
+            0.55 * (1.0 - continuity_pressure)
+            + 0.25 * (1.0 - memory_conflict)
+            + 0.20 * self_integrity,
+        ),
+    )
+    agency_coupling = max(
+        0.0,
+        min(
+            1.0,
+            0.35 * ownership
+            + 0.25 * (1.0 - governance_pressure)
+            + 0.20 * (1.0 - uncertainty)
+            + 0.20 * (0.65 if policy_coupled else 0.35),
+        ),
+    )
+    counterfactual_indispensability = max(
+        0.0,
+        min(
+            1.0,
+            0.25
+            + (0.25 if policy_coupled else 0.0)
+            + min(0.20, verification_need * 0.20)
+            + min(0.15, blind_pressure * 0.15)
+            + (0.15 if workspace_availability >= 0.5 else 0.0),
+        ),
+    )
+
+    terms = {
+        "integration": integration,
+        "global_availability": global_availability,
+        "self_model_ownership": self_model_ownership,
+        "valence_control": valence_control,
+        "memory_continuity": memory_continuity,
+        "agency_coupling": agency_coupling,
+        "counterfactual_indispensability": counterfactual_indispensability,
+    }
+    raw_product = math.prod(max(0.0, min(1.0, value)) for value in terms.values())
+    organismal_coherence = _geometric_mean(tuple(terms.values()))
+    experience_candidate = raw_product
+    sentience_candidate = raw_product * valence_control * memory_continuity * agency_coupling
+    weakest = tuple(name for name, value in sorted(terms.items(), key=lambda item: item[1])[:3] if value < 0.55)
+    downstream: list[str] = []
+    if policy_coupled:
+        downstream.append("action_policy_changed")
+    if verification_need >= 0.45:
+        downstream.append("verification_pressure")
+    if memory_continuity < 0.55 or memory_conflict > 0.25:
+        downstream.append("memory_continuity_pressure")
+    if valence_control >= 0.35:
+        downstream.append("valenced_attention")
+    if global_availability >= 0.5:
+        downstream.append("workspace_broadcast")
+
+    return CausalValencedWorkspaceState(
+        integration=round(integration, 6),
+        global_availability=round(global_availability, 6),
+        self_model_ownership=round(self_model_ownership, 6),
+        valence_control=round(valence_control, 6),
+        memory_continuity=round(memory_continuity, 6),
+        agency_coupling=round(agency_coupling, 6),
+        counterfactual_indispensability=round(counterfactual_indispensability, 6),
+        raw_product=round(raw_product, 8),
+        organismal_coherence=round(organismal_coherence, 6),
+        experience_candidate_strength=round(experience_candidate, 8),
+        sentience_candidate_strength=round(sentience_candidate, 8),
+        weakest_terms=weakest,
+        downstream_effects=tuple(downstream),
+    )
+
+
 def vector_from_aura_now(
     now: AuraNow,
     *,
@@ -137,13 +378,13 @@ def vector_from_aura_now(
     will_confidence = float(getattr(now.will, "confidence", 0.7) or 0.7)
     refusal_pressure = float(getattr(now.will, "refusal_pressure", 0.0) or 0.0)
 
-    welfare_score = float(getattr(welfare_outputs, "welfare_score", 0.5) if welfare_outputs is not None else 0.5)
-    welfare_distress = float(getattr(welfare_outputs, "distress", distress) if welfare_outputs is not None else distress)
-    truth_protection = float(getattr(welfare_outputs, "truth_protection", 0.5) if welfare_outputs is not None else 0.5)
-    self_report_conf = float(getattr(welfare_outputs, "self_report_confidence", 0.5) if welfare_outputs is not None else 0.5)
-    action_inhibition = float(getattr(welfare_outputs, "action_inhibition", 0.0) if welfare_outputs is not None else 0.0)
+    welfare_score = float(runtime_field(welfare_outputs, "welfare_score", 0.5))
+    welfare_distress = float(runtime_field(welfare_outputs, "distress", distress))
+    truth_protection = float(runtime_field(welfare_outputs, "truth_protection", 0.5))
+    self_report_conf = float(runtime_field(welfare_outputs, "self_report_confidence", 0.5))
+    action_inhibition = float(runtime_field(welfare_outputs, "action_inhibition", 0.0))
 
-    policy_outcome = str((action_policy or {}).get("outcome", "")).lower()
+    policy_outcome = str(runtime_field(action_policy, "outcome", "")).lower()
     policy_pressure = 0.0
     if policy_outcome == "refuse":
         policy_pressure = 1.0
@@ -185,9 +426,42 @@ def vector_from_aura_now(
         "workspace_ignition": _sig("workspace_ignition", workspace_ignition, "WorkspaceIgnition", 0.78),
         "ownership_confidence": _sig("ownership_confidence", ownership, "OwnershipTracker", 0.78),
     }
+    cvw = _evaluate_causal_valenced_workspace(
+        now=now,
+        welfare_outputs=welfare_outputs,
+        blind_report=blind_report,
+        action_policy=action_policy,
+        base_signals=signals,
+    )
+    signals.update(
+        {
+            "organismal_coherence": _sig(
+                "organismal_coherence",
+                cvw.organismal_coherence,
+                "CausalValencedWorkspaceState",
+                0.86,
+                note="geometric mean of operational self-world terms",
+            ),
+            "experience_candidate_strength": _sig(
+                "experience_candidate_strength",
+                cvw.experience_candidate_strength,
+                "CausalValencedWorkspaceState",
+                0.72,
+                note="Et product over I,G,S,V,M,A,C; functional evidence only",
+            ),
+            "sentience_candidate_strength": _sig(
+                "sentience_candidate_strength",
+                cvw.sentience_candidate_strength,
+                "CausalValencedWorkspaceState",
+                0.70,
+                note="experience candidate weighted by valence, memory, and agency",
+            ),
+        }
+    )
 
     return CausalSelfVector(
         signals=signals,
+        causal_valenced_workspace=cvw,
         aura_state_hash=getattr(now, "state_hash", ""),
         tick=int(getattr(now, "tick", 0) or 0),
     )

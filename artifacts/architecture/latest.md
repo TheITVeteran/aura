@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v2`
 Root: `<AURA_ROOT>`
-Generated: `1781343896.8945532`
+Generated: `1781350846.522207`
 
 ## Summary
 
 - Subsystems: 146
 - Python files: 1922
-- Python lines: 523205
+- Python lines: 523545
 - Dependency edges: 797
 - ServiceContainer `.get()` calls: 1596
 - ServiceContainer registrations: 386
@@ -20,9 +20,9 @@ Generated: `1781343896.8945532`
 graph TD
     runtime["runtime<br/>105 files, 24339 lines"]
     utils["utils<br/>43 files, 5761 lines"]
-    brain["brain<br/>117 files, 46525 lines"]
+    brain["brain<br/>117 files, 46529 lines"]
     memory["memory<br/>88 files, 19919 lines"]
-    consciousness["consciousness<br/>133 files, 62006 lines"]
+    consciousness["consciousness<br/>133 files, 62020 lines"]
     resilience["resilience<br/>54 files, 12130 lines"]
     health["health<br/>3 files, 875 lines"]
     agency["agency<br/>36 files, 14779 lines"]
@@ -42,7 +42,7 @@ graph TD
     world_model["world_model<br/>9 files, 2592 lines"]
     continuity["continuity<br/>7 files, 238 lines"]
     tasks["tasks<br/>3 files, 335 lines"]
-    being["being<br/>25 files, 5394 lines"]
+    being["being<br/>25 files, 5716 lines"]
     conversation["conversation<br/>9 files, 5443 lines"]
     learning["learning<br/>28 files, 7271 lines"]
     phases["phases<br/>29 files, 17776 lines"]
@@ -967,9 +967,9 @@ graph TD
 
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| consciousness | 133 | 62006 | 2610278 | 39 | 29 |
+| consciousness | 133 | 62020 | 2611224 | 39 | 29 |
 | core_root | 178 | 55289 | 2249064 | 100 | 0 |
-| brain | 117 | 46525 | 2009552 | 42 | 39 |
+| brain | 117 | 46529 | 2009846 | 42 | 39 |
 | runtime | 105 | 24339 | 862138 | 43 | 124 |
 | memory | 88 | 19919 | 799891 | 18 | 34 |
 | orchestrator | 42 | 19212 | 848184 | 125 | 9 |
@@ -986,8 +986,8 @@ graph TD
 | kernel | 11 | 6152 | 257270 | 25 | 4 |
 | utils | 43 | 5761 | 223868 | 17 | 50 |
 | architect | 25 | 5737 | 239735 | 9 | 2 |
+| being | 25 | 5716 | 221650 | 4 | 7 |
 | conversation | 9 | 5443 | 201255 | 12 | 7 |
-| being | 25 | 5394 | 208739 | 4 | 7 |
 | senses | 24 | 5266 | 221030 | 20 | 14 |
 | capabilities | 13 | 5095 | 196749 | 9 | 5 |
 | security | 25 | 4926 | 193599 | 12 | 12 |
@@ -1219,7 +1219,7 @@ graph TD
 | Surface | Calls | Files | Owner Calls | Review Candidates |
 | --- | ---: | ---: | ---: | ---: |
 | UnifiedWill decisions | 55 | 29 | 2 | 53 |
-| Memory writes | 301 | 121 | 50 | 251 |
+| Memory writes | 303 | 122 | 50 | 253 |
 | State mutation | 403 | 152 | 7 | 396 |
 | Tool execution | 93 | 46 | 6 | 87 |
 | Self-modification and patching | 13 | 10 | 1 | 12 |
@@ -1432,8 +1432,8 @@ Review candidates:
 
 ## Degradation Handling
 
-- Total `record_degradation()` calls: 3025
-- Log-and-limp candidates: 2793
+- Total `record_degradation()` calls: 3026
+- Log-and-limp candidates: 2794
 - Nearby fail-closed candidates: 232
 
 Top limp-on files:

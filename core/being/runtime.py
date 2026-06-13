@@ -64,6 +64,8 @@ class BeingRuntime:
         self._last_welfare: Any | None = None
         self._last_blind_report: Any | None = None
         self._last_body_snapshot: Any | None = None
+        self._last_causal_self_vector: Any | None = None
+        self._last_causal_valenced_workspace: Any | None = None
         self._lesion_controller_registered = False
 
     def start(self, *, hz: float = 20.0) -> None:
@@ -289,6 +291,23 @@ class BeingRuntime:
         self._last_welfare = welfare_outputs
         self._last_blind_report = blind_report
         self._last_body_snapshot = body_snapshot
+        try:
+            from core.being.causal_self_state import vector_from_aura_now
+
+            causal_vector = vector_from_aura_now(
+                now,
+                welfare_outputs=welfare_outputs,
+                blind_report=blind_report,
+            )
+            self._last_causal_self_vector = causal_vector
+            self._last_causal_valenced_workspace = causal_vector.causal_valenced_workspace
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "being_runtime",
+                exc,
+                severity="warning",
+                action="continued without causal valenced workspace vector for this sample",
+            )
         self._publish(now)
         return now
 
@@ -576,6 +595,9 @@ class BeingRuntime:
         """Full prompt block: AuraNow + renderer + semantic stream + blind introspection."""
         now = self.sample(state, objective=objective)
         parts = [now.compact_prompt_block()]
+        organismal_block = self.organismal_workspace_prompt_block()
+        if organismal_block:
+            parts.append(organismal_block)
 
         # Semantic stream context.
         parts.append(self.semantic_stream.state.to_prompt_block())
@@ -608,6 +630,13 @@ class BeingRuntime:
         parts.append(self.renderer.render_prompt_block(now))
 
         return "".join(parts)
+
+    def organismal_workspace_prompt_block(self, *, compact: bool = False) -> str:
+        """Return the latest Causal Valenced Workspace block for prompts."""
+        cvw = getattr(self, "_last_causal_valenced_workspace", None)
+        if cvw is None or not hasattr(cvw, "prompt_block"):
+            return ""
+        return cvw.prompt_block(compact=compact)
 
 
 _RUNTIME: BeingRuntime | None = None

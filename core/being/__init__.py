@@ -20,6 +20,7 @@ from .aura_now import (
     WorkspaceState,
     WorldState,
 )
+from .causal_self_state import CausalSelfVector, CausalValencedWorkspaceState
 from .runtime import BeingRuntime, get_being_runtime, reset_being_runtime_for_test
 
 __all__ = [
@@ -28,6 +29,8 @@ __all__ = [
     "AuraNow",
     "BeingRuntime",
     "BodyState",
+    "CausalSelfVector",
+    "CausalValencedWorkspaceState",
     "MemoryContext",
     "OwnershipState",
     "PredictionState",

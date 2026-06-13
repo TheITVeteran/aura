@@ -11,7 +11,7 @@ from typing import Any, Mapping
 import time
 import uuid
 
-from core.being.causal_self_state import CausalSelfVector
+from core.being.causal_self_state import CausalSelfVector, runtime_field
 
 
 @dataclass(frozen=True)
@@ -131,7 +131,7 @@ class FunctionalIAttractor:
                 "aura_state_hash": vector.aura_state_hash,
                 "tick": vector.tick,
                 "commitments": commitments,
-                "action_policy_outcome": (action_policy or {}).get("outcome", ""),
+                "action_policy_outcome": runtime_field(action_policy, "outcome", ""),
                 "allowed_claims": allowed_claims,
                 "forbidden_claims": forbidden_claims,
                 "vector": vector.fingerprint(),

@@ -71,6 +71,7 @@ class ContextAssembler:
 
             runtime = get_being_runtime()
             now = runtime.sample(state, objective=objective)
+            organismal_block = runtime.organismal_workspace_prompt_block(compact=compact)
             if compact:
                 packet = now.to_report_packet()
                 affect = packet["affect"]
@@ -80,8 +81,9 @@ class ContextAssembler:
                     f"valence={affect['valence']:+.2f} arousal={affect['arousal']:.2f} "
                     f"distress={affect['distress']:.2f} FE={affect['free_energy']:.2f} | "
                     "Self-report must stay state-grounded; do not claim phenomenal certainty.\n\n"
+                    f"{organismal_block}"
                 )
-            return now.compact_prompt_block() + runtime.renderer.render_prompt_block(now)
+            return now.compact_prompt_block() + organismal_block + runtime.renderer.render_prompt_block(now)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 "context_assembler",

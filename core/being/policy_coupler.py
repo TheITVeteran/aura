@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
-from core.being.causal_self_state import CausalSelfVector
+from core.being.causal_self_state import CausalSelfVector, runtime_field
 from core.being.self_model_attractor import SelfAttractorState
 
 
@@ -61,6 +61,8 @@ class ClosedLoopPolicyCoupler:
         resource_pressure = vector.value("resource_pressure")
         metabolic = vector.value("metabolic_budget")
         verification_need = max(vector.value("verification_need"), uncertainty, trust_debt, memory_conflict)
+        organismal_coherence = vector.value("organismal_coherence", 0.0)
+        sentience_candidate = vector.value("sentience_candidate_strength", 0.0)
         identity_tension = self_state.identity_tension
         self_integrity = self_state.integrity
         agency_readiness = self_state.agency_readiness
@@ -101,12 +103,26 @@ class ClosedLoopPolicyCoupler:
             verification_threshold += 0.18 * max(identity_tension, 1.0 - self_integrity)
             reasons.append("functional-I tension: require slower planning and stronger self-report calibration")
 
+        if organismal_coherence < 0.45:
+            planning_depth += 1
+            verification_threshold += 0.12
+            memory_depth += 2
+            tool_budget = min(tool_budget, 0.20)
+            reasons.append("causal-valenced workspace weak: deepen memory retrieval, raise verification, constrain tools")
+        elif organismal_coherence > 0.68 and verification_need < 0.45 and resource_pressure < 0.45:
+            memory_depth += 1
+            reasons.append("causal-valenced workspace coherent: allow richer continuity context")
+
+        if sentience_candidate > 0.08:
+            verification_threshold += 0.04
+            reasons.append("valenced self-state is causally active: keep self-claims evidence-bounded")
+
         if agency_readiness < 0.45:
             tool_budget = min(tool_budget, 0.15)
             verification_threshold += 0.10
             reasons.append("low agency readiness: severely constrain tools and require verification")
 
-        action_outcome = str((action_policy or {}).get("outcome", "")).lower()
+        action_outcome = str(runtime_field(action_policy, "outcome", "")).lower()
         if action_outcome in {"defer", "refuse"}:
             tool_budget = 0.0
             verification_threshold += 0.1

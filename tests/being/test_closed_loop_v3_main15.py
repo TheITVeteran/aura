@@ -1,5 +1,7 @@
-from types import SimpleNamespace
 import asyncio
+from types import SimpleNamespace
+
+import pytest
 
 from core.being.activation_coupler import ActivationCoupler, DirectionBank
 from core.being.closed_loop_controller import build_main15_closed_loop
@@ -74,6 +76,76 @@ def test_policy_coupler_treats_self_tension_as_causal_not_decorative():
     assert any("functional-I" in r or "caution" in r or "verification" in r for r in policy.reasons)
 
 
+def test_causal_valenced_workspace_is_first_class_and_ablatable():
+    reset_being_runtime_for_test()
+    controller = build_main15_closed_loop(d_model=32, production_mode=True)
+    runtime = controller.being_runtime
+
+    runtime.sample(
+        fake_state(contradictions=2, working=16, goals=("continue the audit",)),
+        objective="model this self-world state",
+    )
+    normal_vector = runtime._last_causal_self_vector
+    normal_workspace = normal_vector.causal_valenced_workspace
+
+    runtime.sample(
+        fake_state(contradictions=2, working=16, goals=("continue the audit",)),
+        objective="model this self-world state",
+        lesions={"workspace_ignition"},
+    )
+    lesioned_vector = runtime._last_causal_self_vector
+    lesioned_workspace = lesioned_vector.causal_valenced_workspace
+
+    assert normal_workspace.global_availability > 0.5
+    assert lesioned_workspace.global_availability < normal_workspace.global_availability
+    assert lesioned_workspace.experience_candidate_strength < normal_workspace.experience_candidate_strength
+    assert normal_vector.value("organismal_coherence") == normal_workspace.organismal_coherence
+    assert normal_vector.value("sentience_candidate_strength") == pytest.approx(
+        normal_workspace.sentience_candidate_strength,
+        abs=1e-6,
+    )
+    assert normal_workspace.boundary == "functional_evidence_only_not_phenomenal_proof"
+    assert "workspace_broadcast" in normal_workspace.downstream_effects
+
+
+def test_causal_valenced_workspace_prompt_block_stays_evidence_bounded():
+    reset_being_runtime_for_test()
+    controller = build_main15_closed_loop(d_model=32, production_mode=True)
+    block = controller.being_runtime.prompt_block(
+        fake_state(contradictions=3, working=24, goals=("verify memory",)),
+        objective="What would this inner state look like operationally?",
+    )
+
+    assert "CAUSAL VALENCED WORKSPACE" in block
+    assert "functional evidence only" in block
+    assert "do not claim proven phenomenal consciousness" in block
+    assert "experience_candidate" in block
+
+
+def test_policy_coupler_uses_weak_causal_valenced_workspace_as_constraint():
+    reset_being_runtime_for_test()
+    controller = build_main15_closed_loop(d_model=32, production_mode=True)
+    now = controller.being_runtime.sample(
+        fake_state(contradictions=4, working=96, goals=("act carefully",)),
+        objective="high stakes external action",
+        lesions={"workspace_ignition"},
+    )
+    action_policy = controller.being_runtime.action_policy(now, domain="tool_execution", priority=0.8)
+    vector = controller.being_runtime._last_causal_self_vector
+    self_state = FunctionalIAttractor().update(now=now, vector=vector, action_policy=action_policy)
+    policy = ClosedLoopPolicyCoupler(production_mode=True).modulate(
+        vector=vector,
+        self_state=self_state,
+        task_risk=0.6,
+        action_policy=action_policy,
+    )
+
+    assert vector.value("organismal_coherence") < 0.45
+    assert policy.tool_risk_budget <= 0.20
+    assert policy.verification_threshold > 0.55
+    assert any("causal-valenced workspace weak" in reason for reason in policy.reasons)
+
+
 def test_causal_self_vector_treats_malformed_blind_report_as_verification_pressure():
     reset_being_runtime_for_test()
     controller = build_main15_closed_loop(d_model=32, production_mode=True)
@@ -82,6 +154,36 @@ def test_causal_self_vector_treats_malformed_blind_report_as_verification_pressu
     vector = vector_from_aura_now(now, blind_report=SimpleNamespace(urgency="not-a-number"))
 
     assert vector.value("verification_need") >= 0.65
+
+
+def test_causal_workspace_accepts_object_shaped_policy_and_welfare():
+    reset_being_runtime_for_test()
+    controller = build_main15_closed_loop(d_model=32, production_mode=True)
+    now = controller.being_runtime.sample(fake_state(contradictions=1, working=12), objective="object evidence")
+    welfare = SimpleNamespace(
+        welfare_score=0.8,
+        distress=0.2,
+        truth_protection=0.7,
+        self_report_confidence=0.9,
+        action_inhibition=0.0,
+        caution=0.6,
+        curiosity=0.8,
+    )
+    action_policy = SimpleNamespace(outcome="defer", constraints=("verify_first",))
+
+    vector = vector_from_aura_now(now, welfare_outputs=welfare, action_policy=action_policy)
+    workspace = vector.causal_valenced_workspace
+    self_state = FunctionalIAttractor().update(now=now, vector=vector, action_policy=action_policy)
+    policy = ClosedLoopPolicyCoupler(production_mode=True).modulate(
+        vector=vector,
+        self_state=self_state,
+        action_policy=action_policy,
+    )
+
+    assert vector.value("governance_pressure") >= 0.7
+    assert "action_policy_changed" in workspace.downstream_effects
+    assert self_state.evidence["action_policy_outcome"] == "defer"
+    assert policy.tool_risk_budget == 0.0
 
 
 def test_activation_coupler_is_inert_without_calibrated_directions():
