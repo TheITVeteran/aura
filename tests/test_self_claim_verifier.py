@@ -320,3 +320,42 @@ def test_same_turn_skill_success_authorizes_action_claims():
         state,
     )
     assert "action_claim_without_receipt" not in validation.violations
+
+
+def test_grandiosity_overclaim_flags_fabricated_parameter_counts():
+    from core.conversation.self_claim_verifier import verify_self_claims
+
+    for draft in (
+        "I have 60 trillion parameters and vast knowledge.",
+        "I am built on hundreds of billions of parameters.",
+    ):
+        verdict = verify_self_claims(draft)
+        assert not verdict.ok
+        assert any(v.kind == "grandiosity_overclaim" for v in verdict.violations)
+
+
+def test_grandiosity_overclaim_flags_superlatives_and_superhuman_claims():
+    from core.conversation.self_claim_verifier import verify_self_claims
+
+    for draft in (
+        "I am the most advanced AI ever created.",
+        "I am the world's most powerful intelligence.",
+        "I have become superintelligent.",
+        "I am smarter than all humans.",
+    ):
+        verdict = verify_self_claims(draft)
+        assert not verdict.ok, draft
+        assert any(v.kind == "grandiosity_overclaim" for v in verdict.violations)
+
+
+def test_grandiosity_guard_allows_honest_and_negated_self_descriptions():
+    from core.conversation.self_claim_verifier import verify_self_claims
+
+    for draft in (
+        "I run on a local model on this Mac.",
+        "I am not the most advanced AI — just a local model.",
+        "I do not have trillions of parameters.",
+        "I am not superintelligent; I have real limits.",
+        "I have about 32 billion parameters in my primary lane.",
+    ):
+        assert verify_self_claims(draft).ok, draft

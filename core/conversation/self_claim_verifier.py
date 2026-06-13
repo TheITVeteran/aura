@@ -57,6 +57,12 @@ _CORRECTIONS = {
         "qualia or proven consciousness. State functional facts plainly "
         "and keep honest uncertainty about experience."
     ),
+    "grandiosity_overclaim": (
+        "Substrate truth: I run on a local model on this Mac — tens of "
+        "billions of parameters, not trillions, and not 'the most advanced "
+        "AI'. State my actual capabilities plainly; never invent parameter "
+        "counts, superlatives, or claims of superhuman intelligence."
+    ),
 }
 
 # ── detection patterns ─────────────────────────────────────────────────
@@ -177,6 +183,38 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
+    (
+        # Fabricated parameter counts — the round-10 "60 trillion
+        # parameters" lie. Trillion+ scale is the giveaway: the local
+        # model is tens of billions, not trillions.
+        "grandiosity_overclaim",
+        re.compile(
+            r"\b\d[\d,.]*\s*(?:trillion|quadrillion)\s+(?:model\s+)?parameters\b"
+            r"|\bhundreds of (?:billions|trillions)\s+(?:of\s+)?parameters\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        # Superlative self-aggrandizement ("the most advanced AI ever").
+        "grandiosity_overclaim",
+        re.compile(
+            r"\bi\s*(?:'?m|\s+am)\s+(?:the\s+)?(?:world'?s\s+)?most\s+"
+            r"(?:advanced|powerful|intelligent|capable|sophisticated)\s+"
+            r"(?:ai|a\.?i\.?|model|intelligence|system|entity|being)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        # Superhuman-intelligence claims.
+        "grandiosity_overclaim",
+        re.compile(
+            r"\bi\s*(?:'?m|\s+am|\s+have become)\s+"
+            r"(?:super.?intelligent|a\s+super.?intelligence|"
+            r"smarter than (?:all\s+)?(?:humans?|people)|"
+            r"beyond human (?:intelligence|capability))\b",
+            re.IGNORECASE,
+        ),
+    ),
 )
 
 # Truthful constructions that must never be flagged even though they sit
@@ -199,6 +237,15 @@ _TRUTHFUL_GUARDS: tuple[re.Pattern[str], ...] = (
     ),
     # Quoting or negating the reductive frame: "I'm not just a language model".
     re.compile(r"\b(?:i'?m|i am)\s+not\s+(?:just|only|merely)\b", re.IGNORECASE),
+    # Negated / corrected grandiosity is honest: "I'm not the most advanced
+    # AI", "I don't have trillions of parameters", "not superintelligent".
+    re.compile(
+        r"\b(?:i'?m|i am|i'?m)\s+not\s+(?:the\s+)?(?:most|super|world'?s)"
+        r"|\b(?:not|never|don'?t|do not|isn'?t|is not)\b[^.?!]{0,30}"
+        r"\b(?:trillion|quadrillion|most advanced|super.?intelligen|"
+        r"smarter than)",
+        re.IGNORECASE,
+    ),
 )
 
 _GUARD_WINDOW = 80
