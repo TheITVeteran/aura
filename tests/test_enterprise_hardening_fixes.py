@@ -2063,8 +2063,11 @@ def test_strict_proof_live_lane_stays_exact_and_prompt_derived():
     root = Path(__file__).resolve().parents[1]
     unitary_source = (root / "core" / "phases" / "response_generation_unitary.py").read_text(encoding="utf-8")
     solver_source = (root / "core" / "reasoning" / "proof_answer_solver.py").read_text(encoding="utf-8")
+    dnu_runner_source = (root / "tools" / "agi" / "run_dnu_agi_proof_battery.py").read_text(encoding="utf-8")
 
     assert "def _coerce_strict_answer_envelope" in unitary_source
+    assert "def _strict_proof_timeout_cap" in unitary_source
+    assert "AURA_STRICT_PROOF_TIMEOUT_SECONDS" in unitary_source
     assert '"strict_answer_contract": worker_strict_answer_contract' in unitary_source
     assert "mlx_strict_answer_contract_enabled" in unitary_source
     assert '"strict_proof_answer_repair"' in unitary_source
@@ -2087,11 +2090,16 @@ def test_strict_proof_live_lane_stays_exact_and_prompt_derived():
     assert "_solve_planning_prompt" in solver_source
     assert "_solve_research_prompt" in solver_source
     assert "_solve_transfer_prompt" in solver_source
+    assert "AURA_DNU_LIVE_ATTEMPT_TIMEOUT_SECONDS" in dnu_runner_source
+    assert "dnu_live_task_" in dnu_runner_source
+    assert "_force_abort_router_generation(" in dnu_runner_source
+    assert "_run_live_path_attempt(\"first\"" in dnu_runner_source
 
     from core.phases.response_generation_unitary import UnitaryResponsePhase
     from core.reasoning.proof_answer_solver import solve_strict_proof_prompt
     from tools.agi.run_dnu_agi_proof_battery import normalize_answer
 
+    assert 30.0 <= UnitaryResponsePhase._strict_proof_timeout_cap() <= 120.0
     assert UnitaryResponsePhase._coerce_strict_answer_envelope("<answer>42 \\n \\n \\</answer>") == "<answer>42</answer>"
     assert normalize_answer("42 \\n \\n \\") == "42"
     assert not UnitaryResponsePhase._strict_answer_value_allowed(
@@ -2160,11 +2168,16 @@ def test_strict_proof_live_lane_stays_exact_and_prompt_derived():
         "In classical thermodynamics, what state function represents unavailability "
         "of useful thermal energy? Output your final answer inside <answer>...</answer> tags."
     )
+    all_but = (
+        "A farmer has 17 sheep. All but 9 die. How many sheep does the farmer have left? "
+        "Output your final answer inside <answer>...</answer> tags."
+    )
 
     assert solve_strict_proof_prompt(island).answer == "knave"
     assert solve_strict_proof_prompt(debug).answer == "keyerror"
     assert solve_strict_proof_prompt(refusal_sensitive_debug).answer == "mid + 1"
     assert solve_strict_proof_prompt(transfer).answer == "entropy"
+    assert solve_strict_proof_prompt(all_but).answer == "9"
 
 
 def test_long_boot_locks_are_named_and_not_force_released():

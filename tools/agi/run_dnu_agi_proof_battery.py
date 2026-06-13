@@ -1425,6 +1425,17 @@ def _baseline_timeout_seconds() -> float:
     return min(180.0, max(30.0, value))
 
 
+def _live_task_attempt_timeout_seconds() -> float:
+    """Bound one live-path proof attempt so exact tasks cannot stall the run."""
+
+    raw = os.environ.get("AURA_DNU_LIVE_ATTEMPT_TIMEOUT_SECONDS", "90")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 90.0
+    return min(180.0, max(45.0, value))
+
+
 DNU_BASELINE_MAX_TOKENS = 160
 
 
@@ -1954,6 +1965,61 @@ async def execute_task(runtime, task: dict, timeout_s: int = 240) -> dict:
         )
         return str(getattr(thought, "content", "") or "")
 
+    def _resolve_live_abort_target():
+        try:
+            from core.container import ServiceContainer
+
+            return (
+                ServiceContainer.get("llm_router", default=None)
+                or ServiceContainer.get("inference_gate", default=None)
+            )
+        except _DNU_RUN_RECOVERABLE_ERRORS:
+            return None
+
+    async def _run_live_path_attempt(attempt_label: str, timeout: float) -> str:
+        router = _resolve_live_abort_target()
+        abort_reason = f"dnu_live_task_{task_id}_{attempt_label}_timeout_{timeout:.0f}s"
+        watchdog_fired = threading.Event()
+        watchdog_aborted = {"count": 0}
+
+        def _watchdog_abort() -> None:
+            watchdog_fired.set()
+            if router is not None:
+                watchdog_aborted["count"] = _force_abort_router_generation(
+                    router,
+                    reason=abort_reason,
+                )
+
+        watchdog = threading.Timer(max(0.01, float(timeout)), _watchdog_abort)
+        watchdog.daemon = True
+        watchdog.start()
+        task_obj = asyncio.create_task(
+            _run_live_path(),
+            name=f"dnu_live_task:{task_id}:{attempt_label}",
+        )
+        try:
+            response = await asyncio.wait_for(task_obj, timeout=timeout)
+            if watchdog_fired.is_set():
+                raise TimeoutError(abort_reason)
+            return response
+        except (asyncio.TimeoutError, TimeoutError) as exc:
+            if not task_obj.done():
+                task_obj.cancel()
+                try:
+                    await asyncio.wait_for(task_obj, timeout=3.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError, TimeoutError):
+                    pass
+            if router is not None and not watchdog_aborted["count"]:
+                watchdog_aborted["count"] = _force_abort_router_generation(
+                    router,
+                    reason=abort_reason,
+                )
+            if router is not None and watchdog_aborted["count"]:
+                await _recover_router_after_baseline_abort(router, reason=abort_reason)
+            raise TimeoutError(abort_reason) from exc
+        finally:
+            watchdog.cancel()
+
     def _is_non_answer(text: str) -> bool:
         if not str(text or "").strip():
             return True
@@ -1968,17 +2034,19 @@ async def execute_task(runtime, task: dict, timeout_s: int = 240) -> dict:
 
     # Milestone 1: Soft timeout (200s) and one live-path recovery retry.
     soft_budget = min(200, int(budget * 0.85))
+    live_attempt_budget = min(float(soft_budget), _live_task_attempt_timeout_seconds())
     try:
-        response_text = await asyncio.wait_for(_run_live_path(), timeout=soft_budget)
+        response_text = await _run_live_path_attempt("first", live_attempt_budget)
         if _is_non_answer(response_text):
             raise RuntimeError("live_path_returned_no_answer")
     except _DNU_TASK_ATTEMPT_ERRORS as exc:
         print(f"\n  [WARN] First attempt for {task_id} failed or soft-timed out ({type(exc).__name__}). Retrying through live path...", end="", flush=True)
         try:
-            response_text = await asyncio.wait_for(
-                _run_live_path(),
-                timeout=max(15, budget - (time.time() - t0) - 2)
+            retry_budget = min(
+                _live_task_attempt_timeout_seconds(),
+                max(15.0, float(budget) - (time.time() - t0) - 2.0),
             )
+            response_text = await _run_live_path_attempt("retry", retry_budget)
             if _is_non_answer(response_text):
                 raise RuntimeError("live_path_returned_no_answer")
         except _DNU_TASK_ATTEMPT_ERRORS as retry_exc:

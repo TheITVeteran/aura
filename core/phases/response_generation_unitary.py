@@ -579,6 +579,22 @@ class UnitaryResponsePhase(Phase):
         return 180.0
 
     @staticmethod
+    def _strict_proof_timeout_cap() -> float:
+        """Bound exact-answer turns so simple prompts cannot monopolize Cortex.
+
+        Strict proof turns intentionally bypass memory/context expansion and cap
+        output at 96 tokens. They should fail fast and recover cleanly rather
+        than inheriting the broad live-chat foreground budget.
+        """
+
+        raw = os.environ.get("AURA_STRICT_PROOF_TIMEOUT_SECONDS", "60")
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = 60.0
+        return min(120.0, max(30.0, value))
+
+    @staticmethod
     def _recent_router_history(state: AuraState, limit: int = 6) -> list[dict]:
         history: list[dict] = []
         for msg in list(getattr(state.cognition, "working_memory", []) or [])[-limit:]:
@@ -4957,6 +4973,8 @@ class UnitaryResponsePhase(Phase):
                 model_tier=model_tier,
                 deep_handoff=deep_handoff,
             )
+            if strict_proof_answer_request:
+                request_timeout = min(request_timeout, self._strict_proof_timeout_cap())
 
             llm_kwargs = {
                 "messages": messages,
