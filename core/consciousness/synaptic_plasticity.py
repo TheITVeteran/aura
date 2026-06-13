@@ -387,14 +387,28 @@ class SynapticPlasticityEngine:
                 "total_updates": self._total_updates,
                 "saved_at": time.time(),
             }
+            from core.governance_context import local_internal_governed_scope
             from core.runtime.file_write_gateway import get_file_write_gateway
-            get_file_write_gateway().write_text(
-                PERSIST_PATH,
-                json.dumps(state),
-                source="synaptic_plasticity.persist",
-            )
+
+            # Post-inference weight persistence is local runtime maintenance;
+            # it MUST run inside a governed scope or the file-write gateway
+            # raises GovernanceViolationError. That error previously escaped
+            # this best-effort persist, propagated through post_inference_learn
+            # into the inference gate's fail-closed boundary, and killed the
+            # whole turn (cortex circuit opened after 5 → every turn timed out).
+            with local_internal_governed_scope(
+                "synaptic_plasticity.persist", domain="file_write"
+            ):
+                get_file_write_gateway().write_text(
+                    PERSIST_PATH,
+                    json.dumps(state),
+                    source="synaptic_plasticity.persist",
+                )
             logger.debug("SynapticPlasticity: persisted state (%d updates)", self._total_updates)
-        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (OSError, TypeError, ValueError, json.JSONDecodeError, RuntimeError) as exc:
+            # Best-effort persistence must never fail inference learning, let
+            # alone the turn. RuntimeError covers GovernanceViolationError
+            # (its subclass) as belt-and-suspenders behind the governed scope.
             record_degradation("synaptic_plasticity", exc)
 
     def _load_state(self):
