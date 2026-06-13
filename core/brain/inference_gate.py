@@ -96,6 +96,15 @@ _INFERENCE_RECOVERABLE_ERRORS = (
     psutil.Error,
 )
 
+_ACTIVE_GENERATION_BUSY_REASONS = frozenset(
+    {
+        "active_generation_in_flight",
+        "foreground_generation_active",
+        "foreground_owner_active",
+        "warmup_foreground_owner",
+    }
+)
+
 
 def _record_inference_degradation(
     error: BaseException,
@@ -341,6 +350,30 @@ class InferenceGate:
                 exc,
                 exc_info=exc,
             )
+
+    @staticmethod
+    def _lane_reports_active_generation(lane: dict[str, Any] | None) -> bool:
+        if not isinstance(lane, dict):
+            return False
+        try:
+            if int(lane.get("active_generations", 0) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            return False
+        blockers = {
+            str(blocker or "").strip()
+            for blocker in (lane.get("readiness_blockers") or [])
+            if str(blocker or "").strip()
+        }
+        reason = str(lane.get("last_failure_reason", "") or "")
+        if blockers & _ACTIVE_GENERATION_BUSY_REASONS:
+            return True
+        return any(token in reason for token in _ACTIVE_GENERATION_BUSY_REASONS)
+
+    @staticmethod
+    def _exception_reports_active_generation(error: BaseException) -> bool:
+        reason = str(error or "")
+        return any(token in reason for token in _ACTIVE_GENERATION_BUSY_REASONS)
 
     @staticmethod
     def _desktop_safe_boot_enabled() -> bool:
@@ -1256,6 +1289,12 @@ class InferenceGate:
                 lane_state = str(lane.get("state", "") or "").lower()
                 if lane.get("conversation_ready") or lane.get("warmup_in_flight"):
                     return
+                if self._lane_reports_active_generation(lane):
+                    logger.info(
+                        "⏸️ Deferred cortex prewarm postponed while foreground generation is active."
+                    )
+                    next_delay = min(20.0, max(6.0, next_delay))
+                    continue
                 if lane_state == "failed":
                     if await asyncio.to_thread(self._rearm_runtime_failed_lane, force_probe=False):
                         lane = self.get_conversation_status()
@@ -1316,6 +1355,12 @@ class InferenceGate:
                     logger.info("✅ Deferred cortex prewarm completed.")
                     return
                 except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                    if self._exception_reports_active_generation(exc):
+                        logger.info(
+                            "⏸️ Deferred cortex prewarm postponed while foreground generation is active."
+                        )
+                        next_delay = min(20.0, max(6.0, next_delay))
+                        continue
                     record_degradation(
                         "inference_gate",
                         exc,

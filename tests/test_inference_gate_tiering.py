@@ -2130,6 +2130,58 @@ def test_desktop_safe_boot_refuses_explicit_auto_deferred_prewarm_under_pressure
     assert InferenceGate._boot_should_schedule_deferred_prewarm() is False
 
 
+@pytest.mark.asyncio
+async def test_deferred_cortex_prewarm_defers_active_generation_without_degradation(monkeypatch):
+    gate = InferenceGate()
+    handled = asyncio.Event()
+
+    monkeypatch.setattr(InferenceGate, "_foreground_user_turn_active", staticmethod(lambda: False))
+    monkeypatch.setattr(InferenceGate, "_foreground_owner_active", staticmethod(lambda: False))
+    monkeypatch.setattr(gate, "_cortex_warmup_deferral_reason", lambda _context: "")
+    monkeypatch.setattr(gate, "_extend_startup_quiet_window", lambda _seconds: None)
+    monkeypatch.setattr(
+        gate,
+        "get_conversation_status",
+        lambda: {
+            "conversation_ready": False,
+            "state": "ready",
+            "warmup_in_flight": False,
+            "readiness_blockers": [],
+            "last_failure_reason": "",
+            "active_generations": 0,
+        },
+    )
+    monkeypatch.setattr(
+        "core.brain.inference_gate.psutil.virtual_memory",
+        lambda: SimpleNamespace(
+            percent=40.0,
+            total=64 * 1024 ** 3,
+            available=int(40.0 * 1024 ** 3),
+        ),
+    )
+
+    degradation_probe = CallProbe(side_effect=AssertionError("busy prewarm is not degradation"))
+    monkeypatch.setattr("core.brain.inference_gate.record_degradation", degradation_probe)
+
+    async def busy_foreground_ready(*, timeout=None):
+        handled.set()
+        raise RuntimeError("active_generation_in_flight")
+
+    monkeypatch.setattr(gate, "ensure_foreground_ready", busy_foreground_ready)
+
+    gate._schedule_background_cortex_prewarm(delay=0.001)
+    assert gate._deferred_prewarm_task is not None
+    try:
+        await asyncio.wait_for(handled.wait(), timeout=2.0)
+        await asyncio.sleep(0)
+        degradation_probe.assert_not_called()
+        assert not gate._deferred_prewarm_task.done()
+    finally:
+        gate._deferred_prewarm_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await gate._deferred_prewarm_task
+
+
 def test_inference_health_ready_rejects_deferred_safe_boot_without_live_worker(monkeypatch):
     gate = InferenceGate()
     gate._initialized = True
