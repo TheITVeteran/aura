@@ -71,6 +71,14 @@ async def get_runtime_health_contract() -> JSONResponse:
     return JSONResponse(verdict.to_report(), status_code=verdict.status_code)
 
 
+@router.get("/threads")
+async def get_thread_summary() -> JSONResponse:
+    """Live thread histogram grouped by pool — observability for leak hunts."""
+    from core.runtime.thread_inspector import thread_summary
+
+    return JSONResponse(thread_summary())
+
+
 @router.get("/v2")
 async def get_health_v2() -> JSONResponse:
     """Extended system health endpoints via the [ZENITH] Tricorder."""
