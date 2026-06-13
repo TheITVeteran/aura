@@ -104,7 +104,7 @@ async def test_shutdown_proxy_commit_bus_degraded_defers_instead_of_raising(tmp_
     assert transport is None
     assert transport_probe.calls == 1
     messages = [record.getMessage() for record in caplog.records]
-    assert any("attempting shutdown snapshot fallback" in msg for msg in messages)
+    assert not any("Vault transport closed during shutdown" in msg for msg in messages)
     assert any("Graceful-shutdown state commit stored for boot replay" in msg for msg in messages)
 
     await repo.close()

@@ -239,6 +239,7 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
     is_casual  = _is_casual_interaction_v2(objective)
     affect     = state.affect
     mods       = getattr(state.cognition, "modifiers", {}) or {}
+    response_mods = getattr(state, "response_modifiers", {}) or {}
 
     import os
     is_test_run = (
@@ -289,6 +290,20 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
     personality_block = _build_personality_block(state, compact=is_casual)
 
     aura_now_block = "" if black_box_steering else _build_aura_now_block(state, objective, compact=is_casual)
+    imagination_context = ""
+    if not black_box_steering:
+        frame = response_mods.get("imagination_workspace") or mods.get("imagination_workspace")
+        if isinstance(frame, dict):
+            try:
+                from core.brain.imagination import render_imagination_prompt_block
+
+                imagination_context = render_imagination_prompt_block(
+                    frame,
+                    compact=is_casual or bool(is_test_run),
+                )
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+                record_degradation("context_assembler_patch", _e)
+                logger.debug("Patched imagination context injection skipped: %s", _e)
 
     # ── World / somatic context ───────────────────────────────────────────────
     world_context  = ContextAssembler.build_world_context(state)  if not is_casual else ""
@@ -536,6 +551,7 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
             f"{current_state_block}"
             f"{personality_block}"
             f"{aura_now_block}"
+            f"{imagination_context}"
             f"{world_context}"
             f"{somatic_context}"
             f"\n[EXECUTION]\n"
@@ -554,6 +570,7 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
             f"{temporal_finitude_block}"
             f"{meta_qualia_block}"
             f"{personhood_context}"
+            f"{imagination_context}"
             f"{aura_now_block}"
             f"{world_context}"
             f"{somatic_context}"

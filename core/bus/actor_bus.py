@@ -500,7 +500,7 @@ class ActorBus:
             
         except (TimeoutError, BusDegraded, BrokenPipeError, ConnectionResetError) as e:
             if _is_shutdown_commit_request(actor, msg_type, payload):
-                logger.info("📡 StateVault bus closed during shutdown commit; replay queue will handle it.")
+                logger.debug("📡 StateVault bus closed during shutdown commit; caller will handle snapshot fallback.")
             else:
                 logger.warning("📡 Bus degraded for %s → %s", actor, e)
             raise

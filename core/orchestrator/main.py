@@ -999,6 +999,20 @@ class RobustOrchestrator(
 
                 logger.warning("ActiveInferenceSampler boot non-fatal: %s", _ais_err)
 
+            # ── Imagination Engine ─────────────────────────────────────────────
+            try:
+                from core.brain.imagination import get_imagination_engine
+
+                _imagination = get_imagination_engine()
+                ServiceContainer.register_instance("imagination_engine", _imagination, required=False)
+                logger.info("🎨 ImaginationEngine online — bounded mental modeling active")
+            except _ORCHESTRATOR_RECOVERABLE_ERRORS as _img_err:
+                _record_main_degradation(
+                    _img_err,
+                    action="continued startup without bounded imagination workspace",
+                )
+                logger.warning("ImaginationEngine boot non-fatal: %s", _img_err)
+
             # ── Neologism Engine ──────────────────────────────────────────────
             try:
                 from core.consciousness.neologism_engine import get_neologism_engine

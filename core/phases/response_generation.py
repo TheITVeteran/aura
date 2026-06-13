@@ -68,6 +68,41 @@ class ResponseGenerationPhase(BasePhase):
         return 180.0
 
     @staticmethod
+    def _safe_bias_float(value: Any, default: float = 0.0) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+        return parsed if parsed == parsed else default
+
+    @classmethod
+    def _apply_generation_sampling_bias(
+        cls,
+        *,
+        base_temperature: float,
+        token_budget: int,
+        biases: list[dict[str, Any] | None],
+    ) -> tuple[float, int]:
+        temperature = cls._safe_bias_float(base_temperature, 0.7)
+        tokens = max(128, int(token_budget))
+        token_factor = 1.0
+
+        for bias in biases:
+            if not isinstance(bias, dict):
+                continue
+            temperature += max(
+                -0.20,
+                min(0.20, cls._safe_bias_float(bias.get("temperature_delta"), 0.0)),
+            )
+            factor = cls._safe_bias_float(bias.get("max_tokens_factor"), 1.0)
+            if 0.25 <= factor <= 1.25:
+                token_factor *= factor
+
+        temperature = max(0.10, min(1.15, temperature))
+        tokens = max(128, min(8192, int(tokens * token_factor)))
+        return temperature, tokens
+
+    @staticmethod
     def _repair_substantive_instruction_shape_miss(
         objective: Any,
         response_text: Any,
@@ -380,6 +415,14 @@ class ResponseGenerationPhase(BasePhase):
             token_budget = (
                 int((6144 if deep_handoff else 4096) * depth_mod) if not is_background else 1024
             )
+            generation_temperature, token_budget = self._apply_generation_sampling_bias(
+                base_temperature=0.7 * temp_mod,
+                token_budget=token_budget,
+                biases=[
+                    state.response_modifiers.get("sampling_bias"),
+                    state.response_modifiers.get("imagination_sampling_bias"),
+                ],
+            )
             # [STABILITY v55] Raised thermal from 85°C to 95°C (M-series
             # throttles at 100°C+) and memory pressure from 85% to 94%
             # (32B model normally uses 85-90% of 64GB).
@@ -425,7 +468,7 @@ class ResponseGenerationPhase(BasePhase):
                         ),
                         soma=soma_data,
                         state=state,
-                        temperature=0.7 * temp_mod,
+                        temperature=generation_temperature,
                         max_tokens=token_budget,
                         timeout=request_timeout,
                 )
@@ -664,7 +707,7 @@ class ResponseGenerationPhase(BasePhase):
                     allow_cloud_fallback=False,
                     soma=soma_data,
                     state=state,
-                    temperature=0.7 * temp_mod,
+                    temperature=generation_temperature,
                     max_tokens=token_budget,
                     timeout=retry_timeout,
                 )

@@ -366,6 +366,7 @@ class ContextAssembler:
         # The new approach: the SubstrateVoiceEngine compiles hard constraints
         # that the LLM MUST obey, enforced post-generation by ResponseShaper.
         mods = getattr(state.cognition, 'modifiers', {}) or {}
+        response_mods = getattr(state, "response_modifiers", {}) or {}
 
         # Compile substrate voice constraints
         substrate_constraint_block = ""
@@ -564,6 +565,21 @@ class ContextAssembler:
                 pass  # no-op: intentional
         personhood_context = "\n\n".join(personhood_blocks) + "\n\n" if personhood_blocks else ""
 
+        imagination_context = ""
+        if not black_box_steering:
+            frame = response_mods.get("imagination_workspace") or mods.get("imagination_workspace")
+            if isinstance(frame, dict):
+                try:
+                    from core.brain.imagination import render_imagination_prompt_block
+
+                    imagination_context = render_imagination_prompt_block(
+                        frame,
+                        compact=is_casual or elasticity >= 1,
+                    )
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+                    record_degradation('context_assembler', _e)
+                    logger.debug("Imagination context injection skipped: %s", _e)
+
         # 4. Somatic & World Context (Simplified if casual or under context pressure)
         world_context = ContextAssembler.build_world_context(state) if not is_casual and elasticity < 2 else ""
 
@@ -721,6 +737,8 @@ class ContextAssembler:
             # 3. Social/Humor strategy
             if personhood_context:
                 base += personhood_context
+            if imagination_context:
+                base += imagination_context
         elif is_casual:
             # 1. Identity + Requirements
             base = f"{identity_block}\n{requirements}\n"
@@ -735,6 +753,8 @@ class ContextAssembler:
                 base += rolling_summary
             if personhood_context:
                 base += personhood_context
+            if imagination_context:
+                base += imagination_context
         else:
             # Standard path for non-casual/deliberate turns (Research/Complex tasks)
             base = (
@@ -750,6 +770,7 @@ class ContextAssembler:
                 f"{temporal_finitude_block}"
                 f"{meta_qualia_block}"
                 f"{personhood_context}"
+                f"{imagination_context}"
                 f"{aura_now_block}"
                 f"{world_context}"
                 f"{somatic_context}"
@@ -952,6 +973,7 @@ class ContextAssembler:
                 str(identity_rag_context or "").strip(),
                 str(cognitive_metrics or "").strip(),
                 str(continuity_block or "").strip(),
+                str(imagination_context or "").strip(),
                 str(world_context or "").strip(),
             ):
                 if candidate and candidate not in head and candidate not in tail:

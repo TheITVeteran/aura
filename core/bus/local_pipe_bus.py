@@ -741,7 +741,7 @@ class LocalPipeBus:
             if not getattr(self, '_pipe_broken', False):
                 self._pipe_broken = True
                 if quiet_shutdown_commit:
-                    logger.info("📡 Bus closed during shutdown commit; state replay will handle it.")
+                    logger.debug("📡 Bus closed during shutdown commit; caller will handle snapshot fallback.")
                 else:
                     self._mark_transport_degraded(
                         e,

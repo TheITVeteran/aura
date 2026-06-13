@@ -633,18 +633,8 @@ class StateRepository:
             except (BrokenPipeError, BusDegraded, ConnectionError) as exc:
                 last_error = exc
                 if _is_shutdown_commit_payload(payload):
-                    if attempt == 0:
-                        # One immediate retry on a fresh transport: a pipe
-                        # that broke mid-teardown often re-resolves, and
-                        # landing the final state now beats boot replay.
-                        logger.info(
-                            "🔌 [STATE] Vault pipe closed during shutdown (attempt 1/2); retrying once before shutdown snapshot fallback.",
-                        )
-                        self._transport = None
-                        transport = self._resolve_transport()
-                        continue
-                    logger.info(
-                        "🔌 [STATE] Vault pipe closed during shutdown (attempt 2/2); attempting shutdown snapshot fallback.",
+                    logger.debug(
+                        "🔌 [STATE] Vault transport closed during shutdown; direct snapshot fallback will be used.",
                     )
                     return False, None, exc
                 else:
@@ -859,8 +849,7 @@ class StateRepository:
             await self._clear_pending_proxy_commit()
             self._last_proxy_commit_error = ""
             logger.info(
-                "✅ [STATE] Shutdown state committed directly after vault transport closed "
-                "(cause=%s, source=%s).",
+                "✅ [STATE] Shutdown state committed via direct snapshot (cause=%s, source=%s).",
                 getattr(state, "transition_cause", "shutdown"),
                 type(error).__name__ if error is not None else "transport_unavailable",
             )

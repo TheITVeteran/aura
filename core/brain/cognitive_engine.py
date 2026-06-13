@@ -126,6 +126,36 @@ def _compact_spiking_active_inference_directive(advice: dict[str, Any] | None) -
     return "Neurodynamic advisory: " + " ".join(directives)
 
 
+def _compact_imagination_directive(frame: dict[str, Any] | None) -> str:
+    if not isinstance(frame, dict):
+        return ""
+    try:
+        salience = float(frame.get("salience", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        salience = 0.0
+    if salience < 0.18:
+        return ""
+
+    routing = frame.get("routing_bias") or {}
+    if not isinstance(routing, dict):
+        routing = {}
+    directives = [
+        "Imagination workspace: use the internal hypothetical model to enrich the answer, but do not claim it is observed reality."
+    ]
+    visual = str(frame.get("visual_model") or "").strip()
+    bridge = str(frame.get("conceptual_bridge") or "").strip()
+    phrase = str(frame.get("phrase_model") or "").strip()
+    if visual:
+        directives.append(f"Imagined visual model: {visual[:220]}")
+    if bridge:
+        directives.append(f"Novel connection: {bridge[:220]}")
+    if phrase:
+        directives.append(f"Linguistic seed: {phrase[:160]}")
+    if bool(routing.get("seek_verification")):
+        directives.append("If the request needs real-world effects or facts, route through governed tools before claiming completion.")
+    return " ".join(directives)
+
+
 class CognitiveEngine:
     """
     Cognitive Engine facade.
@@ -440,6 +470,55 @@ class CognitiveEngine:
         merged_context["spiking_active_inference"] = advice_dict
         return merged_context
 
+    def _apply_imagination_workspace(
+        self,
+        state: AuraState,
+        objective: str,
+        origin: str,
+        context: dict[str, Any] | None,
+        *,
+        is_background: bool,
+    ) -> dict[str, Any] | None:
+        try:
+            from core.brain.imagination import get_imagination_engine
+
+            engine = get_imagination_engine()
+            frame = engine.imagine(
+                objective,
+                state=state,
+                context=context,
+                origin=origin,
+                is_background=is_background,
+            )
+        except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "cognitive_engine",
+                exc,
+                severity="warning",
+                action="continued cognitive cycle without imagination workspace",
+            )
+            logger.debug("Imagination workspace unavailable: %s", exc)
+            return context
+
+        frame_dict = frame.to_dict()
+        if frame.salience < 0.18:
+            return context
+
+        state.response_modifiers["imagination_workspace"] = frame_dict
+        state.response_modifiers["creative_pressure"] = frame.salience
+        state.response_modifiers["novelty_pressure"] = frame.novelty_pressure
+        state.response_modifiers["imagination_sampling_bias"] = dict(frame.sampling_bias)
+        state.response_modifiers["imagination_routing_bias"] = dict(frame.routing_bias)
+
+        cognition_mods = dict(getattr(state.cognition, "modifiers", {}) or {})
+        cognition_mods["imagination_workspace"] = frame_dict
+        cognition_mods["imagination_prompt_block_available"] = True
+        state.cognition.modifiers = cognition_mods
+
+        merged_context = dict(context or {})
+        merged_context["imagination_workspace"] = frame_dict
+        return merged_context
+
     def _learn_spiking_active_inference_outcome(
         self,
         context: dict[str, Any] | None,
@@ -567,6 +646,13 @@ class CognitiveEngine:
         state.response_modifiers["model_tier"] = "tertiary" if is_background else "primary"
         state.response_modifiers["deep_handoff"] = False
         context = self._apply_spiking_active_inference(
+            state,
+            objective,
+            origin,
+            context,
+            is_background=is_background,
+        )
+        context = self._apply_imagination_workspace(
             state,
             objective,
             origin,
@@ -1127,14 +1213,19 @@ class CognitiveEngine:
 
         max_tokens = int(context.get("max_tokens") or 512)
         advice = context.get("spiking_active_inference")
+        imagination_frame = context.get("imagination_workspace")
+        sampling_sources: list[Any] = []
         if isinstance(advice, dict):
-            sampling = advice.get("sampling_bias") or {}
+            sampling_sources.append(advice.get("sampling_bias") or {})
+        if isinstance(imagination_frame, dict):
+            sampling_sources.append(imagination_frame.get("sampling_bias") or {})
+        for sampling in sampling_sources:
             if isinstance(sampling, dict):
                 try:
                     factor_value = float(sampling.get("max_tokens_factor", 1.0))
                 except (TypeError, ValueError):
                     factor_value = 1.0
-                if 0.25 <= factor_value < 1.0:
+                if 0.25 <= factor_value <= 1.25:
                     max_tokens = max(128, int(max_tokens * factor_value))
         max_tokens = max(128, min(max_tokens, 768))
         request_timeout = max(12.0, min(float(timeout_s or 32.0), 40.0))
@@ -1150,6 +1241,10 @@ class CognitiveEngine:
         neurodynamic_directive = _compact_spiking_active_inference_directive(advice)
         if neurodynamic_directive:
             system_prompt = f"{system_prompt}\n{neurodynamic_directive}"
+        if isinstance(imagination_frame, dict):
+            imagination_directive = _compact_imagination_directive(imagination_frame)
+            if imagination_directive:
+                system_prompt = f"{system_prompt}\n{imagination_directive}"
         if style_contract:
             system_prompt = f"{system_prompt}\n{style_contract}"
 
@@ -1207,6 +1302,9 @@ class CognitiveEngine:
             metadata={
                 "spiking_active_inference": advice
                 if isinstance(advice, dict)
+                else None,
+                "imagination_workspace": imagination_frame
+                if isinstance(imagination_frame, dict)
                 else None,
             },
         )

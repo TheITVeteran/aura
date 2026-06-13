@@ -878,6 +878,43 @@ def _collect_neurodynamic_status() -> dict[str, Any]:
     return payload
 
 
+def _collect_imagination_status() -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": "idle",
+        "frames": 0,
+        "latest": None,
+        "advisory_only": True,
+        "no_external_effects": True,
+        "authority_gateway_required_for_effects": True,
+    }
+    try:
+        engine = ServiceContainer.get("imagination_engine", default=None)
+        if engine is None or not hasattr(engine, "snapshot"):
+            return payload
+        snapshot = engine.snapshot() or {}
+        if not isinstance(snapshot, dict):
+            return payload
+        governance = snapshot.get("governance") or {}
+        if not isinstance(governance, dict):
+            governance = {}
+        payload.update(
+            {
+                "status": str(snapshot.get("status") or "active"),
+                "frames": int(_safe_float(snapshot.get("frames"), 0.0)),
+                "latest": snapshot.get("latest") if isinstance(snapshot.get("latest"), dict) else None,
+                "advisory_only": bool(governance.get("advisory_only", True)),
+                "no_external_effects": bool(governance.get("no_external_effects", True)),
+                "authority_gateway_required_for_effects": bool(
+                    governance.get("authority_gateway_required_for_effects", True)
+                ),
+            }
+        )
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation("system", exc)
+        logger.debug("Imagination status collection failed: %s", exc)
+    return payload
+
+
 def _collect_runtime_capabilities(conversation_lane: dict[str, Any] | None = None) -> dict[str, Any]:
     lane = conversation_lane if isinstance(conversation_lane, dict) else _collect_conversation_lane_status_resilient()
     payload: dict[str, Any] = {
@@ -888,6 +925,7 @@ def _collect_runtime_capabilities(conversation_lane: dict[str, Any] | None = Non
         "conversation_state": str(lane.get("state", "") or ""),
         "conversation_ready": bool(lane.get("conversation_ready", False)),
         "neurodynamic_advisor": _collect_neurodynamic_status(),
+        "imagination_engine": _collect_imagination_status(),
     }
     try:
         from core.brain.llm.model_registry import (
@@ -1690,6 +1728,7 @@ async def api_health(request: Request):
         logger.debug("Terminal fallback status collection failed: %s", e)
 
     desktop_access_data = await _collect_desktop_access_summary()
+    imagination_data = _collect_imagination_status()
 
     # ── Final Response Assembly ──
     try:
@@ -1764,6 +1803,7 @@ async def api_health(request: Request):
             "morphogenesis":  morphogenesis_data,
             "terminal":       terminal_data,
             "desktop_access": desktop_access_data,
+            "imagination":    imagination_data,
             "transcendence": transcendence_data,
             "privacy":        privacy_data,
             "executive_closure": executive_closure_data,
