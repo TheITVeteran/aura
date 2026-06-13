@@ -76,19 +76,30 @@ class ThreadLeakProbe(LiveProof):
 
     def exercise_thread_growth(self) -> bool:
         baseline = self._thread_snapshot()
+        base_total = int(baseline.get("total", 0))
         time.sleep(1.0)
-        half = self.turns // 2
-        midpoint = {}
+        per_turn_totals: list[int] = []
+        latencies: list[float] = []
+        half = max(1, self.turns // 2)
+        midpoint = baseline
         for i in range(self.turns):
-            self.chat(_PROMPTS[i % len(_PROMPTS)], timeout_s=120.0)
+            ok, _reply, latency = self.chat(_PROMPTS[i % len(_PROMPTS)], timeout_s=120.0)
+            latencies.append(round(latency, 1))
             self.guard_rss()
+            time.sleep(0.5)
+            snap = self._thread_snapshot()
+            total = int(snap.get("total", 0))
+            per_turn_totals.append(total)
+            # Per-turn log so a slow/timed-out run still yields the trend.
+            print(
+                f"[probe] turn {i + 1}/{self.turns} ok={ok} {latency:.0f}s threads={total}",
+                flush=True,
+            )
             if i + 1 == half:
-                time.sleep(1.5)
-                midpoint = self._thread_snapshot()
+                midpoint = snap
         time.sleep(2.0)
         final = self._thread_snapshot()
 
-        base_total = int(baseline.get("total", 0))
         mid_total = int(midpoint.get("total", base_total))
         final_total = int(final.get("total", 0))
         first_half_growth = mid_total - base_total
@@ -104,7 +115,7 @@ class ThreadLeakProbe(LiveProof):
             summary=(
                 f"threads base={base_total} mid={mid_total} final={final_total} "
                 f"(1st-half +{first_half_growth}, 2nd-half +{second_half_growth}; "
-                f"leak if 2nd-half >= {LEAK_THRESHOLD})"
+                f"leak if 2nd-half >= {LEAK_THRESHOLD}); per_turn={per_turn_totals}"
             ),
             turns=self.turns,
             baseline_total=base_total,
@@ -112,6 +123,8 @@ class ThreadLeakProbe(LiveProof):
             final_total=final_total,
             first_half_growth=first_half_growth,
             second_half_growth=second_half_growth,
+            per_turn_totals=per_turn_totals,
+            turn_latencies_s=latencies,
             second_half_group_delta=self._group_delta(midpoint, final),
             full_run_group_delta=self._group_delta(baseline, final),
             final_groups=final.get("groups", {}),
