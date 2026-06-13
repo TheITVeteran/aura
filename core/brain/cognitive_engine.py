@@ -9,6 +9,7 @@ from collections import deque
 from typing import Any
 
 from core.consciousness.executive_authority import get_executive_authority
+from core.governance_context import local_internal_governed_scope
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime import background_policy
 from core.runtime.errors import record_degradation
@@ -93,6 +94,9 @@ def _compact_spiking_active_inference_directive(advice: dict[str, Any] | None) -
     routing = advice.get("routing_bias") or {}
     if not isinstance(routing, dict):
         routing = {}
+    working_memory = advice.get("working_memory") or {}
+    if not isinstance(working_memory, dict):
+        working_memory = {}
     uncertainty = advice.get("uncertainty", 0.0)
     try:
         uncertainty_value = float(uncertainty)
@@ -108,6 +112,8 @@ def _compact_spiking_active_inference_directive(advice: dict[str, Any] | None) -
         directives.append("For external effects, describe the governed tool path and do not claim tool completion without evidence.")
     if bool(routing.get("reduce_load")):
         directives.append("Keep the reply compact and stable because runtime load pressure is elevated.")
+    if working_memory.get("admission") == "compress_foreground":
+        directives.append("Preserve the user intent while compressing nonessential detail under working-memory pressure.")
     if bool(routing.get("repair_first")):
         directives.append("Prioritize diagnosis and repair steps before speculative explanation.")
     if not directives and action:
@@ -1251,7 +1257,15 @@ class CognitiveEngine:
             # 1. Rollback state to last stable version (with timeout + guard)
             try:
                 async with asyncio.timeout(5.0):
-                    await self.state_repository.rollback(f"recovery: {reason}")
+                    with local_internal_governed_scope(
+                        "cognitive_engine.reactive_recovery.rollback",
+                        domain="state_mutation",
+                        constraints={
+                            "reason": str(reason or "unknown")[:160],
+                            "origin": "cognitive_engine_recovery",
+                        },
+                    ):
+                        await self.state_repository.rollback(f"recovery: {reason}")
             except (RuntimeError, AttributeError, TypeError, ValueError) as rollback_err:
                 record_degradation(
                     "cognitive_engine",

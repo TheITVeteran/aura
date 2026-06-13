@@ -2613,8 +2613,8 @@ async def test_desktop_cognitive_engine_uses_compact_contract_and_recovery_reser
             )
             return SimpleNamespace(
                 content=(
-                    "I am answering through the live desktop CognitiveEngine path, "
-                    "using the primary foreground lane with bounded generation."
+                    "Reliable desktop tool use matters because a local assistant has to turn intent into visible, "
+                    "verified action. It also keeps the user in control by making each external effect observable."
                 )
             )
 
@@ -2636,7 +2636,9 @@ async def test_desktop_cognitive_engine_uses_compact_contract_and_recovery_reser
         ),
     )
 
-    user_message = "Answer directly in two sentences: what lane are you using for this live desktop chat?"
+    user_message = (
+        "Answer directly in two sentences: why reliable desktop tool use matters for a local assistant."
+    )
     reply = await chat_routes._run_cognitive_engine_chat_turn(
         user_message,
         visible_user_message=user_message,
@@ -2653,6 +2655,181 @@ async def test_desktop_cognitive_engine_uses_compact_contract_and_recovery_reser
     assert calls[0]["context"]["allow_deep_handoff"] is False
     assert calls[0]["context"]["max_tokens"] <= 512
     assert calls[0]["kwargs"]["timeout_s"] == pytest.approx(42.0)
+
+
+@pytest.mark.asyncio
+async def test_desktop_required_runtime_status_avoids_foreground_model_allocation(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append({"objective": objective, "context": dict(context or {})})
+            return SimpleNamespace(content="unexpected model answer")
+
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = "Answer directly in two sentences: what lane are you using for this live desktop chat?"
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+            "recurrent_depth": {"active": True},
+        },
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert calls == []
+    assert reply
+    assert "Cortex (32B) is the active foreground lane" in reply
+    assert "CognitiveEngine handled this turn: yes" in reply
+    assert "governed tools available: yes" in reply
+
+
+def test_compact_desktop_contract_keeps_hypothetical_tool_plans_compact():
+    from interface.routes import chat as chat_routes
+
+    user_message = (
+        "Explain how you would use browser research and a document editor together on a user task."
+    )
+
+    assert chat_routes._is_bounded_nonexecuting_planning_request(user_message) is True
+    assert (
+        chat_routes._is_compact_desktop_chat_contract(
+            user_message,
+            user_message,
+            desktop_execution_contract=chat_routes._looks_like_desktop_objective(user_message),
+            capability_inventory_contract=False,
+        )
+        is True
+    )
+
+
+def test_compact_desktop_contract_does_not_hide_actual_tool_execution_requests():
+    from interface.routes import chat as chat_routes
+
+    user_message = (
+        "Open Chrome, search for climate news, create a document, and export it as a PDF."
+    )
+
+    assert chat_routes._looks_like_desktop_objective(user_message) is True
+    assert (
+        chat_routes._is_compact_desktop_chat_contract(
+            user_message,
+            user_message,
+            desktop_execution_contract=chat_routes._looks_like_desktop_objective(user_message),
+            capability_inventory_contract=False,
+        )
+        is False
+    )
+
+
+def test_failure_mode_surface_request_is_not_misclassified_as_planning():
+    from interface.routes import chat as chat_routes
+
+    user_message = "Name one failure mode you should surface honestly instead of masking."
+
+    assert chat_routes._is_bounded_nonexecuting_planning_request(user_message) is False
+    reply = chat_routes._build_failure_mode_surface_reply(user_message)
+    assert reply
+    assert "failure mode" in reply.lower()
+    assert "avoid claiming completion" in reply
+
+
+@pytest.mark.asyncio
+async def test_desktop_required_bounded_planning_avoids_foreground_model_allocation(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append({"objective": objective, "context": dict(context or {})})
+            return SimpleNamespace(content="unexpected model answer")
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = (
+        "Explain how you would use browser research and a document editor together on a user task."
+    )
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert calls == []
+    assert reply
+    assert "browser" in reply.lower()
+    assert "document" in reply.lower()
+    assert "receipts" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_desktop_required_failure_mode_surface_avoids_foreground_model_allocation(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append({"objective": objective, "context": dict(context or {})})
+            return SimpleNamespace(content="unexpected model answer")
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = "Name one failure mode you should surface honestly instead of masking."
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert calls == []
+    assert reply
+    assert "partial state or receipt" in reply
+    assert "avoid claiming completion" in reply
 
 
 @pytest.mark.asyncio

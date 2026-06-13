@@ -1,4 +1,5 @@
 from core.runtime.errors import record_degradation
+import json
 import multiprocessing
 import multiprocessing.connection
 import time
@@ -135,6 +136,32 @@ class SupervisionTree:
         except (RuntimeError, AttributeError, TypeError, ValueError):
             pass  # no-op: intentional
 
+    def _send_actor_stop(self, pipe: Any, name: str) -> bool:
+        """Best-effort cooperative actor stop over the existing pipe transport."""
+        if pipe is None:
+            return False
+        write_endpoint = pipe[1] if isinstance(pipe, tuple) and len(pipe) >= 2 else pipe
+        if getattr(write_endpoint, "closed", False):
+            return False
+        try:
+            write_endpoint.send(
+                json.dumps(
+                    {
+                        "type": "stop",
+                        "payload": {
+                            "source": "supervision_tree",
+                            "reason": "graceful_shutdown",
+                            "actor": name,
+                        },
+                        "trace_id": f"supervisor-stop:{name}:{time.time_ns()}",
+                    }
+                )
+            )
+            return True
+        except (BrokenPipeError, EOFError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            logger.debug("Cooperative actor stop send failed for %s: %s", name, exc)
+            return False
+
     def _process_is_alive(self, process: multiprocessing.Process) -> bool:
         if getattr(process, "exitcode", None) is not None:
             return False
@@ -255,14 +282,24 @@ class SupervisionTree:
                     return
 
                 if graceful_timeout > 0:
+                    cooperative_sent = self._send_actor_stop(actor.pipe, name)
+                    process.join(timeout=max(0.0, graceful_timeout))
+                    if not self._process_is_alive(process):
+                        logger.info(
+                            "Actor %s exited cooperatively%s.",
+                            name,
+                            " after stop request" if cooperative_sent else "",
+                        )
+                        return
+
                     if actor.pipe is not None:
                         self._close_pipe(actor.pipe)
                         pipe_closed = True
                         with self._lock:
                             actor.pipe = None
-                    process.join(timeout=max(0.0, graceful_timeout))
+                    process.join(timeout=min(0.25, max(0.0, graceful_timeout)))
                     if not self._process_is_alive(process):
-                        logger.info("Actor %s exited cooperatively.", name)
+                        logger.info("Actor %s exited cooperatively after pipe close.", name)
                         return
 
                 process.terminate()
@@ -427,6 +464,11 @@ class SupervisionTree:
         except (TypeError, ValueError):
             graceful_timeout = 2.0
         graceful_timeout = min(10.0, max(0.0, graceful_timeout))
+        try:
+            final_sweep_grace = float(os.getenv("AURA_ACTOR_FINAL_SWEEP_GRACE_S", "0.75"))
+        except (TypeError, ValueError):
+            final_sweep_grace = 0.75
+        final_sweep_grace = min(2.0, max(0.0, final_sweep_grace))
         with self._lock:
             actor_names = list(self._actors.keys())
         for name in actor_names:
@@ -435,10 +477,24 @@ class SupervisionTree:
         import multiprocessing
         for p in multiprocessing.active_children():
             if p.name.startswith("AuraActor:"):
-                logger.info("🧹 Reaping orphaned actor: %s", p.name)
+                if not p.is_alive():
+                    p.join(timeout=0.0)
+                    logger.debug("Reaped already-exited actor child: %s", p.name)
+                    continue
+                if final_sweep_grace > 0.0:
+                    p.join(timeout=final_sweep_grace)
+                    if not p.is_alive():
+                        logger.debug(
+                            "Joined actor child during final supervisor grace: %s",
+                            p.name,
+                        )
+                        continue
+                logger.info("🧹 Stopping active actor child after supervisor shutdown: %s", p.name)
                 p.terminate()
                 p.join(timeout=1.0)
-                if p.is_alive(): p.kill()
+                if p.is_alive():
+                    p.kill()
+                    p.join(timeout=0.2)
         logger.info("🛡️ Supervision Tree Shutdown Complete.")
 
 _tree_instance: Optional[SupervisionTree] = None

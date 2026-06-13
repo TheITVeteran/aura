@@ -436,22 +436,55 @@ class AuraEventBus:
     async def shutdown(self):
         """Best-effort teardown for tests and controlled process shutdown."""
         self._closing = True
+        current_loop = asyncio.get_running_loop()
         pubsub_task = self._pubsub_task
         self._pubsub_task = None
         if pubsub_task:
-            pubsub_task.cancel()
+            task_loop = None
             try:
-                await pubsub_task
-            except asyncio.CancelledError as _exc:
-                logger.debug("Suppressed asyncio.CancelledError: %s", _exc)
-            except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
-                self._record_error(
-                    exc,
-                    "AuraEventBus: pubsub shutdown failed: %s",
-                    degraded=True,
-                )
+                task_loop = pubsub_task.get_loop()
+            except _EVENT_BUS_RECOVERABLE_ERRORS:
+                task_loop = None
+            if task_loop is not None and task_loop is not current_loop:
+                try:
+                    if task_loop.is_running():
+                        task_loop.call_soon_threadsafe(pubsub_task.cancel)
+                    else:
+                        pubsub_task.cancel()
+                    logger.debug(
+                        "AuraEventBus: Redis listener cancellation delegated to owner loop."
+                    )
+                except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
+                    logger.debug(
+                        "AuraEventBus: Redis listener owner-loop cancellation skipped during shutdown: %s",
+                        exc,
+                    )
+            else:
+                pubsub_task.cancel()
+                try:
+                    await pubsub_task
+                except asyncio.CancelledError as _exc:
+                    logger.debug("Suppressed asyncio.CancelledError: %s", _exc)
+                except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
+                    self._record_error(
+                        exc,
+                        "AuraEventBus: pubsub shutdown failed: %s",
+                        degraded=True,
+                    )
 
         if self._redis:
+            redis_loop = getattr(self, "_redis_loop", None)
+            if (
+                redis_loop is not None
+                and redis_loop is not current_loop
+                and hasattr(redis_loop, "is_running")
+            ):
+                self._dispose_stale_redis_client(self._redis, redis_loop)
+                self._redis = None
+                self._redis_loop = None
+                self._subscribers.clear()
+                self._loop = None
+                return
             try:
                 await self._redis.aclose()
             except _EVENT_BUS_RECOVERABLE_ERRORS as exc:

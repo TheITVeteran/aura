@@ -309,6 +309,43 @@ async def test_cognitive_engine_user_recovery_uses_bounded_primary_router(monkey
 
 
 @pytest.mark.asyncio
+async def test_cognitive_engine_reactive_recovery_rolls_back_inside_state_governance(monkeypatch):
+    from core.governance_context import get_active_governance
+
+    engine = CognitiveEngine()
+    captured = {}
+
+    class _Repo:
+        async def rollback(self, reason):
+            token = get_active_governance()
+            captured["reason"] = reason
+            captured["token_domain"] = getattr(token, "domain", "")
+            captured["token_source"] = getattr(token, "source", "")
+
+    class _Router:
+        async def think(self, **_kwargs):
+            return "I recovered the live user-facing turn through the governed primary router."
+
+    engine.state_repository = _Repo()
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(get=lambda name, default=None: _Router() if name == "llm_router" else default),
+    )
+
+    thought = await engine._reactive_recovery(
+        "Answer directly after a cognitive timeout.",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        "timeout",
+    )
+
+    assert thought.content.startswith("I recovered the live user-facing turn")
+    assert captured["reason"] == "recovery: timeout"
+    assert captured["token_domain"] == "state_mutation"
+    assert captured["token_source"] == "cognitive_engine.reactive_recovery.rollback"
+
+
+@pytest.mark.asyncio
 async def test_cognitive_engine_desktop_quick_reply_uses_governed_primary_router(monkeypatch):
     engine = CognitiveEngine()
     state = AuraState.default()

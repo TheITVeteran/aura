@@ -1,10 +1,15 @@
+from types import SimpleNamespace
+
 import pytest
 
 from core.brain.cognitive_engine import CognitiveEngine
 from core.brain.latent_bridge import compute_inference_params
 from core.brain.types import ThinkingMode
 from core.cognitive.spiking_active_inference import (
+    BoundedWorkingMemoryQueueModel,
     MultiCompartmentSpikeResponseModel,
+    SoftmaxCompetitionStabilityProbe,
+    SoftmaxODEStabilityProbe,
     SpikingActiveInferenceAdvisor,
     get_spiking_active_inference_advisor,
 )
@@ -44,6 +49,165 @@ def test_spiking_active_inference_repair_pressure_changes_general_tendency():
     assert advice.features["error_pressure"] >= 0.70
     assert advice.sampling_bias["temperature_delta"] < 0.0
     assert advice.sampling_bias["repetition_penalty_delta"] > 0.0
+
+
+def test_spiking_advisor_consumes_unified_memory_pressure(monkeypatch):
+    from core.utils import memory_monitor
+
+    monkeypatch.setattr(
+        memory_monitor,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            pressure_pct=91.0,
+            process_rss_gb=42.0,
+            process_rss_limit_gb=40.0,
+            level="critical",
+        ),
+    )
+    advisor = SpikingActiveInferenceAdvisor()
+
+    advice = advisor.advise(
+        "Explain what external tools you can use.",
+        context={"desktop_cognitive_engine_required": True},
+        origin="desktop",
+    )
+
+    assert advice.features["memory_pressure"] >= 0.86
+    assert advice.routing_bias["reduce_load"] is True
+    assert advice.sampling_bias["max_tokens_factor"] < 0.62
+    assert advice.features["error_pressure"] >= 0.60
+
+
+def test_spiking_advisor_consumes_affective_driver_status():
+    class Affect:
+        def get_status(self):
+            return {
+                "confused": 100,
+                "frustration": 80,
+                "curiosity": 90,
+                "longing": 60,
+            }
+
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("affect_engine", Affect(), required=False)
+    advisor = SpikingActiveInferenceAdvisor()
+
+    advice = advisor.advise(
+        "Continue the conversation carefully.",
+        context={"desktop_cognitive_engine_required": True},
+        origin="desktop",
+    )
+
+    assert advice.features["clarity"] < 0.55
+    assert advice.features["novelty"] >= 0.25
+    assert advice.features["social_pressure"] >= 0.25
+    assert advice.routing_bias["metacognition_depth"] >= 0.70
+
+
+def test_bounded_working_memory_queue_defers_background_overload():
+    queue = BoundedWorkingMemoryQueueModel(arrival_rate=7.0, service_rate=10.0, max_queue=3.0)
+    high_pressure = {
+        "clarity": 0.12,
+        "energy": 0.30,
+        "urgency": 1.0,
+        "novelty": 0.9,
+        "tool_pressure": 1.0,
+        "error_pressure": 0.8,
+        "social_pressure": 0.0,
+        "memory_pressure": 0.8,
+    }
+
+    first = queue.observe(high_pressure, is_background=False)
+    second = queue.observe(high_pressure, is_background=True)
+
+    assert first["admitted"] is True
+    assert first["admission"] in {"accept", "compress_foreground"}
+    assert second["admitted"] is False
+    assert second["admission"] == "defer_background"
+    assert second["queue_load"] >= 0.9
+    assert second["overload_pressure"] > 0.0
+
+
+def test_spiking_advisor_turns_queue_pressure_into_load_shedding():
+    advisor = SpikingActiveInferenceAdvisor()
+    objective = (
+        "Urgent: open apps, search, browse, create files, export PDFs, run tools, "
+        "fix a crash, remember the result, and explain every step now."
+    )
+
+    advice = None
+    for _ in range(4):
+        advice = advisor.advise(
+            objective,
+            context={"desktop_cognitive_engine_required": True},
+            origin="desktop",
+        )
+
+    assert advice is not None
+    assert advice.working_memory["queue_load"] >= 0.9
+    assert advice.working_memory["admission"] in {"compress_foreground", "accept"}
+    assert advice.routing_bias["reduce_load"] is True
+    assert advice.sampling_bias["max_tokens_factor"] < 0.62
+    assert any("working memory admission" in item for item in advice.rationale)
+
+
+def test_softmax_competition_stability_probe_is_bounded_and_causal():
+    stable = SoftmaxCompetitionStabilityProbe.analyze(
+        [8.0, 0.0, -2.0],
+        [0.98, 0.015, 0.005],
+        temperature=0.6,
+    )
+    unstable = SoftmaxCompetitionStabilityProbe.analyze(
+        [0.1, 0.09, 0.08],
+        [0.34, 0.33, 0.33],
+        temperature=0.6,
+    )
+
+    assert 0.0 <= stable["spectral_radius"] <= 5.0
+    assert "ode_spectral_abscissa" in stable
+    assert 0.0 <= stable["bifurcation_pressure"] <= 1.0
+    assert 0.0 <= unstable["decision_instability"] <= 1.0
+    assert unstable["decision_instability"] > stable["decision_instability"]
+    assert unstable["winner_margin"] < stable["winner_margin"]
+
+
+def test_softmax_ode_stability_probe_is_local_and_bounded():
+    quiet = SoftmaxODEStabilityProbe.analyze(
+        [8.0, 0.0, -2.0],
+        [0.98, 0.015, 0.005],
+        temperature=0.6,
+        features={"clarity": 0.95, "urgency": 0.2, "novelty": 0.1},
+    )
+    pressured = SoftmaxODEStabilityProbe.analyze(
+        [0.1, 0.09, 0.08],
+        [0.34, 0.33, 0.33],
+        temperature=0.6,
+        features={
+            "clarity": 0.2,
+            "urgency": 1.0,
+            "novelty": 0.9,
+            "error_pressure": 0.8,
+            "memory_pressure": 0.7,
+        },
+    )
+
+    assert -5.0 <= quiet["ode_spectral_abscissa"] <= 5.0
+    assert 0.0 <= quiet["fixed_point_residual"] <= 1.0
+    assert 0.0 <= pressured["bifurcation_pressure"] <= 1.0
+    assert pressured["bifurcation_pressure"] >= quiet["bifurcation_pressure"]
+
+
+def test_spiking_advisor_uses_stability_probe_for_metacognition():
+    advisor = SpikingActiveInferenceAdvisor()
+
+    advice = advisor.advise(
+        "Maybe either path could work; perhaps it is ambiguous and I am not sure which one.",
+        origin="desktop",
+    )
+
+    assert advice.stability["decision_instability"] >= 0.0
+    assert advice.routing_bias["metacognition_depth"] >= 0.45
+    assert "stability" in advice.to_dict()
 
 
 def test_multi_compartment_srm_stays_bounded_under_repeated_pressure():
@@ -137,6 +301,11 @@ def test_runtime_capabilities_expose_neurodynamic_status():
     assert status["authority_gateway_required_for_effects"] is True
     assert status["features"]["tool_pressure"] > 0.0
     assert status["features"]["memory_pressure"] > 0.0
+    assert "working_memory" in status
+    assert "queue_load" in status["working_memory"]
+    assert "stability" in status
+    assert "decision_instability" in status["stability"]
+    assert "bifurcation_pressure" in status["stability"]
 
 
 @pytest.mark.asyncio

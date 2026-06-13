@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 import pytest
 
@@ -351,3 +352,37 @@ async def test_runtime_heartbeat_refuses_boot_blockers_even_when_required_probes
     assert payload["status"] == "unhealthy"
     assert payload["required_probes"]["all_passed"] is True
     assert "conversation_failed" in payload["blockers"]
+
+
+@pytest.mark.asyncio
+async def test_boot_health_probe_times_out_instead_of_hanging_http_loop(monkeypatch):
+    from interface.routes import system as system_routes
+
+    def slow_health_snapshot(*, is_gui_proxy: bool):
+        time.sleep(0.2)
+        return ({"ready": True, "required_probes": {"all_passed": True}}, 200)
+
+    monkeypatch.setattr(system_routes, "_HEALTH_PROBE_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(system_routes, "_build_boot_health_payload_sync", slow_health_snapshot)
+
+    started_at = time.perf_counter()
+    payload, status_code = await system_routes._build_boot_health_payload_bounded(is_gui_proxy=False)
+    elapsed = time.perf_counter() - started_at
+
+    assert status_code == 503
+    assert elapsed < 0.15
+    assert payload["ready"] is False
+    assert payload["required_probes"]["all_passed"] is False
+    assert payload["blockers"] == ["health_probe_timeout"]
+    await asyncio.sleep(0.25)
+
+
+def test_boot_health_probe_single_flight_fails_closed_instead_of_stacking():
+    from interface.routes import system as system_routes
+
+    assert system_routes._HEALTH_PROBE_LOCK.acquire(False)
+    try:
+        with pytest.raises(TimeoutError, match="health_probe_already_running"):
+            system_routes._build_boot_health_payload_sync(is_gui_proxy=False)
+    finally:
+        system_routes._HEALTH_PROBE_LOCK.release()

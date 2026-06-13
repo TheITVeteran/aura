@@ -107,6 +107,26 @@ def test_aura_main_acquires_singleton_lock_before_port_cleanup_and_reaper_boot()
     assert "AURA_REAPER_MANIFEST" in main_py
 
 
+def test_stop_aura_signals_parent_before_touching_child_actors():
+    main_py = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
+    stop_body = main_py.split("def stop_aura():", 1)[1].split("# ---------------------------------------------------------------------------", 1)[0]
+
+    assert "p.send_signal(signal.SIGTERM)" in stop_body
+    first_signal = stop_body.index("p.send_signal(signal.SIGTERM)")
+    assert "for child in p.children(recursive=True):" not in stop_body[:first_signal]
+
+
+def test_desktop_runtime_preserves_outer_signal_owner():
+    orchestrator_main = (PROJECT_ROOT / "core" / "orchestrator" / "main.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "desktop_signal_owner" in orchestrator_main
+    assert "Desktop shutdown signal owner preserved in aura_main" in orchestrator_main
+    assert "AURA_LAUNCHED_FROM_APP" in orchestrator_main
+    assert "AURA_EXTERNAL_GUI_OWNER" in orchestrator_main
+
+
 def test_watchdog_mode_remains_supervision_only():
     main_py = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
     watchdog_slice = main_py.split("async def run_watchdog(", 1)[1].split("# ---------------------------------------------------------------------------", 1)[0]

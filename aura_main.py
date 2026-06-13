@@ -1514,13 +1514,20 @@ async def run_server_async(host: str, port: int):
     await server.serve()
 
 
-async def _stop_orchestrator_once(orchestrator: Any, *, reason: str, timeout_s: float = 30.0) -> None:
+async def _stop_orchestrator_once(
+    orchestrator: Any,
+    *,
+    reason: str,
+    timeout_s: float = 30.0,
+    request_global_shutdown: bool = True,
+) -> None:
     """Stop the canonical runtime owner exactly once before process exit."""
 
     if orchestrator is None or getattr(orchestrator, "_aura_stop_invoked", False):
         return
     orchestrator._aura_stop_invoked = True
-    request_shutdown(reason)
+    if request_global_shutdown:
+        request_shutdown(reason)
     stop = getattr(orchestrator, "stop", None)
     if not callable(stop):
         return
@@ -1698,15 +1705,20 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
         api_task: asyncio.Task | None,
         reason: str,
     ) -> None:
-        request_shutdown(reason)
         try:
             supervisor._is_running = False
             supervisor._shutting_down = True
         except AttributeError as exc:
             record_degradation("aura_main", exc)
 
+        await _stop_orchestrator_once(
+            orchestrator,
+            reason=reason,
+            timeout_s=20.0,
+            request_global_shutdown=False,
+        )
+        request_shutdown(reason)
         await _wait_for_task_exit(api_task, name="api_server", timeout_s=8.0)
-        await _stop_orchestrator_once(orchestrator, reason=reason, timeout_s=20.0)
         try:
             await asyncio.wait_for(GracefulShutdown.trigger_shutdown(reason), timeout=20.0)
         except TimeoutError as exc:
@@ -1748,7 +1760,8 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
         api_task: asyncio.Task | None = None
 
         def _request_desktop_shutdown(sig: signal.Signals) -> None:
-            request_shutdown(f"desktop_signal:{sig.name}")
+            nonlocal shutdown_reason
+            shutdown_reason = f"desktop_signal:{sig.name}"
             try:
                 supervisor._is_running = False
                 supervisor._shutting_down = True
@@ -1879,7 +1892,6 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
                             except AttributeError as exc:
                                 record_degradation("aura_main", exc)
                                 logger.debug("GUI supervisor did not expose running flag: %s", exc)
-                            request_shutdown(shutdown_reason)
                             return
 
                         if is_shutdown_requested() or proc.returncode in {-signal.SIGTERM, -signal.SIGINT}:
@@ -1931,7 +1943,7 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
             await _desktop_final_shutdown(
                 orchestrator=orchestrator,
                 api_task=api_task,
-                reason=shutdown_reason if is_shutdown_requested() else "desktop_exit",
+                reason=shutdown_reason,
             )
 
     await _main_loop()
@@ -2280,13 +2292,10 @@ def stop_aura():
         if psutil:
             try:
                 p = psutil.Process(pid)
-                # Terminate children recursively first to prevent orphans
-                for child in p.children(recursive=True):
-                    try:
-                        child.terminate()
-                    except psutil.Error:
-                        pass
-                p.terminate()
+                # Signal the verified parent first. Child actors are owned by
+                # the runtime shutdown contract; terminating them here races
+                # final state commits and forces replay/direct-snapshot paths.
+                p.send_signal(signal.SIGTERM)
             except psutil.Error:
                 print("Process already dead or inaccessible.")
                 _unlink_orchestrator_lock(lock_file)

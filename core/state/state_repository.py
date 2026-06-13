@@ -505,6 +505,10 @@ class StateRepository:
             ok, transport, error = await self._send_proxy_commit_request(transport, payload)
             if ok:
                 return new_state
+            if _is_shutdown_commit_payload(payload):
+                direct_ok = await self._commit_shutdown_direct_snapshot(new_state, error)
+                if direct_ok:
+                    return new_state
             await self._defer_proxy_commit(payload, error)
             return new_state
         else:
@@ -599,7 +603,7 @@ class StateRepository:
                 last_error = last_error or RuntimeError("state_vault transport unavailable")
                 if _is_shutdown_commit_payload(payload):
                     logger.info(
-                        "🔌 [STATE] Vault transport unavailable during shutdown; commit will be queued for boot replay."
+                        "🔌 [STATE] Vault transport unavailable during shutdown; attempting shutdown snapshot fallback."
                     )
                     return False, None, last_error
                 _record_proxy_transport_degradation(
@@ -634,13 +638,13 @@ class StateRepository:
                         # that broke mid-teardown often re-resolves, and
                         # landing the final state now beats boot replay.
                         logger.info(
-                            "🔌 [STATE] Vault pipe closed during shutdown (attempt 1/2); retrying once before queueing for boot replay.",
+                            "🔌 [STATE] Vault pipe closed during shutdown (attempt 1/2); retrying once before shutdown snapshot fallback.",
                         )
                         self._transport = None
                         transport = self._resolve_transport()
                         continue
                     logger.info(
-                        "🔌 [STATE] Vault pipe closed during shutdown (attempt 2/2); commit will be queued for boot replay.",
+                        "🔌 [STATE] Vault pipe closed during shutdown (attempt 2/2); attempting shutdown snapshot fallback.",
                     )
                     return False, None, exc
                 else:
@@ -807,6 +811,70 @@ class StateRepository:
                 payload.get("cause"),
                 self._last_proxy_commit_error,
             )
+
+    async def _commit_shutdown_direct_snapshot(
+        self,
+        state: AuraState,
+        error: BaseException | None,
+    ) -> bool:
+        """Persist the final shutdown snapshot if the vault already exited.
+
+        This path is deliberately limited to lifecycle shutdown commits. It
+        prevents a clean shutdown from manufacturing a boot-replay item after
+        the supervisor has already stopped the vault actor, while keeping normal
+        foreground state mutations on the canonical StateVault path.
+        """
+
+        try:
+            db = await self._ensure_db()
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS state_log (
+                    state_id TEXT PRIMARY KEY,
+                    version INTEGER NOT NULL,
+                    parent_state_id TEXT,
+                    transition_cause TEXT,
+                    state_json TEXT NOT NULL,
+                    timestamp REAL NOT NULL
+                )
+            """)
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_version ON state_log(version)")
+            await db.commit()
+            serialized_data = await asyncio.to_thread(self._serialize, state)
+            from core.governance_context import governed_scope
+
+            shutdown_decision = SimpleNamespace(
+                receipt_id=f"shutdown_state_snapshot:{getattr(state, 'version', 'unknown')}",
+                domain="state_mutation",
+                source="state_repository.shutdown_direct_snapshot",
+                constraints={
+                    "cause": getattr(state, "transition_cause", "shutdown"),
+                    "fallback": "vault_transport_closed",
+                },
+            )
+            async with governed_scope(shutdown_decision):
+                await self._commit_to_db(state, serialized_data)
+            self._current = state
+            self._pending_proxy_commit_payload = None
+            self._pending_proxy_commit_count = 0
+            await self._clear_pending_proxy_commit()
+            self._last_proxy_commit_error = ""
+            logger.info(
+                "✅ [STATE] Shutdown state committed directly after vault transport closed "
+                "(cause=%s, source=%s).",
+                getattr(state, "transition_cause", "shutdown"),
+                type(error).__name__ if error is not None else "transport_unavailable",
+            )
+            return True
+        except _STATE_BOUNDARY_ERRORS as exc:
+            _record_state_degradation(
+                exc,
+                action="shutdown direct state snapshot failed; falling back to boot replay",
+            )
+            logger.warning(
+                "⚠️ [STATE] Shutdown direct state snapshot failed; boot replay will be used: %s",
+                exc,
+            )
+            return False
 
     async def _enqueue_owner_commit(self, payload: dict[str, Any]) -> None:
         """

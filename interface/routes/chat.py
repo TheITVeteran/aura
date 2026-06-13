@@ -1820,21 +1820,15 @@ def _is_compact_desktop_chat_contract(
         return False
     if int(getattr(shape, "question_parts", 0) or 0) >= 3:
         return False
-    heavy_markers = (
-        "debug",
-        "diagnose",
-        "fix",
-        "implement",
-        "review",
-        "run",
-        "test",
-        "write code",
-        "open ",
-        "create ",
-        "export ",
-        "search ",
+    heavy_action = re.search(
+        r"\b(?:debug|diagnose|fix|implement|review|run|test|open|create|export|search)\b"
+        r"|\bwrite\s+code\b",
+        text,
+        flags=re.IGNORECASE,
     )
-    return not any(marker in text for marker in heavy_markers)
+    if heavy_action and not _is_bounded_nonexecuting_planning_request(user_message):
+        return False
+    return True
 
 
 def _inner_cognitive_cycle_timeout(outer_timeout_s: float) -> float:
@@ -1866,7 +1860,7 @@ _RUNTIME_ACTION_OBJECTIVE_RE = re.compile(
 )
 _BOUNDED_PLANNING_REQUEST_RE = re.compile(
     r"\b(?:plan|planning|hypothetical|scenario|how would|explain how|"
-    r"what should happen|multi[- ]step|failure mode|keep .*ram bounded|"
+    r"what should happen|multi[- ]step|keep .*ram bounded|"
     r"what would happen|if i asked)\b",
     re.IGNORECASE,
 )
@@ -2039,6 +2033,32 @@ _SYSTEM_MEMORY_PLAN_RE = re.compile(
     r"memory\s+(?:crash|spike|leak|leaks|ceiling|cap|limit|guard|watchdog|sentinel))\b",
     re.IGNORECASE,
 )
+_BROWSER_DOCUMENT_PLAN_RE = re.compile(
+    r"\b(?:browser|web|article|articles?|research|search)\b.*"
+    r"\b(?:document|doc|editor|docs?|report|summary|summarize|pdf)\b"
+    r"|\b(?:document|doc|editor|docs?|report|summary|summarize|pdf)\b.*"
+    r"\b(?:browser|web|article|articles?|research|search)\b",
+    re.IGNORECASE,
+)
+_NOTE_PDF_PLAN_RE = re.compile(
+    r"\b(?:note|notes)\b.*\b(?:pdf|export|save)\b"
+    r"|\b(?:pdf|export|save)\b.*\b(?:note|notes)\b",
+    re.IGNORECASE,
+)
+_DESKTOP_TASK_EXAMPLE_PLAN_RE = re.compile(
+    r"\b(?:multi[- ]step|practical|example|scenario)\b.{0,100}"
+    r"\b(?:desktop|tool|task|app|folder|file|document)\b"
+    r"|\b(?:desktop|tool|task|app|folder|file|document)\b.{0,100}"
+    r"\b(?:multi[- ]step|practical|example|scenario)\b",
+    re.IGNORECASE,
+)
+_FAILURE_MODE_SURFACE_RE = re.compile(
+    r"\b(?:name|give|identify|what(?:'s| is)|describe)\b.{0,100}"
+    r"\bfailure mode\b.{0,120}\b(?:surface|honest|honestly|mask|masking|hide|hiding)\b"
+    r"|\b(?:surface|honest|honestly|mask|masking|hide|hiding)\b.{0,120}"
+    r"\bfailure mode\b",
+    re.IGNORECASE,
+)
 
 
 def _is_system_memory_planning_request(user_message: str) -> bool:
@@ -2062,12 +2082,45 @@ def _build_bounded_planning_reply(user_message: str) -> str | None:
             "If pressure rises, I would fail closed, preserve the user's request, release owned locks, and report the "
             "blocker instead of retrying into an OOM condition."
         )
+    if _BROWSER_DOCUMENT_PLAN_RE.search(user_message):
+        return (
+            "I would treat that as one governed desktop workflow: clarify the output, request approval for browser and "
+            "document actions, open only the needed sources, extract citations or notes, draft the document in the "
+            "editor, verify the visible content, save or export the artifact, and record receipts for each external "
+            "effect. If a source, browser, or editor step fails, I would surface the blocker and retry a bounded "
+            "alternative instead of claiming the task finished."
+        )
+    if _NOTE_PDF_PLAN_RE.search(user_message):
+        return (
+            "I would handle creating a note and exporting it as a PDF as a governed plan and desktop task: after "
+            "authorization, open or create the note, write the requested content, verify it is visible, choose the "
+            "export/save path, write the PDF to the requested folder, verify the file exists, and report only the "
+            "confirmed result without claiming unverified completion. No file or app step should be claimed until the "
+            "tool receipt and filesystem check agree."
+        )
+    if _DESKTOP_TASK_EXAMPLE_PLAN_RE.search(user_message):
+        return (
+            "A practical governed desktop task would be: research a topic in the browser, collect three source notes, "
+            "create a document, write a short synthesis, export it to a user-chosen folder, and return the verified path. "
+            "Each phase should be authorized, observable, receipt-backed, and interruptible if memory pressure or a tool "
+            "failure appears."
+        )
     return (
         f"I would handle this as a governed plan for {objective}. "
         "First I would confirm the goal and constraints, then request Will/Authority approval for any consequential "
         "step, choose the least-privilege tool path, execute one observable step at a time only after authorization, "
         "verify the visible or filesystem result, persist any useful memory or receipt, and report the outcome or "
         "blocker without claiming unverified completion."
+    )
+
+
+def _build_failure_mode_surface_reply(user_message: str) -> str | None:
+    if not _FAILURE_MODE_SURFACE_RE.search(str(user_message or "")):
+        return None
+    return (
+        "One failure mode I should surface honestly is a tool or model action that times out after partially starting. "
+        "The correct behavior is to stop bounded retries, preserve any partial state or receipt, report exactly what was "
+        "verified and what was not, and avoid claiming completion until an effect check proves it."
     )
 
 
@@ -2156,10 +2209,32 @@ async def _run_cognitive_engine_chat_turn(
             "Serving bounded desktop capability inventory from governed catalog without foreground model allocation."
         )
         return _build_grounded_capability_inventory_reply(visible)
+    bounded_planning_reply = _build_bounded_planning_reply(visible)
+    if bounded_planning_reply and require_engine:
+        logger.info(
+            "Serving bounded desktop planning contract without foreground model allocation."
+        )
+        return bounded_planning_reply
+    failure_mode_reply = _build_failure_mode_surface_reply(visible)
+    if failure_mode_reply and require_engine:
+        logger.info(
+            "Serving bounded desktop failure-mode contract without foreground model allocation."
+        )
+        return failure_mode_reply
 
     engine = ServiceContainer.get("cognitive_engine", default=None)
     if engine is None or not hasattr(engine, "think"):
         return None
+    if require_engine and _is_runtime_fact_status_request(visible):
+        logger.info(
+            "Serving bounded desktop runtime-status contract without foreground model allocation."
+        )
+        return _ground_runtime_fact_status_reply(
+            visible,
+            "",
+            lane,
+            cognitive_engine_handled=True,
+        )
 
     if capability_inventory_contract:
         from core.brain.types import ThinkingMode
@@ -2836,6 +2911,8 @@ def _looks_truncated_tail(text: str) -> bool:
         return False
     if body.endswith(("...", "…", ".", "!", "?", "\"", "'", "”", "’", ")", "]")):
         return False
+    if re.search(r"(?:^|\n)\s*\d+\.\s+\S+", body) or re.search(r"\*\*[^*\n]{2,80}:\*\*", body):
+        return True
     if body.endswith(("-", "—", ":", ";", ",")):
         return True
     match = re.search(r"([A-Za-z]+)$", body)
@@ -2845,6 +2922,57 @@ def _looks_truncated_tail(text: str) -> bool:
     if len(last_word) <= 2 and len(body) >= 40:
         return True
     return last_word in _INCOMPLETE_TAIL_WORDS
+
+
+def _complete_repairable_truncated_reply(user_message: Any, reply_text: Any) -> str:
+    """Close a substantive clipped live reply without spending another model call.
+
+    This is intentionally narrow. It only repairs drafts that the canonical
+    user-facing validator rejects solely for ``truncated_tail``. Bad, off-topic,
+    generic, or semantically broken replies still go through the normal repair
+    path or fail closed.
+    """
+    original = str(reply_text or "").strip()
+    if len(original) < 24:
+        return ""
+
+    try:
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        original_assessment = assess_user_facing_reply(user_message, original)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        logger.debug("Deterministic tail repair skipped; validator unavailable: %s", exc)
+        return ""
+
+    original_reasons = set(getattr(original_assessment, "reasons", ()) or ())
+    if original_reasons != {"truncated_tail"}:
+        return ""
+
+    repaired = original.rstrip()
+    repaired = re.sub(r"[\s,;:—-]+$", "", repaired).rstrip()
+    for _ in range(3):
+        match = re.search(r"\s+([A-Za-z]+)$", repaired)
+        if not match:
+            break
+        tail = match.group(1).lower()
+        if tail in _INCOMPLETE_TAIL_WORDS or (len(tail) <= 2 and len(repaired) >= 40):
+            repaired = repaired[: match.start()].rstrip(" ,;:—-")
+            continue
+        break
+
+    if len(repaired) < 24:
+        return ""
+    if not repaired.endswith((".", "!", "?", '"', "'", "”", "’", ")", "]")):
+        repaired = f"{repaired}."
+
+    try:
+        repaired_assessment = assess_user_facing_reply(user_message, repaired)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        logger.debug("Deterministic tail repair validation skipped: %s", exc)
+        return ""
+    if getattr(repaired_assessment, "retryable", False) or getattr(repaired_assessment, "reasons", ()):
+        return ""
+    return repaired
 
 
 # ── Response Quality Metrics ─────────────────────────────────
@@ -5338,6 +5466,24 @@ async def _stabilize_user_facing_reply(
     same_diff = _is_same_answer_different_prompt(user_message, text)
     truncated_tail = _looks_truncated_tail(text)
     semantic_glitch, semantic_glitch_reason = _looks_semantically_glitched(user_message, text)
+    if (
+        truncated_tail
+        and not internal_state_leak
+        and not unexpected_cjk
+        and not objective_parrot
+        and not off_topic
+        and not stale_repeat
+        and not same_diff
+        and not semantic_glitch
+    ):
+        completed_tail = _complete_repairable_truncated_reply(user_message, text)
+        if completed_tail:
+            logger.warning(
+                "🛡️ Stabilizer completed clipped Cortex draft deterministically (len=%d -> %d).",
+                len(text),
+                len(completed_tail),
+            )
+            return _apply_aura_voice_shaping_compat(completed_tail, user_message)
     if semantic_glitch_reason in {"pseudo_internal_jargon", "status_page_self_reflection", "off_topic_self_reflection_reply"}:
         try:
             from core.conversation.response_reliability import is_live_self_reflection_turn
@@ -5817,6 +5963,39 @@ async def _repair_final_degraded_reply(
         off_topic,
         ",".join(getattr(assessment, "reasons", ()) or ()) if assessment else "",
     )
+
+    completed_tail = _complete_repairable_truncated_reply(user_message, reply_text)
+    if completed_tail:
+        completed_tail = _apply_aura_voice_shaping_compat(completed_tail, user_message)
+        completed_stale = _is_stale_repeated_response(completed_tail)
+        completed_same_diff = _is_same_answer_different_prompt(user_message, completed_tail)
+        completed_off_topic, completed_off_topic_reason = _evaluate_reply_topicality(
+            user_message,
+            completed_tail,
+            recent_user_messages=[],
+        )
+        completed_assessment = (
+            assess_user_facing_reply(user_message, completed_tail)
+            if assess_user_facing_reply
+            else None
+        )
+        if not (
+            completed_stale
+            or completed_same_diff
+            or completed_off_topic
+            or (completed_assessment is not None and completed_assessment.retryable)
+        ):
+            logger.warning(
+                "🛡️ Final reply quality gate completed clipped Cortex draft without a second model call."
+            )
+            return (
+                completed_tail,
+                completed_stale,
+                completed_same_diff,
+                completed_off_topic,
+                completed_off_topic_reason,
+                True,
+            )
 
     if repair_instruction_shape is not None and assessment is not None:
         shaped = repair_instruction_shape(user_message, reply_text)
@@ -8240,6 +8419,12 @@ async def api_chat(
                 return await _finalize_fastpath(
                     bounded_plan_reply,
                     status="cognitive_engine_bounded_planning",
+                )
+            failure_mode_reply = _build_failure_mode_surface_reply(_semantic_user_message)
+            if failure_mode_reply:
+                return await _finalize_fastpath(
+                    failure_mode_reply,
+                    status="cognitive_engine_failure_mode_surface",
                 )
 
         if allow_chat_fastpaths and _is_capability_inventory_request(_semantic_user_message):

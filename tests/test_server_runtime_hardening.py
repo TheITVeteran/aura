@@ -1471,9 +1471,23 @@ async def test_state_repository_shutdown_pipe_close_defers_without_degradation(
         with caplog.at_level("INFO", logger="core.state.state_repository"):
             await repo.commit(repo._current.derive("shutdown", origin="test"), "shutdown")
 
-        assert repo.get_runtime_status()["pending_proxy_commit"] is True
+        assert repo.get_runtime_status()["pending_proxy_commit"] is False
         assert len(transport.request_calls) == 2
         assert "Vault pipe closed during shutdown" in caplog.text
+        assert "Shutdown state committed directly after vault transport closed" in caplog.text
+        assert "attempting shutdown snapshot fallback" in caplog.text
+        assert "commit will be queued for boot replay" not in caplog.text
+        assert "Graceful-shutdown state commit stored for boot replay" not in caplog.text
+        db = await repo._ensure_db()
+        async with db.execute(
+            "SELECT transition_cause FROM state_log ORDER BY timestamp DESC LIMIT 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == "shutdown"
+        async with db.execute("SELECT COUNT(*) FROM proxy_commit_outbox") as cursor:
+            outbox_row = await cursor.fetchone()
+        assert outbox_row[0] == 0
         assert tracker.recent(subsystem="state_repository_proxy_transport") == []
     finally:
         await repo.close()

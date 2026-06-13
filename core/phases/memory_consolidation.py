@@ -154,9 +154,12 @@ class MemoryConsolidationPhase(BasePhase):
             if assistant_msgs[-1].get("ephemeral"):
                 latest = ""
             # vResilience: Workaround for slice limitations
+            duplicate_assistant_ids: set[int] = set()
+            latest_assistant_id = id(assistant_msgs[-1])
             for i in range(len(assistant_msgs) - 1):
                 prev = assistant_msgs[i]
                 if latest == str(prev.get("content", "")).strip() and len(latest) > 20:
+                    duplicate_assistant_ids.add(id(prev))
                     logger.warning("🔄 [LOOP DETECTED] Assistant repeated content: '%s...'", latest[:30])
                     new_state.identity.stability = max(0.1, new_state.identity.stability - 0.3)
                     # CRITICAL FIX: Clear the stuck pending_initiatives that caused the loop.
@@ -170,12 +173,21 @@ class MemoryConsolidationPhase(BasePhase):
                             reason="loop_detected_repeated_assistant_output",
                             source="memory_consolidation",
                         )
-                    # Also prune the repeated assistant messages from working memory
-                    # so the next tick starts fresh — keep only the last user message
-                    user_msgs = [m for m in new_state.cognition.working_memory if isinstance(m, dict) and m.get("role") == "user"]
-                    if user_msgs:
-                        new_state.cognition.working_memory = [user_msgs[-1]]
                     break
+            if duplicate_assistant_ids:
+                # Keep the current user-facing turn intact. Memory consolidation
+                # may prune older duplicate assistant messages, but it must not
+                # erase the latest answer and cause the live chat path to see
+                # "no assistant response" after Cortex succeeded.
+                new_state.cognition.working_memory = [
+                    m
+                    for m in new_state.cognition.working_memory
+                    if id(m) == latest_assistant_id or id(m) not in duplicate_assistant_ids
+                ]
+                new_state.response_modifiers["memory_consolidation_loop_signal"] = {
+                    "duplicate_assistant_messages_pruned": len(duplicate_assistant_ids),
+                    "latest_answer_preserved": True,
+                }
 
         # vResilience: Workaround for slice limitations
         start_idx = max(0, len(new_state.cognition.working_memory) - 2)

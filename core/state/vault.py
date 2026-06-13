@@ -50,6 +50,7 @@ class StateVaultActor:
         self._heartbeat_interval = 3.0
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._background_tasks: set[asyncio.Task] = set()
+        self._stop_event: Optional[asyncio.Event] = None
 
     def _track_task(self, coro: Any, *, name: Optional[str] = None) -> asyncio.Task:
         task = get_task_tracker().create_task(coro, name=name)
@@ -72,6 +73,7 @@ class StateVaultActor:
         # Use the full LocalPipeBus power with concurrent handlers
         # This prevents head-of-line blocking (e.g. slow commit vs fast ping)
         self._bus = LocalPipeBus(is_child=True, connection=pipe, start_reader=True)
+        self._stop_event = asyncio.Event()
         try:
             # Register handlers
             self._bus.register_handler("commit", self._process_commit_bus)
@@ -92,9 +94,14 @@ class StateVaultActor:
             self.shm_transport = self.repo._shm
             logger.info("State Vault Actor ONLINE.")
 
-            # Keep process alive while bus is running
+            # Keep process alive while bus is running. The stop handler sets
+            # the event so shutdown does not wait for the next sleep tick.
             while self._is_running and self._bus._is_running:
-                await asyncio.sleep(1.0)
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=1.0)
+                except TimeoutError:
+                    continue
+                break
         finally:
             self._is_running = False
             await self._cancel_background_tasks()
@@ -141,6 +148,10 @@ class StateVaultActor:
 
     async def _process_stop_bus(self, payload: Any, trace_id: Optional[str]):
         self._is_running = False
+        stop_event = getattr(self, "_stop_event", None)
+        if stop_event is not None:
+            stop_event.set()
+        return {"ok": True, "stopping": True}
 
     async def _process_commit_bus(self, payload: Any, trace_id: Optional[str]):
         """Bridge between bus handler and existing commit logic."""

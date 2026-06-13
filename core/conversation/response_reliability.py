@@ -1767,6 +1767,8 @@ def _has_truncated_tail(reply_text: Any) -> bool:
             return True
     if body.endswith(("...", "…", ".", "!", "?", "\"", "'", "”", "’", ")", "]")):
         return False
+    if re.search(r"(?:^|\n)\s*\d+\.\s+\S+", body) or re.search(r"\*\*[^*\n]{2,80}:\*\*", body):
+        return True
     if body.endswith(("-", "—", ":", ";", ",")):
         return True
     match = re.search(r"([A-Za-z]+)$", body)

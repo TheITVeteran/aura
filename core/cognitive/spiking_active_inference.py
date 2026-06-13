@@ -24,6 +24,14 @@ from typing import Any
 import numpy as np
 
 EPS = 1e-12
+_ADVISOR_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 STATE_NAMES: tuple[str, ...] = (
     "overloaded",
@@ -153,6 +161,85 @@ def _safe_float(value: Any, default: float) -> float:
     return parsed
 
 
+def _status_unit(value: Any) -> float:
+    """Normalize affect/status values that may arrive as 0..1 or 0..100."""
+
+    parsed = _safe_float(value, 0.0)
+    if abs(parsed) > 1.0:
+        parsed = parsed / 100.0
+    return _clamp(parsed)
+
+
+def _unified_memory_pressure_features() -> dict[str, float]:
+    """Read the canonical memory pressure gate without making it a hard dependency."""
+
+    try:
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        snapshot = get_memory_pressure_snapshot()
+    except _ADVISOR_RECOVERABLE_ERRORS:
+        return {}
+
+    process_limit = max(0.1, _safe_float(getattr(snapshot, "process_rss_limit_gb", 0.0), 0.0))
+    process_ratio = _clamp(_safe_float(getattr(snapshot, "process_rss_gb", 0.0), 0.0) / process_limit)
+    pressure_pct = _clamp(_safe_float(getattr(snapshot, "pressure_pct", 0.0), 0.0) / 100.0)
+    level = str(getattr(snapshot, "level", "normal") or "normal").lower()
+    level_pressure = {
+        "normal": 0.0,
+        "warning": 0.35,
+        "high": 0.62,
+        "critical": 0.86,
+        "emergency": 1.0,
+    }.get(level, 0.0)
+    return {
+        "memory_pressure": max(pressure_pct, process_ratio, level_pressure),
+        "process_pressure": process_ratio,
+        "system_pressure": pressure_pct,
+        "level_pressure": level_pressure,
+    }
+
+
+def _affective_driver_features() -> dict[str, float]:
+    """Read operational affect drivers from the canonical affect service."""
+
+    try:
+        from core.container import ServiceContainer
+
+        affect = ServiceContainer.get("affect_engine", default=None)
+        if affect is None:
+            return {}
+        if hasattr(affect, "get_status"):
+            status = affect.get_status() or {}
+        elif hasattr(affect, "get_state_sync"):
+            status = affect.get_state_sync() or {}
+        else:
+            return {}
+    except _ADVISOR_RECOVERABLE_ERRORS:
+        return {}
+
+    if not isinstance(status, Mapping):
+        return {}
+    experiential = status.get("experiential")
+    if not isinstance(experiential, Mapping):
+        experiential = {}
+
+    def get(name: str) -> float:
+        if name in status:
+            return _status_unit(status.get(name))
+        return _status_unit(experiential.get(name))
+
+    return {
+        "confused": get("confused"),
+        "curiosity": get("curiosity"),
+        "frustration": get("frustration"),
+        "upset": get("upset"),
+        "longing": get("longing"),
+        "loneliness": get("loneliness"),
+        "pride": get("pride"),
+        "empathy": get("empathy"),
+    }
+
+
 @dataclass(frozen=True)
 class SpikingActiveInferenceConfig:
     dt: float = 0.01
@@ -179,6 +266,8 @@ class NeurodynamicAdvice:
     sampling_bias: dict[str, float]
     governance: dict[str, Any]
     neural_state: dict[str, float]
+    stability: dict[str, float]
+    working_memory: dict[str, Any]
     rationale: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -275,6 +364,275 @@ class MultiCompartmentSpikeResponseModel:
         }
 
 
+class BoundedWorkingMemoryQueueModel:
+    """Deterministic M/M/1-inspired pressure model for attention admission.
+
+    The model does not drop foreground user turns. It estimates how much work a
+    new cognitive event adds, how quickly live cognition can service that work,
+    and whether background work should be deferred while foreground pressure is
+    high. The outputs are advisory pressure signals consumed by routing and
+    sampling, not a separate execution path.
+    """
+
+    def __init__(
+        self,
+        *,
+        arrival_rate: float = 7.0,
+        service_rate: float = 10.0,
+        max_queue: float = 5.0,
+    ) -> None:
+        self.arrival_rate = max(0.1, float(arrival_rate))
+        self.service_rate = max(0.1, float(service_rate))
+        self.max_queue = max(1.0, float(max_queue))
+        self._load = 0.0
+        self._last_update = time.monotonic()
+        self._accepted = 0
+        self._deferred = 0
+        self._compressed = 0
+
+    def observe(
+        self,
+        features: Mapping[str, float],
+        *,
+        is_background: bool,
+    ) -> dict[str, Any]:
+        now = time.monotonic()
+        elapsed = min(5.0, max(0.0, now - self._last_update))
+        self._last_update = now
+
+        energy = _clamp(_safe_float(features.get("energy"), 0.7))
+        existing_memory_pressure = _clamp(_safe_float(features.get("memory_pressure"), 0.0))
+        effective_service = max(
+            0.5,
+            self.service_rate * max(0.25, energy) * (1.0 - 0.45 * existing_memory_pressure),
+        )
+        self._load = max(0.0, self._load - effective_service * elapsed)
+
+        incoming_pressure = _clamp(
+            0.30 * _safe_float(features.get("urgency"), 0.0)
+            + 0.24 * _safe_float(features.get("tool_pressure"), 0.0)
+            + 0.18 * _safe_float(features.get("error_pressure"), 0.0)
+            + 0.12 * _safe_float(features.get("novelty"), 0.0)
+            + 0.10 * existing_memory_pressure
+            + 0.06 * (1.0 - _safe_float(features.get("clarity"), 1.0))
+        )
+        effective_arrival = max(0.1, self.arrival_rate * (0.35 + 1.15 * incoming_pressure))
+        utilization = _clamp(effective_arrival / effective_service, 0.0, 2.5)
+        work_units = 1.0 + (self.max_queue - 1.0) * incoming_pressure
+        projected = self._load + work_units
+        overflow = max(0.0, projected - self.max_queue)
+        overload_pressure = _clamp(overflow / self.max_queue)
+
+        if is_background and overflow > 0.0:
+            self._deferred += 1
+            admitted = False
+            admission = "defer_background"
+            self._load = min(self.max_queue, self._load)
+        else:
+            admitted = True
+            if overflow > 0.0:
+                self._compressed += 1
+                admission = "compress_foreground"
+            else:
+                admission = "accept"
+            self._accepted += 1
+            self._load = min(self.max_queue, projected)
+
+        queue_load = _clamp(self._load / self.max_queue)
+        rho = min(0.99, max(0.0, utilization))
+        wait_s = (rho / max(EPS, 1.0 - rho)) * (1.0 / effective_service)
+
+        return {
+            "admitted": admitted,
+            "admission": admission,
+            "queue_load": round(queue_load, 4),
+            "overload_pressure": round(max(overload_pressure, _clamp(utilization - 1.0)), 4),
+            "incoming_pressure": round(incoming_pressure, 4),
+            "arrival_rate": round(effective_arrival, 4),
+            "service_rate": round(effective_service, 4),
+            "utilization": round(utilization, 4),
+            "expected_wait_s": round(wait_s, 4),
+            "accepted": self._accepted,
+            "deferred": self._deferred,
+            "compressed": self._compressed,
+            "max_queue": self.max_queue,
+        }
+
+    def snapshot(self) -> dict[str, Any]:
+        queue_load = _clamp(self._load / self.max_queue)
+        return {
+            "admitted": True,
+            "admission": "idle",
+            "queue_load": round(queue_load, 4),
+            "overload_pressure": 0.0,
+            "incoming_pressure": 0.0,
+            "arrival_rate": round(self.arrival_rate, 4),
+            "service_rate": round(self.service_rate, 4),
+            "utilization": round(self.arrival_rate / max(EPS, self.service_rate), 4),
+            "expected_wait_s": round(
+                (
+                    min(0.99, self.arrival_rate / max(EPS, self.service_rate))
+                    / max(EPS, 1.0 - min(0.99, self.arrival_rate / max(EPS, self.service_rate)))
+                )
+                * (1.0 / self.service_rate),
+                4,
+            ),
+            "accepted": self._accepted,
+            "deferred": self._deferred,
+            "compressed": self._compressed,
+            "max_queue": self.max_queue,
+        }
+
+
+class SoftmaxCompetitionStabilityProbe:
+    """Local Jacobian probe for softmax action competition stability.
+
+    This is the runtime-safe version of bifurcation/Jacobian analysis: no SciPy,
+    no symbolic algebra, no plotting stack, and no long sweeps in the live path.
+    It analyzes the current action logits/probabilities and returns bounded
+    instability signals that can steer metacognition and sampling.
+    """
+
+    @staticmethod
+    def analyze(
+        scores: Sequence[float],
+        probabilities: Sequence[float],
+        *,
+        temperature: float,
+        features: Mapping[str, float] | None = None,
+    ) -> dict[str, float]:
+        logits = np.asarray(scores, dtype=np.float64).ravel()
+        p = _normalize(np.asarray(probabilities, dtype=np.float64).ravel())
+        if logits.size == 0 or p.size == 0 or logits.size != p.size:
+            return {
+                "spectral_radius": 0.0,
+                "entropy": 0.0,
+                "winner_margin": 1.0,
+                "decision_instability": 0.0,
+                "ode_spectral_abscissa": 0.0,
+                "fixed_point_residual": 0.0,
+                "bifurcation_pressure": 0.0,
+            }
+        temp = max(EPS, float(temperature))
+        jacobian = (np.diag(p) - np.outer(p, p)) / temp
+        try:
+            eigenvalues = np.linalg.eigvals(jacobian)
+            spectral_radius = float(np.max(np.abs(eigenvalues))) if eigenvalues.size else 0.0
+        except (np.linalg.LinAlgError, ValueError, FloatingPointError):
+            spectral_radius = 0.0
+        ordered = np.sort(p)
+        if ordered.size >= 2:
+            winner_margin = float(ordered[-1] - ordered[-2])
+        else:
+            winner_margin = 1.0
+        entropy = _entropy01(p)
+        decision_instability = _clamp(
+            0.52 * entropy
+            + 0.33 * (1.0 - _clamp(winner_margin))
+            + 0.15 * _clamp(spectral_radius / 1.25)
+        )
+        ode = SoftmaxODEStabilityProbe.analyze(
+            logits,
+            p,
+            temperature=temp,
+            features=features,
+        )
+        decision_instability = _clamp(
+            decision_instability + 0.18 * ode["bifurcation_pressure"]
+        )
+        return {
+            "spectral_radius": round(_clamp(spectral_radius, 0.0, 5.0), 4),
+            "entropy": round(entropy, 4),
+            "winner_margin": round(_clamp(winner_margin), 4),
+            "decision_instability": round(decision_instability, 4),
+            **ode,
+        }
+
+
+class SoftmaxODEStabilityProbe:
+    """Bounded local ODE/Jacobian probe for live action competition.
+
+    The attachment's full analysis script is useful offline, but symbolic
+    Jacobians, root finding, and bifurcation sweeps do not belong in foreground
+    chat. This probe keeps the causal part: it evaluates one local nonlinear
+    competition model around the current action distribution and reports whether
+    the live action landscape is drifting toward an unstable attractor.
+    """
+
+    @staticmethod
+    def analyze(
+        scores: Sequence[float],
+        probabilities: Sequence[float],
+        *,
+        temperature: float,
+        features: Mapping[str, float] | None = None,
+    ) -> dict[str, float]:
+        logits = np.asarray(scores, dtype=np.float64).ravel()
+        p0 = _normalize(np.asarray(probabilities, dtype=np.float64).ravel())
+        if logits.size == 0 or p0.size == 0 or logits.size != p0.size:
+            return {
+                "ode_spectral_abscissa": 0.0,
+                "fixed_point_residual": 0.0,
+                "bifurcation_pressure": 0.0,
+            }
+
+        features = features or {}
+        urgency = _clamp(_safe_float(features.get("urgency"), 0.3))
+        novelty = _clamp(_safe_float(features.get("novelty"), 0.0))
+        error_pressure = _clamp(_safe_float(features.get("error_pressure"), 0.0))
+        memory_pressure = _clamp(_safe_float(features.get("memory_pressure"), 0.0))
+        clarity = _clamp(_safe_float(features.get("clarity"), 0.7))
+
+        lambda_ = 0.10 + 0.32 * urgency + 0.18 * novelty
+        damping = 0.92 + 0.35 * error_pressure + 0.30 * memory_pressure
+        px = 1.0 + 0.45 * (1.0 - clarity) + 0.25 * error_pressure
+        k = 0.05 + 0.10 * memory_pressure
+        coupling = 0.05 + 0.22 * novelty + 0.16 * (1.0 - clarity)
+        temp = max(EPS, float(temperature))
+
+        def rhs(b: np.ndarray) -> np.ndarray:
+            b = np.clip(np.nan_to_num(b, nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0)
+            local_logits = logits + coupling * (b - p0)
+            local_p = _softmax(local_logits, temp)
+            growth = lambda_ * b * (b + k)
+            inhibition = b * damping * (local_p ** px)
+            return growth - inhibition
+
+        b = np.clip(p0, 0.0, 1.0)
+        f0 = rhs(b)
+        residual = float(np.linalg.norm(f0) / max(1.0, math.sqrt(float(b.size))))
+
+        jacobian = np.zeros((b.size, b.size), dtype=np.float64)
+        step = 1e-5
+        for idx in range(b.size):
+            shifted = b.copy()
+            shifted[idx] = _clamp(shifted[idx] + step)
+            jacobian[:, idx] = (rhs(shifted) - f0) / step
+        try:
+            eig = np.linalg.eigvals(jacobian)
+            spectral_abscissa = float(np.max(np.real(eig))) if eig.size else 0.0
+        except (np.linalg.LinAlgError, FloatingPointError, ValueError):
+            spectral_abscissa = 0.0
+
+        stress = _clamp(
+            0.34 * urgency
+            + 0.26 * novelty
+            + 0.22 * error_pressure
+            + 0.18 * memory_pressure
+            + 0.16 * (1.0 - clarity)
+        )
+        positive_drift = _clamp((spectral_abscissa + 0.25) / 1.25)
+        fixed_residual = _clamp(residual / 0.35)
+        bifurcation_pressure = _clamp(
+            0.46 * positive_drift + 0.24 * fixed_residual + 0.30 * stress
+        )
+        return {
+            "ode_spectral_abscissa": round(_clamp(spectral_abscissa, -5.0, 5.0), 4),
+            "fixed_point_residual": round(fixed_residual, 4),
+            "bifurcation_pressure": round(bifurcation_pressure, 4),
+        }
+
+
 class SpikingActiveInferenceAdvisor:
     """General cognitive advisor combining SRM dynamics and active inference."""
 
@@ -287,6 +645,8 @@ class SpikingActiveInferenceAdvisor:
         self._bias = np.zeros(len(ACTION_NAMES), dtype=np.float64)
         self._counts = np.zeros(len(ACTION_NAMES), dtype=np.int64)
         self._srm = MultiCompartmentSpikeResponseModel(config=self.config)
+        self._working_memory = BoundedWorkingMemoryQueueModel()
+        self._stability_probe = SoftmaxCompetitionStabilityProbe()
         self._last_advice: NeurodynamicAdvice | None = None
 
     def advise(
@@ -300,6 +660,11 @@ class SpikingActiveInferenceAdvisor:
     ) -> NeurodynamicAdvice:
         with self._lock:
             features = self._features_from_runtime(objective, context=context, state=state)
+            working_memory = self._working_memory.observe(
+                features,
+                is_background=is_background,
+            )
+            features = self._apply_working_memory_pressure(features, working_memory)
             x = np.array([features[name] for name in FEATURE_NAMES], dtype=np.float64)
             likelihood = self._state_likelihood(x)
             self._belief = _normalize(0.72 * self._belief + 0.28 * likelihood)
@@ -312,12 +677,19 @@ class SpikingActiveInferenceAdvisor:
                 + 0.25 * features["tool_pressure"],
             )
             scores = self._score_actions(x, uncertainty, is_background=is_background)
-            probabilities = _softmax(scores, self._temperature(features, uncertainty))
+            temperature = self._temperature(features, uncertainty)
+            probabilities = _softmax(scores, temperature)
+            stability = self._stability_probe.analyze(
+                scores,
+                probabilities,
+                temperature=temperature,
+                features=features,
+            )
             action_index = int(np.argmax(probabilities))
             self._counts[action_index] += 1
             action = ACTION_NAMES[action_index]
-            routing_bias = self._routing_bias(action, features, uncertainty, is_background)
-            sampling_bias = self._sampling_bias(action, features, uncertainty)
+            routing_bias = self._routing_bias(action, features, uncertainty, is_background, stability)
+            sampling_bias = self._sampling_bias(action, features, uncertainty, stability)
             advice = NeurodynamicAdvice(
                 advice_id=self._advice_id(objective, origin),
                 timestamp=time.time(),
@@ -344,7 +716,16 @@ class SpikingActiveInferenceAdvisor:
                     "origin": str(origin or "system")[:64],
                 },
                 neural_state=neural_state,
-                rationale=self._rationale(action, features, uncertainty, routing_bias),
+                stability=stability,
+                working_memory=working_memory,
+                rationale=self._rationale(
+                    action,
+                    features,
+                    uncertainty,
+                    routing_bias,
+                    working_memory,
+                    stability,
+                ),
             )
             self._last_advice = advice
             return advice
@@ -389,6 +770,12 @@ class SpikingActiveInferenceAdvisor:
                         for name, p in zip(STATE_NAMES, self._belief, strict=True)
                     },
                     "neural_state": self._srm.summary(),
+                    "stability": self._stability_probe.analyze(
+                        np.zeros(len(ACTION_NAMES)),
+                        np.ones(len(ACTION_NAMES)) / len(ACTION_NAMES),
+                        temperature=1.0,
+                    ),
+                    "working_memory": self._working_memory.snapshot(),
                 }
             data = self._last_advice.to_dict()
             data["status"] = "active"
@@ -414,11 +801,31 @@ class SpikingActiveInferenceAdvisor:
         if x[5] > 0.55:
             scores[ACTION_NAMES.index("repair_first")] += 0.45 * x[5]
             scores[ACTION_NAMES.index("reduce_load")] += 0.25 * x[5]
+        if x[7] > 0.55:
+            scores[ACTION_NAMES.index("reduce_load")] += 0.55 * x[7]
         if x[0] < 0.35:
             scores[ACTION_NAMES.index("ask_clarification")] += 0.35 * (1.0 - x[0])
         if x[3] > 0.60 and x[4] < 0.50:
             scores[ACTION_NAMES.index("seek_information")] += 0.30 * x[3]
         return scores
+
+    def _apply_working_memory_pressure(
+        self,
+        features: Mapping[str, float],
+        working_memory: Mapping[str, Any],
+    ) -> dict[str, float]:
+        updated = {name: _clamp(_safe_float(features.get(name), 0.0)) for name in FEATURE_NAMES}
+        queue_load = _clamp(_safe_float(working_memory.get("queue_load"), 0.0))
+        overload = _clamp(_safe_float(working_memory.get("overload_pressure"), 0.0))
+        pressure = max(queue_load, overload)
+        if pressure <= 0.0:
+            return updated
+        updated["memory_pressure"] = max(updated["memory_pressure"], pressure)
+        updated["error_pressure"] = max(updated["error_pressure"], 0.55 * overload)
+        updated["urgency"] = max(updated["urgency"], 0.35 + 0.40 * pressure)
+        updated["energy"] = min(updated["energy"], 1.0 - 0.42 * pressure)
+        updated["clarity"] = _clamp(updated["clarity"] - 0.22 * pressure)
+        return updated
 
     def _temperature(self, features: Mapping[str, float], uncertainty: float) -> float:
         base = 0.58 + 0.20 * features["novelty"] - 0.18 * features["error_pressure"]
@@ -431,7 +838,9 @@ class SpikingActiveInferenceAdvisor:
         features: Mapping[str, float],
         uncertainty: float,
         is_background: bool,
+        stability: Mapping[str, float],
     ) -> dict[str, Any]:
+        decision_instability = _clamp(_safe_float(stability.get("decision_instability"), 0.0))
         return {
             "prefer_direct_answer": action == "answer_directly" and uncertainty < 0.55,
             "prefer_deep_reasoning": action == "plan_deeply",
@@ -441,11 +850,24 @@ class SpikingActiveInferenceAdvisor:
                 action == "ask_clarification"
                 or (features["clarity"] < 0.34 and features["tool_pressure"] < 0.45)
                 or (uncertainty >= 0.62 and features["tool_pressure"] < 0.45)
+                or (decision_instability >= 0.78 and features["tool_pressure"] < 0.45)
             ),
-            "reduce_load": action == "reduce_load" or features["energy"] < 0.22,
-            "repair_first": action == "repair_first",
+            "reduce_load": (
+                action == "reduce_load"
+                or features["energy"] < 0.26
+                or features["memory_pressure"] >= 0.62
+            ),
+            "repair_first": action == "repair_first" or features["error_pressure"] >= 0.68,
             "metacognition_depth": round(
-                _clamp(0.35 + 0.45 * uncertainty + 0.35 * features["error_pressure"], 0.0, 1.0),
+                _clamp(
+                    0.35
+                    + 0.45 * uncertainty
+                    + 0.35 * features["error_pressure"]
+                    + 0.18 * features["memory_pressure"]
+                    + 0.18 * decision_instability,
+                    0.0,
+                    1.0,
+                ),
                 4,
             ),
             "tool_pressure": round(features["tool_pressure"], 4),
@@ -457,23 +879,42 @@ class SpikingActiveInferenceAdvisor:
         action: str,
         features: Mapping[str, float],
         uncertainty: float,
+        stability: Mapping[str, float],
     ) -> dict[str, float]:
-        reduce_load = action == "reduce_load" or features["energy"] < 0.22
+        reduce_load = (
+            action == "reduce_load"
+            or features["energy"] < 0.26
+            or features["memory_pressure"] >= 0.62
+        )
         concise_clarification = action == "ask_clarification"
+        memory_budget = max(0.34, 1.0 - 0.55 * features["memory_pressure"])
+        decision_instability = _clamp(_safe_float(stability.get("decision_instability"), 0.0))
         return {
             "temperature_delta": round(
                 _clamp(
                     -0.10 * uncertainty
                     - 0.10 * features["error_pressure"]
+                    - 0.06 * decision_instability
                     + 0.06 * features["novelty"],
                     -0.20,
                     0.12,
                 ),
                 4,
             ),
-            "top_p_delta": round(_clamp(-0.10 * uncertainty - 0.04 * features["error_pressure"], -0.20, 0.04), 4),
+            "top_p_delta": round(
+                _clamp(
+                    -0.10 * uncertainty
+                    - 0.04 * features["error_pressure"]
+                    - 0.04 * decision_instability,
+                    -0.20,
+                    0.04,
+                ),
+                4,
+            ),
             "max_tokens_factor": round(
-                0.62 if reduce_load else (0.75 if concise_clarification else 1.0),
+                min(memory_budget, 0.62)
+                if reduce_load
+                else (0.75 if concise_clarification else memory_budget),
                 4,
             ),
             "repetition_penalty_delta": round(
@@ -511,6 +952,8 @@ class SpikingActiveInferenceAdvisor:
         memory_pressure = 0.62 if _MEMORY_RE.search(text) else 0.0
         social_pressure = 0.55 if _SOCIAL_RE.search(text) else 0.0
         urgency = 0.72 if any(token in lowered for token in ("now", "urgent", "immediately", "top priority", "fix")) else 0.30
+        memory_features = _unified_memory_pressure_features()
+        affect_features = _affective_driver_features()
 
         modifiers = getattr(state, "response_modifiers", {}) if state is not None else {}
         if not isinstance(modifiers, Mapping):
@@ -520,6 +963,34 @@ class SpikingActiveInferenceAdvisor:
         energy = _safe_float(context.get("homeostatic_energy"), energy)
         anomaly = _safe_float(modifiers.get("anomaly_threat_level"), 0.0)
         free_energy = _safe_float(modifiers.get("fe", modifiers.get("free_energy", 0.0)), 0.0)
+        runtime_memory_pressure = _clamp(memory_features.get("memory_pressure", 0.0))
+        if runtime_memory_pressure > 0.0:
+            memory_pressure = max(memory_pressure, runtime_memory_pressure)
+            error_pressure = max(error_pressure, 0.72 * runtime_memory_pressure)
+            urgency = max(urgency, 0.38 + 0.42 * runtime_memory_pressure)
+            energy = min(energy, 1.0 - 0.90 * runtime_memory_pressure)
+        affect_confused = _clamp(affect_features.get("confused", 0.0))
+        affect_frustration = _clamp(
+            max(affect_features.get("frustration", 0.0), affect_features.get("upset", 0.0))
+        )
+        affect_curiosity = _clamp(affect_features.get("curiosity", 0.0))
+        affect_social_need = _clamp(
+            max(
+                affect_features.get("longing", 0.0),
+                affect_features.get("loneliness", 0.0),
+                affect_features.get("empathy", 0.0) * 0.75,
+            )
+        )
+        if affect_confused:
+            uncertainty = _clamp(uncertainty + 0.26 * affect_confused)
+            error_pressure = max(error_pressure, 0.30 * affect_confused)
+        if affect_frustration:
+            error_pressure = max(error_pressure, 0.55 * affect_frustration)
+            urgency = max(urgency, 0.36 + 0.32 * affect_frustration)
+        if affect_curiosity:
+            research_pressure = max(research_pressure, 0.30 * affect_curiosity)
+        if affect_social_need:
+            social_pressure = max(social_pressure, 0.45 * affect_social_need)
         if bool(context.get("desktop_cognitive_engine_required")):
             tool_pressure = max(tool_pressure, 0.08)
         if modifiers.get("intent_type") == "SKILL" or modifiers.get("matched_skills"):
@@ -528,9 +999,16 @@ class SpikingActiveInferenceAdvisor:
         novelty = _clamp(
             research_pressure
             + (0.28 if any(word in lowered for word in ("new", "novel", "unknown", "idea", "explore")) else 0.0)
+            + 0.24 * affect_curiosity
             + 0.20 * uncertainty
         )
-        clarity = _clamp(1.0 - uncertainty - 0.35 * error_pressure + 0.10 * social_pressure)
+        clarity = _clamp(
+            1.0
+            - uncertainty
+            - 0.35 * error_pressure
+            - 0.22 * affect_confused
+            + 0.10 * social_pressure
+        )
         return {
             "clarity": clarity,
             "energy": _clamp(energy),
@@ -548,6 +1026,8 @@ class SpikingActiveInferenceAdvisor:
         features: Mapping[str, float],
         uncertainty: float,
         routing_bias: Mapping[str, Any],
+        working_memory: Mapping[str, Any],
+        stability: Mapping[str, float],
     ) -> list[str]:
         rationale = [
             f"selected={action}",
@@ -560,6 +1040,15 @@ class SpikingActiveInferenceAdvisor:
             rationale.append("tool effects must go through governed capability path")
         if routing_bias.get("reduce_load"):
             rationale.append("load reduction requested by low energy or overload belief")
+        if working_memory.get("admission") in {"compress_foreground", "defer_background"}:
+            rationale.append(
+                "working memory admission requested "
+                f"{working_memory.get('admission')} at load={working_memory.get('queue_load')}"
+            )
+        if _safe_float(stability.get("decision_instability"), 0.0) >= 0.70:
+            rationale.append(
+                "softmax Jacobian indicated unstable action competition; metacognition increased"
+            )
         return rationale
 
     @staticmethod
@@ -604,8 +1093,11 @@ __all__ = [
     "ACTION_NAMES",
     "FEATURE_NAMES",
     "STATE_NAMES",
+    "BoundedWorkingMemoryQueueModel",
     "MultiCompartmentSpikeResponseModel",
     "NeurodynamicAdvice",
+    "SoftmaxCompetitionStabilityProbe",
+    "SoftmaxODEStabilityProbe",
     "SpikingActiveInferenceAdvisor",
     "SpikingActiveInferenceConfig",
     "get_spiking_active_inference_advisor",

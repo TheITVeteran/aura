@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import subprocess
 import time
 import uuid
 from collections import deque
@@ -33,6 +34,7 @@ _PERCEPTION_DAEMON_RECOVERABLE_ERRORS = (
     TimeoutError,
     TypeError,
     ValueError,
+    subprocess.SubprocessError,
 )
 
 

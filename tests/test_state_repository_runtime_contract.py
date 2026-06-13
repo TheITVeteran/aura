@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from types import SimpleNamespace
 
@@ -103,7 +104,7 @@ async def test_shutdown_proxy_commit_bus_degraded_defers_instead_of_raising(tmp_
     assert transport is None
     assert transport_probe.calls == 1
     messages = [record.getMessage() for record in caplog.records]
-    assert any("commit will be queued for boot replay" in msg for msg in messages)
+    assert any("attempting shutdown snapshot fallback" in msg for msg in messages)
     assert any("Graceful-shutdown state commit stored for boot replay" in msg for msg in messages)
 
     await repo.close()
@@ -176,6 +177,21 @@ async def test_state_vault_actor_closes_repository_on_shutdown(monkeypatch):
     assert actor.repo.closed is True
     assert actor._bus.stopped is True
     assert shm.closed is True
+
+
+@pytest.mark.asyncio
+async def test_state_vault_stop_handler_wakes_actor_loop_immediately():
+    from core.state.vault import StateVaultActor
+
+    actor = StateVaultActor.__new__(StateVaultActor)
+    actor._is_running = True
+    actor._stop_event = asyncio.Event()
+
+    result = await StateVaultActor._process_stop_bus(actor, {}, "trace-stop")
+
+    assert result == {"ok": True, "stopping": True}
+    assert actor._is_running is False
+    assert actor._stop_event.is_set() is True
 
 
 def test_state_vault_hard_exit_guard_is_disabled_for_tests(monkeypatch):

@@ -650,19 +650,36 @@ class RobustOrchestrator(
             logger.info("🚩 [ORCHESTRATOR] running flag set to True.")
             self.status.start_time = time.time()
 
-            # Wire graceful shutdown signals so persistence hooks fire on SIGTERM
-            try:
-                from core.graceful_shutdown import GracefulShutdown
+            # Wire graceful shutdown signals so persistence hooks fire on SIGTERM.
+            # Desktop launches install their own outer signal handler in aura_main;
+            # letting this inner hook replace it makes SIGTERM tear down shared
+            # services before the runtime owner can flush final state.
+            desktop_signal_owner = os.getenv("AURA_LAUNCHED_FROM_APP", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            } or os.getenv("AURA_EXTERNAL_GUI_OWNER", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            if desktop_signal_owner:
+                logger.info("🛡️ Desktop shutdown signal owner preserved in aura_main.")
+            else:
+                try:
+                    from core.graceful_shutdown import GracefulShutdown
 
-                GracefulShutdown.setup_signals()
-                logger.info("🛡️ Graceful shutdown signals wired (persistence on SIGTERM).")
-            except _ORCHESTRATOR_RECOVERABLE_ERRORS as exc:
-                _record_main_degradation(
-                    exc,
-                    action="continued startup after graceful-shutdown signal wiring failed",
-                )
+                    GracefulShutdown.setup_signals()
+                    logger.info("🛡️ Graceful shutdown signals wired (persistence on SIGTERM).")
+                except _ORCHESTRATOR_RECOVERABLE_ERRORS as exc:
+                    _record_main_degradation(
+                        exc,
+                        action="continued startup after graceful-shutdown signal wiring failed",
+                    )
 
-                logger.warning("Graceful shutdown signal setup failed: %s", exc, exc_info=True)
+                    logger.warning("Graceful shutdown signal setup failed: %s", exc, exc_info=True)
 
             if lightweight_test_boot:
                 logger.info(

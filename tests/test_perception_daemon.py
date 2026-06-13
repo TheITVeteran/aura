@@ -1,5 +1,6 @@
 import asyncio
 import pytest
+import subprocess
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -163,3 +164,32 @@ async def test_perception_daemon_file_scan_runs_off_event_loop(monkeypatch, tmp_
     await daemon._main_perceptual_loop()
 
     assert calls == [(tmp_path, 0.1)]
+
+
+@pytest.mark.asyncio
+async def test_perception_daemon_active_window_timeout_does_not_kill_main_loop(monkeypatch):
+    daemon = PerceptionDaemon(check_interval_s=0.1)
+    checks = {"active_window": 0, "clipboard": 0}
+
+    async def _fake_sleep(_delay):
+        if checks["active_window"] >= 1:
+            daemon.running = False
+
+    async def _timeout_window():
+        checks["active_window"] += 1
+        raise subprocess.TimeoutExpired(cmd=["osascript"], timeout=1.5)
+
+    async def _clipboard_probe():
+        checks["clipboard"] += 1
+        return None
+
+    monkeypatch.setattr("core.perception.perception_daemon.asyncio.sleep", _fake_sleep)
+    monkeypatch.setattr(daemon, "_check_active_window", _timeout_window)
+    monkeypatch.setattr(daemon, "_check_clipboard", _clipboard_probe)
+    daemon.running = True
+
+    await daemon._main_perceptual_loop()
+
+    assert checks["active_window"] == 1
+    assert checks["clipboard"] == 0
+    assert daemon.running is False

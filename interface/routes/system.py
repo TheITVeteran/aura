@@ -12,6 +12,7 @@ import math
 import os
 import subprocess
 import sys
+import threading
 import time
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -85,6 +86,8 @@ router = APIRouter()
 _DESKTOP_ACCESS_CACHE_TTL_S = _env_positive_float("AURA_DESKTOP_ACCESS_CACHE_TTL_S", 30.0)
 _SSE_IDLE_HEARTBEAT_S = _env_positive_float("AURA_SSE_IDLE_HEARTBEAT_S", 15.0)
 _SSE_QUEUE_BACKLOG_LIMIT = max(1, _safe_int(os.getenv("AURA_SSE_QUEUE_BACKLOG_LIMIT", ""), 100))
+_HEALTH_PROBE_TIMEOUT_S = _env_positive_float("AURA_HEALTH_PROBE_TIMEOUT_S", 2.5)
+_HEALTH_PROBE_LOCK = threading.Lock()
 _desktop_access_cache: dict[str, Any] = {
     "captured_at": 0.0,
     "payload": None,
@@ -224,6 +227,74 @@ def _conversation_lane_user_message_resilient(lane: dict[str, Any], **kwargs) ->
 _NATIVE_CONVERSATION_LANE_STATUS_WRAPPER = _collect_conversation_lane_status
 _NATIVE_CONVERSATION_LANE_STANDBY_WRAPPER = _conversation_lane_is_standby
 _NATIVE_CONVERSATION_LANE_MESSAGE_WRAPPER = _conversation_lane_user_message
+
+
+def _build_boot_health_payload_sync(*, is_gui_proxy: bool) -> tuple[dict[str, Any], int]:
+    """Build boot health with a single-flight guard for HTTP readiness probes."""
+
+    acquired = _HEALTH_PROBE_LOCK.acquire(False)
+    if not acquired:
+        raise TimeoutError("health_probe_already_running")
+    try:
+        orch = ServiceContainer.get("orchestrator", default=None)
+        rt = _get_runtime_state_safe()
+        conversation_lane = _collect_conversation_lane_status_resilient()
+        try:
+            return build_boot_health_snapshot(
+                orch,
+                rt,
+                is_gui_proxy=is_gui_proxy,
+                conversation_lane=conversation_lane,
+            )
+        except _SYSTEM_RECOVERABLE_ERRORS as exc:
+            record_degradation("system", exc)
+            logger.error("Boot health snapshot failed: %s", exc, exc_info=True)
+            return (
+                {
+                    "ready": False,
+                    "status": "degraded",
+                    "issues": [str(exc)],
+                    "conversation_lane": conversation_lane,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                },
+                503,
+            )
+    finally:
+        _HEALTH_PROBE_LOCK.release()
+
+
+async def _build_boot_health_payload_bounded(*, is_gui_proxy: bool) -> tuple[dict[str, Any], int]:
+    """Return a boot-health snapshot without allowing probes to hang the HTTP loop."""
+
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_build_boot_health_payload_sync, is_gui_proxy=is_gui_proxy),
+            timeout=_HEALTH_PROBE_TIMEOUT_S,
+        )
+    except TimeoutError as exc:
+        failure_reason = str(exc) or "health_probe_timeout"
+        if failure_reason not in {"health_probe_already_running"}:
+            failure_reason = "health_probe_timeout"
+        record_degradation(
+            "system",
+            exc,
+            severity="warning",
+            action="failed health readiness probe closed instead of hanging HTTP response",
+            enforce_failure_policy=False,
+        )
+        return (
+            {
+                "ready": False,
+                "status": "unhealthy",
+                "issues": [failure_reason],
+                "required_probes": {"all_passed": False},
+                "blockers": [failure_reason],
+                "boot_phase": failure_reason,
+                "conversation_ready": False,
+                "timestamp": datetime.now(tz=UTC).isoformat(),
+            },
+            503,
+        )
 
 
 def _get_runtime_state_safe() -> dict[str, Any]:
@@ -771,6 +842,35 @@ def _collect_neurodynamic_status() -> dict[str, Any]:
                 "tool_pressure": _safe_float(features.get("tool_pressure"), 0.0),
                 "error_pressure": _safe_float(features.get("error_pressure"), 0.0),
                 "memory_pressure": _safe_float(features.get("memory_pressure"), 0.0),
+            }
+        stability = snapshot.get("stability")
+        if isinstance(stability, dict):
+            payload["stability"] = {
+                "spectral_radius": _safe_float(stability.get("spectral_radius"), 0.0),
+                "entropy": _safe_float(stability.get("entropy"), 0.0),
+                "winner_margin": _safe_float(stability.get("winner_margin"), 0.0),
+                "decision_instability": _safe_float(
+                    stability.get("decision_instability"), 0.0
+                ),
+                "ode_spectral_abscissa": _safe_float(
+                    stability.get("ode_spectral_abscissa"), 0.0
+                ),
+                "fixed_point_residual": _safe_float(
+                    stability.get("fixed_point_residual"), 0.0
+                ),
+                "bifurcation_pressure": _safe_float(
+                    stability.get("bifurcation_pressure"), 0.0
+                ),
+            }
+        working_memory = snapshot.get("working_memory")
+        if isinstance(working_memory, dict):
+            payload["working_memory"] = {
+                "admission": str(working_memory.get("admission") or "unknown"),
+                "admitted": bool(working_memory.get("admitted", True)),
+                "queue_load": _safe_float(working_memory.get("queue_load"), 0.0),
+                "overload_pressure": _safe_float(working_memory.get("overload_pressure"), 0.0),
+                "utilization": _safe_float(working_memory.get("utilization"), 0.0),
+                "expected_wait_s": _safe_float(working_memory.get("expected_wait_s"), 0.0),
             }
     except _SYSTEM_RECOVERABLE_ERRORS as exc:
         record_degradation("system", exc)
@@ -1860,27 +1960,9 @@ async def api_ui_bootstrap(request: Request = None):
 
 @router.get("/health/boot")
 async def api_boot_health():
-    orch = ServiceContainer.get("orchestrator", default=None)
-    rt = _get_runtime_state_safe()
-    conversation_lane = _collect_conversation_lane_status_resilient()
-    try:
-        payload, status_code = build_boot_health_snapshot(
-            orch,
-            rt,
-            is_gui_proxy=os.environ.get("AURA_GUI_PROXY") == "1",
-            conversation_lane=conversation_lane,
-        )
-    except _SYSTEM_RECOVERABLE_ERRORS as exc:
-        record_degradation("system", exc)
-        logger.error("Boot health snapshot failed: %s", exc, exc_info=True)
-        payload = {
-            "ready": False,
-            "status": "degraded",
-            "issues": [str(exc)],
-            "conversation_lane": conversation_lane,
-            "timestamp": datetime.now(tz=UTC).isoformat(),
-        }
-        status_code = 503
+    payload, status_code = await _build_boot_health_payload_bounded(
+        is_gui_proxy=os.environ.get("AURA_GUI_PROXY") == "1",
+    )
     return JSONResponse(payload, status_code=status_code)
 
 
@@ -1901,14 +1983,8 @@ async def api_heartbeat():
     when the kernel, inference, memory, scheduler, and tool-governance probes
     pass through the canonical boot health contract.
     """
-    orch = ServiceContainer.get("orchestrator", default=None)
-    rt = _get_runtime_state_safe()
-    conversation_lane = _collect_conversation_lane_status_resilient()
-    payload, status_code = build_boot_health_snapshot(
-        orch,
-        rt,
+    payload, status_code = await _build_boot_health_payload_bounded(
         is_gui_proxy=False,
-        conversation_lane=conversation_lane,
     )
     required_probes = payload.get("required_probes", {})
     probe_blockers = _heartbeat_probe_blockers(required_probes)

@@ -484,6 +484,58 @@ def test_health_pulse_reports_conversation_warmup_as_booting_not_failure(monkeyp
     assert "❌ conversation_lane" not in pulse
 
 
+def test_health_pulse_reports_active_generation_as_working_not_failure(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+    from core.subsystem_audit import SubsystemAudit
+
+    required_probes = {
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = True
+    monkeypatch.setattr("core.subsystem_audit.is_shutdown_requested", lambda: False)
+    monkeypatch.setattr(
+        "core.runtime.health_contract.runtime_health_report",
+        lambda: {
+            "healthy": True,
+            "status": "healthy",
+            "required_probes": required_probes,
+            "failures": {"critical": [], "important": [], "optional": []},
+        },
+    )
+
+    class ActiveGenerationGate:
+        @staticmethod
+        def get_conversation_status():
+            return {
+                "conversation_ready": False,
+                "state": "ready",
+                "active_generations": 1,
+                "current_request_started_at": time.time(),
+                "readiness_blockers": ["active_generation_in_flight"],
+                "last_failure_reason": "active_generation_in_flight",
+            }
+
+    ServiceContainer.register_instance("inference_gate", ActiveGenerationGate())
+    try:
+        audit = SubsystemAudit()
+        for name in audit.SUBSYSTEMS:
+            audit.heartbeat(name)
+
+        pulse = audit.emit_pulse()
+    finally:
+        ServiceContainer.clear()
+
+    assert "Required probes: PASS" in pulse
+    assert "Subsystem audit: PASS" in pulse
+    assert "Conversation: WORKING" in pulse
+    assert "Runtime: HEALTHY" in pulse
+    assert "Runtime: DEGRADED" not in pulse
+    assert "Conversation: FAIL" not in pulse
+    assert "❌ conversation_lane" not in pulse
+
+
 def test_health_pulse_reports_shutdown_without_failure_noise(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
@@ -599,7 +651,67 @@ def test_supervision_tree_reaps_cooperative_actor_without_escalation():
     assert tree._actors["state_vault"].process is None
 
 
-def test_supervision_tree_closes_pipe_before_graceful_actor_join():
+def test_supervision_tree_sends_stop_before_pipe_close_fallback():
+    import json
+
+    from core.supervisor.tree import ActorSpec, ManagedActor, SupervisionTree
+
+    class StopAwareProcess:
+        def __init__(self, pipe):
+            self.pipe = pipe
+            self.alive = True
+            self.join_calls = []
+            self.terminate_calls = 0
+            self.kill_calls = 0
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=0.0):
+            self.join_calls.append(timeout)
+            if self.pipe.sent_stop:
+                self.alive = False
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+        def kill(self):
+            self.kill_calls += 1
+
+    class FakePipe:
+        def __init__(self):
+            self.closed = False
+            self.sent = []
+            self.sent_stop = False
+
+        def send(self, raw):
+            self.sent.append(raw)
+            payload = json.loads(raw)
+            self.sent_stop = payload["type"] == "stop"
+
+        def close(self):
+            self.closed = True
+
+    pipe = FakePipe()
+    process = StopAwareProcess(pipe)
+    tree = SupervisionTree()
+    tree._actors["state_vault"] = ManagedActor(
+        spec=ActorSpec(name="state_vault", entry_point=lambda: None),
+        process=process,
+        pipe=pipe,
+    )
+
+    tree.stop_actor("state_vault", graceful_timeout=0.1)
+
+    assert pipe.sent_stop is True
+    assert pipe.closed is True
+    assert process.join_calls == [0.1]
+    assert process.terminate_calls == 0
+    assert process.kill_calls == 0
+    assert tree._actors["state_vault"].process is None
+
+
+def test_supervision_tree_closes_pipe_when_stop_message_is_unavailable():
     from core.supervisor.tree import ActorSpec, ManagedActor, SupervisionTree
 
     class PipeExitProcess:
@@ -643,7 +755,7 @@ def test_supervision_tree_closes_pipe_before_graceful_actor_join():
     tree.stop_actor("state_vault", graceful_timeout=0.1)
 
     assert pipe.closed is True
-    assert process.join_calls == [0.1]
+    assert process.join_calls == [0.1, 0.1]
     assert process.terminate_calls == 0
     assert process.kill_calls == 0
     assert tree._actors["state_vault"].process is None
@@ -742,6 +854,121 @@ def test_supervision_tree_stop_all_gives_actor_shutdown_grace(monkeypatch):
     assert process.terminate_calls == 0
     assert process.kill_calls == 0
     assert tree._actors["state_vault"].process is None
+
+
+def test_supervision_tree_stop_all_quietly_joins_exited_actor_children(monkeypatch, caplog):
+    import core.supervisor.tree as tree_module
+    from core.supervisor.tree import SupervisionTree
+
+    class ExitedChild:
+        name = "AuraActor:state_vault"
+
+        def __init__(self):
+            self.join_calls = []
+            self.terminate_calls = 0
+            self.kill_calls = 0
+
+        def is_alive(self):
+            return False
+
+        def join(self, timeout=0.0):
+            self.join_calls.append(timeout)
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+        def kill(self):
+            self.kill_calls += 1
+
+    child = ExitedChild()
+    monkeypatch.setattr(tree_module.multiprocessing, "active_children", lambda: [child])
+
+    with caplog.at_level(logging.INFO, logger="Aura.Supervisor"):
+        SupervisionTree().stop_all()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert child.join_calls == [0.0]
+    assert child.terminate_calls == 0
+    assert child.kill_calls == 0
+    assert not any("Reaping orphaned actor" in message for message in messages)
+
+
+def test_supervision_tree_stop_all_terminates_live_actor_children(monkeypatch):
+    import core.supervisor.tree as tree_module
+    from core.supervisor.tree import SupervisionTree
+
+    class LiveChild:
+        name = "AuraActor:state_vault"
+
+        def __init__(self):
+            self.alive = True
+            self.join_calls = []
+            self.terminate_calls = 0
+            self.kill_calls = 0
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=0.0):
+            self.join_calls.append(timeout)
+            if self.terminate_calls:
+                self.alive = False
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+        def kill(self):
+            self.kill_calls += 1
+            self.alive = False
+
+    child = LiveChild()
+    monkeypatch.setattr(tree_module.multiprocessing, "active_children", lambda: [child])
+
+    SupervisionTree().stop_all()
+
+    assert child.terminate_calls == 1
+    assert child.kill_calls == 0
+    assert child.join_calls == [0.75, 1.0]
+
+
+def test_supervision_tree_stop_all_gracefully_joins_late_actor_children(monkeypatch, caplog):
+    import core.supervisor.tree as tree_module
+    from core.supervisor.tree import SupervisionTree
+
+    class LateExitingChild:
+        name = "AuraActor:state_vault"
+
+        def __init__(self):
+            self.alive = True
+            self.join_calls = []
+            self.terminate_calls = 0
+            self.kill_calls = 0
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout=0.0):
+            self.join_calls.append(timeout)
+            if timeout and timeout > 0:
+                self.alive = False
+
+        def terminate(self):
+            self.terminate_calls += 1
+
+        def kill(self):
+            self.kill_calls += 1
+
+    child = LateExitingChild()
+    monkeypatch.setattr(tree_module.multiprocessing, "active_children", lambda: [child])
+
+    with caplog.at_level(logging.INFO, logger="Aura.Supervisor"):
+        SupervisionTree().stop_all()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert child.join_calls == [0.75]
+    assert child.terminate_calls == 0
+    assert child.kill_calls == 0
+    assert not any("Stopping active actor child after supervisor shutdown" in message for message in messages)
 
 
 def test_dream_coordinator_defers_dream_work_during_proof_runs(monkeypatch):

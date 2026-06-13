@@ -69,6 +69,44 @@ async def test_memory_consolidation_skips_ephemeral_fallback_messages():
 
 
 @pytest.mark.asyncio
+async def test_memory_consolidation_loop_detection_preserves_latest_live_answer():
+    container = SimpleNamespace(get=lambda name, default=None: default)
+    phase = MemoryConsolidationPhase(container)
+
+    state = AuraState.default()
+    repeated = (
+        "I would use browser research to compare sources, then draft the findings "
+        "into a document and preserve the receipt trail."
+    )
+    state.cognition.working_memory.extend(
+        [
+            {"role": "user", "content": "What tools can you use?", "timestamp": 1.0},
+            {"role": "assistant", "content": repeated, "timestamp": 2.0},
+            {"role": "user", "content": "How would you use browser research and a document?", "timestamp": 3.0},
+            {"role": "assistant", "content": repeated, "timestamp": 4.0},
+        ]
+    )
+
+    new_state = await phase.execute(
+        state,
+        objective="How would you use browser research and a document?",
+    )
+
+    assert new_state.cognition.working_memory[-2]["role"] == "user"
+    assert new_state.cognition.working_memory[-1]["role"] == "assistant"
+    assert new_state.cognition.working_memory[-1]["content"] == repeated
+    assert sum(
+        1
+        for message in new_state.cognition.working_memory
+        if message.get("role") == "assistant" and message.get("content") == repeated
+    ) == 1
+    assert (
+        new_state.response_modifiers["memory_consolidation_loop_signal"]["latest_answer_preserved"]
+        is True
+    )
+
+
+@pytest.mark.asyncio
 async def test_memory_consolidation_commits_completed_turn_to_memory_facade():
     commit_interaction = AsyncCallRecorder()
     memory_facade = SimpleNamespace(commit_interaction=commit_interaction)

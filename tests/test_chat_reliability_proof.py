@@ -533,6 +533,50 @@ def test_dangling_article_tail_is_rejected_as_truncated_user_reply():
     assert "truncated_tail" in assessment.reasons
 
 
+def test_substantive_truncated_tail_can_be_completed_without_model_retry():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes.chat import _complete_repairable_truncated_reply
+
+    prompt = "How would you keep RAM bounded while using local inference?"
+    draft = (
+        "I would keep RAM bounded by running one foreground generation at a time, "
+        "keeping background work off the 32B lane, trimming context before long "
+        "turns, and"
+    )
+
+    original = assess_user_facing_reply(prompt, draft)
+    repaired = _complete_repairable_truncated_reply(prompt, draft)
+    repaired_assessment = assess_user_facing_reply(prompt, repaired)
+
+    assert original.retryable
+    assert original.reasons == ("truncated_tail",)
+    assert repaired.endswith(".")
+    assert " and." not in repaired
+    assert not repaired_assessment.retryable
+    assert repaired_assessment.reasons == ()
+
+
+def test_numbered_list_without_terminal_punctuation_is_treated_as_truncated_tail():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes.chat import _complete_repairable_truncated_reply
+
+    prompt = "How would you keep RAM bounded while using local inference?"
+    draft = (
+        "A few strategies:\n"
+        "1. Use local storage for large inactive data.\n"
+        "2. Process data incrementally.\n"
+        "3. Use a fixed-size memory pool"
+    )
+
+    assessment = assess_user_facing_reply(prompt, draft)
+    repaired = _complete_repairable_truncated_reply(prompt, draft)
+
+    assert assessment.retryable
+    assert assessment.reasons == ("truncated_tail",)
+    assert repaired.endswith("pool.")
+    assert not assess_user_facing_reply(prompt, repaired).retryable
+
+
 def test_autonomous_follow_through_has_safe_specific_floor():
     from core.conversation.response_reliability import assess_user_facing_reply
     from core.synthesis import deterministic_user_facing_floor

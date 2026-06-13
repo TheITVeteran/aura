@@ -68,3 +68,29 @@ async def test_minimal_boot_profile(monkeypatch):
         # Reset ServiceContainer locked state
         from core.container import ServiceContainer
         ServiceContainer._locked = False
+
+
+@pytest.mark.asyncio
+async def test_stop_orchestrator_can_flush_before_global_shutdown_flag():
+    """Desktop shutdown must let the runtime owner flush state before API teardown."""
+
+    from core.runtime.shutdown_coordinator import clear_shutdown_request, is_shutdown_requested
+
+    clear_shutdown_request()
+    calls: list[str] = []
+
+    class FakeOrchestrator:
+        async def stop(self):
+            calls.append("stop")
+
+    try:
+        await _stop_orchestrator_once(
+            FakeOrchestrator(),
+            reason="desktop_exit",
+            request_global_shutdown=False,
+        )
+
+        assert calls == ["stop"]
+        assert is_shutdown_requested() is False
+    finally:
+        clear_shutdown_request()

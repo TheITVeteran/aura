@@ -31,6 +31,19 @@ _CONVERSATION_BOOT_TRANSIENT_BLOCKERS = {
     "warmup_in_flight",
 }
 
+_CONVERSATION_BUSY_BLOCKERS = {
+    "active_generation_in_flight",
+    "foreground_generation_active",
+}
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return parsed if parsed == parsed else default
+
 
 def _conversation_lane_is_standby(lane: dict[str, Any] | None) -> bool:
     lane = dict(lane or {})
@@ -83,6 +96,37 @@ def _conversation_lane_is_boot_warming(lane: dict[str, Any] | None) -> bool:
     }:
         return True
     return state in {"initializing", "starting", "warming"} and not reason
+
+
+def _conversation_lane_is_busy(lane: dict[str, Any] | None) -> bool:
+    lane = dict(lane or {})
+    if bool(lane.get("conversation_ready", False)) or _conversation_lane_is_standby(lane):
+        return False
+
+    state = str(lane.get("state", "") or "").strip().lower()
+    if state in {"critical", "dead", "failed"}:
+        return False
+
+    blockers_raw = lane.get("readiness_blockers", [])
+    blockers_seq = blockers_raw if isinstance(blockers_raw, (list, tuple, set)) else [blockers_raw]
+    blockers = {
+        str(item or "").strip().lower()
+        for item in blockers_seq
+        if str(item or "").strip()
+    }
+    reason = str(
+        lane.get("last_failure_reason", "")
+        or lane.get("last_error", "")
+        or ""
+    ).strip().lower()
+    active_generations = _safe_float(lane.get("active_generations", 0.0), 0.0) > 0.0
+    request_started = _safe_float(lane.get("current_request_started_at", 0.0), 0.0) > 0.0
+    foreground_owned = bool(lane.get("foreground_owned", False))
+    busy_blocker = bool(blockers & _CONVERSATION_BUSY_BLOCKERS) or reason in _CONVERSATION_BUSY_BLOCKERS
+    return (
+        state in {"ready", "recovering", "warming", "starting"}
+        and (active_generations or request_started or foreground_owned or busy_blocker)
+    )
 
 
 def _collect_conversation_lane_status() -> dict[str, Any]:
@@ -328,7 +372,8 @@ class SubsystemAudit:
         conversation_lane = _collect_conversation_lane_status()
         conversation_ready = bool(conversation_lane.get("conversation_ready", False))
         conversation_standby = _conversation_lane_is_standby(conversation_lane)
-        conversation_ok = bool(conversation_ready or conversation_standby)
+        conversation_busy = _conversation_lane_is_busy(conversation_lane)
+        conversation_ok = bool(conversation_ready or conversation_standby or conversation_busy)
         conversation_state = str(conversation_lane.get("state", "unknown") or "unknown").lower()
         contract_status = str(contract.get("status", "unknown") if isinstance(contract, dict) else "unknown")
         shutdown_active = is_shutdown_requested()
@@ -358,7 +403,13 @@ class SubsystemAudit:
         else:
             probe_status = "PASS" if required_ok else "FAIL"
             conversation_status = (
-                "PASS" if conversation_ready else "STANDBY" if conversation_standby else "FAIL"
+                "PASS"
+                if conversation_ready
+                else "WORKING"
+                if conversation_busy
+                else "STANDBY"
+                if conversation_standby
+                else "FAIL"
             )
         if contract_healthy and required_ok and subsystem_ok and conversation_ok:
             runtime_status = contract_status.upper()
