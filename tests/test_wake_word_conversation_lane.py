@@ -317,7 +317,8 @@ class PerceptualPumpTranscriptFidelityTest(unittest.TestCase):
             battery_charging = True
 
             def record_event(self, *args, **kwargs):
-                pass
+                self.events = getattr(self, "events", [])
+                self.events.append((args, kwargs))
 
         ws = FakeWS()
         pump = PerceptualPump()

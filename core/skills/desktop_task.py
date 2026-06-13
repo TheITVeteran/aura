@@ -15,7 +15,7 @@ from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
 from core.skills.os_affordances import detect_os_settings, get_affordance
 
-# Placeholder URL resolved at execution time from the most recent
+# Sentinel URL resolved at execution time from the most recent
 # fetch_topic_image receipt — derivation cannot know the source page
 # before the fetch runs ("show me where you found it").
 FETCHED_IMAGE_SOURCE_TOKEN = "aura://fetched-image-source"
@@ -772,8 +772,8 @@ class DesktopTaskSkill(BaseSkill):
             return ""
         text = str(text or "").strip()
         # The router guarantees non-empty (diagnostic fallback); a synthesis
-        # that is a diagnostic stub or dispatch narration is not document
-        # content, so fall back to the raw research section.
+        # that is a degraded diagnostic line or dispatch narration is not
+        # document content, so fall back to the raw research section.
         if not text or self._looks_like_dispatch_narration(text):
             return ""
         if re.search(r"\b(?:diagnostic|fallback|unavailable|all (?:remote )?endpoints? failed)\b", text.lower()) and len(text) < 200:
@@ -1503,7 +1503,7 @@ class DesktopTaskSkill(BaseSkill):
         for index, step in enumerate(steps, start=1):
             target = step.target
             if step.action == "open_url":
-                # Resolve the fetched-image source placeholder from the
+                # Resolve the fetched-image source sentinel from the
                 # fetch receipt — the source page is only known at runtime.
                 if isinstance(target, dict) and target.get("url") == FETCHED_IMAGE_SOURCE_TOKEN:
                     if not last_image_page_url:

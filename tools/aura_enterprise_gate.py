@@ -92,6 +92,10 @@ ALLOW_SUBPROCESS = {
     "tools/build_release_manifest.py",
     "tools/run_proof_step.py",
     "tools/memory_sentinel.py",
+    # Demo proof driver: reads back the wallpaper via osascript OUTSIDE
+    # Aura's gateways on purpose — independent verification must not route
+    # through the runtime it is verifying.
+    "tools/browser_research_demo_proof.py",
     # Legitimate production modules requiring OS/subprocess interface
     "core/architect/safety_gate.py",
     "core/architect/shadow_workspace.py",

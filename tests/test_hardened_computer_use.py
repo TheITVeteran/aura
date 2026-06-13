@@ -613,7 +613,10 @@ async def test_hotkey_dispatch_failure_carries_real_error(monkeypatch):
 
     monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
 
+    scripts_seen = []
+
     def refusing_applescript(script, *, timeout=10):
+        scripts_seen.append(script)
         raise RuntimeError("osascript is not allowed to send keystrokes")
 
     monkeypatch.setattr(skill, "_run_applescript", refusing_applescript)
@@ -621,6 +624,7 @@ async def test_hotkey_dispatch_failure_carries_real_error(monkeypatch):
     result = await skill.execute({"action": "hotkey", "target": "command+n"}, {})
     assert result["ok"] is False
     assert "not allowed to send keystrokes" in result["error"]
+    assert scripts_seen  # the keystroke dispatch was attempted before refusal
 
 
 @pytest.mark.asyncio
