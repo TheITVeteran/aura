@@ -1,0 +1,1 @@
+{"at": 1781341094.609486, "elapsed_s": 0.05, "step": "preflight_process", "ok": false, "peak_rss_mb": 0.0, "summary": "aura_main already running (pids [30164]); refusing to double-boot"}

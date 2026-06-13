@@ -13,8 +13,8 @@
   },
   "react_agent": {
     "status": "RUN",
-    "pass_rate": 0.2,
+    "pass_rate": 0.6,
     "total_tasks": 10,
-    "passed": 2
+    "passed": 6
   }
 }
