@@ -341,6 +341,18 @@ class ComputerUseSkill(BaseSkill):
         "up": 126,
     }
 
+    def _frontmost_app_name(self) -> str:
+        """Cheap frontmost-app query — no accessibility tree walk."""
+        try:
+            return self._run_applescript(
+                'tell application "System Events" to get name of first '
+                "application process whose frontmost is true",
+                timeout=5,
+            ).strip()
+        except (TimeoutError, RuntimeError) as exc:
+            logger.debug("Frontmost app query failed: %s", exc)
+            return ""
+
     def _send_hotkey_system_events(self, keys: list[str]) -> str:
         """Send a keyboard shortcut via System Events; raise with the real
         error on refusal (e.g. missing Automation/Accessibility grants)."""
@@ -1333,19 +1345,27 @@ end tell
                 }
 
             elif action == "hotkey":
+                # On browser surfaces the 'entire contents' accessibility
+                # walk is pathological (a loading Google Docs tab held
+                # System Events busy so long the keystroke itself timed
+                # out). Browsers skip the screen-text reads; the governed
+                # dispatch receipt is the honest evidence there.
+                front_app = await asyncio.to_thread(self._frontmost_app_name)
+                screen_reads_allowed = front_app not in _ALLOWED_URL_BROWSERS
                 pre_state = ""
-                try:
-                    pre_state = await asyncio.to_thread(self._read_screen_text_macos)
-                except (
-                    TimeoutError,
-                    RuntimeError,
-                    OSError,
-                    AttributeError,
-                    TypeError,
-                    ValueError,
-                    subprocess.SubprocessError,
-                ) as exc:
-                    logger.debug("Pre-state screen read failed before hotkey: %s", exc)
+                if screen_reads_allowed:
+                    try:
+                        pre_state = await asyncio.to_thread(self._read_screen_text_macos)
+                    except (
+                        TimeoutError,
+                        RuntimeError,
+                        OSError,
+                        AttributeError,
+                        TypeError,
+                        ValueError,
+                        subprocess.SubprocessError,
+                    ) as exc:
+                        logger.debug("Pre-state screen read failed before hotkey: %s", exc)
                 keys = [k.strip().lower() for k in params.target.split("+") if k.strip()]
                 # System Events dispatch, not pyautogui: CGEvent posts are
                 # silently dropped without Accessibility grants, which left
@@ -1364,18 +1384,19 @@ end tell
                     }
                 await asyncio.sleep(0.4)
                 post_state = ""
-                try:
-                    post_state = await asyncio.to_thread(self._read_screen_text_macos)
-                except (
-                    TimeoutError,
-                    RuntimeError,
-                    OSError,
-                    AttributeError,
-                    TypeError,
-                    ValueError,
-                    subprocess.SubprocessError,
-                ) as exc:
-                    logger.debug("Post-state screen read failed after hotkey: %s", exc)
+                if screen_reads_allowed:
+                    try:
+                        post_state = await asyncio.to_thread(self._read_screen_text_macos)
+                    except (
+                        TimeoutError,
+                        RuntimeError,
+                        OSError,
+                        AttributeError,
+                        TypeError,
+                        ValueError,
+                        subprocess.SubprocessError,
+                    ) as exc:
+                        logger.debug("Post-state screen read failed after hotkey: %s", exc)
                 screen_verifiable = not (
                     self._screen_text_unavailable(pre_state)
                     and self._screen_text_unavailable(post_state)

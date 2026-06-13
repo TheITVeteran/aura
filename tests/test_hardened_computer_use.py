@@ -698,6 +698,44 @@ async def test_hotkey_screen_shift_still_required_when_screen_readable(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_hotkey_skips_screen_reads_on_browser_surface(monkeypatch):
+    """Part-2 round 2: a loading Google Docs tab held the 'entire contents'
+    accessibility walk busy long enough that the keystroke itself timed
+    out after 8s. When a browser is frontmost the screen-text reads are
+    skipped entirely and the governed dispatch receipt is the evidence."""
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    scripts = []
+
+    def recording_applescript(script, *, timeout=10):
+        scripts.append(script)
+        if "frontmost is true" in script:
+            return "Google Chrome"
+        if "System Events" in script and "keystroke" in script:
+            return ""
+        # If the entire-contents walk is ever reached on a browser, fail
+        # loudly so the regression is caught — it must NOT be called.
+        raise AssertionError("screen-text walk must be skipped on browser surfaces")
+
+    monkeypatch.setattr(skill, "_run_applescript", recording_applescript)
+
+    async def controlled_sleep(secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    result = await skill.execute({"action": "hotkey", "target": "command+v"}, {})
+    assert result["ok"] is True
+    assert result["dispatch"].startswith("system_events:")
+    assert not any("entire contents" in s for s in scripts)
+
+
+@pytest.mark.asyncio
 async def test_open_url_targets_named_browser(monkeypatch):
     """Bryan's Google session lives in Chrome: open_url honors a browser
     in the step target via 'open -a', bounded to a known browser set."""

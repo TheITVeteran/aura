@@ -3519,6 +3519,7 @@ class CapabilityEngine(AuraBaseModule):
         """Executes a skill method with a retry loop for transient failures."""
         last_error = "Unknown"
         attempt = 0
+        output: Any = None
         for attempt in range(self.max_retries):
             try:
                 if attempt > 0:
@@ -3560,7 +3561,14 @@ class CapabilityEngine(AuraBaseModule):
                 if not self._is_transient(last_error):
                     break
 
-        return {"ok": False, "error": last_error, "retries": attempt}
+        failure: dict[str, Any] = {"ok": False, "error": last_error, "retries": attempt}
+        if isinstance(output, dict):
+            # Preserve the skill's structured failure evidence (step
+            # receipts, failure details, step counts) — flattening it
+            # erased the receipts reply surfaces need and reduced every
+            # structured failure to 'unknown' / 'Completed 0/0 steps'.
+            failure = {**output, **failure}
+        return failure
 
     async def _call_method(self, skill: Any, inputs: dict[str, Any]) -> Any:
         """Calls the skill method, handling both sync and async."""
@@ -3635,7 +3643,29 @@ class CapabilityEngine(AuraBaseModule):
     def _extract_error(self, out: Any) -> str:
         """Extracts an error message from skill output."""
         if isinstance(out, dict):
-            return out.get("error") or out.get("message") or "Failed"
+            direct = out.get("error") or out.get("message")
+            if direct:
+                return str(direct)
+            # Structured step failures (desktop_task et al.) carry the real
+            # cause in failures[0] — 'Failed' hid every step error.
+            failures = out.get("failures")
+            if isinstance(failures, list) and failures:
+                first = failures[0]
+                if isinstance(first, dict):
+                    detail = (
+                        first.get("error")
+                        or first.get("effect_evidence")
+                        or first.get("status")
+                    )
+                    action = first.get("action")
+                    if detail:
+                        return (
+                            f"step '{action}' failed: {detail}" if action else str(detail)
+                        )
+            summary = out.get("summary")
+            if summary:
+                return str(summary)
+            return "Failed"
         return "Error"
 
     def _is_transient(self, err: str) -> bool:
