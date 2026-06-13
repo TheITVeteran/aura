@@ -131,6 +131,85 @@ _RISK_RULES: List[Tuple[str, RiskLevel, str]] = [
     (r"click|scroll|hotkey", RiskLevel.LOW, "UI interaction"),
 ]
 
+_MODALITY_PATTERNS: dict[str, tuple[str, ...]] = {
+    "camera": (
+        r"\bcamera\b",
+        r"\bcameras\b",
+        r"\bphoto\b",
+        r"\bphotos\b",
+        r"\bvision\b",
+        r"\bvisual\s+capture\b",
+    ),
+    "microphone": (
+        r"\bmic\b",
+        r"\bmicrophone\b",
+        r"\blisten\b",
+        r"\bvoice\b",
+        r"\bspeech\b",
+    ),
+    "screen_recording": (
+        r"\bscreen\b",
+        r"\bscreenshot\b",
+        r"\bocr\b",
+        r"\bcapture\b",
+        r"\bscreen\s+record(?:ing)?\b",
+    ),
+    "file_delete": (
+        r"\bdelete\b",
+        r"\bremove\b",
+        r"\btrash\b",
+    ),
+    "file_write": (
+        r"\bwrite\b",
+        r"\bcreate\b",
+        r"\bsave\b",
+        r"\bexport\b",
+        r"\bmove\b",
+    ),
+    "network_read": (
+        r"\bdownload\b",
+        r"\bfetch\b",
+        r"\brequest\b",
+        r"\bsearch\b",
+    ),
+    "network_write": (
+        r"\bpost\b",
+        r"\bsend\b",
+        r"\bupload\b",
+        r"\bshare\b",
+        r"\bpublish\b",
+    ),
+    "email": (
+        r"\bemail\b",
+        r"\bmail\b",
+    ),
+    "cloud_write": (
+        r"\bgoogle\s+doc\b",
+        r"\bcloud\s+doc\b",
+        r"\bdrive\b",
+    ),
+    "clipboard": (
+        r"\bclipboard\b",
+        r"\bpaste\b",
+        r"\bcopy\b",
+    ),
+    "system_settings": (
+        r"\bwallpaper\b",
+        r"\bvolume\b",
+        r"\bappearance\b",
+        r"\bdark\s+mode\b",
+        r"\bsetting\b",
+        r"\bsettings\b",
+    ),
+    "app_control": (
+        r"\blaunch\b",
+        r"\bopen\b",
+        r"\bactivate\b",
+        r"\bfocus\b",
+        r"\bapp\b",
+    ),
+}
+
 
 # ---------------------------------------------------------------------------
 # The model
@@ -299,30 +378,9 @@ class PermissionRiskModel:
     def _detect_modality(self, action: str, target: str) -> str:
         """Detect which modality an action touches."""
         combined = f"{action} {target}".lower()
-        if any(w in combined for w in ("camera", "photo", "vision")):
-            return "camera"
-        if any(w in combined for w in ("mic", "microphone", "listen", "voice", "speech")):
-            return "microphone"
-        if any(w in combined for w in ("screen", "screenshot", "ocr", "capture")):
-            return "screen_recording"
-        if any(w in combined for w in ("delete", "remove", "trash")):
-            return "file_delete"
-        if any(w in combined for w in ("write", "create", "save", "export", "move")):
-            return "file_write"
-        if any(w in combined for w in ("download", "fetch", "request", "search")):
-            return "network_read"
-        if any(w in combined for w in ("post", "send", "upload", "share", "publish")):
-            return "network_write"
-        if any(w in combined for w in ("email", "mail")):
-            return "email"
-        if any(w in combined for w in ("google doc", "cloud doc", "drive")):
-            return "cloud_write"
-        if any(w in combined for w in ("clipboard", "paste", "copy")):
-            return "clipboard"
-        if any(w in combined for w in ("wallpaper", "volume", "appearance", "dark mode", "setting")):
-            return "system_settings"
-        if any(w in combined for w in ("launch", "open", "activate", "focus", "app")):
-            return "app_control"
+        for modality, patterns in _MODALITY_PATTERNS.items():
+            if any(re.search(pattern, combined, re.IGNORECASE) for pattern in patterns):
+                return modality
         return "app_control"  # default
 
     def _check_modality(self, modality: str) -> bool:

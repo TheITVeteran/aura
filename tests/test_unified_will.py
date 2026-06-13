@@ -75,6 +75,33 @@ class TestAllDomains:
         )
         assert decision.is_approved()
 
+    def test_response_text_can_discuss_risky_actions_without_permission_block(
+        self, will, monkeypatch
+    ):
+        """Permission regexes govern side effects, not ordinary response text."""
+
+        from core.capabilities.permission_model import PermissionRiskModel
+
+        pm = PermissionRiskModel()
+        monkeypatch.setattr(
+            "core.will.ServiceContainer.get",
+            lambda name, default=None: pm if name == "permission_model" else default,
+        )
+
+        decision = will.decide(
+            content=(
+                "Hypothetically, I can discuss package install order, camera "
+                "availability, file uploads, and deletion risks without doing them."
+            ),
+            source="message_handler:user",
+            domain=ActionDomain.RESPONSE,
+            priority=1.0,
+        )
+
+        assert decision.is_approved()
+        assert "permission_blocked" not in decision.constraints
+        assert "requires_user_confirmation" not in decision.constraints
+
     def test_initiative_low_priority_deferred(self, will):
         """Low-priority initiatives should be deferred."""
         decision = will.decide(

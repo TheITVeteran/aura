@@ -635,7 +635,7 @@ class UnifiedWill:
         # ── 9c. PERMISSION RISK MODEL GATE ───────────────────────────
         try:
             pm = ServiceContainer.get("permission_model", default=None)
-            if pm:
+            if pm and self._permission_model_applies(domain):
                 pm_decision = pm.check_permission(domain.value, content, context)
                 if not pm_decision.approved:
                     if pm_decision.requires_confirmation:
@@ -1173,6 +1173,27 @@ class UnifiedWill:
             ActionDomain.EXPLORATION,
             ActionDomain.SEMANTIC_WEIGHT_UPDATE,
             ActionDomain.BELIEF_UPDATE,
+            ActionDomain.ENVIRONMENT_ACTION,
+            ActionDomain.EXTERNAL_ACTION,
+            ActionDomain.FILE_WRITE,
+            ActionDomain.NETWORK_CALL,
+            ActionDomain.CLOUD_CALL,
+            ActionDomain.CLOUD_FALLBACK,
+            ActionDomain.CI_CD,
+            ActionDomain.SELF_MODIFICATION,
+        }
+
+    @staticmethod
+    def _permission_model_applies(domain: ActionDomain) -> bool:
+        """Return True when the domain represents an actual side effect.
+
+        PermissionRiskModel is an action gate. User-facing text can discuss
+        packages, cameras, uploads, files, or deletion without executing any of
+        them; actual execution is still enforced at the tool/filesystem/network
+        and self-modification domains where the side effect is possible.
+        """
+        return domain in {
+            ActionDomain.TOOL_EXECUTION,
             ActionDomain.ENVIRONMENT_ACTION,
             ActionDomain.EXTERNAL_ACTION,
             ActionDomain.FILE_WRITE,

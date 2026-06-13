@@ -105,3 +105,13 @@ def test_permission_model_blocks_destructive_action() -> None:
     assert decision.risk_level == RiskLevel.BLOCKED
     assert decision.approved is False
     assert "BLOCKED" in decision.reason
+
+
+def test_permission_model_modality_detection_uses_word_boundaries() -> None:
+    model = PermissionRiskModel()
+
+    assert model._detect_modality("response", "ZeroDivisionError in average(nums)") == "app_control"
+    assert model._detect_modality("response", "Provisioning dependency graph") == "app_control"
+    assert model._detect_modality("response", "shared reference mechanism") == "app_control"
+    assert model._detect_modality("response", "camera capture request") == "camera"
+    assert model._detect_modality("response", "upload this file") == "network_write"
