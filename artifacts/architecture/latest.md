@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v2`
 Root: `<AURA_ROOT>`
-Generated: `1781351141.574229`
+Generated: `1781351407.990057`
 
 ## Summary
 
 - Subsystems: 146
 - Python files: 1922
-- Python lines: 523568
+- Python lines: 523621
 - Dependency edges: 797
 - ServiceContainer `.get()` calls: 1596
 - ServiceContainer registrations: 386
@@ -45,7 +45,7 @@ graph TD
     being["being<br/>25 files, 5716 lines"]
     conversation["conversation<br/>9 files, 5443 lines"]
     learning["learning<br/>28 files, 7271 lines"]
-    phases["phases<br/>29 files, 17776 lines"]
+    phases["phases<br/>29 files, 17829 lines"]
     world["world<br/>24 files, 1483 lines"]
     actuators["actuators<br/>9 files, 2127 lines"]
     autonomy["autonomy<br/>22 files, 7721 lines"]
@@ -974,7 +974,7 @@ graph TD
 | memory | 88 | 19919 | 799891 | 18 | 34 |
 | orchestrator | 42 | 19212 | 848184 | 125 | 9 |
 | skills | 79 | 19057 | 774164 | 31 | 6 |
-| phases | 29 | 17776 | 806035 | 33 | 7 |
+| phases | 29 | 17829 | 808637 | 33 | 7 |
 | agency | 36 | 14779 | 598692 | 29 | 18 |
 | adaptation | 26 | 12319 | 492341 | 21 | 14 |
 | resilience | 54 | 12130 | 487860 | 17 | 27 |

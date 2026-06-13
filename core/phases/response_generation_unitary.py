@@ -333,6 +333,19 @@ class UnitaryResponsePhase(Phase):
             )
             return None
 
+    @classmethod
+    def _strict_symbolic_repair_envelope(cls, objective: Any, validation: Any) -> str:
+        """Build a repair envelope from prompt-derived constraints when available."""
+        if cls._response_contract_attr(validation, "valid", None) is not False:
+            return ""
+        derived = str(cls._response_contract_attr(validation, "derived_answer", "") or "").strip()
+        if not derived:
+            return ""
+        return cls._canonicalize_strict_answer_envelope(
+            objective,
+            f"<answer>{derived}</answer>",
+        )
+
     @staticmethod
     def _strip_answer_envelope_instruction(text: Any) -> str:
         """Remove XML-envelope formatting instructions before raw model solving.
@@ -5235,6 +5248,46 @@ class UnitaryResponsePhase(Phase):
                         solver or "symbolic",
                         reason,
                     )
+                    prompt_derived_repair = self._strict_symbolic_repair_envelope(
+                        objective,
+                        validation,
+                    )
+                    if prompt_derived_repair:
+                        repaired_value = self._strict_answer_value_from_envelope(
+                            prompt_derived_repair
+                        )
+                        repaired_validation = self._validate_strict_answer_symbolically(
+                            objective,
+                            repaired_value,
+                        )
+                        repaired_verdict = self._response_contract_attr(
+                            repaired_validation,
+                            "valid",
+                            None,
+                        )
+                        if repaired_verdict is True:
+                            new_state.response_modifiers["strict_proof_symbolic_validation"] = {
+                                "stage": f"{stage}_prompt_derived_repair",
+                                "solver": self._response_contract_attr(
+                                    repaired_validation,
+                                    "solver",
+                                    None,
+                                ),
+                                "reason": self._response_contract_attr(
+                                    repaired_validation,
+                                    "reason",
+                                    "",
+                                ),
+                            }
+                            logger.info(
+                                "UnitaryResponse: repaired strict proof candidate from %s via prompt-derived %s solver.",
+                                stage,
+                                self._response_contract_attr(repaired_validation, "solver", None)
+                                or solver
+                                or "symbolic",
+                            )
+                            return prompt_derived_repair
+
                     repaired_envelope = await _repair_symbolically_rejected_answer(
                         current_envelope,
                         stage=stage,

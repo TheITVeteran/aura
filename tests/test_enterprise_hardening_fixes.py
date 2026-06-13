@@ -517,10 +517,16 @@ def test_strict_proof_response_path_symbolically_rejects_contradictions():
     assert validation is not None
     assert validation.valid is False
     assert validation.solver == "unique_assignment"
+    assert (
+        UnitaryResponsePhase._strict_symbolic_repair_envelope(prompt, validation)
+        == "<answer>Alice</answer>"
+    )
 
     source = inspect.getsource(UnitaryResponsePhase.execute)
     assert "_ensure_symbolic_consistency(" in source
     assert "strict_proof_answer_symbolic_repair" in source
+    assert "_strict_symbolic_repair_envelope(" in source
+    assert "prompt_derived_repair" in source
     assert "strict_proof_symbolic_validation_failed" in source
 
 
