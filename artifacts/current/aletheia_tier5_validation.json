@@ -1,7 +1,7 @@
 {
   "artifact_dir": "artifacts/aletheia",
   "domain_family_count": 30,
-  "generated_at": 1781320502.594476,
+  "generated_at": 1781345032.1811829,
   "metrics": {
     "average_world_score": 0.990664,
     "critical_source_data_destruction_events": 0.0,

@@ -2,13 +2,13 @@
 
 Schema: `aura.architecture.dependency_map.v2`
 Root: `<AURA_ROOT>`
-Generated: `1781339398.813731`
+Generated: `1781343896.8945532`
 
 ## Summary
 
 - Subsystems: 146
-- Python files: 1921
-- Python lines: 523004
+- Python files: 1922
+- Python lines: 523205
 - Dependency edges: 797
 - ServiceContainer `.get()` calls: 1596
 - ServiceContainer registrations: 386
@@ -18,20 +18,20 @@ Generated: `1781339398.813731`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>104 files, 24272 lines"]
+    runtime["runtime<br/>105 files, 24339 lines"]
     utils["utils<br/>43 files, 5761 lines"]
     brain["brain<br/>117 files, 46525 lines"]
     memory["memory<br/>88 files, 19919 lines"]
     consciousness["consciousness<br/>133 files, 62006 lines"]
     resilience["resilience<br/>54 files, 12130 lines"]
-    health["health<br/>3 files, 867 lines"]
+    health["health<br/>3 files, 875 lines"]
     agency["agency<br/>36 files, 14779 lines"]
     adaptation["adaptation<br/>26 files, 12319 lines"]
     affect["affect<br/>6 files, 2962 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
     self_modification["self_modification<br/>30 files, 11172 lines"]
     senses["senses<br/>24 files, 5266 lines"]
-    governance["governance<br/>8 files, 3147 lines"]
+    governance["governance<br/>8 files, 3168 lines"]
     state["state<br/>6 files, 3613 lines"]
     identity["identity<br/>17 files, 2327 lines"]
     security["security<br/>25 files, 4926 lines"]
@@ -43,7 +43,7 @@ graph TD
     continuity["continuity<br/>7 files, 238 lines"]
     tasks["tasks<br/>3 files, 335 lines"]
     being["being<br/>25 files, 5394 lines"]
-    conversation["conversation<br/>9 files, 5396 lines"]
+    conversation["conversation<br/>9 files, 5443 lines"]
     learning["learning<br/>28 files, 7271 lines"]
     phases["phases<br/>29 files, 17776 lines"]
     world["world<br/>24 files, 1483 lines"]
@@ -53,7 +53,7 @@ graph TD
     self["self<br/>7 files, 2094 lines"]
     skills["skills<br/>79 files, 19057 lines"]
     autonomic["autonomic<br/>4 files, 882 lines"]
-    capabilities["capabilities<br/>13 files, 5037 lines"]
+    capabilities["capabilities<br/>13 files, 5095 lines"]
     coordinators["coordinators<br/>9 files, 4247 lines"]
     managers["managers<br/>6 files, 957 lines"]
     meta["meta<br/>7 files, 1267 lines"]
@@ -970,7 +970,7 @@ graph TD
 | consciousness | 133 | 62006 | 2610278 | 39 | 29 |
 | core_root | 178 | 55289 | 2249064 | 100 | 0 |
 | brain | 117 | 46525 | 2009552 | 42 | 39 |
-| runtime | 104 | 24272 | 859546 | 43 | 124 |
+| runtime | 105 | 24339 | 862138 | 43 | 124 |
 | memory | 88 | 19919 | 799891 | 18 | 34 |
 | orchestrator | 42 | 19212 | 848184 | 125 | 9 |
 | skills | 79 | 19057 | 774164 | 31 | 6 |
@@ -986,10 +986,10 @@ graph TD
 | kernel | 11 | 6152 | 257270 | 25 | 4 |
 | utils | 43 | 5761 | 223868 | 17 | 50 |
 | architect | 25 | 5737 | 239735 | 9 | 2 |
-| conversation | 9 | 5396 | 199249 | 12 | 7 |
+| conversation | 9 | 5443 | 201255 | 12 | 7 |
 | being | 25 | 5394 | 208739 | 4 | 7 |
 | senses | 24 | 5266 | 221030 | 20 | 14 |
-| capabilities | 13 | 5037 | 196302 | 9 | 5 |
+| capabilities | 13 | 5095 | 196749 | 9 | 5 |
 | security | 25 | 4926 | 193599 | 12 | 12 |
 | perception | 18 | 4879 | 195844 | 10 | 5 |
 | coordinators | 9 | 4247 | 199509 | 36 | 5 |
@@ -998,7 +998,7 @@ graph TD
 | state | 6 | 3613 | 153434 | 10 | 13 |
 | voice | 9 | 3591 | 160274 | 11 | 5 |
 | cognition | 9 | 3465 | 140466 | 8 | 3 |
-| governance | 8 | 3147 | 130223 | 10 | 13 |
+| governance | 8 | 3168 | 131140 | 10 | 13 |
 | goals | 7 | 3054 | 129624 | 6 | 3 |
 | executive | 11 | 3034 | 125660 | 16 | 11 |
 | affect | 6 | 2962 | 137218 | 13 | 14 |
@@ -1038,7 +1038,7 @@ graph TD
 | promotion | 6 | 936 | 31616 | 1 | 4 |
 | sovereignty | 3 | 885 | 33782 | 10 | 1 |
 | autonomic | 4 | 882 | 36599 | 5 | 5 |
-| health | 3 | 867 | 33062 | 7 | 22 |
+| health | 3 | 875 | 33322 | 7 | 22 |
 | tools | 9 | 863 | 31892 | 4 | 0 |
 | creativity | 2 | 801 | 33361 | 3 | 1 |
 | factory | 8 | 758 | 29090 | 3 | 1 |
