@@ -278,7 +278,7 @@ doctor:
 	@echo "  Checking compilation..."
 	@$(PYTHON) -m compileall -q core aura_main.py
 	@echo "  Checking test collection..."
-	@AURA_TEST_MODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(PYTHON) -m pytest --collect-only -q 2>/dev/null | tail -1
+	@AURA_TEST_MODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(PYTHON) -m pytest -p pytest_asyncio.plugin --collect-only -q 2>/dev/null | tail -1
 	@echo "✅ Doctor checks passed"
 
 diagnostic-bundle:
@@ -459,7 +459,7 @@ final-proof:
 	python -m compileall -q aura_main.py core aura interface skills tools scripts proof_kernel
 	python tools/run_proof_step.py --name pytest_collect_guarded --timeout 900 \
 	  --artifact artifacts/current/proof_steps/pytest_collect_guarded.json -- \
-	  env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest --collect-only -q
+	  env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -p pytest_asyncio.plugin --collect-only -q
 	python tools/run_proof_step.py --name pytest_collect_autoload --timeout 900 \
 	  --artifact artifacts/current/proof_steps/pytest_collect_autoload.json -- \
 	  pytest --collect-only -q
