@@ -428,6 +428,62 @@ def test_health_pulse_reports_booting_during_boot_grace(monkeypatch):
     assert "❌ contract/critical" not in pulse
 
 
+def test_health_pulse_reports_conversation_warmup_as_booting_not_failure(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+    from core.subsystem_audit import SubsystemAudit
+
+    required_probes = {
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = True
+    monkeypatch.setenv("AURA_HEALTH_PULSE_BOOT_GRACE_S", "120")
+    monkeypatch.setattr("core.subsystem_audit.is_shutdown_requested", lambda: False)
+    monkeypatch.setattr(
+        "core.runtime.health_contract.runtime_health_report",
+        lambda: {
+            "healthy": True,
+            "status": "healthy",
+            "required_probes": required_probes,
+            "failures": {"critical": [], "important": [], "optional": []},
+        },
+    )
+
+    class ConversationWarmupGate:
+        @staticmethod
+        def get_conversation_status():
+            return {
+                "conversation_ready": False,
+                "state": "warming",
+                "warmup_in_flight": True,
+                "readiness_blockers": [
+                    "visible_conversation_probe_missing",
+                    "warmup_in_flight",
+                    "warmup_foreground_owner",
+                ],
+                "last_failure_reason": "visible_conversation_probe_missing",
+            }
+
+    ServiceContainer.register_instance("inference_gate", ConversationWarmupGate())
+    try:
+        audit = SubsystemAudit()
+        for name in audit.SUBSYSTEMS:
+            audit.heartbeat(name)
+
+        pulse = audit.emit_pulse()
+    finally:
+        ServiceContainer.clear()
+
+    assert "Runtime: BOOTING" in pulse
+    assert "Required probes: PASS" in pulse
+    assert "Subsystem audit: PASS" in pulse
+    assert "Conversation: WARMING" in pulse
+    assert "Runtime: DEGRADED" not in pulse
+    assert "Conversation: FAIL" not in pulse
+    assert "❌ conversation_lane" not in pulse
+
+
 def test_health_pulse_reports_shutdown_without_failure_noise(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS

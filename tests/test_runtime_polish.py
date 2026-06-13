@@ -787,6 +787,33 @@ async def test_event_bus_local_delivery_failure_marks_degraded():
     assert "delivery callback failed" in str(status["stats"]["last_error"])
 
 
+@pytest.mark.asyncio
+async def test_event_bus_shutdown_ignores_closed_redis_owner_loop():
+    from core.event_bus import AuraEventBus
+
+    class ClosedLoopRedis:
+        def __init__(self):
+            self.closed_attempted = False
+
+        async def aclose(self):
+            self.closed_attempted = True
+            raise RuntimeError("Event loop is closed")
+
+    bus = AuraEventBus()
+    redis = ClosedLoopRedis()
+    bus._redis = redis
+    bus._redis_loop = object()
+
+    await bus.shutdown()
+
+    assert redis.closed_attempted is True
+    status = bus.get_status()
+    assert bus._redis is None
+    assert bus._redis_loop is None
+    assert status["stats"]["errors"] == 0
+    assert bus.degraded is False
+
+
 def test_event_bus_threadsafe_publish_failure_is_recorded():
     from core.event_bus import AuraEventBus
 

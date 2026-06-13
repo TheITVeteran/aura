@@ -2,13 +2,12 @@
 import asyncio
 import json
 import logging
-import sys
-import time
 import threading
+import time
 from collections import defaultdict
 from concurrent.futures import CancelledError as FutureCancelledError
 from enum import IntEnum
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any
 
 try:
     import redis.asyncio as redis
@@ -106,9 +105,9 @@ class AuraEventBus:
 
     def __init__(self):
         # Store tuples of (PriorityQueue, asyncio.AbstractEventLoop)
-        self._subscribers: Dict[str, Set[tuple]] = defaultdict(set)
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._last_error: Optional[Exception] = None
+        self._subscribers: dict[str, set[tuple]] = defaultdict(set)
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._last_error: Exception | None = None
         # M-12 FIX: Initialize lock in __init__, not as lazy property
         self._lock = threading.Lock()
         self._seq = 0  # Monotonic counter for stable priority ordering
@@ -118,15 +117,15 @@ class AuraEventBus:
         self._bus_id = str(uuid.uuid4())
         
         # Redis integration (C-07/H-12 FIX)
-        self._redis: Optional[Any] = None
-        self._pubsub_task: Optional[asyncio.Task] = None
-        self._redis_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._redis: Any | None = None
+        self._pubsub_task: asyncio.Task | None = None
+        self._redis_loop: asyncio.AbstractEventLoop | None = None
         self._redis_url = config.redis.url if hasattr(config, "redis") else "redis://localhost:6379/0"
         self._use_redis = (_REDIS_AVAILABLE and getattr(config.redis, "use_for_events", False))
         self._redis_required = bool(getattr(config.redis, "required_for_events", False))
         self._remote_degraded = False
         self._remote_error_count = 0
-        self._remote_last_error: Optional[BaseException] = None
+        self._remote_last_error: BaseException | None = None
         self._closing = False
 
         if not _REDIS_AVAILABLE and getattr(config.redis, "use_for_events", False):
@@ -142,7 +141,7 @@ class AuraEventBus:
         logger.info("AuraEventBus initialized (Redis: %s).", self._use_redis)
         logger.info("✅ [EVENT_BUS] Kernel signaling READY.")
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return a diagnostic report of the event bus health."""
         alive = self.is_alive()
         return {
@@ -456,13 +455,19 @@ class AuraEventBus:
             try:
                 await self._redis.aclose()
             except _EVENT_BUS_RECOVERABLE_ERRORS as exc:
-                self._record_error(
-                    exc,
-                    "AuraEventBus: redis close failed: %s",
-                    degraded=True,
-                )
+                if self._closing and "Event loop is closed" in str(exc):
+                    logger.debug(
+                        "AuraEventBus: redis close skipped during shutdown; owner loop is already closed."
+                    )
+                else:
+                    self._record_error(
+                        exc,
+                        "AuraEventBus: redis close failed: %s",
+                        degraded=True,
+                    )
             finally:
                 self._redis = None
+                self._redis_loop = None
 
         self._subscribers.clear()
         self._loop = None
@@ -563,7 +568,7 @@ class AuraEventBus:
                         )
                     # [STABILITY] Wrap Redis publish in a 2.0s timeout to prevent external stalls.
                     await asyncio.wait_for(publish(f"aura/events/{topic}", payload), timeout=2.0)
-                except asyncio.TimeoutError as e:
+                except TimeoutError as e:
                     self._record_remote_error(
                         e,
                         "AuraEventBus: Redis publish stalled; switching to local-only mode: %s",

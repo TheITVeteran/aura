@@ -37,15 +37,12 @@ activation steering on a given build, the bridge degrades gracefully —
 the sampling-parameter modulation continues to work.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
 
 import logging
-import math
-import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.LatentBridge")
 
@@ -67,8 +64,8 @@ def _safe_get(eng: Any, attr: str, default: float) -> float:
         return default
 
 
-def _read_substrate() -> Dict[str, float]:
-    out: Dict[str, float] = {
+def _read_substrate() -> dict[str, float]:
+    out: dict[str, float] = {
         "vitality": 0.7,
         "phi": 0.0,
         "free_energy": 0.5,
@@ -80,6 +77,11 @@ def _read_substrate() -> Dict[str, float]:
         "curiosity": 0.5,
         "valence": 0.0,
         "arousal": 0.5,
+        "active_uncertainty": 0.0,
+        "active_tool_pressure": 0.0,
+        "active_error_pressure": 0.0,
+        "active_reduce_load": 0.0,
+        "active_seek_information": 0.0,
     }
     try:
         from core.container import ServiceContainer
@@ -107,6 +109,18 @@ def _read_substrate() -> Dict[str, float]:
             for k in ("frustration", "curiosity"):
                 if k in d:
                     out[k] = float(d[k])
+        advisor = ServiceContainer.get("spiking_active_inference", default=None)
+        if advisor is not None and hasattr(advisor, "snapshot"):
+            active = advisor.snapshot() or {}
+            routing = active.get("routing_bias") or {}
+            features = active.get("features") or {}
+            if isinstance(routing, dict):
+                out["active_reduce_load"] = 1.0 if routing.get("reduce_load") else 0.0
+                out["active_seek_information"] = 1.0 if routing.get("seek_information") else 0.0
+            if isinstance(features, dict):
+                out["active_tool_pressure"] = float(features.get("tool_pressure", 0.0) or 0.0)
+                out["active_error_pressure"] = float(features.get("error_pressure", 0.0) or 0.0)
+            out["active_uncertainty"] = float(active.get("uncertainty", 0.0) or 0.0)
     except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('latent_bridge', exc)
         logger.debug("latent_bridge substrate read failed: %s", exc)
@@ -126,12 +140,12 @@ class InferenceParams:
     max_tokens: int
     repetition_penalty: float
     presence_penalty: float
-    extra_stop_sequences: List[str] = field(default_factory=list)
-    seed: Optional[int] = None
-    layer_offsets: Dict[int, List[float]] = field(default_factory=dict)
-    rationale: List[str] = field(default_factory=list)
+    extra_stop_sequences: list[str] = field(default_factory=list)
+    seed: int | None = None
+    layer_offsets: dict[int, list[float]] = field(default_factory=dict)
+    rationale: list[str] = field(default_factory=list)
 
-    def merge_with_origin(self, base: Dict[str, Any]) -> Dict[str, Any]:
+    def merge_with_origin(self, base: dict[str, Any]) -> dict[str, Any]:
         """Apply the substrate-derived params on top of a base param dict
         (the params the inference gate would have used). Substrate values
         take precedence for the keys it controls; the rest pass through.
@@ -162,7 +176,7 @@ def compute_inference_params(
     """Compute the live inference params from substrate state."""
 
     s = _read_substrate()
-    rationale: List[str] = []
+    rationale: list[str] = []
 
     # ─── temperature ────────────────────────────────────────────────────
     # acetylcholine is sharp attention → lower temp. Cortisol high → narrow
@@ -170,11 +184,15 @@ def compute_inference_params(
     temp = base_temperature
     temp -= 0.20 * (s["acetylcholine"] - 0.5)
     temp -= 0.15 * (s["cortisol"] - 0.3)
+    temp -= 0.10 * s["active_uncertainty"]
+    temp -= 0.08 * s["active_error_pressure"]
     temp += 0.20 * (s["curiosity"] - 0.5)
+    temp += 0.04 * s["active_seek_information"]
     temp_ceiling = 0.85 if foreground else 0.90
     temp = max(0.15, min(temp_ceiling, temp))
     rationale.append(
-        f"temp={temp:.2f} (ach={s['acetylcholine']:.2f}, corts={s['cortisol']:.2f}, curio={s['curiosity']:.2f})"
+        f"temp={temp:.2f} (ach={s['acetylcholine']:.2f}, corts={s['cortisol']:.2f}, "
+        f"curio={s['curiosity']:.2f}, active_uncert={s['active_uncertainty']:.2f})"
     )
 
     # ─── top_p ─────────────────────────────────────────────────────────
@@ -182,9 +200,14 @@ def compute_inference_params(
     top_p = 0.95
     top_p -= 0.20 * max(0.0, s["phi"])  # phi can be 0..1+
     top_p -= 0.10 * s["frustration"]
+    top_p -= 0.08 * s["active_uncertainty"]
+    top_p -= 0.06 * s["active_error_pressure"]
     top_p -= 0.05 * max(0.0, s["arousal"] - 0.65)
     top_p = max(0.55, min(0.99, top_p))
-    rationale.append(f"top_p={top_p:.2f} (phi={s['phi']:.2f}, frust={s['frustration']:.2f})")
+    rationale.append(
+        f"top_p={top_p:.2f} (phi={s['phi']:.2f}, frust={s['frustration']:.2f}, "
+        f"active_error={s['active_error_pressure']:.2f})"
+    )
 
     # ─── top_k ─────────────────────────────────────────────────────────
     # Serotonin high → regulated → fewer alternatives. Norepinephrine high
@@ -202,6 +225,8 @@ def compute_inference_params(
     cap = max(1, int(base_max_tokens * vitality_factor))
     # Fatigue from cortisol clips further
     cap = max(1, int(cap * max(0.55, 1.0 - 0.4 * max(0.0, s["cortisol"] - 0.5))))
+    if s["active_reduce_load"] > 0.0:
+        cap = max(1, int(cap * 0.62))
     rationale.append(f"max_tokens={cap} (vitality={s['vitality']:.2f}, cap={cap})")
 
     # ─── repetition penalty ────────────────────────────────────────────
@@ -209,6 +234,8 @@ def compute_inference_params(
         0.12 * max(0.0, s["arousal"] - 0.60)
         + 0.10 * max(0.0, s["free_energy"] - 0.55)
         + 0.10 * max(0.0, temp - 0.80)
+        + 0.04 * s["active_uncertainty"]
+        + 0.06 * s["active_error_pressure"]
     )
     rep = 1.05 + 0.05 * s["frustration"] + loop_pressure
     rep_floor = 1.05 if foreground else 1.02
@@ -218,14 +245,14 @@ def compute_inference_params(
     )
 
     # ─── presence penalty ─────────────────────────────────────────────
-    pres = 0.0 + 0.30 * s["curiosity"]
+    pres = 0.0 + 0.30 * s["curiosity"] + 0.08 * s["active_tool_pressure"]
     pres = max(0.0, min(0.8, pres))
     rationale.append(f"presence={pres:.2f} (curio={s['curiosity']:.2f})")
 
     # ─── early-stop sequences when degraded ────────────────────────────
-    extra_stops: List[str] = []
+    extra_stops: list[str] = []
     try:
-        from core.organism.viability import get_viability, ViabilityState
+        from core.organism.viability import ViabilityState, get_viability
         v = get_viability().state
         if v in (ViabilityState.STARVED, ViabilityState.DEGRADED, ViabilityState.INJURED, ViabilityState.RECOVERING):
             extra_stops = ["\n\n##", "\n---\n"]
@@ -238,7 +265,7 @@ def compute_inference_params(
     # offsets. The MLX side may or may not consume these; if not, no harm
     # done. The vectors are deterministic given (s) so the same affect
     # produces the same nudge across runs.
-    layer_offsets: Dict[int, List[float]] = {}
+    layer_offsets: dict[int, list[float]] = {}
     for layer in (8, 16, 24):  # representative layers — MLX side maps these
         # 8-dim offset is a small, fixed-size descriptor that the MLX
         # side reshapes into a hidden-dim direction via a learned mapping.
@@ -268,7 +295,7 @@ def compute_inference_params(
     )
 
 
-def current_inference_params(*, base_max_tokens: int = 1536, base_temperature: float = 0.7, foreground: bool = True) -> Dict[str, Any]:
+def current_inference_params(*, base_max_tokens: int = 1536, base_temperature: float = 0.7, foreground: bool = True) -> dict[str, Any]:
     """Convenience wrapper used by inference clients. Returns a plain dict
     so callers don't take a hard import dependency on this module's
     dataclasses.
@@ -281,7 +308,7 @@ def current_inference_params(*, base_max_tokens: int = 1536, base_temperature: f
     return p.merge_with_origin({"max_tokens": base_max_tokens})
 
 
-def activation_offsets() -> Dict[int, List[float]]:
+def activation_offsets() -> dict[int, list[float]]:
     """Return the per-layer residual-stream offsets for activation steering.
     The MLX side reads this just before token generation.
     """

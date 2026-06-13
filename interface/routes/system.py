@@ -734,6 +734,50 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
     return payload
 
 
+def _collect_neurodynamic_status() -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": "idle",
+        "action": "",
+        "uncertainty": 0.0,
+        "confidence": 0.0,
+        "advisory_only": True,
+        "authority_gateway_required_for_effects": True,
+    }
+    try:
+        advisor = ServiceContainer.get("spiking_active_inference", default=None)
+        if advisor is None or not hasattr(advisor, "snapshot"):
+            return payload
+        snapshot = advisor.snapshot() or {}
+        if not isinstance(snapshot, dict):
+            return payload
+        governance = snapshot.get("governance") or {}
+        if not isinstance(governance, dict):
+            governance = {}
+        payload.update(
+            {
+                "status": str(snapshot.get("status") or "active"),
+                "action": str(snapshot.get("action") or ""),
+                "uncertainty": _safe_float(snapshot.get("uncertainty"), 0.0),
+                "confidence": _safe_float(snapshot.get("confidence"), 0.0),
+                "advisory_only": bool(governance.get("advisory_only", True)),
+                "authority_gateway_required_for_effects": bool(
+                    governance.get("authority_gateway_required_for_effects", True)
+                ),
+            }
+        )
+        features = snapshot.get("features")
+        if isinstance(features, dict):
+            payload["features"] = {
+                "tool_pressure": _safe_float(features.get("tool_pressure"), 0.0),
+                "error_pressure": _safe_float(features.get("error_pressure"), 0.0),
+                "memory_pressure": _safe_float(features.get("memory_pressure"), 0.0),
+            }
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation("system", exc)
+        logger.debug("Neurodynamic status collection failed: %s", exc)
+    return payload
+
+
 def _collect_runtime_capabilities(conversation_lane: dict[str, Any] | None = None) -> dict[str, Any]:
     lane = conversation_lane if isinstance(conversation_lane, dict) else _collect_conversation_lane_status_resilient()
     payload: dict[str, Any] = {
@@ -743,6 +787,7 @@ def _collect_runtime_capabilities(conversation_lane: dict[str, Any] | None = Non
         "conversation_endpoint": str(lane.get("desired_endpoint", "") or ""),
         "conversation_state": str(lane.get("state", "") or ""),
         "conversation_ready": bool(lane.get("conversation_ready", False)),
+        "neurodynamic_advisor": _collect_neurodynamic_status(),
     }
     try:
         from core.brain.llm.model_registry import (

@@ -86,6 +86,40 @@ def _record_objective_binding(
         logger.debug("Executive objective audit skipped for %s: %s", source, exc)
 
 
+def _compact_spiking_active_inference_directive(advice: dict[str, Any] | None) -> str:
+    if not isinstance(advice, dict):
+        return ""
+    action = str(advice.get("action") or "").strip()
+    routing = advice.get("routing_bias") or {}
+    if not isinstance(routing, dict):
+        routing = {}
+    uncertainty = advice.get("uncertainty", 0.0)
+    try:
+        uncertainty_value = float(uncertainty)
+    except (TypeError, ValueError):
+        uncertainty_value = 0.0
+
+    directives: list[str] = []
+    if bool(routing.get("ask_clarification")):
+        directives.append("If the request is underspecified, ask one precise clarifying question.")
+    if bool(routing.get("seek_information")):
+        directives.append("If current facts matter, explain what should be verified before acting.")
+    if bool(routing.get("use_tool_gateway")):
+        directives.append("For external effects, describe the governed tool path and do not claim tool completion without evidence.")
+    if bool(routing.get("reduce_load")):
+        directives.append("Keep the reply compact and stable because runtime load pressure is elevated.")
+    if bool(routing.get("repair_first")):
+        directives.append("Prioritize diagnosis and repair steps before speculative explanation.")
+    if not directives and action:
+        directives.append(f"Current advisory tendency: {action.replace('_', ' ')}.")
+    if uncertainty_value >= 0.65:
+        directives.append("State uncertainty plainly rather than guessing.")
+
+    if not directives:
+        return ""
+    return "Neurodynamic advisory: " + " ".join(directives)
+
+
 class CognitiveEngine:
     """
     Cognitive Engine facade.
@@ -348,6 +382,92 @@ class CognitiveEngine:
 
         return "system"
 
+    def _apply_spiking_active_inference(
+        self,
+        state: AuraState,
+        objective: str,
+        origin: str,
+        context: dict[str, Any] | None,
+        *,
+        is_background: bool,
+    ) -> dict[str, Any] | None:
+        try:
+            from core.cognitive.spiking_active_inference import (
+                get_spiking_active_inference_advisor,
+            )
+
+            advisor = get_spiking_active_inference_advisor()
+            advice = advisor.advise(
+                objective,
+                context=context,
+                state=state,
+                origin=origin,
+                is_background=is_background,
+            )
+        except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "cognitive_engine",
+                exc,
+                severity="warning",
+                action="continued cognitive cycle without spiking active-inference advisory",
+            )
+            logger.debug("Spiking active-inference advisory unavailable: %s", exc)
+            return context
+
+        advice_dict = advice.to_dict()
+        routing = dict(advice.routing_bias or {})
+        sampling = dict(advice.sampling_bias or {})
+        state.response_modifiers["spiking_active_inference"] = advice_dict
+        state.response_modifiers["active_inference_action_tendency"] = advice.action
+        state.response_modifiers["epistemic_uncertainty"] = advice.uncertainty
+        state.response_modifiers["metacognition_depth"] = routing.get("metacognition_depth", 0.35)
+        state.response_modifiers["tool_governance_pressure"] = bool(
+            routing.get("use_tool_gateway")
+        )
+        state.response_modifiers["sampling_bias"] = sampling
+        if routing.get("reduce_load"):
+            state.response_modifiers["runtime_load_shed_requested"] = True
+        if routing.get("repair_first"):
+            state.response_modifiers["repair_first_pressure"] = True
+
+        merged_context = dict(context or {})
+        merged_context["spiking_active_inference"] = advice_dict
+        return merged_context
+
+    def _learn_spiking_active_inference_outcome(
+        self,
+        context: dict[str, Any] | None,
+        *,
+        outcome: str,
+        reward: float,
+    ) -> dict[str, Any] | None:
+        if not isinstance(context, dict):
+            return None
+        advice = context.get("spiking_active_inference")
+        if not isinstance(advice, dict):
+            return None
+        action = str(advice.get("action") or "").strip()
+        features = advice.get("features")
+        if not action or not isinstance(features, dict):
+            return None
+        try:
+            advisor = get_container().get("spiking_active_inference", default=None)
+            if advisor is None or not hasattr(advisor, "learn_from_feedback"):
+                return None
+            learned = advisor.learn_from_feedback(action, float(reward), features)
+            if isinstance(learned, dict):
+                learned["outcome"] = str(outcome or "unknown")[:80]
+                return learned
+        except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "cognitive_engine",
+                exc,
+                severity="warning",
+                action="continued cognitive cycle without spiking active-inference feedback learning",
+            )
+            logger.debug("Spiking active-inference feedback learning skipped: %s", exc)
+        return None
+
     async def think(
         self,
         objective: str,
@@ -440,6 +560,13 @@ class CognitiveEngine:
         )
         state.response_modifiers["model_tier"] = "tertiary" if is_background else "primary"
         state.response_modifiers["deep_handoff"] = False
+        context = self._apply_spiking_active_inference(
+            state,
+            objective,
+            origin,
+            context,
+            is_background=is_background,
+        )
 
         structured = self._structured_evaluation_thought(
             objective,
@@ -784,6 +911,11 @@ class CognitiveEngine:
         last_msg = state.cognition.working_memory[-1] if state.cognition.working_memory else None
         if last_msg and last_msg.get("role") == "assistant":
             self.autopoiesis.experience_friction(objective[:20], 0.05)
+            feedback = self._learn_spiking_active_inference_outcome(
+                context,
+                outcome="assistant_response",
+                reward=1.0,
+            )
 
             thought = Thought(
                 id=str(uuid.uuid4()),
@@ -791,12 +923,23 @@ class CognitiveEngine:
                 mode=mode,
                 confidence=0.9,
                 reasoning=["Phase-based cognitive cycle completed successfully."],
+                metadata={
+                    "spiking_active_inference": context.get("spiking_active_inference")
+                    if isinstance(context, dict)
+                    else None,
+                    "spiking_active_inference_feedback": feedback,
+                },
             )
             self.thoughts.append(thought)
             return thought
 
         # Experience friction for unresolved objectives
         self.autopoiesis.experience_friction(objective[:20], 0.45)
+        self._learn_spiking_active_inference_outcome(
+            context,
+            outcome="no_assistant_response",
+            reward=-0.65,
+        )
 
         # ── ACTION IMPERATIVE FALLBACK ──
         if is_action_imperative:
@@ -977,6 +1120,16 @@ class CognitiveEngine:
             return None
 
         max_tokens = int(context.get("max_tokens") or 512)
+        advice = context.get("spiking_active_inference")
+        if isinstance(advice, dict):
+            sampling = advice.get("sampling_bias") or {}
+            if isinstance(sampling, dict):
+                try:
+                    factor_value = float(sampling.get("max_tokens_factor", 1.0))
+                except (TypeError, ValueError):
+                    factor_value = 1.0
+                if 0.25 <= factor_value < 1.0:
+                    max_tokens = max(128, int(max_tokens * factor_value))
         max_tokens = max(128, min(max_tokens, 768))
         request_timeout = max(12.0, min(float(timeout_s or 32.0), 40.0))
         style_contract = str(context.get("response_style_contract") or "").strip()
@@ -988,6 +1141,9 @@ class CognitiveEngine:
             "Do not mention hidden fallback paths, internal recovery, prompt contracts, or implementation details "
             "unless the user specifically asks for them."
         )
+        neurodynamic_directive = _compact_spiking_active_inference_directive(advice)
+        if neurodynamic_directive:
+            system_prompt = f"{system_prompt}\n{neurodynamic_directive}"
         if style_contract:
             system_prompt = f"{system_prompt}\n{style_contract}"
 
@@ -1042,6 +1198,11 @@ class CognitiveEngine:
                 "Desktop quick reply used the governed primary router through CognitiveEngine.",
                 "The compact path disabled deep handoff, cloud fallback, and prompt-cache reuse.",
             ],
+            metadata={
+                "spiking_active_inference": advice
+                if isinstance(advice, dict)
+                else None,
+            },
         )
 
     async def _reactive_recovery(

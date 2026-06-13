@@ -10,6 +10,7 @@ Modules:
     tree_of_thoughts  — Multi-draft reasoning with internal critique
     autopoiesis       — Self-monitoring and self-repair
     homeostatic_rl    — Energy-based intrinsic motivation
+    spiking_active_inference — Bounded neurodynamic advisory routing
     topology_evolution — NEAT-inspired neural architecture plasticity
     strange_loop      — Recursive self-modeling and phenomenal experience
 """

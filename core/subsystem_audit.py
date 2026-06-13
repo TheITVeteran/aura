@@ -21,6 +21,17 @@ def _health_pulse_boot_grace_s() -> float:
         return 120.0
 
 
+_CONVERSATION_BOOT_TRANSIENT_BLOCKERS = {
+    "foreground_owner",
+    "foreground_warming",
+    "prewarm_not_attempted",
+    "startup_grace",
+    "visible_conversation_probe_missing",
+    "warmup_foreground_owner",
+    "warmup_in_flight",
+}
+
+
 def _conversation_lane_is_standby(lane: dict[str, Any] | None) -> bool:
     lane = dict(lane or {})
     state = str(lane.get("state", "") or "").strip().lower()
@@ -30,6 +41,48 @@ def _conversation_lane_is_standby(lane: dict[str, Any] | None) -> bool:
         and not bool(lane.get("warmup_attempted", False))
         and not bool(lane.get("warmup_in_flight", False))
     )
+
+
+def _conversation_lane_is_boot_warming(lane: dict[str, Any] | None) -> bool:
+    lane = dict(lane or {})
+    if bool(lane.get("conversation_ready", False)) or _conversation_lane_is_standby(lane):
+        return False
+
+    state = str(lane.get("state", "") or "").strip().lower()
+    if state in {"critical", "dead", "failed"}:
+        return False
+
+    blockers_raw = lane.get("readiness_blockers", [])
+    blockers_seq = blockers_raw if isinstance(blockers_raw, (list, tuple, set)) else [blockers_raw]
+    blockers = {
+        str(item or "").strip().lower()
+        for item in blockers_seq
+        if str(item or "").strip()
+    }
+    reason = str(
+        lane.get("last_failure_reason", "")
+        or lane.get("last_error", "")
+        or ""
+    ).strip().lower()
+    warmup_active = bool(lane.get("warmup_in_flight", False)) or bool(
+        lane.get("warmup_attempted", False)
+    )
+
+    if blockers and blockers <= _CONVERSATION_BOOT_TRANSIENT_BLOCKERS:
+        return True
+    if reason in _CONVERSATION_BOOT_TRANSIENT_BLOCKERS:
+        return True
+    if warmup_active and state in {
+        "",
+        "cold",
+        "initializing",
+        "recovering",
+        "starting",
+        "unknown",
+        "warming",
+    }:
+        return True
+    return state in {"initializing", "starting", "warming"} and not reason
 
 
 def _collect_conversation_lane_status() -> dict[str, Any]:
@@ -280,18 +333,28 @@ class SubsystemAudit:
         contract_status = str(contract.get("status", "unknown") if isinstance(contract, dict) else "unknown")
         shutdown_active = is_shutdown_requested()
         boot_grace_active = uptime <= _health_pulse_boot_grace_s()
-        boot_warming = (
+        core_boot_warming = (
             boot_grace_active
             and not required_ok
             and not shutdown_active
             and conversation_state in {"cold", "warming", "recovering", "standby", "unknown", ""}
         )
+        conversation_boot_warming = (
+            boot_grace_active
+            and not shutdown_active
+            and not conversation_ok
+            and _conversation_lane_is_boot_warming(conversation_lane)
+        )
+        boot_warming = core_boot_warming or conversation_boot_warming
         if shutdown_active:
             probe_status = "SHUTDOWN"
             conversation_status = "STOPPING"
-        elif boot_warming:
+        elif core_boot_warming:
             probe_status = "WARMING"
             conversation_status = "STANDBY" if conversation_standby else "WARMING"
+        elif conversation_boot_warming:
+            probe_status = "PASS" if required_ok else "WARMING"
+            conversation_status = "WARMING"
         else:
             probe_status = "PASS" if required_ok else "FAIL"
             conversation_status = (
@@ -320,8 +383,10 @@ class SubsystemAudit:
             f"Subsystem audit: {subsystem_status} | Conversation: {conversation_status} | "
             f"Heartbeats: {active_count}/{len(self.SUBSYSTEMS)} ACTIVE"
         )
-        if boot_warming:
+        if core_boot_warming:
             lines.append("  ⏳ boot: required runtime probes are still warming.")
+        elif conversation_boot_warming:
+            lines.append("  ⏳ boot: conversation lane is still warming.")
         if not shutdown_active and not boot_warming and (not contract_healthy or not required_ok):
             failures = contract.get("failures", {}) if isinstance(contract, dict) else {}
             for tier in ("critical", "important"):
