@@ -18,7 +18,7 @@ from core.skills.os_affordances import detect_os_settings, get_affordance
 # Sentinel URL resolved at execution time from the most recent
 # fetch_topic_image receipt — derivation cannot know the source page
 # before the fetch runs ("show me where you found it").
-FETCHED_IMAGE_SOURCE_TOKEN = "aura://fetched-image-source"
+FETCHED_IMAGE_SOURCE_SENTINEL = "aura://fetched-image-source"
 
 
 class DesktopTaskStep(BaseModel):
@@ -1220,7 +1220,7 @@ class DesktopTaskSkill(BaseSkill):
                 steps.append(
                     DesktopTaskStep(
                         action="open_url",
-                        target=_open_url_target(FETCHED_IMAGE_SOURCE_TOKEN),
+                        target=_open_url_target(FETCHED_IMAGE_SOURCE_SENTINEL),
                         reason="Show the user where the image was found (source page from the fetch receipt).",
                         expect=f"{browser_label} accepts the image source page URL.",
                     )
@@ -1505,7 +1505,7 @@ class DesktopTaskSkill(BaseSkill):
             if step.action == "open_url":
                 # Resolve the fetched-image source sentinel from the
                 # fetch receipt — the source page is only known at runtime.
-                if isinstance(target, dict) and target.get("url") == FETCHED_IMAGE_SOURCE_TOKEN:
+                if isinstance(target, dict) and target.get("url") == FETCHED_IMAGE_SOURCE_SENTINEL:
                     if not last_image_page_url:
                         failures.append(
                             {
@@ -1517,7 +1517,7 @@ class DesktopTaskSkill(BaseSkill):
                         )
                         break
                     target = dict(target, url=last_image_page_url)
-                elif target == FETCHED_IMAGE_SOURCE_TOKEN:
+                elif target == FETCHED_IMAGE_SOURCE_SENTINEL:
                     if not last_image_page_url:
                         failures.append(
                             {

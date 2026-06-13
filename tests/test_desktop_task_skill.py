@@ -882,7 +882,7 @@ def test_wallpaper_derivation_fetches_controls_and_shows_source():
     """Bryan's part-2 closer derives fetch → system_control(wallpaper) →
     source tab through the GENERAL affordance loop — no wallpaper-specific
     code — with the source URL resolved at runtime from the fetch receipt."""
-    from core.skills.desktop_task import FETCHED_IMAGE_SOURCE_TOKEN, DesktopTaskSkill
+    from core.skills.desktop_task import FETCHED_IMAGE_SOURCE_SENTINEL, DesktopTaskSkill
 
     skill = DesktopTaskSkill()
     steps = skill._derive_steps_from_objective(
@@ -898,7 +898,7 @@ def test_wallpaper_derivation_fetches_controls_and_shows_source():
     source_steps = [
         s for s in steps
         if s.action == "open_url"
-        and FETCHED_IMAGE_SOURCE_TOKEN in str(s.target)
+        and FETCHED_IMAGE_SOURCE_SENTINEL in str(s.target)
     ]
     assert source_steps, actions
 
