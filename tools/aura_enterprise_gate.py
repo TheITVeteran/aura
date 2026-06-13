@@ -100,6 +100,10 @@ ALLOW_SUBPROCESS = {
     # TextEdit) and reads it back via osascript — the scene setup and
     # independent verification must sit outside Aura's gateways.
     "tools/vision_screen_proof.py",
+    # Clean-env install proof: drives git archive, venv, pip, and a
+    # sub-interpreter to verify a pristine clone installs — subprocess
+    # orchestration is the whole point.
+    "tools/clean_env_install_proof.py",
     # Legitimate production modules requiring OS/subprocess interface
     "core/architect/safety_gate.py",
     "core/architect/shadow_workspace.py",
