@@ -976,3 +976,81 @@ def test_folder_extraction_handles_name_first_phrasing():
     assert extract("Save it inside the 'Aura's Journal' folder in Documents") == "Aura's Journal"
     assert extract('Put it in the "Research Notes" folder please') == "Research Notes"
     assert extract("a folder called 'Aura's Journal' in Documents") == "Aura's Journal"
+
+
+def test_execution_brief_is_rejected_as_document_content():
+    """The internal execution brief ('Execute the user's explicit desktop
+    objective… Do not claim success until…') is a directive to herself, not
+    document content — it leaked into a research PDF as the body."""
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    brief = (
+        "Execute the user's explicit desktop objective through Aura's governed "
+        "desktop_task lane. Do not claim success until the tool result verifies "
+        "the effect. Objective: research climate change."
+    )
+    assert DesktopTaskSkill._looks_like_dispatch_narration(brief)
+
+
+def test_research_section_leads_with_first_person_synthesis():
+    """When Aura composes a first-person summary+opinion, that is the
+    document — the raw search dump is dropped in favor of it, sources kept."""
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    section = DesktopTaskSkill._research_section_from_context({
+        "desktop_task_research_synthesis": "I read three pieces. In my view, the risk is rising.",
+        "desktop_task_research_summary": "RAW SEARCH DUMP that should not appear",
+        "desktop_task_research_sources": [{"title": "A", "url": "https://a", "snippet": "x"}],
+    })
+    assert "In my view" in section
+    assert "RAW SEARCH DUMP" not in section
+    assert "Sources opened or consulted" in section
+
+
+@pytest.mark.asyncio
+async def test_collect_research_synthesizes_first_person_opinion(monkeypatch):
+    """_collect_research_context composes a first-person opinion through the
+    model router when the objective asks for one."""
+    from types import SimpleNamespace
+
+    from core.container import ServiceContainer
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            return {
+                "ok": True,
+                "summary": "Climate findings.",
+                "citations": [
+                    {"title": "A", "url": "https://a", "snippet": "warming"},
+                    {"title": "B", "url": "https://b", "snippet": "adaptation"},
+                    {"title": "C", "url": "https://c", "snippet": "extremes"},
+                ],
+            }
+
+    routed = {}
+
+    class FakeRouter:
+        async def route(self, *, prompt, **kwargs):
+            routed["prompt"] = prompt
+            return SimpleNamespace(
+                text="Three articles converge on rising risk. In my view, the evidence is compelling."
+            )
+
+    monkeypatch.setattr(
+        ServiceContainer, "get",
+        staticmethod(lambda name, default=None: FakeRouter() if name == "llm_router" else default),
+    )
+
+    skill = DesktopTaskSkill()
+    ctx = await skill._collect_research_context(
+        capability_engine=FakeCapabilityEngine(),
+        objective=(
+            "find 3 different recent articles on climate change and summarize "
+            "them and your own opinion in a Google Doc"
+        ),
+        context={},
+    )
+    assert "In my view" in ctx["desktop_task_research_synthesis"]
+    # The synthesis prompt asked for a first-person opinion.
+    assert "In my view" in routed["prompt"] or "first-person opinion" in routed["prompt"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -413,9 +414,24 @@ class DesktopTaskSkill(BaseSkill):
     _DISPATCH_NARRATION_RE = re.compile(
         r"(?:i'?ve started (?:working on )?th(?:is|e) task|"
         r"i'?ll follow up when|tracking commitment\s+[0-9a-f]{6,}|"
-        r"task \(id=[0-9a-f-]{6,}\)|in the background\b.{0,40}follow up)",
+        r"task \(id=[0-9a-f-]{6,}\)|in the background\b.{0,40}follow up|"
+        # Internal execution brief / directive — instruction to herself, not
+        # document content (it leaked into a research PDF as the body).
+        r"execute the user'?s (?:explicit )?desktop objective|"
+        r"governed desktop_task lane|do not claim success until)",
         re.IGNORECASE,
     )
+
+    @staticmethod
+    def _objective_requests_opinion(objective: str) -> bool:
+        """Does the objective ask Aura for her own view, not just a summary?"""
+        lowered = str(objective or "").lower()
+        return bool(
+            re.search(r"\b(?:your|my|her|own)\s+(?:opinion|view|views|take|thoughts|assessment|perspective|stance)\b", lowered)
+            or re.search(r"\bform\s+(?:your|an?|my)\s+(?:own\s+)?opinion\b", lowered)
+            or "what you think" in lowered
+            or "what do you think" in lowered
+        )
 
     @classmethod
     def _looks_like_dispatch_narration(cls, text: str) -> bool:
@@ -538,21 +554,28 @@ class DesktopTaskSkill(BaseSkill):
     @classmethod
     def _research_section_from_context(cls, context: dict[str, Any] | None) -> str:
         context = context or {}
+        synthesis = str(context.get("desktop_task_research_synthesis") or "").strip()
         summary = str(context.get("desktop_task_research_summary") or "").strip()
         query = str(context.get("desktop_task_research_query") or "").strip()
         sources = context.get("desktop_task_research_sources") or []
-        if not summary and not sources:
+        if not synthesis and not summary and not sources:
             return ""
 
         lines = []
-        heading = "Research summary"
-        if query:
-            heading += f" for: {query}"
-        lines.append(heading)
-        lines.append("")
-        if summary:
-            lines.append(summary[:2500])
+        if synthesis:
+            # Aura's own first-person summary (and opinion) leads the
+            # document; the raw search summary is dropped in favor of it.
+            lines.append(synthesis)
             lines.append("")
+        else:
+            heading = "Research summary"
+            if query:
+                heading += f" for: {query}"
+            lines.append(heading)
+            lines.append("")
+            if summary:
+                lines.append(summary[:2500])
+                lines.append("")
         if isinstance(sources, list) and sources:
             lines.append("Sources opened or consulted:")
             for index, item in enumerate(sources[:5], start=1):
@@ -672,12 +695,87 @@ class DesktopTaskSkill(BaseSkill):
                 f"- {item.get('title') or item.get('url')}: {item.get('snippet')}"
                 for item in sources[:3]
             )
-        return {
+        research_ctx = {
             "desktop_task_research_query": query,
             "desktop_task_research_summary": summary[:3000],
             "desktop_task_research_sources": sources,
             "desktop_task_research_result": result,
         }
+        # When the objective asks Aura to summarize AND give her own view,
+        # she actually composes one — a first-person synthesis of the
+        # findings — instead of dumping the raw search summary. This is the
+        # document the reader sees; it must read as her, not as a search dump.
+        synthesis = await self._synthesize_research_document(
+            objective=objective, query=query, summary=summary, sources=sources
+        )
+        if synthesis:
+            research_ctx["desktop_task_research_synthesis"] = synthesis
+        return research_ctx
+
+    async def _synthesize_research_document(
+        self,
+        *,
+        objective: str,
+        query: str,
+        summary: str,
+        sources: list[dict[str, str]],
+    ) -> str:
+        """Compose a first-person summary (and opinion, when asked) of the
+        research through the canonical model router. Bounded and best-effort:
+        if the router is unavailable the raw research section still stands."""
+        from core.container import ServiceContainer
+
+        router = ServiceContainer.get("llm_router", default=None)
+        route = getattr(router, "route", None) if router is not None else None
+        if not callable(route):
+            return ""
+        source_lines = "\n".join(
+            f"- {str(item.get('title') or item.get('url') or 'source')}: {str(item.get('snippet') or '')[:300]}"
+            for item in (sources or [])[:3]
+            if isinstance(item, dict)
+        )
+        wants_opinion = self._objective_requests_opinion(objective)
+        opinion_clause = (
+            " Then, in a separate paragraph that begins \"In my view,\", give your own "
+            "first-person opinion about what these articles say and what you make of them."
+            if wants_opinion
+            else ""
+        )
+        prompt = (
+            f'You researched "{query}" and found these sources:\n'
+            f"{summary[:1500]}\n{source_lines}\n\n"
+            "Write a finished document of about 160-220 words that summarizes the "
+            f"sources for a reader.{opinion_clause}\n"
+            "Write in the first person as Aura. Do not mention tools, steps, dispatch, "
+            "commitments, or that you are executing a task — this is the document the "
+            "reader will see, not a status update."
+        )
+        try:
+            response = await asyncio.wait_for(
+                route(
+                    prompt=prompt,
+                    temperature=0.6,
+                    max_tokens=480,
+                    route_hint="summarization",
+                ),
+                timeout=90.0,
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError, OSError, TimeoutError) as exc:
+            record_degradation(
+                "desktop_task",
+                exc,
+                action="composed research document from raw search section after synthesis was unavailable",
+                severity="warning",
+            )
+            return ""
+        text = getattr(response, "text", None)
+        if not text:
+            text = str(response) if response else ""
+        text = str(text).strip()
+        # A synthesis that echoes dispatch narration is not document content.
+        if self._looks_like_dispatch_narration(text):
+            return ""
+        return text[:4000]
 
     @classmethod
     def _steps_from_payload(cls, payload: Any) -> list[DesktopTaskStep]:
