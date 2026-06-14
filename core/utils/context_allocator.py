@@ -1,10 +1,23 @@
 import logging
-import tiktoken
 from typing import List, Dict, Any, Optional
 from enum import Enum
 from dataclasses import dataclass, field
 
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None
+
 logger = logging.getLogger("Aura.ContextAllocator")
+
+
+class ApproximateEncoding:
+    """Small deterministic fallback when tiktoken is unavailable."""
+
+    def encode(self, text: str, disallowed_special=()) -> list[str]:
+        import re
+
+        return re.findall(r"\w+|[^\w\s]", str(text or ""), flags=re.UNICODE)
 
 class ContextPriority(Enum):
     CRITICAL = 10  # Identity, Persona, Hardening Core
@@ -25,10 +38,14 @@ class TokenGovernor:
     """Manages the allocation of tokens across different cognitive buckets."""
     
     def __init__(self, model_name: str = "gpt-4", max_tokens: int = 8192):
-        try:
-            self.encoding = tiktoken.encoding_for_model(model_name)
-        except (RuntimeError, AttributeError, TypeError, ValueError):
-            self.encoding = tiktoken.get_encoding("cl100k_base")
+        if tiktoken is None:
+            self.encoding = ApproximateEncoding()
+            logger.warning("tiktoken unavailable; using approximate context token counting")
+        else:
+            try:
+                self.encoding = tiktoken.encoding_for_model(model_name)
+            except (RuntimeError, AttributeError, TypeError, ValueError):
+                self.encoding = tiktoken.get_encoding("cl100k_base")
             
         self.max_tokens = max_tokens
         # Reservations (percentage of total window)

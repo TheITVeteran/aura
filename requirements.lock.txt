@@ -967,7 +967,9 @@ pyyaml==6.0.3
     #   transformers
     #   uvicorn
 regex==2026.2.28
-    # via transformers
+    # via
+    #   tiktoken
+    #   transformers
 requests==2.32.5
     # via
     #   -r requirements.txt
@@ -975,6 +977,7 @@ requests==2.32.5
     #   google-genai
     #   prawcore
     #   requests-oauthlib
+    #   tiktoken
     #   tweepy
 requests-oauthlib==2.0.0
     # via tweepy
@@ -1006,6 +1009,8 @@ tenacity==9.1.4
     # via
     #   -r requirements.txt
     #   google-genai
+tiktoken==0.13.0
+    # via -r requirements.txt
 tokenizers==0.22.2
     # via
     #   faster-whisper
