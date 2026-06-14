@@ -373,6 +373,24 @@ def test_substrate_voice_engine_state_exposes_exclamation_flag():
     assert state["exclamation_allowed"] is True
 
 
+def test_speech_profile_discloses_bounded_field_snapshot_contract():
+    from core.voice.speech_profile import SpeechProfile
+
+    profile = SpeechProfile(
+        word_budget=24,
+        substrate_snapshot={
+            "field_snapshot_bounded": 1.0,
+            "field_snapshot_cached": 1.0,
+            "field_snapshot_age_s": 4.2,
+        },
+    )
+
+    block = profile.to_constraint_block()
+
+    assert "STATE FRESHNESS" in block
+    assert "do not claim exact live physiology" in block
+
+
 def test_substrate_voice_engine_demo_override_holds_then_expires(monkeypatch):
     import core.voice.substrate_voice_engine as voice_mod
 
@@ -422,6 +440,130 @@ def test_substrate_voice_engine_demo_override_holds_then_expires(monkeypatch):
     assert after_expiry.substrate_snapshot["arousal"] == pytest.approx(0.9)
     assert after_expiry.tone_override == "enthusiastic"
     assert engine.get_voice_state()["demo_override"]["active"] is False
+
+
+def test_substrate_voice_bounds_unified_field_reads_during_foreground(monkeypatch):
+    from core.voice import substrate_voice_engine as voice_mod
+
+    voice_mod._UNIFIED_FIELD_CACHE = {}
+    voice_mod._UNIFIED_FIELD_CACHE_AT = 0.0
+    calls = {"experiential": 0, "modes": 0}
+
+    class UnifiedField:
+        def get_coherence(self):
+            return 0.73
+
+        def get_phi_contribution(self):
+            return 0.19
+
+        def get_back_pressure(self):
+            return {"chemical_urgency": 0.31, "binding_demand": 0.44}
+
+        def get_experiential_quality(self):
+            calls["experiential"] += 1
+            return {"intensity": 0.91}
+
+        def get_dominant_modes(self, _limit):
+            calls["modes"] += 1
+            return [{"variance_explained": 0.81}]
+
+    field = UnifiedField()
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: SimpleNamespace(unified_field=field)
+            if name == "consciousness_bridge"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        "core.runtime.foreground_guard.foreground_activity_reason",
+        lambda: "foreground_chat_active",
+    )
+
+    snapshot = voice_mod._extract_unified_field()
+
+    assert snapshot["coherence"] == pytest.approx(0.73)
+    assert snapshot["phi"] == pytest.approx(0.19)
+    assert snapshot["back_pressure_urgency"] == pytest.approx(0.31)
+    assert snapshot["binding_demand"] == pytest.approx(0.44)
+    assert snapshot["field_snapshot_bounded"] == pytest.approx(1.0)
+    assert snapshot["field_snapshot_cached"] == pytest.approx(0.0)
+    assert "field_intensity" not in snapshot
+    assert calls == {"experiential": 0, "modes": 0}
+
+
+def test_substrate_voice_reuses_rich_field_cache_under_pressure(monkeypatch):
+    from core.voice import substrate_voice_engine as voice_mod
+
+    voice_mod._UNIFIED_FIELD_CACHE = {}
+    voice_mod._UNIFIED_FIELD_CACHE_AT = 0.0
+    calls = {"experiential": 0, "modes": 0}
+    foreground_reason = [""]
+
+    class UnifiedField:
+        def get_coherence(self):
+            return 0.62
+
+        def get_phi_contribution(self):
+            return 0.27
+
+        def get_back_pressure(self):
+            return {"chemical_urgency": 0.12, "binding_demand": 0.21}
+
+        def get_experiential_quality(self):
+            calls["experiential"] += 1
+            return {
+                "intensity": 0.76,
+                "valence": 0.18,
+                "complexity": 0.68,
+                "clarity": 0.55,
+                "flow": 0.49,
+            }
+
+        def get_dominant_modes(self, _limit):
+            calls["modes"] += 1
+            return [{"variance_explained": 0.59}]
+
+    class MemorySnapshot:
+        warning = False
+        refuse_heavy_local_generation = False
+        level = "normal"
+
+    field = UnifiedField()
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: SimpleNamespace(unified_field=field)
+            if name == "consciousness_bridge"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        "core.runtime.foreground_guard.foreground_activity_reason",
+        lambda: foreground_reason[0],
+    )
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: MemorySnapshot(),
+    )
+
+    rich = voice_mod._extract_unified_field(cache_max_age_s=60.0)
+    assert rich["field_intensity"] == pytest.approx(0.76)
+    assert rich["mode_focus"] == pytest.approx(0.59)
+    assert rich["field_snapshot_bounded"] == pytest.approx(0.0)
+    assert calls == {"experiential": 1, "modes": 1}
+
+    foreground_reason[0] = "foreground_quiet_window"
+    cached = voice_mod._extract_unified_field(cache_max_age_s=60.0)
+
+    assert cached["field_intensity"] == pytest.approx(0.76)
+    assert cached["mode_focus"] == pytest.approx(0.59)
+    assert cached["field_snapshot_bounded"] == pytest.approx(1.0)
+    assert cached["field_snapshot_cached"] == pytest.approx(1.0)
+    assert calls == {"experiential": 1, "modes": 1}
 
 
 @pytest.mark.asyncio

@@ -597,18 +597,31 @@ def _float_env(name: str, default: float) -> float:
 
 
 def _process_uptime_seconds() -> float:
-    """Seconds since this process started, or 0.0 if unknown.
+    """Seconds since the runtime booted, or 0.0 if unknown.
 
-    Used to suppress runtime-pressure health failures during boot/warmup,
-    when loading the local model legitimately spikes event-loop lag and
-    survival pressure — the same window the freeze watchdog already exempts.
+    Reads the orchestrator's start_time from the container. Returns 0.0 when
+    no orchestrator is registered (e.g. unit tests), so the boot-grace
+    exemption below applies ONLY to a live runtime that is genuinely warming
+    up — never to a bare-probe unit test. Used to suppress runtime-pressure
+    health failures during boot/warmup, when loading the local model
+    legitimately spikes event-loop lag and survival pressure (the same window
+    the freeze watchdog already exempts).
     """
     try:
-        import psutil
-
-        return max(0.0, time.time() - psutil.Process().create_time())
-    except (ImportError, OSError, RuntimeError, ValueError):
+        orch = ServiceContainer.get("orchestrator", default=None)
+    except (RuntimeError, AttributeError, TypeError, ValueError):
         return 0.0
+    for candidate in (
+        getattr(orch, "start_time", None),
+        getattr(getattr(orch, "status", None), "start_time", None),
+    ):
+        try:
+            start = float(candidate or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if start > 0.0:
+            return max(0.0, time.time() - start)
+    return 0.0
 
 
 def _runtime_pressure_boot_grace_active() -> bool:

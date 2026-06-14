@@ -28,6 +28,7 @@ from core.runtime.errors import record_degradation
 
 import asyncio
 import logging
+import os
 import random
 import time
 from types import SimpleNamespace
@@ -38,6 +39,79 @@ from core.voice.response_shaper import ResponseShaper
 from core.voice.natural_followup import FollowupDecision, NaturalFollowupEngine
 
 logger = logging.getLogger("Voice.SubstrateVoice")
+
+_UNIFIED_FIELD_CACHE: Dict[str, float] = {}
+_UNIFIED_FIELD_CACHE_AT: float = 0.0
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError, OverflowError):
+        return float(default)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError, OverflowError):
+        return float(default)
+
+
+def _foreground_or_pressure_reason() -> str:
+    """Return why expensive substrate reads should be bounded right now."""
+
+    try:
+        from core.runtime import foreground_guard
+
+        reason = foreground_guard.foreground_activity_reason()
+        if reason:
+            return str(reason)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("Foreground guard probe unavailable for voice field bound: %s", exc)
+        return "foreground_probe_unavailable"
+
+    try:
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        snapshot = get_memory_pressure_snapshot()
+        if getattr(snapshot, "warning", False) or getattr(
+            snapshot, "refuse_heavy_local_generation", False
+        ):
+            return f"memory_pressure:{getattr(snapshot, 'level', 'warning')}"
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("Memory pressure probe unavailable for voice field bound: %s", exc)
+        return "memory_probe_unavailable"
+
+    return ""
+
+
+def _cache_unified_field_snapshot(result: Dict[str, float]) -> None:
+    global _UNIFIED_FIELD_CACHE, _UNIFIED_FIELD_CACHE_AT
+    if not result:
+        return
+    cached = {
+        str(key): float(value)
+        for key, value in result.items()
+        if isinstance(value, (int, float)) and not str(key).startswith("field_snapshot_")
+    }
+    if not cached:
+        return
+    _UNIFIED_FIELD_CACHE = cached
+    _UNIFIED_FIELD_CACHE_AT = time.monotonic()
+
+
+def _cached_unified_field_snapshot(max_age_s: float) -> Dict[str, float]:
+    if not _UNIFIED_FIELD_CACHE:
+        return {}
+    age_s = max(0.0, time.monotonic() - _UNIFIED_FIELD_CACHE_AT)
+    if age_s > max(0.0, float(max_age_s)):
+        return {}
+    result = dict(_UNIFIED_FIELD_CACHE)
+    result["field_snapshot_cached"] = 1.0
+    result["field_snapshot_bounded"] = 1.0
+    result["field_snapshot_age_s"] = round(age_s, 3)
+    return result
 
 
 class SubstrateVoiceEngine:
@@ -58,6 +132,9 @@ class SubstrateVoiceEngine:
         self._silence_streak: int = 0          # consecutive times we chose silence
         self._last_response_time: float = 0.0
         self._response_count: int = 0
+        self._last_profile_compiled_at: float = 0.0
+        self._last_profile_message: str = ""
+        self._last_profile_origin: str = ""
         self._demo_affect_override: Optional[Dict[str, Any]] = None
         self._demo_affect_override_until: float = 0.0
         self._demo_affect_override_mood: str = ""
@@ -120,7 +197,48 @@ class SubstrateVoiceEngine:
             logger.debug("🤫 [SubstrateVoice] Silence-leaning profile compiled.")
 
         self._current_profile = profile
+        self._last_profile_compiled_at = time.monotonic()
+        self._last_profile_message = str(user_message or "")[:500]
+        self._last_profile_origin = str(origin or "user")
         return profile
+
+    def get_generation_params_for(
+        self,
+        *,
+        state: Any = None,
+        user_message: str = "",
+        origin: str = "user",
+        max_profile_age_s: float = 2.5,
+    ) -> Dict[str, Any]:
+        """Return sampler parameters from the current turn profile when safe.
+
+        Payload assembly and sampler override derivation run close together on
+        the live chat path. Reusing a matching, fresh profile prevents duplicate
+        substrate reads and keeps prompt constraints plus sampler settings tied
+        to the same observed moment.
+        """
+
+        message = str(user_message or "")[:500]
+        origin_s = str(origin or "user")
+        age_s = time.monotonic() - float(getattr(self, "_last_profile_compiled_at", 0.0) or 0.0)
+        profile = self._current_profile
+        reused = bool(
+            profile is not None
+            and age_s <= max(0.0, float(max_profile_age_s))
+            and message == getattr(self, "_last_profile_message", "")
+            and origin_s == getattr(self, "_last_profile_origin", "")
+        )
+        if not reused:
+            profile = self.compile_profile(
+                state=state,
+                user_message=message,
+                origin=origin_s,
+            )
+
+        params = dict(profile.to_generation_params() or {})
+        params["substrate_profile_reused"] = bool(reused)
+        params["substrate_profile_age_s"] = round(max(0.0, age_s), 3) if reused else 0.0
+        return params
 
     def _should_be_silent(
         self,
@@ -433,14 +551,33 @@ def _extract_homeostasis() -> Dict[str, float]:
     return {}
 
 
-def _extract_unified_field() -> Dict[str, float]:
-    """Pull FULL unified field state — coherence, phi, experiential quality, modes.
+def _extract_unified_field(
+    *,
+    prefer_cached: bool = False,
+    cache_max_age_s: Optional[float] = None,
+) -> Dict[str, float]:
+    """Pull unified-field state without letting rich introspection block chat.
 
-    The unified field computes rich experiential properties that should
-    DIRECTLY drive speech. Previously only coherence and phi were read.
-    Now we pull everything the field produces.
+    Foreground conversation should be shaped by the substrate, but it must not
+    synchronously pay the full unified-field compute tax. Under foreground
+    activity, memory pressure, or probe uncertainty we use a recent rich cache
+    when available and otherwise collect only cheap live metrics.
     """
     result: Dict[str, float] = {}
+    bound_reason = "prefer_cached" if prefer_cached else _foreground_or_pressure_reason()
+    max_cache_age = (
+        _env_float("AURA_SUBSTRATE_FIELD_CACHE_MAX_AGE_S", 45.0)
+        if cache_max_age_s is None
+        else max(0.0, float(cache_max_age_s))
+    )
+    if bound_reason:
+        cached = _cached_unified_field_snapshot(max_cache_age)
+        if cached:
+            cached["field_snapshot_bound_reason_hash"] = float(
+                abs(hash(bound_reason)) % 1_000_000
+            )
+            return cached
+
     try:
         from core.container import ServiceContainer
         bridge = ServiceContainer.get("consciousness_bridge", default=None)
@@ -455,37 +592,57 @@ def _extract_unified_field() -> Dict[str, float]:
         if not uf:
             return result
 
-        # Core metrics
+        # Core metrics: cheap enough for the live path and causally important.
         if hasattr(uf, "get_coherence"):
-            result["coherence"] = float(uf.get_coherence())
+            result["coherence"] = _safe_float(uf.get_coherence())
         if hasattr(uf, "get_phi_contribution"):
-            result["phi"] = float(uf.get_phi_contribution())
+            result["phi"] = _safe_float(uf.get_phi_contribution())
+
+        # Back-pressure signals are normally cheap scalar reads and preserve
+        # the state/process contract even when the richer field map is deferred.
+        if hasattr(uf, "get_back_pressure"):
+            bp = uf.get_back_pressure()
+            if isinstance(bp, dict):
+                result["back_pressure_urgency"] = _safe_float(
+                    bp.get("chemical_urgency", 0.0)
+                )
+                result["binding_demand"] = _safe_float(bp.get("binding_demand", 0.0))
+
+        if bound_reason:
+            result["field_snapshot_bounded"] = 1.0
+            result["field_snapshot_cached"] = 0.0
+            result["field_snapshot_age_s"] = 0.0
+            result["field_snapshot_bound_reason_hash"] = float(
+                abs(hash(bound_reason)) % 1_000_000
+            )
+            return result
 
         # Experiential quality — the "felt" properties of the current moment
         # These are computed from field dynamics, not labeled by LLM
         if hasattr(uf, "get_experiential_quality"):
             eq = uf.get_experiential_quality()
             if isinstance(eq, dict):
-                result["field_intensity"] = float(eq.get("intensity", 0.5))
-                result["field_valence"] = float(eq.get("valence", 0.0))
-                result["field_complexity"] = float(eq.get("complexity", 0.5))
-                result["field_clarity"] = float(eq.get("clarity", 0.5))
-                result["field_flow"] = float(eq.get("flow", 0.5))
+                result["field_intensity"] = _safe_float(eq.get("intensity", 0.5), 0.5)
+                result["field_valence"] = _safe_float(eq.get("valence", 0.0))
+                result["field_complexity"] = _safe_float(eq.get("complexity", 0.5), 0.5)
+                result["field_clarity"] = _safe_float(eq.get("clarity", 0.5), 0.5)
+                result["field_flow"] = _safe_float(eq.get("flow", 0.5), 0.5)
 
         # Dominant modes — recurring patterns of integrated activity
         if hasattr(uf, "get_dominant_modes"):
             modes = uf.get_dominant_modes(3)
             if modes:
                 # The top mode's variance explained tells us how "focused" the field is
-                result["mode_focus"] = float(modes[0].get("variance_explained", 0.0))
-                result["mode_count"] = float(len(modes))
+                result["mode_focus"] = _safe_float(
+                    modes[0].get("variance_explained", 0.0)
+                )
+                result["mode_count"] = _safe_float(len(modes))
 
-        # Back-pressure signals — field's modulation demands
-        if hasattr(uf, "get_back_pressure"):
-            bp = uf.get_back_pressure()
-            if isinstance(bp, dict):
-                result["back_pressure_urgency"] = float(bp.get("chemical_urgency", 0.0))
-                result["binding_demand"] = float(bp.get("binding_demand", 0.0))
+        if result:
+            result["field_snapshot_bounded"] = 0.0
+            result["field_snapshot_cached"] = 0.0
+            result["field_snapshot_age_s"] = 0.0
+            _cache_unified_field_snapshot(result)
 
     except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('substrate_voice_engine', e)
@@ -583,4 +740,3 @@ def get_substrate_voice_engine() -> SubstrateVoiceEngine:
             logger.warning("⚠️ [SubstrateVoiceEngine] Container registration failed: %s", exc)
         logger.info("🗣️ [SubstrateVoiceEngine] Initialized — substrate controls the voice.")
     return _instance
-

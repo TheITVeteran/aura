@@ -157,6 +157,12 @@ class SpeechProfile:
         if tone_lines:
             lines.append(f"- CURRENT VOICE: {', '.join(tone_lines)}")
 
+        if self.substrate_snapshot.get("field_snapshot_bounded"):
+            lines.append(
+                "- STATE FRESHNESS: rich field telemetry was bounded or cached for this live turn. "
+                "Let it shape tone, but do not claim exact live physiology or private experience from it."
+            )
+
         if self.unprompted_share_probability > 0.4:
             lines.append("- SHARE YOUR OWN THOUGHT. You have something to add — a reaction, connection, or opinion. Add it.")
 

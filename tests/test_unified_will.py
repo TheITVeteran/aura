@@ -380,6 +380,21 @@ class TestSubstrateIntegration:
         assert decision.outcome == WillOutcome.REFUSE
         assert "field_crisis" in decision.reason
 
+    def test_low_coherence_allows_read_only_observation_tool(self, will, monkeypatch):
+        """Low field coherence must not prevent harmless probes needed for recovery."""
+        monkeypatch.setattr(will, "_consult_substrate", lambda *args, **kwargs: (0.15, 0.0, "receipt_123"))
+        decision = will.decide(
+            content="tool:clock",
+            source="api",
+            domain=ActionDomain.TOOL_EXECUTION,
+            priority=0.9,
+            context={"tool": "clock", "effect_scope": "read_only", "read_only": True},
+        )
+        assert decision.outcome == WillOutcome.CONSTRAIN
+        assert decision.is_approved()
+        assert "field_crisis" in "; ".join(decision.constraints)
+        assert "observation_only_under_field_crisis" in decision.constraints
+
     def test_low_coherence_allows_stabilization(self, will, monkeypatch):
         """Low coherence should still allow stabilization actions."""
         monkeypatch.setattr(will, "_consult_substrate", lambda *args, **kwargs: (0.15, 0.0, "receipt_123"))
@@ -400,6 +415,25 @@ class TestSubstrateIntegration:
         )
         assert decision.outcome == WillOutcome.REFUSE
         assert "somatic_veto" in decision.reason
+
+    def test_somatic_veto_allows_read_only_observation_tool(self, will, monkeypatch):
+        """Somatic veto blocks action, but not read-only diagnostic observation."""
+        monkeypatch.setattr(will, "_consult_substrate", lambda *args, **kwargs: (0.6, -0.7, "receipt_123"))
+        decision = will.decide(
+            content="tool:system_proprioception",
+            source="api",
+            domain=ActionDomain.TOOL_EXECUTION,
+            priority=0.9,
+            context={
+                "tool": "system_proprioception",
+                "effect_scope": "read_only",
+                "read_only": True,
+            },
+        )
+        assert decision.outcome == WillOutcome.CONSTRAIN
+        assert decision.is_approved()
+        assert "somatic_caution" in "; ".join(decision.constraints)
+        assert "observation_only_under_somatic_veto" in decision.constraints
 
 
 # ---------------------------------------------------------------------------

@@ -74,6 +74,17 @@ def _origin_tokens(origin: str | None) -> set[str]:
     return {token for token in normalized.split("_") if token}
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError, OverflowError):
+        return float(default)
+
+
+def _memory_hydration_timeout_s() -> float:
+    return max(0.05, _env_float("AURA_RUNTIME_MEMORY_HYDRATION_TIMEOUT_S", 1.25))
+
+
 def is_user_facing_origin(origin: str | None) -> bool:
     return bool(_origin_tokens(origin) & _USER_FACING_ORIGINS)
 
@@ -186,15 +197,26 @@ def _normalize_memory_snippet(item: Any) -> str:
     return str(item or "").strip()
 
 
-async def _call_memory_method(method: Any, *args: Any, **kwargs: Any) -> Any:
+async def _call_memory_method(
+    method: Any,
+    *args: Any,
+    timeout_s: float | None = None,
+    **kwargs: Any,
+) -> Any:
     if method is None:
         return None
-    if inspect.iscoroutinefunction(method):
-        return await method(*args, **kwargs)
-    result = await asyncio.to_thread(method, *args, **kwargs)
-    if inspect.isawaitable(result):
-        return await result
-    return result
+
+    async def _invoke() -> Any:
+        if inspect.iscoroutinefunction(method):
+            return await method(*args, **kwargs)
+        result = await asyncio.to_thread(method, *args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    if timeout_s is None:
+        return await _invoke()
+    return await asyncio.wait_for(_invoke(), timeout=max(0.05, float(timeout_s)))
 
 
 async def _hydrate_runtime_memory(payload_state: Any, objective: str) -> None:
@@ -203,6 +225,7 @@ async def _hydrate_runtime_memory(payload_state: Any, objective: str) -> None:
 
     snippets: list[str] = []
     seen: set[str] = set()
+    timeout_s = _memory_hydration_timeout_s()
 
     def _push(item: Any) -> None:
         snippet = _normalize_memory_snippet(item)
@@ -223,13 +246,22 @@ async def _hydrate_runtime_memory(payload_state: Any, objective: str) -> None:
             search_method = getattr(memory, "search", None)
             if search_method is not None:
                 for item in list(
-                    await _call_memory_method(search_method, objective, limit=5) or []
+                    await _call_memory_method(
+                        search_method,
+                        objective,
+                        limit=5,
+                        timeout_s=timeout_s,
+                    ) or []
                 ):
                     _push(item)
 
             hot_method = getattr(memory, "get_hot_memory", None)
             if hot_method is not None:
-                hot = await _call_memory_method(hot_method, limit=3)
+                hot = await _call_memory_method(
+                    hot_method,
+                    limit=3,
+                    timeout_s=min(timeout_s, 0.75),
+                )
                 if isinstance(hot, dict):
                     for episode in list(hot.get("recent_episodes", []) or []):
                         _push({"content": episode, "metadata": {"type": "recent_episode"}})
@@ -241,7 +273,12 @@ async def _hydrate_runtime_memory(payload_state: Any, objective: str) -> None:
             )
             if search_knowledge is not None:
                 for item in list(
-                    await _call_memory_method(search_knowledge, objective, limit=3) or []
+                    await _call_memory_method(
+                        search_knowledge,
+                        objective,
+                        limit=3,
+                        timeout_s=timeout_s,
+                    ) or []
                 ):
                     _push(item)
     except _SOFT_RUNTIME_FAILURES as exc:
@@ -394,16 +431,28 @@ def derive_substrate_generation_overrides(
         from core.voice.substrate_voice_engine import get_substrate_voice_engine
 
         sve = get_substrate_voice_engine()
-        sve.compile_profile(
-            state=runtime_state,
-            user_message=str(objective or "")[:500],
-            origin=str(origin or "system"),
-        )
-        overrides = dict(sve.get_generation_params() or {})
-        if overrides:
-            overrides["substrate_generation_source"] = str(
-                getattr(sve.get_current_profile(), "compilation_source", "") or "substrate_voice"
+        if hasattr(sve, "get_generation_params_for"):
+            overrides = dict(
+                sve.get_generation_params_for(
+                    state=runtime_state,
+                    user_message=str(objective or "")[:500],
+                    origin=str(origin or "system"),
+                )
+                or {}
             )
+        else:
+            sve.compile_profile(
+                state=runtime_state,
+                user_message=str(objective or "")[:500],
+                origin=str(origin or "system"),
+            )
+            overrides = dict(sve.get_generation_params() or {})
+        profile = sve.get_current_profile()
+        if overrides:
+            source = str(getattr(profile, "compilation_source", "") or "substrate_voice")
+            if overrides.get("substrate_profile_reused"):
+                source = f"{source}, reused_runtime_profile"
+            overrides["substrate_generation_source"] = source
         return overrides
     except _SOFT_RUNTIME_FAILURES as exc:
         _record_runtime_wiring_degradation(

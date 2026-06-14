@@ -196,3 +196,24 @@ def test_will_catatonia_relief_does_not_open_unscoped_state_mutation():
 
     assert unsafe.outcome in {WillOutcome.REFUSE, WillOutcome.CONSTRAIN}
     assert not any("catatonia_relief" in constraint for constraint in unsafe.constraints)
+
+
+def test_will_catatonia_relief_accepts_homeostasis_repair_source():
+    will = UnifiedWill()
+    will._state.catatonia_relief_until = time.time() + 60.0
+
+    decision = will.decide(
+        "repair scheduler state after refusal storm",
+        source="homeostasis",
+        domain=ActionDomain.STATE_MUTATION,
+        priority=0.9,
+        context={
+            "repair_target": "scheduler_state",
+            "external_effects": False,
+            "unity_override": "repair_only",
+        },
+    )
+
+    assert decision.outcome == WillOutcome.CONSTRAIN
+    assert "catatonia_relief:self_repair_lane" in decision.constraints
+    assert "catatonia_relief:no_external_effects" in decision.constraints

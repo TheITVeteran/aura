@@ -1525,6 +1525,10 @@ class UnifiedWill:
                 "self_repair",
                 "error_intelligence",
                 "daily_introspection",
+                "foreground_guard",
+                "health_contract",
+                "homeostasis",
+                "runtime_doctor",
                 "self_audit",
                 "architecture_governor",
                 "asa",
@@ -1654,12 +1658,21 @@ class UnifiedWill:
             constraints.append("identity_tension: self-coherence is low")
 
         # ── Substrate gate (embodied constraints) ───────────────────
+        observation_only_tool = (
+            domain == ActionDomain.TOOL_EXECUTION
+            and self._is_observation_only_tool_context(content, context)
+        )
         field_crisis_threshold = 0.15 if catatonia_relief else 0.25
         if substrate_coherence < field_crisis_threshold:
-            if domain not in (ActionDomain.STABILIZATION, ActionDomain.RESPONSE):
+            if (
+                domain not in (ActionDomain.STABILIZATION, ActionDomain.RESPONSE)
+                and not observation_only_tool
+            ):
                 reasons.append(f"field_crisis: coherence={substrate_coherence:.3f}")
                 return WillOutcome.REFUSE, "; ".join(reasons), constraints
             constraints.append(f"field_crisis: coherence={substrate_coherence:.3f}")
+            if observation_only_tool:
+                constraints.append("observation_only_under_field_crisis")
 
         elif substrate_coherence < 0.25 and catatonia_relief:
             constraints.append(
@@ -1670,10 +1683,15 @@ class UnifiedWill:
 
         # Somatic veto
         if somatic_approach < -0.5:
-            if domain not in (ActionDomain.RESPONSE, ActionDomain.STABILIZATION):
+            if (
+                domain not in (ActionDomain.RESPONSE, ActionDomain.STABILIZATION)
+                and not observation_only_tool
+            ):
                 reasons.append(f"somatic_veto: approach={somatic_approach:.3f}")
                 return WillOutcome.REFUSE, "; ".join(reasons), constraints
             constraints.append(f"somatic_caution: approach={somatic_approach:.3f}")
+            if observation_only_tool:
+                constraints.append("observation_only_under_somatic_veto")
 
         elif somatic_approach < -0.2:
             constraints.append(f"somatic_unease: approach={somatic_approach:.3f}")

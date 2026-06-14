@@ -1,7 +1,11 @@
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 
 from core.brain.llm.runtime_wiring import (
     build_agentic_tool_map,
+    derive_substrate_generation_overrides,
     prepare_runtime_payload,
 )
 from core.runtime.errors import get_degradation_tracker
@@ -91,6 +95,42 @@ async def test_prepare_runtime_payload_records_memory_hydration_failure(monkeypa
     )
 
 
+@pytest.mark.asyncio
+async def test_prepare_runtime_payload_bounds_slow_memory_hydration(monkeypatch):
+    state = AuraState.default()
+    monkeypatch.setenv("AURA_RUNTIME_MEMORY_HYDRATION_TIMEOUT_S", "0.05")
+
+    class _SlowMemoryFacade:
+        async def search(self, _query, limit=5):
+            await asyncio.sleep(10.0)
+            return [{"content": "too late", "metadata": {"type": "fact"}}]
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: _SlowMemoryFacade() if name == "memory_facade" else default
+        ),
+    )
+
+    prompt, _, messages, contract, _ = await prepare_runtime_payload(
+        prompt="What do you remember about our plan?",
+        system_prompt=None,
+        messages=[{"role": "user", "content": "What do you remember about our plan?"}],
+        state=state,
+        origin="desktop",
+        is_background=False,
+    )
+
+    assert prompt == "User: What do you remember about our plan?"
+    assert messages is not None
+    assert contract is not None
+    last = get_degradation_tracker().recent(subsystem="runtime_wiring")[-1]
+    assert (
+        last.action
+        == "continued payload assembly with existing state memory after retrieval hydration failed"
+    )
+
+
 def test_build_agentic_tool_map_records_capability_registry_failure(monkeypatch):
     def _broken_get(name, default=None):
         if name == "capability_engine":
@@ -126,3 +166,51 @@ def test_build_agentic_tool_map_skips_capability_inventory_questions(monkeypatch
         )
         is None
     )
+
+
+def test_substrate_generation_overrides_reuse_fresh_turn_profile(monkeypatch):
+    class VoiceEngine:
+        def __init__(self):
+            self.profile = SimpleNamespace(compilation_source="bounded_voice")
+            self.calls = []
+
+        def get_generation_params_for(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "temperature": 0.62,
+                "top_p": 0.81,
+                "substrate_profile_reused": True,
+                "substrate_profile_age_s": 0.21,
+            }
+
+        def compile_profile(self, **_kwargs):
+            self.compile_calls = getattr(self, "compile_calls", 0) + 1
+            raise AssertionError("runtime wiring should use the reuse-aware profile path")
+
+        def get_current_profile(self):
+            return self.profile
+
+    engine = VoiceEngine()
+    runtime_state = object()
+    monkeypatch.setattr(
+        "core.voice.substrate_voice_engine.get_substrate_voice_engine",
+        lambda: engine,
+    )
+
+    overrides = derive_substrate_generation_overrides(
+        runtime_state=runtime_state,
+        objective="explain what tools you can use",
+        origin="desktop",
+        is_background=False,
+    )
+
+    assert engine.calls == [
+        {
+            "state": runtime_state,
+            "user_message": "explain what tools you can use",
+            "origin": "desktop",
+        }
+    ]
+    assert overrides["temperature"] == pytest.approx(0.62)
+    assert overrides["top_p"] == pytest.approx(0.81)
+    assert overrides["substrate_generation_source"] == "bounded_voice, reused_runtime_profile"
