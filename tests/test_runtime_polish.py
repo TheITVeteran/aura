@@ -872,6 +872,47 @@ def test_background_policy_blocks_when_memory_probe_fails(monkeypatch):
     assert reason == "memory_probe_unavailable"
 
 
+def test_constitutive_compute_budget_throttles_under_foreground_activity(monkeypatch):
+    from core.runtime import background_policy, foreground_guard
+
+    monkeypatch.setattr(foreground_guard, "foreground_activity_reason", lambda: "foreground_chat_active")
+    monkeypatch.setattr("core.container.ServiceContainer.get", lambda _name, default=None: default)
+    monkeypatch.setattr(
+        background_policy.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(percent=40.0),
+    )
+    monkeypatch.setattr(background_policy, "get_unified_failure_state", lambda: {"pressure": 0.0})
+    monkeypatch.setattr("core.runtime.proof_policy.proof_run_active", lambda *args, **kwargs: False)
+
+    budget = background_policy.constitutive_compute_budget("liquid_substrate", 20.0)
+
+    assert budget.effective_hz == pytest.approx(2.0)
+    assert budget.interval_s == pytest.approx(0.5)
+    assert budget.foreground_active is True
+    assert budget.reason == "foreground_chat_active"
+
+
+def test_constitutive_compute_budget_throttles_under_memory_pressure(monkeypatch):
+    from core.runtime import background_policy, foreground_guard
+
+    monkeypatch.setattr(foreground_guard, "foreground_activity_reason", lambda: "")
+    monkeypatch.setattr("core.container.ServiceContainer.get", lambda _name, default=None: default)
+    monkeypatch.setattr(
+        background_policy.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(percent=88.0),
+    )
+    monkeypatch.setattr(background_policy, "get_unified_failure_state", lambda: {"pressure": 0.0})
+    monkeypatch.setattr("core.runtime.proof_policy.proof_run_active", lambda *args, **kwargs: False)
+
+    budget = background_policy.constitutive_compute_budget("unified_field", 20.0)
+
+    assert budget.effective_hz == pytest.approx(2.0)
+    assert budget.memory_percent == pytest.approx(88.0)
+    assert budget.reason == "memory_pressure_88.0"
+
+
 @pytest.mark.asyncio
 async def test_initiative_synthesis_blocks_when_will_authorization_unavailable(monkeypatch):
     from core import initiative_synthesis as synthesis_module

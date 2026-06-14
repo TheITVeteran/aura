@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import pytest
 import torch
@@ -96,3 +98,32 @@ def test_substrate_torch_synchronization():
     # x and x_torch must contain identical values
     x_from_torch = substrate.x_torch.cpu().numpy()
     assert np.allclose(substrate.x, x_from_torch)
+
+
+def test_substrate_weight_cache_starts_from_numpy_connectome_and_resyncs_when_dirty():
+    config = SubstrateConfig(neuron_count=16)
+    substrate = LiquidSubstrate(config=config)
+
+    assert np.allclose(substrate.W, substrate.W_torch.cpu().numpy(), atol=1e-6)
+
+    with substrate.sync_lock:
+        substrate.W = np.zeros_like(substrate.W)
+        substrate._mark_weight_cache_dirty()
+
+    substrate._step_torch_math(0.01)
+
+    assert np.allclose(substrate.W_torch.cpu().numpy(), 0.0)
+    assert substrate._weight_cache_dirty is False
+    assert substrate._cached_connectivity_norm == pytest.approx(0.0)
+
+
+def test_substrate_prompt_marks_stale_snapshot_as_historical():
+    config = SubstrateConfig(neuron_count=16)
+    substrate = LiquidSubstrate(config=config)
+    substrate.last_update = time.time() - 30.0
+    substrate.current_update_rate = 20.0
+
+    prompt_fragment = substrate.format_for_prompt()
+
+    assert "Snapshot is stale" in prompt_fragment
+    assert "historical telemetry" in prompt_fragment

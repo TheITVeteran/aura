@@ -23,9 +23,29 @@ from core.runtime.errors import FallbackClassification, Severity, record_degrada
 from core.utils.exceptions import capture_and_log
 from core.utils.task_tracker import get_task_tracker, mark_task_protected
 
-# 🔒 [M5 64GB] Allow more threads for M5's wider core layout
-torch.set_num_threads(6)
 DEVICE = torch.device("cpu")
+
+
+def _configure_torch_threads() -> int:
+    raw = os.environ.get("AURA_SUBSTRATE_TORCH_THREADS", "2")
+    try:
+        requested = int(raw)
+    except (TypeError, ValueError):
+        requested = 2
+    threads = max(1, min(8, requested))
+    try:
+        torch.set_num_threads(threads)
+    except RuntimeError as exc:
+        record_degradation(
+            "liquid_substrate",
+            exc,
+            severity="warning",
+            action="kept existing torch thread count after substrate thread cap failed",
+        )
+    return threads
+
+
+_SUBSTRATE_TORCH_THREADS = _configure_torch_threads()
 
 # Lazy-loaded to avoid circular imports at module load
 _riiu_instance = None
@@ -116,10 +136,10 @@ class LiquidSubstrate:
         # --- PyTorch Substrate State (Evolution 1) ---
         self.device = DEVICE
         self.x_torch = torch.zeros(self.config.neuron_count, device=self.device)
-        self.W_torch = torch.randn(
-            self.config.neuron_count, self.config.neuron_count, device=self.device
-        ) * (1.0 / (self.config.neuron_count**0.5))
+        self.W_torch = torch.tensor(self.W, dtype=torch.float32, device=self.device)
         self.v_torch = torch.zeros(self.config.neuron_count, device=self.device)
+        self._weight_cache_dirty: bool = False
+        self._cached_connectivity_norm: float = float(np.linalg.norm(self.W))
 
         # --- Unified Qualia State Variables (Phase XVI) ---
         self.microtubule_coherence: float = 1.0  # 1.0 = Max quantum coherence (Orch OR)
@@ -128,6 +148,8 @@ class LiquidSubstrate:
         self.total_collapse_events: int = 0  # Orch OR "Moments of Consciousness"
 
         self.current_update_rate: float = self.config.update_rate
+        self._last_compute_budget_reason: str = "boot"
+        self._last_compute_budget_memory_percent: float | None = None
 
         # Emotional State Mapping (VAD + Psych State)
         self.idx_valence: int = 0
@@ -277,6 +299,53 @@ class LiquidSubstrate:
             except TypeError as fallback_error:
                 logger.debug("Legacy substrate degradation receipt failed: %s", fallback_error)
 
+    def _mark_weight_cache_dirty(self) -> None:
+        self._weight_cache_dirty = True
+
+    def _sync_weight_cache_locked(self) -> None:
+        w = np.nan_to_num(self.W, nan=0.0, posinf=5.0, neginf=-5.0)
+        self.W = w
+        self.W_torch = torch.tensor(w, dtype=torch.float32, device=self.device)
+        self._cached_connectivity_norm = float(np.linalg.norm(w))
+        self._weight_cache_dirty = False
+
+    def _freshness_threshold_s(self) -> float:
+        rate = max(0.1, float(self.current_update_rate or self.config.update_rate or 1.0))
+        return max(2.0, 3.0 / rate)
+
+    def _state_snapshot(self) -> dict[str, Any]:
+        with self.sync_lock:
+            x = np.nan_to_num(self.x.copy(), nan=0.0, posinf=1.0, neginf=-1.0)
+            v = np.nan_to_num(self.v.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+            phi = self._current_phi if np.isfinite(self._current_phi) else 0.0
+            last_update = float(self.last_update or 0.0)
+            update_rate = float(self.current_update_rate or self.config.update_rate or 0.0)
+            coherence = (
+                self.microtubule_coherence
+                if np.isfinite(self.microtubule_coherence)
+                else 1.0
+            )
+            em_field = (
+                self.em_field_magnitude
+                if np.isfinite(self.em_field_magnitude)
+                else 0.0
+            )
+            return {
+                "x": x,
+                "v": v,
+                "phi": float(phi),
+                "last_update": last_update,
+                "update_rate_hz": update_rate,
+                "snapshot_age_s": max(0.0, time.time() - last_update) if last_update else float("inf"),
+                "freshness_threshold_s": self._freshness_threshold_s(),
+                "coherence": float(coherence),
+                "em_field": float(em_field),
+                "l5_bursts": int(self.l5_burst_count),
+                "collapse_events": int(self.total_collapse_events),
+                "compute_budget_reason": self._last_compute_budget_reason,
+                "compute_budget_memory_percent": self._last_compute_budget_memory_percent,
+            }
+
     def _init_soma(self):
         # Phase 16: Soma Integration
         try:
@@ -339,6 +408,31 @@ class LiquidSubstrate:
                     dt = self.config.time_constant
                     if self.config.adaptive_mode:
                         dt = await self._apply_battery_throttling()
+
+                    try:
+                        from core.runtime.background_policy import constitutive_compute_budget
+
+                        budget = constitutive_compute_budget(
+                            "liquid_substrate",
+                            self.current_update_rate,
+                            min_hz=0.5,
+                            foreground_hz=2.0,
+                            memory_high_hz=2.0,
+                            memory_critical_hz=0.5,
+                        )
+                        self.current_update_rate = budget.effective_hz
+                        self._last_compute_budget_reason = budget.reason
+                        self._last_compute_budget_memory_percent = budget.memory_percent
+                    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _budget_exc:
+                        self._record_operational_degradation(
+                            _budget_exc,
+                            stage="constitutive_compute_budget",
+                            action="throttled substrate to minimum safe rate after compute budget probe failed",
+                            severity="degraded",
+                            cooldown_s=30.0,
+                        )
+                        self.current_update_rate = min(self.current_update_rate, 0.5)
+                        self._last_compute_budget_reason = "budget_probe_unavailable"
 
                     # Somatic state freeze: scale down time-delta during LLM inference
                     from core.consciousness.state_freeze import is_state_frozen
@@ -462,19 +556,18 @@ class LiquidSubstrate:
         Now safely executed in a separate thread.
         """
         with torch.inference_mode():
-            # Sync numpy -> torch if they diverged (e.g. from external injects)
-            state_copy = self.x.copy()
-            x_torch = torch.from_numpy(state_copy).to(self.device).float()
-
-            # Sync W_torch from numpy W (plasticity modifies W only)
+            # Sync numpy -> torch if they diverged (e.g. from external injects).
+            # Keep the recurrent weight tensor cached; rebuilding a 512x512
+            # tensor every tick creates avoidable foreground memory churn.
             with self.sync_lock:
-                w_copy = self.W.copy()
-            # Guard against NaN/Inf in weight matrix before matmul
-            w_copy = np.nan_to_num(w_copy, nan=0.0, posinf=5.0, neginf=-5.0)
-            self.W_torch = torch.from_numpy(w_copy).to(self.device).float()
-
-            # CTRNN math in PyTorch (Use @ for robust matmul)
-            weights = self.W_torch
+                state_copy = self.x.copy()
+                if (
+                    self._weight_cache_dirty
+                    or tuple(self.W_torch.shape) != tuple(self.W.shape)
+                ):
+                    self._sync_weight_cache_locked()
+                weights = self.W_torch
+            x_torch = torch.from_numpy(state_copy).to(self.device).float()
 
             recurrent = weights @ x_torch
             activity = torch.tanh(recurrent)
@@ -494,7 +587,7 @@ class LiquidSubstrate:
             v_np = np.nan_to_num(v_np, nan=0.0, posinf=0.0, neginf=0.0)
             self._integration_steps += 1
 
-            connectivity_norm = float(np.linalg.norm(w_copy))
+            connectivity_norm = float(self._cached_connectivity_norm)
             if connectivity_norm < 1e-8 and self.config.noise_level >= 0.1:
                 if self._integration_steps % 7 == 0:
                     damping = 1.0 - min(0.95, float(self.config.noise_level) * 1.8)
@@ -514,6 +607,8 @@ class LiquidSubstrate:
             with self.sync_lock:
                 self.x = new_x_np
                 self.v = v_np
+                self.x_torch = new_x_torch.detach().to(self.device)
+                self.v_torch = new_x_torch.detach().to(self.device) - x_torch.detach().to(self.device)
 
             self.last_update = time.time()
 
@@ -709,16 +804,20 @@ class LiquidSubstrate:
     def get_substrate_affect(self) -> dict[str, float]:
         """Unified cross-feed stats for the Orchestrator."""
         try:
-            x = self.x.copy()
-            v = self.v.copy()
-            x = np.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
-            v = np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
+            snapshot = self._state_snapshot()
+            x = snapshot["x"]
+            v = snapshot["v"]
+            age_s = float(snapshot["snapshot_age_s"])
+            stale = age_s > float(snapshot["freshness_threshold_s"])
             return {
                 "valence": float(np.tanh(x[0])),
                 "arousal": float(np.clip((x[1] + 1.0) / 2.0, 0.0, 1.0)),
                 "dominance": float(np.tanh(x[2])),
                 "energy": float(np.clip(np.mean(np.abs(x)), 0.0, 1.0)),
                 "volatility": float(min(1.0, np.mean(np.abs(v)) * 10.0)),
+                "snapshot_age_s": age_s,
+                "snapshot_stale": 1.0 if stale else 0.0,
+                "update_rate_hz": float(snapshot["update_rate_hz"]),
             }
         except (IndexError, TypeError, ValueError, FloatingPointError) as exc:
             record_degradation("liquid_substrate", exc)
@@ -729,6 +828,9 @@ class LiquidSubstrate:
                 "dominance": 0.0,
                 "energy": 0.5,
                 "volatility": 0.0,
+                "snapshot_age_s": float("inf"),
+                "snapshot_stale": 1.0,
+                "update_rate_hz": 0.0,
             }
 
     def format_for_prompt(self, sub_affect: dict[str, float] | None = None) -> str:
@@ -739,22 +841,32 @@ class LiquidSubstrate:
         v = sub_affect.get("valence", 0.0)
         a = sub_affect.get("arousal", 0.3)
         vo = sub_affect.get("volatility", 0.0)
+        age_s = float(sub_affect.get("snapshot_age_s", 0.0) or 0.0)
+        stale = bool(float(sub_affect.get("snapshot_stale", 0.0) or 0.0) >= 1.0)
 
         valence_word = "positive" if v > 0.1 else ("negative" if v < -0.1 else "neutral")
         arousal_word = "heightened" if a > 0.6 else ("low" if a < 0.2 else "moderate")
         volatile_note = " (volatile, shifting rapidly)" if vo > 0.5 else ""
+        freshness_note = (
+            f" Snapshot is stale by {age_s:.1f}s; treat it as historical telemetry, not current physiology."
+            if stale
+            else f" Snapshot age {age_s:.1f}s."
+        )
 
         return (
             f"[Neural substrate state: {valence_word} valence, "
             f"{arousal_word} arousal{volatile_note}. "
+            f"{freshness_note} "
             f"Let this subtly colour your tone without overriding your reasoning.]"
         )
 
     def get_mood(self) -> str:
         """Returns a string representation of the current 'mood'."""
-        frustration = self.x[self.idx_frustration]
-        energy = self.x[self.idx_energy]
-        curiosity = self.x[self.idx_curiosity]
+        snapshot = self._state_snapshot()
+        x = snapshot["x"]
+        frustration = x[self.idx_frustration]
+        energy = x[self.idx_energy]
+        curiosity = x[self.idx_curiosity]
 
         if frustration > 0.8:
             return "VOLATILE"
@@ -769,11 +881,12 @@ class LiquidSubstrate:
     @property
     def current(self) -> LiquidStateVector:
         """Legacy compatibility property (Aura 4.0)."""
+        x = self._state_snapshot()["x"]
         return LiquidStateVector(
-            frustration=float(self.x[self.idx_frustration]),
-            curiosity=float(self.x[self.idx_curiosity]),
-            energy=float(self.x[self.idx_energy]),
-            focus=float(self.x[self.idx_focus]),
+            frustration=float(x[self.idx_frustration]),
+            curiosity=float(x[self.idx_curiosity]),
+            energy=float(x[self.idx_energy]),
+            focus=float(x[self.idx_focus]),
         )
 
     def get_status(self) -> dict:
@@ -783,20 +896,38 @@ class LiquidSubstrate:
         def _to_pct(val):
             return round(max(0.0, float(val)) * 100)
 
+        snapshot = self._state_snapshot()
+        x = snapshot["x"]
         return {
-            "frustration": _to_pct(self.x[self.idx_frustration]),
-            "curiosity": _to_pct(self.x[self.idx_curiosity]),
-            "energy": _to_pct(self.x[self.idx_energy]),
-            "focus": _to_pct(self.x[self.idx_focus]),
+            "frustration": _to_pct(x[self.idx_frustration]),
+            "curiosity": _to_pct(x[self.idx_curiosity]),
+            "energy": _to_pct(x[self.idx_energy]),
+            "focus": _to_pct(x[self.idx_focus]),
             "mood": self.get_mood(),
+            "update_rate_hz": round(float(snapshot["update_rate_hz"]), 3),
+            "snapshot_age_s": round(float(snapshot["snapshot_age_s"]), 3)
+            if np.isfinite(float(snapshot["snapshot_age_s"]))
+            else None,
+            "snapshot_stale": bool(
+                float(snapshot["snapshot_age_s"]) > float(snapshot["freshness_threshold_s"])
+            ),
+            "compute_budget_reason": snapshot["compute_budget_reason"],
+            "compute_budget_memory_percent": snapshot["compute_budget_memory_percent"],
         }
 
     def get_summary(self) -> str:
         """Returns a text summary for the context builder."""
+        snapshot = self._state_snapshot()
+        x = snapshot["x"]
         mood = self.get_mood()
-        energy = float(self.x[self.idx_energy])
-        focus = float(self.x[self.idx_focus])
-        return f"Current Mood: {mood} (Energy: {energy:.2f}, Focus: {focus:.2f})"
+        energy = float(x[self.idx_energy])
+        focus = float(x[self.idx_focus])
+        age_s = float(snapshot["snapshot_age_s"])
+        stale_note = " stale" if age_s > float(snapshot["freshness_threshold_s"]) else ""
+        return (
+            f"Current Mood: {mood} (Energy: {energy:.2f}, Focus: {focus:.2f}, "
+            f"Substrate age: {age_s:.1f}s{stale_note})"
+        )
 
     async def _recurrent_self_model(self, dt: float):
         await asyncio.to_thread(self._recurrent_self_model_sync, dt)
@@ -810,7 +941,8 @@ class LiquidSubstrate:
 
         Called every 5th tick from _run_loop (~4Hz at 20Hz rate).
         """
-        current = self.x.copy()
+        with self.sync_lock:
+            current = self.x.copy()
 
         # Initialize prior state on first call
         if self._prior_state is None:
@@ -832,7 +964,9 @@ class LiquidSubstrate:
             )
             blended = current
 
-        self.x = np.clip(blended, -1.0, 1.0)
+        with self.sync_lock:
+            self.x = np.clip(blended, -1.0, 1.0)
+            self.x_torch = torch.from_numpy(self.x).to(self.device).float()
 
         # Store for next iteration
         self._prior_state = current
@@ -914,6 +1048,8 @@ class LiquidSubstrate:
             if norm > 10.0:
                 self.W *= 10.0 / norm
             self.W = np.clip(self.W, -5.0, 5.0)
+            self._cached_connectivity_norm = float(np.linalg.norm(self.W))
+            self._mark_weight_cache_dirty()
 
     async def long_term_calibration(self, resonance_vector: np.ndarray):
         """
@@ -933,6 +1069,8 @@ class LiquidSubstrate:
             if norm > 10.0:
                 self.W *= 10.0 / norm
             self.W = np.clip(self.W, -5.0, 5.0)
+            self._cached_connectivity_norm = float(np.linalg.norm(self.W))
+            self._mark_weight_cache_dirty()
 
     def accept_inference_feedback(self, surprise: float, coherence: float) -> None:
         """Process real-time inference feedback.
@@ -1040,6 +1178,7 @@ class LiquidSubstrate:
 
         with self.sync_lock:
             self.x = np.clip(self.x + vector * weight * 0.1, -1.0, 1.0)
+            self.x_torch = torch.from_numpy(self.x).to(self.device).float()
 
         # Track tasks if needed (e.g. if we were launching something here)
         # For now, this is just to ensure Issue 73 logic has a place to live
@@ -1141,25 +1280,29 @@ class LiquidSubstrate:
 
     async def get_state_summary(self) -> dict[str, Any]:
         """Return high-level emotional/cognitive state"""
-        with self.sync_lock:
-            x = np.nan_to_num(self.x, nan=0.0, posinf=1.0, neginf=-1.0)
-            v = np.nan_to_num(self.v, nan=0.0, posinf=0.0, neginf=0.0)
-            phi = self._current_phi if np.isfinite(self._current_phi) else 0.0
-            return {
-                "valence": float(x[self.idx_valence]),
-                "arousal": float(x[self.idx_arousal]),
-                "dominance": float(x[self.idx_dominance]),
-                "global_energy": float(np.mean(np.abs(x))),
-                "volatility": float(np.mean(np.abs(v))) * 100,
-                "phi": float(phi),
-                "qualia_metrics": {
-                    "mt_coherence": float(self.microtubule_coherence),
-                    "em_field": float(self.em_field_magnitude),
-                    "l5_bursts": int(self.l5_burst_count),
-                    "collapse_events": int(self.total_collapse_events),
-                    "phi": float(self._current_phi),
-                },
-            }
+        snapshot = self._state_snapshot()
+        x = snapshot["x"]
+        v = snapshot["v"]
+        age_s = float(snapshot["snapshot_age_s"])
+        return {
+            "valence": float(x[self.idx_valence]),
+            "arousal": float(x[self.idx_arousal]),
+            "dominance": float(x[self.idx_dominance]),
+            "global_energy": float(np.mean(np.abs(x))),
+            "volatility": float(np.mean(np.abs(v))) * 100,
+            "phi": float(snapshot["phi"]),
+            "snapshot_age_s": age_s,
+            "snapshot_stale": bool(age_s > float(snapshot["freshness_threshold_s"])),
+            "update_rate_hz": float(snapshot["update_rate_hz"]),
+            "compute_budget_reason": snapshot["compute_budget_reason"],
+            "qualia_metrics": {
+                "mt_coherence": float(snapshot["coherence"]),
+                "em_field": float(snapshot["em_field"]),
+                "l5_bursts": int(snapshot["l5_bursts"]),
+                "collapse_events": int(snapshot["collapse_events"]),
+                "phi": float(snapshot["phi"]),
+            },
+        }
 
     def compute_cognitive_velocity(self) -> float:
         """Return normalized instantaneous substrate change for phenomenology."""
@@ -1216,6 +1359,8 @@ class LiquidSubstrate:
                         self.x_torch = torch.tensor(self.x, dtype=torch.float32, device=self.device)
                         self.v = np.zeros(n)
                         self.v_torch = torch.zeros(n, device=self.device)
+                        self._cached_connectivity_norm = float(np.linalg.norm(self.W))
+                        self._weight_cache_dirty = False
                         return
                     logger.warning(
                         "Substrate state x dimension (%d) differs from configured n=%d; "
@@ -1237,6 +1382,12 @@ class LiquidSubstrate:
                     )
                     self.x = np.zeros(n)
                     self.W = self._rng.standard_normal((n, n)).astype(np.float64) * 0.1
+                    self.W_torch = torch.tensor(self.W, dtype=torch.float32, device=self.device)
+                    self.x_torch = torch.tensor(self.x, dtype=torch.float32, device=self.device)
+                    self.v = np.zeros(n)
+                    self.v_torch = torch.zeros(n, device=self.device)
+                    self._cached_connectivity_norm = float(np.linalg.norm(self.W))
+                    self._weight_cache_dirty = False
                     return
                 self.x = np.nan_to_num(loaded_x, nan=0.0, posinf=1.0, neginf=-1.0)
                 if loaded_weights.shape == (n, n):
@@ -1252,6 +1403,9 @@ class LiquidSubstrate:
                     )
                 self.W_torch = torch.tensor(self.W, dtype=torch.float32, device=self.device)
                 self.x_torch = torch.tensor(self.x, dtype=torch.float32, device=self.device)
+                self.v_torch = torch.tensor(self.v, dtype=torch.float32, device=self.device)
+                self._cached_connectivity_norm = float(np.linalg.norm(self.W))
+                self._weight_cache_dirty = False
                 self.tick_count = int(data["tick"])
             logger.info("Substrate state restored.")
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
@@ -1264,6 +1418,12 @@ class LiquidSubstrate:
                 ).astype(np.float64)
                 * 0.1
             )
+            self.W_torch = torch.tensor(self.W, dtype=torch.float32, device=self.device)
+            self.x_torch = torch.tensor(self.x, dtype=torch.float32, device=self.device)
+            self.v = np.zeros(self.config.neuron_count)
+            self.v_torch = torch.zeros(self.config.neuron_count, device=self.device)
+            self._cached_connectivity_norm = float(np.linalg.norm(self.W))
+            self._weight_cache_dirty = False
 
     def _apply_idle_decay(self, idle_seconds: float):
         """Apply accumulated natural decay for time spent in deep idle.
@@ -1272,10 +1432,12 @@ class LiquidSubstrate:
         we pause and compute the equivalent exponential decay on resume.
         This is mathematically equivalent: x(t) = x(0) * exp(-decay * t).
         """
-        if idle_seconds <= 0 or self.x is None:
-            return
-        decay_factor = np.exp(-self.config.decay_rate * idle_seconds)
-        self.x = self.x * decay_factor
+        with self.sync_lock:
+            if idle_seconds <= 0 or self.x is None:
+                return
+            decay_factor = np.exp(-self.config.decay_rate * idle_seconds)
+            self.x = self.x * decay_factor
+            self.x_torch = torch.from_numpy(self.x).to(self.device).float()
         logger.info(
             "Applied %.0fs idle decay (factor=%.4f) to substrate state.",
             idle_seconds,

@@ -216,6 +216,7 @@ class HigherOrderThoughtEngine:
         self._last_rich_at: float = 0.0
         self._pending_feedback: dict[str, float] | None = None
         self._rich_task: asyncio.Task | None = None
+        self._last_rich_defer_reason: str = ""
         logger.info("HOT Engine online — reflexive self-modeling active.")
 
     # ── Internal guards ─────────────────────────────────────────────────
@@ -393,6 +394,29 @@ class HigherOrderThoughtEngine:
         """Generate a deep HOT via LLM (async, 2-4s). Non-blocking."""
         if not router:
             return self._current_hot
+        try:
+            from core.runtime.background_policy import (
+                THOUGHT_BACKGROUND_POLICY,
+                background_activity_reason,
+            )
+
+            reason = background_activity_reason(
+                None,
+                profile=THOUGHT_BACKGROUND_POLICY,
+                allow_no_user_anchor=True,
+            )
+            if reason:
+                self._last_rich_defer_reason = reason
+                return self.generate_fast(state)
+            self._last_rich_defer_reason = ""
+        except _RECOVERABLE_HOT_ERRORS as exc:
+            self._last_rich_defer_reason = "background_policy_unavailable"
+            _record_hot_degradation(
+                exc,
+                severity="warning",
+                action="used fast HOT path because rich HOT background policy failed closed",
+            )
+            return self.generate_fast(state)
         # Rate-limit: at most once per 30s
         if time.monotonic() - self._last_rich_at < 30.0:
             return self._current_hot

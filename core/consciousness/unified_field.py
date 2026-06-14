@@ -256,6 +256,9 @@ class UnifiedField:
         self._start_time: float = 0.0
         self._consecutive_tick_failures: int = 0
         self._last_tick_error_at: float = 0.0
+        self._last_compute_budget_reason: str = "boot"
+        self._last_compute_budget_memory_percent: float | None = None
+        self._last_effective_hz: float = float(self.cfg.update_hz)
 
         # External ref for phase coupling
         self._binding_ref = None  # OscillatoryBinding
@@ -350,6 +353,30 @@ class UnifiedField:
         try:
             while self._running:
                 t0 = time.monotonic()
+                try:
+                    from core.runtime.background_policy import constitutive_compute_budget
+
+                    budget = constitutive_compute_budget(
+                        "unified_field",
+                        update_hz,
+                        min_hz=0.5,
+                        foreground_hz=2.0,
+                        memory_high_hz=2.0,
+                        memory_critical_hz=0.5,
+                    )
+                    interval = budget.interval_s
+                    self._last_effective_hz = budget.effective_hz
+                    self._last_compute_budget_reason = budget.reason
+                    self._last_compute_budget_memory_percent = budget.memory_percent
+                except _RECOVERABLE_FIELD_ERRORS as exc:
+                    interval = max(interval, 2.0)
+                    self._last_effective_hz = min(self._last_effective_hz, 0.5)
+                    self._last_compute_budget_reason = "budget_probe_unavailable"
+                    _record_unified_field_degradation(
+                        exc,
+                        action="throttled UnifiedField loop after compute budget probe failed",
+                        severity="degraded",
+                    )
                 try:
                     await asyncio.to_thread(self._tick)
                     self._consecutive_tick_failures = 0
@@ -1194,4 +1221,7 @@ class UnifiedField:
             "consecutive_tick_failures": self._consecutive_tick_failures,
             "last_tick_error_at": round(self._last_tick_error_at, 4),
             "uptime_seconds": round(uptime, 4),
+            "effective_update_hz": round(float(self._last_effective_hz), 4),
+            "compute_budget_reason": self._last_compute_budget_reason,
+            "compute_budget_memory_percent": self._last_compute_budget_memory_percent,
         }

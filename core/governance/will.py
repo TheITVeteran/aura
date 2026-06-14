@@ -264,6 +264,8 @@ class WillState:
     assertiveness: float = 0.5  # bias toward action vs caution
     identity_coherence: float = 0.8  # how coherent the self-model is
     catatonia_relief_until: float = 0.0
+    catatonia_relief_activations: int = 0
+    last_catatonia_relief_reason: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +630,7 @@ class UnifiedWill:
 
         if catatonia_relief and outcome in (WillOutcome.PROCEED, WillOutcome.CONSTRAIN):
             constraints.append("catatonia_relief:self_repair_lane")
+            constraints.append("catatonia_relief:no_external_effects")
             if outcome == WillOutcome.PROCEED:
                 outcome = WillOutcome.CONSTRAIN
                 reason = "catatonia_relief: reserved self-repair lane"
@@ -1500,12 +1503,26 @@ class UnifiedWill:
             ActionDomain.STATE_MUTATION,
         }:
             return False
+        safe_state_targets = {
+            "unity_state",
+            "substrate_state",
+            "scheduler_state",
+            "runtime_health",
+            "foreground_lane",
+            "conversation_lane",
+            "will_circuit_breaker",
+        }
+        if domain == ActionDomain.STATE_MUTATION:
+            repair_target = str(context.get("repair_target") or "").strip().lower()
+            if bool(context.get("external_effects")):
+                return False
+            if repair_target not in safe_state_targets:
+                return False
         source_l = str(source or "").lower()
         source_allowed = any(
             marker in source_l
             for marker in (
                 "self_repair",
-                "self_modification",
                 "error_intelligence",
                 "daily_introspection",
                 "self_audit",
@@ -1526,12 +1543,35 @@ class UnifiedWill:
         now = time.time()
         if self._state.catatonia_relief_until > now:
             return True
-        window = [d for d in self._audit_trail if now - float(d.timestamp or 0.0) <= 300.0]
-        if len(window) < 10:
-            return False
-        blocked = sum(1 for d in window if d.outcome in {WillOutcome.REFUSE, WillOutcome.DEFER})
-        if (blocked / max(1, len(window))) >= 0.70:
+
+        recent_window = [
+            d for d in self._audit_trail if now - float(d.timestamp or 0.0) <= 120.0
+        ]
+        standard_window = [
+            d for d in self._audit_trail if now - float(d.timestamp or 0.0) <= 300.0
+        ]
+
+        def _blocked_ratio(window: list[WillDecision]) -> float:
+            blocked = sum(
+                1 for d in window if d.outcome in {WillOutcome.REFUSE, WillOutcome.DEFER}
+            )
+            return blocked / max(1, len(window))
+
+        activation_reason = ""
+        if (
+            domain in {ActionDomain.STABILIZATION, ActionDomain.REFLECTION}
+            and len(recent_window) >= 5
+            and _blocked_ratio(recent_window) >= 0.80
+        ):
+            self._state.catatonia_relief_until = now + 90.0
+            activation_reason = "recent_refusal_storm"
+        elif len(standard_window) >= 10 and _blocked_ratio(standard_window) >= 0.70:
             self._state.catatonia_relief_until = now + 120.0
+            activation_reason = "sustained_refusal_storm"
+
+        if activation_reason:
+            self._state.catatonia_relief_activations += 1
+            self._state.last_catatonia_relief_reason = activation_reason
             return True
         return False
 
@@ -1986,6 +2026,12 @@ class UnifiedWill:
             "identity_coherence": round(self._state.identity_coherence, 4),
             "confidence": round(self._state.confidence, 4),
             "catatonia_relief_active": self._state.catatonia_relief_until > time.time(),
+            "catatonia_relief_remaining_s": round(
+                max(0.0, self._state.catatonia_relief_until - time.time()),
+                3,
+            ),
+            "catatonia_relief_activations": self._state.catatonia_relief_activations,
+            "last_catatonia_relief_reason": self._state.last_catatonia_relief_reason,
             "uptime_s": round(time.time() - self._boot_time, 1),
         }
 

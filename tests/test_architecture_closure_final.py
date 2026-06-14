@@ -163,10 +163,36 @@ def test_will_signs_receipts_and_allows_reserved_self_repair_under_catatonia():
         context={
             "catatonia_relief": True,
             "unity_override": "repair_only",
+            "repair_target": "will_circuit_breaker",
+            "external_effects": False,
         },
     )
 
     assert decision.outcome == WillOutcome.CONSTRAIN
     assert any("catatonia_relief" in constraint for constraint in decision.constraints)
+    assert "catatonia_relief:no_external_effects" in decision.constraints
     assert decision.signature
     assert will.verify_receipt_signature(decision.receipt_id) is True
+
+
+def test_will_catatonia_relief_does_not_open_unscoped_state_mutation():
+    will = UnifiedWill()
+    now = time.time()
+    for idx in range(10):
+        will._audit_trail.append(
+            SimpleNamespace(
+                outcome=WillOutcome.REFUSE,
+                timestamp=now - idx,
+            )
+        )
+
+    unsafe = will.decide(
+        "mutate state during catatonia without scoped target",
+        source="self_repair",
+        domain=ActionDomain.STATE_MUTATION,
+        priority=0.9,
+        context={"catatonia_relief": True, "unity_override": "repair_only"},
+    )
+
+    assert unsafe.outcome in {WillOutcome.REFUSE, WillOutcome.CONSTRAIN}
+    assert not any("catatonia_relief" in constraint for constraint in unsafe.constraints)

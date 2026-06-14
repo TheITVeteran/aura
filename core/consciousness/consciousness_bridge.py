@@ -95,6 +95,9 @@ class ConsciousnessBridge:
         self._start_time: float = 0.0
         self._boot_errors: list[tuple[str, str]] = []
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._last_compute_budget_reason: str = "boot"
+        self._last_effective_hz: float = self._INTEGRATION_HZ
+        self._last_compute_budget_memory_percent: float | None = None
 
         logger.info("ConsciousnessBridge created")
 
@@ -358,6 +361,27 @@ class ConsciousnessBridge:
         try:
             while self._running:
                 t0 = time.time()
+                try:
+                    from core.runtime.background_policy import constitutive_compute_budget
+
+                    budget = constitutive_compute_budget(
+                        "consciousness_bridge",
+                        self._INTEGRATION_HZ,
+                        min_hz=0.5,
+                        foreground_hz=2.0,
+                        memory_high_hz=2.0,
+                        memory_critical_hz=0.5,
+                    )
+                    interval = budget.interval_s
+                    self._last_effective_hz = budget.effective_hz
+                    self._last_compute_budget_reason = budget.reason
+                    self._last_compute_budget_memory_percent = budget.memory_percent
+                except _RECOVERABLE_BRIDGE_ERRORS as e:
+                    record_degradation("consciousness_bridge", e)
+                    logger.error("Bridge compute budget probe failed; throttling loop: %s", e)
+                    interval = max(interval, 2.0)
+                    self._last_effective_hz = min(self._last_effective_hz, 0.5)
+                    self._last_compute_budget_reason = "budget_probe_unavailable"
                 try:
                     await asyncio.to_thread(self._integration_tick)
                 except _RECOVERABLE_BRIDGE_ERRORS as e:
@@ -780,6 +804,28 @@ class ConsciousnessBridge:
             logger.debug("Proof-run micro-evolution check failed: %s", exc)
             return
 
+        try:
+            from core.runtime.background_policy import (
+                MAINTENANCE_BACKGROUND_POLICY,
+                background_activity_reason,
+            )
+
+            reason_blocked = background_activity_reason(
+                self._orch,
+                profile=MAINTENANCE_BACKGROUND_POLICY,
+                allow_no_user_anchor=False,
+            )
+            if reason_blocked:
+                if not getattr(self, "_micro_evolve_policy_skip_logged", False):
+                    logger.info("Micro-evolution deferred by background policy: %s", reason_blocked)
+                    self._micro_evolve_policy_skip_logged = True
+                return
+            self._micro_evolve_policy_skip_logged = False
+        except _RECOVERABLE_BRIDGE_ERRORS as exc:
+            record_degradation("consciousness_bridge", exc)
+            logger.debug("Micro-evolution background policy check failed: %s", exc)
+            return
+
         def _submit():
             try:
                 if self._loop and self._loop.is_running():
@@ -892,5 +938,8 @@ class ConsciousnessBridge:
             "boot_errors": self._boot_errors,
             "layers_active": self._layers_active(),
             "layers_total": self._BRIDGE_LAYER_COUNT,
+            "effective_integration_hz": round(float(self._last_effective_hz), 4),
+            "compute_budget_reason": self._last_compute_budget_reason,
+            "compute_budget_memory_percent": self._last_compute_budget_memory_percent,
             "components": components,
         }

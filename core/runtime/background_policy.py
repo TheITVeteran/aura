@@ -144,6 +144,24 @@ class BackgroundPolicyProfile:
     require_conversation_ready: bool = False
 
 
+@dataclass(frozen=True)
+class ConstitutiveComputeBudget:
+    """Runtime budget for always-on embodied/cognitive loops.
+
+    These loops should stay alive, but they must yield hard priority to the live
+    foreground conversation and to system memory pressure. The budget is a
+    throttle, not a shutdown signal.
+    """
+
+    component: str
+    base_hz: float
+    effective_hz: float
+    interval_s: float
+    reason: str
+    foreground_active: bool
+    memory_percent: float | None = None
+
+
 THOUGHT_BACKGROUND_POLICY = BackgroundPolicyProfile(
     min_idle_seconds=30.0,
     max_memory_percent=85.0,
@@ -164,6 +182,131 @@ MAINTENANCE_BACKGROUND_POLICY = BackgroundPolicyProfile(
     max_failure_pressure=0.75,
     require_conversation_ready=True,
 )
+
+
+def _component_env_name(component: str) -> str:
+    normalized = "".join(ch if ch.isalnum() else "_" for ch in str(component or "loop"))
+    return f"AURA_CONSTITUTIVE_{normalized.upper()}_HZ"
+
+
+def _bounded_hz(value: float, *, lower: float = 0.1, upper: float = 1000.0) -> float:
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = lower
+    if not value or value != value or value < lower:
+        return lower
+    return min(float(upper), value)
+
+
+def constitutive_compute_budget(
+    component: str,
+    base_hz: float,
+    *,
+    min_hz: float = 0.5,
+    foreground_hz: float = 2.0,
+    memory_high_hz: float = 2.0,
+    memory_critical_hz: float = 0.5,
+    memory_high_percent: float = 85.0,
+    memory_critical_percent: float = 92.0,
+    failure_pressure_hz: float = 1.0,
+    max_failure_pressure: float = 0.75,
+) -> ConstitutiveComputeBudget:
+    """Return a safe update budget for continuous constitutive loops.
+
+    Unlike ``background_activity_reason``, this does not block the loop. It
+    caps its frequency during foreground inference, memory pressure, proof runs,
+    or failure pressure so substrate/field/HOT machinery cannot compete with a
+    user-facing model turn or drive host RAM spikes.
+    """
+
+    base = _bounded_hz(base_hz, lower=0.1, upper=1000.0)
+    floor = _bounded_hz(min_hz, lower=0.1, upper=base)
+    effective = base
+    reason = "nominal"
+    foreground_active = False
+    memory_percent: float | None = None
+
+    component_override = os.getenv(_component_env_name(component))
+    if component_override is not None:
+        effective = min(effective, _bounded_hz(component_override, lower=floor, upper=base))
+        reason = "component_override"
+
+    global_override = os.getenv("AURA_CONSTITUTIVE_MAX_HZ")
+    if global_override is not None:
+        effective = min(effective, _bounded_hz(global_override, lower=floor, upper=base))
+        reason = "global_override" if reason == "nominal" else f"{reason}+global_override"
+
+    try:
+        from core.runtime.proof_policy import proof_run_active
+
+        if proof_run_active():
+            effective = min(effective, floor)
+            reason = "proof_run_active"
+    except (ImportError, AttributeError, RuntimeError) as _exc:
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="throttled constitutive loop because proof-run signal failed",
+        )
+        effective = min(effective, floor)
+        reason = "proof_signal_unavailable"
+
+    if foreground_only_runtime():
+        effective = min(effective, floor)
+        reason = "foreground_only_runtime"
+
+    foreground_reason = _foreground_activity_reason()
+    if foreground_reason:
+        foreground_active = True
+        effective = min(effective, _bounded_hz(foreground_hz, lower=floor, upper=base))
+        reason = foreground_reason
+
+    try:
+        memory_percent = float(psutil.virtual_memory().percent)
+        if memory_percent >= float(memory_critical_percent):
+            effective = min(
+                effective,
+                _bounded_hz(memory_critical_hz, lower=floor, upper=base),
+            )
+            reason = f"memory_critical_{memory_percent:.1f}"
+        elif memory_percent >= float(memory_high_percent):
+            effective = min(effective, _bounded_hz(memory_high_hz, lower=floor, upper=base))
+            reason = f"memory_pressure_{memory_percent:.1f}"
+    except (ImportError, OSError, AttributeError) as _exc:
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="throttled constitutive loop because memory-pressure probe failed",
+        )
+        effective = min(effective, floor)
+        reason = "memory_probe_unavailable"
+
+    try:
+        failure = get_unified_failure_state()
+        pressure = float(failure.get("pressure", 0.0) or 0.0)
+        if pressure >= float(max_failure_pressure):
+            effective = min(effective, _bounded_hz(failure_pressure_hz, lower=floor, upper=base))
+            reason = f"failure_pressure_{pressure:.2f}"
+    except (OSError, ConnectionError, TimeoutError) as _exc:
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="throttled constitutive loop because failure-state probe failed",
+        )
+        effective = min(effective, floor)
+        reason = "failure_state_unavailable"
+
+    effective = max(floor, min(base, float(effective)))
+    return ConstitutiveComputeBudget(
+        component=str(component or "loop"),
+        base_hz=base,
+        effective_hz=effective,
+        interval_s=1.0 / max(floor, effective),
+        reason=reason,
+        foreground_active=foreground_active,
+        memory_percent=memory_percent,
+    )
 
 
 def normalize_origin(origin: Any) -> str:
