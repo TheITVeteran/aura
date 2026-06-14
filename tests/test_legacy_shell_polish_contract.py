@@ -51,6 +51,18 @@ def test_legacy_shell_presents_cold_standby_as_not_ready_shell_state():
     assert "setTimeout(() => dismissSplash(), 8000)" not in js
 
 
+def test_legacy_shell_presents_active_generation_as_working_not_unavailable():
+    js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+
+    assert "function laneHasActiveGeneration" in js
+    assert "active_generation_in_flight" in js
+    assert "Number(lane.active_generations || 0) > 0" in js
+    assert "if (laneHasActiveGeneration(lane)) return 'cortex thinking';" in js
+    assert "laneText === 'cortex thinking' ? 'CORTEX THINKING'" in js
+    assert "state.conversationReady || laneHasActiveGeneration(effectiveLane)" in js
+    assert "lane.conversation_ready === false && !laneHasActiveGeneration(lane)" in js
+
+
 def test_legacy_shell_matches_conversation_lane_timeout_budget():
     js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
 

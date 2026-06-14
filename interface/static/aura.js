@@ -1395,7 +1395,7 @@ function applyBootstrapPayload(payload, { hydrateConversationHistory = false } =
 
     const flags = (payload.ui && payload.ui.status_flags) || [];
     const lane = payload.conversation && payload.conversation.lane;
-    const laneNotReady = lane && lane.conversation_ready === false;
+    const laneNotReady = lane && lane.conversation_ready === false && !laneHasActiveGeneration(lane);
     const connectionMode = flags.includes('booting')
         ? 'booting'
         : !runtimeHealthy
@@ -2965,9 +2965,20 @@ function laneIsStandby(lane) {
         && !lane.warmup_in_flight;
 }
 
+function laneHasActiveGeneration(lane) {
+    if (!lane || typeof lane !== 'object') return false;
+    const blockers = Array.isArray(lane.readiness_blockers) ? lane.readiness_blockers : [];
+    const reason = String(lane.last_failure_reason || '').toLowerCase();
+    return Number(lane.active_generations || 0) > 0
+        || blockers.includes('active_generation_in_flight')
+        || reason === 'active_generation_in_flight';
+}
+
 function laneHealthIsOperational(lane, healthStatus = '') {
     const normalized = String(healthStatus || '').toLowerCase();
-    return state.runtimeHealthy && (
+    if (!state.runtimeHealthy) return false;
+    if (laneHasActiveGeneration(lane)) return true;
+    return (
         normalized === 'ok'
         || normalized === 'ready'
         || normalized === 'healthy'
@@ -3072,6 +3083,7 @@ function conversationLaneStatusText(lane) {
     if (!lane) return 'online';
     const laneState = String(lane.state || 'warming').toLowerCase();
     if (lane.conversation_ready) return 'online';
+    if (laneHasActiveGeneration(lane)) return 'cortex thinking';
     if (laneIsStandby(lane)) return 'cortex preparing';
     if (laneState === 'recovering') return 'cortex recovering';
     if (laneState === 'failed') return 'cortex unavailable';
@@ -3108,7 +3120,7 @@ function applyConversationLane(lane, healthStatus = '') {
     }
 
     updateTypingLabel(
-        state.conversationReady
+        state.conversationReady || laneHasActiveGeneration(effectiveLane)
             ? 'Aura is thinking…'
             : `Aura is ${laneText}...`
     );
@@ -3122,6 +3134,7 @@ function applyConversationLane(lane, healthStatus = '') {
             tierEl.style.color = 'var(--success)';
         } else {
             const stateLabel =
+                laneText === 'cortex thinking' ? 'CORTEX THINKING' :
                 laneText === 'cortex preparing' ? 'CORTEX PREPARING' :
                 laneText === 'cortex recovering' ? 'CORTEX RECOVERING' :
                 laneText === 'cortex unavailable' ? 'CORTEX UNAVAILABLE' :
@@ -3130,7 +3143,9 @@ function applyConversationLane(lane, healthStatus = '') {
             tierEl.title = laneStandby
                 ? 'Local Cortex is not conversation-ready yet.'
                 : effectiveLane.last_failure_reason || (effectiveLane.desired_model || 'Cortex (32B)');
-            tierEl.style.color = effectiveLane.state === 'failed' ? 'var(--error)' : 'var(--warn)';
+            tierEl.style.color = laneHasActiveGeneration(effectiveLane)
+                ? 'var(--success)'
+                : effectiveLane.state === 'failed' ? 'var(--error)' : 'var(--warn)';
         }
     }
 }
