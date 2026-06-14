@@ -10,6 +10,11 @@ from typing import Any
 
 from core.health.degraded_events import get_unified_failure_state
 
+try:  # module-local so tests and diagnostics can patch the exact host probe.
+    import psutil
+except ImportError:  # pragma: no cover - production hosts should carry psutil.
+    psutil = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -160,6 +165,56 @@ class ConstitutiveComputeBudget:
     memory_percent: float | None = None
 
 
+@dataclass(frozen=True)
+class _MemoryPressureSnapshot:
+    pressure_pct: float
+    reason: str
+    refuse_heavy_local_generation: bool = False
+
+
+def _read_memory_pressure_snapshot() -> _MemoryPressureSnapshot:
+    """Read host memory through the local probe and the richer runtime guard.
+
+    The module-local psutil probe is intentionally retained because background
+    policy is the fail-closed boundary for constitutive loops. If this direct
+    host probe fails, optional/background work must not continue on a stale
+    or untestable memory signal.
+    """
+
+    host_percent: float | None = None
+    if psutil is not None:
+        memory = psutil.virtual_memory()
+        host_percent = float(getattr(memory, "percent"))
+
+    try:
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        runtime = get_memory_pressure_snapshot()
+        runtime_percent = float(getattr(runtime, "pressure_pct", 0.0) or 0.0)
+        runtime_reason = str(getattr(runtime, "reason", "") or "")
+        runtime_refuse = bool(getattr(runtime, "refuse_heavy_local_generation", False))
+        pressure = runtime_percent
+        reason = runtime_reason or f"memory_pressure_{runtime_percent:.1f}"
+        refuse = runtime_refuse
+        if host_percent is not None and host_percent >= runtime_percent:
+            pressure = host_percent
+            reason = f"memory_pressure_{host_percent:.1f}"
+            refuse = runtime_refuse and host_percent >= 92.0
+        return _MemoryPressureSnapshot(
+            pressure_pct=pressure,
+            reason=reason,
+            refuse_heavy_local_generation=refuse,
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        if host_percent is None:
+            raise
+        return _MemoryPressureSnapshot(
+            pressure_pct=host_percent,
+            reason=f"memory_pressure_{host_percent:.1f}",
+            refuse_heavy_local_generation=False,
+        )
+
+
 THOUGHT_BACKGROUND_POLICY = BackgroundPolicyProfile(
     min_idle_seconds=30.0,
     max_memory_percent=85.0,
@@ -261,9 +316,7 @@ def constitutive_compute_budget(
         reason = foreground_reason
 
     try:
-        from core.utils.memory_monitor import get_memory_pressure_snapshot
-
-        memory = get_memory_pressure_snapshot()
+        memory = _read_memory_pressure_snapshot()
         memory_percent = float(memory.pressure_pct)
         memory_reason = str(memory.reason or f"memory_pressure_{memory_percent:.1f}")
         if memory.refuse_heavy_local_generation:
@@ -504,9 +557,7 @@ def background_activity_reason(
             return f"recent_user_{int(now - last_user)}"
 
     try:
-        from core.utils.memory_monitor import get_memory_pressure_snapshot
-
-        memory = get_memory_pressure_snapshot()
+        memory = _read_memory_pressure_snapshot()
         memory_pct = float(memory.pressure_pct)
         if bool(memory.refuse_heavy_local_generation):
             return str(memory.reason or f"memory_pressure_guard_{memory_pct:.1f}")

@@ -5365,8 +5365,9 @@ def _build_social_presence_reply(user_message: str) -> str:
     curiosity = frame.get("curiosity")
 
     parts = [
-        "hey. i'm here.",
+        "hey. i'm right here with you.",
         f"I'm feeling {mood} and leaning toward {action} right now.",
+        "I can answer clearly from the active turn.",
     ]
     if focus:
         parts.append(f"My attention is on {focus}.")
@@ -6123,16 +6124,23 @@ async def _repair_final_degraded_reply(
         or off_topic
         or (assessment is not None and assessment.retryable)
     )
+    owner_name_reply = _build_owner_name_recall_reply(user_message)
+    if owner_name_reply:
+        normalized_reply = _normalize_user_message(reply_text)
+        owner_name = _resolve_primary_operator_name()
+        if (
+            len(normalized_reply.split()) <= 4
+            or owner_name.lower() not in normalized_reply
+            or "verified" not in normalized_reply
+        ):
+            return owner_name_reply, False, False, False, "", True
+
     if not needs_repair:
         return reply_text, stale, same_diff, off_topic, off_topic_reason, False
 
     conversation_recall_reply = await _build_conversation_recall_reply(user_message)
     if conversation_recall_reply:
         return conversation_recall_reply, False, False, False, "", True
-
-    owner_name_reply = _build_owner_name_recall_reply(user_message)
-    if owner_name_reply:
-        return owner_name_reply, False, False, False, "", True
 
     logger.warning(
         "🛡️ Final reply quality gate repairing degraded output "

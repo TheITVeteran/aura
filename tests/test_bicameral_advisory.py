@@ -60,6 +60,55 @@ def test_bicameral_advisory_raises_metacognition_for_introspection_and_uncertain
     assert any(proposal.perspective == "explorer" for proposal in frame.proposals)
 
 
+def test_bicameral_advisory_reads_experiential_emotions_as_causal_state():
+    state = AuraState.default()
+    state.affect.emotions["confused"] = 0.72
+    state.affect.emotions["frustration"] = 0.46
+
+    frame = BicameralAdvisory().advise(
+        "Summarize the current plan.",
+        state=state,
+        origin="desktop",
+    )
+
+    assert frame.routing_bias["raise_metacognition"] is True
+    assert frame.causal_effects["metacognition_depth"] >= 0.64
+    assert any(proposal.perspective == "critic" for proposal in frame.proposals)
+
+
+def test_bicameral_advisory_does_not_treat_generic_you_action_as_identity_reflection():
+    frame = BicameralAdvisory().advise(
+        "Can you open Notes and type the summary?",
+        state=AuraState.default(),
+        context={"desktop_cognitive_engine_required": True},
+        origin="desktop",
+    )
+
+    assert frame.routing_bias["use_tool_gateway"] is True
+    assert frame.causal_effects["self_model_update"] < 0.35
+
+
+def test_bicameral_capability_reflection_drives_self_model_and_memory_grounding():
+    engine = CognitiveEngine()
+    state = AuraState.default()
+
+    context = engine._apply_bicameral_advisory(
+        state,
+        "What tools can you use, and how do you know you can use them?",
+        "desktop",
+        {"desktop_cognitive_engine_required": True},
+        is_background=False,
+    )
+
+    frame = state.response_modifiers["bicameral_advisory"]
+    assert frame["causal_effects"]["self_model_update"] >= 0.35
+    assert state.response_modifiers["self_model_update_pressure"] >= 0.35
+    assert state.response_modifiers["requires_memory_grounding"] is True
+    assert state.cognition.modifiers["self_model_update_pressure"] >= 0.35
+    assert state.cognition.modifiers["requires_memory_grounding"] is True
+    assert context["bicameral_advisory"]["frame_id"] == frame["frame_id"]
+
+
 def test_cognitive_engine_records_bicameral_advisory_as_state_context_and_attention():
     engine = CognitiveEngine()
     state = AuraState.default()

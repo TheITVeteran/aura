@@ -699,6 +699,10 @@ class CognitiveEngine:
         state.response_modifiers["bicameral_verification_pressure"] = _bounded_float(
             causal.get("verification_pressure"), 0.0
         )
+        state.response_modifiers["self_model_update_pressure"] = max(
+            _bounded_float(state.response_modifiers.get("self_model_update_pressure"), 0.0),
+            _bounded_float(causal.get("self_model_update"), 0.0),
+        )
         state.response_modifiers["metacognition_depth"] = max(
             _bounded_float(state.response_modifiers.get("metacognition_depth"), 0.35),
             _bounded_float(causal.get("metacognition_depth"), 0.35),
@@ -715,7 +719,11 @@ class CognitiveEngine:
             state.response_modifiers["tool_governance_pressure"] = True
         if routing.get("compact_foreground"):
             state.response_modifiers["runtime_load_shed_requested"] = True
-        if _bounded_float(causal.get("memory_priority"), 0.0) >= 0.45:
+        if (
+            _bounded_float(causal.get("memory_priority"), 0.0) >= 0.45
+            or _bounded_float(causal.get("self_model_update"), 0.0) >= 0.35
+            or routing.get("preserve_conversation_context")
+        ):
             state.response_modifiers["requires_memory_grounding"] = True
 
         cognition_mods = dict(getattr(state.cognition, "modifiers", {}) or {})
@@ -725,6 +733,11 @@ class CognitiveEngine:
         cognition_mods["bicameral_causal_effects"] = causal
         cognition_mods["bicameral_sampling_bias"] = sampling
         cognition_mods["bicameral_routing_bias"] = routing
+        cognition_mods["self_model_update_pressure"] = state.response_modifiers[
+            "self_model_update_pressure"
+        ]
+        if state.response_modifiers.get("requires_memory_grounding"):
+            cognition_mods["requires_memory_grounding"] = True
         state.cognition.modifiers = cognition_mods
 
         if frame.attention_targets and not is_background:

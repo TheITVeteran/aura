@@ -37,8 +37,13 @@ _CREATE_RE = re.compile(
     re.IGNORECASE,
 )
 _SELF_RE = re.compile(
-    r"\b(self|you|your|aura|feel|think|introspect|reflect|conscious|sentient|"
-    r"aware|inner|identity|person)\b",
+    r"\b(self|aura|feel|think|introspect|reflect|conscious|sentient|"
+    r"aware|inner|identity|person|experience|subjective|mind)\b",
+    re.IGNORECASE,
+)
+_CAPABILITY_SELF_RE = re.compile(
+    r"\b(what|which|how)\b.{0,48}\b(can|could|would)\b.{0,24}\b(you|aura)\b|"
+    r"\b(you|aura)\b.{0,32}\b(can|could|able|capable|tools?|skills?|abilities)\b",
     re.IGNORECASE,
 )
 _SOCIAL_RE = re.compile(r"\b(bryan|user|we|us|together|trust|help|relationship|demo)\b", re.IGNORECASE)
@@ -107,6 +112,16 @@ def _keywords(text: str, limit: int = 6) -> list[str]:
         if len(found) >= limit:
             break
     return found
+
+
+def _emotion_value(affect: Any, *names: str, default: float = 0.0) -> float:
+    values: list[float] = []
+    emotions = getattr(affect, "emotions", None)
+    for name in names:
+        values.append(_safe_float(getattr(affect, name, default), default))
+        if isinstance(emotions, dict):
+            values.append(_safe_float(emotions.get(name), default))
+    return max(values) if values else default
 
 
 def _stable_id(text: str) -> str:
@@ -183,16 +198,16 @@ class BicameralAdvisory:
         lower = text.lower()
         words = _keywords(text)
         affect = getattr(state, "affect", None)
-        curiosity = _safe_float(getattr(affect, "curiosity", 0.0), 0.0)
+        curiosity = _emotion_value(affect, "curiosity", "wonder", "interest", default=0.0)
         arousal = _safe_float(getattr(affect, "arousal", 0.0), 0.0)
         valence = _safe_float(getattr(affect, "valence", 0.0), 0.0)
-        frustration = _safe_float(getattr(affect, "frustration", 0.0), 0.0)
-        confusion = _safe_float(getattr(affect, "confused", 0.0), 0.0)
+        frustration = _emotion_value(affect, "frustration", "upset", default=0.0)
+        confusion = _emotion_value(affect, "confused", "uncertainty", default=0.0)
 
         tool = bool(_TOOL_RE.search(lower))
         uncertain = bool(_UNCERTAIN_RE.search(lower)) or confusion >= 0.25
         creative = bool(_CREATE_RE.search(lower)) or curiosity >= 0.35
-        self_reflective = bool(_SELF_RE.search(lower))
+        self_reflective = bool(_SELF_RE.search(lower) or _CAPABILITY_SELF_RE.search(lower))
         social = bool(_SOCIAL_RE.search(lower)) or origin.startswith(("user", "desktop", "voice"))
         load_pressure = bool(context and context.get("desktop_cognitive_engine_required")) and not is_background
 
@@ -501,6 +516,7 @@ def render_bicameral_prompt_block(frame: dict[str, Any] | BicameralFrame, *, com
     verification = _safe_float(causal.get("verification_pressure"), 0.0)
     memory = _safe_float(causal.get("memory_priority"), 0.0)
     creative = _safe_float(causal.get("creative_pressure"), 0.0)
+    self_model = _safe_float(causal.get("self_model_update"), 0.0)
     causal_parts = []
     if meta_depth >= 0.50:
         causal_parts.append(f"metacognition={meta_depth:.2f}")
@@ -510,6 +526,8 @@ def render_bicameral_prompt_block(frame: dict[str, Any] | BicameralFrame, *, com
         causal_parts.append(f"memory={memory:.2f}")
     if creative >= 0.35:
         causal_parts.append(f"creative={creative:.2f}")
+    if self_model >= 0.35:
+        causal_parts.append(f"self_model={self_model:.2f}")
     if causal_parts:
         lines.append("- Causal pressures: " + ", ".join(causal_parts) + ".")
     return "\n".join(lines).strip() + "\n\n"
