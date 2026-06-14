@@ -199,8 +199,41 @@ class ExistentialStakes:
 _INSTANCE: Optional[ExistentialStakes] = None
 
 
+def _resolve_memory_limit_bytes() -> int:
+    """Machine-aware survival memory ceiling for the live singleton.
+
+    A fixed 2GB ceiling makes a large box perceive perpetual near-death: the
+    Python runtime baseline (~1.5GB RSS) alone sits at ~0.75 memory_threat,
+    parking the will-system right at its survival-veto boundary
+    (``threat > 0.75``) during normal operation and intermittently inhibiting
+    heavy actions. Derive the ceiling from the same process-RSS limit the
+    memory watchdog enforces, so existential "near-death" aligns with the
+    watchdog's refuse-heavy-generation point instead of a stale default.
+
+    Honors ``AURA_EXISTENTIAL_MEMORY_LIMIT_GB`` for explicit control; falls
+    back to the 2GB default only when nothing better can be determined.
+    """
+    override = os.environ.get("AURA_EXISTENTIAL_MEMORY_LIMIT_GB", "").strip()
+    if override:
+        try:
+            gb = float(override)
+            if gb > 0.0:
+                return int(gb * (1024 ** 3))
+        except (TypeError, ValueError):
+            pass
+    try:
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        limit_gb = float(get_memory_pressure_snapshot().process_rss_limit_gb or 0.0)
+        if limit_gb > 0.0:
+            return int(limit_gb * (1024 ** 3))
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        pass
+    return DEFAULT_MEMORY_LIMIT_BYTES
+
+
 def get_existential_stakes() -> ExistentialStakes:
     global _INSTANCE
     if _INSTANCE is None:
-        _INSTANCE = ExistentialStakes()
+        _INSTANCE = ExistentialStakes(_resolve_memory_limit_bytes())
     return _INSTANCE

@@ -131,6 +131,41 @@ def test_sampling_parameter_modulation_under_threat():
     # Check that the runtime formula lowers token budget and temperature.
     scaled_tokens = max(96, int(512 * (1.0 - threat * 0.7)))
     assert scaled_tokens == 153  # 512 * 0.3 = 153.6 -> 153
-    
+
     scaled_temp = 0.8 * (1.0 - threat * 0.5)
     assert scaled_temp == 0.4
+
+
+def test_singleton_memory_limit_is_machine_aware(monkeypatch):
+    """The live singleton must not perceive perpetual near-death.
+
+    A fixed 2GB ceiling makes a normal ~1.5GB-RSS runtime sit at ~0.75
+    memory_threat, parking the will-system at its survival-veto boundary. The
+    factory must derive a machine-aware ceiling so normal operation reads low
+    memory_threat and the survival veto only fires near genuine danger.
+    """
+    import core.consciousness.existential_stakes as es
+
+    monkeypatch.delenv("AURA_EXISTENTIAL_MEMORY_LIMIT_GB", raising=False)
+    monkeypatch.setattr(es, "_INSTANCE", None)
+
+    stakes = es.get_existential_stakes()
+
+    # On any real host this resolves well above the 2GB stale default (aligned
+    # to the watchdog's process-RSS ceiling, typically tens of GB).
+    assert stakes._memory_limit > es.DEFAULT_MEMORY_LIMIT_BYTES
+
+    # Normal runtime RSS must read as low memory pressure, not near-death.
+    stakes.update()
+    assert stakes.get_status()["memory_threat"] < 0.5
+
+
+def test_explicit_env_override_sets_memory_limit(monkeypatch):
+    import core.consciousness.existential_stakes as es
+
+    monkeypatch.setenv("AURA_EXISTENTIAL_MEMORY_LIMIT_GB", "48")
+    monkeypatch.setattr(es, "_INSTANCE", None)
+
+    stakes = es.get_existential_stakes()
+
+    assert stakes._memory_limit == int(48 * (1024 ** 3))
