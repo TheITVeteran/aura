@@ -495,7 +495,7 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "payload.runtime_probe_healthy === false" in aura_js
     assert "requiredRuntimeProbesPass(requiredProbes)" in aura_js
     assert (
-        "memory: ['state_repository', 'memory_facade', 'memory_write_gateway', 'unified_memory_pressure']"
+        "memory: ['state_repository', 'memory_facade', 'memory_write_gateway', 'unified_memory_pressure', 'external_memory_sentinel']"
         in aura_js
     )
     assert "runtimeHealthBlockers(payload).length > 0" in aura_js
@@ -551,7 +551,7 @@ def test_native_shell_waits_for_readiness_heartbeat():
     assert "resp.status().is_success()" in native_shell
     assert "readiness_heartbeat_is_healthy" in native_shell
     assert (
-        '"memory", vec!["state_repository", "memory_facade", "memory_write_gateway", "unified_memory_pressure"]'
+        '"memory", vec!["state_repository", "memory_facade", "memory_write_gateway", "unified_memory_pressure", "external_memory_sentinel"]'
         in native_shell
     )
     assert "tool_governance" in native_shell

@@ -298,7 +298,9 @@ def test_runtime_contract_requires_kernel_inference_memory_scheduler_and_tool_go
         "memory_facade",
         "memory_write_gateway",
         "unified_memory_pressure",
+        "external_memory_sentinel",
     )
+    assert required["external_memory_sentinel"].liveness_check == "is_armed"
     assert required["scheduler"].liveness_check == "is_alive"
     assert required["unified_will"].liveness_check == "is_alive"
     assert required["authority_gateway"].liveness_check == "is_ready"

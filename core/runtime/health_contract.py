@@ -34,6 +34,7 @@ REQUIRED_HEALTH_PROBE_GROUPS: dict[str, tuple[str, ...]] = {
         "memory_facade",
         "memory_write_gateway",
         "unified_memory_pressure",
+        "external_memory_sentinel",
     ),
     "scheduler": ("scheduler",),
     "tool_governance": ("unified_will", "authority_gateway", "capability_engine"),
@@ -141,6 +142,13 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         ServiceTier.CRITICAL,
         "Delivers responses to the user. Without it, Aura thinks but cannot speak.",
         liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "External Memory Sentinel",
+        "external_memory_sentinel",
+        ServiceTier.CRITICAL,
+        "Out-of-process memory guard. Without it, a live desktop runaway can outpace in-process watchdogs and crash the host.",
+        liveness_check="is_armed",
     ),
     # ── IMPORTANT: Aura works but is impaired without these ──
     ServiceRequirement(

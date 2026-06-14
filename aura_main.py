@@ -978,6 +978,38 @@ def _install_fault_forensics() -> None:
         )
 
 
+class _ExternalMemorySentinelStatus:
+    """Health-contract handle for the out-of-process memory sentinel."""
+
+    def __init__(self, proc: subprocess.Popen | None, *, lethal_mb: float = 0.0, interval_s: float = 0.0):
+        self.proc = proc
+        self.pid = int(getattr(proc, "pid", 0) or 0) if proc is not None else 0
+        self.lethal_mb = float(lethal_mb or 0.0)
+        self.interval_s = float(interval_s or 0.0)
+        self.started_at = time.time() if proc is not None else 0.0
+
+    def is_armed(self) -> bool:
+        if self.proc is None or self.pid <= 0:
+            return False
+        if self.proc.poll() is not None:
+            return False
+        try:
+            import psutil
+
+            return psutil.pid_exists(self.pid)
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+            return True
+
+    def get_status(self) -> dict[str, Any]:
+        return {
+            "armed": self.is_armed(),
+            "pid": self.pid,
+            "lethal_mb": self.lethal_mb,
+            "interval_s": self.interval_s,
+            "started_at": self.started_at,
+        }
+
+
 def _install_systemwide_memory_protection() -> None:
     """Memory protection that survives process suspension.
 
@@ -1059,15 +1091,18 @@ def _install_systemwide_memory_protection() -> None:
     )
     os.environ.setdefault("AURA_MLX_MEMORY_LIMIT_GB", mlx_gb)
 
-    if str(os.environ.get("AURA_MEMORY_SENTINEL", "1")).strip().lower() not in {"0", "false", "no", "off"}:
+    sentinel_enabled = str(os.environ.get("AURA_MEMORY_SENTINEL", "1")).strip().lower() not in {"0", "false", "no", "off"}
+    if sentinel_enabled:
         try:
+            from core.container import ServiceContainer
+
             lethal_mb = float(
                 os.environ.get("AURA_MEMWATCH_LETHAL_MB", "") or min(46080.0, total_mb * 0.70)
             )
             sentinel_interval_s = float(os.environ.get("AURA_MEMORY_SENTINEL_INTERVAL_S", "1.0") or 1.0)
             sentinel_log = Path("data/error_logs/memory")
             sentinel_log.mkdir(parents=True, exist_ok=True)
-            subprocess.Popen(
+            sentinel_proc = subprocess.Popen(
                 [
                     sys.executable,
                     str(Path(__file__).resolve().parent / "tools" / "memory_sentinel.py"),
@@ -1083,15 +1118,40 @@ def _install_systemwide_memory_protection() -> None:
                 start_new_session=True,
                 cwd=str(Path(__file__).resolve().parent),
             )
+            ServiceContainer.register_instance(
+                "external_memory_sentinel",
+                _ExternalMemorySentinelStatus(
+                    sentinel_proc,
+                    lethal_mb=lethal_mb,
+                    interval_s=max(0.5, sentinel_interval_s),
+                ),
+                required=False,
+            )
             logger.info(
                 "🛡️ External memory sentinel armed: lethal=%.0fMB (kills from outside).",
                 lethal_mb,
             )
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        except (ImportError, OSError, ValueError, subprocess.SubprocessError) as exc:
             record_degradation(
                 _AURA_MAIN_DEGRADATION_KEY,
                 exc,
                 action="continued boot without external memory sentinel",
+                severity="degraded",
+            )
+    else:
+        try:
+            from core.container import ServiceContainer
+
+            ServiceContainer.register_instance(
+                "external_memory_sentinel",
+                _ExternalMemorySentinelStatus(None),
+                required=False,
+            )
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                _AURA_MAIN_DEGRADATION_KEY,
+                exc,
+                action="external memory sentinel disabled and status registration failed",
                 severity="degraded",
             )
 

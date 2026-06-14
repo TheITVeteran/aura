@@ -48,7 +48,7 @@ fn readiness_heartbeat_is_healthy(payload: &Value) -> bool {
     let required_components = [
         ("kernel", vec!["kernel_interface"]),
         ("inference", vec!["inference_gate", "llm_router"]),
-        ("memory", vec!["state_repository", "memory_facade", "memory_write_gateway", "unified_memory_pressure"]),
+        ("memory", vec!["state_repository", "memory_facade", "memory_write_gateway", "unified_memory_pressure", "external_memory_sentinel"]),
         ("scheduler", vec!["scheduler"]),
         ("tool_governance", vec!["unified_will", "authority_gateway", "capability_engine"]),
     ];
