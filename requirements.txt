@@ -1,6 +1,5 @@
 # Aura Luna v2026.4.20-Zenith
 mlx-lm>=0.31.0
-mlx-whisper
 faster-whisper
 webrtcvad
 pywebview>=5.0
@@ -25,8 +24,6 @@ opencv-python-headless
 piper-tts==1.4.2
 playwright>=1.42.0
 playwright-stealth>=2.0.3
-coqui-tts[codec]==0.27.5
-torchaudio==2.11.0
 pyttsx3>=2.90
 cryptography
 tweepy
@@ -39,4 +36,4 @@ tenacity
 prometheus-client
 mss
 astor
-aiohttp
+aiohttp>=3.14.0

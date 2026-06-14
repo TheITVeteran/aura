@@ -33,8 +33,6 @@ dependencies = [
     "playwright>=1.42.0",
     "playwright-stealth>=2.0.3",
     "piper-tts==1.4.2",
-    "coqui-tts[codec]==0.27.5",
-    "torchaudio==2.11.0",
     "pyttsx3>=2.90",
 ]
 
@@ -42,6 +40,10 @@ dependencies = [
 aura = "aura_main:main"
 
 [project.optional-dependencies]
+voice-xtts = [
+    "coqui-tts[codec]==0.27.5",
+    "torchaudio==2.11.0",
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",

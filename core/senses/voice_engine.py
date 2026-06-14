@@ -524,23 +524,24 @@ class SovereignVoiceEngine:
         try:
             logger.info("Loading Whisper model: %s...", self.whisper_model_name)
             
-            import os
             os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-            import torch
-            device = "auto"
-            compute_type = "default"
-            
-            if torch.backends.mps.is_available():
-                # faster-whisper (CTranslate2) does not support MPS yet
-                # attempting to use it causes a noisy fallback error.
-                device = "cpu"
-                compute_type = "int8"
-            elif torch.cuda.is_available():
-                device = "cuda"
-                compute_type = "float16"
-            else:
-                device = "cpu"
-                compute_type = "int8"
+            device = "cpu"
+            compute_type = "int8"
+
+            if _env_flag("AURA_STT_ENABLE_TORCH_DEVICE_PROBE", False):
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        device = "cuda"
+                        compute_type = "float16"
+                except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
+                    record_degradation(
+                        "voice_engine",
+                        exc,
+                        severity="warning",
+                        action="continued STT init with CPU int8 after optional torch probe failed",
+                    )
             
             actual_device = device  # track what we actually end up using
             try:

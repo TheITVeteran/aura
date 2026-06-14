@@ -1,0 +1,10 @@
+# Optional high-fidelity/experimental voice lane.
+#
+# The default live desktop path intentionally avoids Torch-backed voice
+# dependencies to keep boot memory bounded and the security gate clean.
+# Install this only when XTTS/MLX Whisper experiments are explicitly needed:
+#   pip install -r requirements/voice-high-fidelity.txt
+
+mlx-whisper
+coqui-tts[codec]==0.27.5
+torchaudio==2.11.0

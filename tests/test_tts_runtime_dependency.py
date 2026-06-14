@@ -1,5 +1,6 @@
 import importlib.util
 from importlib.metadata import version
+from pathlib import Path
 
 from packaging.version import Version
 
@@ -18,6 +19,9 @@ def test_transformers_tts_compat_restores_removed_helper(monkeypatch):
 def test_voice_engine_loads_coqui_tts_on_transformers_5_lane(monkeypatch):
     import core.senses.voice_engine as voice_engine
 
+    if importlib.util.find_spec("TTS") is None:
+        return
+
     monkeypatch.setattr(voice_engine, "TTS", None)
     monkeypatch.setattr(voice_engine, "_tts_api_import_attempted", False)
     monkeypatch.setattr(voice_engine, "_tts_api_import_error", None)
@@ -30,7 +34,6 @@ def test_voice_engine_loads_coqui_tts_on_transformers_5_lane(monkeypatch):
 def test_voice_engine_exposes_installed_tts_backends(tmp_path):
     import core.senses.voice_engine as voice_engine
 
-    assert importlib.util.find_spec("TTS") is not None
     assert importlib.util.find_spec("piper") is not None
     assert voice_engine.PiperVoice is not None
 
@@ -38,9 +41,21 @@ def test_voice_engine_exposes_installed_tts_backends(tmp_path):
     status = engine.get_status()
 
     assert status["tts_available"] is True
-    assert status["coqui_tts_available"] is True
     assert status["piper_tts_available"] is True
     assert status["pyttsx3_available"] is True
+
+
+def test_default_voice_manifest_keeps_torch_backends_optional():
+    root = Path(__file__).resolve().parents[1]
+    default_requirements = (root / "requirements.txt").read_text(encoding="utf-8")
+    optional_requirements = (root / "requirements" / "voice-high-fidelity.txt").read_text(encoding="utf-8")
+
+    assert "coqui-tts" not in default_requirements
+    assert "torchaudio" not in default_requirements
+    assert "mlx-whisper" not in default_requirements
+    assert "coqui-tts" in optional_requirements
+    assert "torchaudio" in optional_requirements
+    assert "mlx-whisper" in optional_requirements
 
 
 def test_voice_output_skill_resolves_project_venv_piper(monkeypatch, tmp_path):
