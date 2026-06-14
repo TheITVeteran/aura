@@ -104,6 +104,11 @@ ALLOW_SUBPROCESS = {
     # sub-interpreter to verify a pristine clone installs — subprocess
     # orchestration is the whole point.
     "tools/clean_env_install_proof.py",
+    # Recovery test: spawns a sub-interpreter that deliberately wedges its own
+    # event loop to prove the StallWatchdog force-exits the process with the
+    # supervisor-restart code. A real os._exit in a child is the only way to
+    # prove the end-to-end recovery mechanism; subprocess is the point.
+    "tests/test_stall_watchdog_hard_exit.py",
     # Legitimate production modules requiring OS/subprocess interface
     "core/architect/safety_gate.py",
     "core/architect/shadow_workspace.py",

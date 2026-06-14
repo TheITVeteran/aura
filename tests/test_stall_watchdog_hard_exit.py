@@ -67,7 +67,7 @@ def test_no_force_exit_during_shutdown(monkeypatch):
 def test_heartbeat_advances_loop_run_timestamp(monkeypatch):
     dog = _make_watchdog()
     dog._last_loop_run = 0.0
-    # _heartbeat touches asyncio.all_tasks(self.loop); stub it out.
+    # _heartbeat reads asyncio.all_tasks(self.loop); swap in an empty set.
     monkeypatch.setattr(stall_watchdog.asyncio, "all_tasks", lambda _loop: set())
     dog._heartbeat()
     assert dog._last_loop_run > 0.0
