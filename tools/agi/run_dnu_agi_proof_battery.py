@@ -3032,7 +3032,52 @@ async def main():
                     print(f"⚠ error ({result['error']})")
                     continue
 
-            result = await execute_task(orch, task, timeout_s=max(240, task.get("time_budget_s", 240)))
+            # Hard per-task wall-clock cap. A proof battery must NEVER hang
+            # forever on a single wedge-prone task (observed: a strict-proof
+            # task re-wedging on retry stalled the whole 100-task run at task
+            # 16). execute_task's inner timeout is not a hard ceiling — its
+            # internal retries/recycles can exceed it — so bound it from the
+            # OUTSIDE. On breach: abandon the task as a RECORDED failure
+            # (visible in the scorecard, never hidden), recycle the lane so the
+            # wedge does not bleed into the next task, and continue.
+            _task_budget_s = max(240, task.get("time_budget_s", 240))
+            _task_wall_cap_s = float(
+                os.environ.get("AURA_DNU_TASK_WALL_CAP_S", "")
+                or max(420.0, 1.5 * _task_budget_s)
+            )
+            try:
+                result = await asyncio.wait_for(
+                    execute_task(orch, task, timeout_s=_task_budget_s),
+                    timeout=_task_wall_cap_s,
+                )
+            except (asyncio.TimeoutError, TimeoutError):
+                print(f"⚠ abandoned (task_wall_clock_exceeded {_task_wall_cap_s:.0f}s)")
+                try:
+                    await recycle_proof_model_lane(
+                        router,
+                        requested_proof_model_tier,
+                        run_dir=run_dir,
+                        reason="task_wall_clock_abandon",
+                        task_index=i,
+                    )
+                except _DNU_RUN_RECOVERABLE_ERRORS as _recycle_exc:
+                    print(f"  [WARN] lane recycle after task abandon failed: {type(_recycle_exc).__name__}")
+                result = {
+                    "task_id": tid,
+                    "category": task.get("category", "unknown"),
+                    "difficulty": task.get("difficulty", "unknown"),
+                    "status": "error",
+                    "response_text": "",
+                    "extracted_answer": None,
+                    "normalized_answer": None,
+                    "answer_hash": None,
+                    "elapsed_s": _task_wall_cap_s,
+                    "error": "task_wall_clock_exceeded",
+                }
+                results.append(result)
+                trace_fh.write(json.dumps(result, default=str) + "\n")
+                trace_fh.flush()
+                continue
 
             result = grade_result(result, grader_data)
             results.append(result)
