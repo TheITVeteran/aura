@@ -168,3 +168,15 @@ async def test_ui_bootstrap_returns_state_and_tool_catalog(service_container, mo
     assert payload["capabilities"]["conversation_model"] == "Cortex (32B)"
     assert payload["tools"][0]["name"] == "web_search"
     assert "conversation" in payload
+
+
+def test_ui_bootstrap_tool_catalog_skips_materialized_legacy_catalog(service_container):
+    from interface.routes import system as system_routes
+
+    class MaterializedCatalogOnly:
+        def get_tool_catalog(self, *, include_inactive: bool = True):
+            raise AssertionError("bootstrap must not materialize full tool catalog")
+
+    ServiceContainer.register_instance("capability_engine", MaterializedCatalogOnly(), required=False)
+
+    assert system_routes._collect_tool_catalog() == []

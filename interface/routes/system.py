@@ -6,6 +6,7 @@ and all collector/diagnostic helpers.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import math
@@ -53,6 +54,9 @@ _SYSTEM_RECOVERABLE_ERRORS = (
     psutil.Error,
     subprocess.SubprocessError,
 )
+
+_TOOL_CATALOG_BOOTSTRAP_MAX_ITEMS = 256
+_TOOL_CATALOG_BOOTSTRAP_READ_BUDGET_S = 0.35
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -620,12 +624,47 @@ async def _collect_soma_payload() -> dict[str, Any]:
 
 def _collect_tool_catalog() -> list[dict[str, Any]]:
     engine = ServiceContainer.get("capability_engine", default=None)
-    if engine and hasattr(engine, "get_tool_catalog"):
-        try:
-            return list(engine.get_tool_catalog(include_inactive=True))
-        except _SYSTEM_RECOVERABLE_ERRORS as exc:
-            record_degradation('system', exc)
-            logger.debug("Tool catalog collection failed: %s", exc)
+    if not engine:
+        return []
+
+    try:
+        raw_catalog: Any = None
+        if hasattr(engine, "iter_tool_catalog"):
+            raw_catalog = engine.iter_tool_catalog(include_inactive=True)
+        elif hasattr(engine, "get_tool_catalog"):
+            get_tool_catalog = getattr(engine, "get_tool_catalog")
+            if inspect.isgeneratorfunction(get_tool_catalog):
+                raw_catalog = get_tool_catalog(include_inactive=True)
+            else:
+                logger.warning(
+                    "Skipping materialized tool catalog during UI bootstrap; "
+                    "capability_engine should expose iter_tool_catalog()."
+                )
+                return []
+
+        if raw_catalog is None:
+            return []
+
+        catalog: list[dict[str, Any]] = []
+        started_at = time.monotonic()
+        for index, item in enumerate(raw_catalog):
+            if index >= _TOOL_CATALOG_BOOTSTRAP_MAX_ITEMS:
+                break
+            if time.monotonic() - started_at > _TOOL_CATALOG_BOOTSTRAP_READ_BUDGET_S:
+                break
+            if isinstance(item, dict):
+                catalog.append(item)
+        catalog.sort(
+            key=lambda item: (
+                0 if bool(item.get("available")) else 1,
+                0 if bool(item.get("active")) else 1,
+                str(item.get("name") or ""),
+            )
+        )
+        return catalog
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation('system', exc)
+        logger.debug("Tool catalog collection failed: %s", exc)
     return []
 
 
