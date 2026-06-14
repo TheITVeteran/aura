@@ -506,6 +506,8 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "setConnectionVisual('online');\n        dismissSplash();" not in aura_js
     assert "if (runtimeHealthy && bootReady)" in aura_js
     assert "if (runtimeHealthy && (bootReady || standby))" not in aura_js
+    assert ": laneNotReady\n            ? 'degraded'" in aura_js
+    assert "laneNotReady && !laneStandby" not in aura_js
 
 
 def test_desktop_shell_renders_tool_results_without_inline_html_handlers():

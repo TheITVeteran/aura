@@ -1396,12 +1396,11 @@ function applyBootstrapPayload(payload, { hydrateConversationHistory = false } =
     const flags = (payload.ui && payload.ui.status_flags) || [];
     const lane = payload.conversation && payload.conversation.lane;
     const laneNotReady = lane && lane.conversation_ready === false;
-    const laneStandby = laneIsStandby(lane);
     const connectionMode = flags.includes('booting')
         ? 'booting'
         : !runtimeHealthy
             ? 'degraded'
-        : (laneNotReady && !laneStandby)
+        : laneNotReady
             ? 'degraded'
         : flags.some(flag => ['thermal_guard', 'coherence_low', 'fragmentation_high', 'contradictions_present', 'beliefs_contested', 'tool_unavailable', 'executive_hold'].includes(flag))
             ? 'degraded'

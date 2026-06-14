@@ -1753,6 +1753,30 @@ def test_terminal_monitor_ignores_background_phase_timeouts():
     assert monitor._classify_error(entry) is None
 
 
+def test_terminal_monitor_classifies_foreground_conversation_failures():
+    from core.terminal_monitor import ErrorEntry, TerminalMonitor
+
+    monitor = TerminalMonitor.__new__(TerminalMonitor)
+    monitor._actionable_patterns = {
+        r"Foreground conversation lane returned no text|conversation lane returned no text": "Investigate foreground conversation lane blank output",
+        r"TimeoutError|timed out": "Investigate a timeout",
+    }
+
+    no_text = ErrorEntry(
+        message="Foreground conversation lane returned no text",
+        level="ERROR",
+        source="Aura.Chat",
+    )
+    timed_out = ErrorEntry(
+        message="conversation lane timed out before coherent reply",
+        level="ERROR",
+        source="Aura.Chat",
+    )
+
+    assert monitor._classify_error(no_text) == "Investigate foreground conversation lane blank output"
+    assert monitor._classify_error(timed_out) == "Investigate a timeout"
+
+
 def test_chat_live_proof_classifier_requires_explicit_proof_intent():
     from interface.routes.chat import _build_glass_arithmetic_reply, _classify_live_runtime_proof
 

@@ -90,7 +90,6 @@ class TerminalMonitor:
             r"ALL LLM endpoints failed",
             r"emergency mode",
             r"\[SILENT AUTO-FIX\]",
-            r"Foreground conversation lane returned no text",
             r"UnitaryResponsePhase timed out",
             r"ResponseGenerationPhase timed out",
             r"Phase '.*' timed out",
@@ -108,6 +107,7 @@ class TerminalMonitor:
             r"PermissionError|Permission denied": "Fix a file permission issue",
             r"FileNotFoundError|No such file": "Fix a missing file issue",
             r"MemoryError|out of memory": "Investigate memory pressure",
+            r"Foreground conversation lane returned no text|conversation lane returned no text": "Investigate foreground conversation lane blank output",
             r"TimeoutError|timed out": "Investigate a timeout",
             r"JSONDecodeError|json.decoder": "Fix a JSON parsing error in data",
             r"KeyError|IndexError": "Fix a data access error in the code",
@@ -394,8 +394,6 @@ class TerminalMonitor:
                 or "eternalmemoryphase" in lowered
                 or "unitaryresponsephase" in lowered
                 or "responsegenerationphase" in lowered
-                or "foreground conversation lane returned no text" in lowered
-                or "conversation lane timed out" in lowered
             )
         ):
             return None
