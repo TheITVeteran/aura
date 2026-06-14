@@ -122,3 +122,46 @@ def test_force_exit_calls_os_exit_with_nonzero_code(monkeypatch):
 def test_exit_code_env_override(monkeypatch):
     monkeypatch.setenv("AURA_WATCHDOG_HARD_EXIT_CODE", "73")
     assert StallWatchdog._hard_exit_code() == 73
+
+
+# --- End-to-end: a really-wedged loop force-exits with the restart code -------
+
+_WEDGE_SCRIPT = """
+import asyncio, os, sys, time
+os.environ["AURA_WATCHDOG_HARD_EXIT_S"] = "3"
+os.environ["AURA_WATCHDOG_BOOT_GRACE_S"] = "0"
+from core.resilience.stall_watchdog import StallWatchdog
+
+async def main():
+    dog = StallWatchdog(asyncio.get_running_loop(), threshold=1.0)
+    dog.start()
+    await asyncio.sleep(1.0)        # let the watchdog establish a heartbeat
+    time.sleep(60)                  # BLOCK the loop thread — simulate the wedge
+    print("LOOP_NOT_WEDGED")        # must never run; watchdog exits at ~3s
+    sys.stdout.flush()
+
+asyncio.run(main())
+"""
+
+
+def test_wedged_loop_actually_force_exits_with_restart_code():
+    """Real thread, real blocked loop, real os._exit — proves the recovery
+    mechanism end-to-end: a wedged loop exits with the supervisor-restart code,
+    not 0 and not a hang."""
+    import pathlib
+    import subprocess
+    import sys
+
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    proc = subprocess.run(
+        [sys.executable, "-c", _WEDGE_SCRIPT],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    assert "LOOP_NOT_WEDGED" not in proc.stdout
+    assert proc.returncode == _LOOP_WEDGE_EXIT_CODE, (
+        f"expected force-exit {_LOOP_WEDGE_EXIT_CODE}, got {proc.returncode}; "
+        f"stdout={proc.stdout!r} stderr={proc.stderr[-500:]!r}"
+    )
