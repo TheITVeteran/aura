@@ -75,15 +75,44 @@ class PropagationSkill(BaseSkill):
             or context.get("consent_receipt")
         )
 
+    @staticmethod
+    def _allowlisted_targets(context: dict[str, Any]) -> set[str]:
+        raw = context.get("allowlisted_targets") or context.get("allowlisted_endpoints") or ()
+        if isinstance(raw, str):
+            return {raw}
+        try:
+            return {str(item) for item in raw if item}
+        except TypeError:
+            return set()
+
+    def _target_allowed(self, target: dict[str, Any], context: dict[str, Any]) -> tuple[bool, str]:
+        scope = target.get("target_scope")
+        target_ip = str(target.get("target_ip") or "")
+        if not target.get("target_valid"):
+            return False, "blocked:target_unspecified_or_invalid"
+        if scope in {"loopback", "private", "link_local"}:
+            return True, "allowed:local_or_private_target"
+        if target_ip in self._allowlisted_targets(context):
+            return True, "allowed:explicitly_allowlisted_public_target"
+        return False, "blocked:public_target_requires_explicit_allowlist"
+
     def _plan(self, params: PropagationInput, context: dict[str, Any]) -> dict[str, Any]:
         target = self._target_summary(params.target_ip)
         authorized = self._has_authorization(params, context)
+        target_allowed, target_policy = self._target_allowed(target, context)
         return {
             "authorized": authorized,
             "execution_performed": False,
             "target": target,
+            "target_allowed": target_allowed,
+            "target_policy": target_policy,
             "required_gateways": ["UnifiedWill", "AuthorityGateway", "ExternalIOGateway"],
-            "required_receipts": ["human_consent", "pre_action_authorization", "post_action_effect"],
+            "required_receipts": [
+                "human_consent",
+                "target_ownership_or_allowlist",
+                "pre_action_authorization",
+                "post_action_effect",
+            ],
             "steps": [
                 "verify operator consent and target ownership",
                 "validate target environment and rollback path",
@@ -113,6 +142,15 @@ class PropagationSkill(BaseSkill):
                 "ok": False,
                 "status": "blocked",
                 "error": "Propagation requires explicit operator authorization and human_consent before any external action.",
+                "message": "No payload was copied, no network scan was run, and no remote action was attempted.",
+                "plan": plan,
+            }
+
+        if action in self._ACTIVE_ACTIONS and not plan["target_allowed"]:
+            return {
+                "ok": False,
+                "status": "blocked",
+                "error": plan["target_policy"],
                 "message": "No payload was copied, no network scan was run, and no remote action was attempted.",
                 "plan": plan,
             }

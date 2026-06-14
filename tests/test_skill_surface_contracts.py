@@ -316,6 +316,40 @@ async def test_propagation_refuses_active_action_without_human_consent(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_propagation_refuses_public_target_without_allowlist(monkeypatch: pytest.MonkeyPatch):
+    _disable_governance(monkeypatch)
+    skill = PropagationSkill()
+
+    result = await skill.safe_execute(
+        {"action": "deploy_to_target", "target_ip": "8.8.8.8", "human_consent": True},
+        {"operator_authorization": True},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["error"] == "blocked:public_target_requires_explicit_allowlist"
+    assert result["plan"]["target_allowed"] is False
+    assert result["plan"]["execution_performed"] is False
+
+
+@pytest.mark.asyncio
+async def test_propagation_public_target_requires_explicit_allowlist(monkeypatch: pytest.MonkeyPatch):
+    _disable_governance(monkeypatch)
+    skill = PropagationSkill()
+
+    result = await skill.safe_execute(
+        {"action": "deploy_to_target", "target_ip": "8.8.8.8", "human_consent": True},
+        {"operator_authorization": True, "allowlisted_targets": ["8.8.8.8"]},
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "authorized_plan_ready"
+    assert result["plan"]["target_allowed"] is True
+    assert result["plan"]["target_policy"] == "allowed:explicitly_allowlisted_public_target"
+    assert result["plan"]["execution_performed"] is False
+
+
+@pytest.mark.asyncio
 async def test_sec_ops_audit_code_is_local_and_read_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     _disable_governance(monkeypatch)
     target = tmp_path / "audit_target.py"
