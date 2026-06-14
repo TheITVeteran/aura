@@ -2364,22 +2364,29 @@ def test_proof_ablation_guard_blocks_only_proof_runs(monkeypatch: pytest.MonkeyP
     from core.runtime.proof_policy import (
         active_proof_ablation_services,
         proof_ablation_blocked_response,
+        structured_proof_solver_enabled,
     )
 
     monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
     monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
     monkeypatch.delenv("AURA_TESTING", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", raising=False)
     monkeypatch.setenv("AURA_ACTIVE_ABLATION_SERVICES", "memory_facade,unified_will")
 
     assert active_proof_ablation_services(origin="api") == ()
     assert proof_ablation_blocked_response(origin="api") is None
+    assert structured_proof_solver_enabled(origin="api") is False
 
     monkeypatch.setenv("AURA_PROOF_RUN", "1")
 
     active = set(active_proof_ablation_services(origin="api"))
     assert "memory_facade" in active
     assert "unified_will" in active
-    assert proof_ablation_blocked_response(origin="api") == "<answer>runtime_dependency_unavailable</answer>"
+    assert proof_ablation_blocked_response(origin="api") is None
+    assert structured_proof_solver_enabled(origin="api") is False
+
+    monkeypatch.setenv("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", "1")
+    assert structured_proof_solver_enabled(origin="api") is True
 
 
 def test_dnu_ablation_validation_rejects_equal_performance_lesions():
@@ -2392,5 +2399,22 @@ def test_dnu_ablation_validation_rejects_equal_performance_lesions():
     assert "and behavior_degraded" in runner_source
     assert '"ablation",' in validator_source
     assert '"outperform",' in validator_source
-    assert "proof_ablation_blocked_response(origin=origin)" in message_source
-    assert "runtime_dependency_unavailable" in (root / "core" / "runtime" / "proof_policy.py").read_text(encoding="utf-8")
+    assert "active_proof_ablation_services(origin=origin)" in message_source
+    assert "continuing through live runtime with active service lesion" in message_source
+    assert "runtime_dependency_unavailable" not in (root / "core" / "runtime" / "proof_policy.py").read_text(encoding="utf-8")
+
+
+def test_dnu_comparison_sample_is_stratified():
+    from tools.agi.run_dnu_agi_proof_battery import TASK_CATEGORIES, select_stratified_comparison_tasks
+
+    tasks = [
+        {"task_id": f"{category}_{idx}", "category": category}
+        for category in TASK_CATEGORIES
+        for idx in range(3)
+    ]
+
+    selected = select_stratified_comparison_tasks(tasks, 12)
+    categories = {task["category"] for task in selected}
+
+    assert len(selected) == 12
+    assert set(TASK_CATEGORIES) <= categories

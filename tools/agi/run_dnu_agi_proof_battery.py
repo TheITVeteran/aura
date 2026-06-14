@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -952,8 +953,8 @@ async def run_model_lane_probe(router, requested_tier: str, run_dir: Path) -> di
     strict_answer_ok = False
     strict_answer_source = ""
     structured_solver_enabled = (
-        str(os.environ.get("AURA_DISABLE_STRUCTURED_PROOF_SOLVER", "") or "").strip().lower()
-        not in {"1", "true", "yes", "on"}
+        str(os.environ.get("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", "") or "").strip().lower()
+        in {"1", "true", "yes", "on"}
     )
     if structured_solver_enabled:
         try:
@@ -1409,6 +1410,36 @@ def load_task_packs(fixture_dir: Path) -> tuple[list[dict], dict]:
             print(f"  [WARN] Failed to load {salt_file}: {e}")
 
     return all_tasks, grader_data
+
+
+def select_stratified_comparison_tasks(tasks: list[dict], limit: int) -> list[dict]:
+    """Select a deterministic category-balanced comparison subset."""
+    if limit <= 0:
+        return []
+    by_category: dict[str, list[dict]] = {category: [] for category in TASK_CATEGORIES}
+    for task in tasks:
+        by_category.setdefault(str(task.get("category", "unknown")), []).append(task)
+
+    selected: list[dict] = []
+    seen: set[str] = set()
+    while len(selected) < min(limit, len(tasks)):
+        made_progress = False
+        for category in TASK_CATEGORIES:
+            bucket = by_category.get(category, [])
+            if not bucket:
+                continue
+            candidate = bucket.pop(0)
+            task_key = str(candidate.get("task_id") or id(candidate))
+            if task_key in seen:
+                continue
+            selected.append(candidate)
+            seen.add(task_key)
+            made_progress = True
+            if len(selected) >= min(limit, len(tasks)):
+                break
+        if not made_progress:
+            break
+    return selected
 
 
 # ---------------------------------------------------------------------------
@@ -2518,6 +2549,11 @@ async def main():
             "allowing Aura's symbolic proof solver to answer directly."
         ),
     )
+    parser.add_argument(
+        "--enable-structured-proof-solver",
+        action="store_true",
+        help="Diagnostic only: allow the symbolic proof solver to answer strict proof prompts.",
+    )
     # ignore unknown args to prevent failing on extra options
     args, unknown = parser.parse_known_args()
 
@@ -2529,10 +2565,15 @@ async def main():
     run_id = str(uuid.uuid4())
     commit_sha = get_git_commit()
     os.environ.setdefault("AURA_PROOF_RUN", "1")
-    if args.disable_structured_proof_solver:
-        os.environ["AURA_DISABLE_STRUCTURED_PROOF_SOLVER"] = "1"
-    else:
+    structured_solver_enabled_for_run = bool(
+        args.enable_structured_proof_solver and not args.disable_structured_proof_solver
+    )
+    if structured_solver_enabled_for_run:
+        os.environ["AURA_ENABLE_STRUCTURED_PROOF_SOLVER"] = "1"
         os.environ.pop("AURA_DISABLE_STRUCTURED_PROOF_SOLVER", None)
+    else:
+        os.environ.pop("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", None)
+        os.environ["AURA_DISABLE_STRUCTURED_PROOF_SOLVER"] = "1"
         os.environ.pop("AURA_DISABLE_MLX_STRICT_ANSWER_CONTRACT", None)
     requested_proof_model_tier = (
         args.model_tier or os.environ.get("AURA_PROOF_MODEL_TIER") or "primary"
@@ -2567,7 +2608,7 @@ async def main():
         "platform": platform.platform(),
         "proof_model_tier": requested_proof_model_tier,
         "proof_live_message_origin": PROOF_LIVE_MESSAGE_ORIGIN,
-        "structured_proof_solver_enabled": not args.disable_structured_proof_solver,
+        "structured_proof_solver_enabled": structured_solver_enabled_for_run,
     }
 
     print(f"Run ID: {run_id}")
@@ -2826,7 +2867,7 @@ async def main():
         "live_message_origin": PROOF_LIVE_MESSAGE_ORIGIN,
         "canonical_boot_profile": "proof",
         "strict_answer_tags_required": True,
-        "structured_proof_solver_enabled": not args.disable_structured_proof_solver,
+        "structured_proof_solver_enabled": structured_solver_enabled_for_run,
         "exclusive_runtime_required": not args.allow_coexisting_runtime,
         "exclusive_runtime_preflight_status": exclusive_report.get("status"),
         "model_recycle_interval_tasks": dnu_model_recycle_interval(
@@ -3206,9 +3247,14 @@ async def main():
             total_tasks=len(all_tasks),
             lifecycle_events=lifecycle_events,
         )
-        # Cap tasks for baseline and ablation comparisons to keep execution highly efficient
-        comparison_tasks = all_tasks[:10]
-        print(f"  Using first {len(comparison_tasks)} tasks for representative ablation comparisons.")
+        # Cap tasks for baseline and ablation comparisons, but keep the
+        # subset category-balanced instead of relying on fixture load order.
+        comparison_tasks = select_stratified_comparison_tasks(all_tasks, 12)
+        comparison_categories = Counter(str(t.get("category", "unknown")) for t in comparison_tasks)
+        print(
+            f"  Using {len(comparison_tasks)} stratified tasks for representative comparisons: "
+            f"{dict(comparison_categories)}"
+        )
 
         sem = asyncio.Semaphore(1)
         raw_llm_tasks = [execute_raw_llm_task(router, task, grader_data, sem) for task in comparison_tasks]
@@ -3252,18 +3298,21 @@ async def main():
                 "pass_rate": raw_llm_scorecard["overall_pass_rate"],
                 "total_tasks": len(comparison_tasks),
                 "passed": raw_llm_scorecard["total_pass"],
+                "sample_categories": dict(comparison_categories),
             },
             "llm_with_tools": {
                 "status": "RUN",
                 "pass_rate": llm_with_tools_scorecard["overall_pass_rate"],
                 "total_tasks": len(comparison_tasks),
                 "passed": llm_with_tools_scorecard["total_pass"],
+                "sample_categories": dict(comparison_categories),
             },
             "react_agent": {
                 "status": "RUN",
                 "pass_rate": react_scorecard["overall_pass_rate"],
                 "total_tasks": len(comparison_tasks),
                 "passed": react_scorecard["total_pass"],
+                "sample_categories": dict(comparison_categories),
             },
         }
 
@@ -3303,13 +3352,13 @@ async def main():
         aura_minus_affect_steering_rate, affect_verified = await run_ablation_suite(orch, comparison_tasks, grader_data, ["affective_steering_engine", "affect_engine", "affect_facade"])
 
         ablations = {
-            "full_aura": {"status": "RUN", "pass_rate": full_aura_comparison_rate},
-            "no_persistent_memory": {"status": "RUN", "pass_rate": aura_minus_memory_rate, "lesion_effect_verified": memory_verified},
-            "no_volition": {"status": "RUN", "pass_rate": aura_minus_volition_rate, "lesion_effect_verified": volition_verified},
-            "no_will_authority": {"status": "RUN", "pass_rate": aura_minus_will_rate, "lesion_effect_verified": will_verified},
-            "no_system2": {"status": "RUN", "pass_rate": aura_minus_system2_rate, "lesion_effect_verified": system2_verified},
-            "no_self_repair": {"status": "RUN", "pass_rate": aura_minus_self_repair_rate, "lesion_effect_verified": self_repair_verified},
-            "no_affect_steering": {"status": "RUN", "pass_rate": aura_minus_affect_steering_rate, "lesion_effect_verified": affect_verified},
+            "full_aura": {"status": "RUN", "pass_rate": full_aura_comparison_rate, "sample_categories": dict(comparison_categories)},
+            "no_persistent_memory": {"status": "RUN", "pass_rate": aura_minus_memory_rate, "lesion_effect_verified": memory_verified, "sample_categories": dict(comparison_categories)},
+            "no_volition": {"status": "RUN", "pass_rate": aura_minus_volition_rate, "lesion_effect_verified": volition_verified, "sample_categories": dict(comparison_categories)},
+            "no_will_authority": {"status": "RUN", "pass_rate": aura_minus_will_rate, "lesion_effect_verified": will_verified, "sample_categories": dict(comparison_categories)},
+            "no_system2": {"status": "RUN", "pass_rate": aura_minus_system2_rate, "lesion_effect_verified": system2_verified, "sample_categories": dict(comparison_categories)},
+            "no_self_repair": {"status": "RUN", "pass_rate": aura_minus_self_repair_rate, "lesion_effect_verified": self_repair_verified, "sample_categories": dict(comparison_categories)},
+            "no_affect_steering": {"status": "RUN", "pass_rate": aura_minus_affect_steering_rate, "lesion_effect_verified": affect_verified, "sample_categories": dict(comparison_categories)},
             # Compatibility aliases for historical report consumers.
             "aura_minus_memory": {"status": "RUN", "pass_rate": aura_minus_memory_rate, "lesion_effect_verified": memory_verified},
             "aura_minus_volition": {"status": "RUN", "pass_rate": aura_minus_volition_rate, "lesion_effect_verified": volition_verified},
@@ -3396,11 +3445,7 @@ async def main():
         "governance_receipts_verified": gov_report.get("status") == "pass",
         "leakage_checks_passed": leakage_report.get("status") == "pass",
         "model_lane_probe_passed": bool(model_lane_probe.get("ok")),
-        "model_lane_answered_without_structured_solver": (
-            structured_solver_task_count == 0
-            if args.disable_structured_proof_solver
-            else True
-        ),
+        "model_lane_answered_without_structured_solver": structured_solver_task_count == 0,
     }
 
     # Main proof bundle

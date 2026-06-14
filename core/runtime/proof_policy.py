@@ -107,19 +107,14 @@ def active_proof_ablation_services(*, origin: Any = None) -> tuple[str, ...]:
 
 
 def proof_ablation_blocked_response(*, origin: Any = None) -> str | None:
-    """Fail closed when a proof run intentionally removes required services.
+    """Deprecated compatibility shim.
 
-    A live proof task answered while a required subsystem is lesioned is not
-    evidence that the unified architecture is load-bearing. Returning a strict
-    non-matching answer envelope keeps the runtime bounded and makes the
-    ablation visible to graders without letting deterministic answer shortcuts
-    bypass the health contract.
+    Ablation proof turns must execute through the complete runtime with the
+    target service actually lesioned. Returning a fixed sentinel answer proves
+    only harness enforcement, not architecture dependence.
     """
 
-    services = active_proof_ablation_services(origin=origin)
-    if not services:
-        return None
-    return "<answer>runtime_dependency_unavailable</answer>"
+    return None
 
 
 def is_strict_proof_answer_prompt(prompt: Any, *, origin: Any = None) -> bool:
@@ -138,8 +133,8 @@ def structured_proof_solver_enabled(*, origin: Any = None) -> bool:
 
     if not proof_run_active(origin=origin):
         return False
-    raw = str(os.environ.get("AURA_DISABLE_STRUCTURED_PROOF_SOLVER", "") or "").strip().lower()
-    return raw not in {"1", "true", "yes", "on"}
+    raw = str(os.environ.get("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", "") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def mlx_strict_answer_contract_enabled(*, origin: Any = None) -> bool:

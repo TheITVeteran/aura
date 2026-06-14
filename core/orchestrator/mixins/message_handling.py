@@ -717,20 +717,18 @@ class MessageHandlingMixin:
         try:
             from ...runtime.proof_policy import (
                 active_proof_ablation_services,
-                proof_ablation_blocked_response,
             )
 
-            blocked_response = proof_ablation_blocked_response(origin=origin)
-            if blocked_response is not None:
+            lesions = active_proof_ablation_services(origin=origin)
+            if lesions:
                 logger.warning(
-                    "Proof/evaluation turn blocked because required service lesion(s) are active: %s",
-                    ", ".join(active_proof_ablation_services(origin=origin)),
+                    "Proof/evaluation turn continuing through live runtime with active service lesion(s): %s",
+                    ", ".join(lesions),
                 )
-                return blocked_response
         except _MESSAGE_HANDLING_RECOVERABLE_ERRORS as exc:
             _record_message_degradation(
                 exc,
-                action="continued proof turn after ablation guard inspection failed",
+                action="continued proof turn after ablation lesion inspection failed",
                 severity="warning",
             )
 

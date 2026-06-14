@@ -427,6 +427,9 @@ def main():
             tier_6_failed = True
 
     if runtime_policy_data:
+        if int(proof_data.get("structured_solver_task_count", -1) or 0) != 0:
+            failures.append("Structured proof solver answered scored task(s); proof is contaminated")
+            tier_6_failed = True
         if runtime_policy_data.get("proof_model_tier") == "primary":
             probe = runtime_policy_data.get("model_lane_probe") or {}
             if probe.get("local_lane_ok") is not True:
@@ -435,10 +438,6 @@ def main():
             recurrent = probe.get("recurrent_depth") or {}
             if recurrent and recurrent.get("active") is not True:
                 failures.append("Primary proof model lane did not report active recurrent depth")
-                tier_6_failed = True
-        if runtime_policy_data.get("structured_proof_solver_enabled") is False:
-            if int(proof_data.get("structured_solver_task_count", -1) or 0) != 0:
-                failures.append("Structured proof solver was disabled but task trace reports solver usage")
                 tier_6_failed = True
 
     # 14. artifact hashes do not verify
