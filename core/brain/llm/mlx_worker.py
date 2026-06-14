@@ -85,6 +85,14 @@ def _surface_generation_contract_enabled(job: dict[str, Any]) -> bool:
         job.get("clean_user_surface_contract", False)
         or job.get("health_probe", False)
         or job.get("operator_evidence_contract", False)
+        # Strict/structured proof contracts need CORRECT symbolic tokens, not
+        # affective voice. Running them at full steering (alpha 5.0) corrupts the
+        # constrained first-token logits → zero-token generation that hangs to
+        # the 90s first-token timeout (DNU R011/R040/R022 wedges). Clamp steering
+        # for these the same way user-visible prose is clamped.
+        or job.get("strict_answer_contract", False)
+        or job.get("strict_value_contract", False)
+        or job.get("proof_evaluation_contract", False)
     )
 
 
@@ -101,7 +109,20 @@ def _job_requires_prompt_cache_bypass(job: dict[str, Any]) -> bool:
 
 
 def _surface_control_alpha(job: dict[str, Any], current_alpha: Any) -> float:
-    default_alpha = "0.12" if job.get("operator_evidence_contract", False) else "0.35"
+    # Strict/structured proof gens get steering driven near-off (kept >0 so the
+    # hook stays attached and the worker-liveness gate is satisfied) — the proof
+    # answer must be unsteered symbolic output. Operator-evidence stays low;
+    # ordinary user-visible prose keeps a moderate clamp.
+    if (
+        job.get("strict_answer_contract", False)
+        or job.get("strict_value_contract", False)
+        or job.get("proof_evaluation_contract", False)
+    ):
+        default_alpha = "0.08"
+    elif job.get("operator_evidence_contract", False):
+        default_alpha = "0.12"
+    else:
+        default_alpha = "0.35"
     configured = job.get(
         "clean_user_surface_steering_alpha",
         os.environ.get("AURA_USER_SURFACE_STEERING_ALPHA", default_alpha),
