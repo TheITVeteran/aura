@@ -112,6 +112,8 @@ def test_stop_aura_signals_parent_before_touching_child_actors():
     stop_body = main_py.split("def stop_aura():", 1)[1].split("# ---------------------------------------------------------------------------", 1)[0]
 
     assert "p.send_signal(signal.SIGTERM)" in stop_body
+    assert "AURA_STOP_GRACE_SECONDS" in stop_body
+    assert "p.wait(timeout=stop_grace_s)" in stop_body
     first_signal = stop_body.index("p.send_signal(signal.SIGTERM)")
     assert "for child in p.children(recursive=True):" not in stop_body[:first_signal]
 

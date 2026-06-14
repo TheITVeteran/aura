@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import psutil
 import websockets
 
 BANNED_REPLY_RE = re.compile(
@@ -36,6 +37,18 @@ BANNED_REPLY_RE = re.compile(
     r"send your message again|lost my (?:thread|train of thought)|"
     r"hit a bump|one moment|how can i help|as an ai|i am an ai)",
     re.IGNORECASE,
+)
+
+DEFAULT_PROBES: tuple[str, ...] = (
+    "health",
+    "voice_runtime_ready",
+    "skill_button_file_write",
+    "chat_coding_snake",
+    "novel_topic_continuity",
+    "computer_use_local_app",
+    "desktop_task_generic_plan",
+    "regular_chat_desktop_chain",
+    "telemetry_neural_stream",
 )
 
 
@@ -56,11 +69,17 @@ class LiveRuntimeProbe:
         timeout_s: float = 420.0,
         probe_timeout_s: float | None = None,
         artifact_path: Path | None = None,
+        selected_probes: tuple[str, ...] | None = None,
+        skipped_probes: tuple[str, ...] = (),
+        max_rss_mb: float | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout_s = timeout_s
         self.probe_timeout_s = float(probe_timeout_s or min(timeout_s, 180.0))
         self.artifact_path = artifact_path
+        self.selected_probes = selected_probes
+        self.skipped_probes = set(skipped_probes)
+        self.max_rss_mb = float(max_rss_mb or 0.0)
         self.events: list[dict[str, Any]] = []
         self.results: list[ProbeResult] = []
         self.headers: dict[str, str] = {}
@@ -69,19 +88,13 @@ class LiveRuntimeProbe:
             self.headers["X-Api-Token"] = token
 
     async def run(self) -> int:
+        probes = self._selected_probe_items()
         async with httpx.AsyncClient(timeout=self.timeout_s, headers=self.headers) as client:
             self.client = client
             ws_task = asyncio.create_task(self._collect_ws_events(), name="live-probe-ws")
             try:
-                await self._probe("health", self._health)
-                await self._probe("voice_runtime_ready", self._voice_runtime_ready)
-                await self._probe("skill_button_file_write", self._skill_button_file_write)
-                await self._probe("chat_coding_snake", self._chat_coding_snake)
-                await self._probe("novel_topic_continuity", self._novel_topic_continuity)
-                await self._probe("computer_use_local_app", self._computer_use_local_app)
-                await self._probe("desktop_task_generic_plan", self._desktop_task_generic_plan)
-                await self._probe("regular_chat_desktop_chain", self._regular_chat_desktop_chain)
-                await self._probe("telemetry_neural_stream", self._telemetry_neural_stream)
+                for name, fn in probes:
+                    await self._probe(name, fn)
             finally:
                 ws_task.cancel()
                 try:
@@ -95,10 +108,91 @@ class LiveRuntimeProbe:
             await self._write_artifact(passed)
         return 0 if passed else 1
 
+    def _probe_registry(self) -> dict[str, Any]:
+        return {
+            "health": self._health,
+            "voice_runtime_ready": self._voice_runtime_ready,
+            "skill_button_file_write": self._skill_button_file_write,
+            "chat_coding_snake": self._chat_coding_snake,
+            "novel_topic_continuity": self._novel_topic_continuity,
+            "computer_use_local_app": self._computer_use_local_app,
+            "desktop_task_generic_plan": self._desktop_task_generic_plan,
+            "regular_chat_desktop_chain": self._regular_chat_desktop_chain,
+            "telemetry_neural_stream": self._telemetry_neural_stream,
+        }
+
+    def _selected_probe_items(self) -> list[tuple[str, Any]]:
+        registry = self._probe_registry()
+        names = self.selected_probes or DEFAULT_PROBES
+        unknown = [name for name in names if name not in registry]
+        if unknown:
+            raise ValueError(f"Unknown live runtime probe(s): {', '.join(unknown)}")
+        return [
+            (name, registry[name])
+            for name in names
+            if name not in self.skipped_probes
+        ]
+
+    def _aura_processes(self) -> list[psutil.Process]:
+        matches: list[psutil.Process] = []
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            try:
+                cmdline = " ".join(proc.info.get("cmdline") or [])
+            except (psutil.Error, TypeError):
+                continue
+            if "aura_main.py" in cmdline:
+                matches.append(proc)
+        return matches
+
+    def _aura_rss_mb(self) -> float:
+        total = 0
+        for proc in self._aura_processes():
+            try:
+                processes = [proc, *proc.children(recursive=True)]
+            except psutil.Error:
+                processes = [proc]
+            for candidate in processes:
+                try:
+                    total += candidate.memory_info().rss
+                except psutil.Error:
+                    continue
+        return total / (1024 * 1024)
+
+    def _guard_rss(self, probe_name: str) -> None:
+        if self.max_rss_mb <= 0:
+            return
+        rss_mb = self._aura_rss_mb()
+        if rss_mb > self.max_rss_mb:
+            raise RuntimeError(
+                f"live runtime RSS guard tripped during {probe_name}: "
+                f"{rss_mb:.0f}MB > {self.max_rss_mb:.0f}MB"
+            )
+
+    async def _await_with_rss_guard(self, name: str, fn) -> tuple[str, dict[str, Any]]:
+        task = asyncio.create_task(fn(), name=f"live-runtime-probe:{name}")
+        try:
+            while not task.done():
+                self._guard_rss(name)
+                done, _pending = await asyncio.wait({task}, timeout=1.0)
+                if done:
+                    break
+            self._guard_rss(name)
+            return await task
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
     async def _probe(self, name: str, fn) -> None:
         start = time.monotonic()
         try:
-            detail, data = await asyncio.wait_for(fn(), timeout=self.probe_timeout_s)
+            detail, data = await asyncio.wait_for(
+                self._await_with_rss_guard(name, fn),
+                timeout=self.probe_timeout_s,
+            )
             self.results.append(ProbeResult(name, True, detail, time.monotonic() - start, data or {}))
         except TimeoutError:
             self.results.append(ProbeResult(name, False, f"TimeoutError: exceeded {self.probe_timeout_s:.0f}s", time.monotonic() - start))
@@ -618,6 +712,8 @@ return "dismissed"
             "base_url": self.base_url,
             "passed": passed,
             "probe_timeout_s": self.probe_timeout_s,
+            "selected_probes": [result.name for result in self.results],
+            "max_rss_mb": self.max_rss_mb,
             "events_collected": len(self.events),
             "recent_event_types": [
                 str(event.get("type") or "") for event in self.events[-80:]
@@ -635,13 +731,46 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=420.0)
     parser.add_argument("--probe-timeout", type=float, default=None)
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument(
+        "--only",
+        default="",
+        help="Comma-separated probe names to run. Default runs the full probe set.",
+    )
+    parser.add_argument(
+        "--skip",
+        default="",
+        help="Comma-separated probe names to skip from the selected set.",
+    )
+    parser.add_argument(
+        "--max-rss-mb",
+        type=float,
+        default=0.0,
+        help="Abort a probe if the aura_main.py process tree exceeds this RSS.",
+    )
+    parser.add_argument("--list-probes", action="store_true")
     args = parser.parse_args()
+    if args.list_probes:
+        print("\n".join(DEFAULT_PROBES))
+        return 0
+    selected = tuple(
+        item.strip()
+        for item in str(args.only or "").split(",")
+        if item.strip()
+    ) or None
+    skipped = tuple(
+        item.strip()
+        for item in str(args.skip or "").split(",")
+        if item.strip()
+    )
     return asyncio.run(
         LiveRuntimeProbe(
             args.base_url,
             timeout_s=args.timeout,
             probe_timeout_s=args.probe_timeout,
             artifact_path=args.out,
+            selected_probes=selected,
+            skipped_probes=skipped,
+            max_rss_mb=args.max_rss_mb,
         ).run()
     )
 

@@ -34,6 +34,17 @@ class _ScriptedReadConnection(_FakeConnection):
         raise EOFError
 
 
+class _ClosedHandleReadConnection(_FakeConnection):
+    def __init__(self, on_recv=None):
+        super().__init__()
+        self.on_recv = on_recv
+
+    def recv(self):
+        if self.on_recv is not None:
+            self.on_recv()
+        raise OSError("handle is closed")
+
+
 class _FakeTask:
     def __init__(self):
         self.cancelled = False
@@ -357,6 +368,36 @@ def test_reader_marks_bus_stopped_on_peer_eof():
 
             assert bus._is_running is False
             assert bus.is_alive() is False
+        finally:
+            bus._shutdown_executor()
+
+    asyncio.run(scenario())
+
+
+def test_reader_treats_closed_handle_during_shutdown_as_normal(monkeypatch):
+    async def scenario():
+        from core.bus import local_pipe_bus as module
+
+        records = []
+        monkeypatch.setattr(module, "record_degradation", lambda *args, **kwargs: records.append((args, kwargs)))
+        bus = None
+
+        def mark_stopping():
+            assert bus is not None
+            bus._is_running = False
+
+        read_conn = _ClosedHandleReadConnection(on_recv=mark_stopping)
+        write_conn = _FakeConnection()
+        bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=True)
+        bus._is_running = True
+        bus._loop = asyncio.get_running_loop()
+
+        try:
+            await bus._read_loop()
+
+            assert bus._is_running is False
+            assert bus.is_alive() is False
+            assert records == []
         finally:
             bus._shutdown_executor()
 

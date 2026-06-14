@@ -2417,19 +2417,30 @@ def stop_aura():
                 _unlink_orchestrator_lock(lock_file)
                 return
 
-        # Wait for cleanup
-        for _ in range(10):
+        # Wait for cleanup. The desktop/32B lane needs enough time to stop
+        # the API server, persist snapshots, unload MLX workers, and reap
+        # actors. Five seconds made healthy shutdowns look stubborn and
+        # forced SIGKILL while teardown was still progressing.
+        stop_grace_s = max(5.0, float(os.environ.get("AURA_STOP_GRACE_SECONDS", "30")))
+        stopped_cleanly = False
+        if psutil:
             try:
-                if psutil:
-                    p = psutil.Process(pid)
-                    if not p.is_running():
-                        break
-                else:
-                    os.kill(pid, 0) # Check if alive
-            except (ProcessLookupError, PermissionError, psutil.Error):
-                break
-            time.sleep(0.5)
+                p.wait(timeout=stop_grace_s)
+                stopped_cleanly = True
+            except psutil.TimeoutExpired:
+                stopped_cleanly = False
+            except psutil.Error:
+                stopped_cleanly = True
         else:
+            deadline = time.monotonic() + stop_grace_s
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(pid, 0) # Check if alive
+                except (ProcessLookupError, PermissionError):
+                    stopped_cleanly = True
+                    break
+                time.sleep(0.5)
+        if not stopped_cleanly:
             print("Aura is stubborn. Sending SIGKILL...")
             if psutil:
                 try:

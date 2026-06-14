@@ -373,6 +373,36 @@ def test_desktop_task_contract_action_list_matches_step_validator():
         DesktopTaskStep(action="unsupported_desktop_magic")
 
 
+def test_desktop_task_verifies_all_readback_and_command_actions():
+    cases = [
+        (
+            DesktopTaskStep(action="get_clipboard"),
+            {"ok": True, "action": "get_clipboard", "text": "proof", "chars": 5},
+            "clipboard_read_chars=5",
+        ),
+        (
+            DesktopTaskStep(action="read_menu_clock"),
+            {
+                "ok": True,
+                "action": "read_menu_clock",
+                "clock_text": "Sun Jun 14 15:05",
+                "source": "macos_menu_bar",
+            },
+            "clock_text=Sun Jun 14 15:05;source=macos_menu_bar",
+        ),
+        (
+            DesktopTaskStep(action="run_command", target="pwd"),
+            {"ok": True, "action": "run_command", "exit_code": 0, "output": "/tmp"},
+            "exit_code=0;output_chars=4",
+        ),
+    ]
+
+    for step, result, evidence in cases:
+        ok, actual_evidence = DesktopTaskSkill._verify_step_effect(step, result)
+        assert ok is True
+        assert actual_evidence == evidence
+
+
 def test_desktop_task_does_not_invent_aura_journal_folder_name():
     folder = DesktopTaskSkill._extract_folder_name("Write a private journal entry.")
 

@@ -934,6 +934,26 @@ class DesktopTaskSkill(BaseSkill):
             if not isinstance(chars, int) or chars < 0:
                 return False, "missing clipboard character count"
             return True, f"clipboard_chars={chars}"
+        if action == "get_clipboard":
+            chars = result.get("chars")
+            text = result.get("text")
+            if not isinstance(chars, int) or chars < 0 or not isinstance(text, str):
+                return False, "missing clipboard readback evidence"
+            return True, f"clipboard_read_chars={chars}"
+        if action == "read_menu_clock":
+            clock_text = str(result.get("clock_text") or result.get("text") or "").strip()
+            source = str(result.get("source") or "").strip()
+            if not clock_text:
+                return False, "missing menu clock readback"
+            return True, f"clock_text={clock_text[:80]};source={source or 'unknown'}"
+        if action == "run_command":
+            exit_code = result.get("exit_code")
+            if not isinstance(exit_code, int):
+                return False, "missing command exit code"
+            if exit_code != 0:
+                return False, f"command exited {exit_code}"
+            output = str(result.get("output") or "")
+            return True, f"exit_code=0;output_chars={len(output)}"
         if action == "click":
             verification = str(result.get("verification") or "").strip()
             verified = bool(result.get("effect_verified")) or "state shifted" in verification.lower()

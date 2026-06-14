@@ -869,6 +869,11 @@ class LocalPipeBus:
                 self._cancel_pending_requests(e)
                 break
             except OSError as e:
+                if not self._is_running or "handle is closed" in str(e).lower():
+                    logger.info("🔌 Bus connection closed during shutdown.")
+                    self._is_running = False
+                    self._cancel_pending_requests(cancel=True)
+                    break
                 record_degradation('local_pipe_bus', e)
                 logger.exception("❌ Error in Bus read loop: %s", e)
                 

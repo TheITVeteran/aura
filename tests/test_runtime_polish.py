@@ -576,6 +576,36 @@ def test_live_runtime_probe_treats_readiness_heartbeat_as_health_authority():
     assert 'heartbeat.get("healthy") is not True' in probe
     assert 'heartbeat.get("runtime_probe_healthy") is not True' in probe
     assert 'required.get("all_passed") is not True' in probe
+    assert "--only" in probe
+    assert "--max-rss-mb" in probe
+
+
+def test_live_runtime_probe_can_run_focused_probe_sets():
+    from tools.live_runtime_probe import LiveRuntimeProbe
+
+    probe = LiveRuntimeProbe(
+        "http://127.0.0.1:8000",
+        selected_probes=("health", "desktop_task_generic_plan"),
+        skipped_probes=("health",),
+        max_rss_mb=32000,
+    )
+
+    assert [name for name, _ in probe._selected_probe_items()] == [
+        "desktop_task_generic_plan"
+    ]
+    assert probe.max_rss_mb == 32000
+
+
+def test_live_runtime_probe_rejects_unknown_probe_names():
+    from tools.live_runtime_probe import LiveRuntimeProbe
+
+    probe = LiveRuntimeProbe(
+        "http://127.0.0.1:8000",
+        selected_probes=("not_a_probe",),
+    )
+
+    with pytest.raises(ValueError, match="Unknown live runtime probe"):
+        probe._selected_probe_items()
 
 
 def test_input_bus_normalizes_external_priority_values():
