@@ -112,8 +112,8 @@ def test_capability_inventory_reply_repairs_false_tool_limitation(monkeypatch: p
     from interface.routes import chat as chat_routes
 
     class FakeCapabilityEngine:
-        def get_tool_catalog(self, *, include_inactive: bool = True) -> list[dict]:
-            return [
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            yield from [
                 {
                     "name": "computer_use",
                     "available": True,
@@ -188,8 +188,8 @@ def test_runtime_status_grounding_does_not_replace_capability_inventory(
     from interface.routes import chat as chat_routes
 
     class FakeCapabilityEngine:
-        def get_tool_catalog(self, *, include_inactive: bool = True) -> list[dict]:
-            return [
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            yield from [
                 {
                     "name": "computer_use",
                     "available": True,

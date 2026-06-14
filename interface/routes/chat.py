@@ -9,6 +9,7 @@ import asyncio
 import collections
 import hashlib
 import html
+import inspect
 import json
 import logging
 import math
@@ -5063,10 +5064,20 @@ def _read_capability_catalog_snapshot() -> tuple[int, dict[str, list[str]], bool
         if capability_engine is not None and hasattr(capability_engine, "iter_tool_catalog"):
             raw_catalog = capability_engine.iter_tool_catalog(include_inactive=True)
         elif capability_engine is not None and hasattr(capability_engine, "get_tool_catalog"):
-            raw_catalog = capability_engine.get_tool_catalog(include_inactive=True)
-        elif capability_engine is not None and hasattr(capability_engine, "get_catalog"):
-            raw_catalog = capability_engine.get_catalog(include_inactive=True) or {}
-        catalog, truncated = _bounded_capability_catalog_items(raw_catalog, started_at=started_at)
+            get_tool_catalog = getattr(capability_engine, "get_tool_catalog")
+            if inspect.isgeneratorfunction(get_tool_catalog):
+                raw_catalog = get_tool_catalog(include_inactive=True)
+            else:
+                truncated = True
+                logger.warning(
+                    "Skipping materialized capability catalog on desktop inventory route; "
+                    "capability_engine should expose iter_tool_catalog()."
+                )
+        catalog, bounded_truncated = _bounded_capability_catalog_items(
+            raw_catalog,
+            started_at=started_at,
+        )
+        truncated = truncated or bounded_truncated
 
         for item in catalog:
             if not isinstance(item, dict) or not bool(item.get("available")):

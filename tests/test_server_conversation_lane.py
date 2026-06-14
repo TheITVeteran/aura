@@ -651,8 +651,8 @@ async def test_api_chat_desktop_capability_inventory_bypasses_model_allocation(m
     from interface.routes import chat as chat_routes
 
     class _FakeCapabilityEngine:
-        def get_tool_catalog(self, *, include_inactive: bool = True):
-            return [
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            yield from [
                 {
                     "name": "computer_use",
                     "available": True,
@@ -822,6 +822,36 @@ def test_capability_catalog_snapshot_prefers_streaming_catalog(monkeypatch):
     assert truncated is True
     assert governance_available is True
     assert len(categories["specialized governed skills"]) == 12
+    assert engine.materialized_catalog_calls == 0
+
+
+def test_capability_catalog_snapshot_skips_materialized_catalog(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _FakeCapabilityEngine:
+        def __init__(self):
+            self.materialized_catalog_calls = 0
+
+        def get_tool_catalog(self, *, include_inactive: bool = True):
+            self.materialized_catalog_calls += 1
+            raise AssertionError("desktop inventory must not materialize a full catalog")
+
+    engine = _FakeCapabilityEngine()
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: engine if name == "capability_engine" else default),
+    )
+
+    available_count, categories, governance_available, truncated = (
+        chat_routes._read_capability_catalog_snapshot()
+    )
+
+    assert available_count == 0
+    assert categories == {}
+    assert governance_available is True
+    assert truncated is True
     assert engine.materialized_catalog_calls == 0
 
 
@@ -3057,8 +3087,8 @@ async def test_desktop_capability_inventory_uses_bounded_catalog_without_engine_
     from interface.routes import chat as chat_routes
 
     class _FakeCapabilityEngine:
-        def get_tool_catalog(self, *, include_inactive: bool = True):
-            return [
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            yield from [
                 {
                     "name": "computer_use",
                     "available": True,
@@ -3084,6 +3114,9 @@ async def test_desktop_capability_inventory_uses_bounded_catalog_without_engine_
                     "effect_scope": "file_system",
                 },
             ]
+
+        def execute(self, *_args, **_kwargs):
+            return None
 
     class _FakeAuthority:
         def is_ready(self):
