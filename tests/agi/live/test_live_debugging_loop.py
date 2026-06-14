@@ -101,10 +101,17 @@ async def test_default_live_debugging_loop_uses_symbolic_fallback_for_palindrome
 
 @pytest.mark.asyncio
 async def test_symbolic_preflight_handles_simple_repairs_without_waking_model(monkeypatch, tmp_path):
-    async def should_not_call_model(_observation):
-        raise AssertionError("symbolic preflight should solve this before model repair")
+    model_calls = []
 
-    monkeypatch.setattr(debugging_loop_module, "_default_patch_provider", should_not_call_model)
+    async def record_unexpected_model_call(observation):
+        model_calls.append(observation)
+        return None
+
+    monkeypatch.setattr(
+        debugging_loop_module,
+        "_default_patch_provider",
+        record_unexpected_model_call,
+    )
     repo = tmp_path / "reverse_repo"
     repo.mkdir()
     (repo / "solution.py").write_text("def reverse_list(lst):\n    return lst[::-2]\n")
@@ -121,6 +128,7 @@ async def test_symbolic_preflight_handles_simple_repairs_without_waking_model(mo
         step.get("stage") == "symbolic_patch_proposal" and step.get("phase") == "preflight"
         for step in result["trace"]
     )
+    assert model_calls == []
     assert "return lst[::-1]" in (repo / "solution.py").read_text()
 
 
