@@ -77,6 +77,13 @@ class ChaosConfig:
     # Dream residual weight (remainder of budget)
     dream_weight: float = 0.3
 
+    # Anti-degeneracy: how much a downstream field's degeneracy pressure
+    # (e.g. UnifiedField eigenvalue-entropy collapse) can amplify the chaos
+    # intensity. At full pressure (1.0) the effective intensity is multiplied
+    # by (1 + degeneracy_gain), driving the substrate — and the field it feeds —
+    # out of a flat/saturated attractor. 0.0 pressure = baseline (no change).
+    degeneracy_gain: float = 6.0
+
 
 # ---------------------------------------------------------------------------
 # Chaos Engine
@@ -115,6 +122,12 @@ class ChaosEngine:
         self._ncs: Optional[NeurochemicalSystem] = None
         self._prev_chem_levels: Optional[np.ndarray] = None
 
+        # --- Dynamic anti-degeneracy pressure (0=healthy, 1=fully degenerate) ---
+        # Driven by a downstream field's eigenvalue-entropy collapse so the
+        # chaos intensity scales UP exactly when the field is settling into a
+        # degenerate attractor, instead of staying at a fixed level.
+        self._complexity_pressure: float = 0.0
+
         # --- Telemetry ---
         self._tick_count: int = 0
         self._last_perturbation: np.ndarray = np.zeros(dim, dtype=np.float64)
@@ -138,6 +151,27 @@ class ChaosEngine:
         """Wire the neurochemical system for jitter derivation."""
         self._ncs = ncs
         logger.info("ChaosEngine wired to NeurochemicalSystem")
+
+    def set_complexity_pressure(self, pressure: float) -> None:
+        """Set anti-degeneracy pressure in [0, 1] from a downstream field.
+
+        Typically driven by 1 - UnifiedField.get_spectral_entropy(): as the
+        field's eigenvalue spectrum collapses toward a degenerate attractor,
+        pressure rises and the chaos intensity scales up to break the lock-in.
+        """
+        try:
+            p = float(pressure)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(p):
+            return
+        self._complexity_pressure = min(1.0, max(0.0, p))
+
+    def effective_intensity(self) -> float:
+        """Current intensity after anti-degeneracy scaling."""
+        return self.config.intensity * (
+            1.0 + self.config.degeneracy_gain * self._complexity_pressure
+        )
 
     # ── Core tick ────────────────────────────────────────────────────────
 
@@ -171,8 +205,10 @@ class ChaosEngine:
             + cfg.neurochemical_weight * neuro_vec
         )
 
-        # Scale by global intensity and dt
-        perturbation = combined * cfg.intensity * dt
+        # Scale by global intensity (dynamically amplified under degeneracy
+        # pressure) and dt. Static intensity is the floor; a collapsing field
+        # pushes complexity_pressure up and the perturbation grows to match.
+        perturbation = combined * self.effective_intensity() * dt
 
         # Telemetry
         self._last_perturbation = perturbation
@@ -454,6 +490,8 @@ class ChaosEngine:
         return {
             "tick_count": self._tick_count,
             "intensity": self.config.intensity,
+            "complexity_pressure": round(self._complexity_pressure, 4),
+            "effective_intensity": round(self.effective_intensity(), 6),
             "active_dream_residuals": len(self._dream_residuals),
             "component_magnitudes": {
                 k: round(v, 8) for k, v in self._component_magnitudes.items()

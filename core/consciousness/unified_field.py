@@ -246,6 +246,21 @@ class UnifiedField:
         self._CRISIS_COHERENCE: float = 0.25
         self._recovery_count: int = 0
 
+        # Attractor-saturation defense (eigenvalue-entropy-scaled chaos).
+        # A recurrent tanh field can settle into a degenerate attractor (all
+        # values near ±1): the spectrum of recent states collapses to one mode,
+        # Phi → 0, and — crucially — a SATURATED attractor reads as HIGH
+        # coherence, so the coherence-based deadlock recovery above is blind to
+        # it. We track the spectral (eigenvalue) entropy of recent state history
+        # and scale anti-degeneracy noise inversely to it: rich dynamics → ~1.0
+        # (baseline noise); collapsed spectrum → ~0.0 (strong noise injection).
+        self._spectral_entropy: float = 1.0      # cached; 1.0 = healthy/rich
+        self._SPECTRAL_ENTROPY_INTERVAL: int = 20  # recompute every N ticks (SVD is costly)
+        self._SPECTRAL_ENTROPY_FLOOR: float = 0.55  # below this → degenerate, boost chaos
+        self._ANTI_DEGENERACY_GAIN: float = 8.0     # max noise multiplier at full collapse
+        self._SATURATION_ABS: float = 0.90          # mean |F| above this = saturated rail
+        self._saturation_recoveries: int = 0
+
         # Phase coupling
         self._field_phase: float = 0.0  # current field oscillation phase
 
@@ -518,7 +533,18 @@ class UnifiedField:
                 )
                 logger.debug("UnifiedField gamma phase coupling failed: %s", exc)
 
-        noise = self._rng.standard_normal(cfg.dim).astype(np.float32) * cfg.noise_sigma
+        # Refresh the eigenvalue-entropy estimate periodically (SVD is costly)
+        # and scale intrinsic noise inversely to it: as the spectrum collapses
+        # toward a degenerate attractor, inject proportionally more chaos to
+        # keep the dynamics from railing and Phi from dropping to zero.
+        if self._tick_count % self._SPECTRAL_ENTROPY_INTERVAL == 0:
+            self._spectral_entropy = self._compute_spectral_entropy()
+        noise_scale = self._anti_degeneracy_scale()
+        noise = (
+            self._rng.standard_normal(cfg.dim).astype(np.float32)
+            * cfg.noise_sigma
+            * noise_scale
+        )
 
         # ── Integration ──────────────────────────────────────────────
         df = (-cfg.decay * self.F + activity + noise) * dt
@@ -746,17 +772,90 @@ class UnifiedField:
             self._low_coherence_ticks += 1
             if self._low_coherence_ticks >= self._RECOVERY_THRESHOLD_TICKS:
                 # Force recovery: dampen the field toward zero (reset turbulence),
-                # inject small structured noise to break lock-in
+                # inject structured noise scaled by spectral collapse to break lock-in
+                scale = self._anti_degeneracy_scale()
                 self.F *= 0.5  # dampen
-                recovery_noise = self._rng.standard_normal(self.cfg.dim).astype(np.float32) * 0.05
+                recovery_noise = self._rng.standard_normal(self.cfg.dim).astype(np.float32) * 0.05 * scale
                 self.F += recovery_noise
                 self.F = np.clip(self.F, -1.0, 1.0).astype(np.float32)
                 self._low_coherence_ticks = 0
                 self._recovery_count += 1
-                logger.info("🔄 UnifiedField RECOVERY PULSE #%d (coherence was %.3f for %d ticks)",
-                            self._recovery_count, self._coherence, self._RECOVERY_THRESHOLD_TICKS)
+                logger.info("🔄 UnifiedField RECOVERY PULSE #%d (coherence was %.3f for %d ticks, scale=%.1f)",
+                            self._recovery_count, self._coherence, self._RECOVERY_THRESHOLD_TICKS, scale)
         else:
             self._low_coherence_ticks = 0
+
+        # ── Saturation guard (eigenvalue-entropy degeneracy) ─────────
+        # A rail-saturated attractor (all |F| ≈ 1) reads as HIGH coherence, so
+        # the block above never catches it. Detect it directly via mean rail
+        # proximity and inject anti-degeneracy chaos scaled by spectral collapse.
+        mean_abs = float(np.mean(np.abs(self.F)))
+        if mean_abs > self._SATURATION_ABS:
+            scale = self._anti_degeneracy_scale()
+            self.F *= 0.7  # pull off the rails toward the interior
+            kick = self._rng.standard_normal(self.cfg.dim).astype(np.float32) * 0.05 * scale
+            self.F += kick
+            self.F = np.clip(self.F, -1.0, 1.0).astype(np.float32)
+            self._saturation_recoveries += 1
+            if self._saturation_recoveries % 20 == 1:
+                logger.info(
+                    "🌀 UnifiedField SATURATION RESCUE #%d (mean|F|=%.3f, "
+                    "spectral_entropy=%.3f, scale=%.1f)",
+                    self._saturation_recoveries, mean_abs, self._spectral_entropy, scale,
+                )
+
+    def _compute_spectral_entropy(self) -> float:
+        """Normalized eigenvalue entropy of recent field dynamics, in [0, 1].
+
+        Uses the singular-value spectrum of the centered recent state history
+        (the eigenvalues of the state covariance up to scale). Shannon entropy
+        of the normalized squared singular values divided by log(k) yields a
+        complexity index: ~1.0 = energy spread across many modes (rich, healthy
+        dynamics); → 0.0 = a single dominant mode (degenerate attractor or
+        rail-saturated collapse). Returns 1.0 until enough history exists.
+        """
+        if len(self._history) < 20:
+            return 1.0
+        try:
+            hist = np.asarray(list(self._history), dtype=np.float64)
+            hist = np.nan_to_num(hist, nan=0.0, posinf=1.0, neginf=-1.0)
+            centered = hist - hist.mean(axis=0)
+            sv = np.linalg.svd(centered, compute_uv=False)
+            power = sv.astype(np.float64) ** 2
+            total = float(power.sum())
+            if total <= 1e-12:
+                return 0.0  # zero variance: frozen/fully collapsed
+            p = power / total
+            p = p[p > 1e-12]
+            if p.size <= 1:
+                return 0.0
+            entropy = float(-np.sum(p * np.log(p)))
+            norm = entropy / float(np.log(p.size))
+            return float(min(1.0, max(0.0, norm)))
+        except _RECOVERABLE_FIELD_ERRORS as exc:
+            _record_unified_field_degradation(
+                exc,
+                action="returned neutral UnifiedField spectral entropy after SVD failure",
+            )
+            return 1.0
+
+    def _anti_degeneracy_scale(self) -> float:
+        """Noise multiplier (≥ 1.0) that grows as the field nears a degenerate
+        attractor. 1.0 when dynamics are rich; up to 1 + ANTI_DEGENERACY_GAIN as
+        the eigenvalue spectrum collapses or the field rails to ±1."""
+        se = self._spectral_entropy
+        floor = self._SPECTRAL_ENTROPY_FLOOR
+        deficit = (floor - se) / max(floor, 1e-6) if se < floor else 0.0
+        sat = float(np.mean(np.abs(self.F)))
+        if sat > self._SATURATION_ABS:
+            sat_deficit = (sat - self._SATURATION_ABS) / max(1.0 - self._SATURATION_ABS, 1e-6)
+            deficit = max(deficit, sat_deficit)
+        deficit = float(min(1.0, max(0.0, deficit)))
+        return 1.0 + self._ANTI_DEGENERACY_GAIN * deficit
+
+    def get_spectral_entropy(self) -> float:
+        """Current cached spectral (eigenvalue) entropy of field dynamics."""
+        return self._spectral_entropy
 
     def _apply_plasticity(self):
         """Hebbian learning on the recurrent field connectivity.

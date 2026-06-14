@@ -297,18 +297,34 @@ class EntropyTracker:
     }
 
     def __init__(self, max_entropy: float = 100.0, crisis_threshold: float = 0.85,
-                 history_size: int = 500):
+                 history_size: int = 500, allostatic_threshold: float = 0.80,
+                 allostatic_target: float = 0.30):
         """
         Args:
             max_entropy:      Upper bound on the entropy register.
             crisis_threshold: Fraction of max_entropy above which crisis mode
                               activates (default 85%).
             history_size:     How many recent events to retain for analysis.
+            allostatic_threshold: Fraction of max_entropy at/above which the
+                              organism should autonomously select an allostatic
+                              consolidation ("rest") to clear the buffer. Set
+                              just below the crisis line so rest is chosen
+                              BEFORE crisis throttling kicks in.
+            allostatic_target: Fraction of max_entropy the allostatic reset
+                              drives entropy DOWN to (a deep consolidation, far
+                              more than incremental idle dissipation). This is
+                              the cure for long-horizon entropy creep: over 72h+
+                              of continuous operation passive dissipation cannot
+                              keep up, so an active reset is required.
         """
         self._entropy: float = 0.0
         self._max_entropy: float = max_entropy
         self._crisis_threshold: float = crisis_threshold
+        self._allostatic_threshold: float = allostatic_threshold
+        self._allostatic_target: float = allostatic_target
         self._in_crisis: bool = False
+        self._allostatic_resets: int = 0
+        self._last_allostatic_reset_at: float = 0.0
 
         self._history: Deque[EntropyEvent] = deque(maxlen=history_size)
         self._total_generated: float = 0.0
@@ -350,6 +366,45 @@ class EntropyTracker:
         self._check_crisis()
         return self._entropy
 
+    def needs_allostatic_reset(self) -> bool:
+        """True when entropy has crept to/above the allostatic threshold.
+
+        This is the autonomous-rest trigger: the organism's Will can poll this
+        to decide to enter a consolidation/rest state and clear the buffer
+        BEFORE entropy reaches the crisis line and throttles cognition.
+        """
+        return self._entropy >= self._allostatic_threshold * self._max_entropy
+
+    def allostatic_reset(self, reason: str = "allostatic_consolidation") -> float:
+        """Active deep cleanup of the entropy buffer — the "rest" behavior.
+
+        Unlike incremental dissipate_entropy (a few units per constructive
+        action), this models an allostatic consolidation/rest state: it drives
+        entropy down to allostatic_target * max_entropy in one deliberate
+        action. This is what the Will autonomously selects to cure long-horizon
+        entropy creep that passive dissipation cannot keep up with. No-op if
+        already below the target.
+
+        Returns:
+            The amount of entropy cleared (>= 0).
+        """
+        target = self._allostatic_target * self._max_entropy
+        if self._entropy <= target:
+            return 0.0
+        cleared = self._entropy - target
+        self._entropy = target
+        self._total_dissipated += cleared
+        self._allostatic_resets += 1
+        self._last_allostatic_reset_at = time.time()
+        self._record(-cleared, reason)
+        self._check_crisis()
+        logger.info(
+            "🛌 ALLOSTATIC CONSOLIDATION: cleared %.1f entropy units "
+            "(%.1f → %.1f, reset #%d)",
+            cleared, self._entropy + cleared, self._entropy, self._allostatic_resets,
+        )
+        return cleared
+
     def get_entropy(self) -> float:
         """Current entropy level (0 to max_entropy)."""
         return self._entropy
@@ -379,6 +434,8 @@ class EntropyTracker:
             "max_entropy": self._max_entropy,
             "pressure": round(self.get_entropy_pressure(), 4),
             "in_crisis": self._in_crisis,
+            "needs_allostatic_reset": self.needs_allostatic_reset(),
+            "allostatic_resets": self._allostatic_resets,
             "total_generated": round(self._total_generated, 2),
             "total_dissipated": round(self._total_dissipated, 2),
             "net_balance": round(self._total_generated - self._total_dissipated, 2),
@@ -619,6 +676,9 @@ class ALifeState:
     kernel_complexity: float            # effective rank of the Lenia kernel
     gini_coefficient: float             # inequality of credit distribution
     mean_growth: float                  # mean of the growth signal
+    # Allostatic consolidation signals (defaulted for back-compat constructors)
+    entropy_needs_consolidation: bool = False  # entropy at/above allostatic line
+    entropy_consolidating: bool = False        # a rest/consolidation fired this tick
     timestamp: float = field(default_factory=time.time)
 
 
@@ -658,6 +718,11 @@ class ALifeDynamics:
         self._dt = dt
         self._tick_count: int = 0
         self._last_state: Optional[ALifeState] = None
+        # Allostatic consolidation: minimum wall-clock seconds between autonomous
+        # "rest" cleanups, so consolidation is a deliberate periodic act rather
+        # than thrashing every tick once the threshold is crossed.
+        self._consolidation_cooldown_s: float = 30.0
+        self._last_consolidation_at: float = 0.0
 
         logger.info(
             "ALifeDynamics initialized (dt=%.3f, max_entropy=%.0f, temp=%.1f)",
@@ -733,6 +798,23 @@ class ALifeDynamics:
             EntropyTracker.DISSIPATION["idle_tick"], "idle_tick",
         )
 
+        # ── 5b. Autonomous allostatic consolidation ("rest") ─────────
+        # Over long-horizon runs (72h+), idle dissipation cannot keep pace with
+        # generation and entropy creeps toward the crisis line — a slow
+        # cognitive poison. When entropy crosses the allostatic threshold, the
+        # organism autonomously selects a consolidation/rest state to clear the
+        # buffer (cooldown-gated so it is a deliberate periodic act). Higher
+        # layers can also observe entropy_needs_consolidation and select rest
+        # explicitly; this substrate-level reflex guarantees survival even if
+        # they don't.
+        consolidating = False
+        if self._entropy.needs_allostatic_reset():
+            now = time.time()
+            if now - self._last_consolidation_at >= self._consolidation_cooldown_s:
+                cleared = self._entropy.allostatic_reset("autonomous_rest_consolidation")
+                self._last_consolidation_at = now
+                consolidating = cleared > 0.0
+
         # ── 6. Package state ─────────────────────────────────────────
         state = ALifeState(
             kernel_weights=kernel_weights,
@@ -742,6 +824,8 @@ class ALifeDynamics:
             entropy=self._entropy.get_entropy(),
             entropy_pressure=self._entropy.get_entropy_pressure(),
             entropy_in_crisis=self._entropy.is_in_crisis(),
+            entropy_needs_consolidation=self._entropy.needs_allostatic_reset(),
+            entropy_consolidating=consolidating,
             kernel_complexity=kernel_complexity,
             gini_coefficient=self._credits.get_gini_coefficient(),
             mean_growth=float(growth_signal.mean()),
@@ -788,6 +872,25 @@ class ALifeDynamics:
     def get_entropy_pressure(self) -> float:
         """Quadratic entropy pressure for free energy integration."""
         return self._entropy.get_entropy_pressure()
+
+    def needs_allostatic_reset(self) -> bool:
+        """True when entropy warrants an allostatic consolidation/rest.
+
+        The Will / autonomous initiative loop can poll this to surface a
+        deliberate "rest and consolidate" objective; the substrate also acts on
+        it autonomously each tick as a survival reflex.
+        """
+        return self._entropy.needs_allostatic_reset()
+
+    def allostatic_reset(self, reason: str = "allostatic_consolidation") -> float:
+        """Perform an allostatic consolidation now (Will-selectable rest).
+
+        Returns the entropy units cleared. Respects no cooldown — the caller
+        (the Will) has explicitly chosen to rest.
+        """
+        cleared = self._entropy.allostatic_reset(reason)
+        self._last_consolidation_at = time.time()
+        return cleared
 
     # ── Status / telemetry ───────────────────────────────────────────
 
