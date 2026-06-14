@@ -82,6 +82,7 @@ interface/static/aura_avatar.png
 
 # Dev scripts with hardcoded paths
 scripts/export_*.py
+!scripts/export_ai_audit_bundle.py
 scripts/generate_export.py
 scripts/generate_high_fidelity_dataset.py
 scripts/bundle_audit.py
