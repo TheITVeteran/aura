@@ -123,6 +123,7 @@ APPROVED_FILE_WRITE_SINKS = {
     # writes are append-only diagnostic dumps under data/error_logs/.
     "aura_main.py",                       # fault forensics + sentinel log
     "core/resilience/memory_watchdog.py", # spike-stack faulthandler dumps
+    "core/resilience/stall_watchdog.py",  # loop-wedge faulthandler dump before hard-exit
 }
 APPROVED_DYNAMIC_CODE_SINKS = {
     "core/runtime/dynamic_execution_gateway.py",
