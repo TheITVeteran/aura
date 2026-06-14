@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS intentions (
 CREATE INDEX IF NOT EXISTS idx_intentions_status ON intentions(status);
 CREATE INDEX IF NOT EXISTS idx_intentions_intended_at ON intentions(intended_at);
 CREATE INDEX IF NOT EXISTS idx_intentions_surprise ON intentions(surprise);
+CREATE INDEX IF NOT EXISTS idx_intentions_completed_at ON intentions(completed_at);
 """
 
 
@@ -134,6 +135,13 @@ class IntentionLoop:
     """
 
     COMPLETED_HISTORY = 100
+    # Hard cap on persisted completed intentions. prune_old() only removes
+    # 30-day-old rows, so under continuous operation (a 72h+ soak) the table
+    # grows unbounded within the window — DB ops slow and the runtime degrades.
+    # This count bound keeps the table small over arbitrarily long runs.
+    MAX_DB_INTENTIONS = 2000
+    # Run the count-bound prune every Nth persist (cheap amortization).
+    _PRUNE_EVERY_N_PERSISTS = 200
 
     def __init__(self, db_path: Optional[str] = None):
         if db_path:
@@ -147,6 +155,7 @@ class IntentionLoop:
         self._conn: Optional[sqlite3.Connection] = None
         self._active_intentions: Dict[str, IntentionRecord] = {}
         self._completed_intentions: deque[IntentionRecord] = deque(maxlen=self.COMPLETED_HISTORY)
+        self._persist_count: int = 0
 
         # Lazy service references (resolved on first use)
         self._ledger = None
@@ -678,11 +687,19 @@ class IntentionLoop:
                     ),
                 )
                 self._conn.commit()
-                return True
+                self._persist_count += 1
+                should_prune = (
+                    self._persist_count % self._PRUNE_EVERY_N_PERSISTS == 0
+                )
             except (sqlite3.Error, OSError) as e:
                 record_degradation('intention_loop', e)
                 logger.error("IntentionLoop persist failed: %s", e)
                 return False
+        # Amortized count-bound prune OUTSIDE the lock-held write (prune_excess
+        # re-acquires the lock); keeps the table bounded over long-horizon runs.
+        if should_prune:
+            self.prune_excess()
+        return True
 
     def _row_to_record(self, raw: Dict[str, Any]) -> IntentionRecord:
         """Deserialize a database row into an IntentionRecord."""
@@ -732,6 +749,50 @@ class IntentionLoop:
         )
 
     # ── Maintenance ─────────────────────────────────────────────────────
+
+    def prune_excess(self, max_rows: int | None = None) -> int:
+        """Bound the intentions table by COUNT, keeping the most recent rows.
+
+        prune_old() only removes 30-day-old rows, so under continuous operation
+        the table grows unbounded within the window — DB ops slow and the whole
+        runtime degrades (observed: a session-bloated 79MB/9k-row table dragged
+        a DNU run 7-10x slower). This keeps at most max_rows of the newest
+        COMPLETED intentions; active (unfinished) intentions are always kept.
+        Self-maintaining: called amortized from _persist. Returns rows deleted.
+        """
+        if self._conn is None:
+            return 0
+        cap = int(max_rows if max_rows is not None else self.MAX_DB_INTENTIONS)
+        if cap <= 0:
+            return 0
+        with self._lock:
+            try:
+                total = int(self._conn.execute("SELECT COUNT(*) FROM intentions").fetchone()[0])
+                if total <= cap:
+                    return 0
+                cur = self._conn.execute(
+                    """DELETE FROM intentions
+                       WHERE completed_at IS NOT NULL
+                       AND id IN (
+                           SELECT id FROM intentions
+                           WHERE completed_at IS NOT NULL
+                           ORDER BY completed_at DESC
+                           LIMIT -1 OFFSET ?
+                       )""",
+                    (cap,),
+                )
+                deleted = cur.rowcount
+                self._conn.commit()
+                if deleted:
+                    logger.info(
+                        "IntentionLoop: pruned %d excess intentions (cap=%d, was %d).",
+                        deleted, cap, total,
+                    )
+                return deleted
+            except (sqlite3.Error, OSError) as e:
+                record_degradation('intention_loop', e)
+                logger.error("IntentionLoop prune_excess failed: %s", e)
+                return 0
 
     def prune_old(self, max_age_days: int = 30) -> int:
         """Delete intentions older than max_age_days. Returns rows deleted."""
