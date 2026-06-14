@@ -219,6 +219,22 @@ class DesktopTaskSkill(BaseSkill):
         return ""
 
     @staticmethod
+    def _requested_visible_source_count(objective: str) -> int:
+        lowered = str(objective or "").lower()
+        if not any(token in lowered for token in ("open", "show", "bring up", "pull up", "tab")):
+            return 0
+        if not any(token in lowered for token in ("article", "articles", "source", "sources", "news", "stories")):
+            return 0
+        explicit = re.search(r"\b([2-5])\s+(?:different\s+)?(?:articles?|sources?|stories?)\b", lowered)
+        if explicit:
+            return max(1, min(5, int(explicit.group(1))))
+        if re.search(r"\b(?:two|a couple)\s+(?:different\s+)?(?:articles?|sources?|stories?)\b", lowered):
+            return 2
+        if re.search(r"\b(?:three|a few|several)\s+(?:different\s+)?(?:articles?|sources?|stories?)\b", lowered):
+            return 3
+        return 3
+
+    @staticmethod
     def _objective_requests_research_document(objective: str) -> bool:
         lowered = str(objective or "").lower()
         has_source_markers = any(
@@ -1100,6 +1116,30 @@ class DesktopTaskSkill(BaseSkill):
                     expect=f"{browser_label} accepts the search URL.",
                 )
             )
+            visible_source_count = self._requested_visible_source_count(text)
+            if visible_source_count > 0:
+                opened_source_urls: set[str] = set()
+                for source in (context or {}).get("desktop_task_research_sources") or []:
+                    if not isinstance(source, dict):
+                        continue
+                    source_url = str(source.get("url") or source.get("link") or "").strip()
+                    if (
+                        not source_url.startswith(("http://", "https://"))
+                        or source_url in opened_source_urls
+                        or source_url == search_url
+                    ):
+                        continue
+                    opened_source_urls.add(source_url)
+                    steps.append(
+                        DesktopTaskStep(
+                            action="open_url",
+                            target=_open_url_target(source_url),
+                            reason="Open one governed research source so the user can inspect the evidence visibly.",
+                            expect=f"{browser_label} accepts the research source URL.",
+                        )
+                    )
+                    if len(opened_source_urls) >= visible_source_count:
+                        break
         if web_document_url:
             steps.append(
                 DesktopTaskStep(

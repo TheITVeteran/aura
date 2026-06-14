@@ -228,3 +228,39 @@ def test_user_requests_mentioning_proof_are_not_hijacked_by_harness_lane():
     ]
     for message in harness_invocations:
         assert _is_live_runtime_proof_request(message) is True, message
+
+
+def test_research_document_objective_opens_visible_sources_before_document_work():
+    skill = DesktopTaskSkill()
+    objective = (
+        "Open Google Chrome, find 3 different articles on climate change, "
+        "open Google Docs, summarize those articles in a doc, and export it "
+        "as a PDF to a new folder titled Aura's Journal on my Desktop."
+    )
+    context = {
+        "desktop_task_research_sources": [
+            {"title": "Climate source 1", "url": "https://example.com/climate-1", "snippet": "one"},
+            {"title": "Climate source 2", "url": "https://example.com/climate-2", "snippet": "two"},
+            {"title": "Climate source 3", "url": "https://example.com/climate-3", "snippet": "three"},
+        ],
+        "desktop_task_research_summary": "Three current climate article notes.",
+    }
+
+    steps = skill._derive_steps_from_objective(objective, context)
+    actions = [step.action for step in steps]
+    source_targets = [step.target for step in steps if step.action == "open_url"]
+
+    assert actions[0] == "create_folder"
+    assert any(step.action == "open_app" and step.target == "Google Chrome" for step in steps)
+    assert any(
+        isinstance(target, dict)
+        and str(target.get("url", "")).startswith("https://www.google.com/search?")
+        and target.get("browser") == "Google Chrome"
+        for target in source_targets
+    )
+    assert {"url": "https://example.com/climate-1", "browser": "Google Chrome"} in source_targets
+    assert {"url": "https://example.com/climate-2", "browser": "Google Chrome"} in source_targets
+    assert {"url": "https://example.com/climate-3", "browser": "Google Chrome"} in source_targets
+    assert {"url": "https://docs.google.com/document/u/0/create", "browser": "Google Chrome"} in source_targets
+    assert "set_clipboard" in actions
+    assert "render_text_pdf" in actions
