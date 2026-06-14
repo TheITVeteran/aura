@@ -8,7 +8,9 @@ import pytest
 from scripts.export_ai_audit_bundle import (
     AuditExportError,
     export_bundle,
+    require_clean_source_snapshot,
     select_files,
+    verify_bundle,
 )
 
 
@@ -56,7 +58,7 @@ def test_select_files_keeps_source_and_excludes_runtime_data(tmp_path: Path) -> 
 
 
 def test_export_bundle_is_deterministic_and_self_identifying(tmp_path: Path) -> None:
-    _write(tmp_path, "core/a.py", "A = 1\n")
+    _write(tmp_path, "core/a.py", "A = 1\nFILE: source text is not framing\n")
     _write(tmp_path, "tests/test_a.py", "def test_a():\n    assert True\n")
     selected, excluded = select_files(
         tmp_path,
@@ -86,6 +88,24 @@ def test_export_bundle_is_deterministic_and_self_identifying(tmp_path: Path) -> 
     text = first.read_text(encoding="utf-8")
     assert "# Commit SHA: " + ("a" * 40) in text
     assert text.index("FILE: core/a.py") < text.index("FILE: tests/test_a.py")
+    verify_bundle(first, first_manifest)
+
+
+def test_verify_bundle_rejects_tampering(tmp_path: Path) -> None:
+    _write(tmp_path, "core/a.py", "A = 1\n")
+    selected, excluded = select_files(tmp_path, ["core/a.py"])
+    output = tmp_path / "audit.txt"
+    manifest = export_bundle(
+        root=tmp_path,
+        output_path=output,
+        files=selected,
+        excluded_counts=excluded,
+        commit_sha="c" * 40,
+    )
+    output.write_bytes(output.read_bytes() + b"tampered")
+
+    with pytest.raises(AuditExportError, match="size mismatch"):
+        verify_bundle(output, manifest)
 
 
 def test_export_bundle_fails_closed_when_complete_scope_exceeds_cap(
@@ -106,3 +126,15 @@ def test_export_bundle_fails_closed_when_complete_scope_exceeds_cap(
         )
 
     assert not output.exists()
+
+
+def test_require_clean_source_snapshot_ignores_excluded_artifact_changes(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path, "core/a.py", "A = 1\n")
+    selected, _excluded = select_files(tmp_path, ["core/a.py"])
+
+    require_clean_source_snapshot(selected, {"artifacts/current/result.json"})
+
+    with pytest.raises(AuditExportError, match="commit it before export"):
+        require_clean_source_snapshot(selected, {"core/a.py"})

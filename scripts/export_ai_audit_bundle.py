@@ -182,6 +182,11 @@ def current_commit(root: Path) -> str:
     return _run_git(root, "rev-parse", "HEAD").strip()
 
 
+def dirty_tracked_paths(root: Path) -> set[str]:
+    output = _run_git(root, "diff", "--name-only", "-z", "HEAD", "--")
+    return {path for path in output.split("\0") if path}
+
+
 def _is_requirements_file(path: PurePosixPath) -> bool:
     if path.suffix != ".txt":
         return False
@@ -269,6 +274,22 @@ def select_files(
         )
     selected.sort(key=lambda item: (item.priority, item.relative_path))
     return selected, dict(sorted(excluded.items()))
+
+
+def require_clean_source_snapshot(
+    files: Sequence[SelectedFile],
+    dirty_paths: Iterable[str],
+) -> None:
+    selected_paths = {item.relative_path for item in files}
+    dirty_selected = sorted(selected_paths.intersection(dirty_paths))
+    if dirty_selected:
+        sample = ", ".join(dirty_selected[:10])
+        remainder = len(dirty_selected) - min(len(dirty_selected), 10)
+        suffix = f" (+{remainder} more)" if remainder else ""
+        raise AuditExportError(
+            "Selected audit source differs from HEAD; commit it before export: "
+            f"{sample}{suffix}"
+        )
 
 
 def _header(
@@ -390,6 +411,66 @@ def export_bundle(
     )
 
 
+def verify_bundle(path: Path, manifest: AuditExportManifest) -> None:
+    """Verify output framing, ordering, byte counts, and complete-file hash."""
+    path = path.expanduser().resolve()
+    payload = path.read_bytes()
+    if len(payload) != manifest.output_bytes:
+        raise AuditExportError(
+            f"Audit export size mismatch: {len(payload):,} != {manifest.output_bytes:,}"
+        )
+    actual_sha256 = hashlib.sha256(payload).hexdigest()
+    if actual_sha256 != manifest.output_sha256:
+        raise AuditExportError(
+            "Audit export SHA-256 mismatch: "
+            f"{actual_sha256} != {manifest.output_sha256}"
+        )
+
+    files = [SelectedFile(**item) for item in manifest.files]
+    expected_header = _header(
+        root=Path(manifest.source_root),
+        commit_sha=manifest.commit_sha,
+        files=files,
+        excluded_counts=manifest.excluded_counts,
+    )
+    if not payload.startswith(expected_header):
+        raise AuditExportError("Audit export header does not match its manifest")
+
+    cursor = len(expected_header)
+    verified_source_bytes = 0
+    for item in files:
+        file_header = _file_header(item.relative_path, item.size_bytes)
+        if payload[cursor : cursor + len(file_header)] != file_header:
+            raise AuditExportError(
+                f"Audit export framing mismatch before {item.relative_path}"
+            )
+        cursor += len(file_header)
+        file_end = cursor + item.size_bytes
+        if file_end > len(payload):
+            raise AuditExportError(
+                f"Audit export truncated inside {item.relative_path}"
+            )
+        file_payload = payload[cursor:file_end]
+        cursor = file_end
+        verified_source_bytes += len(file_payload)
+        if not file_payload.endswith(b"\n"):
+            if payload[cursor : cursor + 1] != b"\n":
+                raise AuditExportError(
+                    f"Audit export separator missing after {item.relative_path}"
+                )
+            cursor += 1
+
+    if cursor != len(payload):
+        raise AuditExportError(
+            f"Audit export has {len(payload) - cursor:,} trailing unframed bytes"
+        )
+    if verified_source_bytes != manifest.source_bytes:
+        raise AuditExportError(
+            "Audit export source byte count mismatch: "
+            f"{verified_source_bytes:,} != {manifest.source_bytes:,}"
+        )
+
+
 def write_manifest(path: Path, manifest: AuditExportManifest) -> None:
     path = path.expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -439,6 +520,7 @@ def main() -> int:
     )
     if not files:
         raise AuditExportError("No tracked source files matched the audit scope")
+    require_clean_source_snapshot(files, dirty_tracked_paths(root))
 
     manifest = export_bundle(
         root=root,
@@ -449,6 +531,7 @@ def main() -> int:
         max_output_bytes=args.max_output_bytes,
         max_file_bytes=args.max_file_bytes,
     )
+    verify_bundle(args.output, manifest)
     manifest_path = args.output.with_suffix(args.output.suffix + ".manifest.json")
     write_manifest(manifest_path, manifest)
     print(
