@@ -131,6 +131,41 @@ async def test_prepare_runtime_payload_bounds_slow_memory_hydration(monkeypatch)
     )
 
 
+@pytest.mark.asyncio
+async def test_prepare_runtime_payload_returns_turn_consistent_state_snapshot(monkeypatch):
+    state = AuraState.default()
+    state.affect.dominant_emotion = "curious"
+    state.cognition.attention_focus = "the user's current question"
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda _name, default=None: default),
+    )
+
+    _, _, messages, contract, payload_state = await prepare_runtime_payload(
+        prompt="What are you noticing right now?",
+        system_prompt=None,
+        messages=None,
+        state=state,
+        origin="desktop",
+        is_background=False,
+    )
+
+    assert payload_state is not state
+    assert payload_state.affect.dominant_emotion == "curious"
+    assert payload_state.cognition.attention_focus == "What are you noticing right now?"
+    assert payload_state.cognition.current_objective == "What are you noticing right now?"
+    assert state.cognition.attention_focus == "the user's current question"
+    assert messages is not None
+    assert contract is not None
+
+    state.affect.dominant_emotion = "frustrated"
+    state.cognition.attention_focus = "a later background event"
+
+    assert payload_state.affect.dominant_emotion == "curious"
+    assert payload_state.cognition.attention_focus == "What are you noticing right now?"
+
+
 def test_build_agentic_tool_map_records_capability_registry_failure(monkeypatch):
     def _broken_get(name, default=None):
         if name == "capability_engine":

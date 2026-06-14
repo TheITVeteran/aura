@@ -306,11 +306,11 @@ async def prepare_runtime_payload(
 ) -> tuple[str, str | None, list[dict[str, Any]] | None, ResponseContract | None, Any]:
     objective = str(prompt or _objective_from_messages(messages) or "").strip()
     runtime_state = await resolve_runtime_state(state, origin=origin, is_background=is_background)
+    payload_state = runtime_state
     contract: ResponseContract | None = None
     prepared_messages = messages
 
     if runtime_state is not None and objective:
-        payload_state = runtime_state
         try:
             if hasattr(runtime_state, "derive"):
                 payload_state = runtime_state.derive("runtime_llm_payload", origin="runtime_wiring")
@@ -413,7 +413,10 @@ async def prepare_runtime_payload(
         block = contract.to_prompt_block().strip()
         system_prompt = f"{system_prompt}\n\n{block}".strip() if system_prompt else block
 
-    return str(prompt or ""), system_prompt, prepared_messages, contract, runtime_state
+    # Return the same derived snapshot used to build messages and the response
+    # contract. Downstream sampler/voice overrides must not re-read the mutable
+    # live state and describe a different moment than the model prompt.
+    return str(prompt or ""), system_prompt, prepared_messages, contract, payload_state
 
 
 def derive_substrate_generation_overrides(
