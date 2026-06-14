@@ -2687,7 +2687,7 @@ async def _run_cognitive_engine_chat_turn(
                 )
         return None
     try:
-        from core.conversation.response_reliability import assess_user_facing_reply
+        from core.conversation.response_reliability import assess_user_facing_reply, is_status_check_turn
 
         assessment = assess_user_facing_reply(visible, text)
         if (
@@ -2710,6 +2710,20 @@ async def _run_cognitive_engine_chat_turn(
                 "CognitiveEngine desktop chat reply failed reliability gate (%s); attempting general repair.",
                 ",".join(assessment.reasons),
             )
+            if require_engine and is_status_check_turn(visible):
+                status_repair = _build_social_presence_reply(visible)
+                status_assessment = assess_user_facing_reply(visible, status_repair)
+                if not status_assessment.retryable:
+                    logger.warning(
+                        "CognitiveEngine desktop chat status reply was too thin; "
+                        "repairing from live state after engine attempt."
+                    )
+                    return _ground_runtime_fact_status_reply(
+                        visible,
+                        status_repair,
+                        lane,
+                        cognitive_engine_handled=True,
+                    )
             repaired, stale, same_diff, off_topic, off_topic_reason, did_repair = (
                 await _repair_final_degraded_reply(
                     visible,

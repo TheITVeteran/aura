@@ -1483,6 +1483,71 @@ async def test_api_chat_desktop_surface_allows_memory_fastpath_without_cognitive
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_owner_name_recall_preempts_cognitive_engine_when_required(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    cognitive_calls = []
+
+    async def _unexpected_cognitive_turn(*_args, **_kwargs):
+        cognitive_calls.append("unexpected_cognitive_turn")
+        return "unexpected cognitive generation"
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return None
+
+    async def _fake_output_receipt(*_args, **_kwargs):
+        return None
+
+    async def _fake_log_exchange(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _unexpected_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_owner_session_is_verified", lambda **_kwargs: True)
+    monkeypatch.setattr(chat_routes, "_resolve_primary_operator_name", lambda: "Bryan")
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message="Do you know my name?",
+            session_id="owner-name-fastpath-test",
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["status"] == "owner_identity_recall"
+    assert "You're Bryan" in payload["response"]
+    assert cognitive_calls == []
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_surface_executes_governed_desktop_objective_without_freeform_generation(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface import server as server_module
@@ -3416,6 +3481,58 @@ async def test_api_chat_desktop_surface_uses_direct_cognitive_engine_when_pool_u
     assert stabilize_calls
     assert stabilize_calls[-1]["desktop_cognitive_engine_required"] is True
     assert stabilize_calls[-1]["protected_foreground_lane"] is True
+
+
+@pytest.mark.asyncio
+async def test_cognitive_engine_desktop_status_repair_uses_live_state_after_thin_draft(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    engine_calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, *_args, **_kwargs):
+            engine_calls.append("engine_think")
+            return SimpleNamespace(content="Yes.")
+
+    class _FakePool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return True
+
+    def _fake_get(name, default=None):
+        if name == "cognitive_engine":
+            return _FakeCognitiveEngine()
+        return default
+
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _FakePool())
+    monkeypatch.setattr(
+        chat_routes,
+        "_build_social_presence_reply",
+        lambda _message: (
+            "hey. i'm here. I'm feeling steady and leaning toward engage right now. "
+            "My attention is on you."
+        ),
+    )
+
+    result = await chat_routes._run_cognitive_engine_chat_turn(
+        "You ok?",
+        visible_user_message="You ok?",
+        preflight_context_message="",
+        origin="api_chat",
+        timeout_s=10.0,
+        lane={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+        },
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert result is not None
+    assert "hey. i'm here" in result
+    assert engine_calls == ["engine_think"]
 
 
 def test_desktop_static_chat_requests_require_cognitive_engine():

@@ -333,6 +333,7 @@ def test_reliability_contract_allows_tiny_direct_answers():
     from core.conversation.response_reliability import assess_user_facing_reply
 
     assert assess_user_facing_reply("What is the capital of France?", "Paris.").ok
+    assert assess_user_facing_reply("Do you know my name?", "Bryan.").ok
     assert assess_user_facing_reply("Hi", "Hey.").ok
     assert assess_user_facing_reply("Say exactly: 32B lane online.", "32B lane online.").ok
 

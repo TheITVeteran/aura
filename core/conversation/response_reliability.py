@@ -379,6 +379,10 @@ _RELIABILITY_DIAGNOSTIC_SUBSTANCE_MARKERS = (
     "worker",
 )
 _TINY_DIRECT_MARKERS = (
+    "do you know my name",
+    "do you remember my name",
+    "do you know who i am",
+    "what's my name",
     "what is ",
     "who wrote",
     "capital of",
