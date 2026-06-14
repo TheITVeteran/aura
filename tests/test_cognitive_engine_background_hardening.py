@@ -402,6 +402,53 @@ async def test_cognitive_engine_desktop_quick_reply_uses_governed_primary_router
 
 
 @pytest.mark.asyncio
+async def test_cognitive_engine_desktop_quick_reply_includes_recent_context(monkeypatch):
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = StateRepositoryFixture(state)
+    captured = {}
+
+    class _Router:
+        async def think(self, **kwargs):
+            captured.update(kwargs)
+            return "I am carrying the recent context forward instead of losing the thread."
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router() if name == "llm_router" else default
+        ),
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "Continue from there.",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "visible_user_message": "Continue from there.",
+            "recent_conversation_context": (
+                "User: The live desktop lane lost context.\n"
+                "Aura: I should preserve bounded recent exchanges through CognitiveEngine."
+            ),
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "max_tokens": 512,
+        },
+        is_background=False,
+        timeout_s=42.0,
+    )
+
+    user_message = captured["messages"][1]["content"]
+    assert thought.content.startswith("I am carrying")
+    assert "[RECENT COMPLETED CONVERSATION]" in user_message
+    assert "live desktop lane lost context" in user_message
+    assert "[CURRENT USER MESSAGE]" in user_message
+    assert "Continue from there." in user_message
+
+
+@pytest.mark.asyncio
 async def test_cognitive_engine_strict_answer_recovery_propagates_cancellation(monkeypatch):
     import core.brain.llm_health_router as router_module
 

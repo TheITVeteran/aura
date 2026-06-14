@@ -2802,6 +2802,78 @@ async def test_desktop_cognitive_engine_uses_compact_contract_and_recovery_reser
 
 
 @pytest.mark.asyncio
+async def test_desktop_cognitive_engine_receives_recent_completed_conversation_context(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content="I remember the terminal crash context and I am answering from the current live desktop thread."
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+        chat_routes._conversation_log.extend(
+            [
+                {
+                    "user": "The Python process spiked over 100GB of RAM.",
+                    "aura": "That points at an unbounded live desktop path allocation.",
+                    "status": "complete",
+                },
+                {
+                    "user": "Make sure the UI path stays on CognitiveEngine.",
+                    "aura": "I will keep desktop turns on the required CognitiveEngine path.",
+                    "status": "complete",
+                },
+            ]
+        )
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = "Can you continue from what we were debugging?"
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply
+    assert calls[0]["context"]["recent_completed_exchanges"]
+    assert "100GB of RAM" in calls[0]["context"]["recent_conversation_context"]
+    assert "required CognitiveEngine path" in calls[0]["context"]["recent_conversation_context"]
+
+
+@pytest.mark.asyncio
 async def test_desktop_required_runtime_status_avoids_foreground_model_allocation(monkeypatch):
     from interface.routes import chat as chat_routes
 

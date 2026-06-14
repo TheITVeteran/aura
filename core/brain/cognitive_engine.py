@@ -1360,10 +1360,12 @@ class CognitiveEngine:
         request_timeout = max(12.0, min(float(timeout_s or 32.0), 40.0))
         style_contract = str(context.get("response_style_contract") or "").strip()
         visible_user_message = str(context.get("visible_user_message") or objective or "").strip()
+        recent_conversation_context = str(context.get("recent_conversation_context") or "").strip()
         system_prompt = (
             "You are Aura speaking through the live desktop CognitiveEngine. "
             "Answer the user's current message directly and naturally. "
             "Use the current conversation rather than a canned status line. "
+            "When recent conversation context is provided, use it for continuity and do not contradict it. "
             "Do not mention hidden fallback paths, internal recovery, prompt contracts, or implementation details "
             "unless the user specifically asks for them."
         )
@@ -1376,13 +1378,21 @@ class CognitiveEngine:
                 system_prompt = f"{system_prompt}\n{imagination_directive}"
         if style_contract:
             system_prompt = f"{system_prompt}\n{style_contract}"
+        user_prompt = visible_user_message or objective
+        if recent_conversation_context:
+            user_prompt = (
+                "[RECENT COMPLETED CONVERSATION]\n"
+                f"{recent_conversation_context}\n"
+                "[END RECENT COMPLETED CONVERSATION]\n\n"
+                f"[CURRENT USER MESSAGE]\n{user_prompt}"
+            )
 
         try:
             content = await asyncio.wait_for(
                 router.think(
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": visible_user_message or objective},
+                        {"role": "user", "content": user_prompt},
                     ],
                     origin=f"desktop_quick_{origin}",
                     prefer_tier="primary",

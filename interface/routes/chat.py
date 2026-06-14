@@ -1358,6 +1358,21 @@ async def _recent_completed_conversation_exchanges(
     return exchanges
 
 
+def _format_recent_conversation_context(exchanges: list[dict[str, str]], *, limit_chars: int = 1400) -> str:
+    lines: list[str] = []
+    for entry in exchanges:
+        user_text = _clip_conversation_text(entry.get("user"), limit=220)
+        aura_text = _clip_conversation_text(entry.get("aura"), limit=260)
+        if user_text:
+            lines.append(f"User: {user_text}")
+        if aura_text:
+            lines.append(f"Aura: {aura_text}")
+    text = "\n".join(lines).strip()
+    if len(text) <= limit_chars:
+        return text
+    return text[-limit_chars:].lstrip()
+
+
 async def _recall_durable_conversation_snippets(user_message: str, *, limit: int = 3) -> list[str]:
     try:
         memory_facade = ServiceContainer.get("memory_facade", default=None)
@@ -2248,6 +2263,11 @@ async def _run_cognitive_engine_chat_turn(
         desktop_execution_contract=desktop_execution_contract,
         capability_inventory_contract=capability_inventory_contract,
     )
+    recent_exchanges = await _recent_completed_conversation_exchanges(
+        current_user_message=visible,
+        limit=6,
+    )
+    recent_conversation_context = _format_recent_conversation_context(recent_exchanges)
     context = {
         "route": "desktop_chat",
         "source": source,
@@ -2255,6 +2275,8 @@ async def _run_cognitive_engine_chat_turn(
         "foreground_request": True,
         "user_facing": True,
         "preflight_context_message": preflight_context[:8000],
+        "recent_completed_exchanges": recent_exchanges,
+        "recent_conversation_context": recent_conversation_context,
         "cognitive_engine_required": bool(require_engine),
         "conversation_lane": dict(lane or {}),
         "prompt_shape": {
