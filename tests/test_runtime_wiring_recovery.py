@@ -173,6 +173,7 @@ def test_substrate_generation_overrides_reuse_fresh_turn_profile(monkeypatch):
         def __init__(self):
             self.profile = SimpleNamespace(compilation_source="bounded_voice")
             self.calls = []
+            self.compile_calls = 0
 
         def get_generation_params_for(self, **kwargs):
             self.calls.append(kwargs)
@@ -184,8 +185,8 @@ def test_substrate_generation_overrides_reuse_fresh_turn_profile(monkeypatch):
             }
 
         def compile_profile(self, **_kwargs):
-            self.compile_calls = getattr(self, "compile_calls", 0) + 1
-            raise AssertionError("runtime wiring should use the reuse-aware profile path")
+            self.compile_calls += 1
+            return self.profile
 
         def get_current_profile(self):
             return self.profile
@@ -211,6 +212,7 @@ def test_substrate_generation_overrides_reuse_fresh_turn_profile(monkeypatch):
             "origin": "desktop",
         }
     ]
+    assert engine.compile_calls == 0
     assert overrides["temperature"] == pytest.approx(0.62)
     assert overrides["top_p"] == pytest.approx(0.81)
     assert overrides["substrate_generation_source"] == "bounded_voice, reused_runtime_profile"
