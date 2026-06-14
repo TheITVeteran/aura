@@ -250,6 +250,41 @@ def test_runtime_pressure_probe_rejects_high_existential_threat(monkeypatch):
     assert "existential_threat" in (status.error or "")
 
 
+def test_runtime_pressure_probe_ignores_steady_state_memory_threat(monkeypatch):
+    """A loaded model (high memory_threat, low lag) must stay healthy here.
+
+    Steady-state memory pressure is owned by _unified_memory_pressure_status and
+    the out-of-band watchdog. A ~20GB local model on a 64GB box sits near
+    memory_threat 0.77 while serving requests fine; the runtime-pressure probe
+    targets the *stuck/overloaded* runtime (lag), so it must not double-count
+    memory and mark a healthy, request-serving runtime degraded.
+    """
+    from core.container import ServiceContainer
+    from core.runtime import health_contract
+
+    class LoadedModelThreat:
+        def get_status(self):
+            return {
+                "existential_threat": 0.77,
+                "lag_threat": 0.22,
+                "memory_threat": 0.77,
+            }
+
+    def fake_get(cls, name, default=None):
+        if name == "existential_stakes":
+            return LoadedModelThreat()
+        return default
+
+    monkeypatch.setenv("AURA_HEALTH_EXISTENTIAL_THREAT_UNHEALTHY", "0.75")
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+
+    status = health_contract._runtime_pressure_status()
+
+    assert status.present is True
+    assert status.liveness_ok is True
+    assert status.error is None
+
+
 def test_runtime_pressure_probe_rejects_hard_event_loop_lag(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime import health_contract

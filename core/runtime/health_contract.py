@@ -677,14 +677,25 @@ def _runtime_pressure_status() -> ServiceStatus:
                     "existential_threat="
                     f"{threat:.2f}, lag_threat={lag_threat:.2f}, memory_threat={memory_threat:.2f}"
                 )
-                if threat >= threat_threshold:
+                # Steady-state memory pressure is owned by the dedicated
+                # _unified_memory_pressure_status probe (calibrated via
+                # get_memory_pressure_snapshot, flags only snapshot.critical)
+                # and the out-of-band memory watchdog. A loaded ~20GB model on a
+                # 64GB box sits at memory_threat ~0.77 while serving requests
+                # fine, so folding raw existential memory pressure into THIS
+                # probe double-counts it and would mark a healthy runtime
+                # degraded. This probe targets the *stuck / overloaded* runtime
+                # the docstring describes, which lag_threat captures. So when
+                # memory is the high contributor, gate on the lag signal and let
+                # the dedicated memory probe decide; otherwise use the full
+                # aggregate (covers lag- and cpu-driven existential threat).
+                pressure_threat = (
+                    lag_threat if memory_threat >= threat_threshold else threat
+                )
+                if pressure_threat >= threat_threshold:
                     blocker = f"existential_threat {threat:.2f} >= {threat_threshold:.2f}"
                     blockers.append(blocker)
-                    if (
-                        boot_grace_active
-                        and lag_threat >= threat_threshold
-                        and memory_threat < threat_threshold
-                    ):
+                    if boot_grace_active and lag_threat >= threat_threshold:
                         boot_deferrable_blockers.add(blocker)
     except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         details.append(f"existential_stakes_unavailable:{type(exc).__name__}")
