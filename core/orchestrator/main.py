@@ -1463,8 +1463,15 @@ class RobustOrchestrator(
             # HARDENING: Register Periodic Metabolic/Substrate Tasks
             # ---------------------------------------------------------
             if _foreground_only_runtime():
-                logger.info("Scheduler background tasks disabled for foreground-only boot.")
+                logger.info(
+                    "Scheduler periodic tasks disabled for foreground-only boot; "
+                    "heartbeat remains active for runtime health."
+                )
                 ServiceContainer.register_instance("scheduler", scheduler, required=False)
+                if not scheduler.is_alive():
+                    await asyncio.wait_for(scheduler.start(), timeout=5.0)
+                if not scheduler.is_alive():
+                    raise RuntimeError("scheduler heartbeat unavailable in foreground-only boot")
             else:
                 await asyncio.wait_for(self._register_scheduled_tasks(), timeout=10.0)
                 ServiceContainer.register_instance("scheduler", scheduler, required=False)

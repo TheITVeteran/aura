@@ -943,21 +943,11 @@ class OrchestratorBootMixin(
                 try:
                     from core.scheduler import scheduler
 
-                    foreground_only = (
-                        os.getenv("AURA_FOREGROUND_ONLY", "").strip().lower()
-                        in {"1", "true", "yes", "on"}
-                    )
                     ServiceContainer.register_instance("scheduler", scheduler, required=False)
-                    if foreground_only:
-                        logger.warning(
-                            "Scheduler heartbeat disabled for foreground-only boot; "
-                            "runtime health contract will remain non-operational."
-                        )
-                    else:
-                        await asyncio.wait_for(scheduler.start(), timeout=5.0)
-                        if not scheduler.is_alive():
-                            raise RuntimeError("scheduler start returned without live main loop")
-                        logger.info("✓ Scheduler heartbeat active before health contract.")
+                    await asyncio.wait_for(scheduler.start(), timeout=5.0)
+                    if not scheduler.is_alive():
+                        raise RuntimeError("scheduler start returned without live main loop")
+                    logger.info("✓ Scheduler heartbeat active before health contract.")
                 except asyncio.CancelledError:
                     raise
                 except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:

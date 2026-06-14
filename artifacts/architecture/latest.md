@@ -2,15 +2,15 @@
 
 Schema: `aura.architecture.dependency_map.v2`
 Root: `<AURA_ROOT>`
-Generated: `1781374673.077245`
+Generated: `1781396773.750596`
 
 ## Summary
 
 - Subsystems: 146
 - Python files: 1922
-- Python lines: 524112
+- Python lines: 524528
 - Dependency edges: 797
-- ServiceContainer `.get()` calls: 1597
+- ServiceContainer `.get()` calls: 1600
 - ServiceContainer registrations: 386
 - Boot contract: PASS
 
@@ -18,19 +18,19 @@ Generated: `1781374673.077245`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>105 files, 24339 lines"]
+    runtime["runtime<br/>105 files, 24454 lines"]
     utils["utils<br/>43 files, 5761 lines"]
-    brain["brain<br/>117 files, 46949 lines"]
+    brain["brain<br/>117 files, 47166 lines"]
     memory["memory<br/>88 files, 19919 lines"]
-    consciousness["consciousness<br/>133 files, 62020 lines"]
-    resilience["resilience<br/>54 files, 12130 lines"]
+    consciousness["consciousness<br/>133 files, 62071 lines"]
+    resilience["resilience<br/>54 files, 12144 lines"]
     health["health<br/>3 files, 875 lines"]
     agency["agency<br/>36 files, 14779 lines"]
     adaptation["adaptation<br/>26 files, 12319 lines"]
     affect["affect<br/>6 files, 2962 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
     self_modification["self_modification<br/>30 files, 11172 lines"]
-    senses["senses<br/>24 files, 5266 lines"]
+    senses["senses<br/>24 files, 5285 lines"]
     governance["governance<br/>8 files, 3168 lines"]
     state["state<br/>6 files, 3613 lines"]
     identity["identity<br/>17 files, 2327 lines"]
@@ -967,17 +967,17 @@ graph TD
 
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| consciousness | 133 | 62020 | 2611224 | 39 | 29 |
+| consciousness | 133 | 62071 | 2613187 | 39 | 29 |
 | core_root | 178 | 55289 | 2249064 | 100 | 0 |
-| brain | 117 | 46949 | 2028623 | 42 | 39 |
-| runtime | 105 | 24339 | 862138 | 43 | 124 |
+| brain | 117 | 47166 | 2037113 | 42 | 39 |
+| runtime | 105 | 24454 | 867223 | 43 | 124 |
 | memory | 88 | 19919 | 799891 | 18 | 34 |
 | orchestrator | 42 | 19212 | 848184 | 125 | 9 |
 | skills | 79 | 19057 | 774164 | 31 | 6 |
 | phases | 29 | 17891 | 811302 | 33 | 7 |
 | agency | 36 | 14779 | 598692 | 29 | 18 |
 | adaptation | 26 | 12319 | 492341 | 21 | 14 |
-| resilience | 54 | 12130 | 487860 | 17 | 27 |
+| resilience | 54 | 12144 | 488584 | 17 | 27 |
 | self_modification | 30 | 11172 | 444320 | 13 | 14 |
 | cognitive | 12 | 9212 | 373941 | 9 | 4 |
 | environment | 82 | 8517 | 332342 | 11 | 2 |
@@ -988,7 +988,7 @@ graph TD
 | being | 25 | 5748 | 223125 | 4 | 7 |
 | architect | 25 | 5737 | 239735 | 9 | 2 |
 | conversation | 9 | 5443 | 201255 | 12 | 7 |
-| senses | 24 | 5266 | 221030 | 20 | 14 |
+| senses | 24 | 5285 | 222403 | 20 | 14 |
 | capabilities | 13 | 5095 | 196749 | 9 | 5 |
 | security | 25 | 4926 | 193599 | 12 | 12 |
 | perception | 18 | 4879 | 195844 | 10 | 5 |
@@ -1143,8 +1143,8 @@ graph TD
 | orchestrator | 71 | 3 |
 | cognitive_engine | 53 | 3 |
 | llm_router | 49 | 2 |
+| inference_gate | 43 | 4 |
 | affect_engine | 41 | 1 |
-| inference_gate | 41 | 4 |
 | capability_engine | 34 | 2 |
 | memory_facade | 31 | 1 |
 | liquid_substrate | 28 | 1 |
@@ -1432,8 +1432,8 @@ Review candidates:
 
 ## Degradation Handling
 
-- Total `record_degradation()` calls: 3026
-- Log-and-limp candidates: 2794
+- Total `record_degradation()` calls: 3027
+- Log-and-limp candidates: 2795
 - Nearby fail-closed candidates: 232
 
 Top limp-on files:

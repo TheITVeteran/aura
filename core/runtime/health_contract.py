@@ -596,6 +596,41 @@ def _float_env(name: str, default: float) -> float:
         return float(default)
 
 
+def _process_uptime_seconds() -> float:
+    """Seconds since this process started, or 0.0 if unknown.
+
+    Used to suppress runtime-pressure health failures during boot/warmup,
+    when loading the local model legitimately spikes event-loop lag and
+    survival pressure — the same window the freeze watchdog already exempts.
+    """
+    try:
+        import psutil
+
+        return max(0.0, time.time() - psutil.Process().create_time())
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return 0.0
+
+
+def _runtime_pressure_boot_grace_active() -> bool:
+    """Return True only during an explicit boot/proof warmup grace window."""
+
+    boot_context = any(
+        str(os.environ.get(name, "") or "").strip().lower()
+        not in {"", "0", "false", "no", "off"}
+        for name in (
+            "AURA_PROOF_RUN",
+            "AURA_SAFE_BOOT_DESKTOP",
+            "AURA_HEALTH_RUNTIME_PRESSURE_BOOT_GRACE",
+        )
+    )
+    if not boot_context:
+        return False
+
+    boot_grace_s = _float_env("AURA_HEALTH_RUNTIME_PRESSURE_BOOT_GRACE_S", 180.0)
+    uptime_s = _process_uptime_seconds()
+    return bool(boot_grace_s > 0.0 and 0.0 < uptime_s < boot_grace_s)
+
+
 def _runtime_pressure_status() -> ServiceStatus:
     """Return an important health failure when runtime pressure is too high.
 
@@ -606,6 +641,7 @@ def _runtime_pressure_status() -> ServiceStatus:
     canonical health contract.
     """
     blockers: list[str] = []
+    boot_deferrable_blockers: set[str] = set()
     details: list[str] = []
     threat_threshold = _float_env("AURA_HEALTH_EXISTENTIAL_THREAT_UNHEALTHY", 0.75)
     lag_threshold = _float_env("AURA_HEALTH_EVENT_LOOP_LAG_UNHEALTHY_S", 5.0)
@@ -613,6 +649,7 @@ def _runtime_pressure_status() -> ServiceStatus:
         "AURA_HEALTH_RECENT_DEGRADATION_WINDOW_S",
         180.0,
     )
+    boot_grace_active = _runtime_pressure_boot_grace_active()
 
     try:
         stakes = ServiceContainer.get("existential_stakes", default=None)
@@ -628,9 +665,14 @@ def _runtime_pressure_status() -> ServiceStatus:
                     f"{threat:.2f}, lag_threat={lag_threat:.2f}, memory_threat={memory_threat:.2f}"
                 )
                 if threat >= threat_threshold:
-                    blockers.append(
-                        f"existential_threat {threat:.2f} >= {threat_threshold:.2f}"
-                    )
+                    blocker = f"existential_threat {threat:.2f} >= {threat_threshold:.2f}"
+                    blockers.append(blocker)
+                    if (
+                        boot_grace_active
+                        and lag_threat >= threat_threshold
+                        and memory_threat < threat_threshold
+                    ):
+                        boot_deferrable_blockers.add(blocker)
     except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         details.append(f"existential_stakes_unavailable:{type(exc).__name__}")
 
@@ -649,7 +691,10 @@ def _runtime_pressure_status() -> ServiceStatus:
             if failure_reason:
                 blockers.append(f"{key}:{failure_reason}")
             elif last_lag >= lag_threshold:
-                blockers.append(f"{key}.last_lag_s {last_lag:.2f} >= {lag_threshold:.2f}")
+                blocker = f"{key}.last_lag_s {last_lag:.2f} >= {lag_threshold:.2f}"
+                blockers.append(blocker)
+                if boot_grace_active:
+                    boot_deferrable_blockers.add(blocker)
         except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             details.append(f"{key}_pressure_unavailable:{type(exc).__name__}")
 
@@ -682,6 +727,19 @@ def _runtime_pressure_status() -> ServiceStatus:
                 blockers.append(f"recent_{subsystem}_saturation: {(message or action)[:120]}")
     except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         details.append(f"degradation_pressure_unavailable:{type(exc).__name__}")
+
+    if blockers:
+        active_blockers = [
+            blocker for blocker in blockers if blocker not in boot_deferrable_blockers
+        ]
+        if not active_blockers and boot_deferrable_blockers:
+            details.append(
+                "boot_grace_deferred_runtime_pressure:"
+                + ",".join(sorted(boot_deferrable_blockers))
+            )
+            blockers = []
+        else:
+            blockers = active_blockers
 
     return ServiceStatus(
         requirement=UNIFIED_RUNTIME_PRESSURE_REQUIREMENT,

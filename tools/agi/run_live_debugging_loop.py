@@ -109,6 +109,15 @@ def _symbolic_fallback_enabled() -> bool:
     }
 
 
+def _symbolic_preflight_enabled() -> bool:
+    return str(os.environ.get("AURA_LIVE_DEBUG_SYMBOLIC_PREFLIGHT", "1") or "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
 async def run_terminal_command(
     cmd: list[str], cwd: Path, timeout_s: float = 180.0
 ) -> dict[str, Any]:
@@ -690,15 +699,27 @@ async def run_debugging_loop(
             initial_stdout=previous_test["stdout"],
             initial_stderr=previous_test["stderr"],
         )
-        try:
-            proposal = await _call_patch_provider(provider, observation)
-        except _COMMAND_RECOVERABLE_ERRORS as exc:
-            logger.error("Patch provider failed: %s: %s", type(exc).__name__, exc)
-            return {
-                "ok": False,
-                "error": f"Patch provider failed: {type(exc).__name__}: {exc}",
-                "trace": trace,
-            }
+        proposal = None
+        if using_default_provider and _symbolic_fallback_enabled() and _symbolic_preflight_enabled():
+            proposal = await asyncio.to_thread(_symbolic_patch_provider, observation)
+            if proposal is not None:
+                logger.info("Symbolic repair preflight produced a patch proposal.")
+                trace.append({
+                    "stage": "symbolic_patch_proposal",
+                    "attempt": attempt,
+                    "phase": "preflight",
+                    "rationale": proposal.rationale,
+                })
+        if proposal is None:
+            try:
+                proposal = await _call_patch_provider(provider, observation)
+            except _COMMAND_RECOVERABLE_ERRORS as exc:
+                logger.error("Patch provider failed: %s: %s", type(exc).__name__, exc)
+                return {
+                    "ok": False,
+                    "error": f"Patch provider failed: {type(exc).__name__}: {exc}",
+                    "trace": trace,
+                }
         if proposal is None:
             if using_default_provider and _symbolic_fallback_enabled():
                 proposal = await asyncio.to_thread(_symbolic_patch_provider, observation)
@@ -707,6 +728,7 @@ async def run_debugging_loop(
                     trace.append({
                         "stage": "symbolic_patch_proposal",
                         "attempt": attempt,
+                        "phase": "fallback",
                         "rationale": proposal.rationale,
                     })
         if proposal is None:

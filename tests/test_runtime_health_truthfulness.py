@@ -285,6 +285,34 @@ def test_runtime_pressure_probe_rejects_hard_event_loop_lag(monkeypatch):
     assert "event_loop_monitor.last_lag_s" in (status.error or "")
 
 
+def test_runtime_pressure_boot_grace_defers_only_explicit_warmup_lag(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime import health_contract
+
+    class LagMonitor:
+        def get_status(self):
+            return {
+                "last_lag_s": 12.5,
+                "last_failure_reason": "",
+            }
+
+    def fake_get(cls, name, default=None):
+        if name == "event_loop_monitor":
+            return LagMonitor()
+        return default
+
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    monkeypatch.setattr(health_contract, "_process_uptime_seconds", lambda: 30.0)
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monkeypatch.setenv("AURA_HEALTH_RUNTIME_PRESSURE_BOOT_GRACE_S", "180")
+
+    status = health_contract._runtime_pressure_status()
+
+    assert status.present is True
+    assert status.liveness_ok is True
+    assert status.error is None
+
+
 def test_runtime_pressure_probe_rejects_recent_inference_saturation(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime import health_contract
@@ -309,6 +337,37 @@ def test_runtime_pressure_probe_rejects_recent_inference_saturation(monkeypatch)
 
         assert status.liveness_ok is False
         assert "recent_llm_health_router" in (status.error or "")
+        assert "generation gate saturated" in (status.error or "")
+    finally:
+        get_degradation_tracker().reset()
+
+
+def test_runtime_pressure_boot_grace_does_not_hide_inference_saturation(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime import health_contract
+    from core.runtime.errors import get_degradation_tracker, record_degradation
+
+    def fake_get(cls, name, default=None):
+        return default
+
+    get_degradation_tracker().reset()
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    monkeypatch.setattr(health_contract, "_process_uptime_seconds", lambda: 30.0)
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monkeypatch.setenv("AURA_HEALTH_RUNTIME_PRESSURE_BOOT_GRACE_S", "180")
+    monkeypatch.setenv("AURA_HEALTH_RECENT_DEGRADATION_WINDOW_S", "180")
+
+    try:
+        record_degradation(
+            "llm_health_router",
+            RuntimeError("generation gate saturated"),
+            severity="degraded",
+            action="refused to stack another concurrent generation",
+        )
+
+        status = health_contract._runtime_pressure_status()
+
+        assert status.liveness_ok is False
         assert "generation gate saturated" in (status.error or "")
     finally:
         get_degradation_tracker().reset()

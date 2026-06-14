@@ -100,6 +100,31 @@ async def test_default_live_debugging_loop_uses_symbolic_fallback_for_palindrome
 
 
 @pytest.mark.asyncio
+async def test_symbolic_preflight_handles_simple_repairs_without_waking_model(monkeypatch, tmp_path):
+    async def should_not_call_model(_observation):
+        raise AssertionError("symbolic preflight should solve this before model repair")
+
+    monkeypatch.setattr(debugging_loop_module, "_default_patch_provider", should_not_call_model)
+    repo = tmp_path / "reverse_repo"
+    repo.mkdir()
+    (repo / "solution.py").write_text("def reverse_list(lst):\n    return lst[::-2]\n")
+    (repo / "test_solution.py").write_text(
+        "from solution import reverse_list\n"
+        "def test_reverse_list():\n"
+        "    assert reverse_list([1, 2, 3]) == [3, 2, 1]\n"
+    )
+
+    result = await run_debugging_loop(repo)
+
+    assert result["ok"] is True
+    assert any(
+        step.get("stage") == "symbolic_patch_proposal" and step.get("phase") == "preflight"
+        for step in result["trace"]
+    )
+    assert "return lst[::-1]" in (repo / "solution.py").read_text()
+
+
+@pytest.mark.asyncio
 async def test_default_live_debugging_loop_uses_symbolic_fallback_for_missing_recursion_base(monkeypatch, tmp_path):
     async def unavailable_model(_observation):
         return None

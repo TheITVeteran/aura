@@ -767,6 +767,7 @@ async def _boot_runtime_orchestrator(
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
         logger.warning("⚠️ Failed to write runtime service ownership manifest: %s", exc)
     await _enforce_boot_probes(ready_label)
+    _refresh_orchestrator_health_before_manifest(orchestrator, ready_label)
     _write_runtime_manifest(
         profile=profile or ready_label.lower(),
         ready_label=ready_label,
@@ -1157,6 +1158,54 @@ async def boot_aura_runtime(
         profile=profile,
         artifact_root=artifact_root,
     )
+
+
+def _refresh_orchestrator_health_before_manifest(orchestrator: Any, ready_label: str) -> bool:
+    """Refresh live runtime health immediately before writing proof/desktop manifests."""
+
+    try:
+        healthy = bool(orchestrator.health_check())
+        if healthy:
+            logger.info("✅ Runtime health confirmed before manifest (%s).", ready_label)
+            return True
+
+        from core.runtime.health_contract import (
+            required_probe_blockers,
+            required_probe_status,
+            runtime_health_report,
+        )
+
+        contract = runtime_health_report()
+        failures = contract.get("failures", {}) if isinstance(contract, dict) else {}
+        critical = [
+            str(item.get("container_key") or item.get("name") or "")
+            for item in failures.get("critical", [])
+            if isinstance(item, dict)
+        ]
+        important = [
+            str(item.get("container_key") or item.get("name") or "")
+            for item in failures.get("important", [])
+            if isinstance(item, dict)
+        ]
+        probes = required_probe_blockers(required_probe_status(contract))
+        logger.warning(
+            "⚠️ Runtime health still not clean before manifest (%s): "
+            "critical=%s important=%s probes=%s",
+            ready_label,
+            critical,
+            important,
+            probes,
+        )
+        return False
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation(
+            _AURA_MAIN_DEGRADATION_KEY,
+            exc,
+            action="continued canonical boot after pre-manifest health refresh failed",
+            severity="critical",
+        )
+        logger.warning("⚠️ Runtime health refresh before manifest failed: %s", exc)
+        return False
 
 
 def _write_runtime_manifest(
