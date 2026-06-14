@@ -5504,6 +5504,30 @@ def _desktop_secondary_model_repair_allowed(*, reason: str) -> tuple[bool, str]:
     return True, reason
 
 
+def _protected_foreground_generation_block_reason() -> str:
+    """Return a reason to skip optional protected-foreground rescue generation.
+
+    Protected foreground is a rescue lane, not the canonical user-turn owner. It
+    must not add another foreground model allocation when RAM is already under
+    pressure or when the memory probe itself is unavailable.
+    """
+
+    try:
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        snapshot = get_memory_pressure_snapshot()
+        if bool(getattr(snapshot, "warning", False)) or bool(
+            getattr(snapshot, "refuse_heavy_local_generation", False)
+        ):
+            reason = str(getattr(snapshot, "reason", "") or "").strip()
+            level = str(getattr(snapshot, "level", "") or "").strip()
+            return reason or f"memory_pressure:{level or 'warning'}"
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        return f"memory_probe_unavailable:{exc}"
+    return ""
+
+
 def _original_reply_is_safe_to_surface(
     user_message: str,
     text: str,
@@ -8422,6 +8446,14 @@ async def api_chat(
                 return None
             gate = ServiceContainer.get("inference_gate", default=None)
             if gate is None or not hasattr(gate, "generate"):
+                return None
+            memory_block = _protected_foreground_generation_block_reason()
+            if memory_block:
+                logger.warning(
+                    "Skipping protected foreground rescue (%s) under memory guard: %s",
+                    reason,
+                    memory_block,
+                )
                 return None
 
             route = _protected_foreground_route(_semantic_user_message)

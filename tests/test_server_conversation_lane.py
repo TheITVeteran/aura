@@ -3643,6 +3643,71 @@ async def test_api_chat_returns_hard_local_failure_without_kernel_fallback(monke
 
 
 @pytest.mark.asyncio
+async def test_api_chat_skips_protected_foreground_rescue_under_memory_warning(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    generate_calls = []
+
+    class _FakeGate:
+        async def generate(self, *_args, **_kwargs):
+            generate_calls.append("generate")
+            raise AssertionError("protected foreground rescue must not allocate under memory warning")
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            self.unexpected_process_calls = getattr(self, "unexpected_process_calls", 0) + 1
+            message = "Kernel should not run after a hard local runtime failure"
+            raise AssertionError(message)
+
+    lane_status = {
+        "conversation_ready": False,
+        "state": "failed",
+        "last_failure_reason": "local_runtime_unavailable:exit_124",
+        "desired_model": "Cortex (32B)",
+        "desired_endpoint": "Cortex",
+    }
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_collect_conversation_lane_status", lambda: dict(lane_status))
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            critical=False,
+            warning=True,
+            refuse_heavy_local_generation=False,
+            reason="memory_pressure:79.0%/8.0GB",
+            level="warning",
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: _FakeGate() if name == "inference_gate" else default),
+    )
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="Are you there?"),
+        SimpleNamespace(headers={}),
+        None,
+        None,
+    )
+
+    assert response.status_code == 503
+    assert b"local 32B runtime could not start cleanly" in response.body
+    assert b"\"status\":\"conversation_unavailable\"" in response.body
+    assert generate_calls == []
+
+
+@pytest.mark.asyncio
 async def test_stabilize_user_facing_reply_blocks_ungrounded_search_turn_fallback(monkeypatch):
     from core.state.aura_state import AuraState
     from interface.routes import chat as chat_routes
