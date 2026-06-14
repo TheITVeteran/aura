@@ -35,6 +35,7 @@ from pathlib import Path
 import psutil
 
 RING_MAX_LINES = 600  # ~20 minutes at 2s
+IMMEDIATE_KILL_OVERSHOOT = 1.15
 
 # macOS killed Aura as 'largest compressed process Python 78557 MB'
 # while RSS read 20GB: compressed pages leave RSS but live in
@@ -201,6 +202,20 @@ def kill_tree(root: psutil.Process) -> list[int]:
     return killed
 
 
+def should_kill_for_memory(
+    *,
+    managed_mb: float,
+    lethal_mb: float,
+    consecutive_over: int,
+    overshoot_factor: float = IMMEDIATE_KILL_OVERSHOOT,
+) -> bool:
+    """Return true when the sentinel must kill the protected process tree."""
+
+    if managed_mb >= lethal_mb * max(1.0, float(overshoot_factor)):
+        return True
+    return consecutive_over >= 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pid", type=int, required=True)
@@ -249,11 +264,16 @@ def main(argv: list[str] | None = None) -> int:
         else:
             consecutive_over = 0
 
-        # Two consecutive samples over lethal: kill. No reclaim attempts —
-        # the in-process watchdog owns graceful reclaim at lower ceilings;
-        # by the time the EXTERNAL sentinel acts, cooperation has already
-        # failed and every second risks the host.
-        if consecutive_over >= 2:
+        # Two consecutive samples over lethal: kill. A single large overshoot
+        # also kills immediately; a runaway can add tens of GB between 1s
+        # samples, and protecting the host beats waiting for confirmation.
+        # No reclaim attempts here — the in-process watchdog owns graceful
+        # reclaim at lower ceilings.
+        if should_kill_for_memory(
+            managed_mb=managed,
+            lethal_mb=args.lethal_mb,
+            consecutive_over=consecutive_over,
+        ):
             killed = kill_tree(target)
             tombstone = {
                 "schema": "aura.memory_sentinel.tombstone.v1",
