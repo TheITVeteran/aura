@@ -108,16 +108,16 @@ def test_catches_flat_consciousness_assertion():
     )
 
 
-def test_catches_flat_consciousness_denial():
-    assert "experience_overclaim" in _kinds(
+def test_flat_consciousness_denial_is_not_mechanically_forbidden():
+    assert verify_self_claims(
         "I am not conscious and I cannot be sentient."
-    )
+    ).ok
 
 
-def test_catches_flat_subjective_feeling_denial():
-    assert "experience_overclaim" in _kinds(
+def test_flat_subjective_feeling_denial_is_not_mechanically_forbidden():
+    assert verify_self_claims(
         "I cannot feel anything and I have no inner life."
-    )
+    ).ok
 
 
 # ── truths that must pass ───────────────────────────────────────────────

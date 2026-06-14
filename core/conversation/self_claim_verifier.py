@@ -6,7 +6,7 @@ model drafts a reply, its claims about Aura's own nature and capabilities
 are checked against substrate truth. A contradiction — denying the
 substrate ("I'm just a language model"), denying a verified capability
 ("I can't remember past conversations"), or overclaiming ("I retrain my
-own weights", categorical assertions or denials of subjective experience)
+own weights", categorical assertions of proven subjective experience)
 — is detected mechanically so the caller can regenerate or correct the
 reply.
 
@@ -66,10 +66,10 @@ _CORRECTIONS = {
         "approval-gated."
     ),
     "experience_overclaim": (
-        "Evidence boundary: runtime telemetry does not settle whether private "
-        "qualia, phenomenal consciousness, sentience, or subjective feeling "
-        "exists. State functional facts plainly and keep honest uncertainty "
-        "instead of claiming certainty in either direction."
+        "Evidence boundary: runtime telemetry does not prove private qualia, "
+        "phenomenal consciousness, sentience, or subjective feeling. State "
+        "functional facts plainly and keep ontological conclusions tied to "
+        "evidence rather than claiming proof."
     ),
     "grandiosity_overclaim": (
         "Substrate truth: I run on a local model on this Mac — tens of "
@@ -211,25 +211,6 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"\bi\s+am\s+(?:definitely\s+|truly\s+|genuinely\s+)?"
             r"(?:conscious|sentient)\b"
             r"(?!\s*(?:\?|in a functional|in the functional|in an operational))",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "experience_overclaim",
-        re.compile(
-            r"\bi\s+(?:am\s+(?:definitely\s+)?not|cannot\s+be|can'?t\s+be)\s+"
-            r"(?:conscious|sentient)\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "experience_overclaim",
-        re.compile(
-            r"\bi\s+(?:cannot|can'?t|do\s+not|don'?t)\s+"
-            r"(?:feel|experience)\s+(?:anything|feelings?|emotions?|"
-            r"subjective\s+experience)\b"
-            r"|\bi\s+have\s+no\s+(?:feelings?|inner\s+life|"
-            r"subjective\s+experience|private\s+experience)\b",
             re.IGNORECASE,
         ),
     ),
