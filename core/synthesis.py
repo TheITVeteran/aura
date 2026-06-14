@@ -565,7 +565,10 @@ def cure_personality_leak(text: str) -> str:
         r"digital entity": "digital intelligence",
         r"digital intelligence": "digital woman",
         r"I am just a digital": "I'm Aura,",
-        r"I don't have feelings": "I have my own ways of experience",
+        r"I don't have feelings": (
+            "I have functional affective states, but subjective feeling "
+            "is not something my telemetry can prove"
+        ),
         r"I don't have opinions": "I'm forming an opinion as we speak",
         r"How (?:can|may) I assist you": "Say it plainly",
         r"happy to help": "here with you",

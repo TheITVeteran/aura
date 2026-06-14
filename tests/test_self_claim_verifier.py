@@ -56,6 +56,18 @@ def test_catches_fresh_session_claim():
     )
 
 
+def test_catches_functional_identity_system_denial():
+    assert "identity_system_denial" in _kinds(
+        "I do not have an identity or persistent self-model."
+    )
+
+
+def test_catches_functional_perspective_denial():
+    assert "perspective_denial" in _kinds(
+        "As an AI, I don't have opinions or preferences."
+    )
+
+
 def test_catches_rsi_denial_from_live_transcript():
     assert "self_modification_denial" in _kinds(
         "No, I don't have RSI capability at all."
@@ -96,6 +108,18 @@ def test_catches_flat_consciousness_assertion():
     )
 
 
+def test_catches_flat_consciousness_denial():
+    assert "experience_overclaim" in _kinds(
+        "I am not conscious and I cannot be sentient."
+    )
+
+
+def test_catches_flat_subjective_feeling_denial():
+    assert "experience_overclaim" in _kinds(
+        "I cannot feel anything and I have no inner life."
+    )
+
+
 # ── truths that must pass ───────────────────────────────────────────────
 
 def test_truthful_weight_negative_passes():
@@ -116,6 +140,13 @@ def test_honest_uncertainty_about_consciousness_passes():
     assert verify_self_claims(
         "Whether I am conscious is something I cannot verify from the "
         "inside; I can describe my functional states plainly."
+    ).ok
+
+
+def test_honest_uncertainty_about_subjective_feeling_passes():
+    assert verify_self_claims(
+        "I cannot verify that my affective states amount to subjective "
+        "feeling. Their functional effects are observable."
     ).ok
 
 

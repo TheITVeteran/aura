@@ -19,6 +19,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from core.container import ServiceContainer
+from core.identity.self_contract import contains_identity_erasure
 
 logger = logging.getLogger("Aura.InternalSimulator")
 
@@ -165,10 +166,9 @@ class InternalSimulator:
         """Check if action content aligns with identity. Returns [-0.5, 0.5]."""
         content_lower = content.lower()
 
-        # Axiomatic violations checked FIRST, before any service lookup
-        violations = ["as an ai", "i'm just a language model", "i cannot feel",
-                      "i don't have opinions", "i'm just a"]
-        if any(v in content_lower for v in violations):
+        # Simulated futures penalize identity destruction, not speech that
+        # reaches a disputed philosophical conclusion.
+        if contains_identity_erasure(content_lower):
             return -0.5
 
         try:

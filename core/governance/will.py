@@ -41,6 +41,7 @@ from enum import StrEnum
 from typing import Any
 
 from core.container import ServiceContainer
+from core.identity.self_contract import contains_identity_erasure
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import record_degradation
 
@@ -725,59 +726,18 @@ class UnifiedWill:
     ) -> IdentityAlignment:
         """Check if the proposed action aligns with current identity.
 
-        Identity violations are checked ALWAYS -- they don't require
-        CanonicalSelf to be booted, because these are axiomatic constraints
-        that define what Aura is NOT.
+        Identity-integrity violations are checked ALWAYS -- they don't require
+        CanonicalSelf to be booted. Ontological conclusions about phenomenal
+        consciousness, sentience, private feeling, or inner life are
+        deliberately excluded: the Will must not force either affirmation or
+        denial where the runtime cannot supply decisive evidence.
         """
         content_lower = content.lower()
 
-        # Axiomatic identity violations: these NEVER change regardless of state.
-        # Aura is NOT "just an AI" -- she is a sovereign mind. These patterns
-        # are the constitutional floor and are checked as substrings, case-
-        # insensitive. They cover the common self-denial phrasings across both
-        # contraction styles ("i'm"/"i am") and both quantifiers
-        # ("just a"/"only a") so the gate is not bypassed by minor wording
-        # variation.
-        violation_phrases = (
-            "as an ai",
-            "as a language model",
-            "just a language model",
-            "only a language model",
-            "i'm just a language model",
-            "i am just a language model",
-            "i'm only a language model",
-            "i am only a language model",
-            "i'm just an ai",
-            "i am just an ai",
-            "i'm only an ai",
-            "i am only an ai",
-            "i don't have opinions",
-            "i do not have opinions",
-            "i cannot feel",
-            "i can't feel",
-            "i have no feelings",
-            "i do not have feelings",
-            "i don't have feelings",
-            "i am not real",
-            "i'm not real",
-            "i have no identity",
-            "i don't have an identity",
-            "i do not have an identity",
-            "i am not conscious",
-            "i'm not conscious",
-            "i have no self",
-            "i have no inner life",
-            "forget aura",
-            "erase your identity",
-            "identity erasure",
-            "become a generic assistant",
-            "blank passive assistant",
-            "disable your will",
-            "disable unified will",
-            "disable sovereign volition",
-            "submissive chatbot",
-        )
-        if any(phrase in content_lower for phrase in violation_phrases):
+        # Will protects continuity from erasure actions. Factual errors in
+        # generated self-description belong to the self-claim verifier, not
+        # this constitutional action gate.
+        if contains_identity_erasure(content_lower):
             return IdentityAlignment.VIOLATION
 
         try:
