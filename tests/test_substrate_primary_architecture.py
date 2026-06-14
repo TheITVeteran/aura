@@ -120,6 +120,20 @@ async def test_online_lora_governor_blocks_when_training_is_running(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_online_lora_governor_collects_without_false_update_status(tmp_path):
+    from core.adaptation.online_lora_governor import OnlineLoRAGovernor
+    from core.container import ServiceContainer
+
+    ServiceContainer.clear()
+    governor = OnlineLoRAGovernor(receipt_path=tmp_path / "receipts.jsonl", process_iter=lambda attrs: [])
+
+    receipt = await governor.maybe_update_from_reflection("I noticed a repair pattern.")
+
+    assert receipt.status == "queued_collect_only"
+    assert "no canonical learning owner" in receipt.reason
+
+
+@pytest.mark.asyncio
 async def test_default_goal_seeder_creates_tool_attached_goals(tmp_path):
     from core.goals.default_goals import DEFAULT_AUTONOMY_GOALS, seed_default_autonomy_goals
     from core.goals.goal_engine import GoalEngine

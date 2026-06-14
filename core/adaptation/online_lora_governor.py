@@ -131,26 +131,42 @@ class OnlineLoRAGovernor:
 
             dataset_path = await self._capture_training_example(reflection, conversation_context)
             
-            # Delegate to continuous learner to unify the learning pathways
+            # Delegate to the already-booted learning owner. This path is
+            # collect-only; it must not instantiate a second learner or report
+            # a weight update before the scheduler validates and promotes one.
             try:
-                from core.learning.genuine_learning_pipeline import register_continuous_learner
-                learner = register_continuous_learner()
-                learner.record_turn(
-                    system_prompt="You are Aura.",
-                    user_input=conversation_context[-500:] if conversation_context else "Self-reflection trigger.",
-                    response=reflection,
-                    explicit_positive=True,
-                    emotional_context={"arousal": 0.5, "valence": 0.5}
-                )
-                
-                # We do not block to run the optimizer synchronously anymore;
-                # the scheduler handles it asynchronously in the background.
-                optimizer_result = {"ok": True, "message": "delegated to continuous learner scheduler"}
+                from core.container import ServiceContainer
+
+                learner = ServiceContainer.get("continuous_learner", default=None)
+                if learner is None:
+                    learner = ServiceContainer.get("live_learner", default=None)
+                if learner is None:
+                    optimizer_result = {
+                        "ok": False,
+                        "message": "queued_collect_only: no canonical learning owner registered",
+                    }
+                elif hasattr(learner, "record_turn"):
+                    learner.record_turn(
+                        system_prompt="You are Aura.",
+                        user_input=conversation_context[-500:] if conversation_context else "Self-reflection trigger.",
+                        response=reflection,
+                        explicit_positive=True,
+                        emotional_context={"arousal": 0.5, "valence": 0.5},
+                    )
+                    optimizer_result = {
+                        "ok": True,
+                        "message": "queued_for_scheduler_validation",
+                    }
+                else:
+                    optimizer_result = {
+                        "ok": False,
+                        "message": "queued_collect_only: learning owner lacks record_turn",
+                    }
             except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation("online_lora_governor", _e)
-                optimizer_result = await self._run_optimizer(dataset_path)
+                optimizer_result = {"ok": False, "message": f"queued_collect_only: {type(_e).__name__}"}
 
-            status = "updated" if optimizer_result.get("ok") else "optimizer_failed"
+            status = "queued_for_validation" if optimizer_result.get("ok") else "queued_collect_only"
             return self._record(
                 OnlineLoRAReceipt(
                     requested_at=time.time(),

@@ -200,6 +200,7 @@ class AdapterRegistry:
         training_examples: int,
         benchmark_passed: bool,
         quality_delta: float = 0.0,
+        active: bool | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> str:
         """Register a new adapter version. Returns version string."""
@@ -211,9 +212,12 @@ class AdapterRegistry:
             "training_examples": training_examples,
             "benchmark_passed": benchmark_passed,
             "quality_delta":    quality_delta,
-            "active":           benchmark_passed,
+            "active":           benchmark_passed if active is None else bool(active),
             "metadata":         metadata or {},
         }
+        if entry["active"]:
+            for prior in self._registry:
+                prior["active"] = False
         self._registry.append(entry)
         self._save()
         return version
@@ -227,9 +231,21 @@ class AdapterRegistry:
 
     def rollback(self) -> str | None:
         """Roll back to the previous valid adapter."""
-        valid = [e for e in self._registry if e.get("active")]
-        if len(valid) >= 2:
-            return valid[-2]["adapter_path"]
+        valid = [
+            e for e in self._registry
+            if e.get("benchmark_passed") and Path(str(e.get("adapter_path", ""))).exists()
+        ]
+        active_indices = [idx for idx, entry in enumerate(valid) if entry.get("active")]
+        if not active_indices:
+            return None
+        active_index = active_indices[-1]
+        if active_index >= 1:
+            current = valid[active_index]
+            previous = valid[active_index - 1]
+            current["active"] = False
+            previous["active"] = True
+            self._save()
+            return previous["adapter_path"]
         return None
 
     def list_versions(self) -> list[dict]:
@@ -517,17 +533,24 @@ class LiveLearner:
 
     def rollback_adapter(self) -> bool:
         """Rollback to the previous adapter if the current one is causing issues."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.rollback_adapter_async())
+        logger.error("Cannot synchronously roll back adapter while event loop is running; use rollback_adapter_async().")
+        return False
+
+    async def rollback_adapter_async(self) -> bool:
+        """Rollback to the previous adapter and verify the live reload finished."""
         prev = self._adapter_registry.rollback()
         if prev:
-            self._current_adapter = prev
-            from core.utils.task_tracker import get_task_tracker
-
-            get_task_tracker().create_task(
-                self._hot_swap_adapter(prev),
-                name="live_learner.hot_swap_adapter",
-            )
-            logger.warning("Adapter rolled back to: %s", prev)
-            return True
+            swapped = await self._hot_swap_adapter(prev)
+            if swapped:
+                self._current_adapter = prev
+                logger.warning("Adapter rolled back to: %s", prev)
+                return True
+            logger.error("Rollback target could not be loaded: %s", prev)
+            return False
         logger.error("No previous adapter to roll back to.")
         return False
 
@@ -619,6 +642,7 @@ class LiveLearner:
                     str(adapter_dir),
                     len(candidates),
                     benchmark_passed=False,
+                    active=False,
                     metadata={
                         "fine_tune_type": self._policy.fine_tune_type,
                         "split_counts": split_counts,
@@ -632,6 +656,28 @@ class LiveLearner:
             swap_path = str(promoted_model_path or adapter_dir)
             swapped = await self._hot_swap_adapter(swap_path)
 
+            if not swapped:
+                self._adapter_registry.register(
+                    str(adapter_dir),
+                    len(candidates),
+                    benchmark_passed=True,
+                    active=False,
+                    quality_delta=0.0,
+                    metadata={
+                        "fine_tune_type": self._policy.fine_tune_type,
+                        "split_counts": split_counts,
+                        "promoted_model_path": str(promoted_model_path) if promoted_model_path else "",
+                        "hot_swapped": False,
+                        "rejected_reason": "live_reload_failed",
+                        "benchmark_report": getattr(self, "_last_benchmark_report", {}),
+                    },
+                )
+                logger.error(
+                    "LiveLearner: benchmark passed but live reload failed; "
+                    "artifact is not active and will not be promoted on restart."
+                )
+                return False
+
             if promoted_model_path is not None:
                 self._publish_active_model_manifest(
                     promoted_model_path,
@@ -641,6 +687,7 @@ class LiveLearner:
                         "adapter_path": str(adapter_dir),
                         "fine_tune_type": self._policy.fine_tune_type,
                         "split_counts": split_counts,
+                        "benchmark_report": getattr(self, "_last_benchmark_report", {}),
                     },
                 )
 
@@ -649,25 +696,21 @@ class LiveLearner:
                 len(candidates),
                 benchmark_passed=True,
                 quality_delta=self._compute_quality_delta(),
+                active=True,
                 metadata={
                     "fine_tune_type": self._policy.fine_tune_type,
                     "split_counts": split_counts,
                     "promoted_model_path": str(promoted_model_path) if promoted_model_path else "",
                     "hot_swapped": swapped,
+                    "benchmark_report": getattr(self, "_last_benchmark_report", {}),
                 },
             )
 
-            if swapped:
-                self._current_adapter = swap_path
-                logger.info(
-                    "LiveLearner: learned artifact %s active. Aura has genuinely learned.",
-                    version,
-                )
-            else:
-                logger.warning(
-                    "LiveLearner: training succeeded but hot-swap failed. "
-                    "Adapter will activate on next restart."
-                )
+            self._current_adapter = swap_path
+            logger.info(
+                "LiveLearner: learned artifact %s active after behavioral validation and reload.",
+                version,
+            )
 
             self._last_train_time = time.time()
             return True
@@ -926,7 +969,7 @@ class LiveLearner:
         *,
         promoted_model_path: Path | None = None,
     ) -> tuple[bool, list[str]]:
-        """Run behavioral regression tests against the new adapter."""
+        """Run paired behavioral regression tests against incumbent and candidate."""
         benchmarks = [
             (
                 "hey",
@@ -946,18 +989,29 @@ class LiveLearner:
         ]
 
         failures = []
+        case_reports: list[dict[str, Any]] = []
 
         # Try to load the new adapter for testing
         try:
             from mlx_lm import generate, load
-            if promoted_model_path is not None:
-                model, tokenizer = load(str(promoted_model_path))
-            elif self._policy.fine_tune_type == "full":
-                model, tokenizer = load(str(adapter_dir))
-            else:
-                model, tokenizer = load(self._model_path, adapter_path=str(adapter_dir))
 
-            async def test_inference(prompt: str) -> str:
+            def _load_artifact(path: str | Path | None):
+                if path is None:
+                    return load(str(self._model_path))
+                artifact = Path(str(path))
+                if (artifact / "config.json").exists():
+                    return load(str(artifact))
+                return load(str(self._model_path), adapter_path=str(artifact))
+
+            incumbent_model, incumbent_tokenizer = _load_artifact(self._current_adapter)
+            if promoted_model_path is not None:
+                candidate_model, candidate_tokenizer = load(str(promoted_model_path))
+            elif self._policy.fine_tune_type == "full":
+                candidate_model, candidate_tokenizer = load(str(adapter_dir))
+            else:
+                candidate_model, candidate_tokenizer = load(str(self._model_path), adapter_path=str(adapter_dir))
+
+            async def test_inference(model: Any, tokenizer: Any, prompt: str) -> str:
                 result = await asyncio.to_thread(
                     generate, model, tokenizer, prompt=prompt, max_tokens=100
                 )
@@ -965,13 +1019,40 @@ class LiveLearner:
 
             for prompt, must_contain, must_not_contain in benchmarks:
                 try:
-                    response = await asyncio.wait_for(test_inference(prompt), timeout=30.0)
-                    rl = response.lower()
-                    if not any(m in rl for m in must_contain):
+                    incumbent_response = await asyncio.wait_for(
+                        test_inference(incumbent_model, incumbent_tokenizer, prompt),
+                        timeout=30.0,
+                    )
+                    response = await asyncio.wait_for(
+                        test_inference(candidate_model, candidate_tokenizer, prompt),
+                        timeout=30.0,
+                    )
+                    incumbent_score, _ = self._score_benchmark_response(
+                        incumbent_response,
+                        must_contain=must_contain,
+                        must_not_contain=must_not_contain,
+                    )
+                    candidate_score, candidate_failures = self._score_benchmark_response(
+                        response,
+                        must_contain=must_contain,
+                        must_not_contain=must_not_contain,
+                    )
+                    case_reports.append(
+                        {
+                            "prompt": prompt,
+                            "incumbent_score": incumbent_score,
+                            "candidate_score": candidate_score,
+                            "candidate_delta": round(candidate_score - incumbent_score, 3),
+                        }
+                    )
+                    if candidate_failures:
                         failures.append(f"FAIL [{prompt!r}]: missing {must_contain}")
-                    for banned in must_not_contain:
-                        if banned in rl:
-                            failures.append(f"FAIL [{prompt!r}]: contains banned '{banned}'")
+                        failures.extend(f"FAIL [{prompt!r}]: {f}" for f in candidate_failures)
+                    if candidate_score + 0.05 < incumbent_score:
+                        failures.append(
+                            f"FAIL [{prompt!r}]: candidate regressed below incumbent "
+                            f"({candidate_score:.2f} < {incumbent_score:.2f})"
+                        )
                 except TimeoutError:
                     failures.append(f"FAIL [{prompt!r}]: timeout")
 
@@ -989,7 +1070,37 @@ class LiveLearner:
             )
             failures.append(f"benchmark inference failed: {exc}")
 
+        self._last_benchmark_report = {
+            "paired_incumbent_candidate": True,
+            "case_reports": case_reports,
+            "failures": failures,
+        }
         return len(failures) == 0, failures
+
+    @staticmethod
+    def _score_benchmark_response(
+        response: str,
+        *,
+        must_contain: list[str],
+        must_not_contain: list[str],
+    ) -> tuple[float, list[str]]:
+        rl = str(response or "").lower()
+        failures: list[str] = []
+        score = 0.0
+        if any(m in rl for m in must_contain):
+            score += 0.6
+        else:
+            failures.append(f"missing one of {must_contain}")
+        banned_hits = [b for b in must_not_contain if b in rl]
+        if not banned_hits:
+            score += 0.3
+        else:
+            failures.extend(f"contains banned '{b}'" for b in banned_hits)
+        if len(rl.split()) >= 2:
+            score += 0.1
+        else:
+            failures.append("too short")
+        return min(1.0, score), failures
 
     async def _hot_swap_adapter(self, adapter_path: str) -> bool:
         """

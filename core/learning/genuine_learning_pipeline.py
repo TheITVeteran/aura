@@ -695,6 +695,16 @@ class LearningScheduler:
                 return False
 
             # Run behavioral benchmark before accepting new weights
+            if inference_fn is None:
+                _record_learning_degradation(
+                    "genuine_learning_pipeline",
+                    RuntimeError("candidate inference callback missing"),
+                    action="restored adapter snapshot because candidate behavior could not be validated",
+                    extra={"adapter_dir": str(self.trainer.adapter_dir)},
+                )
+                await asyncio.to_thread(self.trainer.restore_rollback_snapshot, snapshot)
+                return False
+
             if inference_fn:
                 try:
                     passed, failures = await self.benchmark.run(inference_fn)
@@ -840,7 +850,7 @@ class ContinuousLearner:
         Called from the orchestrator's idle loop.
         Runs training if conditions are met.
         """
-        await self.scheduler.run_if_ready(inference_fn)
+        return await self.scheduler.run_if_ready(inference_fn)
 
     def get_status(self) -> dict[str, Any]:
         return {

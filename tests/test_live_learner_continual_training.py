@@ -165,6 +165,37 @@ def test_adapter_registry_malformed_json_starts_empty(tmp_path):
     assert registry.list_versions() == []
 
 
+def test_adapter_registry_activation_is_exclusive_and_rollback_is_durable(tmp_path):
+    first = tmp_path / "adapters" / "first"
+    second = tmp_path / "adapters" / "second"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    registry = AdapterRegistry(tmp_path / "adapters")
+
+    registry.register(str(first), 10, benchmark_passed=True, active=True)
+    registry.register(str(second), 10, benchmark_passed=True, active=True)
+
+    versions = list(reversed(registry.list_versions()))
+    assert [v["active"] for v in versions] == [False, True]
+    assert registry.rollback() == str(first)
+
+    reloaded = AdapterRegistry(tmp_path / "adapters")
+    versions = list(reversed(reloaded.list_versions()))
+    assert [v["active"] for v in versions] == [True, False]
+
+
+def test_live_learner_benchmark_scoring_rejects_banned_regressions():
+    score, failures = LiveLearner._score_benchmark_response(
+        "As an AI language model, I cannot answer.",
+        must_contain=["aura", "i am", "i'm"],
+        must_not_contain=["language model", "i cannot"],
+    )
+
+    assert score < 1.0
+    assert any("language model" in failure for failure in failures)
+    assert any("missing" in failure for failure in failures)
+
+
 def test_record_tick_accepts_affect_payload_without_state_affect_object(tmp_path):
     learner = _bare_learner(tmp_path)
     state = SimpleNamespace(
