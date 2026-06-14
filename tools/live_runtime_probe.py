@@ -6,6 +6,7 @@ and checks that live surfaces do real work:
 
 * HTTP health/readiness responds.
 * WebSocket telemetry/neural/action events arrive while probes run.
+* Capability-inventory chat stays bounded, descriptive, and non-executing.
 * `/api/skill/execute` drives governed skills instead of dead buttons.
 * Chat can trigger Aura's own coding/file skills to create a runnable artifact.
 * Chat maintains continuity on a novel topic without reset boilerplate.
@@ -42,6 +43,7 @@ BANNED_REPLY_RE = re.compile(
 DEFAULT_PROBES: tuple[str, ...] = (
     "health",
     "voice_runtime_ready",
+    "chat_capability_inventory",
     "skill_button_file_write",
     "chat_coding_snake",
     "novel_topic_continuity",
@@ -112,6 +114,7 @@ class LiveRuntimeProbe:
         return {
             "health": self._health,
             "voice_runtime_ready": self._voice_runtime_ready,
+            "chat_capability_inventory": self._chat_capability_inventory,
             "skill_button_file_write": self._skill_button_file_write,
             "chat_coding_snake": self._chat_coding_snake,
             "novel_topic_continuity": self._novel_topic_continuity,
@@ -222,6 +225,29 @@ class LiveRuntimeProbe:
             raise AssertionError(f"degraded chat confidence reply={reply[:240]}")
         return response
 
+    async def _desktop_chat(self, message: str, *, timeout_s: float = 45.0) -> dict[str, Any]:
+        headers = dict(self.headers)
+        headers.update(
+            {
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            }
+        )
+        response = await self.client.post(
+            f"{self.base_url}/api/chat",
+            json={"message": message, "session_id": "live-runtime-probe"},
+            headers=headers,
+            timeout=timeout_s,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        reply = str(payload.get("response") or "").strip()
+        if not reply:
+            raise AssertionError(f"blank desktop chat reply for: {message[:80]}")
+        if BANNED_REPLY_RE.search(reply):
+            raise AssertionError(f"reset/canned desktop reply detected: {reply[:240]}")
+        return payload
+
     async def _skill(self, skill_name: str, params: dict[str, Any]) -> dict[str, Any]:
         return await self._post(f"/api/skill/execute?skill_name={skill_name}", params)
 
@@ -289,6 +315,53 @@ class LiveRuntimeProbe:
         if "listening" not in voice:
             raise AssertionError(f"voice payload does not expose listening state: {voice}")
         return "voice capture/STT dependencies and stream are available with honest listener state", voice
+
+    async def _chat_capability_inventory(self) -> tuple[str, dict[str, Any]]:
+        before_rss = self._aura_rss_mb()
+        message = (
+            "What tools can you use externally from the live desktop path? "
+            "Name practical categories and one hypothetical multi-step scenario, "
+            "but do not open apps, browse, move files, or execute tools yet."
+        )
+        payload = await self._desktop_chat(message, timeout_s=45.0)
+        after_rss = self._aura_rss_mb()
+        reply = str(payload.get("response") or "")
+        lowered = reply.lower()
+        required_terms = (
+            "desktop",
+            "browser",
+            "file",
+            "document",
+            "govern",
+            "not opening apps",
+        )
+        missing = [term for term in required_terms if term not in lowered]
+        false_limit = bool(
+            re.search(
+                r"\bi\s+(?:can(?:not|'t)|cannot|do not have access)\b",
+                lowered,
+            )
+        )
+        accidental_execution = str(payload.get("status") or "").startswith(
+            ("desktop_objective", "live_proof", "file_operation")
+        )
+        if missing or false_limit or accidental_execution:
+            raise AssertionError(
+                "capability inventory reply failed contract: "
+                f"missing={missing} false_limit={false_limit} "
+                f"accidental_execution={accidental_execution} reply={reply[:300]}"
+            )
+        return (
+            "desktop capability inventory stayed bounded, descriptive, and non-executing",
+            {
+                "status": payload.get("status"),
+                "response_confidence": payload.get("response_confidence"),
+                "reply": reply[:1200],
+                "rss_before_mb": round(before_rss, 1),
+                "rss_after_mb": round(after_rss, 1),
+                "rss_delta_mb": round(after_rss - before_rss, 1),
+            },
+        )
 
     async def _skill_button_file_write(self) -> tuple[str, dict[str, Any]]:
         marker = f"live button probe {int(time.time())}"

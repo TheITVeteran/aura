@@ -585,12 +585,13 @@ def test_live_runtime_probe_can_run_focused_probe_sets():
 
     probe = LiveRuntimeProbe(
         "http://127.0.0.1:8000",
-        selected_probes=("health", "desktop_task_generic_plan"),
+        selected_probes=("health", "chat_capability_inventory", "desktop_task_generic_plan"),
         skipped_probes=("health",),
         max_rss_mb=32000,
     )
 
     assert [name for name, _ in probe._selected_probe_items()] == [
+        "chat_capability_inventory",
         "desktop_task_generic_plan"
     ]
     assert probe.max_rss_mb == 32000
@@ -606,6 +607,42 @@ def test_live_runtime_probe_rejects_unknown_probe_names():
 
     with pytest.raises(ValueError, match="Unknown live runtime probe"):
         probe._selected_probe_items()
+
+
+@pytest.mark.asyncio
+async def test_live_runtime_probe_checks_desktop_capability_inventory_contract():
+    from tools.live_runtime_probe import LiveRuntimeProbe
+
+    class Probe(LiveRuntimeProbe):
+        def __init__(self):
+            super().__init__("http://127.0.0.1:8000", max_rss_mb=32000)
+            self.messages: list[str] = []
+
+        def _aura_rss_mb(self) -> float:
+            return 2048.0
+
+        async def _desktop_chat(self, message: str, *, timeout_s: float = 45.0):
+            self.messages.append(message)
+            return {
+                "status": "cognitive_engine_capability_inventory",
+                "response_confidence": "high",
+                "response": (
+                    "I can use desktop, browser, file, document, terminal, memory, "
+                    "and governed tool surfaces. Will/Authority approves consequential "
+                    "steps. A realistic scenario is researching sources, creating a "
+                    "document, exporting it, and recording receipts. I am not opening apps "
+                    "or executing tools for this hypothetical inventory."
+                ),
+            }
+
+    probe = Probe()
+
+    detail, data = await probe._chat_capability_inventory()
+
+    assert "bounded" in detail
+    assert data["status"] == "cognitive_engine_capability_inventory"
+    assert data["rss_delta_mb"] == 0.0
+    assert probe.messages and "do not open apps" in probe.messages[0]
 
 
 def test_input_bus_normalizes_external_priority_values():
