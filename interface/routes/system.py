@@ -385,8 +385,7 @@ def _collect_stability_details() -> dict[str, Any]:
 
     try:
         lane = _collect_conversation_lane_status_resilient()
-        lane_is_standby = _conversation_lane_is_standby_resilient(lane) if isinstance(lane, dict) else False
-        if isinstance(lane, dict) and not bool(lane.get("conversation_ready", False)) and not lane_is_standby:
+        if isinstance(lane, dict) and not bool(lane.get("conversation_ready", False)):
             details["healthy"] = False
             if details.get("status") == "unknown":
                 details["status"] = "degraded"
@@ -2041,11 +2040,14 @@ async def api_heartbeat():
     for blocker in probe_blockers:
         if blocker not in blockers:
             blockers.append(blocker)
+    if not bool(payload.get("conversation_ready", False)) and "conversation_ready" not in blockers:
+        blockers.append("conversation_ready")
     runtime_probe_healthy = not probe_blockers
     healthy = (
         status_code == 200
         and bool(payload.get("system_ready", payload.get("ready", False)))
         and runtime_probe_healthy
+        and bool(payload.get("conversation_ready", False))
         and not blockers
     )
     if not healthy:

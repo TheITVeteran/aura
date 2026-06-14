@@ -3456,7 +3456,7 @@ def _conversation_lane_user_message(
     if timed_out:
         return f"{_mood_prefix}that answer took too long to finish cleanly. I logged the timeout and preserved the turn context."
     if _conversation_lane_is_standby(lane):
-        return "The conversation lane is in standby and ready for the first live turn."
+        return f"{_mood_prefix}the local answer path is still preparing. I logged the cold lane instead of claiming Aura is ready."
     if state == "recovering":
         return f"{_mood_prefix}the answer lane is recovering from the previous failure. I logged the degraded state instead of emitting a fragment."
     if state == "failed":
@@ -5060,7 +5060,9 @@ def _read_capability_catalog_snapshot() -> tuple[int, dict[str, list[str]], bool
     try:
         capability_engine = ServiceContainer.get("capability_engine", default=None)
         raw_catalog: Any = None
-        if capability_engine is not None and hasattr(capability_engine, "get_tool_catalog"):
+        if capability_engine is not None and hasattr(capability_engine, "iter_tool_catalog"):
+            raw_catalog = capability_engine.iter_tool_catalog(include_inactive=True)
+        elif capability_engine is not None and hasattr(capability_engine, "get_tool_catalog"):
             raw_catalog = capability_engine.get_tool_catalog(include_inactive=True)
         elif capability_engine is not None and hasattr(capability_engine, "get_catalog"):
             raw_catalog = capability_engine.get_catalog(include_inactive=True) or {}

@@ -58,7 +58,7 @@ def _conversation_lane_is_standby(lane: dict[str, Any] | None) -> bool:
 
 def _conversation_lane_is_boot_warming(lane: dict[str, Any] | None) -> bool:
     lane = dict(lane or {})
-    if bool(lane.get("conversation_ready", False)) or _conversation_lane_is_standby(lane):
+    if bool(lane.get("conversation_ready", False)):
         return False
 
     state = str(lane.get("state", "") or "").strip().lower()
@@ -100,7 +100,7 @@ def _conversation_lane_is_boot_warming(lane: dict[str, Any] | None) -> bool:
 
 def _conversation_lane_is_busy(lane: dict[str, Any] | None) -> bool:
     lane = dict(lane or {})
-    if bool(lane.get("conversation_ready", False)) or _conversation_lane_is_standby(lane):
+    if bool(lane.get("conversation_ready", False)):
         return False
 
     state = str(lane.get("state", "") or "").strip().lower()
@@ -371,9 +371,9 @@ class SubsystemAudit:
         subsystem_ok = bool(health.get("all_ok", False))
         conversation_lane = _collect_conversation_lane_status()
         conversation_ready = bool(conversation_lane.get("conversation_ready", False))
-        conversation_standby = _conversation_lane_is_standby(conversation_lane)
         conversation_busy = _conversation_lane_is_busy(conversation_lane)
-        conversation_ok = bool(conversation_ready or conversation_standby or conversation_busy)
+        conversation_ok = bool(conversation_ready or conversation_busy)
+        conversation_standby = _conversation_lane_is_standby(conversation_lane)
         conversation_state = str(conversation_lane.get("state", "unknown") or "unknown").lower()
         contract_status = str(contract.get("status", "unknown") if isinstance(contract, dict) else "unknown")
         shutdown_active = is_shutdown_requested()

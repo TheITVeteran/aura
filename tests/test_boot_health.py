@@ -149,7 +149,7 @@ def test_boot_health_separates_system_ready_from_conversation_ready():
     assert "conversation_ready" in payload["blockers"]
 
 
-def test_boot_health_treats_cold_standby_lane_as_ready_kernel():
+def test_boot_health_treats_cold_standby_lane_as_not_conversation_ready():
     _register_runtime_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
     status = SimpleNamespace(
         initialized=True,
@@ -174,12 +174,15 @@ def test_boot_health_treats_cold_standby_lane_as_ready_kernel():
         },
     )
 
-    assert status_code == 200
-    assert payload["status"] == "ready"
-    assert payload["boot_phase"] == "kernel_ready"
+    assert status_code == 503
+    assert payload["status"] == "warming"
+    assert payload["ready"] is False
+    assert payload["launcher_ready"] is False
+    assert payload["system_ready"] is True
+    assert payload["boot_phase"] == "conversation_warming"
     assert payload["conversation_ready"] is False
-    assert payload["status_message"] == "Aura is awake. Cortex will warm on first turn."
-    assert "conversation_ready" not in payload["blockers"]
+    assert payload["status_message"] == "Warming local Cortex (32B)…"
+    assert "conversation_ready" in payload["blockers"]
 
 
 def test_boot_health_reports_hard_conversation_failure():

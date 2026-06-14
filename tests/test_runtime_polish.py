@@ -316,6 +316,44 @@ def test_websocket_runtime_heartbeat_reports_runtime_contract_degradation(monkey
     assert "important:event_bus" in payload["blockers"]
 
 
+def test_websocket_runtime_heartbeat_requires_conversation_readiness(monkeypatch):
+    from core.runtime import health_contract as health_contract_module
+    from interface.websocket_manager import runtime_heartbeat_payload
+
+    monkeypatch.setattr(
+        health_contract_module,
+        "runtime_health_report",
+        lambda: {"healthy": True, "status": "healthy"},
+    )
+    monkeypatch.setattr(
+        health_contract_module,
+        "required_probe_status",
+        lambda _report: _complete_required_probe_payload(),
+    )
+    monkeypatch.setattr(
+        websocket_module,
+        "_conversation_lane_readiness",
+        lambda: (
+            {
+                "conversation_ready": False,
+                "state": "cold",
+                "warmup_attempted": False,
+                "warmup_in_flight": False,
+            },
+            False,
+        ),
+    )
+
+    payload = runtime_heartbeat_payload("heartbeat")
+
+    assert payload["healthy"] is False
+    assert payload["runtime_probe_healthy"] is True
+    assert payload["conversation_ready"] is False
+    assert payload["status"] == "unhealthy"
+    assert "conversation_ready" in payload["blockers"]
+    assert "conversation_lane:cold" in payload["blockers"]
+
+
 def _complete_required_probe_payload() -> dict[str, object]:
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 
@@ -404,6 +442,44 @@ async def test_api_heartbeat_reports_healthy_only_with_all_required_probe_compon
     assert payload["blockers"] == []
 
 
+@pytest.mark.asyncio
+async def test_api_heartbeat_requires_conversation_readiness(monkeypatch):
+    from interface.routes import system as system_routes
+
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+    monkeypatch.setattr(system_routes, "_get_runtime_state_safe", lambda: {})
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_conversation_lane_status_resilient",
+        lambda: {"conversation_ready": False, "state": "cold"},
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "build_boot_health_snapshot",
+        lambda *_args, **_kwargs: (
+            {
+                "ready": True,
+                "system_ready": True,
+                "required_probes": _complete_required_probe_payload(),
+                "blockers": [],
+                "boot_phase": "kernel_ready",
+                "conversation_ready": False,
+            },
+            200,
+        ),
+    )
+
+    response = await system_routes.api_heartbeat()
+    payload = json.loads(response.body)
+
+    assert response.status_code == 503
+    assert payload["status"] == "unhealthy"
+    assert payload["healthy"] is False
+    assert payload["runtime_probe_healthy"] is True
+    assert payload["conversation_ready"] is False
+    assert "conversation_ready" in payload["blockers"]
+
+
 def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
     server = (PROJECT_ROOT / "interface" / "server.py").read_text(encoding="utf-8")
@@ -428,7 +504,8 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "runtime_health_unverified" in aura_js
     assert "applyRuntimeHeartbeat(data)" in aura_js
     assert "setConnectionVisual('online');\n        dismissSplash();" not in aura_js
-    assert "if (runtimeHealthy && (bootReady || standby))" in aura_js
+    assert "if (runtimeHealthy && bootReady)" in aura_js
+    assert "if (runtimeHealthy && (bootReady || standby))" not in aura_js
 
 
 def test_desktop_shell_renders_tool_results_without_inline_html_handlers():

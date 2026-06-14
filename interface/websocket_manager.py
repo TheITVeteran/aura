@@ -115,15 +115,12 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
 def _conversation_lane_readiness() -> tuple[dict[str, Any], bool]:
     """Return live conversation readiness for transport heartbeat payloads."""
     try:
-        from interface.routes.chat import (
-            _collect_conversation_lane_status,
-            _conversation_lane_is_standby,
-        )
+        from interface.routes.chat import _collect_conversation_lane_status
 
         lane = _collect_conversation_lane_status()
         if not isinstance(lane, dict):
             raise TypeError(f"conversation lane collector returned {type(lane).__name__}")
-        ready = bool(lane.get("conversation_ready", False)) or _conversation_lane_is_standby(lane)
+        ready = bool(lane.get("conversation_ready", False))
         return lane, ready
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation(

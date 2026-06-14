@@ -783,6 +783,48 @@ def test_capability_catalog_snapshot_caps_unbounded_catalog(monkeypatch):
     assert len(categories["specialized governed skills"]) == 12
 
 
+def test_capability_catalog_snapshot_prefers_streaming_catalog(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _FakeCapabilityEngine:
+        def __init__(self):
+            self.materialized_catalog_calls = 0
+
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            assert include_inactive is True
+            for index in range(chat_routes._CAPABILITY_CATALOG_MAX_ITEMS + 25):
+                yield {
+                    "name": f"streamed_tool_{index}",
+                    "available": True,
+                    "description": "Specialized governed skill surface.",
+                    "route_class": "specialized",
+                    "risk_class": "low",
+                    "effect_scope": "read_only",
+                }
+
+        def get_tool_catalog(self, *, include_inactive: bool = True):
+            self.materialized_catalog_calls += 1
+            return []
+
+    engine = _FakeCapabilityEngine()
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: engine if name == "capability_engine" else default),
+    )
+
+    available_count, categories, governance_available, truncated = (
+        chat_routes._read_capability_catalog_snapshot()
+    )
+
+    assert available_count == chat_routes._CAPABILITY_CATALOG_MAX_ITEMS
+    assert truncated is True
+    assert governance_available is True
+    assert len(categories["specialized governed skills"]) == 12
+    assert engine.materialized_catalog_calls == 0
+
+
 def test_capability_inventory_skips_catalog_under_memory_pressure(monkeypatch):
     from interface.routes import chat as chat_routes
 

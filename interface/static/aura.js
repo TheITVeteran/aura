@@ -2972,7 +2972,6 @@ function laneHealthIsOperational(lane, healthStatus = '') {
         normalized === 'ok'
         || normalized === 'ready'
         || normalized === 'healthy'
-        || (laneIsStandby(lane) && normalized === 'warming')
     );
 }
 
@@ -3074,7 +3073,7 @@ function conversationLaneStatusText(lane) {
     if (!lane) return 'online';
     const laneState = String(lane.state || 'warming').toLowerCase();
     if (lane.conversation_ready) return 'online';
-    if (laneIsStandby(lane)) return 'cortex on standby';
+    if (laneIsStandby(lane)) return 'cortex preparing';
     if (laneState === 'recovering') return 'cortex recovering';
     if (laneState === 'failed') return 'cortex unavailable';
     return 'cortex warming';
@@ -3105,16 +3104,14 @@ function applyConversationLane(lane, healthStatus = '') {
     const laneStandby = laneIsStandby(effectiveLane);
     if (state.connected) {
         const healthy = laneHealthIsOperational(effectiveLane, healthStatus);
-        const connectionMode = (state.conversationReady || laneStandby) && healthy ? 'online' : 'degraded';
+        const connectionMode = state.conversationReady && healthy ? 'online' : 'degraded';
         setConnectionVisual(connectionMode, !state.conversationReady ? laneText : '');
     }
 
     updateTypingLabel(
         state.conversationReady
             ? 'Aura is thinking…'
-            : laneStandby
-                ? 'Aura is ready. Cortex will warm on first turn.'
-                : `Aura is ${laneText}...`
+            : `Aura is ${laneText}...`
     );
 
     const tierEl = $('r-llm-tier');
@@ -3126,15 +3123,15 @@ function applyConversationLane(lane, healthStatus = '') {
             tierEl.style.color = 'var(--success)';
         } else {
             const stateLabel =
-                laneText === 'cortex on standby' ? 'CORTEX ON STANDBY' :
+                laneText === 'cortex preparing' ? 'CORTEX PREPARING' :
                 laneText === 'cortex recovering' ? 'CORTEX RECOVERING' :
                 laneText === 'cortex unavailable' ? 'CORTEX UNAVAILABLE' :
                 'CORTEX WARMING';
             tierEl.textContent = stateLabel;
             tierEl.title = laneStandby
-                ? 'Aura is awake. Cortex will warm on first turn.'
+                ? 'Local Cortex is not conversation-ready yet.'
                 : effectiveLane.last_failure_reason || (effectiveLane.desired_model || 'Cortex (32B)');
-            tierEl.style.color = laneStandby ? 'var(--success)' : effectiveLane.state === 'failed' ? 'var(--error)' : 'var(--warn)';
+            tierEl.style.color = effectiveLane.state === 'failed' ? 'var(--error)' : 'var(--warn)';
         }
     }
 }
@@ -4614,9 +4611,7 @@ function syncSplashState(payload) {
     if (!splash || splash.classList.contains('hidden')) return;
 
     const boot = payload && payload.telemetry && payload.telemetry.boot ? payload.telemetry.boot : {};
-    const lane = payload && payload.conversation ? payload.conversation.lane : null;
     const runtimeHealthy = payloadRuntimeHealthy(payload);
-    const standby = laneIsStandby(lane);
     const bootReady = runtimeHealthy && (boot.ready === true || String(boot.status || '').toLowerCase() === 'ready');
     const message = String(boot.status_message || '').trim();
 
@@ -4626,12 +4621,12 @@ function syncSplashState(payload) {
     }
 
     updateSplashProgress(
-        boot.progress != null ? boot.progress : (runtimeHealthy && standby ? 100 : runtimeHealthy ? 90 : 15),
-        message || (runtimeHealthy && standby ? 'Aura is awake. Cortex will warm on first turn.' : runtimeHealthStatusText(payload))
+        boot.progress != null ? boot.progress : (runtimeHealthy ? 90 : 15),
+        message || runtimeHealthStatusText(payload)
     );
 
-    if (runtimeHealthy && (bootReady || standby)) {
-        dismissSplash(message || (standby ? 'Aura is awake. Cortex will warm on first turn.' : 'Neural link established.'));
+    if (runtimeHealthy && bootReady) {
+        dismissSplash(message || 'Neural link established.');
     }
 }
 

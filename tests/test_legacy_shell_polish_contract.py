@@ -39,13 +39,13 @@ def test_legacy_shell_frontend_uses_bootstrap_and_tool_catalog():
     assert "renderToolCatalog" in js
 
 
-def test_legacy_shell_presents_cold_standby_as_ready_shell_state():
+def test_legacy_shell_presents_cold_standby_as_not_ready_shell_state():
     js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
 
     assert "function laneIsStandby" in js
-    assert "cortex on standby" in js
-    assert "CORTEX ON STANDBY" in js
-    assert "Aura is ready. Cortex will warm on first turn." in js
+    assert "cortex preparing" in js
+    assert "CORTEX PREPARING" in js
+    assert "Aura is ready. Cortex will warm on first turn." not in js
     assert "syncSplashState(payload);" in js
     assert "Live shell is still syncing. Aura is stabilizing background channels..." in js
     assert "setTimeout(() => dismissSplash(), 8000)" not in js

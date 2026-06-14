@@ -106,10 +106,6 @@ def _boot_status_message(
     normalized = str(boot_phase or "").strip().lower()
     lane = conversation_lane if isinstance(conversation_lane, dict) else {}
     endpoint = str(lane.get("foreground_endpoint", "") or PRIMARY_ENDPOINT)
-    lane_state = str(lane.get("state", "") or "").strip().lower()
-    warmup_attempted = bool(lane.get("warmup_attempted", False))
-    warmup_in_flight = bool(lane.get("warmup_in_flight", False))
-    conversation_ready = bool(lane.get("conversation_ready", False))
     failure_reason = str(lane.get("last_failure_reason", "") or lane.get("last_error", "") or "")
 
     if normalized == "proxy_ready":
@@ -117,13 +113,6 @@ def _boot_status_message(
     if normalized == "proxy_transport_only":
         return "Aura proxy is alive; canonical runtime is not ready."
     if normalized == "kernel_ready":
-        if (
-            not conversation_ready
-            and lane_state in {"cold", "closed", ""}
-            and not warmup_attempted
-            and not warmup_in_flight
-        ):
-            return "Aura is awake. Cortex will warm on first turn."
         return "Aura is awake."
     if normalized == "conversation_recovering":
         if "cortex" in endpoint.lower():
@@ -269,13 +258,9 @@ def build_boot_health_snapshot(
 
         conversation_ready = True
         conversation_state = "ready"
-        warmup_attempted = False
-        warmup_in_flight = False
         if isinstance(conversation_lane, dict) and conversation_lane:
             conversation_ready = bool(conversation_lane.get("conversation_ready", False))
             conversation_state = str(conversation_lane.get("state", "warming") or "warming")
-            warmup_attempted = bool(conversation_lane.get("warmup_attempted", False))
-            warmup_in_flight = bool(conversation_lane.get("warmup_in_flight", False))
 
         system_ready = (
             orchestrator is not None
@@ -299,29 +284,17 @@ def build_boot_health_snapshot(
             launcher_ready = True
             http_status = 200
         elif system_ready and not conversation_ready:
-            lane_is_standby = (
-                conversation_state in {"cold", "closed", ""}
-                and not warmup_attempted
-                and not warmup_in_flight
-            )
-            if lane_is_standby:
-                boot_phase = "kernel_ready"
-                status_text = "ready"
-                user_ready = True
-                launcher_ready = True
-                http_status = 200
+            blockers.append("conversation_ready")
+            user_ready = False
+            launcher_ready = False
+            http_status = 503
+            if conversation_state == "failed":
+                blockers.append("conversation_failed")
+                boot_phase = "conversation_failed"
+                status_text = "degraded"
             else:
-                blockers.append("conversation_ready")
-                user_ready = False
-                launcher_ready = False
-                http_status = 503
-                if conversation_state == "failed":
-                    blockers.append("conversation_failed")
-                    boot_phase = "conversation_failed"
-                    status_text = "degraded"
-                else:
-                    boot_phase = "conversation_recovering" if conversation_state == "recovering" else "conversation_warming"
-                    status_text = "recovering" if conversation_state == "recovering" else "warming"
+                boot_phase = "conversation_recovering" if conversation_state == "recovering" else "conversation_warming"
+                status_text = "recovering" if conversation_state == "recovering" else "warming"
         elif initialized or running or runtime_fresh or cycle_count > 0:
             boot_phase = "kernel_warming"
             status_text = "booting"

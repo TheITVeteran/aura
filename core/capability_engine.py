@@ -2070,65 +2070,80 @@ class CapabilityEngine(AuraBaseModule):
             return f"use {skill_name} to {description[:80].lower()}"
         return f"use {skill_name} when its capability is needed"
 
-    def get_tool_catalog(self, *, include_inactive: bool = True) -> list[dict[str, Any]]:
-        catalog: list[dict[str, Any]] = []
-        for skill_name, meta in self.skills.items():
-            if not meta.enabled and not include_inactive:
-                continue
-
-            state = self.skill_states.get(skill_name, "READY")
-            active = skill_name in self.active_skills
-            available = bool(meta.enabled and active and state != "ERROR")
-            policy_state = (
-                "disabled"
-                if not meta.enabled
-                else "inactive_by_policy"
-                if skill_name in self._explicitly_deactivated_skills
-                else "active"
-                if active
-                else "inactive"
-            )
-            availability_reason = (
-                None
-                if available
-                else (
-                    self.skill_last_errors.get(skill_name)
-                    or (
-                        "disabled_by_policy"
-                        if not meta.enabled
-                        else "inactive_by_policy"
-                        if skill_name in self._explicitly_deactivated_skills
-                        else "error_state"
-                        if state == "ERROR"
-                        else "inactive"
-                    )
+    def _catalog_item_for_skill(self, skill_name: str, meta: SkillMetadata) -> dict[str, Any]:
+        state = self.skill_states.get(skill_name, "READY")
+        active = skill_name in self.active_skills
+        available = bool(meta.enabled and active and state != "ERROR")
+        policy_state = (
+            "disabled"
+            if not meta.enabled
+            else "inactive_by_policy"
+            if skill_name in self._explicitly_deactivated_skills
+            else "active"
+            if active
+            else "inactive"
+        )
+        availability_reason = (
+            None
+            if available
+            else (
+                self.skill_last_errors.get(skill_name)
+                or (
+                    "disabled_by_policy"
+                    if not meta.enabled
+                    else "inactive_by_policy"
+                    if skill_name in self._explicitly_deactivated_skills
+                    else "error_state"
+                    if state == "ERROR"
+                    else "inactive"
                 )
             )
+        )
 
-            catalog.append(
-                {
-                    "name": skill_name,
-                    "description": meta.description,
-                    "state": state,
-                    "availability": "available" if available else "unavailable",
-                    "available": available,
-                    "enabled": bool(meta.enabled),
-                    "active": active,
-                    "policy_state": policy_state,
-                    "risk_class": self._risk_class_for(skill_name, meta),
-                    "route_class": self._route_class_for(meta),
-                    "input_summary": self._input_summary_for(meta),
-                    "example_usage": self._example_usage_for(skill_name, meta),
-                    "last_error": self.skill_last_errors.get(skill_name),
-                    "degraded_reason": availability_reason,
-                    "availability_reason": availability_reason,
-                    "execution_profile": meta.execution_profile,
-                    "timeout_seconds": meta.timeout_seconds,
-                    "memory_mb_estimate": meta.memory_mb_estimate,
-                    "metabolic_cost": meta.metabolic_cost,
-                    "effect_scope": self._effect_scope_for(skill_name, meta),
-                }
-            )
+        return {
+            "name": skill_name,
+            "description": meta.description,
+            "state": state,
+            "availability": "available" if available else "unavailable",
+            "available": available,
+            "enabled": bool(meta.enabled),
+            "active": active,
+            "policy_state": policy_state,
+            "risk_class": self._risk_class_for(skill_name, meta),
+            "route_class": self._route_class_for(meta),
+            "input_summary": self._input_summary_for(meta),
+            "example_usage": self._example_usage_for(skill_name, meta),
+            "last_error": self.skill_last_errors.get(skill_name),
+            "degraded_reason": availability_reason,
+            "availability_reason": availability_reason,
+            "execution_profile": meta.execution_profile,
+            "timeout_seconds": meta.timeout_seconds,
+            "memory_mb_estimate": meta.memory_mb_estimate,
+            "metabolic_cost": meta.metabolic_cost,
+            "effect_scope": self._effect_scope_for(skill_name, meta),
+        }
+
+    def iter_tool_catalog(self, *, include_inactive: bool = True) -> Iterable[dict[str, Any]]:
+        """Stream catalog items without materializing the full registry."""
+        yielded: set[str] = set()
+        for skill_name in sorted(self.active_skills):
+            meta = self.skills.get(skill_name)
+            if meta is None:
+                continue
+            if not meta.enabled and not include_inactive:
+                continue
+            yielded.add(skill_name)
+            yield self._catalog_item_for_skill(skill_name, meta)
+
+        for skill_name, meta in self.skills.items():
+            if skill_name in yielded:
+                continue
+            if not meta.enabled and not include_inactive:
+                continue
+            yield self._catalog_item_for_skill(skill_name, meta)
+
+    def get_tool_catalog(self, *, include_inactive: bool = True) -> list[dict[str, Any]]:
+        catalog = list(self.iter_tool_catalog(include_inactive=include_inactive))
 
         catalog.sort(
             key=lambda item: (

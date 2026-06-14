@@ -434,16 +434,17 @@ async def test_api_health_reports_cold_standby_without_healthy_claim(service_con
         "build_boot_health_snapshot",
         lambda orch, rt, is_gui_proxy=False, conversation_lane=None: (
             {
-                "status": "ready",
-                "ready": True,
+                "status": "warming",
+                "ready": False,
                 "system_ready": True,
                 "conversation_ready": False,
-                "boot_phase": "kernel_ready",
-                "status_message": "Aura is awake. Cortex will warm on first turn.",
-                "progress": 100,
+                "boot_phase": "conversation_warming",
+                "status_message": "Warming local Cortex (32B)…",
+                "progress": 78,
+                "blockers": ["conversation_ready"],
                 "conversation_lane": conversation_lane or {},
             },
-            200,
+            503,
         ),
     )
     monkeypatch.setattr(
@@ -476,7 +477,8 @@ async def test_api_health_reports_cold_standby_without_healthy_claim(service_con
     assert payload["status"] == "standby"
     assert payload["healthy"] is False
     assert payload["conversation_lane"]["state"] == "cold"
-    assert payload["boot"]["status"] == "ready"
+    assert payload["boot"]["status"] == "warming"
+    assert "conversation_ready" in payload["boot"]["blockers"]
 
 
 @pytest.mark.asyncio
