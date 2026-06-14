@@ -1772,20 +1772,14 @@ class MLXLocalClient:
 
     def _spawn_worker_blocking(self) -> mp.Process:
         """Isolated spawn logic for the MLX worker, run in a background thread."""
-        memory_block = _memory_pressure_blocks_worker_spawn(self.model_path)
-        if memory_block:
-            error = RuntimeError(f"memory_pressure_refused_worker_spawn:{memory_block}")
-            _record_mlx_degradation(
-                error,
-                action="refused MLX worker spawn before model load due to memory pressure",
-                severity="critical",
-            )
-            raise error
-
-        runtime_ok, runtime_detail = _probe_mlx_runtime()
-        if not runtime_ok:
-            raise RuntimeError(f"mlx_runtime_probe_failed:{runtime_detail}")
-
+        # [STABILITY v60] Reclaim the old/orphan worker BEFORE the memory
+        # admission check. A recycle (or crash respawn) replaces a worker that
+        # is still resident; killing it below frees its ~20GB. Running the
+        # headroom check FIRST saw the about-to-die worker's memory and refused
+        # the spawn (memory_pressure_refused_worker_spawn:model_load_headroom:
+        # 20.2GB < 22.0GB → recycled_model_lane_not_live_after_warmup → DNU
+        # FATAL), so the wedge could never recover. Free first, then admit.
+        #
         # [STABILITY v51] Orphan reclamation: kill any existing MLXWorker
         # processes for this model path before spawning a new one.
         try:
@@ -1815,6 +1809,20 @@ class MLXLocalClient:
                 action="continued worker spawn after orphan reclamation scan failed",
             )
             logger.debug("Orphan reclamation scan failed (non-fatal): %s", orphan_exc)
+
+        memory_block = _memory_pressure_blocks_worker_spawn(self.model_path)
+        if memory_block:
+            error = RuntimeError(f"memory_pressure_refused_worker_spawn:{memory_block}")
+            _record_mlx_degradation(
+                error,
+                action="refused MLX worker spawn before model load due to memory pressure",
+                severity="critical",
+            )
+            raise error
+
+        runtime_ok, runtime_detail = _probe_mlx_runtime()
+        if not runtime_ok:
+            raise RuntimeError(f"mlx_runtime_probe_failed:{runtime_detail}")
 
         if self._req_q is None or self._res_q is None:
             raise RuntimeError("MLX IPC queues must be created before worker spawn")
