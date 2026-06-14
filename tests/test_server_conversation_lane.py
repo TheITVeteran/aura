@@ -2502,6 +2502,15 @@ async def test_desktop_cognitive_engine_retries_failed_reply_on_same_lane(monkey
             return await operation()
 
     monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", "1")
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            warning=False,
+            refuse_heavy_local_generation=False,
+            reason="",
+        ),
+    )
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -2538,6 +2547,60 @@ async def test_desktop_cognitive_engine_retries_failed_reply_on_same_lane(monkey
 
 
 @pytest.mark.asyncio
+async def test_desktop_cognitive_engine_does_not_retry_failed_reply_by_default(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **_kwargs):
+            calls.append({"objective": objective, "context": dict(context or {})})
+            return SimpleNamespace(
+                content=(
+                    "Give me a moment — I want to answer that properly. "
+                    "I am still with your question about reliable desktop tool use."
+                )
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = (
+        "Answer in exactly two numbered sentences. Explain why reliable "
+        "desktop tool use matters for a local AI assistant."
+    )
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=5.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert len(calls) == 1
+    assert reply is None or "reliable desktop tool use matters" not in reply.lower()
+
+
+@pytest.mark.asyncio
 async def test_desktop_cognitive_engine_retries_empty_cycle_without_placeholder(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
@@ -2564,6 +2627,15 @@ async def test_desktop_cognitive_engine_retries_empty_cycle_without_placeholder(
             return await operation()
 
     monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", "1")
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            warning=False,
+            refuse_heavy_local_generation=False,
+            reason="",
+        ),
+    )
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -3125,6 +3197,10 @@ def test_desktop_static_chat_requests_require_cognitive_engine():
     source = (root / "interface/static/aura.js").read_text(encoding="utf-8")
     assert "CHAT_REQUEST_TIMEOUT_READY_MS = 335000" in source
     assert "CHAT_REQUEST_TIMEOUT_RECOVERING_MS = 395000" in source
+    assert "const CHAT_SEND_QUEUE_MAX = 4;" in source
+    assert "function enqueueChatMessage(message)" in source
+    assert "function drainQueuedChatMessages()" in source
+    assert "if (state.isSubmitting) {\n        enqueueChatMessage(msg);" in source
 
 
 def test_desktop_objective_detector_handles_general_document_surfaces():
@@ -3603,6 +3679,67 @@ def test_stabilizer_generation_budget_respects_memory_token_cap(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_desktop_required_stabilizer_skips_second_model_pass_by_default(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _Gate:
+        def validate_output(self, text, enforce_supervision=False):
+            if "ai language model" in str(text).lower():
+                return False, "assistant_disclaimer", 0.0
+            return True, "ok", 1.0
+
+        def sanitize(self, _text):
+            return ""
+
+    class _InferenceGate:
+        def __init__(self):
+            self.calls = []
+
+        async def think(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return "unexpected rewrite"
+
+    inference_gate = _InferenceGate()
+
+    monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
+    monkeypatch.setattr(chat_routes, "_resolve_live_aura_state", lambda: None)
+    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
+    monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping", lambda text: str(text))
+    monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping_compat", lambda text, _msg: str(text))
+    monkeypatch.setattr(
+        chat_routes,
+        "_looks_generic_assistantish",
+        lambda _msg, text: ("ai language model" in str(text).lower(), "assistant_disclaimer"),
+    )
+    monkeypatch.setattr(chat_routes, "_is_objective_parrot_reply", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
+    monkeypatch.setattr(chat_routes, "_evaluate_reply_topicality", lambda *_args, **_kwargs: (False, ""))
+    monkeypatch.setattr(chat_routes, "_is_stale_repeated_response", lambda _text: False)
+    monkeypatch.setattr(chat_routes, "_is_same_answer_different_prompt", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(chat_routes, "_looks_truncated_tail", lambda _text: False)
+    monkeypatch.setattr(chat_routes, "_looks_semantically_glitched", lambda *_args, **_kwargs: (False, ""))
+    monkeypatch.setattr(chat_routes, "_record_recent_response", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("core.identity.identity_guard.PersonaEnforcementGate", lambda: _Gate())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: inference_gate if name == "inference_gate" else default),
+    )
+
+    result = await chat_routes._stabilize_user_facing_reply(
+        "You ok?",
+        "As an AI language model, I do not have feelings.",
+        desktop_cognitive_engine_required=True,
+        protected_foreground_lane=True,
+    )
+
+    assert inference_gate.calls == []
+    assert "not starting a second foreground generation" in result
+
+
+@pytest.mark.asyncio
 async def test_stabilizer_skips_second_generation_under_critical_memory_pressure(monkeypatch):
     from interface.routes import chat as chat_routes
 
@@ -3685,6 +3822,15 @@ async def test_desktop_required_stabilizer_uses_protected_primary_contract(monke
 
     inference_gate = _InferenceGate()
 
+    monkeypatch.setenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", "1")
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            warning=False,
+            refuse_heavy_local_generation=False,
+            reason="",
+        ),
+    )
     monkeypatch.setattr(chat_routes, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))

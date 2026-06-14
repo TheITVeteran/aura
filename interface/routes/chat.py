@@ -2413,6 +2413,17 @@ async def _run_cognitive_engine_chat_turn(
         rejected_reply: str,
         reasons: tuple[str, ...] | list[str],
     ) -> str | None:
+        if require_engine:
+            allowed, block_reason = _desktop_secondary_model_repair_allowed(
+                reason="cognitive_engine_repair_retry"
+            )
+            if not allowed:
+                logger.warning(
+                    "Skipping CognitiveEngine desktop repair retry (%s); "
+                    "live desktop turns stay bounded to one foreground generation by default.",
+                    block_reason,
+                )
+                return None
         try:
             from core.conversation.response_reliability import assess_user_facing_reply
         except _CHAT_RECOVERABLE_ERRORS as exc:
@@ -5410,6 +5421,60 @@ def _bound_stabilizer_generation_budget(requested_max_tokens: int) -> tuple[int,
     return max_tokens, ""
 
 
+def _desktop_secondary_model_repair_allowed(*, reason: str) -> tuple[bool, str]:
+    """Return whether a live desktop turn may start a second foreground generation.
+
+    The normal desktop contract is one protected foreground model allocation per
+    user turn. If that draft fails reliability gates, deterministic repair or
+    fail-closed behavior is safer than launching another 32B/70B foreground pass
+    while the user is still interacting. Operators can opt into secondary repair
+    for diagnostics, but memory pressure still vetoes it.
+    """
+
+    enabled = str(os.environ.get("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", "")).strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return False, "secondary_desktop_model_repair_disabled"
+
+    try:
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        snapshot = get_memory_pressure_snapshot()
+        if bool(getattr(snapshot, "warning", False)) or bool(
+            getattr(snapshot, "refuse_heavy_local_generation", False)
+        ):
+            return False, str(getattr(snapshot, "reason", "") or "memory_pressure")
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        return False, f"memory_probe_unavailable:{exc}"
+
+    return True, reason
+
+
+def _original_reply_is_safe_to_surface(
+    user_message: str,
+    text: str,
+    *,
+    identity_collapse: bool = False,
+    unexpected_cjk: bool,
+    objective_parrot: bool,
+    off_topic: bool,
+    truncated_tail: bool,
+    semantic_glitch: bool,
+) -> bool:
+    """Check whether the original model text is safer than another generation."""
+
+    candidate = str(text or "").strip()
+    if len(candidate) < 16 or candidate == "…":
+        return False
+    if _INTERNAL_STATE_PATTERNS.search(candidate) or _PROMPT_ARTIFACT_PATTERNS.search(candidate):
+        return False
+    if _SEARCH_SNIPPET_PATTERNS.search(candidate):
+        return False
+    if identity_collapse or unexpected_cjk or objective_parrot or off_topic or truncated_tail or semantic_glitch:
+        return False
+    return True
+
+
 async def _stabilize_user_facing_reply(
     user_message: str,
     reply_text: Any,
@@ -5446,6 +5511,7 @@ async def _stabilize_user_facing_reply(
     recent_user_messages = await _gather_recent_user_messages_for_relevance(user_message)
     recent_user_context = _build_recent_user_context_block(recent_user_messages)
     generic, generic_reason = _looks_generic_assistantish(user_message, text)
+    identity_collapse = bool(generic and generic_reason == "assistant_disclaimer")
     objective_parrot = _is_objective_parrot_reply(user_message, text)
     needs_self_expression = bool(frame.get("needs_self_expression"))
     requires_first_person_anchor = bool(frame.get("requires_explicit_live_grounding"))
@@ -5466,6 +5532,7 @@ async def _stabilize_user_facing_reply(
     same_diff = _is_same_answer_different_prompt(user_message, text)
     truncated_tail = _looks_truncated_tail(text)
     semantic_glitch, semantic_glitch_reason = _looks_semantically_glitched(user_message, text)
+    reason = ""
     if (
         truncated_tail
         and not internal_state_leak
@@ -5515,7 +5582,6 @@ async def _stabilize_user_facing_reply(
         # The old gate rejected on generic/objective_parrot/lacks_self_anchor
         # which triggered a second 12s LLM rewrite call, creating contention
         # and often falling through to robotic template responses.
-        identity_collapse = bool(generic and generic_reason == "assistant_disclaimer")
         hard_failure = bool(
             internal_state_leak
             or unexpected_cjk
@@ -5620,6 +5686,38 @@ async def _stabilize_user_facing_reply(
         from core.container import ServiceContainer
         inference_gate = ServiceContainer.get("inference_gate", default=None)
         if inference_gate:
+            if desktop_cognitive_engine_required or protected_foreground_lane:
+                allowed, block_reason = _desktop_secondary_model_repair_allowed(
+                    reason=str(reason or "stabilizer_rewrite")
+                )
+                if not allowed:
+                    logger.warning(
+                        "Skipping secondary desktop stabilizer rewrite (%s); "
+                        "using deterministic repair/fail-closed path.",
+                        block_reason,
+                    )
+                    if grounded:
+                        return grounded
+                    if architecture_self_assessment:
+                        return _build_architecture_self_reflex(frame)
+                    if _original_reply_is_safe_to_surface(
+                        user_message,
+                        text,
+                        identity_collapse=identity_collapse,
+                        unexpected_cjk=unexpected_cjk,
+                        objective_parrot=objective_parrot,
+                        off_topic=off_topic,
+                        truncated_tail=truncated_tail,
+                        semantic_glitch=semantic_glitch,
+                    ):
+                        _record_recent_response(text, user_message)
+                        return text
+                    bounded_failure = (
+                        "This live desktop turn failed the reply-quality gate, "
+                        "and I am not starting a second foreground generation over it."
+                    )
+                    _record_recent_response(bounded_failure, user_message)
+                    return bounded_failure
             # Length cap is structural (output token budget), not behavioral.
             # The personality / phrasing comes from the LoRA, not from prompt
             # nudges — so the stabilizer raises max_tokens for multi-part
@@ -5817,18 +5915,15 @@ async def _stabilize_user_facing_reply(
                 # which are themselves often triggered *because* prior turns
                 # fell through to the same canned reflex. Block free-form
                 # leaks and topicality, then return the live text.
-                if (
-                    text
-                    and len(text.strip()) >= 16
-                    and text.strip() != "…"
-                    and not _INTERNAL_STATE_PATTERNS.search(text)
-                    and not _PROMPT_ARTIFACT_PATTERNS.search(text)
-                    and not _SEARCH_SNIPPET_PATTERNS.search(text)
-                    and not unexpected_cjk
-                    and not objective_parrot
-                    and not off_topic
-                    and not truncated_tail
-                    and not semantic_glitch
+                if _original_reply_is_safe_to_surface(
+                    user_message,
+                    text,
+                    identity_collapse=identity_collapse,
+                    unexpected_cjk=unexpected_cjk,
+                    objective_parrot=objective_parrot,
+                    off_topic=off_topic,
+                    truncated_tail=truncated_tail,
+                    semantic_glitch=semantic_glitch,
                 ):
                     _record_recent_response(text, user_message)
                     return text

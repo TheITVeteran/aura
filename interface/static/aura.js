@@ -31,6 +31,7 @@ const state = {
     lastToolEvent: null,
     isSubmitting: false,
     activeChatRequestId: null,
+    chatSendQueue: [],
     surfaceSuspended: false,
     resumeInProgress: false,
     lastSurfaceHiddenAt: 0,
@@ -61,6 +62,7 @@ console.log(`%c AURA %c ${state.version} `, "color:white; background:#8a2be2; pa
 
 const CHAT_REQUEST_TIMEOUT_READY_MS = 335000;
 const CHAT_REQUEST_TIMEOUT_RECOVERING_MS = 395000;
+const CHAT_SEND_QUEUE_MAX = 4;
 const THOUGHT_QUEUE_MAX = 160;
 const THOUGHT_COALESCE_WINDOW_MS = 12000;
 const THOUGHT_COALESCE_LOOKBACK = 18;
@@ -2449,30 +2451,45 @@ function sendMessage(message) {
 window.sendMessage = sendMessage;
 
 // ── Chat ─────────────────────────────────────────────────
-$('chat-form').onsubmit = async e => {
-    e.preventDefault();
-    const msgInput = $('chat-input');
-    const msg = msgInput.value.trim();
+function enqueueChatMessage(message) {
+    const msg = String(message || '').trim();
+    if (!msg) return false;
+    if (state.chatSendQueue.length >= CHAT_SEND_QUEUE_MAX) {
+        state.chatSendQueue.shift();
+        appendMsg(
+            'aura',
+            'I am keeping the live chat lane bounded, so I dropped the oldest queued unsent message and kept the newest ones.'
+        );
+    }
+    state.chatSendQueue.push({ message: msg, rendered: true, queuedAt: Date.now() });
+    updateTypingLabel(`Aura is finishing the current turn… ${state.chatSendQueue.length} queued`);
+    return true;
+}
 
-    if (!msg) return;
+function drainQueuedChatMessages() {
+    if (state.isSubmitting || !state.chatSendQueue.length) return;
+    const next = state.chatSendQueue.shift();
+    if (!next || !next.message) return;
+    window.setTimeout(() => {
+        if (state.isSubmitting) {
+            state.chatSendQueue.unshift(next);
+            return;
+        }
+        runChatRequest(next.message, { messageAlreadyRendered: !!next.rendered });
+    }, 0);
+}
 
-    flushTypingSignal({ submitted: true, messageCharsOverride: msg.length });
-
+async function runChatRequest(msg, { messageAlreadyRendered = false } = {}) {
     // Track last user message for regeneration
     state.lastUserMessage = msg;
     const regenBtn = $('regen-btn');
     if (regenBtn) regenBtn.style.display = 'inline-flex';
 
-    state.userScrolledUp = false;  // Reset scroll lock when user sends a message
-    appendMsg('user', msg);
-    msgInput.value = '';
-    // Reset textarea height
-    msgInput.style.height = 'auto';
-    msgInput.focus();
-    $('typing-ind').classList.add('show');
+    state.userScrolledUp = false;
+    if (!messageAlreadyRendered) appendMsg('user', msg);
+    const typingInd = $('typing-ind');
+    if (typingInd) typingInd.classList.add('show');
     state.isSubmitting = true;
-    // [v7.1] UNLOCK CHAT: Per user preference, do not disable input/button while thinking.
-    // Allow user to continue typing or send more messages.
 
     const controller = new AbortController();
     const requestTimeoutMs = conversationLaneRequestTimeoutMs(state.conversationLane);
@@ -2553,8 +2570,30 @@ $('chat-form').onsubmit = async e => {
             state.activeChatRequestId = null;
         }
         // Note: Typing indicator is usually cleared when the WS 'aura_message' arrives.
-        $('typing-ind').classList.remove('show');
+        if (typingInd) typingInd.classList.remove('show');
+        drainQueuedChatMessages();
     }
+};
+
+$('chat-form').onsubmit = async e => {
+    e.preventDefault();
+    const msgInput = $('chat-input');
+    const msg = msgInput.value.trim();
+
+    if (!msg) return;
+
+    flushTypingSignal({ submitted: true, messageCharsOverride: msg.length });
+    appendMsg('user', msg);
+    msgInput.value = '';
+    msgInput.style.height = 'auto';
+    msgInput.focus();
+
+    if (state.isSubmitting) {
+        enqueueChatMessage(msg);
+        return;
+    }
+
+    await runChatRequest(msg, { messageAlreadyRendered: true });
 };
 
 async function appendMsg(role, text, isHtml = false, metadata = {}) {
