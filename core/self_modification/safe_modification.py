@@ -30,6 +30,7 @@ from .promotion_policy import (
     SUPERVISED_SELF_MODIFICATION_ENV as _SUPERVISED_SELF_MODIFICATION_ENV,
 )
 from .promotion_policy import env_flag, source_promotion_decision
+from .safe_modification_harness import SafeModificationHarness
 
 logger = logging.getLogger("SelfModification.SafeModification")
 
@@ -884,6 +885,21 @@ class SafeSelfModification:
             raise  # Fail closed completely
 
         commit_hash = None
+        staged_content = await asyncio.to_thread(staging_file.read_text, encoding="utf-8")
+
+        # Stage 4a: Re-run the canonical non-LLM harness against the exact
+        # quarantined content that would be promoted. Caller-supplied sandbox
+        # evidence can prove intent, but this local gate proves the final bytes.
+        harness_passed, harness_msg = await self._run_promotion_harness(
+            target_rel,
+            staged_content,
+        )
+        if not harness_passed:
+            logger.error("✗ Stage 4a: Safe modification harness failed: %s", harness_msg)
+            if branch_created:
+                await self.git.checkout_main()
+                await self.git.delete_branch(branch_name)
+            return False, f"Safe modification harness failed: {harness_msg}"
 
         # Stage 4: Run comprehensive tests
         # For now, we trust the sandbox tests
@@ -920,8 +936,7 @@ class SafeSelfModification:
 
         # PROMOTE FROM QUARANTINE TO REAL FILE
         logger.info("🚀 [PROMOTION] Quarantine passed. Applying to primary repository.")
-        promoted_content = await asyncio.to_thread(staging_file.read_text, encoding="utf-8")
-        await asyncio.to_thread(atomic_write_text, target_path, promoted_content, encoding="utf-8")
+        await asyncio.to_thread(atomic_write_text, target_path, staged_content, encoding="utf-8")
 
         logger.info("✓ Stage 5: System Verification passed & Promoted")
 
@@ -969,6 +984,25 @@ class SafeSelfModification:
 
         logger.info("✅ Successfully applied autonomous fix to %s", fix.target_file)
         return True, "Fix applied successfully"
+
+    async def _run_promotion_harness(
+        self,
+        target_rel: str,
+        staged_content: str,
+    ) -> tuple[bool, str]:
+        """Validate the exact staged bytes before live source promotion."""
+        try:
+            result = await SafeModificationHarness(self.code_base).run(
+                [target_rel],
+                patch_content={target_rel: staged_content},
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("safe_modification", exc)
+            return False, f"harness execution failed: {exc}"
+
+        if result.passed:
+            return True, result.summary()
+        return False, "; ".join(result.errors) or result.summary()
 
     async def _apply_code_change(self, fix) -> bool:
         """Actually modify the file using robust line-based patching (Async)."""

@@ -415,6 +415,7 @@ async def test_safe_modification_commits_after_repair_lab_quarantine_promotion(
     safe_mod.git = Git()
     safe_mod.boot_validator = SimpleNamespace(validate_boot=validate_boot)
     safe_mod.modification_log = tmp_path / "modifications.jsonl"
+    safe_mod._run_promotion_harness = _AsyncCallRecorder(result=(True, "harness ok"))
 
     async def full_suite():
         assert target.read_text(encoding="utf-8") == "value = 1\n"
@@ -613,6 +614,7 @@ async def test_safe_modification_blocks_no_branch_promotion_without_supervision(
         validate_boot=_AsyncCallRecorder(result=(True, "ok"))
     )
     safe_mod.modification_log = tmp_path / "modifications.jsonl"
+    safe_mod._run_promotion_harness = _AsyncCallRecorder(result=(True, "harness ok"))
 
     safe_mod._run_full_test_suite = _AsyncCallRecorder(
         side_effect=AssertionError("branch policy must block before suite execution")
@@ -682,6 +684,7 @@ async def test_safe_modification_allows_supervised_no_branch_promotion(
         validate_boot=_AsyncCallRecorder(result=(True, "ok"))
     )
     safe_mod.modification_log = tmp_path / "modifications.jsonl"
+    safe_mod._run_promotion_harness = _AsyncCallRecorder(result=(True, "harness ok"))
     safe_mod._run_full_test_suite = _AsyncCallRecorder(result=True)
 
     fix = SimpleNamespace(
@@ -711,6 +714,84 @@ async def test_safe_modification_allows_supervised_no_branch_promotion(
 
     assert (success, message) == (True, "Fix applied successfully")
     assert target.read_text(encoding="utf-8") == "value = 2\n"
+
+
+@pytest.mark.asyncio
+async def test_safe_modification_internal_harness_vetoes_caller_claimed_success(
+    tmp_path, monkeypatch
+):
+    _enable_repair_lab_profile(monkeypatch)
+    target = tmp_path / "core" / "example.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    class Backup:
+        def create_backup(self, _path):
+            return "backup-id"
+
+    class Git:
+        async def create_branch(self, _branch_name):
+            return True
+
+        async def checkout_main(self):
+            return True
+
+        async def delete_branch(self, _branch_name):
+            return True
+
+    safe_mod = SafeSelfModification.__new__(SafeSelfModification)
+    safe_mod.code_base = tmp_path
+    safe_mod.staging_dir = tmp_path / ".aura-staging"
+    safe_mod.staging_dir.mkdir()
+    safe_mod.stats = {
+        "total_attempts": 0,
+        "successful": 0,
+        "failed": 0,
+        "rolled_back": 0,
+        "blocked_by_policy": 0,
+    }
+    safe_mod.event_bus = None
+    safe_mod.backup = Backup()
+    safe_mod.git = Git()
+    safe_mod.boot_validator = SimpleNamespace(
+        validate_boot=_AsyncCallRecorder(result=(True, "ok"))
+    )
+    safe_mod.modification_log = tmp_path / "modifications.jsonl"
+    safe_mod._run_promotion_harness = _AsyncCallRecorder(
+        result=(False, "related tests missing")
+    )
+    safe_mod._run_full_test_suite = _AsyncCallRecorder(
+        side_effect=AssertionError("internal harness must block before full suite")
+    )
+
+    fix = SimpleNamespace(
+        target_file="core/example.py",
+        target_line=1,
+        original_code="value = 1\n",
+        fixed_code="value = 2\n",
+        explanation="raise value",
+        risk_level=1,
+        lines_changed=1,
+    )
+
+    success, message = await safe_mod.apply_fix(
+        fix,
+        {
+            "success": True,
+            "validation": "safe_modification_harness",
+            "command": "pytest tests/test_example.py",
+            "validated_files": ["core/example.py"],
+            "syntax_test": True,
+            "import_test": True,
+            "integrity_check": True,
+            "unit_tests": True,
+        },
+    )
+
+    assert success is False
+    assert "Safe modification harness failed" in message
+    assert "related tests missing" in message
+    assert target.read_text(encoding="utf-8") == "value = 1\n"
 
 
 def test_safe_modification_static_validation_excludes_generated_artifacts(tmp_path):
