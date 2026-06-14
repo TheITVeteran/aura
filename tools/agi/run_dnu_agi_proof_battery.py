@@ -3141,7 +3141,27 @@ async def main():
             append_jsonl(resource_trace_file, task_resource_snapshot)
             task_health_blockers = proof_runtime_health_blockers(task_resource_snapshot)
             if task_health_blockers:
-                print("  [FATAL] Proof runtime health failed during task execution:")
+                # Give a TRANSIENT runtime degradation its designed recovery
+                # window before failing the entire battery. A single hard/empty
+                # generation can trip the Cortex circuit breaker
+                # (client_returned_no_text) → inference probe momentarily
+                # critical; the circuit is built to go half-open→closed and the
+                # lane re-arms. An unanswerable hard task is a per-task failure
+                # (already graded), not a dead runtime. Only FATAL if health
+                # stays critical after the recovery window.
+                recovery_snapshot, task_health_blockers = await wait_for_proof_runtime_health(
+                    label="post_task_health_recovery",
+                    task_index=i,
+                    task_id=tid,
+                    timeout_s=float(
+                        os.environ.get("AURA_DNU_POST_TASK_HEALTH_RECOVERY_S", "")
+                        or 90.0
+                    ),
+                )
+                if isinstance(recovery_snapshot, dict) and recovery_snapshot:
+                    append_jsonl(resource_trace_file, recovery_snapshot)
+            if task_health_blockers:
+                print("  [FATAL] Proof runtime health failed during task execution (after recovery window):")
                 for blocker in task_health_blockers:
                     print(f"    - {blocker}")
                 await shutdown_proof_runtime(orch)
