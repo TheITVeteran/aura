@@ -1199,6 +1199,16 @@ async def recycle_proof_model_lane(
         if not callable(warmup):
             warmup = getattr(recycled_candidate, "warm_up", None)
         if callable(warmup):
+            # A recycle REPLACES a dead lane — the rewarm reloads the SAME model
+            # the just-aborted worker freed, so it is not net-additive memory.
+            # The RAM-protection warmup deferral, however, samples the
+            # about-to-be-replaced worker's RSS and defers ("⏸️ Warmup deferred
+            # to protect RAM"), leaving the lane cold →
+            # recycled_model_lane_not_live_after_warmup. Force the warmup through
+            # for the duration of THIS recycle only, then restore the env.
+            _force_key = "AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE"
+            _force_prev = os.environ.get(_force_key)
+            os.environ[_force_key] = "1"
             try:
                 try:
                     warmup_result = warmup(
@@ -1218,6 +1228,11 @@ async def recycle_proof_model_lane(
                 )
                 append_jsonl(lifecycle_path, event)
                 return event
+            finally:
+                if _force_prev is None:
+                    os.environ.pop(_force_key, None)
+                else:
+                    os.environ[_force_key] = _force_prev
         live_check = getattr(recycled_candidate, "is_alive", None)
         lane_live = bool(callable(live_check) and live_check())
         if not lane_live:
