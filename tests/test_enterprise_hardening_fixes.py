@@ -2057,7 +2057,14 @@ def test_startup_optional_webrtcvad_probe_suppresses_known_dependency_warning(mo
             )
         return object()
 
+    def find_spec(name):
+        if name == "webrtcvad":
+            return object()
+        return original_find_spec(name)
+
+    original_find_spec = validator_module.importlib.util.find_spec
     monkeypatch.setattr(validator_module.importlib, "import_module", import_module)
+    monkeypatch.setattr(validator_module.importlib.util, "find_spec", find_spec)
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -2065,6 +2072,26 @@ def test_startup_optional_webrtcvad_probe_suppresses_known_dependency_warning(mo
 
     assert any(result.name == "Optional: webrtcvad" and result.passed for result in results)
     assert caught == []
+
+
+def test_startup_optional_webrtcvad_probe_warns_when_absent(monkeypatch):
+    import core.startup.validator as validator_module
+
+    original_find_spec = validator_module.importlib.util.find_spec
+
+    def find_spec(name):
+        if name == "webrtcvad":
+            return None
+        return original_find_spec(name)
+
+    monkeypatch.setattr(validator_module.importlib.util, "find_spec", find_spec)
+
+    results = validator_module.check_optional_packages()
+
+    webrtcvad = next(result for result in results if result.name == "Optional: webrtcvad")
+    assert webrtcvad.passed is False
+    assert webrtcvad.severity == "warn"
+    assert "Voice activity detection unavailable" in webrtcvad.message
 
 
 def test_structured_evaluation_floor_handles_bounded_planning_prompts():
