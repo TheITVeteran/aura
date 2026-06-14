@@ -2408,11 +2408,19 @@ async def _run_cognitive_engine_chat_turn(
                 timeout=operation_timeout,
             )
 
-        attempts = 1
+        attempts = 2 if require_engine else 1
+        deadline = time.monotonic() + max(0.1, float(operation_timeout))
         last_error: BaseException | None = None
         for attempt in range(1, attempts + 1):
             try:
-                return await asyncio.wait_for(operation(), timeout=operation_timeout)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError()
+                if attempt < attempts:
+                    attempt_timeout = max(2.0, min(remaining, float(operation_timeout) * 0.55))
+                else:
+                    attempt_timeout = remaining
+                return await asyncio.wait_for(operation(), timeout=attempt_timeout)
             except TimeoutError:
                 raise
             except _CHAT_RECOVERABLE_ERRORS as exc:

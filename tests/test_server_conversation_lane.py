@@ -3096,6 +3096,68 @@ async def test_desktop_required_cognitive_engine_timeout_does_not_retry_hidden_w
 
 
 @pytest.mark.asyncio
+async def test_desktop_required_cognitive_engine_retries_transient_engine_error_same_path(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "timeout_s": kwargs.get("timeout_s"),
+                }
+            )
+            if len(calls) == 1:
+                raise RuntimeError("transient live cognitive turn reset")
+            return SimpleNamespace(
+                content=(
+                    "Reliable desktop chat has to recover from a transient engine reset without "
+                    "leaving the governed CognitiveEngine path."
+                )
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, *_args, **_kwargs):
+            calls.append({"unexpected_pool_retry": True})
+            return SimpleNamespace(content="unexpected pool retry")
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "Answer directly about reliable desktop chat recovery.",
+        visible_user_message="Answer directly about reliable desktop chat recovery.",
+        origin="user",
+        timeout_s=12.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply
+    assert "transient engine reset" in reply
+    assert "CognitiveEngine path" in reply
+    assert len(calls) == 2
+    assert not any(call.get("unexpected_pool_retry") for call in calls)
+    assert all(call["context"]["desktop_cognitive_engine_required"] is True for call in calls)
+
+
+@pytest.mark.asyncio
 async def test_desktop_cognitive_engine_keeps_preflight_context_out_of_objective(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
