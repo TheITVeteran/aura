@@ -976,6 +976,14 @@ class DesktopTaskSkill(BaseSkill):
             if not isinstance(seconds, int | float):
                 return False, "missing wait duration evidence"
             return True, f"seconds={seconds}"
+        if action == "run_applescript":
+            script_result = str(result.get("result") or result.get("output") or "").strip()
+            verification = str(result.get("verification") or "").strip()
+            verified = bool(result.get("effect_verified")) or bool(script_result) or bool(verification)
+            if not verified:
+                return False, "missing AppleScript result evidence"
+            evidence = verification or f"result={script_result[:160]}"
+            return True, evidence
         if action == "type":
             verification = str(result.get("verification") or "").strip()
             typed = str(result.get("typed") or "").strip()

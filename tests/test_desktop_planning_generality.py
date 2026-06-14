@@ -64,7 +64,12 @@ class _GovernedEngineDouble:
         if action == "set_clipboard":
             return {"ok": True, "chars": len(str(parsed.get("text") or target))}
         if action == "hotkey":
-            return {"ok": True, "hotkey": target}
+            return {
+                "ok": True,
+                "hotkey": target,
+                "effect_verified": True,
+                "verification": f"state shifted after {target}",
+            }
         if action == "wait":
             return {"ok": True, "seconds": float(parsed.get("seconds") or 1)}
         if action == "read_screen_text":
