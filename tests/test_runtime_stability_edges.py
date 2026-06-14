@@ -300,6 +300,11 @@ class TestMLXCompatibility(unittest.IsolatedAsyncioTestCase):
         client._last_token_progress_at = now
         client._last_ready_at = now
         client._last_generation_completed_at = now
+        # A primary/deep lane is only "conversation ready" once it has proven a
+        # user-facing turn can complete (visible_conversation_probe). Stamp the
+        # visible-readiness anchors so this helper models a TRULY ready client.
+        client._last_visible_readiness_at = now
+        client._last_user_facing_completed_at = now
         return client
 
     async def test_warm_up_alias_delegates_to_warmup(self):
