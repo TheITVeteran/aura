@@ -65,6 +65,23 @@ _TASK_HUNG_SECONDS = 90.0
 # Minimum stall length to trigger active recovery. Below this, we just log.
 _ACTIVE_RECOVERY_THRESHOLD = 30.0
 
+# Absolute ceiling on CONTINUOUS event-loop unresponsiveness, immune to all
+# stall suppression. A healthy runtime runs the watchdog heartbeat every
+# second even during long generations (those run off the loop), so the loop
+# only goes silent this long when it is genuinely wedged. Observed live: a
+# steered 32B generation triggered a Metal GPU command-buffer hang that
+# deadlocked every thread (all parked on a Metal semaphore) — the event loop
+# died, in-process "active recovery" could not run (it schedules onto the dead
+# loop), and even SIGTERM could not shut down. In-process recovery of a shared
+# GPU-context deadlock is impossible, so the out-of-band watchdog thread — the
+# only code still running — force-exits the process. The launchd KeepAlive
+# supervisor (tools/install_supervisor.sh) restarts within ~15s with continuity
+# from the periodic state-vault snapshots. 0 disables the ceiling.
+_LOOP_WEDGE_HARD_EXIT_S = 150.0
+# Distinct from memory_watchdog's categorized exit (70). Non-zero ⇒ the
+# supervisor's KeepAlive/SuccessfulExit=false restarts the runtime.
+_LOOP_WEDGE_EXIT_CODE = 71
+
 
 class StallWatchdog(threading.Thread):
     """Monitor thread that tracks event loop responsiveness."""
@@ -79,6 +96,12 @@ class StallWatchdog(threading.Thread):
         self._task_birth: dict[int, float] = {}
         self._consecutive_long_stalls: int = 0
         self._started_at: float = time.time()
+        # Source of truth for "the loop actually ran a callback", updated ONLY
+        # by _heartbeat (never by stall suppression). The suppression paths
+        # reset _last_heartbeat to silence expected warmup/foreground stalls,
+        # which would otherwise mask a genuinely wedged loop forever — so the
+        # absolute hard-exit ceiling keys off this independent timestamp.
+        self._last_loop_run: float = time.time()
         self._diagnostic_only_notice_logged: bool = False
         self._last_boot_suppression_log_at: float = 0.0
         self._last_foreground_suppression_log_at: float = 0.0
@@ -124,6 +147,16 @@ class StallWatchdog(threading.Thread):
 
             time.sleep(1.0)  # Check every second
 
+            # Absolute loop-liveness ceiling — checked FIRST and immune to all
+            # stall suppression. _last_loop_run is advanced only when the loop
+            # actually executes the heartbeat callback, so this measures true
+            # loop death (e.g. a Metal GPU deadlock) that suppression would
+            # otherwise hide. If the loop is wedged beyond any in-process
+            # recovery, hard-exit so the supervisor restarts the runtime.
+            loop_silence = time.time() - self._last_loop_run
+            if self._should_force_exit(loop_silence):
+                self._force_exit_for_restart(loop_silence)
+
             # Check for stall
             elapsed = time.time() - self._last_heartbeat
             if elapsed > self.threshold:
@@ -146,7 +179,11 @@ class StallWatchdog(threading.Thread):
         self._stop_event.set()
 
     def _heartbeat(self):
-        self._last_heartbeat = time.time()
+        now = time.time()
+        self._last_heartbeat = now
+        # Independent liveness proof for the hard-exit ceiling: this only runs
+        # when the loop is genuinely alive, and nothing else writes it.
+        self._last_loop_run = now
         # Track task ages so a future stall can pick out which ones look hung.
         # This runs on the loop thread — cheap and safe.
         try:
@@ -170,6 +207,77 @@ class StallWatchdog(threading.Thread):
                 extra={"stage": "task_age_bookkeeping"},
             )
             logger.debug("Task age bookkeeping failed: %s", exc)
+
+    @staticmethod
+    def _hard_exit_ceiling_s() -> float:
+        try:
+            return float(
+                os.getenv("AURA_WATCHDOG_HARD_EXIT_S", str(_LOOP_WEDGE_HARD_EXIT_S))
+                or _LOOP_WEDGE_HARD_EXIT_S
+            )
+        except (TypeError, ValueError):
+            return _LOOP_WEDGE_HARD_EXIT_S
+
+    @staticmethod
+    def _hard_exit_code() -> int:
+        try:
+            return int(
+                os.getenv("AURA_WATCHDOG_HARD_EXIT_CODE", str(_LOOP_WEDGE_EXIT_CODE))
+                or _LOOP_WEDGE_EXIT_CODE
+            )
+        except (TypeError, ValueError):
+            return _LOOP_WEDGE_EXIT_CODE
+
+    def _should_force_exit(self, loop_silence: float) -> bool:
+        """True when the loop is wedged beyond any in-process recovery.
+
+        Immune to stall suppression by design: this is the last-resort ceiling
+        for a genuinely dead loop (e.g. a Metal GPU deadlock). The only thing
+        we honor is an intentional shutdown, when the loop stops on purpose.
+        """
+        ceiling = self._hard_exit_ceiling_s()
+        if ceiling <= 0 or loop_silence < ceiling:
+            return False
+        try:
+            from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+            if is_shutdown_requested():
+                return False
+        except (ImportError, RuntimeError):
+            pass
+        return True
+
+    def _force_exit_for_restart(self, loop_silence: float) -> None:
+        """Hard-exit a wedged process so the supervisor restarts it.
+
+        Runs on the out-of-band watchdog thread — the only code still alive
+        when the loop is deadlocked. Dumps thread stacks via low-level
+        faulthandler to a raw fd (never through app locks/gateways the wedge
+        may be holding), then exits immediately with a non-zero code. No
+        logging.shutdown()/handler flush: those can block under a wedge (the
+        lesson from the 115GB crash where the lethal path never reached exit).
+        """
+        logger.critical(
+            "🛑 [WATCHDOG] Event loop unresponsive %.0fs ≥ hard ceiling — wedged beyond "
+            "in-process recovery; forcing process exit %d for supervisor restart.",
+            loop_silence,
+            self._hard_exit_code(),
+        )
+        try:
+            import faulthandler
+
+            crash_dir = Path("data/error_logs/crash")
+            crash_dir.mkdir(parents=True, exist_ok=True)
+            with open(crash_dir / "loop_wedge_stacks.log", "a") as fh:
+                fh.write(
+                    f"\n===== LOOP WEDGE pid={os.getpid()} "
+                    f"silence={loop_silence:.1f}s at={time.time()} =====\n"
+                )
+                fh.flush()
+                faulthandler.dump_traceback(file=fh, all_threads=True)
+        except (OSError, ValueError, RuntimeError) as exc:
+            logger.debug("Loop-wedge stack dump failed: %s", exc)
+        os._exit(self._hard_exit_code())
 
     def _should_suppress_stall(self, elapsed: float) -> bool:
         """Suppress expected launch/shutdown stalls without hiding live hangs."""
