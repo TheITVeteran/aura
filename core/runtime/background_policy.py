@@ -8,8 +8,6 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-import psutil
-
 from core.health.degraded_events import get_unified_failure_state
 
 logger = logging.getLogger(__name__)
@@ -263,8 +261,18 @@ def constitutive_compute_budget(
         reason = foreground_reason
 
     try:
-        memory_percent = float(psutil.virtual_memory().percent)
-        if memory_percent >= float(memory_critical_percent):
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        memory = get_memory_pressure_snapshot()
+        memory_percent = float(memory.pressure_pct)
+        memory_reason = str(memory.reason or f"memory_pressure_{memory_percent:.1f}")
+        if memory.refuse_heavy_local_generation:
+            effective = min(
+                effective,
+                _bounded_hz(memory_critical_hz, lower=floor, upper=base),
+            )
+            reason = memory_reason
+        elif memory_percent >= float(memory_critical_percent):
             effective = min(
                 effective,
                 _bounded_hz(memory_critical_hz, lower=floor, upper=base),
@@ -273,7 +281,7 @@ def constitutive_compute_budget(
         elif memory_percent >= float(memory_high_percent):
             effective = min(effective, _bounded_hz(memory_high_hz, lower=floor, upper=base))
             reason = f"memory_pressure_{memory_percent:.1f}"
-    except (ImportError, OSError, AttributeError) as _exc:
+    except (ImportError, OSError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
         record_degradation(
             "background_policy",
             _exc,
@@ -496,10 +504,15 @@ def background_activity_reason(
             return f"recent_user_{int(now - last_user)}"
 
     try:
-        memory_pct = float(psutil.virtual_memory().percent)
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        memory = get_memory_pressure_snapshot()
+        memory_pct = float(memory.pressure_pct)
+        if bool(memory.refuse_heavy_local_generation):
+            return str(memory.reason or f"memory_pressure_guard_{memory_pct:.1f}")
         if memory_pct >= max_memory_percent:
             return f"memory_pressure_{memory_pct:.1f}"
-    except (ImportError, OSError, AttributeError) as _exc:
+    except (ImportError, OSError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
         record_degradation(
             "background_policy",
             _exc,

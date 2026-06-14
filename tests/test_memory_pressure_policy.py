@@ -138,6 +138,60 @@ def test_memory_pressure_snapshot_uses_darwin_footprint_when_larger_than_rss(mon
     assert "process_tree_rss:21.0GB/18.0GB" in snapshot.reason
 
 
+def test_background_policy_blocks_on_process_tree_rss_even_when_system_memory_is_low(
+    monkeypatch,
+):
+    import core.runtime.background_policy as background_policy
+    import core.utils.memory_monitor as memory_monitor
+
+    monkeypatch.setattr(
+        memory_monitor.psutil,
+        "virtual_memory",
+        lambda: _vm(total_gb=64.0, available_gb=28.0, percent=56.0),
+    )
+    monkeypatch.setenv("AURA_PROCESS_RSS_LIMIT_GB", "18")
+    _patch_process_rss(monkeypatch, memory_monitor, 20.0)
+    monkeypatch.setattr(background_policy, "_foreground_activity_reason", lambda: "")
+    monkeypatch.setattr(
+        background_policy,
+        "get_unified_failure_state",
+        lambda: {"pressure": 0.0},
+    )
+
+    reason = background_policy.background_activity_reason(allow_no_user_anchor=True)
+
+    assert reason.startswith("process_tree_rss:20.0GB/18.0GB")
+
+
+def test_constitutive_compute_budget_throttles_on_process_tree_rss_pressure(monkeypatch):
+    import core.runtime.background_policy as background_policy
+    import core.utils.memory_monitor as memory_monitor
+
+    monkeypatch.setattr(
+        memory_monitor.psutil,
+        "virtual_memory",
+        lambda: _vm(total_gb=64.0, available_gb=28.0, percent=56.0),
+    )
+    monkeypatch.setenv("AURA_PROCESS_RSS_LIMIT_GB", "18")
+    _patch_process_rss(monkeypatch, memory_monitor, 20.0)
+    monkeypatch.setattr(background_policy, "_foreground_activity_reason", lambda: "")
+    monkeypatch.setattr(
+        background_policy,
+        "get_unified_failure_state",
+        lambda: {"pressure": 0.0},
+    )
+
+    budget = background_policy.constitutive_compute_budget(
+        "liquid_substrate",
+        60.0,
+        min_hz=0.5,
+        memory_critical_hz=0.5,
+    )
+
+    assert budget.effective_hz == pytest.approx(0.5)
+    assert budget.reason.startswith("process_tree_rss:20.0GB/18.0GB")
+
+
 @pytest.mark.asyncio
 async def test_mlx_client_refuses_heavy_generation_under_emergency_memory(monkeypatch):
     import core.utils.memory_monitor as memory_monitor
