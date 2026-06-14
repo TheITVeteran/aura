@@ -7720,7 +7720,12 @@ async def api_chat_regenerate(
                 return JSONResponse({"error": "offline", "message": "Cognitive engine offline."}, status_code=503)
             reply_text = await orch.process_user_input_priority(user_msg, origin="user", timeout_sec=foreground_timeout)
 
-        reply_text = await _stabilize_user_facing_reply(user_msg, reply_text)
+        reply_text = await _stabilize_user_facing_reply(
+            user_msg,
+            reply_text,
+            desktop_cognitive_engine_required=desktop_requires_cognitive_engine,
+            protected_foreground_lane=desktop_requires_cognitive_engine,
+        )
         response_data = {"response": reply_text or "…", "regenerated": True}
 
         async with _get_convo_lock():
@@ -8481,7 +8486,11 @@ async def api_chat(
             if not direct_reply or not str(direct_reply).strip():
                 return None
 
-            stabilized = await _stabilize_user_facing_reply(_semantic_user_message, str(direct_reply).strip())
+            stabilized = await _stabilize_user_facing_reply(
+                _semantic_user_message,
+                str(direct_reply).strip(),
+                protected_foreground_lane=True,
+            )
             recent_user_messages = await _gather_recent_user_messages_for_relevance(_semantic_user_message)
             is_stale = _is_stale_repeated_response(stabilized)
             is_same_diff = _is_same_answer_different_prompt(_semantic_user_message, stabilized)
@@ -9279,7 +9288,12 @@ async def api_chat(
             )
             return JSONResponse(response_data)
 
-        reply_text = await _stabilize_user_facing_reply(_semantic_user_message, reply_text)
+        reply_text = await _stabilize_user_facing_reply(
+            _semantic_user_message,
+            reply_text,
+            desktop_cognitive_engine_required=desktop_requires_cognitive_engine,
+            protected_foreground_lane=desktop_requires_cognitive_engine,
+        )
         if allow_chat_fastpaths and _capability_inventory_reply_is_inadequate(
             _semantic_user_message,
             reply_text,

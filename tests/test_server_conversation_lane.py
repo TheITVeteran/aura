@@ -3350,6 +3350,12 @@ async def test_api_chat_desktop_surface_uses_direct_cognitive_engine_when_pool_u
     async def _fake_output_receipt(*_args, **_kwargs):
         return None
 
+    stabilize_calls = []
+
+    async def _fake_stabilize(_message, reply, **kwargs):
+        stabilize_calls.append(kwargs)
+        return reply
+
     def _fake_get(name, default=None):
         if name == "cognitive_engine":
             return _FakeCognitiveEngine()
@@ -3360,6 +3366,7 @@ async def test_api_chat_desktop_surface_uses_direct_cognitive_engine_when_pool_u
     monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
     monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_stabilize_user_facing_reply", _fake_stabilize)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
     monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _FailingPool())
     monkeypatch.setattr(
@@ -3406,6 +3413,9 @@ async def test_api_chat_desktop_surface_uses_direct_cognitive_engine_when_pool_u
     assert response.status_code == 200
     assert b"desktop CognitiveEngine path" in response.body
     assert calls == ["pool_acquire_failed", "engine_think"]
+    assert stabilize_calls
+    assert stabilize_calls[-1]["desktop_cognitive_engine_required"] is True
+    assert stabilize_calls[-1]["protected_foreground_lane"] is True
 
 
 def test_desktop_static_chat_requests_require_cognitive_engine():
@@ -3521,6 +3531,64 @@ async def test_api_chat_regenerate_desktop_requires_cognitive_engine(monkeypatch
     assert b"desktop_cognitive_engine_unavailable" in response.body
     assert kernel_calls == []
     assert orchestrator_calls == []
+
+
+@pytest.mark.asyncio
+async def test_api_chat_regenerate_desktop_stabilizer_keeps_protected_flags(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    stabilize_calls = []
+
+    async def _fake_cognitive_turn(*_args, **_kwargs):
+        return "Regenerated through the protected desktop CognitiveEngine path."
+
+    async def _fake_stabilize(_message, reply, **kwargs):
+        stabilize_calls.append(kwargs)
+        return reply
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_stabilize_user_facing_reply", _fake_stabilize)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.append(
+            {
+                "id": "regen-2",
+                "user": "Please regenerate the desktop answer.",
+                "aura": "Previous answer.",
+                "status": "complete",
+            }
+        )
+
+    response = await chat_routes.api_chat_regenerate(
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+            url=SimpleNamespace(scheme="http"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 200
+    assert b"protected desktop CognitiveEngine path" in response.body
+    assert stabilize_calls
+    assert stabilize_calls[-1]["desktop_cognitive_engine_required"] is True
+    assert stabilize_calls[-1]["protected_foreground_lane"] is True
 
 
 @pytest.mark.asyncio
@@ -4283,13 +4351,19 @@ async def test_api_chat_uses_protected_foreground_lane_when_kernel_lock_is_held(
             raise AssertionError("Kernel should be bypassed when the protected foreground lane is engaged")
 
     gate = _FakeGate()
+    stabilize_calls = []
+
+    async def _fake_stabilize(_message, reply, **kwargs):
+        stabilize_calls.append(kwargs)
+        return reply
+
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_log_exchange", AsyncCallFixture())
     monkeypatch.setattr(
         chat_routes,
         "_stabilize_user_facing_reply",
-        AsyncCallFixture(side_effect=lambda _message, reply: reply),
+        _fake_stabilize,
     )
     monkeypatch.setattr(
         chat_routes,
@@ -4328,6 +4402,8 @@ async def test_api_chat_uses_protected_foreground_lane_when_kernel_lock_is_held(
     assert gate_calls[0]["context"]["protected_foreground_lane"] is True
     assert gate_calls[0]["context"]["prefer_tier"] == "primary"
     assert gate_calls[0]["context"]["deep_handoff"] is False
+    assert stabilize_calls
+    assert stabilize_calls[0]["protected_foreground_lane"] is True
 
 
 @pytest.mark.asyncio
@@ -4407,13 +4483,19 @@ async def test_api_chat_keeps_protected_foreground_deep_prompts_on_primary_lane(
             raise AssertionError("Kernel should be bypassed when the protected deep lane is engaged")
 
     gate = _FakeGate()
+    stabilize_calls = []
+
+    async def _fake_stabilize(_message, reply, **kwargs):
+        stabilize_calls.append(kwargs)
+        return reply
+
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_log_exchange", AsyncCallFixture())
     monkeypatch.setattr(
         chat_routes,
         "_stabilize_user_facing_reply",
-        AsyncCallFixture(side_effect=lambda _message, reply: reply),
+        _fake_stabilize,
     )
     monkeypatch.setattr(
         chat_routes,
@@ -4454,6 +4536,8 @@ async def test_api_chat_keeps_protected_foreground_deep_prompts_on_primary_lane(
     assert gate_calls[0]["context"]["protected_foreground_lane"] is True
     assert gate_calls[0]["context"]["prefer_tier"] == "primary"
     assert gate_calls[0]["context"]["deep_handoff"] is False
+    assert stabilize_calls
+    assert stabilize_calls[0]["protected_foreground_lane"] is True
 
 
 def test_collect_conversation_lane_status_ignores_router_foreground_override(monkeypatch):
