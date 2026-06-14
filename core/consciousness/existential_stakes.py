@@ -25,6 +25,15 @@ from core.container import ServiceContainer
 logger = logging.getLogger("Consciousness.ExistentialStakes")
 
 DEFAULT_MEMORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB default limit
+
+# Ceiling on how much OPERATIONAL pressure (high CPU, event-loop lag) can
+# contribute to the combined survival threat. High CPU and lag are normal
+# during heavy local generation — a busy machine is not a dying one — so they
+# must never alone reach the will-system's survival-inhibition veto threshold
+# (will.py: threat > 0.75), which would block Aura's own actions whenever it is
+# working hard. Genuine death risk (memory exhaustion → OOM, degradation
+# cascades) is uncapped and can still reach 1.0. Kept just below the veto line.
+OPERATIONAL_THREAT_CAP = 0.70
 _EXISTENTIAL_STAKES_RECOVERABLE_ERRORS = (
     AttributeError,
     LookupError,
@@ -124,13 +133,25 @@ class ExistentialStakes:
             # 5 recent degradations/exceptions in a minute is high threat
             self._degradation_threat = min(1.0, recent_degradations / 5.0)
 
-            # Combined Threat: Maximum of any single critical factor (survival exclusion postulate)
-            self._threat = max(
-                self._memory_threat,
-                self._lag_threat,
-                self._cpu_threat,
-                self._degradation_threat,
+            # Combined Threat. Distinguish SURVIVAL pressure (genuine death
+            # risk) from OPERATIONAL pressure (busy/laggy but not dying):
+            #   - memory exhaustion → OOM kill (the 110GB incident) and
+            #     degradation cascades are real survival threats; uncapped, they
+            #     may reach 1.0 and trigger the will-system's survival veto.
+            #   - high CPU and event-loop lag are NORMAL during heavy 32B
+            #     generation. Treating them as maximal survival threat made the
+            #     will-veto block Aura's own actions whenever it worked hard
+            #     (observed: continual-learning battery blocked at threat=1.00
+            #     under load). Operational pressure still raises the felt threat
+            #     so survival perception isn't blind, but it is capped BELOW the
+            #     veto threshold so load alone can never inhibit action. Loop
+            #     wedges are owned by the StallWatchdog, not this veto.
+            survival_pressure = max(self._memory_threat, self._degradation_threat)
+            operational_pressure = min(
+                OPERATIONAL_THREAT_CAP,
+                max(self._lag_threat, self._cpu_threat),
             )
+            self._threat = max(survival_pressure, operational_pressure)
 
             # Log critical warning if threat is high
             if self._threat > 0.75:

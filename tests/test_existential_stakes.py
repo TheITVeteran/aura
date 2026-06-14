@@ -169,3 +169,43 @@ def test_explicit_env_override_sets_memory_limit(monkeypatch):
     stakes = es.get_existential_stakes()
 
     assert stakes._memory_limit == int(48 * (1024 ** 3))
+
+
+def test_operational_load_cannot_trigger_survival_veto():
+    """High CPU/lag with healthy memory must stay below the will-veto line.
+
+    Regression for the continual-learning battery blocking at threat=1.00:
+    heavy 32B generation pegs CPU and event-loop lag, but a busy machine is not
+    a dying one. Operational pressure is capped below 0.75 so survival
+    inhibition only fires on genuine death risk (memory/degradation).
+    """
+    from core.consciousness.existential_stakes import (
+        OPERATIONAL_THREAT_CAP,
+        ExistentialStakes,
+    )
+
+    stakes = ExistentialStakes(memory_limit_bytes=10**12)  # memory threat ~0
+    # Force maximal operational pressure directly.
+    with stakes._lock:
+        stakes._memory_threat = 0.02
+        stakes._lag_threat = 1.0
+        stakes._cpu_threat = 1.0
+        stakes._degradation_threat = 0.0
+        stakes._threat = max(
+            max(stakes._memory_threat, stakes._degradation_threat),
+            min(OPERATIONAL_THREAT_CAP, max(stakes._lag_threat, stakes._cpu_threat)),
+        )
+
+    threat = stakes.get_existential_threat()
+    assert threat == OPERATIONAL_THREAT_CAP
+    assert threat <= 0.70
+    assert threat < 0.75  # the will-system survival-inhibition veto threshold
+
+
+def test_memory_death_risk_still_reaches_critical():
+    """Genuine death risk (memory) is uncapped and still triggers the veto."""
+    from core.consciousness.existential_stakes import ExistentialStakes
+
+    stakes = ExistentialStakes(memory_limit_bytes=1000)  # tiny → memory_threat 1.0
+    stakes.update()
+    assert stakes.get_existential_threat() == 1.0
