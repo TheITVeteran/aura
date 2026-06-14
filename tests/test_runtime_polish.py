@@ -645,6 +645,43 @@ async def test_live_runtime_probe_checks_desktop_capability_inventory_contract()
     assert probe.messages and "do not open apps" in probe.messages[0]
 
 
+@pytest.mark.asyncio
+async def test_live_runtime_probe_checks_creative_self_reflection_contract():
+    from tools.live_runtime_probe import LiveRuntimeProbe
+
+    class Probe(LiveRuntimeProbe):
+        def __init__(self):
+            super().__init__("http://127.0.0.1:8000", max_rss_mb=32000)
+            self.messages: list[str] = []
+
+        def _aura_rss_mb(self) -> float:
+            return 2048.0
+
+        async def _desktop_chat(self, message: str, *, timeout_s: float = 45.0):
+            self.messages.append(message)
+            return {
+                "status": "cognitive_engine",
+                "response_confidence": "high",
+                "response": (
+                    "As a private mental model, I would picture my current architecture "
+                    "as an internal workspace with attention, memory, and governance "
+                    "pressures visible. That model changes the next answer by making me "
+                    "check assumptions before acting and route external claims through "
+                    "governed verification. It is not proof of consciousness or external "
+                    "perception."
+                ),
+            }
+
+    probe = Probe()
+
+    detail, data = await probe._chat_creative_self_reflection()
+
+    assert "creative self-reflection" in detail
+    assert data["status"] == "cognitive_engine"
+    assert data["rss_delta_mb"] == 0.0
+    assert probe.messages and "private mental model" in probe.messages[0]
+
+
 def test_input_bus_normalizes_external_priority_values():
     bus = InputBus(maxsize=4)
     try:
