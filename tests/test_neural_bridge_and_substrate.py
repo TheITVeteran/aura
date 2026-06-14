@@ -82,3 +82,31 @@ def test_substrate_default_dim_uses_env(monkeypatch):
     assert substrate.SubstrateConfig().neuron_count == 4096
     monkeypatch.setenv("AURA_SUBSTRATE_DIM", "bad")
     assert substrate.SubstrateConfig().neuron_count == 512
+
+
+def test_neural_broadcast_backpressure_clears_inflight():
+    """Telemetry broadcasts are bounded to one in flight: the result handler
+    clears the tracker so the next tick can publish again. Under load this
+    drops piled-up broadcasts that backed the LocalPipeBus into event-loop
+    lag + 'transport is saturated' (which once wedged a battery)."""
+    import concurrent.futures
+
+    from core.senses.neural_bridge import NeuralBridge
+
+    bridge = NeuralBridge(lightweight_mode=True)
+    assert bridge._inflight_broadcast is None  # initialized
+
+    fut: concurrent.futures.Future = concurrent.futures.Future()
+    bridge._inflight_broadcast = fut
+    fut.set_result(None)
+    # Handler for the matching future clears the in-flight slot.
+    bridge._handle_broadcast_result(fut)
+    assert bridge._inflight_broadcast is None
+
+    # A stale future (not the current in-flight one) must not clear a newer slot.
+    newer: concurrent.futures.Future = concurrent.futures.Future()
+    bridge._inflight_broadcast = newer
+    stale: concurrent.futures.Future = concurrent.futures.Future()
+    stale.set_result(None)
+    bridge._handle_broadcast_result(stale)
+    assert bridge._inflight_broadcast is newer

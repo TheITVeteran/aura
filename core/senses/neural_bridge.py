@@ -149,6 +149,13 @@ class NeuralBridge:
         self._max_consecutive_failures = 3
         self._broadcast_failures = 0
         self._max_broadcast_failures = 3
+        # Backpressure: at most one telemetry broadcast may be in flight. If
+        # the prior publish has not drained, the main loop is saturated
+        # (heavy generation under load) — dropping this tick's broadcast
+        # keeps the loop's queue and the LocalPipeBus from backing up into
+        # event-loop lag + "transport is saturated" (a battery once wedged
+        # this way). Telemetry is lossy by nature; a dropped tick is fine.
+        self._inflight_broadcast: concurrent.futures.Future[Any] | None = None
 
         self._last_pattern: str | None = None
         self._confidence: float = 0.0
@@ -280,7 +287,11 @@ class NeuralBridge:
                     break
 
                 if _logging_streams_available():
-                    logger.info(
+                    # DEBUG, not INFO: this fires every 5-15s for the whole
+                    # process lifetime. At INFO it flooded the stdout stream
+                    # (173 lines in one battery run) — pure noise that also
+                    # adds log-pipe pressure under load.
+                    logger.debug(
                         "🧠 [NEURAL] Simulated neural telemetry: state=%s quality=%.2f entropy=%.2f novelty=%.2f bands=%s",
                         self._last_pattern,
                         self._confidence,
@@ -292,7 +303,12 @@ class NeuralBridge:
                 if self._event_bus:
                     try:
                         loop = getattr(self, "_main_loop", None)
-                        if loop and not loop.is_closed():
+                        prior = self._inflight_broadcast
+                        if prior is not None and not prior.done():
+                            # The previous publish has not drained — the loop
+                            # is backed up. Drop this tick rather than pile on.
+                            logger.debug("⚠️ [NEURAL] Prior broadcast in flight; dropping tick (backpressure).")
+                        elif loop and not loop.is_closed():
                             future = asyncio.run_coroutine_threadsafe(
                                 self._event_bus.publish(
                                     "core/senses/bci_event",
@@ -300,6 +316,7 @@ class NeuralBridge:
                                 ),
                                 loop,
                             )
+                            self._inflight_broadcast = future
                             future.add_done_callback(self._handle_broadcast_result)
                         else:
                             logger.debug("⚠️ [NEURAL] Main loop unavailable. Skipping broadcast.")
@@ -357,6 +374,8 @@ class NeuralBridge:
         }
 
     def _handle_broadcast_result(self, future: concurrent.futures.Future[Any]) -> None:
+        if future is self._inflight_broadcast:
+            self._inflight_broadcast = None
         try:
             future.result()
             self._broadcast_failures = 0
