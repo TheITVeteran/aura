@@ -98,6 +98,56 @@ def test_affective_steering_runtime_cache_is_partitioned_by_geometry():
     assert "dmodel_4096_layers_64" in str(large)
 
 
+def test_steering_vector_weight_prefers_direct_substrate_index():
+    from core.consciousness.affective_steering import SteeringVector
+
+    vector = SteeringVector(
+        key="curiosity",
+        layer_idx=1,
+        d_model=4,
+        v=np.ones(4, dtype=np.float32),
+        substrate_idx=4,
+        substrate_fn="tanh",
+    )
+    substrate = np.zeros(64, dtype=np.float32)
+    substrate[4] = 0.75
+
+    assert vector.compute_weight({"motivation": -1.0}) < 0.0
+    assert vector.compute_weight_from_state(substrate) > 0.6
+
+
+def test_substrate_sync_prefers_shared_state_vector_over_mood_projection():
+    from core.consciousness.affective_steering import SubstrateSyncThread
+
+    shared = {"state_vector": np.array([0.1, 0.2, 0.0, 0.3, 0.4], dtype=np.float32)}
+    sync = SubstrateSyncThread(hooks=[], engine=object(), shared_state=shared)
+
+    vector, source = sync._read_substrate_vector()
+
+    assert source == "shared_state"
+    assert vector is not None
+    assert np.allclose(vector, np.array([0.1, 0.2, 0.0, 0.3, 0.4], dtype=np.float32))
+
+
+def test_substrate_sync_reads_registered_liquid_substrate_vector(monkeypatch):
+    from core.container import ServiceContainer
+    from core.consciousness.affective_steering import SubstrateSyncThread
+
+    ServiceContainer.clear()
+    substrate = SimpleNamespace(get_state_vector=lambda: np.array([0.5, -0.25], dtype=np.float32))
+    ServiceContainer.register_instance("liquid_substrate", substrate)
+    try:
+        sync = SubstrateSyncThread(hooks=[], engine=object())
+
+        vector, source = sync._read_substrate_vector()
+
+        assert source == "liquid_substrate"
+        assert vector is not None
+        assert np.allclose(vector, np.array([0.5, -0.25], dtype=np.float32))
+    finally:
+        ServiceContainer.clear()
+
+
 def test_affective_steering_geometry_falls_back_to_packaged_vector_dim(
     tmp_path,
     monkeypatch,

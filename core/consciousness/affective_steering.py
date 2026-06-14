@@ -400,6 +400,17 @@ class SteeringVector:
         else:
             return float(np.tanh(raw))
 
+    def compute_weight_from_state(self, substrate_x: np.ndarray) -> float:
+        """Map the live substrate vector index directly to a steering weight."""
+        if substrate_x is None or self.substrate_idx < 0 or self.substrate_idx >= len(substrate_x):
+            return 0.0
+        raw = float(substrate_x[self.substrate_idx])
+        if not math.isfinite(raw):
+            return 0.0
+        if self.substrate_fn == "linear_half":
+            return float(np.clip(raw, -1.0, 1.0))
+        return float(np.tanh(raw))
+
     def to_dict(self) -> dict:
         return {
             "key": self.key,
@@ -1034,18 +1045,41 @@ class AffectiveSteeringHook:
         self._last_composite_np: np.ndarray | None = None
         self._cached_substrate_hash: int = 0
 
+    @staticmethod
+    def _vector_from_moods(moods: dict[str, float]) -> np.ndarray:
+        latest = {str(key): float(value) for key, value in dict(moods or {}).items()}
+        x = np.zeros(64, dtype=np.float32)
+        x[0] = float(latest.get("valence", 0.0))
+        x[1] = float(latest.get("arousal", 0.0))
+        x[3] = float(latest.get("stress", 0.0))
+        x[4] = float(latest.get("motivation", 0.0))
+        x[5] = float(latest.get("energy", 0.0))
+        return x
+
     def update_substrate(self, moods: dict[str, float]):
-        """Called by SubstrateSyncThread at ~20Hz. [OPTIMIZED]"""
+        """Called by SubstrateSyncThread at ~20Hz when only mood telemetry exists."""
+        self.update_substrate_vector(
+            self._vector_from_moods(moods),
+            moods=moods,
+            source="live_mood_projection",
+        )
+
+    def update_substrate_vector(
+        self,
+        substrate_x: np.ndarray,
+        *,
+        moods: dict[str, float] | None = None,
+        source: str = "live_substrate_vector",
+    ):
+        """Called by SubstrateSyncThread at ~20Hz with the direct substrate vector."""
         import mlx.core as mx
+        state = np.asarray(substrate_x, dtype=np.float32).reshape(-1)
+        if len(state) == 0 or not np.isfinite(state).all():
+            state = np.zeros(64, dtype=np.float32)
         with self._substrate_lock:
-            # 1. Store mood state for debugging
             self._latest_moods = {str(key): float(value) for key, value in dict(moods or {}).items()}
-            self._substrate_x = np.zeros(64, dtype=np.float32)
-            self._substrate_x[0] = float(self._latest_moods.get("valence", 0.0))
-            self._substrate_x[1] = float(self._latest_moods.get("arousal", 0.0))
-            self._substrate_x[3] = float(self._latest_moods.get("stress", 0.0))
-            self._substrate_x[4] = float(self._latest_moods.get("motivation", 0.0))
-            self._substrate_x[5] = float(self._latest_moods.get("energy", 0.0))
+            self._latest_moods["_source"] = source
+            self._substrate_x = state.copy()
             
             # 2. PRE-COMPUTE COMPOSITE ON CPU/NP (Background Thread)
             # This moves the O(dims * d_model) work out of the inference hook.
@@ -1053,7 +1087,7 @@ class AffectiveSteeringHook:
             active = False
             
             for sv in self._vectors.values():
-                weight = sv.compute_weight(moods)
+                weight = sv.compute_weight_from_state(state)
                 if abs(weight) > 0.05:
                     target_composite_np += weight * sv.v
                     active = True
@@ -1245,6 +1279,7 @@ class AffectiveSteeringHook:
             "last_injection_norm": round(self._last_injection_norm, 4),
             "last_mask_mode": self._last_mask_mode,
             "substrate_connected": x is not None,
+            "substrate_source": str(moods.get("_source", "")) if moods else None,
             "substrate_valence": round(float(moods.get("valence", 0.0)), 3) if moods else None,
             "substrate_arousal": round(float(moods.get("arousal", 0.0)), 3) if moods else None,
             "vector_sources": {key: vector.source for key, vector in self._vectors.items()},
@@ -1285,10 +1320,79 @@ class SubstrateSyncThread:
     def stop(self):
         self._running = False
 
+    @staticmethod
+    def _coerce_state_vector(value: Any) -> np.ndarray | None:
+        if value is None:
+            return None
+        try:
+            vector = np.asarray(value, dtype=np.float32).reshape(-1)
+        except (TypeError, ValueError, RuntimeError):
+            return None
+        if len(vector) == 0 or not np.isfinite(vector).all():
+            return None
+        return vector
+
+    def _read_substrate_vector(self) -> tuple[np.ndarray | None, str]:
+        candidates: list[tuple[str, Any]] = []
+        if self._shared_state is not None:
+            candidates.append(("shared_state", self._shared_state))
+        try:
+            from core.container import ServiceContainer
+
+            candidates.extend(
+                [
+                    ("liquid_substrate", ServiceContainer.get("liquid_substrate", default=None)),
+                    ("conscious_substrate", ServiceContainer.get("conscious_substrate", default=None)),
+                    ("liquid_state", ServiceContainer.get("liquid_state", default=None)),
+                ]
+            )
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            _emit_affective_fault(
+                exc,
+                action="continued substrate sync with explicit shared state only after ServiceContainer lookup failed",
+                severity="warning",
+                stage="substrate_sync_vector_lookup",
+            )
+
+        for source, substrate in candidates:
+            if substrate is None:
+                continue
+            try:
+                if hasattr(substrate, "get_state_vector"):
+                    vector = self._coerce_state_vector(substrate.get_state_vector())
+                    if vector is not None:
+                        return vector, source
+                if hasattr(substrate, "x"):
+                    lock = getattr(substrate, "sync_lock", None)
+                    if lock is not None:
+                        with lock:
+                            vector = self._coerce_state_vector(getattr(substrate, "x", None))
+                    else:
+                        vector = self._coerce_state_vector(getattr(substrate, "x", None))
+                    if vector is not None:
+                        return vector, source
+                if isinstance(substrate, dict):
+                    raw_vector = substrate.get("state_vector")
+                    if raw_vector is None:
+                        raw_vector = substrate.get("x")
+                    vector = self._coerce_state_vector(raw_vector)
+                    if vector is not None:
+                        return vector, source
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                _emit_affective_fault(
+                    exc,
+                    action="ignored unreadable substrate vector candidate and tried next source",
+                    severity="warning",
+                    stage="substrate_sync_vector_read",
+                    extra={"source": source},
+                )
+        return None, ""
+
     def _loop(self):
         while self._running:
             try:
                 moods = {}
+                substrate_x, substrate_source = self._read_substrate_vector()
                 try:
                     from core.container import ServiceContainer
                     ncs = ServiceContainer.get("neurochemical_system", default=None)
@@ -1303,7 +1407,7 @@ class SubstrateSyncThread:
                     )
                     logger.debug('Ignored Exception in affective_steering.py: %s', _e)
 
-                if moods:
+                if moods or substrate_x is not None:
                     # Governor modulation
                     arousal = moods.get("arousal", 0.0)
                     coherence = moods.get("coherence", 1.0) # assume 1.0 if missing
@@ -1318,17 +1422,24 @@ class SubstrateSyncThread:
                     
                     for hook in self._hooks:
                         hook._alpha = new_alpha
-                        hook.update_substrate(moods)
+                        if substrate_x is not None:
+                            hook.update_substrate_vector(
+                                substrate_x,
+                                moods=moods,
+                                source=substrate_source or "live_substrate_vector",
+                            )
+                        else:
+                            hook.update_substrate(moods)
                         try:
-                            hook.substrate_source = "live_mood"
+                            hook.substrate_source = substrate_source or "live_mood_projection"
                         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                             _emit_affective_fault(
                                 exc,
-                                action="continued live mood sync after substrate source annotation failed",
+                                action="continued substrate sync after source annotation failed",
                                 severity="warning",
                                 stage="substrate_source_annotation",
                             )
-                            logger.debug("Live mood substrate source annotation failed: %s", exc)
+                            logger.debug("Substrate source annotation failed: %s", exc)
                 else:
                     # Evidence mode
                     from core.evaluation.evidence_mode import require
