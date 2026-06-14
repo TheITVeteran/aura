@@ -1279,26 +1279,37 @@ def _build_recent_user_context_block(recent_user_messages: list[str], *, limit: 
 
 
 _CONVERSATION_RECALL_LAST_USER_MARKERS = (
+    "do you remember what i said",
+    "do you remember what i asked",
+    "do you remember my question",
     "what did i just ask",
     "what was my last question",
     "what did i ask you",
     "what did i say earlier",
     "what did i say before",
     "what was the last thing i said",
+    "what was i saying",
 )
 _CONVERSATION_RECALL_LAST_AURA_MARKERS = (
+    "do you remember what you said",
+    "do you remember your answer",
     "what did you just say",
     "what was your last answer",
     "what did you tell me",
     "what was the last thing you said",
 )
 _CONVERSATION_RECALL_TOPIC_MARKERS = (
+    "what did we discuss",
+    "what have we discussed",
+    "what did we talk about",
     "what were we talking about",
     "what have we been talking about",
     "what are we talking about",
     "what was this conversation about",
     "what is this conversation about",
     "do you remember what we were discussing",
+    "do you remember what we discussed",
+    "earlier in this conversation",
     "summarize our conversation",
     "summarize what we have discussed",
 )

@@ -382,6 +382,26 @@ def _conversation_importance(user_input: str) -> float:
     return min(0.95, importance)
 
 
+def _clip_continuity_text(text: Any, *, limit: int = 520) -> str:
+    clipped = " ".join(str(text or "").strip().split())
+    if len(clipped) <= limit:
+        return clipped
+    return clipped[: max(0, limit - 1)].rstrip() + "..."
+
+
+def _build_conversation_continuity_memory(
+    user_input: str,
+    aura_response: str,
+    *,
+    user_id: str,
+) -> str:
+    return (
+        "Conversation continuity memory. "
+        f"User({user_id}) said: {_clip_continuity_text(user_input)} "
+        f"Aura replied: {_clip_continuity_text(aura_response)}"
+    )
+
+
 async def record_conversation_experience(
     user_input: str, aura_response: str, state: Any = None
 ) -> None:
@@ -458,6 +478,36 @@ async def record_conversation_experience(
                 used_memory_facade = False
             else:
                 logger.debug(f"✓ Conversation turn saved to memory facade: {memory_commit_result}")
+                if hasattr(memory_facade, "add_memory"):
+                    continuity_text = _build_conversation_continuity_memory(
+                        user_input,
+                        aura_response,
+                        user_id=user_id,
+                    )
+                    continuity_result = memory_facade.add_memory(
+                        continuity_text,
+                        metadata={
+                            "origin": "api",
+                            "source": "chat_api",
+                            "domain": "conversation",
+                            "memory_type": "conversation_continuity",
+                            "conversation_turn": True,
+                            "preserve_for_continuity": True,
+                            "searchable_conversation_context": True,
+                            "user_id": user_id,
+                            "user_utterance": _clip_continuity_text(user_input, limit=700),
+                            "aura_response": _clip_continuity_text(aura_response, limit=700),
+                            "intent_type": str(analysis.intent_type).lower(),
+                            "semantic_mode": str(analysis.semantic_mode),
+                            "importance": min(0.95, max(importance, 0.62)),
+                            "provenance_source": "live_conversation_turn",
+                            "confidence": 1.0,
+                        },
+                    )
+                    if hasattr(continuity_result, "__await__"):
+                        continuity_result = await continuity_result
+                    if not bool(continuity_result):
+                        logger.debug("Conversation continuity add_memory returned false after commit.")
     except (RuntimeError, AttributeError, TypeError) as exc:
         _record_conversation_degradation(
             exc,

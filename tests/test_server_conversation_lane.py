@@ -2957,6 +2957,23 @@ def test_compact_desktop_contract_does_not_hide_actual_tool_execution_requests()
     )
 
 
+def test_conversation_recall_classifier_handles_natural_memory_questions():
+    from interface.routes import chat as chat_routes
+
+    assert (
+        chat_routes._classify_conversation_recall_request("Do you remember what I said earlier?")
+        == "last_user"
+    )
+    assert (
+        chat_routes._classify_conversation_recall_request("Do you remember what you said?")
+        == "last_aura"
+    )
+    assert (
+        chat_routes._classify_conversation_recall_request("What did we discuss earlier in this conversation?")
+        == "topic"
+    )
+
+
 def test_failure_mode_surface_request_is_not_misclassified_as_planning():
     from interface.routes import chat as chat_routes
 
