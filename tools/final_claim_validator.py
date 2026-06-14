@@ -175,13 +175,100 @@ def _num(value: Any) -> float | None:
     return None
 
 
+def _artifact_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+FINAL_PROOF_STEP_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "dnu_agi_battery": (
+        "agi_live/RUN_STATUS.json",
+        "agi_live/SCORECARD.json",
+        "agi_live/DNU_AGI_PROOF.json",
+    ),
+    "dnu_bundle_validate": ("agi_live/MANIFEST.json",),
+    "agency_emergence_battery": ("agency_emergence_boxed_entity/SCORECARD.json",),
+    "external_live_validation": ("external_live_validation/SCORECARD.json",),
+    "unified_scenario": ("unified_system_scenario/SUMMARY.json",),
+    "continual_learning_battery": ("continual_learning/SCORECARD.json",),
+    "novel_environment_battery": ("novel_environment_adaptation/SCORECARD.json",),
+}
+
+
+def _final_proof_steps_pass(
+    artifacts_dir: Path,
+    required_steps: tuple[str, ...],
+    reasons: list[str],
+) -> bool:
+    passed = True
+    for step_name in required_steps:
+        step_path = artifacts_dir / "proof_steps" / f"{step_name}.json"
+        step = _load_json(step_path)
+        if step is None:
+            reasons.append(f"Required proof step {step_name!r} is missing or unreadable.")
+            passed = False
+            continue
+        if step.get("passed") is not True:
+            reasons.append(
+                f"Required proof step {step_name!r} did not pass "
+                f"(returncode={step.get('returncode')}, timed_out={step.get('timed_out')})."
+            )
+            passed = False
+            continue
+        step_started = float(step.get("started_at") or _artifact_mtime(step_path))
+        for rel in FINAL_PROOF_STEP_OUTPUTS.get(step_name, ()):
+            output = artifacts_dir / rel
+            if not output.exists():
+                reasons.append(f"Required proof step {step_name!r} output {rel!r} is missing.")
+                passed = False
+            elif _artifact_mtime(output) + 1.0 < step_started:
+                reasons.append(
+                    f"Required proof step {step_name!r} started after {rel!r}; evidence is stale."
+                )
+                passed = False
+    return passed
+
+
+def _dnu_run_status_passes(artifacts_dir: Path, reasons: list[str]) -> bool:
+    run_status = _load_json(artifacts_dir / "agi_live" / "RUN_STATUS.json")
+    if run_status is None:
+        reasons.append("AGI-candidate claim requires readable DNU RUN_STATUS.json.")
+        return False
+    passed = True
+    if run_status.get("schema") != "aura.dnu_run_status.v1":
+        reasons.append("DNU RUN_STATUS.json schema is invalid.")
+        passed = False
+    if run_status.get("status") != "complete":
+        reasons.append(f"DNU run status is not complete: {run_status.get('status')!r}.")
+        passed = False
+    if run_status.get("runner_completed") is not True:
+        reasons.append("DNU run status does not confirm runner completion.")
+        passed = False
+    completed = int(run_status.get("tasks_completed") or 0)
+    total = int(run_status.get("total_tasks") or 0)
+    if total < 100 or completed != total:
+        reasons.append(f"DNU run status is incomplete: {completed}/{total} tasks.")
+        passed = False
+    return passed
+
+
 def _dnu_candidate_evidence_passes(artifacts_dir: Path, reasons: list[str]) -> bool:
+    proof_steps_ok = _final_proof_steps_pass(
+        artifacts_dir,
+        ("dnu_agi_battery", "dnu_bundle_validate"),
+        reasons,
+    )
+    run_status_ok = _dnu_run_status_passes(artifacts_dir, reasons)
     scorecard = _load_json(artifacts_dir / "agi_live" / "SCORECARD.json")
     leakage = _load_json(artifacts_dir / "agi_live" / "LEAKAGE_REPORT.json")
     baselines = _load_json(artifacts_dir / "agi_live" / "BASELINES.json")
     ablations = _load_json(artifacts_dir / "agi_live" / "ABLATIONS.json")
     if scorecard is None or leakage is None or baselines is None or ablations is None:
         reasons.append("AGI-candidate claim requires DNU scorecard/leakage/baseline/ablation artifacts.")
+        return False
+    if not (proof_steps_ok and run_status_ok):
         return False
 
     total_tasks = _num(scorecard.get("total_tasks")) or 0.0
@@ -235,6 +322,17 @@ def _dnu_candidate_evidence_passes(artifacts_dir: Path, reasons: list[str]) -> b
 
 
 def _integrated_candidate_evidence_passes(artifacts_dir: Path, reasons: list[str]) -> bool:
+    proof_steps_ok = _final_proof_steps_pass(
+        artifacts_dir,
+        (
+            "agency_emergence_battery",
+            "external_live_validation",
+            "unified_scenario",
+            "continual_learning_battery",
+            "novel_environment_battery",
+        ),
+        reasons,
+    )
     agency = _load_json(artifacts_dir / "agency_emergence_boxed_entity" / "SCORECARD.json")
     external = _load_json(artifacts_dir / "external_live_validation" / "SCORECARD.json")
     unified = _load_json(artifacts_dir / "unified_system_scenario" / "SUMMARY.json")
@@ -244,6 +342,8 @@ def _integrated_candidate_evidence_passes(artifacts_dir: Path, reasons: list[str
 
     if agency is None or external is None or unified is None or receipts is None or consistency is None or aletheia is None:
         reasons.append("AGI-candidate claim requires agency, external, unified, receipt, consistency, and Aletheia artifacts.")
+        return False
+    if not proof_steps_ok:
         return False
     if (_num(agency.get("overall_pass_rate")) or 0.0) < 0.85:
         reasons.append("AGI-candidate claim requires agency emergence pass rate >=85%.")
@@ -267,11 +367,18 @@ def _integrated_candidate_evidence_passes(artifacts_dir: Path, reasons: list[str
 
 
 def _synthetic_entity_evidence_passes(artifacts_dir: Path, reasons: list[str]) -> bool:
+    proof_steps_ok = _final_proof_steps_pass(
+        artifacts_dir,
+        ("agency_emergence_battery", "unified_scenario"),
+        reasons,
+    )
     agency = _load_json(artifacts_dir / "agency_emergence_boxed_entity" / "SCORECARD.json")
     unified = _load_json(artifacts_dir / "unified_system_scenario" / "SUMMARY.json")
     receipts = _load_json(artifacts_dir / "receipt_coverage.json")
     if agency is None or unified is None or receipts is None:
         reasons.append("Synthetic cognitive entity claim requires agency, unified scenario, and receipt artifacts.")
+        return False
+    if not proof_steps_ok:
         return False
     if (_num(agency.get("overall_pass_rate")) or 0.0) < 0.85:
         reasons.append("Synthetic cognitive entity claim requires boxed agency pass rate >=85%.")

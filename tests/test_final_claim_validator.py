@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import json
+import time
 from pathlib import Path
 
 from tools import final_claim_validator
@@ -75,6 +77,37 @@ def test_final_claim_validator_rejects_production_sealed_as_active_claim(tmp_pat
     result = final_claim_validator.main(["--claims", str(claims_path), "--artifacts", str(tmp_path / "artifacts")])
 
     assert result == 1
+
+
+def test_final_claim_validator_rejects_stale_failed_dnu_for_agi_candidate(tmp_path: Path):
+    claims_path = tmp_path / "CLAIMS_MATRIX.md"
+    claims_path.write_text(
+        _claims_matrix(
+            "| **14. AGI-Candidate** | `locally demonstrated` | Requires fresh final-proof evidence. |\n"
+        ),
+        encoding="utf-8",
+    )
+    artifacts = tmp_path / "artifacts"
+    step = artifacts / "proof_steps" / "dnu_agi_battery.json"
+    step.parent.mkdir(parents=True, exist_ok=True)
+    step.write_text(
+        json.dumps(
+            {
+                "name": "dnu_agi_battery",
+                "passed": False,
+                "returncode": 1,
+                "timed_out": False,
+                "finished_at": time.time(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = final_claim_validator.main(["--claims", str(claims_path), "--artifacts", str(artifacts)])
+
+    assert result == 1
+    report = json.loads((artifacts / "final_claim_validation.json").read_text())
+    assert any("dnu_agi_battery" in reason for reason in report["reasons"])
 
 
 def test_runtime_kernel_language_avoids_agi_asi_overclaim_labels():

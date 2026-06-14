@@ -13,6 +13,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -50,6 +51,89 @@ def verify_manifest(manifest_path: Path, base_dir: Path) -> bool:
     return True
 
 
+def _load_json(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+FINAL_PROOF_STEP_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "dnu_agi_battery": (
+        "agi_live/RUN_STATUS.json",
+        "agi_live/SCORECARD.json",
+        "agi_live/DNU_AGI_PROOF.json",
+    ),
+    "dnu_bundle_validate": ("agi_live/MANIFEST.json",),
+    "agency_emergence_battery": ("agency_emergence_boxed_entity/SCORECARD.json",),
+    "external_live_validation": ("external_live_validation/SCORECARD.json",),
+    "unified_scenario": ("unified_system_scenario/SUMMARY.json",),
+    "continual_learning_battery": ("continual_learning/SCORECARD.json",),
+    "novel_environment_battery": ("novel_environment_adaptation/SCORECARD.json",),
+}
+
+
+def validate_final_proof_steps(artifacts_dir: Path) -> tuple[bool, list[str]]:
+    """Reject stale-green evidence from newer failed or incomplete proof steps."""
+    reasons: list[str] = []
+    proof_steps_dir = artifacts_dir / "proof_steps"
+    for step_name, output_paths in FINAL_PROOF_STEP_OUTPUTS.items():
+        step_path = proof_steps_dir / f"{step_name}.json"
+        if not step_path.exists():
+            continue
+        step = _load_json(step_path)
+        if not step:
+            reasons.append(f"Proof step {step_name!r} is unreadable.")
+            continue
+        if step.get("passed") is not True:
+            reasons.append(
+                f"Proof step {step_name!r} did not pass "
+                f"(returncode={step.get('returncode')}, timed_out={step.get('timed_out')})."
+            )
+            continue
+        step_started = float(step.get("started_at") or _mtime(step_path))
+        for rel in output_paths:
+            output = artifacts_dir / rel
+            if not output.exists():
+                reasons.append(f"Proof step {step_name!r} passed but output {rel!r} is missing.")
+                continue
+            if _mtime(output) + 1.0 < step_started:
+                reasons.append(
+                    f"Proof step {step_name!r} started after {rel!r} was last updated; evidence is stale."
+                )
+    return not reasons, reasons
+
+
+def validate_dnu_run_status(artifacts_dir: Path) -> tuple[bool, list[str]]:
+    """DNU current-run status cannot be left running/incomplete in current artifacts."""
+    run_status_path = artifacts_dir / "agi_live" / "RUN_STATUS.json"
+    if not run_status_path.exists():
+        return True, []
+    run_status = _load_json(run_status_path)
+    if not run_status:
+        return False, ["DNU RUN_STATUS.json is unreadable."]
+    reasons: list[str] = []
+    if run_status.get("schema") != "aura.dnu_run_status.v1":
+        reasons.append("DNU RUN_STATUS.json has an invalid schema.")
+    if run_status.get("status") != "complete":
+        reasons.append(f"DNU run status is not complete: {run_status.get('status')!r}.")
+    if run_status.get("runner_completed") is not True:
+        reasons.append("DNU run status does not confirm runner completion.")
+    completed = int(run_status.get("tasks_completed") or 0)
+    total = int(run_status.get("total_tasks") or 0)
+    if total < 100 or completed != total:
+        reasons.append(f"DNU run status is incomplete: {completed}/{total} tasks.")
+    return not reasons, reasons
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifacts", default="artifacts/current")
@@ -60,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     reasons: list[str] = []
     notes: list[str] = []
     manifests_consistent = True
+    proof_steps_consistent = True
+    dnu_status_complete = True
 
     # 1. Check manifestation consistency
     for manifest_path in artifacts_dir.rglob("MANIFEST.json"):
@@ -67,6 +153,16 @@ def main(argv: list[str] | None = None) -> int:
             passed = False
             manifests_consistent = False
             reasons.append(f"Hash mismatch in manifest: {manifest_path}")
+
+    proof_steps_consistent, step_reasons = validate_final_proof_steps(artifacts_dir)
+    if not proof_steps_consistent:
+        passed = False
+        reasons.extend(step_reasons)
+
+    dnu_status_complete, dnu_reasons = validate_dnu_run_status(artifacts_dir)
+    if not dnu_status_complete:
+        passed = False
+        reasons.extend(dnu_reasons)
 
     # 2. Check scorecard and DNU proof agreement
     dnu_proof_path = artifacts_dir / "agi_live" / "DNU_AGI_PROOF.json"
@@ -101,6 +197,8 @@ def main(argv: list[str] | None = None) -> int:
         "generated_at": time.time(),
         "passed": passed,
         "manifests_consistent": manifests_consistent,
+        "proof_steps_consistent": proof_steps_consistent,
+        "dnu_status_complete": dnu_status_complete,
         "baselines_complete": True,
         "ablations_verified": True,
         "unsupported_critical_claims_banned": True,
