@@ -58,6 +58,60 @@ def test_imagination_engine_models_visual_counterfactual_and_connections():
     assert frame.governance["advisory_only"] is True
     assert frame.governance["no_external_effects"] is True
     assert "not external perception" in frame.verification_boundary
+    assert frame.working_memory["admission"] in {"admit", "compress_foreground", "thin_frame"}
+    assert frame.attractor_state["selected"]
+    assert frame.attractor_state["recurrent_depth"] >= 1
+    assert frame.eligibility_trace
+    assert frame.causal_effects["working_memory_admission"] == frame.working_memory["admission"]
+
+
+def test_imagination_engine_load_gate_compresses_background_under_pressure():
+    engine = ImaginationEngine()
+
+    frame = engine.imagine(
+        "Invent a new mental model for desktop tool use and imagine what it looks like.",
+        state=AuraState.default(),
+        origin="background",
+        is_background=True,
+        context={
+            "memory_pressure": {
+                "level": "high",
+                "pressure_pct": 86.0,
+                "reason": "test high memory pressure",
+            }
+        },
+    )
+
+    assert frame.working_memory["admission"] == "defer_background"
+    assert frame.working_memory["admitted"] is False
+    assert frame.routing_bias["compress_imagination"] is True
+    assert frame.sampling_bias["max_tokens_factor"] <= 0.70
+    assert frame.causal_effects["load_shed_requested"] is True
+    assert "runtime_load_shed" in frame.causal_effects["expected_downstream"]
+    assert frame.governance["no_external_effects"] is True
+
+
+def test_imagination_feedback_updates_future_attractor_bias():
+    engine = ImaginationEngine()
+    frame = engine.imagine(
+        "Create a novel analogy for memory, curiosity, and tool governance.",
+        state=AuraState.default(),
+        origin="desktop",
+    )
+    selected = frame.attractor_state["selected"]
+
+    feedback = engine.learn_from_feedback(
+        frame,
+        reward=1.0,
+        outcome="assistant_response",
+    )
+    snapshot = engine.snapshot()
+
+    assert feedback is not None
+    assert feedback["selected_attractor"] == selected
+    assert feedback["updated_bias"] > 0.0
+    assert snapshot["attractor_bias"][selected] == pytest.approx(feedback["updated_bias"])
+    assert snapshot["recent_outcomes"][-1]["outcome"] == "assistant_response"
 
 
 def test_cognitive_engine_records_imagination_workspace_as_state_and_context():
@@ -87,11 +141,15 @@ def test_cognitive_engine_records_imagination_workspace_as_state_and_context():
     assert "imagination_sampling_bias" in state.response_modifiers
     assert state.response_modifiers["imagination_memory_pressure"] == frame["memory_pressure"]
     assert state.response_modifiers["imagination_verification_pressure"] == frame["verification_pressure"]
+    assert state.response_modifiers["imagination_working_memory"] == frame["working_memory"]
+    assert state.response_modifiers["imagination_attractor_state"] == frame["attractor_state"]
     assert state.response_modifiers["verification_pressure"] == frame["verification_pressure"]
     assert state.response_modifiers["tool_governance_pressure"] is True
     assert state.cognition.modifiers["imagination_workspace"]["frame_id"] == frame["frame_id"]
     assert state.cognition.modifiers["imagination_attention_targets"] == frame["attention_targets"]
     assert state.cognition.modifiers["imagination_causal_effects"]["memory_priority"] == frame["memory_pressure"]
+    assert state.cognition.modifiers["imagination_working_memory"] == frame["working_memory"]
+    assert state.cognition.modifiers["imagination_attractor_state"] == frame["attractor_state"]
     assert state.cognition.modifiers["requires_memory_grounding"] is True
     assert "imagined focus" in state.cognition.attention_focus
     assert context["imagination_workspace"]["frame_id"] == frame["frame_id"]
@@ -155,6 +213,7 @@ async def test_desktop_quick_path_consumes_imagination_workspace():
 
     assert thought is not None
     assert thought.metadata["imagination_workspace"]["frame_id"] == frame["frame_id"]
+    assert thought.metadata["imagination_workspace_feedback"]["outcome"] == "desktop_quick_reply"
     assert "Imagination workspace" in captured["messages"][0]["content"]
     assert "Mental canvas" in captured["messages"][0]["content"]
     assert "Novel thought candidates" in captured["messages"][0]["content"]

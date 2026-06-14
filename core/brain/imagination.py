@@ -122,6 +122,33 @@ def _extract_keywords(text: str, *, limit: int = 8) -> list[str]:
     return keywords
 
 
+def _stable_softmax(scores: dict[str, float], *, temperature: float = 1.0) -> dict[str, float]:
+    if not scores:
+        return {}
+    temp = max(0.05, min(5.0, float(temperature or 1.0)))
+    finite_scores = {
+        key: (_safe_float(value, 0.0) / temp)
+        for key, value in scores.items()
+    }
+    highest = max(finite_scores.values())
+    exps = {
+        key: math.exp(max(-60.0, min(60.0, value - highest)))
+        for key, value in finite_scores.items()
+    }
+    total = sum(exps.values()) or 1.0
+    return {key: value / total for key, value in exps.items()}
+
+
+def _entropy01(probabilities: dict[str, float]) -> float:
+    if len(probabilities) <= 1:
+        return 0.0
+    entropy = 0.0
+    for probability in probabilities.values():
+        p = max(1e-12, min(1.0, float(probability or 0.0)))
+        entropy -= p * math.log(p)
+    return _clamp(entropy / math.log(len(probabilities)))
+
+
 def _top_memory_fragments(state: Any, *, limit: int = 3) -> list[str]:
     fragments: list[str] = []
     try:
@@ -153,6 +180,9 @@ class ImaginationFrame:
     affective_pressure: float
     memory_pressure: float
     verification_pressure: float
+    working_memory: dict[str, Any] = field(default_factory=dict)
+    attractor_state: dict[str, Any] = field(default_factory=dict)
+    eligibility_trace: dict[str, float] = field(default_factory=dict)
     modalities: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
     attention_targets: list[str] = field(default_factory=list)
@@ -234,6 +264,22 @@ class ImaginationFrame:
             lines.append("- Counterfactual probes: " + " | ".join(self.counterfactuals[:3]))
         if self.simulation_steps:
             lines.append("- Internal simulation steps: " + " | ".join(self.simulation_steps[:3]))
+        if self.attractor_state:
+            selected = str(self.attractor_state.get("selected") or "").strip()
+            entropy = _safe_float(self.attractor_state.get("entropy"), 0.0)
+            margin = _safe_float(self.attractor_state.get("stability_margin"), 0.0)
+            if selected:
+                lines.append(
+                    f"- Attractor: {selected} | entropy={entropy:.2f} | stability_margin={margin:.2f}"
+                )
+        if self.working_memory:
+            admission = str(self.working_memory.get("admission") or "admit")
+            queue_load = _safe_float(self.working_memory.get("queue_load"), 0.0)
+            overload = _safe_float(self.working_memory.get("overload_pressure"), 0.0)
+            if admission != "admit" or overload >= 0.20:
+                lines.append(
+                    f"- Working-memory gate: {admission} | queue_load={queue_load:.2f} | overload={overload:.2f}"
+                )
         if self.experiments:
             lines.append("- Useful next experiments: " + " | ".join(self.experiments[:3]))
         if self.action_affordances:
@@ -260,7 +306,15 @@ class ImaginationEngine:
 
     def __init__(self, *, history_limit: int = 64):
         self._history: deque[ImaginationFrame] = deque(maxlen=max(8, history_limit))
+        self._frame_index: dict[str, ImaginationFrame] = {}
+        self._outcomes: deque[dict[str, Any]] = deque(maxlen=max(8, history_limit))
         self._frame_count = 0
+        self._queue_load = 0.0
+        self._arrival_rate_ema = 0.0
+        self._service_rate_ema = 1.0
+        self._last_observed_at = time.monotonic()
+        self._attractor_bias: dict[str, float] = {}
+        self._eligibility_trace: dict[str, float] = {}
 
     def imagine(
         self,
@@ -345,6 +399,24 @@ class ImaginationEngine:
             + (novelty_pressure * 0.12)
             + (0.06 if visual else 0.0)
         )
+        working_memory = self._observe_working_memory_gate(
+            salience=salience,
+            novelty_pressure=novelty_pressure,
+            verification_pressure=verification_pressure,
+            memory_pressure=memory_pressure,
+            context=context,
+            is_background=is_background,
+        )
+        admission = str(working_memory.get("admission") or "admit")
+        if admission == "defer_background":
+            salience = _clamp(salience * 0.55)
+            novelty_pressure = _clamp(novelty_pressure * 0.70)
+            memory_pressure = _clamp(memory_pressure * 0.70)
+        elif admission in {"compress_foreground", "thin_frame"}:
+            salience = _clamp(salience * 0.86)
+            novelty_pressure = _clamp(novelty_pressure * 0.82)
+            memory_pressure = _clamp(memory_pressure * 0.82)
+            verification_pressure = max(verification_pressure, 0.35)
 
         modalities: list[str] = []
         if visual:
@@ -407,15 +479,43 @@ class ImaginationEngine:
             curiosity=curiosity,
             confusion=confusion,
             tool_or_reality=tool_or_reality,
+            working_memory=working_memory,
         )
 
         mode = "visual_simulation" if visual else "counterfactual" if counterfactual else "creative_synthesis" if creative else "associative"
+        attractor_state = self._select_attractor_state(
+            mode=mode,
+            salience=salience,
+            novelty_pressure=novelty_pressure,
+            curiosity=curiosity,
+            affective_pressure=affective_pressure,
+            memory_pressure=memory_pressure,
+            verification_pressure=verification_pressure,
+            working_memory=working_memory,
+            visual=visual,
+            linguistic=linguistic,
+            counterfactual=counterfactual,
+            creative=creative,
+            tool_or_reality=tool_or_reality,
+        )
+        eligibility_trace = self._update_eligibility_trace(
+            keywords,
+            selected_attractor=str(attractor_state.get("selected") or mode),
+            salience=salience,
+            novelty_pressure=novelty_pressure,
+            memory_pressure=memory_pressure,
+        )
         seed = f"{text}|{keywords}|{origin}|{memories}".encode("utf-8", errors="ignore")
         frame_id = hashlib.sha256(seed).hexdigest()[:16]
+        token_factor = 1.0 + min(0.12, salience * 0.10)
+        if admission in {"compress_foreground", "thin_frame"}:
+            token_factor = min(token_factor, 0.92)
+        if admission == "defer_background":
+            token_factor = min(token_factor, 0.70)
         sampling_bias = {
             "temperature_delta": round(min(0.12, novelty_pressure * 0.12), 4),
             "presence_penalty_delta": round(min(0.18, (novelty_pressure + curiosity) * 0.10), 4),
-            "max_tokens_factor": round(1.0 + min(0.12, salience * 0.10), 4),
+            "max_tokens_factor": round(token_factor, 4),
         }
         routing_bias = {
             "use_private_scratchpad": salience >= 0.24,
@@ -426,6 +526,7 @@ class ImaginationEngine:
             "raise_metacognition": verification_pressure >= 0.45 or confusion >= 0.25,
             "consolidate_if_success": memory_pressure >= 0.50,
             "avoid_claiming_observation": True,
+            "compress_imagination": admission in {"compress_foreground", "thin_frame", "defer_background"},
         }
         frame = ImaginationFrame(
             frame_id=frame_id,
@@ -437,6 +538,9 @@ class ImaginationEngine:
             affective_pressure=round(affective_pressure, 4),
             memory_pressure=round(memory_pressure, 4),
             verification_pressure=round(verification_pressure, 4),
+            working_memory=working_memory,
+            attractor_state=attractor_state,
+            eligibility_trace=eligibility_trace,
             modalities=modalities,
             keywords=keywords,
             attention_targets=attention_targets,
@@ -457,6 +561,12 @@ class ImaginationEngine:
         )
         self._frame_count += 1
         self._history.append(frame)
+        self._frame_index[frame.frame_id] = frame
+        while len(self._frame_index) > self._history.maxlen:
+            live_ids = {item.frame_id for item in self._history}
+            for stale_id in list(self._frame_index):
+                if stale_id not in live_ids:
+                    self._frame_index.pop(stale_id, None)
         return frame
 
     def snapshot(self) -> dict[str, Any]:
@@ -465,11 +575,275 @@ class ImaginationEngine:
             "status": "active" if latest else "idle",
             "frames": len(self._history),
             "latest": latest,
+            "working_memory": self._working_memory_snapshot(),
+            "attractor_bias": {
+                key: round(value, 4)
+                for key, value in sorted(self._attractor_bias.items())
+            },
+            "eligibility_trace": {
+                key: round(value, 4)
+                for key, value in sorted(
+                    self._eligibility_trace.items(),
+                    key=lambda item: item[1],
+                    reverse=True,
+                )[:12]
+            },
+            "recent_outcomes": list(self._outcomes)[-5:],
             "governance": {
                 "advisory_only": True,
                 "no_external_effects": True,
                 "authority_gateway_required_for_effects": True,
             },
+        }
+
+    def learn_from_feedback(
+        self,
+        frame: str | dict[str, Any] | ImaginationFrame | None,
+        *,
+        reward: float,
+        outcome: str = "unknown",
+    ) -> dict[str, Any] | None:
+        materialized = self._coerce_frame(frame)
+        if materialized is None:
+            return None
+        selected = str(
+            (materialized.attractor_state or {}).get("selected")
+            or materialized.mode
+        )
+        reward_value = max(-1.0, min(1.0, _safe_float(reward, 0.0)))
+        current_bias = _safe_float(self._attractor_bias.get(selected), 0.0)
+        rpe = reward_value - current_bias
+        self._attractor_bias[selected] = max(-0.45, min(0.45, current_bias + 0.12 * rpe))
+        for key, value in list(materialized.eligibility_trace.items())[:16]:
+            previous = _safe_float(self._eligibility_trace.get(key), 0.0)
+            self._eligibility_trace[key] = _clamp(previous + reward_value * value * 0.04)
+        record = {
+            "frame_id": materialized.frame_id,
+            "outcome": str(outcome or "unknown")[:80],
+            "reward": round(reward_value, 4),
+            "selected_attractor": selected,
+            "reward_prediction_error": round(rpe, 4),
+            "updated_bias": round(self._attractor_bias[selected], 4),
+        }
+        self._outcomes.append(record)
+        return record
+
+    def _coerce_frame(
+        self, frame: str | dict[str, Any] | ImaginationFrame | None
+    ) -> ImaginationFrame | None:
+        if isinstance(frame, ImaginationFrame):
+            return frame
+        if isinstance(frame, str):
+            return self._frame_index.get(frame)
+        if isinstance(frame, dict):
+            frame_id = str(frame.get("frame_id") or "")
+            if frame_id and frame_id in self._frame_index:
+                return self._frame_index[frame_id]
+            try:
+                allowed = {field.name for field in ImaginationFrame.__dataclass_fields__.values()}
+                filtered = {key: value for key, value in frame.items() if key in allowed}
+                return ImaginationFrame(**filtered)
+            except (TypeError, ValueError, AttributeError):
+                return None
+        return None
+
+    def _observe_working_memory_gate(
+        self,
+        *,
+        salience: float,
+        novelty_pressure: float,
+        verification_pressure: float,
+        memory_pressure: float,
+        context: dict[str, Any] | None,
+        is_background: bool,
+    ) -> dict[str, Any]:
+        now = time.monotonic()
+        elapsed = max(0.05, min(60.0, now - self._last_observed_at))
+        self._last_observed_at = now
+        runtime_pressure = self._runtime_memory_pressure(context)
+        pressure_level = str(runtime_pressure.get("level") or "normal")
+        pressure_rank = {
+            "normal": 0.0,
+            "warning": 0.18,
+            "high": 0.34,
+            "critical": 0.62,
+            "emergency": 0.90,
+        }.get(pressure_level, 0.0)
+        arrival_load = _clamp(
+            0.12
+            + salience * 0.36
+            + novelty_pressure * 0.20
+            + verification_pressure * 0.16
+            + memory_pressure * 0.18
+            + pressure_rank * 0.30
+        )
+        service_rate = _clamp(
+            1.05
+            - pressure_rank * 0.55
+            - (0.20 if is_background else 0.0),
+            lower=0.18,
+            upper=1.20,
+        )
+        decay = min(self._queue_load, (elapsed / 6.0) * service_rate)
+        self._queue_load = _clamp(self._queue_load - decay + arrival_load * 0.28)
+        instantaneous_rate = min(12.0, 1.0 / elapsed)
+        self._arrival_rate_ema = (0.82 * self._arrival_rate_ema) + (0.18 * instantaneous_rate)
+        self._service_rate_ema = (0.86 * self._service_rate_ema) + (0.14 * service_rate)
+        overload = _clamp(max(0.0, self._queue_load - 0.68) / 0.32)
+        if pressure_level in {"critical", "emergency"}:
+            admission = "thin_frame"
+        elif is_background and (overload >= 0.35 or pressure_level in {"warning", "high"}):
+            admission = "defer_background"
+        elif overload >= 0.45 or pressure_level == "high":
+            admission = "compress_foreground"
+        else:
+            admission = "admit"
+        expected_wait = self._queue_load / max(0.05, self._service_rate_ema)
+        return {
+            "admission": admission,
+            "admitted": admission != "defer_background",
+            "queue_load": round(self._queue_load, 4),
+            "overload_pressure": round(overload, 4),
+            "arrival_rate_hz": round(self._arrival_rate_ema, 4),
+            "service_rate_hz": round(self._service_rate_ema, 4),
+            "utilization": round(_clamp(self._arrival_rate_ema / max(0.05, self._service_rate_ema) / 8.0), 4),
+            "expected_wait_s": round(expected_wait, 4),
+            "runtime_memory_level": pressure_level,
+            "runtime_memory_pressure_pct": round(_safe_float(runtime_pressure.get("pressure_pct"), 0.0), 4),
+            "reason": str(runtime_pressure.get("reason") or "")[:220],
+        }
+
+    @staticmethod
+    def _runtime_memory_pressure(context: dict[str, Any] | None) -> dict[str, Any]:
+        if isinstance(context, dict):
+            raw = context.get("memory_pressure_snapshot") or context.get("memory_pressure")
+            if isinstance(raw, dict):
+                return {
+                    "level": str(raw.get("level") or "normal"),
+                    "pressure_pct": _safe_float(raw.get("pressure_pct"), 0.0),
+                    "reason": str(raw.get("reason") or ""),
+                }
+            if isinstance(raw, (int, float)):
+                pct = _safe_float(raw, 0.0)
+                if pct >= 94.0:
+                    level = "emergency"
+                elif pct >= 90.0:
+                    level = "critical"
+                elif pct >= 84.0:
+                    level = "high"
+                elif pct >= 78.0:
+                    level = "warning"
+                else:
+                    level = "normal"
+                return {"level": level, "pressure_pct": pct, "reason": f"context_memory_pressure:{pct:.1f}%"}
+        try:
+            from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+            snapshot = get_memory_pressure_snapshot()
+            return {
+                "level": str(getattr(snapshot, "level", "normal") or "normal"),
+                "pressure_pct": _safe_float(getattr(snapshot, "pressure_pct", 0.0), 0.0),
+                "reason": str(getattr(snapshot, "reason", "") or ""),
+            }
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+            record_degradation(
+                "imagination_engine",
+                exc,
+                severity="warning",
+                action="used neutral memory-pressure signal for imagination admission",
+            )
+            return {"level": "normal", "pressure_pct": 0.0, "reason": "memory_pressure_probe_failed"}
+
+    def _select_attractor_state(
+        self,
+        *,
+        mode: str,
+        salience: float,
+        novelty_pressure: float,
+        curiosity: float,
+        affective_pressure: float,
+        memory_pressure: float,
+        verification_pressure: float,
+        working_memory: dict[str, Any],
+        visual: bool,
+        linguistic: bool,
+        counterfactual: bool,
+        creative: bool,
+        tool_or_reality: bool,
+    ) -> dict[str, Any]:
+        overload = _safe_float(working_memory.get("overload_pressure"), 0.0)
+        scores = {
+            "direct_answer": 0.30 + (1.0 - salience) * 0.20 - novelty_pressure * 0.08,
+            "mental_canvas": (0.55 if visual else 0.05) + novelty_pressure * 0.34 + curiosity * 0.12,
+            "linguistic_surface": (0.50 if linguistic else 0.08) + novelty_pressure * 0.12,
+            "counterfactual_probe": (0.55 if counterfactual else 0.06) + verification_pressure * 0.22,
+            "memory_bridge": 0.10 + memory_pressure * 0.58,
+            "governed_action_boundary": (0.62 if tool_or_reality else 0.02) + verification_pressure * 0.40,
+            "creative_synthesis": (0.50 if creative else 0.08) + novelty_pressure * 0.36 + affective_pressure * 0.14,
+            "load_stabilization": overload * 0.72,
+        }
+        for key in list(scores):
+            scores[key] = _safe_float(scores[key], 0.0) + _safe_float(self._attractor_bias.get(key), 0.0)
+        probabilities = _stable_softmax(scores, temperature=max(0.30, 0.72 + overload * 0.35))
+        ranked = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
+        selected = ranked[0][0] if ranked else mode
+        margin = ranked[0][1] - ranked[1][1] if len(ranked) > 1 else 1.0
+        recurrent_depth = 1 + int(round(_clamp(novelty_pressure + verification_pressure + curiosity * 0.5) * 4))
+        if overload >= 0.50:
+            recurrent_depth = min(recurrent_depth, 2)
+        return {
+            "selected": selected,
+            "probabilities": {key: round(value, 4) for key, value in ranked[:6]},
+            "entropy": round(_entropy01(probabilities), 4),
+            "stability_margin": round(_clamp(margin), 4),
+            "recurrent_depth": recurrent_depth,
+            "bias": round(_safe_float(self._attractor_bias.get(selected), 0.0), 4),
+            "load_stabilized": selected == "load_stabilization" or overload >= 0.50,
+        }
+
+    def _update_eligibility_trace(
+        self,
+        keywords: list[str],
+        *,
+        selected_attractor: str,
+        salience: float,
+        novelty_pressure: float,
+        memory_pressure: float,
+    ) -> dict[str, float]:
+        decayed: dict[str, float] = {}
+        for key, value in self._eligibility_trace.items():
+            next_value = _safe_float(value, 0.0) * 0.82
+            if next_value >= 0.01:
+                decayed[key] = next_value
+        self._eligibility_trace = decayed
+        self._eligibility_trace[f"attractor:{selected_attractor}"] = _clamp(
+            self._eligibility_trace.get(f"attractor:{selected_attractor}", 0.0)
+            + salience * 0.26
+            + novelty_pressure * 0.12
+        )
+        for token in keywords[:6]:
+            trace_key = f"keyword:{token}"
+            self._eligibility_trace[trace_key] = _clamp(
+                self._eligibility_trace.get(trace_key, 0.0)
+                + 0.05
+                + memory_pressure * 0.05
+            )
+        return {
+            key: round(value, 4)
+            for key, value in sorted(
+                self._eligibility_trace.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:12]
+        }
+
+    def _working_memory_snapshot(self) -> dict[str, Any]:
+        return {
+            "queue_load": round(self._queue_load, 4),
+            "arrival_rate_hz": round(self._arrival_rate_ema, 4),
+            "service_rate_hz": round(self._service_rate_ema, 4),
+            "utilization": round(_clamp(self._arrival_rate_ema / max(0.05, self._service_rate_ema) / 8.0), 4),
+            "history_limit": self._history.maxlen,
         }
 
     @staticmethod
@@ -765,8 +1139,12 @@ class ImaginationEngine:
         curiosity: float,
         confusion: float,
         tool_or_reality: bool,
+        working_memory: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         metacognition_depth = _clamp(0.30 + verification_pressure * 0.45 + confusion * 0.35 + curiosity * 0.20)
+        working_memory = working_memory if isinstance(working_memory, dict) else {}
+        admission = str(working_memory.get("admission") or "admit")
+        overload = _safe_float(working_memory.get("overload_pressure"), 0.0)
         return {
             "attention_focus": attention_targets[:4],
             "memory_priority": round(memory_pressure, 4),
@@ -774,6 +1152,9 @@ class ImaginationEngine:
             "metacognition_depth": round(metacognition_depth, 4),
             "tool_governance": bool(tool_or_reality or verification_pressure >= 0.45),
             "external_effects_allowed": False,
+            "working_memory_admission": admission,
+            "working_memory_overload": round(overload, 4),
+            "load_shed_requested": admission in {"compress_foreground", "thin_frame", "defer_background"},
             "expected_downstream": [
                 effect
                 for effect, active in (
@@ -782,6 +1163,7 @@ class ImaginationEngine:
                     ("memory_consolidation_bias", memory_pressure >= 0.50),
                     ("verification_bias", verification_pressure >= 0.35),
                     ("governed_tool_boundary", tool_or_reality),
+                    ("runtime_load_shed", admission in {"compress_foreground", "thin_frame", "defer_background"}),
                 )
                 if active
             ],

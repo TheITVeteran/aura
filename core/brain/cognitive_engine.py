@@ -172,6 +172,22 @@ def _compact_imagination_directive(frame: dict[str, Any] | None) -> str:
         rendered = " | ".join(str(item)[:120] for item in novel_thoughts[:2] if item)
         if rendered:
             directives.append(f"Novel thought candidates: {rendered}")
+    attractor = frame.get("attractor_state") or {}
+    if isinstance(attractor, dict):
+        selected = str(attractor.get("selected") or "").strip()
+        recurrent_depth = attractor.get("recurrent_depth")
+        if selected:
+            directives.append(
+                f"Attractor state: center the reply on {selected.replace('_', ' ')}"
+                + (f" with recurrent_depth={recurrent_depth}." if recurrent_depth else ".")
+            )
+    working_memory = frame.get("working_memory") or {}
+    if isinstance(working_memory, dict):
+        admission = str(working_memory.get("admission") or "admit")
+        if admission != "admit":
+            directives.append(
+                f"Working-memory gate: {admission}; keep the response compact and stable while preserving intent."
+            )
     causal_effects = frame.get("causal_effects") or {}
     if isinstance(causal_effects, dict):
         attention = causal_effects.get("attention_focus") or []
@@ -554,6 +570,8 @@ class CognitiveEngine:
         state.response_modifiers["imagination_routing_bias"] = dict(frame.routing_bias)
         state.response_modifiers["imagination_memory_pressure"] = frame.memory_pressure
         state.response_modifiers["imagination_verification_pressure"] = frame.verification_pressure
+        state.response_modifiers["imagination_working_memory"] = dict(frame.working_memory)
+        state.response_modifiers["imagination_attractor_state"] = dict(frame.attractor_state)
         state.response_modifiers["verification_pressure"] = max(
             _bounded_float(state.response_modifiers.get("verification_pressure"), 0.0),
             frame.verification_pressure,
@@ -571,8 +589,13 @@ class CognitiveEngine:
         cognition_mods["imagination_attention_targets"] = list(frame.attention_targets)
         cognition_mods["imagination_causal_effects"] = dict(frame.causal_effects)
         cognition_mods["imagination_ablation_predictions"] = dict(frame.ablation_predictions)
+        cognition_mods["imagination_working_memory"] = dict(frame.working_memory)
+        cognition_mods["imagination_attractor_state"] = dict(frame.attractor_state)
         if frame.routing_bias.get("requires_memory_grounding"):
             cognition_mods["requires_memory_grounding"] = True
+        if frame.routing_bias.get("compress_imagination"):
+            state.response_modifiers["runtime_load_shed_requested"] = True
+            cognition_mods["runtime_load_shed_requested"] = True
         state.cognition.modifiers = cognition_mods
         if frame.attention_targets and not is_background:
             state.cognition.attention_focus = (
@@ -615,6 +638,37 @@ class CognitiveEngine:
                 action="continued cognitive cycle without spiking active-inference feedback learning",
             )
             logger.debug("Spiking active-inference feedback learning skipped: %s", exc)
+        return None
+
+    def _learn_imagination_workspace_outcome(
+        self,
+        context: dict[str, Any] | None,
+        *,
+        outcome: str,
+        reward: float,
+    ) -> dict[str, Any] | None:
+        if not isinstance(context, dict):
+            return None
+        frame = context.get("imagination_workspace")
+        if not isinstance(frame, dict):
+            return None
+        try:
+            from core.brain.imagination import get_imagination_engine
+
+            learned = get_imagination_engine().learn_from_feedback(
+                frame,
+                reward=float(reward),
+                outcome=outcome,
+            )
+            return learned if isinstance(learned, dict) else None
+        except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "cognitive_engine",
+                exc,
+                severity="warning",
+                action="continued cognitive cycle without imagination workspace feedback learning",
+            )
+            logger.debug("Imagination workspace feedback learning skipped: %s", exc)
         return None
 
     async def think(
@@ -1072,6 +1126,11 @@ class CognitiveEngine:
                 outcome="assistant_response",
                 reward=1.0,
             )
+            imagination_feedback = self._learn_imagination_workspace_outcome(
+                context,
+                outcome="assistant_response",
+                reward=1.0,
+            )
 
             thought = Thought(
                 id=str(uuid.uuid4()),
@@ -1084,6 +1143,7 @@ class CognitiveEngine:
                     if isinstance(context, dict)
                     else None,
                     "spiking_active_inference_feedback": feedback,
+                    "imagination_workspace_feedback": imagination_feedback,
                 },
             )
             self.thoughts.append(thought)
@@ -1092,6 +1152,11 @@ class CognitiveEngine:
         # Experience friction for unresolved objectives
         self.autopoiesis.experience_friction(objective[:20], 0.45)
         self._learn_spiking_active_inference_outcome(
+            context,
+            outcome="no_assistant_response",
+            reward=-0.65,
+        )
+        self._learn_imagination_workspace_outcome(
             context,
             outcome="no_assistant_response",
             reward=-0.65,
@@ -1359,6 +1424,11 @@ class CognitiveEngine:
         text = str(content or "").strip()
         if not text or text == "…" or text.startswith("background_thought_suppressed"):
             return None
+        imagination_feedback = self._learn_imagination_workspace_outcome(
+            context,
+            outcome="desktop_quick_reply",
+            reward=0.8,
+        )
 
         return Thought(
             id=str(uuid.uuid4()),
@@ -1376,6 +1446,7 @@ class CognitiveEngine:
                 "imagination_workspace": imagination_frame
                 if isinstance(imagination_frame, dict)
                 else None,
+                "imagination_workspace_feedback": imagination_feedback,
             },
         )
 
