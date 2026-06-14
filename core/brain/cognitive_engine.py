@@ -206,6 +206,48 @@ def _compact_imagination_directive(frame: dict[str, Any] | None) -> str:
     return " ".join(directives)
 
 
+def _compact_bicameral_directive(frame: dict[str, Any] | None) -> str:
+    if not isinstance(frame, dict):
+        return ""
+    try:
+        salience = float(frame.get("salience", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        salience = 0.0
+    if salience < 0.18:
+        return ""
+
+    routing = frame.get("routing_bias") or {}
+    causal = frame.get("causal_effects") or {}
+    attention = frame.get("attention_targets") or []
+    if not isinstance(routing, dict):
+        routing = {}
+    if not isinstance(causal, dict):
+        causal = {}
+    if not isinstance(attention, list):
+        attention = []
+
+    directives = [
+        "Bicameral advisory: reconcile internal proposals into one coherent answer; do not present them as voices or evidence of phenomenal experience."
+    ]
+    summary = str(frame.get("narrator_summary") or "").strip()
+    if summary:
+        directives.append(summary[:260])
+    if routing.get("use_tool_gateway"):
+        directives.append("External effects require governed tool execution and post-action evidence.")
+    if routing.get("seek_verification"):
+        directives.append("Verify before claiming facts, tool completion, or successful file/browser actions.")
+    if routing.get("raise_metacognition"):
+        directives.append("Check assumptions and resolve uncertainty before answering strongly.")
+    if routing.get("use_imagination") or routing.get("expand_options"):
+        directives.append("Use a novel option or analogy if it helps the user's actual request.")
+    rendered_attention = ", ".join(str(item)[:40] for item in attention[:4] if item)
+    if rendered_attention:
+        directives.append(f"Attention: {rendered_attention}.")
+    if _bounded_float(causal.get("memory_priority"), 0.0) >= 0.45:
+        directives.append("Preserve continuity with relevant prior conversation or memory.")
+    return " ".join(directives)
+
+
 class CognitiveEngine:
     """
     Cognitive Engine facade.
@@ -606,6 +648,99 @@ class CognitiveEngine:
         merged_context["imagination_workspace"] = frame_dict
         return merged_context
 
+    def _apply_bicameral_advisory(
+        self,
+        state: AuraState,
+        objective: str,
+        origin: str,
+        context: dict[str, Any] | None,
+        *,
+        is_background: bool,
+    ) -> dict[str, Any] | None:
+        try:
+            from core.brain.bicameral_advisory import get_bicameral_advisory
+
+            advisor = get_bicameral_advisory()
+            frame = advisor.advise(
+                objective,
+                state=state,
+                context=context,
+                origin=origin,
+                is_background=is_background,
+            )
+        except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "cognitive_engine",
+                exc,
+                severity="warning",
+                action="continued cognitive cycle without bicameral advisory",
+            )
+            logger.debug("Bicameral advisory unavailable: %s", exc)
+            return context
+
+        if frame.salience < 0.18:
+            return context
+
+        frame_dict = frame.to_dict()
+        causal = dict(frame.causal_effects or {})
+        routing = dict(frame.routing_bias or {})
+        sampling = dict(frame.sampling_bias or {})
+
+        state.response_modifiers["bicameral_advisory"] = frame_dict
+        state.response_modifiers["bicameral_consensus"] = frame.consensus
+        state.response_modifiers["bicameral_dissent"] = frame.dissent
+        state.response_modifiers["bicameral_sampling_bias"] = sampling
+        state.response_modifiers["bicameral_routing_bias"] = routing
+        state.response_modifiers["bicameral_attention_targets"] = list(frame.attention_targets)
+        state.response_modifiers["bicameral_causal_effects"] = causal
+        state.response_modifiers["bicameral_memory_priority"] = _bounded_float(
+            causal.get("memory_priority"), 0.0
+        )
+        state.response_modifiers["bicameral_verification_pressure"] = _bounded_float(
+            causal.get("verification_pressure"), 0.0
+        )
+        state.response_modifiers["metacognition_depth"] = max(
+            _bounded_float(state.response_modifiers.get("metacognition_depth"), 0.35),
+            _bounded_float(causal.get("metacognition_depth"), 0.35),
+        )
+        state.response_modifiers["verification_pressure"] = max(
+            _bounded_float(state.response_modifiers.get("verification_pressure"), 0.0),
+            _bounded_float(causal.get("verification_pressure"), 0.0),
+        )
+        state.response_modifiers["creative_pressure"] = max(
+            _bounded_float(state.response_modifiers.get("creative_pressure"), 0.0),
+            _bounded_float(causal.get("creative_pressure"), 0.0),
+        )
+        if routing.get("use_tool_gateway") or routing.get("seek_verification"):
+            state.response_modifiers["tool_governance_pressure"] = True
+        if routing.get("compact_foreground"):
+            state.response_modifiers["runtime_load_shed_requested"] = True
+        if _bounded_float(causal.get("memory_priority"), 0.0) >= 0.45:
+            state.response_modifiers["requires_memory_grounding"] = True
+
+        cognition_mods = dict(getattr(state.cognition, "modifiers", {}) or {})
+        cognition_mods["bicameral_advisory"] = frame_dict
+        cognition_mods["bicameral_prompt_block_available"] = True
+        cognition_mods["bicameral_attention_targets"] = list(frame.attention_targets)
+        cognition_mods["bicameral_causal_effects"] = causal
+        cognition_mods["bicameral_sampling_bias"] = sampling
+        cognition_mods["bicameral_routing_bias"] = routing
+        state.cognition.modifiers = cognition_mods
+
+        if frame.attention_targets and not is_background:
+            existing_focus = str(getattr(state.cognition, "attention_focus", "") or "").strip()
+            advisory_focus = ", ".join(frame.attention_targets[:4])
+            state.cognition.attention_focus = (
+                f"{existing_focus} | advisory focus: {advisory_focus}"
+                if existing_focus
+                else f"{objective[:120]} | advisory focus: {advisory_focus}"
+            )
+
+        merged_context = dict(context or {})
+        merged_context["bicameral_advisory"] = frame_dict
+        merged_context["bicameral_sampling_bias"] = sampling
+        return merged_context
+
     def _learn_spiking_active_inference_outcome(
         self,
         context: dict[str, Any] | None,
@@ -669,6 +804,37 @@ class CognitiveEngine:
                 action="continued cognitive cycle without imagination workspace feedback learning",
             )
             logger.debug("Imagination workspace feedback learning skipped: %s", exc)
+        return None
+
+    def _learn_bicameral_advisory_outcome(
+        self,
+        context: dict[str, Any] | None,
+        *,
+        outcome: str,
+        reward: float,
+    ) -> dict[str, Any] | None:
+        if not isinstance(context, dict):
+            return None
+        frame = context.get("bicameral_advisory")
+        if not isinstance(frame, dict):
+            return None
+        try:
+            from core.brain.bicameral_advisory import get_bicameral_advisory
+
+            learned = get_bicameral_advisory().learn_from_feedback(
+                frame,
+                reward=float(reward),
+                outcome=outcome,
+            )
+            return learned if isinstance(learned, dict) else None
+        except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "cognitive_engine",
+                exc,
+                severity="warning",
+                action="continued cognitive cycle without bicameral advisory feedback learning",
+            )
+            logger.debug("Bicameral advisory feedback learning skipped: %s", exc)
         return None
 
     async def think(
@@ -771,6 +937,13 @@ class CognitiveEngine:
             is_background=is_background,
         )
         context = self._apply_imagination_workspace(
+            state,
+            objective,
+            origin,
+            context,
+            is_background=is_background,
+        )
+        context = self._apply_bicameral_advisory(
             state,
             objective,
             origin,
@@ -1131,6 +1304,11 @@ class CognitiveEngine:
                 outcome="assistant_response",
                 reward=1.0,
             )
+            bicameral_feedback = self._learn_bicameral_advisory_outcome(
+                context,
+                outcome="assistant_response",
+                reward=1.0,
+            )
 
             thought = Thought(
                 id=str(uuid.uuid4()),
@@ -1144,6 +1322,10 @@ class CognitiveEngine:
                     else None,
                     "spiking_active_inference_feedback": feedback,
                     "imagination_workspace_feedback": imagination_feedback,
+                    "bicameral_advisory": context.get("bicameral_advisory")
+                    if isinstance(context, dict)
+                    else None,
+                    "bicameral_advisory_feedback": bicameral_feedback,
                 },
             )
             self.thoughts.append(thought)
@@ -1157,6 +1339,11 @@ class CognitiveEngine:
             reward=-0.65,
         )
         self._learn_imagination_workspace_outcome(
+            context,
+            outcome="no_assistant_response",
+            reward=-0.65,
+        )
+        self._learn_bicameral_advisory_outcome(
             context,
             outcome="no_assistant_response",
             reward=-0.65,
@@ -1343,11 +1530,14 @@ class CognitiveEngine:
         max_tokens = int(context.get("max_tokens") or 512)
         advice = context.get("spiking_active_inference")
         imagination_frame = context.get("imagination_workspace")
+        bicameral_frame = context.get("bicameral_advisory")
         sampling_sources: list[Any] = []
         if isinstance(advice, dict):
             sampling_sources.append(advice.get("sampling_bias") or {})
         if isinstance(imagination_frame, dict):
             sampling_sources.append(imagination_frame.get("sampling_bias") or {})
+        if isinstance(bicameral_frame, dict):
+            sampling_sources.append(bicameral_frame.get("sampling_bias") or {})
         for sampling in sampling_sources:
             if isinstance(sampling, dict):
                 try:
@@ -1376,6 +1566,10 @@ class CognitiveEngine:
             imagination_directive = _compact_imagination_directive(imagination_frame)
             if imagination_directive:
                 system_prompt = f"{system_prompt}\n{imagination_directive}"
+        if isinstance(bicameral_frame, dict):
+            bicameral_directive = _compact_bicameral_directive(bicameral_frame)
+            if bicameral_directive:
+                system_prompt = f"{system_prompt}\n{bicameral_directive}"
         if style_contract:
             system_prompt = f"{system_prompt}\n{style_contract}"
         user_prompt = visible_user_message or objective
@@ -1417,6 +1611,11 @@ class CognitiveEngine:
                         if isinstance(imagination_frame, dict)
                         else None
                     ),
+                    bicameral_sampling_bias=(
+                        bicameral_frame.get("sampling_bias")
+                        if isinstance(bicameral_frame, dict)
+                        else None
+                    ),
                     timeout=request_timeout,
                 ),
                 timeout=request_timeout + 3.0,
@@ -1439,6 +1638,11 @@ class CognitiveEngine:
             outcome="desktop_quick_reply",
             reward=0.8,
         )
+        bicameral_feedback = self._learn_bicameral_advisory_outcome(
+            context,
+            outcome="desktop_quick_reply",
+            reward=0.8,
+        )
 
         return Thought(
             id=str(uuid.uuid4()),
@@ -1457,6 +1661,10 @@ class CognitiveEngine:
                 if isinstance(imagination_frame, dict)
                 else None,
                 "imagination_workspace_feedback": imagination_feedback,
+                "bicameral_advisory": bicameral_frame
+                if isinstance(bicameral_frame, dict)
+                else None,
+                "bicameral_advisory_feedback": bicameral_feedback,
             },
         )
 

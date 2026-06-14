@@ -2246,6 +2246,7 @@ class InferenceGate:
         biases: list[Any] = [
             context.get("sampling_bias"),
             context.get("imagination_sampling_bias"),
+            context.get("bicameral_sampling_bias"),
         ]
         modifiers = getattr(state, "response_modifiers", None)
         if isinstance(modifiers, dict):
@@ -2253,6 +2254,7 @@ class InferenceGate:
                 [
                     modifiers.get("sampling_bias"),
                     modifiers.get("imagination_sampling_bias"),
+                    modifiers.get("bicameral_sampling_bias"),
                 ]
             )
 
@@ -6220,6 +6222,7 @@ class InferenceGate:
             "state",
             "sampling_bias",
             "imagination_sampling_bias",
+            "bicameral_sampling_bias",
             "skip_runtime_payload",
         ):
             if key in kwargs:

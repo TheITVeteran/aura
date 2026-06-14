@@ -203,20 +203,42 @@ class MemoryRetrievalPhase(BasePhase):
         imagination_memory_pressure = _safe_float(
             response_modifiers.get("imagination_memory_pressure")
         )
+        bicameral_causal_effects = response_modifiers.get("bicameral_causal_effects")
+        if not isinstance(bicameral_causal_effects, dict):
+            bicameral_causal_effects = {}
+        bicameral_memory_priority = _safe_float(
+            response_modifiers.get("bicameral_memory_priority")
+            or bicameral_causal_effects.get("memory_priority")
+        )
         imagination_verification_pressure = _safe_float(
             response_modifiers.get("imagination_verification_pressure")
             or response_modifiers.get("verification_pressure")
         )
+        bicameral_verification_pressure = _safe_float(
+            response_modifiers.get("bicameral_verification_pressure")
+            or bicameral_causal_effects.get("verification_pressure")
+        )
+        verification_pressure = max(
+            imagination_verification_pressure,
+            bicameral_verification_pressure,
+            _safe_float(response_modifiers.get("verification_pressure")),
+        )
         effective_memory_salience = max(
             _safe_float(affect_signature.get("memory_salience")),
             imagination_memory_pressure,
+            bicameral_memory_priority,
         )
         retrieval_limit = 5
-        if contract.get("requires_memory_grounding") or imagination_memory_pressure > 0.55:
+        if (
+            contract.get("requires_memory_grounding")
+            or response_modifiers.get("requires_memory_grounding")
+            or imagination_memory_pressure > 0.55
+            or bicameral_memory_priority > 0.55
+        ):
             retrieval_limit += 2
         if effective_memory_salience > 0.65:
             retrieval_limit += 1
-        if imagination_verification_pressure > 0.55:
+        if verification_pressure > 0.55:
             retrieval_limit += 1
         hot_limit = 4 if _safe_float(affect_signature.get("social_hunger")) > 0.65 else 3
 
@@ -526,5 +548,8 @@ class MemoryRetrievalPhase(BasePhase):
             "affect": affect_signature,
             "imagination_memory_pressure": round(imagination_memory_pressure, 4),
             "imagination_verification_pressure": round(imagination_verification_pressure, 4),
+            "bicameral_memory_priority": round(bicameral_memory_priority, 4),
+            "bicameral_verification_pressure": round(bicameral_verification_pressure, 4),
+            "verification_pressure": round(verification_pressure, 4),
         }
         return new_state

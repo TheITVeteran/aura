@@ -125,9 +125,17 @@ class MemoryConsolidationPhase(BasePhase):
         imagination_memory_pressure = self._safe_float(
             response_modifiers.get("imagination_memory_pressure")
         )
+        bicameral_causal_effects = response_modifiers.get("bicameral_causal_effects")
+        if not isinstance(bicameral_causal_effects, dict):
+            bicameral_causal_effects = {}
+        bicameral_memory_priority = self._safe_float(
+            response_modifiers.get("bicameral_memory_priority")
+            or bicameral_causal_effects.get("memory_priority")
+        )
         force_consolidation = (
             new_state.affect.arousal > 0.8
             or imagination_memory_pressure > 0.72
+            or bicameral_memory_priority > 0.72
             or (
                 len(new_state.cognition.working_memory) > 0
                 and new_state.cognition.working_memory[-1].get("action")
@@ -304,8 +312,13 @@ class MemoryConsolidationPhase(BasePhase):
                 salience = max(
                     float(affect_signature.get("memory_salience", 0.0) or 0.0),
                     imagination_memory_pressure,
+                    bicameral_memory_priority,
                 )
                 complexity = float(affect_signature.get("affective_complexity", 0.0) or 0.0)
+                bicameral_verification_pressure = self._safe_float(
+                    response_modifiers.get("bicameral_verification_pressure")
+                    or bicameral_causal_effects.get("verification_pressure")
+                )
                 importance = 0.85 if is_completed_turn else 0.65
                 importance = max(
                     importance,
@@ -330,10 +343,12 @@ class MemoryConsolidationPhase(BasePhase):
                         "memory_salience": salience,
                         "affective_memory_salience": float(affect_signature.get("memory_salience", 0.0) or 0.0),
                         "imagination_memory_pressure": imagination_memory_pressure,
+                        "bicameral_memory_priority": bicameral_memory_priority,
                         "imagination_verification_pressure": self._safe_float(
                             response_modifiers.get("imagination_verification_pressure")
                             or response_modifiers.get("verification_pressure")
                         ),
+                        "bicameral_verification_pressure": bicameral_verification_pressure,
                         "resonance": affect_signature.get("resonance", getattr(new_state.affect, "get_resonance_string", lambda: "")()),
                     },
                 )

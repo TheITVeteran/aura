@@ -421,6 +421,7 @@ class ResponseGenerationPhase(BasePhase):
                 biases=[
                     state.response_modifiers.get("sampling_bias"),
                     state.response_modifiers.get("imagination_sampling_bias"),
+                    state.response_modifiers.get("bicameral_sampling_bias"),
                 ],
             )
             # [STABILITY v55] Raised thermal from 85°C to 95°C (M-series

@@ -318,6 +318,21 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
                 record_degradation("context_assembler_patch", _e)
                 logger.debug("Patched imagination context injection skipped: %s", _e)
 
+    bicameral_context = ""
+    if not black_box_steering:
+        frame = response_mods.get("bicameral_advisory") or mods.get("bicameral_advisory")
+        if isinstance(frame, dict):
+            try:
+                from core.brain.bicameral_advisory import render_bicameral_prompt_block
+
+                bicameral_context = render_bicameral_prompt_block(
+                    frame,
+                    compact=is_casual or bool(is_test_run),
+                )
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+                record_degradation("context_assembler_patch", _e)
+                logger.debug("Patched bicameral context injection skipped: %s", _e)
+
     # ── World / somatic context ───────────────────────────────────────────────
     world_context  = ContextAssembler.build_world_context(state)  if not is_casual else ""
     somatic_context = ContextAssembler.build_somatic_context(state) if not is_casual else ""
@@ -565,6 +580,7 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
             f"{personality_block}"
             f"{aura_now_block}"
             f"{imagination_context}"
+            f"{bicameral_context}"
             f"{world_context}"
             f"{somatic_context}"
             f"\n[EXECUTION]\n"
@@ -584,6 +600,7 @@ def _patched_build_system_prompt(state: "AuraState") -> str:
             f"{meta_qualia_block}"
             f"{personhood_context}"
             f"{imagination_context}"
+            f"{bicameral_context}"
             f"{aura_now_block}"
             f"{world_context}"
             f"{somatic_context}"

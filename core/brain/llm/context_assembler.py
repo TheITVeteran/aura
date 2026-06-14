@@ -626,6 +626,21 @@ class ContextAssembler:
                     record_degradation('context_assembler', _e)
                     logger.debug("Imagination context injection skipped: %s", _e)
 
+        bicameral_context = ""
+        if not black_box_steering:
+            frame = response_mods.get("bicameral_advisory") or mods.get("bicameral_advisory")
+            if isinstance(frame, dict):
+                try:
+                    from core.brain.bicameral_advisory import render_bicameral_prompt_block
+
+                    bicameral_context = render_bicameral_prompt_block(
+                        frame,
+                        compact=is_casual or elasticity >= 1,
+                    )
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+                    record_degradation("context_assembler", _e)
+                    logger.debug("Bicameral context injection skipped: %s", _e)
+
         # 4. Somatic & World Context (Simplified if casual or under context pressure)
         world_context = ContextAssembler.build_world_context(state) if not is_casual and elasticity < 2 else ""
 
@@ -785,6 +800,8 @@ class ContextAssembler:
                 base += personhood_context
             if imagination_context:
                 base += imagination_context
+            if bicameral_context:
+                base += bicameral_context
         elif is_casual:
             # 1. Identity + Requirements
             base = f"{identity_block}\n{requirements}\n"
@@ -801,6 +818,8 @@ class ContextAssembler:
                 base += personhood_context
             if imagination_context:
                 base += imagination_context
+            if bicameral_context:
+                base += bicameral_context
         else:
             # Standard path for non-casual/deliberate turns (Research/Complex tasks)
             base = (
@@ -817,6 +836,7 @@ class ContextAssembler:
                 f"{meta_qualia_block}"
                 f"{personhood_context}"
                 f"{imagination_context}"
+                f"{bicameral_context}"
                 f"{aura_now_block}"
                 f"{world_context}"
                 f"{somatic_context}"
@@ -1020,6 +1040,7 @@ class ContextAssembler:
                 str(cognitive_metrics or "").strip(),
                 str(continuity_block or "").strip(),
                 str(imagination_context or "").strip(),
+                str(bicameral_context or "").strip(),
                 str(world_context or "").strip(),
             ):
                 if candidate and candidate not in head and candidate not in tail:

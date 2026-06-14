@@ -170,6 +170,36 @@ async def test_memory_consolidation_includes_imagination_memory_pressure():
 
 
 @pytest.mark.asyncio
+async def test_memory_consolidation_includes_bicameral_memory_pressure():
+    commit_interaction = AsyncCallRecorder()
+    memory_facade = SimpleNamespace(commit_interaction=commit_interaction)
+    container = SimpleNamespace(
+        get=lambda name, default=None: memory_facade if name == "memory_facade" else default
+    )
+    phase = MemoryConsolidationPhase(container)
+
+    state = AuraState.default()
+    state.response_modifiers["bicameral_memory_priority"] = 0.79
+    state.response_modifiers["bicameral_verification_pressure"] = 0.66
+    state.cognition.current_origin = "desktop"
+    state.cognition.working_memory.extend(
+        [
+            {"role": "user", "content": "Reflect on what you can remember and verify.", "timestamp": 1.0},
+            {"role": "assistant", "content": "I checked the assumption and marked what should be remembered.", "timestamp": 2.0},
+        ]
+    )
+
+    await phase.execute(state, objective="Reflect on verified memory.")
+
+    assert len(commit_interaction.calls) == 1
+    _, kwargs = commit_interaction.calls[0]
+    metadata = kwargs["metadata"]
+    assert metadata["memory_salience"] == pytest.approx(0.79)
+    assert metadata["bicameral_memory_priority"] == pytest.approx(0.79)
+    assert metadata["bicameral_verification_pressure"] == pytest.approx(0.66)
+
+
+@pytest.mark.asyncio
 async def test_memory_consolidation_queues_failed_facade_commit_for_retry():
     class _MemoryFacade:
         async def commit_interaction(self, **kwargs):
