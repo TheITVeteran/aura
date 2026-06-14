@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from core.runtime.desktop_task_contract import DESKTOP_TASK_ALLOWED_ACTIONS
 from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
@@ -25,10 +26,8 @@ class DesktopTaskStep(BaseModel):
     action: str = Field(
         ...,
         description=(
-            "One computer_use action: click, type, hotkey, scroll, read_screen_text, "
-            "read_menu_clock, open_app, open_url, run_command, set_clipboard, "
-            "get_clipboard, wait, run_applescript, write_text_file, render_text_pdf, "
-            "move_file, create_folder"
+            "One governed computer_use action: "
+            + ", ".join(DESKTOP_TASK_ALLOWED_ACTIONS)
         ),
     )
     target: str | dict[str, Any] = Field("", description="Text, command, URL, app name, script, or JSON action target")
@@ -41,28 +40,7 @@ class DesktopTaskStep(BaseModel):
     @classmethod
     def _normalize_action(cls, value: str) -> str:
         action = str(value or "").strip().lower()
-        allowed = {
-            "click",
-            "type",
-            "hotkey",
-            "scroll",
-            "read_screen_text",
-            "read_menu_clock",
-            "open_app",
-            "open_url",
-            "run_command",
-            "set_clipboard",
-            "get_clipboard",
-            "wait",
-            "run_applescript",
-            "write_text_file",
-            "render_text_pdf",
-            "move_file",
-            "create_folder",
-            "fetch_topic_image",
-            "system_control",
-        }
-        if action not in allowed:
+        if action not in DESKTOP_TASK_ALLOWED_ACTIONS:
             raise ValueError(f"Unsupported desktop action: {value}")
         return action
 

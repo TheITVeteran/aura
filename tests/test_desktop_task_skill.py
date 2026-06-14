@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from core.skills.desktop_task import DesktopTaskSkill
+from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
 
 
 def _fake_computer_use_result(params):
@@ -363,6 +363,16 @@ def test_desktop_task_extracts_generic_named_app_mentions():
     ]
 
 
+def test_desktop_task_contract_action_list_matches_step_validator():
+    from core.runtime.desktop_task_contract import DESKTOP_TASK_ALLOWED_ACTIONS
+
+    for action in DESKTOP_TASK_ALLOWED_ACTIONS:
+        assert DesktopTaskStep(action=action).action == action
+
+    with pytest.raises(ValueError):
+        DesktopTaskStep(action="unsupported_desktop_magic")
+
+
 def test_desktop_task_does_not_invent_aura_journal_folder_name():
     folder = DesktopTaskSkill._extract_folder_name("Write a private journal entry.")
 
@@ -499,9 +509,26 @@ async def test_desktop_task_collects_research_before_document_composition(monkey
     assert calls[0][0] == "web_search"
     assert calls[0][1]["query"] == "climate change"
     assert calls[0][2]["route"] == "desktop_task.web_search"
-    desktop_actions = [call[1]["action"] for call in calls if call[0] == "computer_use"]
-    assert desktop_actions[:4] == ["open_app", "open_url", "open_url", "set_clipboard"]
-    clipboard_body = next(call[1]["target"] for call in calls if call[0] == "computer_use" and call[1]["action"] == "set_clipboard")
+    desktop_calls = [call for call in calls if call[0] == "computer_use"]
+    desktop_actions = [call[1]["action"] for call in desktop_calls]
+    assert desktop_actions[:6] == [
+        "open_app",
+        "open_url",
+        "open_url",
+        "open_url",
+        "open_url",
+        "open_url",
+    ]
+    opened_urls = [
+        json.loads(call[1]["target"])["url"]
+        for call in desktop_calls
+        if call[1]["action"] == "open_url"
+    ]
+    assert "https://example.test/climate-assessment" in opened_urls
+    assert "https://example.test/adaptation" in opened_urls
+    assert "https://example.test/extreme-weather" in opened_urls
+    assert desktop_actions[6] == "set_clipboard"
+    clipboard_body = next(call[1]["target"] for call in desktop_calls if call[1]["action"] == "set_clipboard")
     assert "Research summary for: climate change" in clipboard_body
     assert "Climate assessment" in clipboard_body
     assert "https://example.test/climate-assessment" in clipboard_body

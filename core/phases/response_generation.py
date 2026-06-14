@@ -21,6 +21,7 @@ from core.runtime.conversation_support import (
     record_shared_ground_callbacks,
     update_conversational_intelligence,
 )
+from core.runtime.desktop_task_contract import desktop_task_action_sentence
 from core.runtime.errors import record_degradation
 from core.synthesis import stabilize_user_facing_response, strip_meta_commentary
 from core.utils.task_tracker import get_task_tracker
@@ -314,8 +315,7 @@ class ResponseGenerationPhase(BasePhase):
                         "The user's request is a live desktop/computer objective. Produce a compact "
                         "execution draft that can drive the governed desktop_task lane. Prefer a JSON "
                         "object with optional `document_body` and a bounded `steps` array. Allowed step "
-                        "actions are open_app, open_url, set_clipboard, hotkey, wait, read_screen_text, "
-                        "create_folder, write_text_file, render_text_pdf, move_file, and run_applescript. "
+                        f"actions are {desktop_task_action_sentence()}. "
                         "Use `{{document_body}}` inside a step target when a long composed body should be "
                         "typed, pasted, written, or exported. Each step needs a reason and an expected "
                         "observable effect. Do not claim completion inside this draft; completion is only "

@@ -66,6 +66,10 @@ def test_cognitive_engine_turn_required_contract_has_no_kernel_fallback_language
 def test_desktop_cognitive_turn_carries_generic_execution_planning_contract():
     from interface.routes import chat
     from core.phases.response_generation import ResponseGenerationPhase
+    from core.runtime.desktop_task_contract import (
+        DESKTOP_TASK_ALLOWED_ACTIONS,
+        desktop_task_action_sentence,
+    )
 
     chat_source = inspect.getsource(chat._run_cognitive_engine_chat_turn)
     response_source = inspect.getsource(ResponseGenerationPhase.execute)
@@ -73,5 +77,9 @@ def test_desktop_cognitive_turn_carries_generic_execution_planning_contract():
     assert "desktop_execution_contract" in chat_source
     assert "desktop_task_planning_schema" in chat_source
     assert "{{document_body}}" in chat_source
+    assert "DESKTOP_TASK_ALLOWED_ACTIONS" in chat_source
     assert "LIVE DESKTOP EXECUTION PLANNING CONTRACT" in response_source
     assert "Do not claim completion inside this draft" in response_source
+    action_sentence = desktop_task_action_sentence()
+    for action in DESKTOP_TASK_ALLOWED_ACTIONS:
+        assert action in action_sentence

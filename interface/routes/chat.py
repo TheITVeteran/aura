@@ -32,6 +32,10 @@ from core.reasoning.artifact_synthesis import response_satisfies_artifact_contra
 from core.runtime.desktop_objective_intent import (
     looks_like_desktop_objective as _shared_looks_like_desktop_objective,
 )
+from core.runtime.desktop_task_contract import (
+    DESKTOP_TASK_ALLOWED_ACTIONS,
+    desktop_task_action_schema,
+)
 from core.runtime.errors import record_degradation
 from core.runtime.structured_input import analyze_prompt_shape
 from core.utils.intent_normalization import normalize_memory_intent_text
@@ -2353,26 +2357,14 @@ async def _run_cognitive_engine_chat_turn(
                     "document_body": "optional prose to type/write/export",
                     "steps": [
                         {
-                            "action": "open_app|open_url|set_clipboard|hotkey|wait|read_screen_text|create_folder|write_text_file|render_text_pdf|move_file|run_applescript",
+                            "action": desktop_task_action_schema(),
                             "target": "string or JSON payload; use {{document_body}} to reference the prose body",
                             "reason": "why this step is needed",
                             "expect": "observable effect evidence required after the step",
                         }
                     ],
                 },
-                "desktop_task_allowed_actions": (
-                    "open_app",
-                    "open_url",
-                    "set_clipboard",
-                    "hotkey",
-                    "wait",
-                    "read_screen_text",
-                    "create_folder",
-                    "write_text_file",
-                    "render_text_pdf",
-                    "move_file",
-                    "run_applescript",
-                ),
+                "desktop_task_allowed_actions": DESKTOP_TASK_ALLOWED_ACTIONS,
             }
         )
     timeout_s = max(2.0, float(timeout_s if timeout_s is not None else 120.0))
