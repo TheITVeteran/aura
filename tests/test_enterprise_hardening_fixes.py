@@ -1781,6 +1781,117 @@ def test_benchmark_no_text_does_not_trip_primary_circuit():
     asyncio.run(scenario())
 
 
+def test_background_router_deferral_happens_before_generation_gate(monkeypatch):
+    from core.brain import llm_health_router
+    from core.brain.llm_health_router import HealthAwareLLMRouter
+
+    class GateMustNotBeTouched:
+        acquire_calls = 0
+        release_calls = 0
+
+        def acquire(self, *_args, **_kwargs):
+            self.acquire_calls += 1
+            raise AssertionError("background deferral should happen before generation gate")
+
+        def release(self):
+            self.release_calls += 1
+            raise AssertionError("release should not run when acquire never ran")
+
+    gate = GateMustNotBeTouched()
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monkeypatch.setattr(llm_health_router, "_GENERATION_GATE", gate)
+
+    async def scenario():
+        router = HealthAwareLLMRouter()
+        result = await router.generate_with_metadata(
+            "internal reflection",
+            origin="phenomenological_narrative",
+            is_background=True,
+        )
+        assert result["ok"] is False
+        assert result["endpoint"] == "suppressed"
+        assert result["error"] == "background_deferred:proof_run_active"
+
+    asyncio.run(scenario())
+    assert gate.acquire_calls == 0
+
+
+def test_generation_gate_force_release_is_lease_scoped(monkeypatch):
+    import threading
+
+    from core.brain import llm_health_router as router_module
+    from core.runtime.errors import get_degradation_tracker
+
+    gate = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(router_module, "_GENERATION_GATE", gate)
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_ACTIVE_LEASES", {})
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_FORCED_LEASES", set())
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_NEXT_LEASE_ID", 0)
+
+    get_degradation_tracker().reset()
+    try:
+        assert gate.acquire(False) is True
+        stale_lease = router_module._mark_generation_gate_acquired("stale")
+        assert router_module.force_release_generation_gate("unit_test_timeout") is True
+
+        assert gate.acquire(False) is True
+        fresh_lease = router_module._mark_generation_gate_acquired("fresh")
+        router_module._release_generation_gate_after_call(fresh_lease)
+
+        assert gate.acquire(False) is True
+        gate.release()
+        router_module._release_generation_gate_after_call(stale_lease)
+    finally:
+        get_degradation_tracker().reset()
+
+
+def test_generation_gate_saturation_aborts_stale_lease_and_retries(monkeypatch):
+    import threading
+
+    from core.brain import llm_health_router as router_module
+    from core.brain.llm_health_router import HealthAwareLLMRouter
+    from core.runtime.errors import get_degradation_tracker
+
+    gate = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(router_module, "_GENERATION_GATE", gate)
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_WAIT_S", 0.01)
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_ACTIVE_LEASES", {})
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_FORCED_LEASES", set())
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_NEXT_LEASE_ID", 0)
+
+    assert gate.acquire(False) is True
+    stale_lease = router_module._mark_generation_gate_acquired("stale")
+    get_degradation_tracker().reset()
+
+    async def scenario():
+        router = HealthAwareLLMRouter()
+
+        async def fake_gated(*_args, **_kwargs):
+            return {
+                "ok": True,
+                "text": "recovered",
+                "endpoint": "unit-test",
+                "tokens": 1,
+                "error": "",
+            }
+
+        monkeypatch.setattr(router, "_generate_with_metadata_gated", fake_gated)
+        return await router.generate_with_metadata(
+            "repair",
+            origin="external_live_debugging_loop",
+            purpose="proof_evaluation_repair",
+            foreground_request=True,
+        )
+
+    try:
+        result = asyncio.run(scenario())
+        assert result["ok"] is True
+        assert result["text"] == "recovered"
+    finally:
+        router_module._release_generation_gate_after_call(stale_lease)
+        get_degradation_tracker().reset()
+
+
 def test_agency_baseline_watchdog_accepts_dict_and_list_endpoint_maps():
     from tools.agency.run_agency_emergence_battery import _force_abort_router_generation
 

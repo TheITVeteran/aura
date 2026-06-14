@@ -75,6 +75,12 @@ import threading as _threading  # noqa: E402 - gate lives with its rationale blo
 _GENERATION_GATE = _threading.BoundedSemaphore(
     max(1, int(os.environ.get("AURA_MAX_CONCURRENT_GENERATIONS", "2") or 2))
 )
+_GENERATION_GATE_STATE_LOCK = _threading.Lock()
+_GENERATION_GATE_ACTIVE_LEASES: dict[int, tuple[float, str]] = {}
+_GENERATION_GATE_FORCED_LEASES: set[int] = set()
+_GENERATION_GATE_NEXT_LEASE_ID = 0
+_GENERATION_GATE_LAST_ACQUIRED_AT = 0.0
+_GENERATION_GATE_LAST_OWNER = ""
 # Wait long enough to outlast one full serialized generation: gated
 # turns measure 31-46s live (2026-06-11), so the old 20s wait starved
 # any request arriving while both slots were mid-turn — external
@@ -94,6 +100,72 @@ _GATE_SATURATION_RESULT = {
         "concurrent generation (memory-bomb prevention)"
     ),
 }
+
+
+def _generation_gate_owner(origin: str, purpose: str) -> str:
+    origin = str(origin or "unknown").strip() or "unknown"
+    purpose = str(purpose or "unknown").strip() or "unknown"
+    return f"{origin}:{purpose}"
+
+
+def _mark_generation_gate_acquired(owner: str) -> int:
+    global _GENERATION_GATE_NEXT_LEASE_ID, _GENERATION_GATE_LAST_ACQUIRED_AT, _GENERATION_GATE_LAST_OWNER
+    with _GENERATION_GATE_STATE_LOCK:
+        _GENERATION_GATE_NEXT_LEASE_ID += 1
+        lease_id = _GENERATION_GATE_NEXT_LEASE_ID
+        acquired_at = time.time()
+        _GENERATION_GATE_ACTIVE_LEASES[lease_id] = (acquired_at, str(owner or "unknown"))
+        _GENERATION_GATE_LAST_ACQUIRED_AT = acquired_at
+        _GENERATION_GATE_LAST_OWNER = str(owner or "unknown")
+        return lease_id
+
+
+def _release_generation_gate_after_call(lease_id: int) -> None:
+    """Release the generation gate, accounting for watchdog-forced releases."""
+
+    should_release = False
+    with _GENERATION_GATE_STATE_LOCK:
+        if lease_id in _GENERATION_GATE_FORCED_LEASES:
+            _GENERATION_GATE_FORCED_LEASES.discard(lease_id)
+            return
+        if lease_id in _GENERATION_GATE_ACTIVE_LEASES:
+            _GENERATION_GATE_ACTIVE_LEASES.pop(lease_id, None)
+            should_release = True
+    if not should_release:
+        return
+    try:
+        _GENERATION_GATE.release()
+    except ValueError:
+        pass
+
+
+def force_release_generation_gate(reason: str = "hard_generation_deadline") -> bool:
+    """Emergency-release a stale router gate lease from a watchdog thread."""
+
+    reason = str(reason or "hard_generation_deadline")
+    with _GENERATION_GATE_STATE_LOCK:
+        if not _GENERATION_GATE_ACTIVE_LEASES:
+            return False
+        lease_id, (acquired_at, owner) = min(
+            _GENERATION_GATE_ACTIVE_LEASES.items(),
+            key=lambda item: item[1][0],
+        )
+        _GENERATION_GATE_ACTIVE_LEASES.pop(lease_id, None)
+        _GENERATION_GATE_FORCED_LEASES.add(lease_id)
+        age_s = max(0.0, time.time() - acquired_at)
+    try:
+        _GENERATION_GATE.release()
+    except ValueError:
+        with _GENERATION_GATE_STATE_LOCK:
+            _GENERATION_GATE_FORCED_LEASES.discard(lease_id)
+        return False
+    record_degradation(
+        "llm_health_router",
+        TimeoutError(f"generation gate forcibly released after {age_s:.1f}s"),
+        severity="degraded",
+        action=f"released stale generation gate lease for {owner}: {reason}",
+    )
+    return True
 
 
 def _record_router_degradation(
@@ -431,6 +503,7 @@ def _background_error_is_quiet(error: str) -> bool:
         "first_token_sla_exceeded",
         "token_progress_stalled",
     } or normalized.startswith((
+        "background_deferred:",
         "mlx_runtime_unavailable:",
         "local_runtime_unavailable:",
         "request_queue_failed:",
@@ -611,6 +684,48 @@ class HealthAwareLLMRouter:
             if str(getattr(ep, "name", "") or "").strip().lower() != "static-reflex"
         )
 
+    def force_release_generation_gate(self, reason: str = "hard_generation_deadline") -> bool:
+        """Emergency release for watchdogs when a router call outlives its budget."""
+
+        return force_release_generation_gate(reason=reason)
+
+    def force_abort_active_generation(self, reason: str = "hard_generation_deadline") -> int:
+        """Abort stale router/model generation state from watchdog or saturation paths."""
+
+        aborted = 1 if force_release_generation_gate(reason=reason) else 0
+        seen: set[int] = set()
+
+        def _abort_client(client: Any) -> None:
+            nonlocal aborted
+            if client is None:
+                return
+            ident = id(client)
+            if ident in seen:
+                return
+            seen.add(ident)
+            abort = getattr(client, "force_abort_active_generation", None)
+            if not callable(abort):
+                return
+            try:
+                if abort(reason=reason):
+                    aborted += 1
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                _record_router_degradation(
+                    exc,
+                    action="continued force-aborting other generation clients",
+                    severity="degraded",
+                )
+
+        for endpoint in self.endpoints.values():
+            _abort_client(getattr(endpoint, "client", None))
+        try:
+            from core.container import ServiceContainer
+
+            _abort_client(ServiceContainer.get("inference_gate", default=None))
+        except (ImportError, AttributeError, RuntimeError):
+            pass
+        return aborted
+
     def register(
         self,
         name: str,
@@ -767,9 +882,33 @@ class HealthAwareLLMRouter:
         Falls back to local if all remote endpoints fail.
         Always returns a dict: {"ok": bool, "text": str, "endpoint": str, "tokens": int}
         """
+        origin = str(kwargs.get("origin", "") or "").lower()
+        purpose = str(kwargs.get("purpose", "") or "").lower()
+        explicit_background = bool(kwargs.get("is_background", False))
+        explicit_foreground = bool(
+            kwargs.get("foreground_request", False)
+            or kwargs.get("health_probe", False)
+            or kwargs.get("protected_foreground_lane", False)
+            or kwargs.get("proof_primary_lane_required", False)
+        )
+        early_deferral = self._background_suppression_result(
+            origin=origin,
+            purpose=purpose,
+            explicit_background=explicit_background,
+            explicit_foreground=explicit_foreground,
+        )
+        if early_deferral is not None:
+            return early_deferral
+
         acquired = await asyncio.to_thread(
             _GENERATION_GATE.acquire, True, _GENERATION_GATE_WAIT_S
         )
+        if not acquired:
+            aborted = self.force_abort_active_generation(
+                reason=f"generation_gate_wait_timeout:{_GENERATION_GATE_WAIT_S:.1f}s"
+            )
+            if aborted:
+                acquired = await asyncio.to_thread(_GENERATION_GATE.acquire, True, 2.0)
         if not acquired:
             record_degradation(
                 "llm_health_router",
@@ -778,6 +917,7 @@ class HealthAwareLLMRouter:
                 action="refused to stack another concurrent generation",
             )
             return dict(_GATE_SATURATION_RESULT)
+        lease_id = _mark_generation_gate_acquired(_generation_gate_owner(origin, purpose))
         try:
             return await self._generate_with_metadata_gated(
                 prompt,
@@ -788,10 +928,7 @@ class HealthAwareLLMRouter:
                 **kwargs,
             )
         finally:
-            try:
-                _GENERATION_GATE.release()
-            except ValueError:
-                pass
+            _release_generation_gate_after_call(lease_id)
 
     async def _generate_with_metadata_gated(
         self,
@@ -1290,6 +1427,86 @@ class HealthAwareLLMRouter:
             return True
 
         return True
+
+    def _background_suppression_result(
+        self,
+        *,
+        origin: str | None,
+        purpose: str | None,
+        explicit_background: bool,
+        explicit_foreground: bool = False,
+    ) -> dict[str, Any] | None:
+        """Return a suppression result before scarce generation capacity is acquired."""
+
+        is_bg = self._is_background_request(
+            origin=origin,
+            purpose=purpose,
+            explicit_background=explicit_background,
+            explicit_foreground=explicit_foreground,
+        )
+        if not is_bg:
+            return None
+
+        reason = ""
+        try:
+            from core.runtime.background_policy import (
+                THOUGHT_BACKGROUND_POLICY,
+                background_activity_reason,
+            )
+
+            reason = str(
+                background_activity_reason(
+                    None,
+                    profile=THOUGHT_BACKGROUND_POLICY,
+                    allow_no_user_anchor=True,
+                )
+                or ""
+            )
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            _record_router_degradation(
+                exc,
+                action="deferred background routing because background policy was unavailable",
+                severity="degraded",
+            )
+            logger.warning("Background router policy probe failed: %s", exc)
+            reason = "background_policy_unavailable"
+        if not reason:
+            try:
+                from core.container import ServiceContainer
+
+                gate = ServiceContainer.get("inference_gate", default=None)
+                if gate and hasattr(gate, "_background_local_deferral_reason"):
+                    reason = str(gate._background_local_deferral_reason(origin=origin) or "")
+            except (ImportError, AttributeError, RuntimeError) as exc:
+                _record_router_degradation(
+                    exc,
+                    action="continued background routing without inference-gate deferral signal",
+                )
+                logger.debug("Background router deferral probe failed: %s", exc)
+        if not reason and self._foreground_quiet_window_active():
+            reason = "foreground_quiet_window"
+        if not reason and getattr(self, "high_pressure_mode", False):
+            reason = "memory_pressure"
+        if not reason and (
+            self._foreground_user_turn_active() or self._foreground_owner_active()
+        ):
+            reason = "foreground_busy"
+
+        if not reason:
+            return None
+
+        logger.info(
+            "⏸️ Router: Deferring background inference before generation gate for origin=%s reason=%s.",
+            origin,
+            reason,
+        )
+        return {
+            "ok": False,
+            "text": "",
+            "endpoint": "suppressed",
+            "tokens": 0,
+            "error": f"background_deferred:{reason}",
+        }
 
     @staticmethod
     def _deterministic_intent_classification(prompt: str) -> str:

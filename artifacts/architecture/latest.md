@@ -2,15 +2,15 @@
 
 Schema: `aura.architecture.dependency_map.v2`
 Root: `<AURA_ROOT>`
-Generated: `1781351773.262074`
+Generated: `1781374673.077245`
 
 ## Summary
 
 - Subsystems: 146
 - Python files: 1922
-- Python lines: 523666
+- Python lines: 524112
 - Dependency edges: 797
-- ServiceContainer `.get()` calls: 1596
+- ServiceContainer `.get()` calls: 1597
 - ServiceContainer registrations: 386
 - Boot contract: PASS
 
@@ -20,7 +20,7 @@ Generated: `1781351773.262074`
 graph TD
     runtime["runtime<br/>105 files, 24339 lines"]
     utils["utils<br/>43 files, 5761 lines"]
-    brain["brain<br/>117 files, 46597 lines"]
+    brain["brain<br/>117 files, 46949 lines"]
     memory["memory<br/>88 files, 19919 lines"]
     consciousness["consciousness<br/>133 files, 62020 lines"]
     resilience["resilience<br/>54 files, 12130 lines"]
@@ -42,10 +42,10 @@ graph TD
     world_model["world_model<br/>9 files, 2592 lines"]
     continuity["continuity<br/>7 files, 238 lines"]
     tasks["tasks<br/>3 files, 335 lines"]
-    being["being<br/>25 files, 5716 lines"]
+    being["being<br/>25 files, 5748 lines"]
     conversation["conversation<br/>9 files, 5443 lines"]
     learning["learning<br/>28 files, 7271 lines"]
-    phases["phases<br/>29 files, 17829 lines"]
+    phases["phases<br/>29 files, 17891 lines"]
     world["world<br/>24 files, 1483 lines"]
     actuators["actuators<br/>9 files, 2127 lines"]
     autonomy["autonomy<br/>22 files, 7721 lines"]
@@ -969,12 +969,12 @@ graph TD
 | --- | ---: | ---: | ---: | ---: | ---: |
 | consciousness | 133 | 62020 | 2611224 | 39 | 29 |
 | core_root | 178 | 55289 | 2249064 | 100 | 0 |
-| brain | 117 | 46597 | 2012521 | 42 | 39 |
+| brain | 117 | 46949 | 2028623 | 42 | 39 |
 | runtime | 105 | 24339 | 862138 | 43 | 124 |
 | memory | 88 | 19919 | 799891 | 18 | 34 |
 | orchestrator | 42 | 19212 | 848184 | 125 | 9 |
 | skills | 79 | 19057 | 774164 | 31 | 6 |
-| phases | 29 | 17829 | 808637 | 33 | 7 |
+| phases | 29 | 17891 | 811302 | 33 | 7 |
 | agency | 36 | 14779 | 598692 | 29 | 18 |
 | adaptation | 26 | 12319 | 492341 | 21 | 14 |
 | resilience | 54 | 12130 | 487860 | 17 | 27 |
@@ -985,8 +985,8 @@ graph TD
 | learning | 28 | 7271 | 287595 | 15 | 7 |
 | kernel | 11 | 6152 | 257270 | 25 | 4 |
 | utils | 43 | 5761 | 223868 | 17 | 50 |
+| being | 25 | 5748 | 223125 | 4 | 7 |
 | architect | 25 | 5737 | 239735 | 9 | 2 |
-| being | 25 | 5716 | 221650 | 4 | 7 |
 | conversation | 9 | 5443 | 201255 | 12 | 7 |
 | senses | 24 | 5266 | 221030 | 20 | 14 |
 | capabilities | 13 | 5095 | 196749 | 9 | 5 |
@@ -1219,7 +1219,7 @@ graph TD
 | Surface | Calls | Files | Owner Calls | Review Candidates |
 | --- | ---: | ---: | ---: | ---: |
 | UnifiedWill decisions | 55 | 29 | 2 | 53 |
-| Memory writes | 303 | 122 | 50 | 253 |
+| Memory writes | 305 | 123 | 50 | 255 |
 | State mutation | 403 | 152 | 7 | 396 |
 | Tool execution | 93 | 46 | 6 | 87 |
 | Self-modification and patching | 13 | 10 | 1 | 12 |

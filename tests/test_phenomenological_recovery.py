@@ -27,6 +27,10 @@ async def test_deep_narrative_failure_updates_recovery_state(monkeypatch):
         "core.container.ServiceContainer.get",
         lambda name, default=None: _BrokenRouter() if name == "llm_router" else default,
     )
+    monkeypatch.setattr(
+        "core.consciousness.phenomenological_experiencer._phenomenology_background_deferral_reason",
+        lambda: "",
+    )
 
     psm = PhenomenalSelfModel()
     report = await psm.run_deep_narrative_update(
@@ -39,7 +43,7 @@ async def test_deep_narrative_failure_updates_recovery_state(monkeypatch):
 
     assert report == psm._present_description
     assert psm.to_dict()["narrative_failure_streak"] == 1
-    last = get_degradation_tracker().recent(subsystem="phenomenological_experiencer")[-1]
+    last = get_degradation_tracker().recent(subsystem="phenomenological_narrative")[-1]
     assert last.action == "retained previous present-description after narrative update failed"
 
 
@@ -54,6 +58,10 @@ async def test_witness_failure_updates_recovery_state(monkeypatch):
         "core.container.ServiceContainer.get",
         lambda name, default=None: _BrokenRouter() if name == "llm_router" else default,
     )
+    monkeypatch.setattr(
+        "core.consciousness.phenomenological_experiencer._phenomenology_background_deferral_reason",
+        lambda: "",
+    )
 
     psm = PhenomenalSelfModel()
     observation = await psm.run_witness_reflection(
@@ -63,8 +71,44 @@ async def test_witness_failure_updates_recovery_state(monkeypatch):
 
     assert observation == ""
     assert psm.to_dict()["witness_failure_streak"] == 1
-    last = get_degradation_tracker().recent(subsystem="phenomenological_experiencer")[-1]
+    last = get_degradation_tracker().recent(subsystem="phenomenological_witness")[-1]
     assert last.action == "retained previous witness observation after reflection update failed"
+
+
+@pytest.mark.asyncio
+async def test_slow_phenomenology_defers_during_proof_without_router_call(monkeypatch):
+    class _UnexpectedRouter:
+        think_calls = 0
+
+        async def think(self, **_kwargs):
+            self.think_calls += 1
+            raise AssertionError("background phenomenology should not call the router during proof")
+
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        lambda name, default=None: _UnexpectedRouter() if name == "llm_router" else default,
+    )
+
+    psm = PhenomenalSelfModel()
+    report = await psm.run_deep_narrative_update(
+        continuity=ExperientialContinuityEngine(),
+        schema=AttentionSchema("a proof run", "aware", "cognitive", 0.7),
+        qualia=[],
+        current_emotion="focused",
+        dominant_motivation="needs_to_reason",
+    )
+    witness = await psm.run_witness_reflection(
+        continuity=ExperientialContinuityEngine(),
+        credit_summary="credit assignment active",
+    )
+
+    assert report == psm._present_description
+    assert witness == ""
+    assert psm.to_dict()["narrative_failure_streak"] == 0
+    assert psm.to_dict()["witness_failure_streak"] == 0
+    assert psm.to_dict()["last_narrative_error"] == "deferred:proof_run_active"
+    assert psm.to_dict()["last_witness_error"] == "deferred:proof_run_active"
 
 
 @pytest.mark.asyncio
@@ -92,6 +136,10 @@ async def test_experiencer_update_loop_uses_adaptive_backoff(monkeypatch, tmp_pa
     monkeypatch.setattr(
         "core.consciousness.phenomenological_experiencer.BOOT_GRACE_PERIOD_S",
         0,
+    )
+    monkeypatch.setattr(
+        "core.consciousness.phenomenological_experiencer._phenomenology_background_deferral_reason",
+        lambda: "",
     )
 
     await experiencer._update_loop()

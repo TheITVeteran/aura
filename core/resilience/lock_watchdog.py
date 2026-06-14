@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import logging
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ class LockWatchdog:
     """
     def __init__(self, check_interval: float = 10.0, threshold: float = 180.0):
         self._active_locks: dict[str, _TrackedLock] = {}
+        self._active_locks_guard = threading.RLock()
         self._check_interval = check_interval
         self._threshold = threshold
         self._running = False
@@ -100,38 +102,44 @@ class LockWatchdog:
         threshold_s: float | None = None,
     ):
         """Called when a lock acquisition begins."""
-        existing = self._active_locks.get(lock_id)
-        self._active_locks[lock_id] = _TrackedLock(
-            start_time=time.monotonic(),
-            name=name,
-            on_stall=on_stall or (existing.on_stall if existing else None),
-            threshold_s=threshold_s if threshold_s is not None else (existing.threshold_s if existing else None),
-            interventions=existing.interventions if existing else 0,
-            last_alert_at=existing.last_alert_at if existing else 0.0,
-            last_intervention_at=existing.last_intervention_at if existing else 0.0,
-        )
+        with self._active_locks_guard:
+            existing = self._active_locks.get(lock_id)
+            self._active_locks[lock_id] = _TrackedLock(
+                start_time=time.monotonic(),
+                name=name,
+                on_stall=on_stall or (existing.on_stall if existing else None),
+                threshold_s=threshold_s if threshold_s is not None else (existing.threshold_s if existing else None),
+                interventions=existing.interventions if existing else 0,
+                last_alert_at=existing.last_alert_at if existing else 0.0,
+                last_intervention_at=existing.last_intervention_at if existing else 0.0,
+            )
 
     def report_acquire_success(self, lock_id: str):
         """Called when a lock is successfully acquired."""
         # We update the time to the actual hold start
-        tracked = self._active_locks.get(lock_id)
-        if tracked is not None:
-            tracked.start_time = time.monotonic()
+        with self._active_locks_guard:
+            tracked = self._active_locks.get(lock_id)
+            if tracked is not None:
+                tracked.start_time = time.monotonic()
 
     def report_wait_progress(self, lock_id: str):
         """Called to indicate a lock is actively waiting, preventing false stalls."""
-        tracked = self._active_locks.get(lock_id)
-        if tracked is not None:
-            tracked.start_time = time.monotonic()
+        with self._active_locks_guard:
+            tracked = self._active_locks.get(lock_id)
+            if tracked is not None:
+                tracked.start_time = time.monotonic()
 
     def report_release(self, lock_id: str):
         """Called when a lock is released."""
-        self._active_locks.pop(lock_id, None)
+        with self._active_locks_guard:
+            self._active_locks.pop(lock_id, None)
 
     def get_snapshot(self) -> dict[str, Any]:
         now = time.monotonic()
         locks = []
-        for lock_id, tracked in self._active_locks.items():
+        with self._active_locks_guard:
+            active_items = list(self._active_locks.items())
+        for lock_id, tracked in active_items:
             locks.append(
                 {
                     "lock_id": lock_id,
@@ -161,7 +169,8 @@ class LockWatchdog:
             result = callback()
             if inspect.isawaitable(result):
                 await result
-            refreshed = self._active_locks.get(lock_id)
+            with self._active_locks_guard:
+                refreshed = self._active_locks.get(lock_id)
             if refreshed is not None:
                 refreshed.interventions += 1
                 refreshed.last_intervention_at = time.monotonic()
@@ -182,12 +191,17 @@ class LockWatchdog:
             try:
                 await asyncio.sleep(self._check_interval)
                 now = time.monotonic()
-                for lock_id, tracked in list(self._active_locks.items()):
+                with self._active_locks_guard:
+                    active_items = list(self._active_locks.items())
+                for lock_id, tracked in active_items:
                     held_duration = now - tracked.start_time
                     threshold_s = tracked.threshold_s if tracked.threshold_s is not None else self._threshold
                     if held_duration > threshold_s:
                         if (now - tracked.last_alert_at) >= self._check_interval:
-                            tracked.last_alert_at = now
+                            with self._active_locks_guard:
+                                refreshed = self._active_locks.get(lock_id)
+                                if refreshed is not None:
+                                    refreshed.last_alert_at = now
                             logger.critical(
                                 "🚨 DEADLOCK ALERT: Lock '%s' (ID: %s) held for %.1fs!",
                                 tracked.name,

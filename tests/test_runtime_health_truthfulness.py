@@ -223,6 +223,97 @@ def test_dnu_runtime_health_blockers_reject_unhealthy_snapshots():
     assert any("inference" in item for item in blockers)
 
 
+def test_runtime_pressure_probe_rejects_high_existential_threat(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime import health_contract
+
+    class HighThreat:
+        def get_status(self):
+            return {
+                "existential_threat": 0.91,
+                "lag_threat": 0.91,
+                "memory_threat": 0.1,
+            }
+
+    def fake_get(cls, name, default=None):
+        if name == "existential_stakes":
+            return HighThreat()
+        return default
+
+    monkeypatch.setenv("AURA_HEALTH_EXISTENTIAL_THREAT_UNHEALTHY", "0.75")
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+
+    status = health_contract._runtime_pressure_status()
+
+    assert status.present is True
+    assert status.liveness_ok is False
+    assert "existential_threat" in (status.error or "")
+
+
+def test_runtime_pressure_probe_rejects_hard_event_loop_lag(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime import health_contract
+
+    class HealthyThreat:
+        def get_status(self):
+            return {
+                "existential_threat": 0.05,
+                "lag_threat": 0.0,
+                "memory_threat": 0.0,
+            }
+
+    class LagMonitor:
+        def get_status(self):
+            return {
+                "last_lag_s": 12.5,
+                "last_failure_reason": "",
+            }
+
+    def fake_get(cls, name, default=None):
+        if name == "existential_stakes":
+            return HealthyThreat()
+        if name == "event_loop_monitor":
+            return LagMonitor()
+        return default
+
+    monkeypatch.setenv("AURA_HEALTH_EVENT_LOOP_LAG_UNHEALTHY_S", "5.0")
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+
+    status = health_contract._runtime_pressure_status()
+
+    assert status.liveness_ok is False
+    assert "event_loop_monitor.last_lag_s" in (status.error or "")
+
+
+def test_runtime_pressure_probe_rejects_recent_inference_saturation(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime import health_contract
+    from core.runtime.errors import get_degradation_tracker, record_degradation
+
+    def fake_get(cls, name, default=None):
+        return default
+
+    get_degradation_tracker().reset()
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    monkeypatch.setenv("AURA_HEALTH_RECENT_DEGRADATION_WINDOW_S", "180")
+
+    try:
+        record_degradation(
+            "llm_health_router",
+            RuntimeError("generation gate saturated"),
+            severity="degraded",
+            action="refused to stack another concurrent generation",
+        )
+
+        status = health_contract._runtime_pressure_status()
+
+        assert status.liveness_ok is False
+        assert "recent_llm_health_router" in (status.error or "")
+        assert "generation gate saturated" in (status.error or "")
+    finally:
+        get_degradation_tracker().reset()
+
+
 def test_stability_guardian_initializing_summary_is_not_healthy():
     from core.resilience.stability_guardian import StabilityGuardian
 
@@ -234,6 +325,47 @@ def test_stability_guardian_initializing_summary_is_not_healthy():
     assert summary["healthy"] is False
     assert summary["active_issues"]
     assert "no stability report yet" in summary["message"]
+
+
+def test_lock_watchdog_snapshot_survives_concurrent_mutation():
+    import threading
+
+    from core.resilience.lock_watchdog import LockWatchdog
+
+    watchdog = LockWatchdog(check_interval=0.01, threshold=0.01)
+    with watchdog._active_locks_guard:
+        watchdog._active_locks.clear()
+
+    stop = threading.Event()
+    failures: list[BaseException] = []
+
+    def mutate_locks() -> None:
+        index = 0
+        while not stop.is_set():
+            lock_id = f"test-lock-{index % 8}"
+            try:
+                watchdog.report_acquire_start(lock_id, "test")
+                if index % 2 == 0:
+                    watchdog.report_release(lock_id)
+            except (AssertionError, RuntimeError, ValueError, TypeError, OSError, KeyError, IndexError) as exc:  # pragma: no cover - copied back to main assertion
+                failures.append(exc)
+                stop.set()
+            index += 1
+
+    worker = threading.Thread(target=mutate_locks, daemon=True)
+    worker.start()
+    try:
+        deadline = time.monotonic() + 0.25
+        while time.monotonic() < deadline:
+            snapshot = watchdog.get_snapshot()
+            assert "locks" in snapshot
+    finally:
+        stop.set()
+        worker.join(timeout=1.0)
+        with watchdog._active_locks_guard:
+            watchdog._active_locks.clear()
+
+    assert failures == []
 
 
 def test_autonomous_brain_enters_safe_mode_when_stability_health_is_unknown(monkeypatch):

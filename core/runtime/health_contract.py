@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -292,6 +293,17 @@ UNIFIED_MEMORY_PRESSURE_REQUIREMENT = ServiceRequirement(
     ServiceTier.CRITICAL,
     "Process-wide unified-memory pressure gate. Aura must not claim healthy when the live model lane risks system OOM.",
     liveness_check="get_memory_pressure_snapshot",
+)
+
+UNIFIED_RUNTIME_PRESSURE_REQUIREMENT = ServiceRequirement(
+    "Unified Runtime Pressure",
+    "unified_runtime_pressure",
+    ServiceTier.IMPORTANT,
+    (
+        "Event-loop, CPU, and existential-pressure gate. Aura must not claim "
+        "healthy when scheduling lag or substrate survival pressure is high."
+    ),
+    liveness_check="runtime_pressure_snapshot",
 )
 
 
@@ -577,6 +589,108 @@ def _unified_memory_pressure_status() -> ServiceStatus:
         )
 
 
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _runtime_pressure_status() -> ServiceStatus:
+    """Return an important health failure when runtime pressure is too high.
+
+    Heartbeat transport, service presence, and memory headroom are necessary
+    but not sufficient for a healthy live desktop runtime. A system stuck in a
+    long foreground generation can still have every service "alive"; this probe
+    closes that gap by folding existential pressure and lag monitors into the
+    canonical health contract.
+    """
+    blockers: list[str] = []
+    details: list[str] = []
+    threat_threshold = _float_env("AURA_HEALTH_EXISTENTIAL_THREAT_UNHEALTHY", 0.75)
+    lag_threshold = _float_env("AURA_HEALTH_EVENT_LOOP_LAG_UNHEALTHY_S", 5.0)
+    recent_degradation_window_s = _float_env(
+        "AURA_HEALTH_RECENT_DEGRADATION_WINDOW_S",
+        180.0,
+    )
+
+    try:
+        stakes = ServiceContainer.get("existential_stakes", default=None)
+        status_getter = getattr(stakes, "get_status", None)
+        if callable(status_getter):
+            status = status_getter()
+            if isinstance(status, dict):
+                threat = float(status.get("existential_threat", 0.0) or 0.0)
+                lag_threat = float(status.get("lag_threat", 0.0) or 0.0)
+                memory_threat = float(status.get("memory_threat", 0.0) or 0.0)
+                details.append(
+                    "existential_threat="
+                    f"{threat:.2f}, lag_threat={lag_threat:.2f}, memory_threat={memory_threat:.2f}"
+                )
+                if threat >= threat_threshold:
+                    blockers.append(
+                        f"existential_threat {threat:.2f} >= {threat_threshold:.2f}"
+                    )
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        details.append(f"existential_stakes_unavailable:{type(exc).__name__}")
+
+    for key in ("event_loop_monitor", "hypervisor"):
+        try:
+            monitor = ServiceContainer.get(key, default=None)
+            status_getter = getattr(monitor, "get_status", None)
+            if not callable(status_getter):
+                continue
+            status = status_getter()
+            if not isinstance(status, dict):
+                continue
+            last_lag = float(status.get("last_lag_s", 0.0) or 0.0)
+            failure_reason = str(status.get("last_failure_reason", "") or "")
+            details.append(f"{key}.last_lag_s={last_lag:.2f}")
+            if failure_reason:
+                blockers.append(f"{key}:{failure_reason}")
+            elif last_lag >= lag_threshold:
+                blockers.append(f"{key}.last_lag_s {last_lag:.2f} >= {lag_threshold:.2f}")
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            details.append(f"{key}_pressure_unavailable:{type(exc).__name__}")
+
+    try:
+        from core.runtime.errors import get_degradation_tracker
+
+        now = time.time()
+        inference_subsystems = {
+            "llm_health_router",
+            "inference_gate",
+            "mlx_client",
+            "mlx_runtime",
+        }
+        for record in get_degradation_tracker().recent(limit=80):
+            subsystem = str(getattr(record, "subsystem", "") or "")
+            if subsystem not in inference_subsystems:
+                continue
+            age_s = now - float(getattr(record, "timestamp", 0.0) or 0.0)
+            if age_s > recent_degradation_window_s:
+                continue
+            severity = str(getattr(record, "severity", "") or "")
+            action = str(getattr(record, "action", "") or "")
+            message = str(getattr(record, "error_message", "") or "")
+            if severity in {"critical", "degraded"}:
+                blockers.append(
+                    f"recent_{subsystem}_{severity}: {(message or action)[:120]}"
+                )
+                continue
+            if "generation gate saturated" in message.lower() or "refused to stack" in action.lower():
+                blockers.append(f"recent_{subsystem}_saturation: {(message or action)[:120]}")
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        details.append(f"degradation_pressure_unavailable:{type(exc).__name__}")
+
+    return ServiceStatus(
+        requirement=UNIFIED_RUNTIME_PRESSURE_REQUIREMENT,
+        present=True,
+        liveness_ok=not blockers,
+        error="; ".join(blockers or details[:3]) if blockers else None,
+    )
+
+
 def _tier_summary(services: list[ServiceStatus], tier: ServiceTier) -> dict[str, int]:
     tier_services = [status for status in services if status.requirement.tier == tier]
     failed = [
@@ -644,6 +758,7 @@ def evaluate_health() -> HealthVerdict:
             )
 
     statuses.append(_unified_memory_pressure_status())
+    statuses.append(_runtime_pressure_status())
 
     # Classify
     concrete_statuses = [

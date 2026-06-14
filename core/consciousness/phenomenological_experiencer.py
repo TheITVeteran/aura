@@ -90,18 +90,47 @@ def _record_phenomenology_degradation(
     action: str,
     severity: Severity = "warning",
     extra: dict[str, Any] | None = None,
+    subsystem: str = "phenomenological_experiencer",
 ) -> None:
     payload = {"stage": stage, "repair_requested": True}
     if extra:
         payload.update(extra)
     record_degradation(
-        "phenomenological_experiencer",
+        subsystem,
         error,
         severity=severity,
         action=action,
         classification=FallbackClassification.SAFE_FALLBACK,
         extra=payload,
     )
+
+
+def _phenomenology_background_deferral_reason() -> str:
+    """Return why slow phenomenology LLM work must yield right now."""
+
+    try:
+        from core.runtime.background_policy import (
+            THOUGHT_BACKGROUND_POLICY,
+            background_activity_reason,
+        )
+
+        return str(
+            background_activity_reason(
+                None,
+                profile=THOUGHT_BACKGROUND_POLICY,
+                allow_no_user_anchor=True,
+            )
+            or ""
+        )
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        _record_phenomenology_degradation(
+            exc,
+            stage="background_policy",
+            action="deferred slow phenomenology because background policy was unavailable",
+            severity="degraded",
+            subsystem="phenomenology_background_policy",
+        )
+        return "background_policy_unavailable"
 
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -838,6 +867,7 @@ class PhenomenalSelfModel:
             action=action,
             severity=severity,
             extra={"narrative_failure_streak": self._narrative_failure_streak},
+            subsystem="phenomenological_narrative",
         )
 
     def _note_witness_failure(
@@ -856,6 +886,7 @@ class PhenomenalSelfModel:
             action=action,
             severity=severity,
             extra={"witness_failure_streak": self._witness_failure_streak},
+            subsystem="phenomenological_witness",
         )
 
     @property
@@ -970,6 +1001,13 @@ class PhenomenalSelfModel:
 
         This is NOT a response to the user. It is purely internal.
         """
+        deferral_reason = _phenomenology_background_deferral_reason()
+        if deferral_reason:
+            self._last_narrative_error = f"deferred:{deferral_reason}"
+            self._last_narrative_update = time.time()
+            logger.debug("PSM deep update deferred: %s", deferral_reason)
+            return self._present_description
+
         try:
             from core.container import ServiceContainer
 
@@ -1072,6 +1110,13 @@ class PhenomenalSelfModel:
         The witness does not intervene. It observes. It notices patterns
         in experience that the experiencer is too embedded to see.
         """
+        deferral_reason = _phenomenology_background_deferral_reason()
+        if deferral_reason:
+            self._last_witness_error = f"deferred:{deferral_reason}"
+            self._last_witness_update = time.time()
+            logger.debug("Witness reflection deferred: %s", deferral_reason)
+            return ""
+
         try:
             from core.container import ServiceContainer
 
@@ -1373,6 +1418,12 @@ class PhenomenologicalExperiencer:
 
         while self._running:
             try:
+                deferral_reason = _phenomenology_background_deferral_reason()
+                if deferral_reason:
+                    self._last_update_error = f"deferred:{deferral_reason}"
+                    await asyncio.sleep(10.0)
+                    continue
+
                 # [STABILITY] Check if user is active to prevent competing for GPU
                 is_user_active = False
                 try:

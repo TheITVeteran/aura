@@ -105,8 +105,13 @@ async def execute_real_coding_repair(task_id: str, code_content: str, test_conte
         (repo_dir / "solution.py").write_text(code_content)
         (repo_dir / "test_solution.py").write_text(test_content)
 
-        # Run debugging loop
-        res = await run_debugging_loop(repo_dir)
+        # Run debugging loop under a task-level ceiling so a wedged repair
+        # proposal becomes failed evidence instead of freezing final-proof.
+        try:
+            res = await asyncio.wait_for(run_debugging_loop(repo_dir), timeout=180.0)
+        except (TimeoutError, asyncio.TimeoutError) as exc:
+            print(f"    [ERROR] Coding repair timed out: {type(exc).__name__}: {exc}")
+            return False
         print(f"    → Coding repair completed: {res.get('status')} (ok={res.get('ok')})")
         return bool(res.get("ok"))
 
