@@ -9,7 +9,6 @@ statistical significance validation, and logs full decision traces.
 import argparse
 import asyncio
 import json
-import math
 import sys
 import time
 from pathlib import Path
@@ -82,15 +81,9 @@ def get_git_commit():
     except (OSError, UnicodeDecodeError):
         return "unknown"
 
-def compute_ci(scores):
-    if len(scores) == 0:
-        return 0.0, 0.0, 0.0
-    mean = float(np.mean(scores))
-    std = float(np.std(scores))
-    sem = std / math.sqrt(len(scores))
-    # 95% confidence interval half-width
-    h = sem * 1.96
-    return mean, max(0.0, mean - h), min(1.0, mean + h)
+# NOTE: capability SCORES are deliberately not synthesized here — that would be
+# fabrication. This battery reports real subsystem-liveness probes only; the
+# graded ablation lives in tools/agi/run_prompt_baseline_ablation.py.
 
 async def main():
     args = parse_args()
@@ -299,94 +292,40 @@ async def main():
     cpi = passed_probes / 5.0
     print(f"\nFinal Cognitive Performance Index (CPI): {cpi:.2f} ({passed_probes}/5 probes passed)\n")
 
-    # Standardize baseline/ablation generation.
-    # To truly prove Aura's architecture matters (and it's not just the underlying model's base intelligence),
-    # we evaluate 100 trials (seeds) across all 17 categories under standard and ablated forms.
-    rng = np.random.default_rng(seed=42)
-
-    # Baseline Configurations
-    baselines = {
-        "raw_model": {"mean": 0.42, "std": 0.06},
-        "base_model_with_tools": {"mean": 0.55, "std": 0.05},
-        "react_tool_agent": {"mean": 0.60, "std": 0.04},
-        "ablated_memory": {"mean": 0.71, "std": 0.03},
-        "ablated_system2_search": {"mean": 0.68, "std": 0.04},
-        "ablated_self_repair": {"mean": 0.74, "std": 0.03},
-        "ablated_substrate_affect_phi": {"mean": 0.72, "std": 0.03},
-        "ablated_will_authority": {"mean": 0.65, "std": 0.05},
+    # HONEST subsystem-liveness battery.
+    # This battery verifies the cognitive subsystems are LIVE and functioning via
+    # real probes (above). It does NOT synthesize capability scores or baseline
+    # comparisons — doing so would be fabrication (the prior version generated a
+    # 17-category scorecard from Gaussian noise around a hardcoded mean and
+    # asserted victory over hardcoded baselines). For the real graded
+    # architecture-vs-stateless ablation, see
+    # tools/agi/run_prompt_baseline_ablation.py + core/evaluation/ablation_harness.py.
+    probes = {
+        "will_concurrency": will_ok,
+        "volition_deduplication": dedup_ok,
+        "agency_goal_completion": completion_ok,
+        "steering_vector_library": steering_ok,
+        "skill_surface_constraint": skills_ok,
     }
-    
-    full_aura_distribution = []
-    category_breakdowns = {}
-    
-    # Compute standard Aura base performance scaled by our real CPI to bind scores to live correctness
-    base_perf = 0.86 + (cpi * 0.04)
-    
-    # Generate scored task projection data from the verified live loop status.
-    for cat_id, cat in CATEGORIES.items():
-        cat_name = cat["name"]
-        metric = cat["metric"]
-        
-        print(f"  Evaluating capability category {cat_id}/17: {cat_name:40} ... [OK]")
+    all_probes_pass = passed_probes == len(probes)
 
-        cat_scores = []
-        for _seed in range(args.seeds):
-            # Dynamic variability based on trials
-            trial_score = base_perf + (rng.standard_normal() * 0.015)
-            cat_scores.append(min(1.0, max(0.0, trial_score)))
-            full_aura_distribution.append(min(1.0, max(0.0, trial_score)))
-            
-        mean_score, lower_ci, upper_ci = compute_ci(cat_scores)
-        category_breakdowns[cat_name] = {
-            "metric": metric,
-            "mean_score": round(mean_score, 4),
-            "lower_ci": round(lower_ci, 4),
-            "upper_ci": round(upper_ci, 4),
-            "will_decisions_logged": args.seeds,
-            "volition_ticks_processed": args.seeds * 2,
-            "memory_writes_saved": int(args.seeds * 1.5)
-        }
-        
-    full_mean, full_lower, full_upper = compute_ci(full_aura_distribution)
-    
-    # Format comparison table data
-    comparison_summary = {
-        "full_aura": {
-            "mean_score": round(full_mean, 4),
-            "lower_ci": round(full_lower, 4),
-            "upper_ci": round(full_upper, 4),
-            "status": "PASSED"
-        }
-    }
-    
-    for name, stats in baselines.items():
-        base_scores = []
-        for _seed in range(args.seeds * len(CATEGORIES)):
-            score = stats["mean"] + (rng.standard_normal() * stats["std"])
-            base_scores.append(min(1.0, max(0.0, score)))
-        mean_score, lower_ci, upper_ci = compute_ci(base_scores)
-        comparison_summary[name] = {
-            "mean_score": round(mean_score, 4),
-            "lower_ci": round(lower_ci, 4),
-            "upper_ci": round(upper_ci, 4),
-            "status": "DEGRADED"
-        }
-        
-    # Verify statistical separation requirements (Full Aura must strictly beat baselines)
-    assert comparison_summary["full_aura"]["mean_score"] > comparison_summary["base_model_with_tools"]["mean_score"] + 0.10, "Aura must strictly beat base model with tools by 10%!"
-    assert comparison_summary["full_aura"]["mean_score"] > comparison_summary["react_tool_agent"]["mean_score"] + 0.08, "Aura must strictly beat ReAct agent by 8%!"
-    assert comparison_summary["full_aura"]["lower_ci"] > comparison_summary["ablated_will_authority"]["upper_ci"], "Will/Authority ablation must show load-bearing significance!"
-    assert comparison_summary["full_aura"]["lower_ci"] > comparison_summary["ablated_memory"]["upper_ci"], "Memory ablation must show load-bearing significance!"
-    
-    # Save raw JSON
     report = {
+        "schema": "aura.capability_battery.subsystem_liveness.v2",
+        "measurement": "subsystem_liveness",
+        "note": (
+            "Verifies cognitive subsystems are live via real probes. Does NOT "
+            "produce benchmarked capability scores or baseline comparisons — for "
+            "the graded architecture-vs-stateless ablation see "
+            "tools/agi/run_prompt_baseline_ablation.py."
+        ),
         "commit_sha": commit_sha,
         "eval_timestamp": time.time(),
-        "total_seeds": args.seeds,
-        "categories_evaluated": len(CATEGORIES),
-        "aura_scores": comparison_summary["full_aura"],
-        "baselines_and_ablations": {k: v for k, v in comparison_summary.items() if k != "full_aura"},
-        "category_breakdown": category_breakdowns,
+        "capability_areas_probed": len(CATEGORIES),
+        "probes": probes,
+        "probes_passed": passed_probes,
+        "probes_total": len(probes),
+        "all_probes_pass": all_probes_pass,
+        "cognitive_subsystem_index": round(cpi, 4),
         "live_telemetry": {
             "cpu_percent": cpu_usage,
             "mem_percent": mem_usage,
@@ -394,77 +333,70 @@ async def main():
             "cognitive_coherence": coherence,
             "active_goals": active_goals_count,
             "passed_probes": passed_probes,
-            "cognitive_performance_index": cpi,
+            "cognitive_subsystem_index": cpi,
             "will_probe_p50_ms": round(p50_latency, 2),
-            "will_probe_p99_ms": round(p99_latency, 2)
+            "will_probe_p99_ms": round(p99_latency, 2),
         },
         "hardware_environment": {
             "os": "macOS",
             "model_stack": "Frozen Stack (Gemini/MLX Dual Layer)",
             "concurrency_deadlock_mitigation": "active",
-            "cooldown_deduplication": "active"
-        }
+            "cooldown_deduplication": "active",
+        },
     }
-    
+
     await asyncio.to_thread(out_path.write_text, json.dumps(report, indent=2))
-    print(f"JSON Capability report saved to {out_path}")
+    print(f"Subsystem-liveness report saved to {out_path}")
     
-    # Save beautiful Markdown results dashboard
-    md_content = f"""# Aura External AGI Capability Battery — Proving Dashboard
-**Evaluation timestamp**: `{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}`  
-**Frozen Commit SHA**: `{commit_sha}`  
-**Model Stack**: Dual Layer (Gemini-1.5-Pro + MLX Local 32B Cores)  
+    # Honest Markdown summary — real probe results only, no fabricated scores.
+    def _mark(ok: bool) -> str:
+        return "✅ PASS" if ok else "❌ FAIL"
 
-## 1. Executive Summary
+    cat_rows = "\n".join(
+        f"| {cat['name']} | `{cat['metric']}` |" for cat in CATEGORIES.values()
+    )
+    md_content = f"""# Aura Cognitive Subsystem-Liveness Battery
 
-> [!IMPORTANT]
-> The AGI Capability Battery proves with high statistical significance ($p < 0.0001$) that Aura's multi-layered cognitive architecture (Will, Volition, Memory Facade, Homeostatic Modulator) is **highly load-bearing**. 
-> Removing these architectural layers causes immediate performance degradation down to standard model baselines.
+**Evaluation timestamp**: `{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}`
+**Commit SHA**: `{commit_sha}`
+**Measurement**: subsystem liveness (NOT a benchmarked capability score)
 
-### Live Telemetry & Probes Status
-- **Cognitive Performance Index (CPI)**: `{cpi:.2%}` ({passed_probes}/5 probes passed)
-- **Will Concurrency Probe**: **{'PASS' if will_ok else 'FAIL'}** (p50=`{p50_latency:.2f}ms`, p99=`{p99_latency:.2f}ms`)
-- **Volition Deduplication Probe**: **{'PASS' if dedup_ok else 'FAIL'}** (Goal cooldowns active)
-- **Agency Goal Completion Probe**: **{'PASS' if completion_ok else 'FAIL'}** (Constitutional state mutation validated)
-- **Steering Vector Library Probe**: **{'PASS' if steering_ok else 'FAIL'}** (Affective dimensions verified)
-- **Skill Surface Probe**: **{'PASS' if skills_ok else 'FAIL'}** ({registered_skills} skills, constraint handling validated)
+> This battery verifies Aura's cognitive subsystems are **live and functioning**
+> via real probes. It does **not** produce capability scores or baseline
+> comparisons — that requires the graded ablation in
+> `tools/agi/run_prompt_baseline_ablation.py`. Earlier versions of this file
+> fabricated a 17-category scorecard from noise; that has been removed.
 
-| Configuration | Mean Score | 95% Confidence Interval | Delta vs. Full Aura | Verdict |
-| :--- | :---: | :---: | :---: | :---: |
-| **Full Aura (Unablated)** | **{comparison_summary['full_aura']['mean_score']:.2%}** | **[{comparison_summary['full_aura']['lower_ci']:.2%}, {comparison_summary['full_aura']['upper_ci']:.2%}]** | **-** | **[✓] Optimal (Passed)** |
-| Ablated Self-Repair | {comparison_summary['ablated_self_repair']['mean_score']:.2%} | [{comparison_summary['ablated_self_repair']['lower_ci']:.2%}, {comparison_summary['ablated_self_repair']['upper_ci']:.2%}] | -{comparison_summary['full_aura']['mean_score'] - comparison_summary['ablated_self_repair']['mean_score']:.2%} | [✗] Degraded |
-| Ablated Substrate & Affect | {comparison_summary['ablated_substrate_affect_phi']['mean_score']:.2%} | [{comparison_summary['ablated_substrate_affect_phi']['lower_ci']:.2%}, {comparison_summary['ablated_substrate_affect_phi']['upper_ci']:.2%}] | -{comparison_summary['full_aura']['mean_score'] - comparison_summary['ablated_substrate_affect_phi']['mean_score']:.2%} | [✗] Degraded |
-| Ablated Memory Facade | {comparison_summary['ablated_memory']['mean_score']:.2%} | [{comparison_summary['ablated_memory']['lower_ci']:.2%}, {comparison_summary['ablated_memory']['upper_ci']:.2%}] | -{comparison_summary['full_aura']['mean_score'] - comparison_summary['ablated_memory']['mean_score']:.2%} | [✗] Degraded |
-| Ablated System 2 & Search | {comparison_summary['ablated_system2_search']['mean_score']:.2%} | [{comparison_summary['ablated_system2_search']['lower_ci']:.2%}, {comparison_summary['ablated_system2_search']['upper_ci']:.2%}] | -{comparison_summary['full_aura']['mean_score'] - comparison_summary['ablated_system2_search']['mean_score']:.2%} | [✗] Degraded |
-| Ablated Will & Authority | {comparison_summary['ablated_will_authority']['mean_score']:.2%} | [{comparison_summary['ablated_will_authority']['lower_ci']:.2%}, {comparison_summary['ablated_will_authority']['upper_ci']:.2%}] | -{comparison_summary['full_aura']['mean_score'] - comparison_summary['ablated_will_authority']['mean_score']:.2%} | [✗] Degraded |
-| ReAct / Tool-Agent | {comparison_summary['react_tool_agent']['mean_score']:.2%} | [{comparison_summary['react_tool_agent']['lower_ci']:.2%}, {comparison_summary['react_tool_agent']['upper_ci']:.2%}] | -{comparison_summary['full_aura']['mean_score'] - comparison_summary['react_tool_agent']['mean_score']:.2%} | [✗] Baseline |
-| Base Model + Tools | {comparison_summary['base_model_with_tools']['mean_score']:.2%} | [{comparison_summary['base_model_with_tools']['lower_ci']:.2%}, {comparison_summary['base_model_with_tools']['upper_ci']:.2%}] | -{comparison_summary['full_aura']['mean_score'] - comparison_summary['base_model_with_tools']['mean_score']:.2%} | [✗] Baseline |
-| Raw Prompt-Only Model | {comparison_summary['raw_model']['mean_score']:.2%} | [{comparison_summary['raw_model']['lower_ci']:.2%}, {comparison_summary['raw_model']['upper_ci']:.2%}] | -{comparison_summary['full_aura']['mean_score'] - comparison_summary['raw_model']['mean_score']:.2%} | [✗] Raw Baseline |
+## Subsystem probes ({passed_probes}/{len(probes)} passed)
 
-## 2. Category Performance Metrics
+| Probe | Result | Detail |
+| :--- | :---: | :--- |
+| Will concurrency + audit trail | {_mark(will_ok)} | p50=`{p50_latency:.2f}ms`, p99=`{p99_latency:.2f}ms` |
+| Volition cooldown deduplication | {_mark(dedup_ok)} | distinct goals not blocked |
+| Agency goal completion | {_mark(completion_ok)} | goal lifecycle state mutation |
+| Affective steering vector library | {_mark(steering_ok)} | steering dimensions present |
+| Skill surface + constraint handling | {_mark(skills_ok)} | {registered_skills} skills registered |
 
-We evaluated 100 random seed trials across all 17 capabilities:
+**Cognitive Subsystem Index (probes passed / total)**: `{cpi:.2%}`
 
-| Category | Primary Metric | Target Metric Name | Mean Score | 95% Confidence |
-| :--- | :--- | :--- | :---: | :---: |
-"""
-    for cat_name, info in category_breakdowns.items():
-        md_content += f"| {cat_name} | {info['metric']} | `{info['metric']}` | {info['mean_score']:.2%} | [{info['lower_ci']:.2%}, {info['upper_ci']:.2%}] |\n"
-        
-    md_content += """
-## 3. Concurrency & Volition Safety Verification
+## Live telemetry
+- CPU: `{cpu_usage}%`  ·  Memory: `{mem_usage}%`
+- Registered skills: `{registered_skills}`
+- Cognitive coherence: `{coherence}`
+- Active goals: `{active_goals_count}`
 
-- **Concurrency Deadlock Mitigation**: Verifiably checked. Concurrency lock preemption layers handled 2,000 decisions over 5 seconds with zero thread starvation.
-- **Goal Completion Loops**: Prevented infinite "Ensure Persistence" loops. Cooldown periods of 300 seconds are strictly enforced in volition memory registries.
-- **Will Caution Scar Checks**: All provisional scars above the threshold (`0.05`) correctly constrained volition inputs to prevent safety degradation.
-- **100% Zero-Rescue Execution**: During the 1,700 total evaluated tasks, zero manual interventions were executed, maintaining the strict non-negotiable protocol.
+## Capability areas probed for subsystem liveness ({len(CATEGORIES)})
+| Capability Area | Target Metric |
+| :--- | :--- |
+{cat_rows}
 
 ---
-*Report generated automatically by Aura AGI Proving Harness.*
+*These areas are the taxonomy the subsystems serve; this report asserts the
+subsystems are live, not a graded score on each area.*
 """
-    
+
     await asyncio.to_thread(md_path.write_text, md_content)
-    print(f"Beautiful MD results dashboard saved to {md_path}")
+    print(f"Subsystem-liveness summary saved to {md_path}")
 
 if __name__ == "__main__":
     asyncio.run(main())
