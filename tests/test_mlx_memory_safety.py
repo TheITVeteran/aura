@@ -6,6 +6,12 @@ from types import SimpleNamespace
 def test_mlx_worker_spawn_blocks_32b_when_headroom_is_too_low(monkeypatch):
     from core.brain.llm import mlx_client
 
+    gib = 1024**3
+    monkeypatch.setattr(
+        mlx_client.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(total=int(64.0 * gib)),
+    )
     snapshot = SimpleNamespace(
         refuse_heavy_local_generation=False,
         available_gb=12.0,
@@ -20,12 +26,18 @@ def test_mlx_worker_spawn_blocks_32b_when_headroom_is_too_low(monkeypatch):
 
     assert reason is not None
     assert "model_load_headroom" in reason
-    assert "required 22.0GB" in reason
+    assert "required 24.0GB" in reason
 
 
 def test_mlx_worker_spawn_allows_32b_with_sufficient_headroom(monkeypatch):
     from core.brain.llm import mlx_client
 
+    gib = 1024**3
+    monkeypatch.setattr(
+        mlx_client.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(total=int(64.0 * gib)),
+    )
     snapshot = SimpleNamespace(
         refuse_heavy_local_generation=False,
         available_gb=24.0,
@@ -53,6 +65,32 @@ def test_mlx_worker_spawn_blocks_when_unified_guard_refuses(monkeypatch):
     )
 
     assert reason == "process_tree_rss:54GB/48GB"
+
+
+def test_mlx_worker_spawn_blocks_72b_on_64gb_without_large_free_headroom(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    gib = 1024**3
+    monkeypatch.setattr(
+        mlx_client.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(total=int(64.0 * gib)),
+    )
+    snapshot = SimpleNamespace(
+        refuse_heavy_local_generation=False,
+        available_gb=48.0,
+        reason="",
+    )
+    monkeypatch.setattr(mlx_client, "get_memory_pressure_snapshot", lambda: snapshot)
+    monkeypatch.delenv("AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB", raising=False)
+
+    reason = mlx_client._memory_pressure_blocks_worker_spawn(
+        "/models/Qwen2.5-72B-Instruct-4bit",
+    )
+
+    assert reason is not None
+    assert "model_load_headroom" in reason
+    assert "required 52.0GB" in reason
 
 
 def test_worker_memory_sentinel_uses_bounded_heavy_lane_limits(monkeypatch):

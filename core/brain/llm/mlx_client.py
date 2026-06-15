@@ -123,10 +123,16 @@ def _model_load_min_available_gb(model_path: str) -> float:
             return default
 
     lowered = str(model_path or "").lower()
+    try:
+        total_gb = float(psutil.virtual_memory().total) / float(1024**3)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, psutil.Error):
+        total_gb = 0.0
     if any(token in lowered for token in ("72b", "solver")):
-        return _env_float("AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB", 34.0)
+        default = 52.0 if 0.0 < total_gb < 96.0 else 34.0
+        return _env_float("AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB", default)
     if any(token in lowered for token in ("32b", "cortex", "zenith")):
-        return _env_float("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", 22.0)
+        default = 24.0 if total_gb >= 60.0 else 22.0
+        return _env_float("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", default)
     return _env_float("AURA_MLX_LOAD_MIN_AVAILABLE_GB", 8.0)
 
 

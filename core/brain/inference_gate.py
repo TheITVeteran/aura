@@ -575,12 +575,14 @@ class InferenceGate:
     @staticmethod
     def _headroom_snapshot(requested_tier: str = "primary") -> dict[str, Any]:
         try:
-            from core.utils.memory_monitor import AppleSiliconMemoryMonitor
+            from core.utils.memory_monitor import get_memory_pressure_snapshot
 
-            pressure = AppleSiliconMemoryMonitor()._get_pressure_sysctl()
-            vm = psutil.virtual_memory()
-            total_gb = vm.total / float(1024**3)
-            available_gb = total_gb * ((100 - pressure) / 100.0)
+            snapshot = get_memory_pressure_snapshot()
+            total_gb = float(snapshot.total_gb)
+            available_gb = float(snapshot.available_gb)
+            pressure_pct = float(snapshot.pressure_pct)
+            process_rss_gb = float(snapshot.process_rss_gb)
+            process_rss_limit_gb = float(snapshot.process_rss_limit_gb)
             tier = str(requested_tier or "primary").strip().lower()
 
             def _threshold(name: str, default: str) -> float:
@@ -589,11 +591,11 @@ class InferenceGate:
             if tier == "secondary":
                 max_pressure = _threshold(
                     "AURA_FOREGROUND_SECONDARY_MAX_PRESSURE_PCT",
-                    "55" if total_gb < 96.0 else "72",
+                    "42" if total_gb < 96.0 else "72",
                 )
                 min_available_gb = _threshold(
                     "AURA_FOREGROUND_SECONDARY_MIN_AVAILABLE_GB",
-                    "38" if total_gb < 96.0 else "28",
+                    "52" if total_gb < 96.0 else "28",
                 )
             elif tier == "tertiary":
                 max_pressure = _threshold(
@@ -613,24 +615,36 @@ class InferenceGate:
                     "AURA_FOREGROUND_PRIMARY_MIN_AVAILABLE_GB",
                     "18" if total_gb >= 60.0 else "10",
                 )
-            can_admit = bool(vm.percent < max_pressure and available_gb >= min_available_gb)
-            reason = ""
-            if not can_admit:
-                reason = (
-                    f"memory_pressure:{float(vm.percent):.1f}%/{available_gb:.1f}GB "
+            system_admit = bool(pressure_pct < max_pressure and available_gb >= min_available_gb)
+            process_admit = bool(
+                process_rss_limit_gb <= 0.0
+                or process_rss_gb < process_rss_limit_gb
+            )
+            can_admit = bool(system_admit and process_admit and not snapshot.refuse_heavy_local_generation)
+            reason_parts: list[str] = []
+            if not system_admit:
+                reason_parts.append(
+                    f"memory_pressure:{pressure_pct:.1f}%/{available_gb:.1f}GB "
                     f"(need <{max_pressure:.1f}% and >={min_available_gb:.1f}GB)"
                 )
+            if not process_admit or snapshot.refuse_heavy_local_generation:
+                reason_parts.append(
+                    f"process_tree_rss:{process_rss_gb:.1f}GB/{process_rss_limit_gb:.1f}GB"
+                )
+            reason = "; ".join(part for part in reason_parts if part)
             return {
                 "tier": tier,
-                "pressure_pct": float(vm.percent),
+                "pressure_pct": pressure_pct,
                 "total_gb": total_gb,
                 "available_gb": available_gb,
+                "process_rss_gb": process_rss_gb,
+                "process_rss_limit_gb": process_rss_limit_gb,
                 "max_pressure_pct": max_pressure,
                 "min_available_gb": min_available_gb,
                 "can_admit": can_admit,
                 "reason": reason,
             }
-        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError, psutil.Error):
             force_admit = str(
                 os.environ.get("AURA_FORCE_FOREGROUND_HEADROOM_ON_PROBE_FAILURE", "")
             ).strip().lower() in {"1", "true", "yes", "on"}
@@ -639,6 +653,8 @@ class InferenceGate:
                 "pressure_pct": 0.0,
                 "total_gb": 0.0,
                 "available_gb": 0.0,
+                "process_rss_gb": 0.0,
+                "process_rss_limit_gb": 0.0,
                 "max_pressure_pct": 100.0,
                 "min_available_gb": 0.0,
                 "can_admit": force_admit,
@@ -800,10 +816,14 @@ class InferenceGate:
             return snapshot
 
         logger.warning(
-            "🛡️ Foreground admission tightening for %s (pressure=%.1f%% available=%.1fGB).",
+            "🛡️ Foreground admission tightening for %s "
+            "(pressure=%.1f%% available=%.1fGB process=%.1f/%.1fGB reason=%s).",
             requested_tier,
             snapshot["pressure_pct"],
             snapshot["available_gb"],
+            snapshot.get("process_rss_gb", 0.0),
+            snapshot.get("process_rss_limit_gb", 0.0),
+            snapshot.get("reason", ""),
         )
         await self._shed_background_workers_for_memory_pressure()
         gc.collect()
@@ -811,10 +831,12 @@ class InferenceGate:
         if not tightened["can_admit"] and protected_foreground and requested_tier != "secondary":
             logger.warning(
                 "🛡️ Protected foreground request proceeding under reduced headroom for tier=%s "
-                "(pressure=%.1f%% available=%.1fGB).",
+                "(pressure=%.1f%% available=%.1fGB process=%.1f/%.1fGB).",
                 requested_tier,
                 tightened["pressure_pct"],
                 tightened["available_gb"],
+                tightened.get("process_rss_gb", 0.0),
+                tightened.get("process_rss_limit_gb", 0.0),
             )
         return tightened
 
@@ -4631,9 +4653,12 @@ class InferenceGate:
             ):
                 logger.warning(
                     "🛡️ InferenceGate: deep local handoff exceeds safe headroom "
-                    "(pressure=%.1f%% available=%.1fGB). Downgrading to the primary lane.",
+                    "(pressure=%.1f%% available=%.1fGB process=%.1f/%.1fGB). "
+                    "Downgrading to the primary lane.",
                     float(admission_snapshot.get("pressure_pct", 0.0) or 0.0),
                     float(admission_snapshot.get("available_gb", 0.0) or 0.0),
+                    float(admission_snapshot.get("process_rss_gb", 0.0) or 0.0),
+                    float(admission_snapshot.get("process_rss_limit_gb", 0.0) or 0.0),
                 )
                 requested_tier = "primary"
                 deep_handoff = False
@@ -4674,22 +4699,30 @@ class InferenceGate:
             ):
                 pressure = float(admission_snapshot.get("pressure_pct", 0.0) or 0.0)
                 available = float(admission_snapshot.get("available_gb", 0.0) or 0.0)
-                if pressure >= 90.0 or available < 8.0:
+                process_rss = float(admission_snapshot.get("process_rss_gb", 0.0) or 0.0)
+                process_limit = float(admission_snapshot.get("process_rss_limit_gb", 0.0) or 0.0)
+                process_over_limit = bool(process_limit > 0.0 and process_rss >= process_limit)
+                if pressure >= 90.0 or available < 8.0 or process_over_limit:
                     logger.error(
                         "🛑 InferenceGate: refusing primary foreground generation under critical "
-                        "memory pressure (pressure=%.1f%% available=%.1fGB).",
+                        "memory pressure (pressure=%.1f%% available=%.1fGB process=%.1f/%.1fGB).",
                         pressure,
                         available,
+                        process_rss,
+                        process_limit,
                     )
                     return None
-                capped_tokens = 256 if available < 12.0 or pressure >= 84.0 else 384
+                near_process_limit = bool(process_limit > 0.0 and process_rss >= process_limit * 0.90)
+                capped_tokens = 256 if available < 12.0 or pressure >= 84.0 or near_process_limit else 384
                 if max_tokens > capped_tokens:
                     logger.warning(
                         "🛡️ InferenceGate: capping primary foreground output to %d tokens under "
-                        "memory pressure (pressure=%.1f%% available=%.1fGB).",
+                        "memory pressure (pressure=%.1f%% available=%.1fGB process=%.1f/%.1fGB).",
                         capped_tokens,
                         pressure,
                         available,
+                        process_rss,
+                        process_limit,
                     )
                     max_tokens = capped_tokens
 

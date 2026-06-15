@@ -1958,6 +1958,72 @@ async def test_solver_hot_spare_warmup_uses_background_semantics():
     solver.warmup.assert_awaited_once_with(foreground_request=False)
 
 
+def _memory_snapshot(
+    *,
+    total_gb: float = 64.0,
+    available_gb: float = 24.0,
+    pressure_pct: float = 62.0,
+    process_rss_gb: float = 3.0,
+    process_rss_limit_gb: float = 38.0,
+    refuse_heavy_local_generation: bool = False,
+):
+    return SimpleNamespace(
+        total_gb=total_gb,
+        available_gb=available_gb,
+        pressure_pct=pressure_pct,
+        process_rss_gb=process_rss_gb,
+        process_rss_limit_gb=process_rss_limit_gb,
+        refuse_heavy_local_generation=refuse_heavy_local_generation,
+    )
+
+
+def test_headroom_snapshot_blocks_secondary_on_64gb_without_large_free_headroom(monkeypatch):
+    import core.utils.memory_monitor as memory_monitor
+
+    monkeypatch.delenv("AURA_FOREGROUND_SECONDARY_MAX_PRESSURE_PCT", raising=False)
+    monkeypatch.delenv("AURA_FOREGROUND_SECONDARY_MIN_AVAILABLE_GB", raising=False)
+    monkeypatch.setattr(
+        memory_monitor,
+        "get_memory_pressure_snapshot",
+        lambda: _memory_snapshot(
+            total_gb=64.0,
+            available_gb=48.0,
+            pressure_pct=25.0,
+            process_rss_gb=4.0,
+            process_rss_limit_gb=38.0,
+        ),
+    )
+
+    snapshot = InferenceGate._headroom_snapshot("secondary")
+
+    assert snapshot["can_admit"] is False
+    assert snapshot["min_available_gb"] == pytest.approx(52.0)
+    assert "memory_pressure:25.0%/48.0GB" in snapshot["reason"]
+
+
+def test_headroom_snapshot_blocks_primary_when_process_tree_exceeds_limit(monkeypatch):
+    import core.utils.memory_monitor as memory_monitor
+
+    monkeypatch.setattr(
+        memory_monitor,
+        "get_memory_pressure_snapshot",
+        lambda: _memory_snapshot(
+            total_gb=64.0,
+            available_gb=26.0,
+            pressure_pct=59.0,
+            process_rss_gb=39.5,
+            process_rss_limit_gb=38.0,
+            refuse_heavy_local_generation=True,
+        ),
+    )
+
+    snapshot = InferenceGate._headroom_snapshot("primary")
+
+    assert snapshot["can_admit"] is False
+    assert snapshot["process_rss_gb"] == pytest.approx(39.5)
+    assert "process_tree_rss:39.5GB/38.0GB" in snapshot["reason"]
+
+
 @pytest.mark.asyncio
 async def test_secondary_requests_downgrade_to_primary_when_headroom_is_tight():
     # The local deep solver is auto-disabled on <96GB hosts (memory-
