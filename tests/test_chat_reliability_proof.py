@@ -168,6 +168,17 @@ def test_reliability_prompt_contract_demands_live_self_reflection_substance():
     assert "place" "holder" in block
 
 
+def test_reliability_prompt_contract_preserves_named_continuation_anchor():
+    from core.conversation.response_reliability import conversation_reliability_system_block
+
+    block = conversation_reliability_system_block(
+        "Stay with glass arithmetic. Add one limitation and connect it to the example."
+    )
+
+    assert "Keep the named continuation topic visible" in block
+    assert "glass arithmetic" in block
+
+
 def test_conversational_continuity_checks_stay_out_of_task_engine():
     from core.kernel.upgrades_10x import _looks_like_simple_dialogue_request as godmode_dialogue
     from core.phases.cognitive_routing import _looks_like_simple_dialogue_request as legacy_dialogue

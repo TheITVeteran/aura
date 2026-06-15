@@ -206,6 +206,52 @@ def _endpoint_call_timeout(timeout: float) -> float:
     return timeout_s + grace_s
 
 
+def _endpoint_call_budgets(
+    timeout: float,
+    *,
+    foreground_local: bool = False,
+    prompt_chars: int = 0,
+    max_tokens: int | None = None,
+    benchmark_request: bool = False,
+    proof_evaluation_contract: bool = False,
+    health_probe: bool = False,
+) -> tuple[float, float]:
+    """Return cooperative client timeout and hard wall-clock watchdog budget."""
+    try:
+        timeout_s = max(0.1, float(timeout))
+    except (TypeError, ValueError, OverflowError):
+        timeout_s = 120.0
+    wall_s = _endpoint_call_timeout(timeout_s)
+    cooperative_s = timeout_s
+
+    if (
+        foreground_local
+        and timeout_s >= 60.0
+        and not benchmark_request
+        and not proof_evaluation_contract
+        and not health_probe
+    ):
+        try:
+            token_count = int(max_tokens or 0)
+        except (TypeError, ValueError, OverflowError):
+            token_count = 0
+        compact_turn = int(prompt_chars or 0) <= 10_000 and token_count <= 768
+        env_name = (
+            "AURA_FOREGROUND_LOCAL_COMPACT_WALL_TIMEOUT_S"
+            if compact_turn
+            else "AURA_FOREGROUND_LOCAL_EXTENDED_WALL_TIMEOUT_S"
+        )
+        default_cap = 105.0 if compact_turn else 150.0
+        try:
+            cap_s = max(30.0, float(os.environ.get(env_name, str(default_cap)) or default_cap))
+        except (TypeError, ValueError, OverflowError):
+            cap_s = default_cap
+        wall_s = min(wall_s, cap_s)
+        cooperative_s = min(cooperative_s, max(5.0, wall_s - 2.0))
+
+    return cooperative_s, wall_s
+
+
 def _proof_primary_lane_active(*, origin: str) -> bool:
     """Return whether this router build/call must expose only the primary lane."""
     try:
@@ -2243,7 +2289,22 @@ class HealthAwareLLMRouter:
                 continue
             watchdog_aborted = {"value": False}
             try:
-                endpoint_budget = _endpoint_call_timeout(timeout)
+                try:
+                    requested_max_tokens = int(kwargs.get("max_tokens") or 0)
+                except (TypeError, ValueError, OverflowError):
+                    requested_max_tokens = 0
+                cooperative_budget, endpoint_budget = _endpoint_call_budgets(
+                    timeout,
+                    foreground_local=bool(not is_bg and ep.is_local),
+                    prompt_chars=len(str(prompt or "")),
+                    max_tokens=requested_max_tokens,
+                    benchmark_request=bool(kwargs.get("benchmark_request", False)),
+                    proof_evaluation_contract=bool(
+                        kwargs.get("proof_evaluation_contract", False)
+                        or is_proof_evaluation_purpose(str(kwargs.get("purpose", "") or ""))
+                    ),
+                    health_probe=bool(kwargs.get("health_probe", False)),
+                )
                 timeout_reason = f"endpoint_timeout:{ep.name}:{endpoint_budget:.1f}s"
                 watchdog_fired, watchdog_aborted, watchdog = _start_endpoint_wall_clock_watchdog(
                     ep.client,
@@ -2252,7 +2313,14 @@ class HealthAwareLLMRouter:
                 )
                 try:
                     result = await asyncio.wait_for(
-                        self._call_endpoint(ep, prompt, system_prompt, timeout, schema=schema, **kwargs),
+                        self._call_endpoint(
+                            ep,
+                            prompt,
+                            system_prompt,
+                            cooperative_budget,
+                            schema=schema,
+                            **kwargs,
+                        ),
                         timeout=endpoint_budget,
                     )
                     if watchdog_fired.is_set():
@@ -2308,7 +2376,22 @@ class HealthAwareLLMRouter:
                             ep.name, last_error
                         )
             except TimeoutError as exc:
-                endpoint_budget = _endpoint_call_timeout(timeout)
+                try:
+                    requested_max_tokens = int(kwargs.get("max_tokens") or 0)
+                except (TypeError, ValueError, OverflowError):
+                    requested_max_tokens = 0
+                _cooperative_budget, endpoint_budget = _endpoint_call_budgets(
+                    timeout,
+                    foreground_local=bool(not is_bg and ep.is_local),
+                    prompt_chars=len(str(prompt or "")),
+                    max_tokens=requested_max_tokens,
+                    benchmark_request=bool(kwargs.get("benchmark_request", False)),
+                    proof_evaluation_contract=bool(
+                        kwargs.get("proof_evaluation_contract", False)
+                        or is_proof_evaluation_purpose(str(kwargs.get("purpose", "") or ""))
+                    ),
+                    health_probe=bool(kwargs.get("health_probe", False)),
+                )
                 last_error = f"endpoint_timeout:{ep.name}:{endpoint_budget:.1f}s"
                 aborted = bool(watchdog_aborted.get("value", False))
                 if not aborted:

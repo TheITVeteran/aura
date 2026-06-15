@@ -135,6 +135,11 @@ _RAW_TOOL_RESULT_FRAGMENT_RE = re.compile(
     r"no bugs detected\s*-\s*system healthy(?:\s*\(idle\))?)\.?\s*$",
     re.IGNORECASE,
 )
+_NAMED_CONTINUATION_ANCHOR_RE = re.compile(
+    r"\b(?:stay with|continue with|keep going with|return to|go back to)\s+"
+    r"(?P<topic>[A-Za-z][A-Za-z0-9' -]{2,80}?)(?:[.?!,;:]|$)",
+    re.IGNORECASE,
+)
 _PSEUDO_COMMITMENT_STATUS_RE = re.compile(
     r"\blast thing i committed\s*:|\bquiet seconds\b|\bproceeding on [A-Z][A-Z\s]{8,}\b",
     re.IGNORECASE,
@@ -2287,6 +2292,13 @@ def conversation_reliability_system_block(user_message: Any = "") -> str:
         )
     if _FOLLOWUP_QUESTION_REQUEST_RE.search(str(user_message or "")):
         instruction_notes.append("End with a real follow-up question because the user requested one.")
+    continuation_match = _NAMED_CONTINUATION_ANCHOR_RE.search(str(user_message or ""))
+    if continuation_match:
+        topic = " ".join(str(continuation_match.group("topic") or "").split())
+        if topic:
+            instruction_notes.append(
+                f"Keep the named continuation topic visible in the reply: {topic[:80]}."
+            )
     if instruction_notes:
         extra = f"{extra}\n- " + "\n- ".join(instruction_notes)
     return (

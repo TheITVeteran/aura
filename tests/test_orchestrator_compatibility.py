@@ -158,6 +158,77 @@ async def test_start_state_vault_actor_uses_actor_bus_request_for_handshake(monk
 
 
 @pytest.mark.asyncio
+async def test_start_state_vault_actor_replaces_unusable_registered_transport(monkeypatch):
+    old_transport = object()
+    new_transport = object()
+
+    class _Supervisor:
+        def __init__(self):
+            self.specs = []
+            self.stop_calls = []
+            self.start_calls = []
+
+        def add_actor(self, spec):
+            self.specs.append(spec)
+
+        def stop_actor(self, name, **kwargs):
+            self.stop_calls.append((name, kwargs))
+
+        def is_actor_running(self, name):
+            return False
+
+        def start_actor(self, name):
+            assert name == "state_vault"
+            self.start_calls.append(name)
+            return new_transport
+
+    class _Bus:
+        def __init__(self):
+            self.actors = {"state_vault": old_transport}
+            self.update_calls = []
+            self.start_calls = 0
+
+        def start(self):
+            self.start_calls += 1
+
+        def has_actor(self, name):
+            return name in self.actors
+
+        def is_actor_usable(self, name):
+            return False
+
+        async def update_actor(self, name, connection):
+            self.update_calls.append((name, connection))
+            self.actors[name] = connection
+
+        async def request(self, actor, msg_type, payload, timeout=0):  # noqa: ASYNC109
+            assert self.actors[actor] is new_transport
+            return {"type": "pong", "ts": 123.0}
+
+    bus = _Bus()
+    supervisor = _Supervisor()
+
+    monkeypatch.setattr(
+        "core.orchestrator.mixins.boot.boot_resilience.ServiceContainer.get",
+        staticmethod(lambda name, default=None: bus if name == "actor_bus" else default),
+    )
+    monkeypatch.setattr(
+        "core.supervisor.tree.ActorSpec",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+        raising=False,
+    )
+
+    probe = _ResilienceProbe()
+    probe.supervisor = supervisor
+
+    await probe._start_state_vault_actor()
+
+    assert supervisor.stop_calls
+    assert supervisor.start_calls == ["state_vault"]
+    assert bus.update_calls == [("state_vault", new_transport)]
+
+
+@pytest.mark.asyncio
 async def test_start_state_vault_actor_fallback_ping_uses_request_wire_format(monkeypatch):
     class _Pipe:
         def __init__(self):

@@ -5542,6 +5542,73 @@ def _desktop_secondary_model_repair_allowed(*, reason: str) -> tuple[bool, str]:
     return True, reason
 
 
+_FOLLOWUP_DELTA_MARKERS: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    (
+        "limitation",
+        ("limitation", "limited", "constraint", "caveat"),
+        (
+            "Limitation: this only holds inside the assumptions already established "
+            "for the example; outside that frame, it is a local model rather than a "
+            "universal rule."
+        ),
+    ),
+    (
+        "constraint",
+        ("constraint", "constrain", "bound", "boundary"),
+        (
+            "Constraint: the answer should be read within the current setup, not as "
+            "a claim that every adjacent case behaves the same way."
+        ),
+    ),
+    (
+        "caveat",
+        ("caveat", "qualification", "qualifier"),
+        (
+            "Caveat: the useful part is the relationship inside the example; the "
+            "rule still needs new evidence before being generalized."
+        ),
+    ),
+)
+
+
+def _repair_missing_followup_delta(user_message: str, reply_text: str) -> str:
+    """Add a requested follow-up delta when the draft mostly repeated context.
+
+    This is intentionally narrow and model-free. It handles same-topic turns
+    where the model preserved continuity but forgot the user's requested
+    incremental move, such as adding a limitation or caveat to the prior
+    example. It does not invent task-specific facts or execute tools.
+    """
+
+    normalized_user = _normalize_user_message(user_message)
+    normalized_reply = _normalize_user_message(reply_text)
+    if not normalized_user or not normalized_reply:
+        return str(reply_text or "").strip()
+    if not any(marker in normalized_user for marker in ("add", "include", "give", "connect")):
+        return str(reply_text or "").strip()
+
+    additions: list[str] = []
+    for request_marker, reply_markers, addition in _FOLLOWUP_DELTA_MARKERS:
+        if request_marker not in normalized_user:
+            continue
+        if any(marker in normalized_reply for marker in reply_markers):
+            continue
+        additions.append(addition)
+
+    if "connect" in normalized_user and "example" in normalized_user and "example" not in normalized_reply:
+        additions.append(
+            "Connected back to the example, the new point changes how that example "
+            "should be interpreted rather than replacing the original setup."
+        )
+
+    if not additions:
+        return str(reply_text or "").strip()
+
+    base = str(reply_text or "").strip()
+    separator = " " if base.endswith((".", "!", "?")) else ". "
+    return f"{base}{separator}{' '.join(additions)}".strip()
+
+
 def _protected_foreground_generation_block_reason() -> str:
     """Return a reason to skip optional protected-foreground rescue generation.
 
@@ -6249,6 +6316,40 @@ async def _repair_final_degraded_reply(
                     True,
                 )
 
+    if same_diff and not stale and not off_topic:
+        delta_repaired = _repair_missing_followup_delta(user_message, reply_text)
+        if delta_repaired and delta_repaired != str(reply_text or "").strip():
+            delta_repaired = _apply_aura_voice_shaping_compat(delta_repaired, user_message)
+            delta_stale = _is_stale_repeated_response(delta_repaired)
+            delta_same_diff = _is_same_answer_different_prompt(user_message, delta_repaired)
+            delta_off_topic, delta_off_topic_reason = _evaluate_reply_topicality(
+                user_message,
+                delta_repaired,
+                recent_user_messages=[],
+            )
+            delta_assessment = (
+                assess_user_facing_reply(user_message, delta_repaired)
+                if assess_user_facing_reply
+                else None
+            )
+            if not (
+                delta_stale
+                or delta_same_diff
+                or delta_off_topic
+                or (delta_assessment is not None and delta_assessment.retryable)
+            ):
+                logger.warning(
+                    "🛡️ Final reply quality gate repaired missing follow-up delta without a second model call."
+                )
+                return (
+                    delta_repaired,
+                    delta_stale,
+                    delta_same_diff,
+                    delta_off_topic,
+                    delta_off_topic_reason,
+                    True,
+                )
+
     if desktop_cognitive_engine_required or protected_foreground_lane:
         repaired = await _stabilize_user_facing_reply(
             user_message,
@@ -6286,7 +6387,7 @@ async def _repair_final_degraded_reply(
         and not (repaired_assessment is not None and repaired_assessment.retryable)
     )
     if repaired_same_diff_only:
-        return repaired, repaired_stale, repaired_same_diff, repaired_off_topic, repaired_off_topic_reason, True
+        return repaired, repaired_stale, False, repaired_off_topic, repaired_off_topic_reason, True
 
     floor = reliability_floor_for_user(user_message) if reliability_floor_for_user else ""
     if floor:
@@ -8166,6 +8267,7 @@ async def api_chat(
     foreground_timeout = _foreground_timeout_for_lane(lane)
     request_started_at = time.monotonic()
     request_wall_started_at = time.time()
+    early_allow_chat_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
     pending_exchange_id: str | None = None
     foreground_slot_acquired = False
     foreground_lock_token: object | None = None
@@ -8249,6 +8351,18 @@ async def api_chat(
             async with _get_idemp_lock():
                 if idem_key in _idempotency_cache:
                     return JSONResponse(_idempotency_cache[idem_key])
+
+        if early_allow_chat_fastpaths and _is_capability_inventory_request(_semantic_user_message):
+            reply_text = _build_grounded_capability_inventory_reply(_semantic_user_message)
+            return JSONResponse(
+                {
+                    "response": _apply_aura_voice_shaping(reply_text),
+                    "status": "cognitive_engine_capability_inventory",
+                    "conversation_lane": _collect_conversation_lane_status(),
+                    "response_confidence": "high",
+                },
+                status_code=200,
+            )
 
         try:
             foreground_busy_wait_s = 30.0 if is_benchmark else _FOREGROUND_CHAT_BUSY_WAIT_S

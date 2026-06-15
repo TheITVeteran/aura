@@ -2709,6 +2709,55 @@ async def test_stability_guardian_snapshots_extra_checks_during_run(monkeypatch)
     assert [check.name for check in second_report.checks].count("late_extra") == 1
 
 
+@pytest.mark.asyncio
+async def test_stability_guardian_self_probe_error_does_not_kill_fail_closed_monitor(
+    service_container,
+    monkeypatch,
+):
+    monkeypatch.setenv("AURA_MODE", "live")
+    guardian = StabilityGuardian(SimpleNamespace(start_time=time.time()))
+    service_container.register_instance(
+        "stability_guardian",
+        guardian,
+        failure_policy="fail-closed",
+    )
+    failures = []
+
+    def _raise_mutating_registry_error():
+        failures.append("runtime_hygiene")
+        raise RuntimeError("dictionary changed size during iteration")
+
+    def _healthy(name):
+        return HealthCheckResult(name, True, "ok")
+
+    for attr in (
+        "_check_memory",
+        "_check_asyncio_tasks",
+        "_check_lock_watchdog",
+        "_check_tick_rate",
+        "_check_state_integrity",
+        "_check_state_repository_pressure",
+        "_check_llm_circuit",
+        "_check_db_connections",
+        "_check_backup_maintenance",
+        "_check_runtime_hygiene",
+        "_check_background_tasks",
+    ):
+        monkeypatch.setattr(guardian, attr, lambda attr=attr: _healthy(attr))
+    monkeypatch.setattr(guardian, "_check_runtime_hygiene", _raise_mutating_registry_error)
+
+    report = await guardian.run_checks()
+
+    assert report.overall_healthy is False
+    failed = [
+        check
+        for check in report.checks
+        if "dictionary changed size during iteration" in check.message
+    ]
+    assert len(failed) == 1
+    assert failed[0].severity == "error"
+
+
 def test_collect_liquid_state_payload_prefers_runtime_signal_over_zero_stub():
     from interface import server as server_module
 

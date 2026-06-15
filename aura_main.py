@@ -658,6 +658,7 @@ async def bootstrap_aura(orchestrator: Any):
     
     actor_bus = create_actor_bus() # Main bus for orchestrator
     ServiceContainer.register_instance("actor_bus", actor_bus, failure_policy="degrade_with_receipt")
+    actor_bus.start()
 
     # Guarded stage-based ignition
     # Explicitly link internal refs to ensure property lookups match initialized instances

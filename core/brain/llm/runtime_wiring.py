@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 from typing import Any
 
 from core.phases.response_contract import (
@@ -47,6 +48,16 @@ _USER_FACING_ORIGINS = frozenset(
     }
 )
 
+_MEMORY_HYDRATION_REQUEST_RE = re.compile(
+    r"\b(?:"
+    r"remember|recall|memory|memories|memor(?:y|ies)|earlier|previous|last time|"
+    r"what did (?:i|you|we)|what have (?:i|you|we)|across sessions|"
+    r"ground(?:ed|ing)?|evidence|receipt|source|cite|search|look up|web|browser|"
+    r"open|create|write|save|export|file|folder|document|note|tool|tools"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 def _record_runtime_wiring_degradation(
     error: BaseException,
@@ -83,6 +94,15 @@ def _env_float(name: str, default: float) -> float:
 
 def _memory_hydration_timeout_s() -> float:
     return max(0.05, _env_float("AURA_RUNTIME_MEMORY_HYDRATION_TIMEOUT_S", 1.25))
+
+
+def _should_hydrate_runtime_memory(objective: str, origin: str | None) -> bool:
+    text = str(objective or "").strip()
+    if not text:
+        return False
+    if not is_user_facing_origin(origin):
+        return True
+    return bool(_MEMORY_HYDRATION_REQUEST_RE.search(text))
 
 
 def is_user_facing_origin(origin: str | None) -> bool:
@@ -356,7 +376,7 @@ async def prepare_runtime_payload(
                 )
                 logger.debug("Substrate profile precompile skipped: %s", exc)
 
-        if not is_background:
+        if not is_background and _should_hydrate_runtime_memory(objective, origin):
             try:
                 await _hydrate_runtime_memory(payload_state, objective)
             except _SOFT_RUNTIME_FAILURES as _exc:

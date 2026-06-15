@@ -21,6 +21,8 @@ class _CompletedProcess:
 
 
 def test_screen_state_probe_uses_read_only_subprocess_gateway(monkeypatch) -> None:
+    import core.perception.perceptual_pump as pump_mod
+
     calls = []
 
     class Gateway:
@@ -34,6 +36,7 @@ def test_screen_state_probe_uses_read_only_subprocess_gateway(monkeypatch) -> No
         "core.runtime.subprocess_gateway.get_subprocess_gateway",
         lambda: Gateway(),
     )
+    monkeypatch.setattr(pump_mod, "_collect_native_screen_state", lambda: None)
 
     state = _collect_screen_state("")
 
@@ -46,6 +49,36 @@ def test_screen_state_probe_uses_read_only_subprocess_gateway(monkeypatch) -> No
         "perceptual_pump.screen.title",
     ]
     assert all(call[1]["read_only"] is True for call in calls)
+
+
+def test_screen_state_probe_uses_native_frontmost_metadata_before_subprocess(monkeypatch) -> None:
+    import core.perception.perceptual_pump as pump_mod
+
+    class Gateway:
+        def __init__(self):
+            self.calls = []
+
+        def run(self, *_args, **_kwargs):
+            self.calls.append((_args, _kwargs))
+            raise AssertionError("native screen probe should avoid AppleScript subprocess")
+
+    gateway = Gateway()
+    monkeypatch.setattr(
+        "core.runtime.subprocess_gateway.get_subprocess_gateway",
+        lambda: gateway,
+    )
+    monkeypatch.setattr(
+        pump_mod,
+        "_collect_native_screen_state",
+        lambda: ScreenState(active_app="Google Chrome", window_title="Climate News"),
+    )
+
+    state = _collect_screen_state("")
+
+    assert state.active_app == "Google Chrome"
+    assert state.window_title == "Climate News"
+    assert state.screen_changed is True
+    assert state.change_magnitude == 0.3
 
 
 def test_perceptual_frame_maps_into_runtime_body_observed_vector() -> None:
@@ -164,6 +197,7 @@ def test_screen_probe_timeout_does_not_propagate_and_sets_backoff(monkeypatch) -
         "core.runtime.subprocess_gateway.get_subprocess_gateway",
         lambda: gateway,
     )
+    monkeypatch.setattr(pump_mod, "_collect_native_screen_state", lambda: None)
 
     # A hung osascript must yield an empty state, not an exception — a
     # TimeoutExpired here killed the entire pump task in live runtime.

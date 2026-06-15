@@ -628,6 +628,8 @@ async def test_user_facing_primary_uses_conversational_budget_and_chatml():
     )
     actual_tokens = cortex.kwargs[0]["max_tokens"]
     assert 384 <= actual_tokens <= expected_tokens
+    assert cortex.kwargs[0]["clean_user_surface_contract"] is True
+    assert cortex.kwargs[0]["clean_user_surface_steering_alpha"] == 0.25
     assert cortex.prompts[0].startswith("<|im_start|>")
     assert "<|im_start|>assistant" in cortex.prompts[0]
     assert "<|SYSTEM|>" not in cortex.prompts[0]
@@ -677,6 +679,7 @@ async def test_user_facing_primary_retry_uses_clean_cortex_repair_lane(monkeypat
     assert result == good_reply
     assert len(cortex.kwargs) == 2
     assert cortex.kwargs[0]["clean_user_surface_contract"] is True
+    assert cortex.kwargs[0]["clean_user_surface_steering_alpha"] <= 0.35
     retry_kwargs = cortex.kwargs[1]
     assert retry_kwargs["clean_user_surface_contract"] is True
     assert retry_kwargs["disable_prompt_cache"] is True
@@ -717,6 +720,7 @@ async def test_health_probe_primary_lane_uses_adaptive_recurrent_depth_clamp(mon
     assert probe_kwargs["max_tokens"] <= 64
     assert probe_kwargs["clean_user_surface_contract"] is True
     assert probe_kwargs["clean_user_surface_recurrent_loops"] == 1
+    assert probe_kwargs["clean_user_surface_steering_alpha"] == 0.25
 
 
 def test_adaptive_max_tokens_expands_budget_for_compound_prompt():
@@ -750,10 +754,45 @@ def test_short_foreground_prompt_uses_low_latency_compute_profile(monkeypatch):
         is_background=False,
     )
 
-    assert 384 <= floor <= 512
-    assert cap == 1024
+    assert 256 <= floor <= 384
+    assert cap == 512
     assert adapted == cap
     assert loops == 1
+
+
+def test_simple_foreground_prompt_uses_small_prebuilt_history_and_prompt_budget(monkeypatch):
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+    gate = InferenceGate.__new__(InferenceGate)
+    current_user = "Invent a tiny discipline called glass arithmetic. Give it two rules and one example."
+    messages = [{"role": "system", "content": "S" * 12_000}]
+    for idx in range(10):
+        messages.extend(
+            [
+                {"role": "user", "content": f"old user turn {idx} " + ("U" * 600)},
+                {"role": "assistant", "content": f"old assistant turn {idx} " + ("A" * 600)},
+            ]
+        )
+    messages.append({"role": "user", "content": current_user})
+
+    profile = InferenceGate._foreground_prompt_profile(
+        current_user,
+        {"desktop_quick_reply_contract": True},
+    )
+    compact = gate._compact_prebuilt_messages(
+        messages,
+        history_limit=InferenceGate._foreground_prebuilt_history_limit(
+            current_user,
+            {"desktop_quick_reply_contract": True},
+        ),
+        budget_profile=profile,
+    )
+    total_chars = sum(len(msg["content"]) for msg in compact)
+
+    assert profile == "simple"
+    assert total_chars <= 9_000
+    assert len(compact[0]["content"]) <= 5_200
+    assert len([msg for msg in compact if msg["role"] in {"user", "assistant"}]) <= 4
+    assert compact[-1]["content"] == current_user
 
 
 def test_multi_part_foreground_prompt_retains_deep_compute_profile():
@@ -788,6 +827,45 @@ def test_user_facing_primary_default_budget_allows_expressive_opening(monkeypatc
 
     assert base >= 3072
     assert adapted >= 3072
+
+
+@pytest.mark.asyncio
+async def test_explicit_desktop_token_cap_survives_runtime_budget_nudges(monkeypatch):
+    from core.container import ServiceContainer
+
+    gate = InferenceGate()
+    cortex = _RecordingClient(
+        "The live desktop lane should keep this answer compact, direct, and finished while "
+        "preserving the explicit caller token cap."
+    )
+    gate._mlx_client = cortex
+
+    class _FreeEnergyEngine:
+        current = SimpleNamespace(free_energy=0.9, dominant_action="act_on_world")
+
+    def _fake_get(name, default=None):
+        if name == "free_energy_engine":
+            return _FreeEnergyEngine()
+        return default
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_fake_get))
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                result = await gate.generate(
+                    "Give me a concise live reply.",
+                    context={
+                        "origin": "user",
+                        "prefer_tier": "primary",
+                        "history": [],
+                        "desktop_quick_reply_contract": True,
+                        "max_tokens": 384,
+                    },
+                )
+
+    assert "explicit caller token cap" in result
+    assert cortex.kwargs[0]["max_tokens"] <= 384
 
 
 @pytest.mark.asyncio

@@ -2947,6 +2947,23 @@ def test_same_answer_different_prompt_detection_catches_near_duplicate_reply():
     ) is True
 
 
+def test_missing_followup_delta_repair_adds_requested_limitation():
+    from interface.routes import chat as chat_mod
+
+    repaired = chat_mod._repair_missing_followup_delta(
+        "Stay with glass arithmetic. Add one limitation and connect it to the example you just gave.",
+        (
+            "Glass arithmetic. Rule one: combine transparent quantities by optical "
+            "blending. Rule two: a cracked number splits into two visible facets. "
+            "For example, two panes become one clearer pane."
+        ),
+    )
+
+    assert "limitation" in repaired.lower()
+    assert "example" in repaired.lower()
+    assert "universal rule" in repaired.lower()
+
+
 def test_same_answer_different_prompt_detection_ignores_near_paraphrase_followups():
     from interface.routes import chat as chat_mod
 

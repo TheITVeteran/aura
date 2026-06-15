@@ -280,20 +280,55 @@ class BootResilienceMixin:
             sup = getattr(self, "supervisor", None) or ServiceContainer.get(
                 "supervisor", default=None
             )
+            if bus and hasattr(bus, "start") and not getattr(bus, "_is_running", False):
+                bus.start()
+
+            bus_has_vault = bool(
+                bus and getattr(bus, "has_actor", lambda *_: False)("state_vault")
+            )
+            bus_vault_usable = bool(
+                bus
+                and getattr(bus, "is_actor_usable", lambda *_: bus_has_vault)(
+                    "state_vault"
+                )
+            )
+            if bus_has_vault and not bus_vault_usable:
+                stop_actor = getattr(sup, "stop_actor", None) if sup else None
+                if callable(stop_actor):
+                    await asyncio.to_thread(
+                        stop_actor,
+                        "state_vault",
+                        graceful_timeout=0.25,
+                        terminate_timeout=0.5,
+                        kill_timeout=0.5,
+                    )
+                _record_boot_resilience_degradation(
+                    RuntimeError("state_vault transport registered but unusable"),
+                    action="restarted StateVaultActor instead of accepting stale transport",
+                )
+                bus_has_vault = False
+                bus_vault_usable = False
+
             if sup and hasattr(sup, "is_actor_running") and sup.is_actor_running("state_vault"):
                 parent_pipe = sup.get_actor_pipe("state_vault")
                 if (
                     bus
                     and parent_pipe
-                    and not getattr(bus, "has_actor", lambda *_: False)("state_vault")
+                    and not bus_vault_usable
                 ):
-                    bus.add_actor("state_vault", parent_pipe)
+                    if bus_has_vault and hasattr(bus, "update_actor"):
+                        await bus.update_actor("state_vault", parent_pipe)
+                    else:
+                        bus.add_actor("state_vault", parent_pipe)
+                    bus_vault_usable = bool(
+                        getattr(bus, "is_actor_usable", lambda *_: True)("state_vault")
+                    )
                     logger.info(
                         "🛡️  StateVaultActor transport rebound from existing supervisor actor."
                     )
                 logger.info("🛡️  StateVaultActor already active. Skipping redundant start.")
                 return
-            if bus and getattr(bus, "has_actor", lambda *_: False)("state_vault"):
+            if bus_vault_usable:
                 logger.info("🛡️  StateVaultActor already active. Skipping redundant start.")
                 return
 
@@ -316,10 +351,17 @@ class BootResilienceMixin:
             # 2. Start Actor and get the control pipe
             # supervisor.start_actor returns parent_conn
             parent_pipe = sup.start_actor("state_vault")
+            if parent_pipe is None:
+                raise RuntimeError("StateVaultActor did not provide a control pipe")
 
-            if bus and not getattr(bus, "has_actor", lambda *_: False)("state_vault"):
-                bus.add_actor("state_vault", parent_pipe)
-                logger.info("🛡️  StateVaultActor transport registered with ActorBus")
+            if bus:
+                if getattr(bus, "has_actor", lambda *_: False)("state_vault"):
+                    if hasattr(bus, "update_actor"):
+                        await bus.update_actor("state_vault", parent_pipe)
+                        logger.info("🛡️  StateVaultActor transport replaced in ActorBus")
+                else:
+                    bus.add_actor("state_vault", parent_pipe)
+                    logger.info("🛡️  StateVaultActor transport registered with ActorBus")
 
             # 3. Wait for readiness using the same request protocol as runtime IPC.
             logger.info("⏳ Waiting for StateVaultActor to be ready...")

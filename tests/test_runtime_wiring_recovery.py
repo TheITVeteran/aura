@@ -7,6 +7,7 @@ from core.brain.llm.runtime_wiring import (
     build_agentic_tool_map,
     derive_substrate_generation_overrides,
     prepare_runtime_payload,
+    _should_hydrate_runtime_memory,
 )
 from core.runtime.errors import get_degradation_tracker
 from core.state.aura_state import AuraState
@@ -129,6 +130,49 @@ async def test_prepare_runtime_payload_bounds_slow_memory_hydration(monkeypatch)
         last.action
         == "continued payload assembly with existing state memory after retrieval hydration failed"
     )
+
+
+@pytest.mark.asyncio
+async def test_prepare_runtime_payload_skips_memory_hydration_for_ordinary_live_chat(monkeypatch):
+    state = AuraState.default()
+    state.cognition.long_term_memory = ["already present state memory"]
+    calls = []
+
+    class _UnexpectedMemoryFacade:
+        async def search(self, _query, limit=5):
+            calls.append((_query, limit))
+            raise AssertionError("ordinary live chat should not hydrate external memory")
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: _UnexpectedMemoryFacade()
+            if name == "memory_facade"
+            else default
+        ),
+    )
+
+    prompt, _, messages, contract, payload_state = await prepare_runtime_payload(
+        prompt="Invent a tiny discipline called glass arithmetic.",
+        system_prompt=None,
+        messages=[{"role": "user", "content": "Invent a tiny discipline called glass arithmetic."}],
+        state=state,
+        origin="desktop",
+        is_background=False,
+    )
+
+    assert prompt == "User: Invent a tiny discipline called glass arithmetic."
+    assert messages is not None
+    assert contract is not None
+    assert payload_state.cognition.long_term_memory == ["already present state memory"]
+    assert get_degradation_tracker().recent(subsystem="runtime_wiring") == []
+
+
+def test_runtime_memory_hydration_is_demand_driven_for_user_facing_origins():
+    assert not _should_hydrate_runtime_memory("Invent a tiny discipline.", "desktop")
+    assert _should_hydrate_runtime_memory("What do you remember about our plan?", "desktop")
+    assert _should_hydrate_runtime_memory("Search for the latest climate article.", "user")
+    assert _should_hydrate_runtime_memory("Run this internal reflection pass.", "system")
 
 
 @pytest.mark.asyncio

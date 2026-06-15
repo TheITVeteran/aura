@@ -5182,6 +5182,48 @@ async def test_api_chat_returns_busy_reply_when_foreground_turn_is_already_in_fl
 
 
 @pytest.mark.asyncio
+async def test_api_chat_capability_inventory_bypasses_busy_foreground_lock(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(chat_routes, "_foreground_chat_lock", chat_routes.PreemptibleChatLock())
+    monkeypatch.setattr(chat_routes, "_FOREGROUND_CHAT_BUSY_WAIT_S", 0.01)
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+
+    await chat_routes._foreground_chat_lock.acquire()
+    try:
+        response = await server_module.api_chat(
+            server_module.ChatRequest(message="What tools can you use externally?"),
+            SimpleNamespace(headers={}),
+            None,
+            None,
+        )
+    finally:
+        if chat_routes._foreground_chat_lock.locked():
+            chat_routes._foreground_chat_lock.release()
+
+    assert response.status_code == 200
+    assert b"cognitive_engine_capability_inventory" in response.body
+    assert b"previous turn open" not in response.body
+    assert b"desktop" in response.body
+    assert b"browser" in response.body
+    assert b"govern" in response.body
+
+
+@pytest.mark.asyncio
 async def test_api_chat_preempts_stale_foreground_lock_and_clears_mlx_owner(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes

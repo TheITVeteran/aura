@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from core.brain.llm.llm_router import IntelligentLLMRouter, LLMEndpoint, LLMTier
-from core.brain.llm_health_router import EndpointHealth, HealthAwareLLMRouter
+from core.brain.llm_health_router import (
+    EndpointHealth,
+    HealthAwareLLMRouter,
+    _endpoint_call_budgets,
+    _endpoint_call_timeout,
+)
 from tools.audit_degradation import analyze_file
 
 
@@ -180,6 +185,69 @@ async def test_router_outer_watchdog_aborts_hung_endpoint():
     assert result["error"].startswith("endpoint_timeout:Cortex:")
     assert client.abort_reasons
     assert client.abort_reasons[0].startswith("endpoint_timeout:Cortex:")
+
+
+def test_foreground_local_endpoint_budget_stays_inside_desktop_request_envelope():
+    cooperative, wall = _endpoint_call_budgets(
+        180.0,
+        foreground_local=True,
+        prompt_chars=6300,
+        max_tokens=512,
+    )
+
+    assert wall == 105.0
+    assert cooperative == 103.0
+
+
+def test_proof_and_health_endpoint_budgets_keep_explicit_timeout_contract():
+    proof_cooperative, proof_wall = _endpoint_call_budgets(
+        180.0,
+        foreground_local=True,
+        prompt_chars=6300,
+        max_tokens=512,
+        proof_evaluation_contract=True,
+    )
+    health_cooperative, health_wall = _endpoint_call_budgets(
+        180.0,
+        foreground_local=True,
+        prompt_chars=6300,
+        max_tokens=512,
+        health_probe=True,
+    )
+
+    assert proof_cooperative == 180.0
+    assert proof_wall == _endpoint_call_timeout(180.0)
+    assert health_cooperative == 180.0
+    assert health_wall == _endpoint_call_timeout(180.0)
+
+
+@pytest.mark.asyncio
+async def test_foreground_local_router_forwards_bounded_cooperative_timeout():
+    router = HealthAwareLLMRouter()
+    client = _TimeoutRecordingClient()
+    router.register(
+        name="Cortex",
+        url="internal",
+        model="test",
+        is_local=True,
+        tier="local",
+        client=client,
+    )
+
+    result = await router.generate_with_metadata(
+        "continue the ordinary live desktop conversation",
+        timeout=180.0,
+        prefer_tier="primary",
+        origin="user",
+        purpose="chat",
+        foreground_request=True,
+        max_tokens=512,
+        skip_runtime_payload=True,
+        allow_cloud_fallback=False,
+    )
+
+    assert result["ok"] is True
+    assert client.calls[0]["timeout"] == 103.0
 
 
 @pytest.mark.asyncio

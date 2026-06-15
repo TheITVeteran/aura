@@ -26,6 +26,7 @@ import hashlib
 import logging
 import os
 import subprocess
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -78,6 +79,51 @@ _SCREEN_PROBE_TIMEOUT_S = _env_float(
     maximum=2.0,
 )
 _LAST_SCREEN_PROBE_TIMEOUT_AT: float = 0.0
+
+
+def _collect_native_screen_state() -> ScreenState | None:
+    """Collect foreground app/window metadata without spawning AppleScript."""
+
+    if sys.platform != "darwin":
+        return None
+
+    state = ScreenState()
+    state.timestamp = time.time()
+    try:
+        from AppKit import NSWorkspace
+
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if app is not None:
+            name = app.localizedName()
+            if name:
+                state.active_app = str(name).strip()[:120]
+    except _PUMP_RUNTIME_ERRORS as exc:
+        logger.debug("Native frontmost app probe unavailable: %s", exc)
+
+    try:
+        import Quartz
+
+        options = (
+            Quartz.kCGWindowListOptionOnScreenOnly
+            | Quartz.kCGWindowListExcludeDesktopElements
+        )
+        windows = Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID) or []
+        for window in windows:
+            if int(window.get("kCGWindowLayer", 0) or 0) != 0:
+                continue
+            owner = str(window.get("kCGWindowOwnerName") or "").strip()
+            title = str(window.get("kCGWindowName") or "").strip()
+            if owner and not state.active_app:
+                state.active_app = owner[:120]
+            if title:
+                state.window_title = title[:200]
+            if state.active_app or state.window_title:
+                break
+    except _PUMP_RUNTIME_ERRORS as exc:
+        logger.debug("Native frontmost window probe unavailable: %s", exc)
+
+    return state if state.active_app or state.window_title else None
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -173,15 +219,16 @@ def _collect_screen_state(prev_hash: str) -> ScreenState:
 
     Tries (in order): ScreenObserver JSON, AppleScript, fallback.
     """
-    state = ScreenState()
+    state = _collect_native_screen_state() or ScreenState()
     now = time.time()
     state.timestamp = now
 
-    # 1. Get active app and window title via AppleScript (fast, no imports)
+    # 1. Get active app and window title via native macOS APIs first. AppleScript
+    # is a governed fallback for hosts without PyObjC/Quartz, not the hot path.
     global _LAST_SCREEN_PROBE_TIMEOUT_AT
     probe_allowed = (now - _LAST_SCREEN_PROBE_TIMEOUT_AT) >= _SCREEN_PROBE_BACKOFF_S
     try:
-        if probe_allowed:
+        if probe_allowed and not state.active_app:
             from core.runtime.subprocess_gateway import get_subprocess_gateway
             gw = get_subprocess_gateway()
 

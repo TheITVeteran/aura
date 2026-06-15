@@ -234,6 +234,40 @@ def test_runtime_hygiene_treats_recent_model_warmup_as_transient(monkeypatch):
     assert hygiene._active_local_model_activity() == ["cortex:recent"]
 
 
+def test_runtime_hygiene_tolerates_model_registry_churn(monkeypatch):
+    hygiene = RuntimeHygieneManager()
+    now = time.time()
+
+    fake_client = SimpleNamespace(
+        get_lane_status=lambda: {
+            "state": "ready",
+            "warmup_in_flight": False,
+            "current_request_started_at": 0.0,
+            "last_ready_at": now - 10.0,
+            "last_progress_at": now - 12.0,
+            "last_transition_at": now - 15.0,
+        }
+    )
+
+    class FlakyRegistry(dict):
+        def __init__(self):
+            super().__init__({str(TMP_ROOT / "cortex"): fake_client})
+            self.calls = 0
+
+        def items(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("dictionary changed size during iteration")
+            return super().items()
+
+    fake_mlx_module = SimpleNamespace(_CLIENTS=FlakyRegistry())
+    fake_server_module = SimpleNamespace(_SERVER_CLIENTS={})
+    monkeypatch.setitem(sys.modules, "core.brain.llm.mlx_client", fake_mlx_module)
+    monkeypatch.setitem(sys.modules, "core.brain.llm.local_server_client", fake_server_module)
+
+    assert hygiene._active_local_model_activity() == ["cortex:recent"]
+
+
 def test_runtime_hygiene_adopts_late_active_children_before_flagging_rogue_processes():
     class _ChildProc:
         pid = 43210

@@ -179,6 +179,25 @@ def test_affective_steering_geometry_falls_back_to_packaged_vector_dim(
     assert engine._discover_model_geometry(model) == (64, 513)
 
 
+def test_surface_alpha_override_survives_adaptive_alpha_update():
+    from core.consciousness.affective_steering import AffectiveSteeringEngine
+
+    hooks = [SimpleNamespace(_alpha=5.0), SimpleNamespace(_alpha=5.0)]
+    engine = AffectiveSteeringEngine()
+    engine._hooks = hooks
+
+    engine.set_surface_alpha_override(0.25)
+    engine.set_alpha(4.7)
+
+    assert engine._alpha == 4.7
+    assert [hook._alpha for hook in hooks] == [0.25, 0.25]
+
+    engine.set_surface_alpha_override(None)
+    engine.set_alpha(4.7)
+
+    assert [hook._alpha for hook in hooks] == [4.7, 4.7]
+
+
 def test_production_caa_adapts_alpha_and_detects_collapse(tmp_path):
     from core.consciousness.caa import (
         ProductionCAA,

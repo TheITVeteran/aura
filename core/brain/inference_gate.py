@@ -2334,19 +2334,19 @@ class InferenceGate:
             )
             cap = cls._configured_token_bound(
                 "AURA_FOREGROUND_CHAT_STANDARD_MAX_TOKENS",
-                2048,
+                1280,
                 minimum=floor,
             )
             loops = 1
         else:
             floor = cls._configured_token_bound(
                 "AURA_FOREGROUND_CHAT_SIMPLE_MIN_TOKENS",
-                512,
-                minimum=384,
+                384,
+                minimum=256,
             )
             cap = cls._configured_token_bound(
                 "AURA_FOREGROUND_CHAT_SIMPLE_MAX_TOKENS",
-                1024,
+                512,
                 minimum=floor,
             )
             loops = 1
@@ -2364,6 +2364,56 @@ class InferenceGate:
             cap = max(cap, floor)
 
         return floor, max(floor, cap), loops
+
+    @classmethod
+    def _foreground_prompt_profile(cls, prompt: str, context: dict[str, Any] | None = None) -> str:
+        """Classify a live foreground turn for context and output budgeting."""
+
+        context = context or {}
+        if bool(context.get("deep_mind_probe", False)):
+            return "deep_probe"
+        if bool(context.get("desktop_quick_reply_contract", False)):
+            return "simple"
+        if bool(context.get("capability_inventory_contract", False)):
+            return "standard"
+        if bool(
+            context.get("desktop_execution_contract", False)
+            or context.get("coding_request", False)
+            or context.get("requires_search", False)
+            or context.get("requires_memory_grounding", False)
+        ):
+            return "extended"
+
+        text = str(prompt or "").strip()
+        shape = analyze_prompt_shape(text)
+        long_form_requested = bool(_LONG_FORM_REQUEST_RE.search(text))
+        if (
+            long_form_requested
+            or shape.prefers_extended_answer
+            or shape.requires_single_reply_coverage
+            or shape.question_parts >= 2
+        ):
+            return "extended"
+        if len(text.split()) > 45 or len(text) > 320:
+            return "standard"
+        return "simple"
+
+    @classmethod
+    def _foreground_prebuilt_history_limit(
+        cls,
+        prompt: str,
+        context: dict[str, Any] | None = None,
+        *,
+        deep_probe: bool = False,
+    ) -> int:
+        if deep_probe:
+            return 2
+        profile = cls._foreground_prompt_profile(prompt, context)
+        if profile == "simple":
+            return 4
+        if profile == "standard":
+            return 6
+        return 10
 
     @staticmethod
     def _split_attempt_timeouts(total_timeout: float, requested_tier: str) -> tuple[float, float]:
@@ -3790,7 +3840,12 @@ class InferenceGate:
             return runtime_window
 
     @staticmethod
-    def _compact_prebuilt_message_content(role: str, content: Any) -> str:
+    def _compact_prebuilt_message_content(
+        role: str,
+        content: Any,
+        *,
+        budget_profile: str = "standard",
+    ) -> str:
         clean = str(content or "").strip()
         if not clean:
             return ""
@@ -3799,12 +3854,38 @@ class InferenceGate:
         # Keep the live foreground lane fast: target the *runtime* context
         # window instead of the model family's theoretical max so prompt eval
         # does not balloon into 5k+ tokens on desktop.
-        prompt_budget_chars = max(14000, int(max(4096, context_window - 1536) * 2.25))
-        limits = {
-            "system": min(9000, max(6000, int(prompt_budget_chars * 0.40))),
-            "user": min(16000, max(5000, int(prompt_budget_chars * 0.46))),
-            "assistant": min(7000, max(3500, int(prompt_budget_chars * 0.20))),
-        }
+        profile = str(budget_profile or "standard").lower()
+        if profile == "simple":
+            prompt_budget_chars = min(
+                9000,
+                max(7000, int(max(4096, context_window - 1536) * 0.62)),
+            )
+            limits = {
+                "system": min(5200, max(3800, int(prompt_budget_chars * 0.58))),
+                "user": min(3200, max(1800, int(prompt_budget_chars * 0.36))),
+                "assistant": min(1800, max(900, int(prompt_budget_chars * 0.20))),
+            }
+        elif profile == "deep_probe":
+            prompt_budget_chars = 9000
+            limits = {
+                "system": 5200,
+                "user": 3200,
+                "assistant": 1600,
+            }
+        elif profile == "extended":
+            prompt_budget_chars = max(18000, int(max(4096, context_window - 1536) * 1.75))
+            limits = {
+                "system": min(9000, max(6000, int(prompt_budget_chars * 0.40))),
+                "user": min(14000, max(5000, int(prompt_budget_chars * 0.46))),
+                "assistant": min(6000, max(3000, int(prompt_budget_chars * 0.20))),
+            }
+        else:
+            prompt_budget_chars = max(12000, int(max(4096, context_window - 1536) * 1.05))
+            limits = {
+                "system": min(6500, max(4500, int(prompt_budget_chars * 0.46))),
+                "user": min(7000, max(3200, int(prompt_budget_chars * 0.42))),
+                "assistant": min(3200, max(1600, int(prompt_budget_chars * 0.22))),
+            }
         limit = limits.get(role, 8000)
         if len(clean) <= limit:
             return clean
@@ -3816,6 +3897,7 @@ class InferenceGate:
         *,
         history_limit: int = 12,
         deep_probe: bool = False,
+        budget_profile: str = "standard",
     ) -> list[dict[str, str]]:
         """Trim oversized prebuilt chat payloads for the live 32B lane.
 
@@ -3827,6 +3909,7 @@ class InferenceGate:
         if not isinstance(messages, list):
             return []
 
+        profile = "deep_probe" if deep_probe else str(budget_profile or "standard").lower()
         system_message: dict[str, str] | None = None
         preserved_system_messages: list[dict[str, str]] = []
         convo: list[dict[str, str]] = []
@@ -3834,7 +3917,11 @@ class InferenceGate:
             if not isinstance(msg, dict):
                 continue
             role = str(msg.get("role", "") or "").strip().lower()
-            content = self._compact_prebuilt_message_content(role, msg.get("content", ""))
+            content = self._compact_prebuilt_message_content(
+                role,
+                msg.get("content", ""),
+                budget_profile=profile,
+            )
             if not content:
                 continue
             normalized = {"role": role or "user", "content": content}
@@ -3858,7 +3945,15 @@ class InferenceGate:
         compact.extend(convo[-max(1, int(history_limit)) :])
 
         context_window = self._foreground_prompt_context_window()
-        total_budget_chars = max(14000, int(max(4096, context_window - 1536) * 2.25))
+        if profile == "simple":
+            total_budget_chars = min(
+                9000,
+                max(7000, int(max(4096, context_window - 1536) * 0.62)),
+            )
+        elif profile == "extended":
+            total_budget_chars = max(18000, int(max(4096, context_window - 1536) * 1.75))
+        else:
+            total_budget_chars = max(12000, int(max(4096, context_window - 1536) * 1.05))
         if deep_probe:
             total_budget_chars = min(total_budget_chars, 9000)
 
@@ -3882,6 +3977,17 @@ class InferenceGate:
             if removable_index is None:
                 break
             compact.pop(removable_index)
+
+        total_chars = sum(len(str(msg.get("content", "") or "")) for msg in compact)
+        if compact and total_chars > total_budget_chars:
+            first = compact[0]
+            if first.get("role") == "system":
+                overflow = total_chars - total_budget_chars
+                content = str(first.get("content", "") or "")
+                min_system_chars = 3200 if profile == "simple" else 4200
+                new_limit = max(min_system_chars, len(content) - overflow - 1)
+                if len(content) > new_limit:
+                    first["content"] = content[:new_limit].rstrip() + "…"
 
         return compact
 
@@ -4389,6 +4495,12 @@ class InferenceGate:
                 is_background=is_background,
             )
         )
+        explicit_max_tokens_cap: int | None = None
+        if "max_tokens" in context:
+            try:
+                explicit_max_tokens_cap = max(1, int(context.get("max_tokens") or 1))
+            except (TypeError, ValueError, OverflowError):
+                explicit_max_tokens_cap = None
         if "max_tokens" not in context:
             max_tokens = self._adaptive_max_tokens_for_prompt(
                 initial_visible_user_prompt,
@@ -5012,6 +5124,10 @@ class InferenceGate:
                     max_tokens,
                 )
 
+        if explicit_max_tokens_cap is not None:
+            max_tokens = min(max_tokens, explicit_max_tokens_cap)
+            context["max_tokens"] = max_tokens
+
         if (
             not is_background
             and self._origin_is_user_facing(origin)
@@ -5057,8 +5173,10 @@ class InferenceGate:
             context["max_tokens"] = max_tokens
             context.setdefault("clean_user_surface_contract", True)
             context.setdefault("clean_user_surface_recurrent_loops", 1)
+            context.setdefault("clean_user_surface_steering_alpha", 0.25)
             morpho_kwargs.setdefault("clean_user_surface_contract", True)
             morpho_kwargs.setdefault("clean_user_surface_recurrent_loops", 1)
+            morpho_kwargs.setdefault("clean_user_surface_steering_alpha", 0.25)
 
         if benchmark_request:
             requested_cap = context.get("max_tokens", max_tokens)
@@ -5277,10 +5395,19 @@ class InferenceGate:
             )
         if provided_messages is not None and use_compact_foreground_context:
             deep_probe_context = bool(context.get("deep_mind_probe", False))
+            foreground_profile = self._foreground_prompt_profile(
+                visible_user_prompt,
+                context,
+            )
             messages = self._compact_prebuilt_messages(
                 messages,
-                history_limit=2 if deep_probe_context else 12,
+                history_limit=self._foreground_prebuilt_history_limit(
+                    visible_user_prompt,
+                    context,
+                    deep_probe=deep_probe_context,
+                ),
                 deep_probe=deep_probe_context,
+                budget_profile=foreground_profile,
             )
         prompt_chars = sum(len(str(msg.get("content", ""))) for msg in messages)
         prompt_mode = "rich" if use_rich_context else "compact"
@@ -5312,10 +5439,18 @@ class InferenceGate:
             _foreground_floor, _foreground_cap, foreground_loops = (
                 self._foreground_compute_profile(initial_visible_user_prompt)
             )
+            foreground_profile = self._foreground_prompt_profile(
+                visible_user_prompt,
+                context,
+            )
             morpho_kwargs.setdefault("clean_user_surface_contract", True)
             morpho_kwargs.setdefault(
                 "clean_user_surface_recurrent_loops",
                 foreground_loops,
+            )
+            morpho_kwargs.setdefault(
+                "clean_user_surface_steering_alpha",
+                0.35 if foreground_profile == "extended" else 0.25,
             )
         client_foreground_request = (
             bool(_is_user_facing or explicit_foreground) and not is_background and not benchmark_request

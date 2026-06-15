@@ -1711,9 +1711,19 @@ class AffectiveSteeringEngine:
         alpha > 30 risks incoherence.
         """
         self._alpha = alpha
+        effective_alpha = float(alpha)
+        surface_override = getattr(self, "_surface_alpha_override", None)
+        if surface_override is not None:
+            try:
+                effective_alpha = min(effective_alpha, max(0.01, float(surface_override)))
+            except (TypeError, ValueError):
+                effective_alpha = float(alpha)
         for hook in self._hooks:
-            hook._alpha = alpha
-        logger.info("⚙️  Steering alpha set to %.1f", alpha)
+            hook._alpha = effective_alpha
+        if surface_override is not None and effective_alpha != float(alpha):
+            logger.info("⚙️  Steering alpha set to %.3f (surface clamp; requested %.3f)", effective_alpha, float(alpha))
+        else:
+            logger.info("⚙️  Steering alpha set to %.1f", alpha)
 
     def set_surface_alpha_override(self, alpha: float | None):
         """Clamp hook alpha for user-facing surface generations."""
@@ -1722,7 +1732,10 @@ class AffectiveSteeringEngine:
             return
         self._surface_alpha_override = max(0.01, float(alpha))
         for hook in self._hooks:
-            hook._alpha = min(float(getattr(hook, "_alpha", self._surface_alpha_override)), self._surface_alpha_override)
+            hook._alpha = min(
+                float(getattr(hook, "_alpha", self._surface_alpha_override)),
+                self._surface_alpha_override,
+            )
 
     def observe_generation(
         self,

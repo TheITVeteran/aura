@@ -51,6 +51,23 @@ _THREAD_RUN_FAILURES = (
 )
 
 
+def _snapshot_mapping_items(mapping: Any) -> list[tuple[Any, Any]]:
+    """Return a bounded snapshot of a live mapping without crashing on churn."""
+    if not mapping:
+        return []
+    last_error: RuntimeError | None = None
+    for _attempt in range(3):
+        try:
+            return list(mapping.items())
+        except RuntimeError as exc:
+            if "changed size" not in str(exc):
+                raise
+            last_error = exc
+            time.sleep(0)
+    logger.debug("RuntimeHygiene: skipped mutating registry snapshot: %s", last_error)
+    return []
+
+
 def _env_int(name: str, default: int, *, low: int, high: int) -> int:
     try:
         value = int(os.getenv(name, "") or default)
@@ -740,11 +757,11 @@ class RuntimeHygieneManager:
         for module_name, registry_attr in registries:
             try:
                 module = __import__(module_name, fromlist=[registry_attr])
-                registry = dict(getattr(module, registry_attr, {}) or {})
+                registry_items = _snapshot_mapping_items(getattr(module, registry_attr, {}) or {})
             except (RuntimeError, AttributeError, TypeError):
                 continue
 
-            for client_path, client in registry.items():
+            for client_path, client in registry_items:
                 if client is None or not hasattr(client, "get_lane_status"):
                     continue
                 try:

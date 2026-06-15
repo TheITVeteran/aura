@@ -272,6 +272,9 @@ class ResilientBoot:
         actor_bus = ServiceContainer.get("actor_bus")
         if not supervisor or not actor_bus:
             raise RuntimeError("State Repository boot requires supervisor and actor_bus")
+        start_bus = getattr(actor_bus, "start", None)
+        if callable(start_bus) and not getattr(actor_bus, "_is_running", False):
+            start_bus()
         
         # 1. Register and Start State Vault Actor
         db_path = str(self.orchestrator.state_repo.db_path)
@@ -283,7 +286,27 @@ class ResilientBoot:
         )
         
         supervisor.add_actor(spec)
+        if (
+            actor_bus.has_actor("state_vault")
+            and hasattr(actor_bus, "is_actor_usable")
+            and not actor_bus.is_actor_usable("state_vault")
+        ):
+            stop_actor = getattr(supervisor, "stop_actor", None)
+            if callable(stop_actor):
+                await asyncio.to_thread(
+                    stop_actor,
+                    "state_vault",
+                    graceful_timeout=0.25,
+                    terminate_timeout=0.5,
+                    kill_timeout=0.5,
+                )
+            _record_boot_degradation(
+                RuntimeError("state_vault transport registered but unusable"),
+                action="restarted state vault actor instead of accepting stale transport",
+            )
         pipe = supervisor.start_actor("state_vault")
+        if not pipe:
+            raise RuntimeError("StateVaultActor did not provide a control pipe")
         if actor_bus.has_actor("state_vault"):
             await actor_bus.update_actor("state_vault", pipe)
         else:
