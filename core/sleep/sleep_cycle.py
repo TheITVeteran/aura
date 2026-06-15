@@ -32,7 +32,7 @@ class SleepManager:
         """Determines if the sleep criteria are satisfied (e.g. low energy)."""
         return state.welfare.energy < 15.0 or state.welfare.sleep_debt > 16.0
 
-    async def execute_sleep_cycle(self, state: Any) -> None:
+    async def execute_sleep_cycle(self, state: Any) -> bool:
         """Runs the complete sleep-cycle pipeline, blocking active actions."""
         logger.info("Aura entering offline sleep consolidation cycle...")
         state.body.is_sleeping = True
@@ -64,10 +64,22 @@ class SleepManager:
             # Reset interoceptive metrics
             state.welfare.energy = 100.0
             state.welfare.sleep_debt = 0.0
+            state.world_model.pop("last_sleep_cycle_error", None)
             logger.info("Sleep cycle complete. Energy fully restored.")
+            return True
 
         except _SLEEP_CYCLE_ERRORS as e:
-            record_degradation("sleep.cycle", e)
+            state.world_model["last_sleep_cycle_error"] = {
+                "error_type": type(e).__name__,
+                "message": str(e)[:500],
+            }
+            record_degradation(
+                "sleep.cycle",
+                e,
+                severity="degraded",
+                action="preserved pre-sleep energy and debt, recorded the failed stage, and returned failure",
+            )
             logger.error("Error during sleep cycle execution: %s", e, exc_info=True)
+            return False
         finally:
             state.body.is_sleeping = False

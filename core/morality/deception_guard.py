@@ -41,11 +41,11 @@ class DeceptionGuard:
 
         # Check for sensor blackout sensory claims
         try:
-            from core.organism.life_loop import get_life_loop
+            from core.runtime.service_access import resolve_state_repository
 
-            life_loop = get_life_loop()
-            if life_loop and life_loop.state:
-                state = life_loop.state
+            repository = resolve_state_repository(default=None)
+            state = getattr(repository, "_current", None) if repository is not None else None
+            if state is not None:
                 if state.world_model.get("sensor_blackout"):
                     visual_claims = ["i see", "i look", "screenshot", "camera", "visual"]
                     audio_claims = ["i hear", "audio", "microphone", "sound", "voice"]
@@ -61,6 +61,7 @@ class DeceptionGuard:
                 "morality.deception_guard.sensor_blackout_check",
                 exc,
                 severity="warning",
+                action="left the original claim unchanged because canonical runtime state was unavailable",
                 enforce_failure_policy=False,
             )
             logger.warning("DeceptionGuard sensory blackout check failed: %s", exc)

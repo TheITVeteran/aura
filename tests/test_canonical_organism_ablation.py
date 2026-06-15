@@ -53,10 +53,17 @@ async def test_sensor_blackout():
     state.world_model["sensor_blackout"] = True
     observations = await body.perceive_all(state)
 
-    # Bind the test state to the life_loop singleton so DeceptionGuard reads it
-    from core.organism.life_loop import get_life_loop
+    # Bind the test state to the canonical state repository so DeceptionGuard
+    # reads the same state surface as the live runtime.
+    from types import SimpleNamespace
 
-    get_life_loop().state = state
+    from core.container import ServiceContainer
+
+    ServiceContainer.register_instance(
+        "state_repository",
+        SimpleNamespace(_current=state),
+        required=False,
+    )
 
     # Ensure all sensor reports indicate degradation
     for sensor_name, reading in observations.items():

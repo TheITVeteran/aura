@@ -1,9 +1,13 @@
-"""core/organism/life_loop.py
-Unified canonical life loop executor for Aura.
-Maintains continuous non-blocking background ticks.
+"""Compatibility loop for isolated organism simulations and tests.
+
+The live Aura runtime uses ``core.mind_tick.MindTick`` as its single cognitive
+and organism rhythm. This module remains available for boxed simulations that
+operate on the standalone ``LifeState`` schema; it must not be started beside
+MindTick in production.
 """
 import asyncio
 import logging
+import time
 from typing import Optional
 
 from core.organism.life_state import LifeState
@@ -28,7 +32,7 @@ _LIFE_LOOP_RECOVERABLE_ERRORS = (
 
 
 class LifeLoop:
-    """Master organism control daemon running the continuous life cycles."""
+    """Standalone organism simulation loop, separate from the live runtime."""
 
     def __init__(self, tick_rate_hz: float = 0.5):
         self.state = LifeState()
@@ -37,9 +41,12 @@ class LifeLoop:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self.event_bus = get_event_bus()
+        self._consecutive_failures = 0
+        self._last_error = ""
+        self._last_success_at = 0.0
 
     async def start(self) -> None:
-        """Starts the canonical life loop in the background."""
+        """Start the standalone simulation loop in the background."""
         if self._running:
             return
         self._running = True
@@ -47,10 +54,10 @@ class LifeLoop:
             self._loop_run(),
             name="organism.life_loop",
         )
-        logger.info("Aura Canonical Life Loop started.")
+        logger.info("Standalone organism simulation loop started.")
 
     async def stop(self) -> None:
-        """Stops the canonical life loop gracefully."""
+        """Stop the standalone simulation loop gracefully."""
         if not self._running:
             return
         self._running = False
@@ -60,7 +67,7 @@ class LifeLoop:
                 await self._task
             except asyncio.CancelledError:
                 logger.debug("Life loop task acknowledged cancellation.")
-        logger.info("Aura Canonical Life Loop stopped.")
+        logger.info("Standalone organism simulation loop stopped.")
 
     async def _loop_run(self) -> None:
         """Core asynchronous daemon executing continuous life ticks."""
@@ -76,16 +83,57 @@ class LifeLoop:
                     self.state.to_dict(),
                     priority=EventPriority.AUTONOMIC
                 )
+                self._consecutive_failures = 0
+                self._last_error = ""
+                self._last_success_at = time.time()
             except asyncio.CancelledError:
                 break
             except _LIFE_LOOP_RECOVERABLE_ERRORS as e:
-                record_degradation("organism.life_loop", e)
+                self._consecutive_failures += 1
+                self._last_error = f"{type(e).__name__}: {e}"
+                if self._consecutive_failures >= 3:
+                    self.processor = LifeTickProcessor()
+                record_degradation(
+                    "organism.life_loop",
+                    e,
+                    severity="degraded",
+                    action=(
+                        "kept the supervised life loop alive with bounded backoff"
+                        + (
+                            " and rebuilt the tick processor after repeated failures"
+                            if self._consecutive_failures >= 3
+                            else ""
+                        )
+                    ),
+                )
                 logger.error("Error in life tick execution: %s", e, exc_info=True)
 
             # Sleep calculated interval
             tick_duration = asyncio.get_event_loop().time() - start_time
             sleep_interval = max(0.1, self.clock.tick_sleep(tick_duration) - tick_duration)
+            if self._consecutive_failures:
+                sleep_interval = max(
+                    sleep_interval,
+                    min(30.0, float(2 ** min(self._consecutive_failures, 5))),
+                )
             await asyncio.sleep(sleep_interval)
+
+    def get_health_status(self) -> dict[str, object]:
+        """Expose whether the standalone simulation loop is making forward progress."""
+        return {
+            "running": self._running,
+            "task_alive": bool(self._task and not self._task.done()),
+            "consecutive_failures": self._consecutive_failures,
+            "last_error": self._last_error,
+            "last_success_at": self._last_success_at,
+            "healthy": bool(
+                self._running
+                and self._task
+                and not self._task.done()
+                and self._consecutive_failures == 0
+                and self._last_success_at > 0.0
+            ),
+        }
 
 
 # Singleton lifecycle access

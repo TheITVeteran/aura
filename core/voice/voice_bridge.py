@@ -50,7 +50,12 @@ class VoiceConversationBridge:
         try:
             engine = ServiceContainer.get("cognitive_engine", default=None)
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            record_degradation("voice_bridge", exc)
+            record_degradation(
+                "voice_bridge",
+                exc,
+                severity="warning",
+                action="used the injected conversation engine if available; otherwise returned no cognitive reply",
+            )
             logger.warning("Voice Bridge CognitiveEngine lookup failed: %s", exc)
             engine = None
         if engine is None and hasattr(self._engine, "think"):
@@ -88,7 +93,12 @@ class VoiceConversationBridge:
         try:
             engine = ServiceContainer.get("capability_engine", default=None)
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            record_degradation("voice_bridge", exc)
+            record_degradation(
+                "voice_bridge",
+                exc,
+                severity="degraded",
+                action="failed the spoken desktop objective explicitly without attempting an ungoverned fallback",
+            )
             logger.warning("Voice desktop capability lookup failed: %s", exc)
             engine = None
         if engine is None or not hasattr(engine, "execute"):

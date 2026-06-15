@@ -159,3 +159,8 @@ def test_local_background_failure_does_not_raise(monkeypatch):
         time.sleep(0.02)
     assert handler_attempted.is_set()
     assert degraded, "local handler failure was not recorded as degradation"
+    status = tasks_module.get_background_task_status("test.boom")
+    assert status["state"] == "failed"
+    assert status["route"] == "local"
+    assert status["error_type"] == "ValueError"
+    assert "handler exploded" in status["error"]

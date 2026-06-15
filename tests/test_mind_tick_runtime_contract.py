@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+import time
 
 import pytest
 
@@ -40,6 +41,27 @@ def test_mind_scheduler_closes_unscheduled_awaitable():
 
     assert task is None
     assert awaitable.closed is True
+
+
+def test_mind_tick_liveness_requires_supervised_progress():
+    class RunningTask:
+        @staticmethod
+        def done():
+            return False
+
+    tick = MindTick.__new__(MindTick)
+    tick._running = True
+    tick._task = RunningTask()
+    tick._started_at = time.time()
+    tick._last_successful_tick_at = time.time()
+    tick._consecutive_loop_failures = 0
+    tick._tick_count = 4
+
+    assert tick.is_alive() is True
+    assert tick.get_health_status()["healthy"] is True
+
+    tick._consecutive_loop_failures = 3
+    assert tick.is_alive() is False
 
 
 @pytest.mark.asyncio

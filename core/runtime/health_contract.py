@@ -221,6 +221,13 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "Fine-grained event-loop lag monitor. Without it, blocking regressions are harder to catch.",
         liveness_check="is_alive",
     ),
+    ServiceRequirement(
+        "MindTick",
+        "mind_tick",
+        ServiceTier.IMPORTANT,
+        "Canonical cognitive and organism rhythm. Without forward progress, autonomous state integration stalls.",
+        liveness_check="is_alive",
+    ),
     # ── OPTIONAL: Background enrichments ──
     ServiceRequirement(
         "Mycelial Network",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from pathlib import Path
 
@@ -175,6 +176,42 @@ async def test_screen_perception_active_window_uses_subprocess_gateway(monkeypat
     assert result == {"app": "Google Chrome", "title": "News", "bounds": ""}
     assert gateway.calls[0]["read_only"] is True
     assert gateway.calls[0]["source"] == "screen_perception.active_window"
+
+
+@pytest.mark.asyncio
+async def test_screen_perception_registers_unreaped_timeout_child(monkeypatch) -> None:
+    from core.perception import screen_perception as module
+    from core import reaper
+
+    class StuckProcess:
+        pid = 4242
+        returncode = None
+
+        async def communicate(self):
+            await asyncio.sleep(60.0)
+
+        def kill(self):
+            return None
+
+        async def wait(self):
+            await asyncio.sleep(60.0)
+
+    class Gateway:
+        async def spawn_async(self, *_args, **_kwargs):
+            return StuckProcess()
+
+    registered = []
+    monkeypatch.setattr(module, "get_subprocess_gateway", lambda: Gateway())
+    monkeypatch.setattr(reaper, "register_reaper_pid", registered.append)
+
+    result = await ScreenPerception()._run_osascript(
+        "return 1",
+        source="screen_perception.timeout_test",
+        timeout_s=0.01,
+    )
+
+    assert result == ""
+    assert registered == [4242]
 
 
 @pytest.mark.asyncio

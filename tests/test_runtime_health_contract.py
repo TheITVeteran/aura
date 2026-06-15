@@ -257,6 +257,17 @@ def test_user_facing_runtime_services_have_explicit_liveness_checks():
     assert required["agency_core"].liveness_check == "is_alive"
 
 
+def test_mind_tick_is_an_explicit_important_runtime_liveness_probe():
+    required = {
+        requirement.container_key: requirement
+        for requirement in RUNTIME_CONTRACT
+        if requirement.container_key == "mind_tick"
+    }
+
+    assert required["mind_tick"].tier == ServiceTier.IMPORTANT
+    assert required["mind_tick"].liveness_check == "is_alive"
+
+
 def test_consciousness_enrichment_services_have_explicit_liveness_checks():
     required = {
         requirement.container_key: requirement

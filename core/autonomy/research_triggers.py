@@ -160,7 +160,12 @@ def _maybe_truncate_ring(path: Path) -> None:
             atomic_write_text(tmp, "".join(keep), encoding="utf-8")
             os.replace(tmp, path)
     except OSError as exc:
-        record_degradation("research_triggers", exc)
+        record_degradation(
+            "research_triggers",
+            exc,
+            severity="warning",
+            action="left the append-only queue intact so the next emission can retry bounded compaction",
+        )
         logger.debug("Failed to truncate research trigger ring at %s: %s", path, exc)
 
 

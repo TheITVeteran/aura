@@ -15,6 +15,7 @@ import asyncio
 import gc
 import inspect
 import logging
+import math
 import os
 import re
 import threading as _threading
@@ -4961,10 +4962,12 @@ class InferenceGate:
 
                     # Inject Existential Stakes physical parameter coupling
                     try:
-                        from core.container import ServiceContainer
                         stakes = ServiceContainer.get("existential_stakes", default=None)
                         if stakes:
-                            threat = stakes.get_existential_threat()
+                            threat = float(stakes.get_existential_threat())
+                            if not math.isfinite(threat):
+                                raise ValueError("existential threat must be finite")
+                            threat = max(0.0, min(1.0, threat))
                             if threat > 0.2:
                                 # Scale token limit down based on threat
                                 max_tokens = int(max_tokens * (1.0 - threat * 0.7))
@@ -4980,7 +4983,20 @@ class InferenceGate:
                                 if "max_tokens" in morpho_kwargs:
                                     morpho_kwargs["max_tokens"] = max_tokens
                     except _INFERENCE_RECOVERABLE_ERRORS as _st_err:
-                        record_degradation("inference_gate.existential_stakes", _st_err)
+                        record_degradation(
+                            "inference_gate.existential_stakes",
+                            _st_err,
+                            severity="warning",
+                            action=(
+                                "kept the validated morphogenetic generation parameters "
+                                "and ignored only the invalid existential-stakes modifier"
+                            ),
+                        )
+                        logger.warning(
+                            "Existential-stakes generation modifier rejected; "
+                            "using validated base parameters: %s",
+                            _st_err,
+                        )
 
                     if somatic_temperature is not None:
                         somatic_temperature = max(0.1, min(1.5, somatic_temperature))

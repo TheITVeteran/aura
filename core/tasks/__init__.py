@@ -1,5 +1,7 @@
 import logging
 import threading
+import time
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -7,6 +9,8 @@ from .celery_app import CELERY_AVAILABLE, celery_app
 from .managed_command import run_project_pytest, run_project_python
 
 logger = logging.getLogger("Aura.Tasks")
+_TASK_STATUS_LOCK = threading.RLock()
+_BACKGROUND_TASK_STATUS: dict[str, dict[str, Any]] = {}
 
 _RECOVERABLE_TASK_ERRORS = (
     AttributeError,
@@ -30,6 +34,24 @@ def _broker_active() -> bool:
     from core.config import config
 
     return CELERY_AVAILABLE and getattr(config.redis, "enabled", False)
+
+
+def _set_background_task_status(name: str, state: str, **details: Any) -> None:
+    with _TASK_STATUS_LOCK:
+        previous = _BACKGROUND_TASK_STATUS.get(name, {})
+        _BACKGROUND_TASK_STATUS[name] = {
+            "name": name,
+            "state": state,
+            "created_at": float(previous.get("created_at", time.time())),
+            "updated_at": time.time(),
+            **details,
+        }
+
+
+def get_background_task_status(name: str) -> dict[str, Any]:
+    """Return the latest observable outcome for a background task route."""
+    with _TASK_STATUS_LOCK:
+        return dict(_BACKGROUND_TASK_STATUS.get(name, {}))
 
 
 def dispatch_user_input(message: str):
@@ -59,23 +81,50 @@ def dispatch_background(name: str, args=None, kwargs=None) -> str:
     if _broker_active():
         try:
             celery_app.send_task(name, args=args, kwargs=kwargs)
+            _set_background_task_status(name, "submitted", route="celery")
             return "celery"
         except _RECOVERABLE_TASK_ERRORS as exc:
-            record_degradation("tasks", exc)
+            record_degradation(
+                "tasks",
+                exc,
+                severity="warning",
+                action="fell back to the registered local handler after broker dispatch failed",
+            )
             logger.error("Celery dispatch of %s failed: %s. Running locally.", name, exc)
     fn = _LOCAL_TASKS.get(name)
     if fn is None:
+        _set_background_task_status(name, "missing", route="none")
         logger.error("No local handler registered for background task %s; skipping.", name)
         return "skipped"
 
     def _runner():
+        _set_background_task_status(name, "running", route="local")
         try:
-            fn(*args, **kwargs)
+            result = fn(*args, **kwargs)
+            _set_background_task_status(
+                name,
+                "succeeded",
+                route="local",
+                result_type=type(result).__name__,
+            )
         except _RECOVERABLE_TASK_ERRORS as exc:
-            record_degradation("tasks", exc)
+            _set_background_task_status(
+                name,
+                "failed",
+                route="local",
+                error_type=type(exc).__name__,
+                error=str(exc)[:500],
+            )
+            record_degradation(
+                "tasks",
+                exc,
+                severity="degraded",
+                action="recorded the terminal local-task failure for health and operator inspection",
+            )
             logger.error("Local background task %s failed: %s", name, exc)
 
     short = name.rsplit(".", 1)[-1]
+    _set_background_task_status(name, "queued", route="local")
     threading.Thread(target=_runner, name=f"aura-task-{short}", daemon=True).start()
     return "local"
 

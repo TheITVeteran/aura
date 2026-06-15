@@ -1,6 +1,7 @@
-"""core/organism/life_tick.py
-Execution steps for a single tick of the canonical organism loop.
-Enforces Pydantic contracts and broadcasts loop states to the EventBus.
+"""Execution steps for a standalone boxed-organism simulation tick.
+
+Production cognition and state integration are owned by ``MindTick`` and the
+kernel. This processor is retained for isolated scenario/evaluation worlds.
 """
 
 import logging

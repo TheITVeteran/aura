@@ -74,7 +74,17 @@ class BrowserController:
                 if pref:
                     self._preferred_browser = pref.name
         except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation("browser_controller.start_registry", exc)
+            record_degradation(
+                "browser_controller.start_registry",
+                exc,
+                severity="warning",
+                action="started with the deterministic Google Chrome default instead of an unknown registry value",
+            )
+            logger.warning(
+                "Browser preference lookup failed; using %s: %s",
+                self._preferred_browser,
+                exc,
+            )
 
         ServiceContainer.register_instance("browser_controller", self, required=False)
         self._started = True

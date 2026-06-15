@@ -382,7 +382,12 @@ class WakeWordDetector:
                         ok=ok,
                     )
             except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                record_degradation("wake_word.command_event", exc)
+                record_degradation(
+                    "wake_word.command_event",
+                    exc,
+                    severity="warning",
+                    action="completed the voice command while omitting only the optional world-state event",
+                )
             if ok and reply:
                 await self._speak_reply(reply)
             logger.info("🎤 Voice command %s", "completed" if ok else "failed")

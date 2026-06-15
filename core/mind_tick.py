@@ -138,6 +138,9 @@ class MindTick:
         self._tick_count = 0
         self._task: asyncio.Task | None = None
         self._last_tick_metadata: TickMetadata | None = None
+        self._started_at = 0.0
+        self._last_successful_tick_at = 0.0
+        self._consecutive_loop_failures = 0
         
         # Cognitive Deepening Components
         self.predictive_engine = PredictiveEngine()
@@ -281,12 +284,33 @@ class MindTick:
         get_watchdog().register_component("mind_tick", timeout=30.0)
         
         self._running = True
+        self._started_at = time.time()
         self._task = _schedule_mind_task(self._run_loop(), name="mind_tick.run_loop")
         if self._task is None:
             self._running = False
             logger.warning("💓 MindTick: Cognitive rhythm scheduling deferred.")
             return
         logger.info("💓 MindTick: Cognitive rhythm started.")
+
+    def is_alive(self) -> bool:
+        """Return true only while the supervised loop is running and progressing."""
+        task_alive = bool(self._task and not self._task.done())
+        if not self._running or not task_alive or self._consecutive_loop_failures >= 3:
+            return False
+        if self._last_successful_tick_at <= 0.0:
+            return bool(self._started_at and (time.time() - self._started_at) <= 180.0)
+        return (time.time() - self._last_successful_tick_at) <= 300.0
+
+    def get_health_status(self) -> dict[str, Any]:
+        """Expose causal loop progress without treating heartbeat transport as health."""
+        return {
+            "healthy": self.is_alive(),
+            "running": self._running,
+            "task_alive": bool(self._task and not self._task.done()),
+            "tick_count": self._tick_count,
+            "consecutive_failures": self._consecutive_loop_failures,
+            "last_successful_tick_at": self._last_successful_tick_at,
+        }
 
     async def stop(self):
         """Stop the cognitive rhythm."""
@@ -1036,6 +1060,8 @@ class MindTick:
 
                 metadata.duration = asyncio.get_running_loop().time() - start_time
                 self._last_tick_metadata = metadata
+                self._last_successful_tick_at = time.time()
+                self._consecutive_loop_failures = 0
                 
             except asyncio.CancelledError:
                 if not self._running or is_shutdown_requested():
@@ -1043,6 +1069,7 @@ class MindTick:
                 logger.warning("MindTick loop spuriously cancelled. Ignoring.")
                 continue
             except _MIND_BOUNDARY_ERRORS as e:
+                self._consecutive_loop_failures += 1
                 _record_mind_degradation(e)
                 logger.error("⚠️ MindTick Loop Error: %s", e)
                 try:

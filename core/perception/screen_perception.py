@@ -138,7 +138,31 @@ class ScreenPerception:
                     proc.kill()
                     await asyncio.wait_for(proc.wait(), timeout=1.0)
                 except (TimeoutError, OSError, RuntimeError) as kill_exc:
-                    record_degradation(f"{source}.reap", kill_exc)
+                    reaper_registered = False
+                    try:
+                        from core.reaper import register_reaper_pid
+
+                        pid = int(getattr(proc, "pid", 0) or 0)
+                        if pid > 0:
+                            register_reaper_pid(pid)
+                            reaper_registered = True
+                    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as reaper_exc:
+                        logger.error(
+                            "Failed to register timed-out AppleScript child for reaping: %s",
+                            reaper_exc,
+                        )
+                    reap_action = (
+                        "registered the timed-out child PID with Aura's process reaper "
+                        "for supervised cleanup"
+                        if reaper_registered
+                        else "reported the unreaped child explicitly after kill and reaper registration failed"
+                    )
+                    record_degradation(
+                        f"{source}.reap",
+                        kill_exc,
+                        severity="degraded",
+                        action=reap_action,
+                    )
             record_degradation(source, exc)
             return ""
         except (OSError, RuntimeError) as exc:

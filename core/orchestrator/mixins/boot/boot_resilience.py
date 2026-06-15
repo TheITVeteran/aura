@@ -124,6 +124,11 @@ class BootResilienceMixin:
             )
             logger.debug("Skipping state_repository registration in boot mixin: %s", e)
         self.mind_tick = MindTick(self)
+        ServiceContainer.register_instance(
+            "mind_tick",
+            self.mind_tick,
+            required=False,
+        )
 
         self.stats = {
             "goals_processed": 0,
