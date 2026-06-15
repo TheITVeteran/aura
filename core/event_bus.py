@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 from collections import defaultdict
@@ -34,6 +35,14 @@ _EVENT_BUS_RECOVERABLE_ERRORS = (
     TypeError,
     AttributeError,
 ) + _REDIS_ERRORS
+
+
+def _env_float(name: str, default: float, *, low: float, high: float) -> float:
+    try:
+        value = float(str(os.environ.get(name, "") or default))
+    except (TypeError, ValueError):
+        value = default
+    return max(low, min(high, value))
 
 
 class EventPriority(IntEnum):
@@ -126,6 +135,13 @@ class AuraEventBus:
         self._remote_degraded = False
         self._remote_error_count = 0
         self._remote_last_error: BaseException | None = None
+        self._remote_publish_lock: asyncio.Lock | None = None
+        self._redis_publish_timeout_s = _env_float(
+            "AURA_EVENT_BUS_REDIS_PUBLISH_TIMEOUT_S",
+            2.0 if self._redis_required else 0.75,
+            low=0.05,
+            high=10.0,
+        )
         self._closing = False
 
         if not _REDIS_AVAILABLE and getattr(config.redis, "use_for_events", False):
@@ -584,6 +600,8 @@ class AuraEventBus:
         # 2. Remote delivery via Redis (H-12)
         if self._closing:
             return
+        if self._remote_degraded and not self._redis_required:
+            return
         if self._use_redis:
             self._check_loop_mismatch()
             if not self._redis:
@@ -591,28 +609,44 @@ class AuraEventBus:
 
             redis_client = self._redis
             if redis_client:
-                try:
-                    # Offload JSON serialization to thread to avoid event loop lag
-                    payload = await asyncio.to_thread(json.dumps, data)
-                    publish = getattr(redis_client, "publish", None)
-                    if not callable(publish):
-                        raise AttributeError(
-                            f"{type(redis_client).__name__} has no callable publish"
-                        )
-                    # [STABILITY] Wrap Redis publish in a 2.0s timeout to prevent external stalls.
-                    await asyncio.wait_for(publish(f"aura/events/{topic}", payload), timeout=2.0)
-                except TimeoutError as e:
-                    self._record_remote_error(
-                        e,
-                        "AuraEventBus: Redis publish stalled; switching to local-only mode: %s",
-                    )
-                    self._use_redis = False
-                except _EVENT_BUS_RECOVERABLE_ERRORS as e:
-                    self._record_remote_error(
-                        e,
-                        "AuraEventBus: Redis publish failed; switching to local-only mode: %s",
-                    )
-                    self._use_redis = False
+                if self._remote_publish_lock is None:
+                    self._remote_publish_lock = asyncio.Lock()
+                if self._remote_publish_lock.locked() and not self._redis_required:
+                    return
+                async with self._remote_publish_lock:
+                    if self._closing:
+                        return
+                    if self._remote_degraded and not self._redis_required:
+                        return
+                    await self._publish_remote_redis(topic, data, redis_client)
+
+    async def _publish_remote_redis(self, topic: str, data: Any, redis_client: Any) -> None:
+        try:
+            # Offload JSON serialization to thread to avoid event loop lag
+            payload = await asyncio.to_thread(json.dumps, data)
+            publish = getattr(redis_client, "publish", None)
+            if not callable(publish):
+                raise AttributeError(
+                    f"{type(redis_client).__name__} has no callable publish"
+                )
+            await asyncio.wait_for(
+                publish(f"aura/events/{topic}", payload),
+                timeout=self._redis_publish_timeout_s,
+            )
+        except TimeoutError as e:
+            self._record_remote_error(
+                e,
+                "AuraEventBus: Redis publish stalled; switching to local-only mode: %s",
+            )
+            self._use_redis = False
+            self._redis = None
+        except _EVENT_BUS_RECOVERABLE_ERRORS as e:
+            self._record_remote_error(
+                e,
+                "AuraEventBus: Redis publish failed; switching to local-only mode: %s",
+            )
+            self._use_redis = False
+            self._redis = None
 
     async def _publish_local(self, topic: str, data: Any, priority: int = EventPriority.COGNITIVE):
         """Asynchronously publish an event to all local subscribers with priority."""

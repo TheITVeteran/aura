@@ -108,6 +108,26 @@ def _is_python_resource_tracker_process(proc: Any) -> bool:
     )
 
 
+def _process_pid(proc: Any) -> int:
+    try:
+        return int(getattr(proc, "pid", 0) or 0)
+    except _PROCESS_INTROSPECTION_ERRORS:
+        return 0
+
+
+def _process_ppid(proc: Any) -> int:
+    try:
+        if hasattr(proc, "ppid"):
+            return int(proc.ppid() or 0)
+    except _PROCESS_INTROSPECTION_ERRORS:
+        return 0
+    info = getattr(proc, "info", None) or {}
+    try:
+        return int(info.get("ppid") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 @dataclass
 class MemorySample:
     timestamp: float
@@ -687,6 +707,8 @@ class RuntimeHygieneManager:
             elif record.kind == "multiprocessing":
                 active_multiprocessing += 1
         rogue_children = 0
+        owned_descendants = 0
+        rogue_samples: list[dict[str, Any]] = []
         if self._proc is not None:
             try:
                 active_children = list(self._proc.children(recursive=True))
@@ -694,18 +716,72 @@ class RuntimeHygieneManager:
                 record_degradation('runtime_hygiene', exc)
                 logger.debug("RuntimeHygiene: child process scan failed: %s", exc)
                 active_children = []
-            rogue_children = sum(
-                1
+            child_by_pid = {
+                pid: child
                 for child in active_children
-                if int(getattr(child, "pid", 0) or 0) not in active_registered_pids
-                and not _is_python_resource_tracker_process(child)
-            )
+                if (pid := _process_pid(child)) > 0
+            }
+            for child in active_children:
+                child_pid = _process_pid(child)
+                if child_pid in active_registered_pids or _is_python_resource_tracker_process(child):
+                    continue
+                if self._is_owned_descendant_process(
+                    child,
+                    active_registered_pids=active_registered_pids,
+                    child_by_pid=child_by_pid,
+                ):
+                    owned_descendants += 1
+                    continue
+                rogue_children += 1
+                if len(rogue_samples) < 5:
+                    rogue_samples.append(
+                        {
+                            "pid": child_pid or None,
+                            "ppid": _process_ppid(child) or None,
+                            "name": _process_name(child)[:80],
+                            "command": " ".join(_process_cmdline(child))[:160],
+                        }
+                    )
         return {
             "active_registered": max(0, active_registered),
             "active_subprocesses": max(0, active_subprocesses),
             "active_multiprocessing": max(0, active_multiprocessing),
+            "owned_descendant_processes": max(0, owned_descendants),
             "rogue_child_processes": max(0, rogue_children),
+            "rogue_samples": rogue_samples,
         }
+
+    def _is_owned_descendant_process(
+        self,
+        proc: Any,
+        *,
+        active_registered_pids: set[int],
+        child_by_pid: dict[int, Any],
+    ) -> bool:
+        """Return true when a recursive child belongs to a registered owner.
+
+        ``psutil.children(recursive=True)`` returns grandchildren as well as
+        direct children. A registered model worker can legitimately spawn a
+        short-lived helper below it; that helper should be visible in telemetry
+        without being misclassified as an unregistered root process. The walk is
+        bounded and stops at Aura's current process so an unrelated child still
+        fails the hygiene check.
+        """
+
+        current_pid = int(os.getpid())
+        seen: set[int] = set()
+        parent_pid = _process_ppid(proc)
+        for _ in range(16):
+            if parent_pid <= 0 or parent_pid == current_pid or parent_pid in seen:
+                return False
+            if parent_pid in active_registered_pids:
+                return True
+            seen.add(parent_pid)
+            parent = child_by_pid.get(parent_pid)
+            if parent is None:
+                return False
+            parent_pid = _process_ppid(parent)
+        return False
 
     def _memory_summary(self) -> dict[str, Any]:
         if len(self._samples) < self.memory_growth_window:

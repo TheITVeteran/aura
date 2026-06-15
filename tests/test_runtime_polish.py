@@ -870,6 +870,55 @@ async def test_event_bus_optional_redis_publish_failure_keeps_local_bus_healthy(
 
 
 @pytest.mark.asyncio
+async def test_event_bus_optional_redis_publish_timeout_trips_local_only_circuit():
+    from core.event_bus import AuraEventBus
+
+    class SlowRedis:
+        async def publish(self, *_args, **_kwargs):
+            await asyncio.sleep(0.2)
+
+    bus = AuraEventBus()
+    bus._use_redis = True
+    bus._redis = SlowRedis()
+    bus._redis_publish_timeout_s = 0.01
+
+    await bus.publish("runtime/test", {"ok": True})
+
+    assert bus.degraded is False
+    assert bus.is_alive() is True
+    assert bus._use_redis is False
+    assert bus._redis is None
+    assert bus.get_status()["remote_degraded"] is True
+    assert bus.get_status()["stats"]["remote_errors"] == 1
+
+
+@pytest.mark.asyncio
+async def test_event_bus_optional_redis_skips_concurrent_remote_publish_when_busy():
+    from core.event_bus import AuraEventBus
+
+    calls = 0
+
+    class Redis:
+        async def publish(self, *_args, **_kwargs):
+            nonlocal calls
+            calls += 1
+
+    bus = AuraEventBus()
+    bus._use_redis = True
+    bus._redis = Redis()
+    bus._remote_publish_lock = asyncio.Lock()
+    await bus._remote_publish_lock.acquire()
+    try:
+        await bus.publish("runtime/test", {"ok": True})
+    finally:
+        bus._remote_publish_lock.release()
+
+    assert calls == 0
+    assert bus.degraded is False
+    assert bus.is_alive() is True
+
+
+@pytest.mark.asyncio
 async def test_event_bus_shutdown_skips_remote_publish_without_false_degradation():
     from core.event_bus import AuraEventBus
 

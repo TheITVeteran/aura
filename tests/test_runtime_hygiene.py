@@ -348,6 +348,72 @@ def test_runtime_hygiene_process_iter_system_error_is_nonfatal(monkeypatch):
     assert hygiene._process_records == {}
 
 
+def test_runtime_hygiene_classifies_registered_worker_descendants_as_owned():
+    class _Proc:
+        def __init__(self, pid: int, ppid: int, name: str):
+            self.pid = pid
+            self._ppid = ppid
+            self._name = name
+
+        def ppid(self):
+            return self._ppid
+
+        def cmdline(self):
+            return [sys.executable, "-m", self._name]
+
+        def name(self):
+            return self._name
+
+        def is_running(self):
+            return True
+
+        def status(self):
+            return "sleeping"
+
+    parent = _Proc(61001, 999, "mlx-worker")
+    helper = _Proc(61002, 61001, "mlx-helper")
+    hygiene = RuntimeHygieneManager()
+    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [parent, helper])
+    hygiene.register_process_handle(
+        SimpleNamespace(pid=61001),
+        kind="multiprocessing",
+        name="mlx-worker",
+        source="test.worker_owner",
+        command="MLX worker",
+    )
+
+    summary = hygiene._process_summary()
+
+    assert summary["active_registered"] == 1
+    assert summary["owned_descendant_processes"] == 1
+    assert summary["rogue_child_processes"] == 0
+    assert summary["rogue_samples"] == []
+
+
+def test_runtime_hygiene_keeps_unowned_child_process_fail_closed():
+    class _Proc:
+        pid = 62002
+
+        def ppid(self):
+            return 999
+
+        def cmdline(self):
+            return [sys.executable, "-m", "unexpected_worker"]
+
+        def name(self):
+            return "unexpected-worker"
+
+    hygiene = RuntimeHygieneManager()
+    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [_Proc()])
+
+    summary = hygiene._process_summary()
+
+    assert summary["owned_descendant_processes"] == 0
+    assert summary["rogue_child_processes"] == 1
+    assert summary["rogue_samples"][0]["pid"] == 62002
+    assert "unexpected-worker" in summary["rogue_samples"][0]["name"]
+
+
 @pytest.mark.asyncio
 async def test_runtime_hygiene_ignores_python_resource_tracker_children():
     class _ResourceTrackerProc:
