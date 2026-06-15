@@ -614,6 +614,7 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
     if not pinned:
         return False
     timestamp = datetime.now(tz=UTC).isoformat()
+    ledger_ok = False
     async with _get_convo_lock():
         _session_memory_pins.append(
             {
@@ -654,7 +655,13 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
         if hasattr(result, "__await__"):
             result = await result
         if not bool(result):
-            return False
+            ledger_ok = await asyncio.to_thread(
+                _append_session_memory_pin_ledger,
+                pinned,
+                source,
+                timestamp,
+            )
+            return bool(ledger_ok)
         ledger_ok = await asyncio.to_thread(
             _append_session_memory_pin_ledger,
             pinned,
@@ -670,6 +677,13 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.session_memory_pin", exc)
         logger.debug("Durable session memory pin write skipped: %s", exc)
+        if not ledger_ok:
+            ledger_ok = await asyncio.to_thread(
+                _append_session_memory_pin_ledger,
+                pinned,
+                source,
+                timestamp,
+            )
         return bool(ledger_ok)
 
 

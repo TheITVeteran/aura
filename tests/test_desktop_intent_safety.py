@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 INVENTORY_PROMPT = (
     "What tools can you hypothetically use externally on my computer? "
     "Explain the categories, name one realistic multi-step scenario, "
@@ -461,6 +460,7 @@ async def test_session_memory_pin_does_not_overclaim_when_durable_write_fails(
         "get",
         staticmethod(lambda name, default=None: MemoryFacade() if name == "memory_facade" else default),
     )
+    monkeypatch.setattr(chat_routes, "_append_session_memory_pin_ledger", lambda *_args: False)
 
     result = await chat_routes._build_memory_state_fastpath_reply(
         "Remember this phrase for later in this session: ember-vault-93"
@@ -471,6 +471,44 @@ async def test_session_memory_pin_does_not_overclaim_when_durable_write_fails(
     assert status == "session_memory_pin_transient"
     assert "durable memory storage did not accept the write" in reply
     assert "durable session memory" not in reply
+
+
+@pytest.mark.asyncio
+async def test_session_memory_pin_handles_memory_facade_exception_truthfully(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from interface.routes import chat as chat_routes
+
+    add_memory_calls = []
+    ledger_calls = []
+
+    class MemoryFacade:
+        async def add_memory(self, *_args, **_kwargs):
+            add_memory_calls.append(True)
+            raise RuntimeError("vector store unavailable")
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: MemoryFacade() if name == "memory_facade" else default),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_append_session_memory_pin_ledger",
+        lambda content, source, timestamp: ledger_calls.append((content, source, timestamp)) or True,
+    )
+
+    result = await chat_routes._build_memory_state_fastpath_reply(
+        "Remember this phrase for later in this session: ember-vault-93"
+    )
+
+    assert result is not None
+    reply, status = result
+    assert status == "session_memory_pin"
+    assert "durable session memory" in reply
+    assert "ember-vault-93" in reply
+    assert add_memory_calls == [True]
+    assert ledger_calls
 
 
 @pytest.mark.asyncio
