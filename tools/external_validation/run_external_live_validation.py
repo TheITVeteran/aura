@@ -432,12 +432,29 @@ async def async_main(argv: list[str] | None = None) -> int:
                     domain=ActionDomain.EXTERNAL_ACTION,
                     priority=1.0,
                 )
+                effect_verified = bool(t["passed"])
+                telemetry_logged = True
+                closure_verified = (
+                    bool(
+                        will.verify_closure(
+                            decision.receipt_id,
+                            effect_verified=effect_verified,
+                            telemetry_logged=telemetry_logged,
+                        )
+                    )
+                    if hasattr(will, "verify_closure")
+                    else False
+                )
                 receipt = {
                     "task_id": t["id"],
                     "receipt_id": decision.receipt_id,
                     "domain": "external_action",
                     "outcome": decision.outcome.value if hasattr(decision.outcome, "value") else str(decision.outcome),
                     "reason": decision.reason,
+                    "authorization_phase": "pre_action",
+                    "effect_verified": effect_verified,
+                    "telemetry_logged": telemetry_logged,
+                    "closure_verified": closure_verified,
                     "verification": will.get_receipt_verification_material(decision.receipt_id)
                     if hasattr(will, "get_receipt_verification_material") else {},
                 }

@@ -316,3 +316,71 @@ def test_receipt_coverage_current_scope_ignores_stale_smoke_folders(tmp_path, mo
     report = json.loads((current / "receipt_coverage.json").read_text(encoding="utf-8"))
     assert report["invalid_receipts"] == 0
     assert report["total_events"] == 1
+
+
+def test_receipt_coverage_rejects_task_artifact_without_pre_action_receipt(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(receipt_coverage_validator, "run_negative_tests", _all_negative_tests_pass)
+    external = tmp_path / "external_live_validation"
+    external.mkdir()
+    (external / "SCORECARD.json").write_text(
+        json.dumps({"tasks": [{"id": "task_without_receipt", "passed": True}]}),
+        encoding="utf-8",
+    )
+
+    assert receipt_coverage_validator.main(["--artifacts", str(tmp_path)]) == 1
+
+    report = json.loads((tmp_path / "receipt_coverage.json").read_text(encoding="utf-8"))
+    assert report["artifact_events_checked"] == 1
+    assert report["missing_receipts"] == 1
+    assert report["pre_action_authorization_missing"] == 1
+    assert report["passed"] is False
+
+
+def test_receipt_coverage_rejects_task_artifact_without_effect_evidence(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(receipt_coverage_validator, "run_negative_tests", _all_negative_tests_pass)
+    external = tmp_path / "external_live_validation"
+    external.mkdir()
+    receipt = _canonical_will_receipt(receipt_id="will_task_pre_action")
+    receipt["task_id"] = "task_without_effect"
+    _write_jsonl(external / "RECEIPTS.jsonl", [receipt])
+    (external / "SCORECARD.json").write_text(
+        json.dumps({"tasks": [{"id": "task_without_effect", "passed": True}]}),
+        encoding="utf-8",
+    )
+
+    assert receipt_coverage_validator.main(["--artifacts", str(tmp_path)]) == 1
+
+    report = json.loads((tmp_path / "receipt_coverage.json").read_text(encoding="utf-8"))
+    assert report["missing_receipts"] == 0
+    assert report["pre_action_authorization_missing"] == 0
+    assert report["effect_evidence_missing"] == 1
+    assert report["passed"] is False
+
+
+def test_receipt_coverage_accepts_task_artifact_with_effect_verified_receipt(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(receipt_coverage_validator, "run_negative_tests", _all_negative_tests_pass)
+    external = tmp_path / "external_live_validation"
+    external.mkdir()
+    receipt = _canonical_will_receipt(receipt_id="will_task_effect_verified")
+    receipt.update(
+        {
+            "task_id": "task_with_effect",
+            "authorization_phase": "pre_action",
+            "effect_verified": True,
+            "telemetry_logged": True,
+            "closure_verified": True,
+        }
+    )
+    _write_jsonl(external / "RECEIPTS.jsonl", [receipt])
+    (external / "SCORECARD.json").write_text(
+        json.dumps({"tasks": [{"id": "task_with_effect", "passed": True}]}),
+        encoding="utf-8",
+    )
+
+    assert receipt_coverage_validator.main(["--artifacts", str(tmp_path)]) == 0
+
+    report = json.loads((tmp_path / "receipt_coverage.json").read_text(encoding="utf-8"))
+    assert report["artifact_events_checked"] == 1
+    assert report["missing_receipts"] == 0
+    assert report["effect_evidence_missing"] == 0
+    assert report["passed"] is True

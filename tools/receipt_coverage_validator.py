@@ -53,6 +53,43 @@ _NEGATIVE_TEST_RECOVERABLE_ERRORS = (
     ValueError,
 )
 
+_ARTIFACT_EVIDENCE_SUFFIXES = {".json", ".jsonl"}
+_ARTIFACT_EVIDENCE_NAME_MARKERS = (
+    "SCORECARD",
+    "TASK_TRACE",
+    "SCENARIO_TRACE",
+    "TRACE",
+    "SOAK_METRICS",
+    "DNU_AGI_PROOF",
+    "AGENCY_EMERGENCE_PROOF",
+)
+_ARTIFACT_EVIDENCE_IGNORE_NAMES = {
+    "RECEIPTS.jsonl",
+    "MANIFEST.json",
+    "RUNTIME_MANIFEST.json",
+    "RUNTIME_POLICY.json",
+    "BASELINES.json",
+    "ABLATIONS.json",
+    "GOVERNANCE_REPORT.json",
+    "INTEGRITY.json",
+    "MODEL_LANE_PROBE.json",
+    "EXCLUSIVE_RUNTIME_PREFLIGHT.json",
+    "RESOURCE_TRACE.jsonl",
+    "LIFECYCLE_EVENTS.jsonl",
+}
+_PASS_STATUSES = {"pass", "passed", "success", "succeeded", "completed", "ok"}
+_ATTEMPTED_STATUSES = _PASS_STATUSES | {
+    "fail",
+    "failed",
+    "failure",
+    "error",
+    "timeout",
+    "no_answer",
+    "partial",
+    "refused",
+    "blocked",
+}
+
 
 def run_negative_tests() -> dict[str, bool]:
     """Execute strict, live governance policy negative tests on the Unified Will.
@@ -344,6 +381,148 @@ def _receipt_files_for(artifacts_dir: Path) -> list[Path]:
     return list(artifacts_dir.rglob("RECEIPTS.jsonl"))
 
 
+def _artifact_evidence_files_for(artifacts_dir: Path) -> list[Path]:
+    """Return current-run result/trace artifacts that create receipt obligations."""
+
+    roots: list[Path] = []
+    for name in CANONICAL_PROOF_ARTIFACT_DIRS:
+        root = artifacts_dir / name
+        if root.exists():
+            roots.append(root)
+    if not roots:
+        roots = [artifacts_dir]
+
+    files: list[Path] = []
+    for root in roots:
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.name in _ARTIFACT_EVIDENCE_IGNORE_NAMES:
+                continue
+            if path.suffix not in _ARTIFACT_EVIDENCE_SUFFIXES:
+                continue
+            if any(marker in path.name for marker in _ARTIFACT_EVIDENCE_NAME_MARKERS):
+                files.append(path)
+    return sorted(files)
+
+
+def _json_records(path: Path) -> list[object]:
+    if path.suffix == ".jsonl":
+        records: list[object] = []
+        with path.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+        return records
+    return [json.loads(path.read_text(encoding="utf-8"))]
+
+
+def _clean_event_id(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text if text and text.lower() not in {"none", "null"} else ""
+
+
+def _status_value(record: dict[str, object]) -> str:
+    status = record.get("status")
+    if isinstance(status, str) and status.strip():
+        return status.strip().lower()
+    if record.get("passed") is True:
+        return "pass"
+    if record.get("passed") is False:
+        return "fail"
+    return ""
+
+
+def _record_is_receipt_obligation(record: dict[str, object], task_id: str) -> bool:
+    if not task_id and not _clean_event_id(record.get("receipt_id")):
+        return False
+    if _status_value(record) in _ATTEMPTED_STATUSES:
+        return True
+    if "passed" in record or "response_text" in record or "elapsed_s" in record:
+        return True
+    if isinstance(record.get("actions_taken"), list):
+        return True
+    if _clean_event_id(record.get("action")) and any(
+        key in record for key in ("next_observation", "result", "output", "error", "receipt_id")
+    ):
+        return True
+    return False
+
+
+def _record_effect_required(record: dict[str, object]) -> bool:
+    status = _status_value(record)
+    if status in _ATTEMPTED_STATUSES:
+        return True
+    if record.get("passed") is not None:
+        return True
+    return bool(_clean_event_id(record.get("action")))
+
+
+def _iter_receipt_obligation_events(
+    value: object,
+    *,
+    file_path: Path,
+    parent_task_id: str = "",
+    pointer: str = "$",
+) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    if isinstance(value, dict):
+        task_id = (
+            _clean_event_id(value.get("task_id"))
+            or _clean_event_id(value.get("id"))
+            or _clean_event_id(value.get("world_id"))
+            or _clean_event_id(value.get("ticket_id"))
+            or parent_task_id
+        )
+        if _record_is_receipt_obligation(value, task_id):
+            events.append(
+                {
+                    "task_id": task_id,
+                    "receipt_id": _clean_event_id(value.get("receipt_id")),
+                    "status": _status_value(value),
+                    "effect_required": _record_effect_required(value),
+                    "file": str(file_path),
+                    "pointer": pointer,
+                }
+            )
+        for key, child in value.items():
+            if key in {"baselines", "ablations", "baseline_scores", "ablation_scores"}:
+                continue
+            if isinstance(child, (dict, list)):
+                events.extend(
+                    _iter_receipt_obligation_events(
+                        child,
+                        file_path=file_path,
+                        parent_task_id=task_id,
+                        pointer=f"{pointer}.{key}",
+                    )
+                )
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            if isinstance(child, (dict, list)):
+                events.extend(
+                    _iter_receipt_obligation_events(
+                        child,
+                        file_path=file_path,
+                        parent_task_id=parent_task_id,
+                        pointer=f"{pointer}[{index}]",
+                    )
+                )
+    return events
+
+
+def _receipt_has_effect_evidence(record: dict[str, object]) -> bool:
+    return (
+        record.get("effect_verified") is True
+        or record.get("closure_verified") is True
+        or record.get("post_action_verified") is True
+        or record.get("receipt_phase") == "pre_action" and record.get("effect_verified") is True
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifacts", default="artifacts/current")
@@ -360,8 +539,15 @@ def main(argv: list[str] | None = None) -> int:
     broken_chains = 0
     post_action_receipts = 0
     pre_action_authorization_missing = 0
+    effect_evidence_missing = 0
     signed_will_ids: set[str] = set()
+    person_box_ids: set[str] = set()
+    effect_evidence_receipt_ids: set[str] = set()
+    receipt_ids_by_task: dict[str, set[str]] = {}
     post_action_will_ids: list[str] = []
+    artifact_events_checked = 0
+    missing_event_examples: list[dict[str, object]] = []
+    effect_missing_examples: list[dict[str, object]] = []
 
     surface_counts = {
         "model_calls": 0,
@@ -382,7 +568,13 @@ def main(argv: list[str] | None = None) -> int:
                         record = json.loads(line)
                         if isinstance(record, dict) and _is_valid_signed_will_receipt(record):
                             total_receipts += 1
-                            signed_will_ids.add(str(record.get("receipt_id", "")))
+                            receipt_id = str(record.get("receipt_id", ""))
+                            signed_will_ids.add(receipt_id)
+                            task_id = _clean_event_id(record.get("task_id"))
+                            if task_id:
+                                receipt_ids_by_task.setdefault(task_id, set()).add(receipt_id)
+                            if _receipt_has_effect_evidence(record):
+                                effect_evidence_receipt_ids.add(receipt_id)
                             domain = record.get("domain", "")
                             
                             # Audit by surface
@@ -399,6 +591,13 @@ def main(argv: list[str] | None = None) -> int:
                             post_action_will_ids.append(str(record.get("will_receipt_id", "")))
                         elif isinstance(record, dict) and _is_valid_person_box_receipt(record):
                             person_box_harness_receipts += 1
+                            receipt_id = str(record.get("receipt_id", ""))
+                            person_box_ids.add(receipt_id)
+                            task_id = _clean_event_id(record.get("task_id"))
+                            if task_id:
+                                receipt_ids_by_task.setdefault(task_id, set()).add(receipt_id)
+                            if _receipt_has_effect_evidence(record):
+                                effect_evidence_receipt_ids.add(receipt_id)
                         else:
                             invalid_receipts += 1
 
@@ -408,7 +607,44 @@ def main(argv: list[str] | None = None) -> int:
             invalid_receipts += 1
             print(f"Warning: skipped unreadable receipt file {path}: {exc}", file=sys.stderr)
 
+    post_action_will_id_set = set(post_action_will_ids)
     broken_chains = sum(1 for will_id in post_action_will_ids if will_id not in signed_will_ids)
+
+    valid_pre_action_ids = signed_will_ids | person_box_ids
+    proof_artifacts_present = any((artifacts_dir / name).exists() for name in CANONICAL_PROOF_ARTIFACT_DIRS)
+    if proof_artifacts_present:
+        for artifact_path in _artifact_evidence_files_for(artifacts_dir):
+            try:
+                roots = _json_records(artifact_path)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                invalid_receipts += 1
+                print(f"Warning: skipped unreadable evidence artifact {artifact_path}: {exc}", file=sys.stderr)
+                continue
+            for root in roots:
+                for event in _iter_receipt_obligation_events(root, file_path=artifact_path):
+                    artifact_events_checked += 1
+                    explicit_receipt_id = _clean_event_id(event.get("receipt_id"))
+                    task_id = _clean_event_id(event.get("task_id"))
+                    if explicit_receipt_id:
+                        matching_pre_action = {explicit_receipt_id} & valid_pre_action_ids
+                    else:
+                        matching_pre_action = receipt_ids_by_task.get(task_id, set())
+                    if not matching_pre_action:
+                        missing_receipts += 1
+                        pre_action_authorization_missing += 1
+                        if len(missing_event_examples) < 20:
+                            missing_event_examples.append(event)
+                        continue
+                    if event.get("effect_required") is True:
+                        effect_ok = any(
+                            receipt_id in effect_evidence_receipt_ids
+                            or receipt_id in post_action_will_id_set
+                            for receipt_id in matching_pre_action
+                        )
+                        if not effect_ok:
+                            effect_evidence_missing += 1
+                            if len(effect_missing_examples) < 20:
+                                effect_missing_examples.append(event)
 
     # Ensure a governance report with 0 receipts fails for any non-trivial proof run
     if total_receipts == 0 and person_box_harness_receipts == 0:
@@ -420,12 +656,13 @@ def main(argv: list[str] | None = None) -> int:
 
     negative_tests = run_negative_tests()
     negative_tests_passed = all(value is True for value in negative_tests.values())
-    proof_artifacts_present = any((artifacts_dir / name).exists() for name in CANONICAL_PROOF_ARTIFACT_DIRS)
     passed = (
         (total_receipts > 0 or person_box_harness_receipts > 0)
         and missing_receipts == 0
         and invalid_receipts == 0
         and broken_chains == 0
+        and pre_action_authorization_missing == 0
+        and effect_evidence_missing == 0
         and negative_tests_passed
     ) or not proof_artifacts_present
 
@@ -438,6 +675,10 @@ def main(argv: list[str] | None = None) -> int:
         "broken_chains": broken_chains,
         "post_action_receipts": post_action_receipts,
         "pre_action_authorization_missing": pre_action_authorization_missing,
+        "effect_evidence_missing": effect_evidence_missing,
+        "artifact_events_checked": artifact_events_checked,
+        "missing_event_examples": missing_event_examples,
+        "effect_missing_examples": effect_missing_examples,
         "coverage_by_surface": {
             "model_calls": 1.0 if surface_counts["model_calls"] > 0 else 0.0,
             "tool_calls": 1.0 if surface_counts["tool_calls"] > 0 else 0.0,
