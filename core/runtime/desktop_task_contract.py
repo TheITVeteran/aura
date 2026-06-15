@@ -8,6 +8,8 @@ live UI from advertising a narrower or stale action surface than the executor
 can actually govern and verify.
 """
 
+from typing import Any
+
 DESKTOP_TASK_ALLOWED_ACTIONS: tuple[str, ...] = (
     "click",
     "type",
@@ -30,6 +32,17 @@ DESKTOP_TASK_ALLOWED_ACTIONS: tuple[str, ...] = (
     "system_control",
 )
 
+DESKTOP_TASK_RETRY_SAFE_ACTIONS: frozenset[str] = frozenset(
+    {
+        "create_folder",
+        "get_clipboard",
+        "open_app",
+        "read_menu_clock",
+        "read_screen_text",
+        "wait",
+    }
+)
+
 
 def desktop_task_action_schema() -> str:
     return "|".join(DESKTOP_TASK_ALLOWED_ACTIONS)
@@ -44,3 +57,26 @@ def desktop_task_action_sentence() -> str:
         ", ".join(DESKTOP_TASK_ALLOWED_ACTIONS[:-1])
         + f", and {DESKTOP_TASK_ALLOWED_ACTIONS[-1]}"
     )
+
+
+def desktop_task_planning_schema() -> dict[str, Any]:
+    """Return the canonical schema sent to every live cognition entrypoint."""
+    return {
+        "document_body": "optional prose to type, write, or export",
+        "steps": [
+            {
+                "action": desktop_task_action_schema(),
+                "target": (
+                    "string or JSON payload; use {{document_body}} for composed prose "
+                    "and {{steps.1.result.path}} or {{last.result.path}} for a prior "
+                    "verified step result"
+                ),
+                "reason": "why this step is needed",
+                "expect": "observable effect evidence required after the step",
+                "critical": (
+                    "true by default; false only when the objective can still succeed "
+                    "after this step fails"
+                ),
+            }
+        ],
+    }

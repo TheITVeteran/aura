@@ -3597,7 +3597,8 @@ class CapabilityEngine(AuraBaseModule):
         last_error = "Unknown"
         attempt = 0
         output: Any = None
-        for attempt in range(self.max_retries):
+        max_attempts = 1 if self._outer_retry_disabled(skill_name, params, context) else self.max_retries
+        for attempt in range(max(1, max_attempts)):
             try:
                 if attempt > 0:
                     await asyncio.sleep(self.retry_delay * attempt)
@@ -3646,6 +3647,24 @@ class CapabilityEngine(AuraBaseModule):
             # structured failure to 'unknown' / 'Completed 0/0 steps'.
             failure = {**output, **failure}
         return failure
+
+    @staticmethod
+    def _outer_retry_disabled(
+        skill_name: str,
+        params: dict[str, Any],
+        context: dict[str, Any],
+    ) -> bool:
+        """Avoid replaying aggregate consequential plans from step one.
+
+        `desktop_task` owns per-step retry policy because only it knows which
+        primitives are idempotent. Retrying the whole skill after a late timeout
+        can duplicate clicks, typing, file writes, or system changes.
+        """
+        if bool((context or {}).get("disable_outer_skill_retry")):
+            return True
+        if bool((params or {}).get("disable_outer_skill_retry")):
+            return True
+        return skill_name == "desktop_task"
 
     async def _call_method(self, skill: Any, inputs: dict[str, Any]) -> Any:
         """Calls the skill method, handling both sync and async."""

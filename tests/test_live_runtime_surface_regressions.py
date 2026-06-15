@@ -2202,6 +2202,25 @@ async def test_live_runtime_probe_accepts_generic_desktop_task_contract(monkeypa
                 "governed_action_result": True,
                 "governed_action_status": "desktop_objective_completed",
             },
+            "data": {
+                "desktop_result": {
+                    "ok": True,
+                    "steps_requested": 2,
+                    "steps_completed": 2,
+                    "receipts": [
+                        {
+                            "action": "create_folder",
+                            "ok": True,
+                            "effect_verified": True,
+                        },
+                        {
+                            "action": "write_text_file",
+                            "ok": True,
+                            "effect_verified": True,
+                        },
+                    ],
+                }
+            },
         }
 
     monkeypatch.setattr(probe, "_chat", fake_chat)
@@ -2211,6 +2230,7 @@ async def test_live_runtime_probe_accepts_generic_desktop_task_contract(monkeypa
     assert "generic governed desktop_task" in detail
     assert data["status"] == "desktop_objective_completed"
     assert data["conversation_lane"]["governed_action_result"] is True
+    assert data["desktop_result"]["steps_completed"] == 2
 
 
 @pytest.mark.asyncio

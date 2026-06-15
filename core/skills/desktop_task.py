@@ -11,7 +11,10 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from core.runtime.desktop_objective_intent import looks_like_desktop_objective
-from core.runtime.desktop_task_contract import DESKTOP_TASK_ALLOWED_ACTIONS
+from core.runtime.desktop_task_contract import (
+    DESKTOP_TASK_ALLOWED_ACTIONS,
+    DESKTOP_TASK_RETRY_SAFE_ACTIONS,
+)
 from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
 from core.skills.os_affordances import detect_os_settings, get_affordance
@@ -35,6 +38,10 @@ class DesktopTaskStep(BaseModel):
     y: int = Field(0, description="Screen y coordinate for click/scroll/focus")
     reason: str = Field("", description="Short reason for this step")
     expect: str = Field("", description="Expected observable result")
+    critical: bool = Field(
+        True,
+        description="Whether failure makes the overall objective incomplete.",
+    )
 
     @field_validator("action")
     @classmethod
@@ -75,6 +82,10 @@ class DesktopTaskSkill(BaseSkill):
         "${document_body}",
         "__document_body__",
         "<document_body>",
+    )
+    _STEP_REFERENCE_PATTERN = re.compile(
+        r"\{\{(?P<root>last|steps\.(?P<index>[1-9]\d*))"
+        r"\.(?P<path>[A-Za-z_][A-Za-z0-9_]*(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+))*)\}\}"
     )
 
     @staticmethod
@@ -890,19 +901,27 @@ class DesktopTaskSkill(BaseSkill):
 
     @classmethod
     def _steps_from_context(cls, context: dict[str, Any] | None) -> list[DesktopTaskStep]:
+        steps, _ = cls._steps_with_provenance_from_context(context)
+        return steps
+
+    @classmethod
+    def _steps_with_provenance_from_context(
+        cls,
+        context: dict[str, Any] | None,
+    ) -> tuple[list[DesktopTaskStep], str]:
         context = context or {}
         for key in ("desktop_task_steps", "desktop_task_plan"):
             steps = cls._steps_from_payload(context.get(key))
             if steps:
-                return steps
+                return steps, key
             steps = cls._steps_from_plan_text(str(context.get(key) or ""))
             if steps:
-                return steps
+                return steps, key
         for key in ("cognitive_reply", "draft_response", "response"):
             steps = cls._steps_from_plan_text(str(context.get(key) or ""))
             if steps:
-                return steps
-        return []
+                return steps, f"{key}_structured"
+        return [], ""
 
     @classmethod
     def _declared_plan_validation_error(cls, context: dict[str, Any] | None) -> str:
@@ -969,6 +988,140 @@ class DesktopTaskSkill(BaseSkill):
             else:
                 resolved.append(step.model_copy(update={"target": target}))
         return resolved
+
+    @staticmethod
+    def _lookup_result_path(value: Any, path: str) -> tuple[bool, Any]:
+        current = value
+        for part in path.split("."):
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+                continue
+            if isinstance(current, list) and part.isdigit():
+                index = int(part)
+                if 0 <= index < len(current):
+                    current = current[index]
+                    continue
+            return False, None
+        return True, current
+
+    @classmethod
+    def _resolve_step_reference_token(
+        cls,
+        match: re.Match[str],
+        receipts: list[dict[str, Any]],
+    ) -> tuple[bool, Any, str]:
+        index_text = match.group("index")
+        if index_text is None:
+            if not receipts:
+                return False, None, "last step is unavailable"
+            receipt = receipts[-1]
+        else:
+            index = int(index_text)
+            if index > len(receipts):
+                return False, None, f"step {index} has not completed"
+            receipt = receipts[index - 1]
+        if not receipt.get("ok"):
+            return False, None, f"referenced step {receipt.get('index')} did not verify"
+        path = match.group("path")
+        found, value = cls._lookup_result_path(receipt, path)
+        if not found:
+            return False, None, f"referenced result path '{path}' is unavailable"
+        return True, value, ""
+
+    @classmethod
+    def _resolve_step_references(
+        cls,
+        value: Any,
+        receipts: list[dict[str, Any]],
+    ) -> tuple[bool, Any, str]:
+        if isinstance(value, dict):
+            resolved: dict[str, Any] = {}
+            for key, item in value.items():
+                ok, replacement, error = cls._resolve_step_references(item, receipts)
+                if not ok:
+                    return False, value, error
+                resolved[key] = replacement
+            return True, resolved, ""
+        if isinstance(value, list):
+            resolved_items: list[Any] = []
+            for item in value:
+                ok, replacement, error = cls._resolve_step_references(item, receipts)
+                if not ok:
+                    return False, value, error
+                resolved_items.append(replacement)
+            return True, resolved_items, ""
+        if not isinstance(value, str):
+            return True, value, ""
+
+        matches = list(cls._STEP_REFERENCE_PATTERN.finditer(value))
+        if not matches:
+            return True, value, ""
+        if len(matches) == 1 and matches[0].span() == (0, len(value)):
+            ok, replacement, error = cls._resolve_step_reference_token(matches[0], receipts)
+            if not ok:
+                return False, value, error
+            return True, replacement, ""
+
+        resolved_text = value
+        for match in reversed(matches):
+            ok, replacement, error = cls._resolve_step_reference_token(match, receipts)
+            if not ok:
+                return False, value, error
+            if isinstance(replacement, (dict, list)):
+                replacement_text = json.dumps(replacement, ensure_ascii=False)
+            else:
+                replacement_text = str(replacement)
+            start, end = match.span()
+            resolved_text = resolved_text[:start] + replacement_text + resolved_text[end:]
+        return True, resolved_text, ""
+
+    @classmethod
+    def _resolve_step_target(
+        cls,
+        step: DesktopTaskStep,
+        receipts: list[dict[str, Any]],
+    ) -> tuple[bool, DesktopTaskStep, str]:
+        ok, target, error = cls._resolve_step_references(step.target, receipts)
+        if not ok:
+            return False, step, error
+        if isinstance(target, list):
+            target = json.dumps(target, ensure_ascii=False)
+        elif not isinstance(target, (str, dict)):
+            target = str(target)
+        if target == step.target:
+            return True, step, ""
+        return True, step.model_copy(update={"target": target}), ""
+
+    @staticmethod
+    def _emit_progress(
+        *,
+        index: int,
+        total: int,
+        action: str,
+        state: str,
+        detail: str,
+        level: str = "info",
+    ) -> None:
+        try:
+            from core.thought_stream import get_emitter
+
+            get_emitter().emit(
+                "Desktop Task",
+                f"Step {index}/{total} {action}: {state}. {detail[:240]}",
+                level=level,
+                category="ToolExecution",
+                step_index=index,
+                step_total=total,
+                action=action,
+                state=state,
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "desktop_task",
+                exc,
+                action="continued verified desktop execution without neural-stream progress telemetry",
+                severity="warning",
+            )
 
     @classmethod
     def _verify_step_effect(cls, step: DesktopTaskStep, result: dict[str, Any]) -> tuple[bool, str]:
@@ -1895,14 +2048,8 @@ class DesktopTaskSkill(BaseSkill):
         objective = params.objective or str((context or {}).get("objective") or "desktop task")
 
         task_context = dict(context or {})
-        research_context = await self._collect_research_context(
-            capability_engine=capability_engine,
-            objective=objective,
-            context=task_context,
-        )
-        if research_context:
-            task_context.update(research_context)
         steps = list(params.steps)
+        planner = "explicit_steps" if steps else ""
         if not steps:
             plan_error = self._declared_plan_validation_error(task_context)
             if plan_error:
@@ -1916,14 +2063,67 @@ class DesktopTaskSkill(BaseSkill):
                     "receipts": [],
                     "failures": [],
                 }
-            steps = self._steps_from_context(task_context)
+            steps, planner = self._steps_with_provenance_from_context(task_context)
+        requires_structured_plan = bool(task_context.get("desktop_execution_contract")) and not bool(
+            task_context.get("allow_heuristic_desktop_plan")
+        )
+        if not steps and requires_structured_plan:
+            return {
+                "ok": False,
+                "status": "desktop_task_plan_required",
+                "error": (
+                    "The live CognitiveEngine response did not contain a valid structured "
+                    "desktop plan, so no desktop action was attempted."
+                ),
+                "objective": objective,
+                "steps_requested": 0,
+                "steps_completed": 0,
+                "receipts": [],
+                "failures": [],
+                "planner": "required_cognitive_plan_missing",
+            }
+
+        research_context = await self._collect_research_context(
+            capability_engine=capability_engine,
+            objective=objective,
+            context=task_context,
+        )
+        if research_context:
+            task_context.update(research_context)
+            if task_context.get("desktop_task_research_error") and self._objective_requests_research_document(objective):
+                return {
+                    "ok": False,
+                    "status": "desktop_task_research_unavailable",
+                    "error": str(task_context.get("desktop_task_research_error") or "research evidence unavailable"),
+                    "objective": objective,
+                    "steps_requested": 0,
+                    "steps_completed": 0,
+                    "receipts": [],
+                    "failures": [
+                        {
+                            "index": 0,
+                            "action": "web_search",
+                            "ok": False,
+                            "critical": True,
+                            "effect_verified": False,
+                            "effect_evidence": str(task_context.get("desktop_task_research_error") or ""),
+                            "result": task_context.get("desktop_task_research_result") or {},
+                        }
+                    ],
+                    "planner": planner or "research_preflight",
+                    "research": {
+                        "query": task_context.get("desktop_task_research_query"),
+                        "sources": [],
+                        "error": task_context.get("desktop_task_research_error"),
+                    },
+                }
         if not steps:
             steps = self._derive_steps_from_objective(objective, task_context)
-        else:
-            steps = self._resolve_document_body_tokens(
-                steps,
-                self._document_body(objective, task_context),
-            )
+            planner = "heuristic_compat"
+        steps = self._resolve_document_body_tokens(
+            steps,
+            self._document_body(objective, task_context),
+        )
         if len(steps) > 20:
             return {
                 "ok": False,
@@ -1937,9 +2137,14 @@ class DesktopTaskSkill(BaseSkill):
                 "steps_completed": 0,
                 "receipts": [],
                 "failures": [],
+                "planner": planner,
             }
 
-        if self._should_escalate_to_os_automation(objective, steps, task_context):
+        if planner == "heuristic_compat" and self._should_escalate_to_os_automation(
+            objective,
+            steps,
+            task_context,
+        ):
             return await self._execute_os_automation_escalation(
                 capability_engine=capability_engine,
                 objective=objective,
@@ -1948,41 +2153,99 @@ class DesktopTaskSkill(BaseSkill):
 
         last_image_page_url = ""
         for index, step in enumerate(steps, start=1):
-            target = step.target
-            if step.action == "open_url":
+            references_ok, resolved_step, reference_error = self._resolve_step_target(step, receipts)
+            if not references_ok:
+                receipt = {
+                    "index": index,
+                    "action": step.action,
+                    "reason": step.reason,
+                    "expect": step.expect,
+                    "critical": step.critical,
+                    "ok": False,
+                    "effect_verified": False,
+                    "effect_evidence": reference_error,
+                    "attempts": 0,
+                    "result": {
+                        "ok": False,
+                        "status": "desktop_step_reference_unresolved",
+                        "error": reference_error,
+                    },
+                }
+                receipts.append(receipt)
+                failures.append(receipt)
+                self._emit_progress(
+                    index=index,
+                    total=len(steps),
+                    action=step.action,
+                    state="blocked",
+                    detail=reference_error,
+                    level="warning",
+                )
+                if step.critical and params.stop_on_error:
+                    break
+                continue
+
+            target = resolved_step.target
+            if resolved_step.action == "open_url":
                 # Resolve the fetched-image source sentinel from the
                 # fetch receipt — the source page is only known at runtime.
                 if isinstance(target, dict) and target.get("url") == FETCHED_IMAGE_SOURCE_SENTINEL:
                     if not last_image_page_url:
-                        failures.append(
-                            {
-                                "index": index,
-                                "action": step.action,
+                        reference_error = "no fetched-image source URL available to show"
+                        receipt = {
+                            "index": index,
+                            "action": resolved_step.action,
+                            "reason": resolved_step.reason,
+                            "expect": resolved_step.expect,
+                            "critical": resolved_step.critical,
+                            "ok": False,
+                            "effect_verified": False,
+                            "effect_evidence": reference_error,
+                            "attempts": 0,
+                            "result": {
                                 "ok": False,
-                                "error": "no fetched-image source URL available to show",
-                            }
-                        )
-                        break
+                                "status": "desktop_step_reference_unresolved",
+                                "error": reference_error,
+                            },
+                        }
+                        receipts.append(receipt)
+                        failures.append(receipt)
+                        if resolved_step.critical and params.stop_on_error:
+                            break
+                        continue
                     target = dict(target, url=last_image_page_url)
                 elif target == FETCHED_IMAGE_SOURCE_SENTINEL:
                     if not last_image_page_url:
-                        failures.append(
-                            {
-                                "index": index,
-                                "action": step.action,
+                        reference_error = "no fetched-image source URL available to show"
+                        receipt = {
+                            "index": index,
+                            "action": resolved_step.action,
+                            "reason": resolved_step.reason,
+                            "expect": resolved_step.expect,
+                            "critical": resolved_step.critical,
+                            "ok": False,
+                            "effect_verified": False,
+                            "effect_evidence": reference_error,
+                            "attempts": 0,
+                            "result": {
                                 "ok": False,
-                                "error": "no fetched-image source URL available to show",
-                            }
-                        )
-                        break
+                                "status": "desktop_step_reference_unresolved",
+                                "error": reference_error,
+                            },
+                        }
+                        receipts.append(receipt)
+                        failures.append(receipt)
+                        if resolved_step.critical and params.stop_on_error:
+                            break
+                        continue
                     target = last_image_page_url
             if isinstance(target, dict):
                 target = json.dumps(target)
             payload = {
-                "action": step.action,
+                "action": resolved_step.action,
                 "target": str(target or ""),
-                "x": int(step.x),
-                "y": int(step.y),
+                "x": int(resolved_step.x),
+                "y": int(resolved_step.y),
             }
             step_context = dict(task_context)
             step_context.update(
@@ -1994,61 +2257,135 @@ class DesktopTaskSkill(BaseSkill):
                     "user_requested_action": True,
                     "user_explicitly_authorized": True,
                     "desktop_task_step": index,
-                    "desktop_task_reason": step.reason,
-                    "desktop_task_expect": step.expect,
+                    "desktop_task_step_total": len(steps),
+                    "desktop_task_planner": planner,
+                    "desktop_task_reason": resolved_step.reason,
+                    "desktop_task_expect": resolved_step.expect,
                 }
             )
-            try:
-                result = await capability_engine.execute("computer_use", payload, context=step_context)
-            except (AttributeError, RuntimeError, TypeError, ValueError, OSError, TimeoutError) as exc:
-                record_degradation(
-                    "desktop_task",
-                    exc,
-                    action="recorded failed desktop step after governed computer_use exception",
-                    severity="degraded",
+            self._emit_progress(
+                index=index,
+                total=len(steps),
+                action=resolved_step.action,
+                state="starting",
+                detail=resolved_step.reason or "Executing governed desktop action.",
+            )
+            attempt_limit = (
+                2 if resolved_step.action in DESKTOP_TASK_RETRY_SAFE_ACTIONS else 1
+            )
+            attempt = 0
+            result: dict[str, Any] = {}
+            effect_verified = False
+            effect_evidence = "step did not execute"
+            while attempt < attempt_limit:
+                attempt += 1
+                step_context["desktop_task_attempt"] = attempt
+                try:
+                    result = await capability_engine.execute(
+                        "computer_use",
+                        payload,
+                        context=step_context,
+                    )
+                except (
+                    AttributeError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                    OSError,
+                    TimeoutError,
+                ) as exc:
+                    record_degradation(
+                        "desktop_task",
+                        exc,
+                        action="recorded failed desktop step after governed computer_use exception",
+                        severity="degraded",
+                    )
+                    result = {
+                        "ok": False,
+                        "status": "computer_use_exception",
+                        "error": str(exc),
+                    }
+                if not isinstance(result, dict):
+                    result = {"ok": bool(result), "result": result}
+                effect_verified, effect_evidence = self._verify_step_effect(
+                    resolved_step,
+                    result,
                 )
-                result = {
-                    "ok": False,
-                    "status": "computer_use_exception",
-                    "error": str(exc),
-                }
-            if not isinstance(result, dict):
-                result = {"ok": bool(result), "result": result}
-            effect_verified, effect_evidence = self._verify_step_effect(step, result)
+                if bool(result.get("ok")) and effect_verified:
+                    break
+                if attempt < attempt_limit:
+                    self._emit_progress(
+                        index=index,
+                        total=len(steps),
+                        action=resolved_step.action,
+                        state="retrying",
+                        detail=effect_evidence,
+                        level="warning",
+                    )
+                    await asyncio.sleep(0.1)
             receipt = {
                 "index": index,
-                "action": step.action,
-                "reason": step.reason,
-                "expect": step.expect,
+                "action": resolved_step.action,
+                "reason": resolved_step.reason,
+                "expect": resolved_step.expect,
+                "critical": resolved_step.critical,
                 "ok": bool(result.get("ok")) and effect_verified,
                 "effect_verified": effect_verified,
                 "effect_evidence": effect_evidence,
+                "attempts": attempt,
                 "result": result,
             }
             receipts.append(receipt)
-            if step.action == "fetch_topic_image" and receipt["ok"]:
+            if resolved_step.action == "fetch_topic_image" and receipt["ok"]:
                 last_image_page_url = str(result.get("page_url") or "") or last_image_page_url
             if not receipt["ok"]:
                 failures.append(receipt)
-                if params.stop_on_error:
+                self._emit_progress(
+                    index=index,
+                    total=len(steps),
+                    action=resolved_step.action,
+                    state="failed",
+                    detail=effect_evidence,
+                    level="warning",
+                )
+                if resolved_step.critical and params.stop_on_error:
                     break
+            else:
+                self._emit_progress(
+                    index=index,
+                    total=len(steps),
+                    action=resolved_step.action,
+                    state="verified",
+                    detail=effect_evidence,
+                )
 
-        ok = not failures and len(receipts) == len(steps)
+        critical_failures = [receipt for receipt in failures if receipt.get("critical", True)]
+        completed_all_steps = len(receipts) == len(steps)
+        ok = not critical_failures and completed_all_steps
+        status = (
+            "completed_with_warnings"
+            if ok and failures
+            else "completed"
+            if ok
+            else "failed"
+        )
+        completed_count = sum(1 for receipt in receipts if receipt.get("ok"))
         return {
             "ok": ok,
-            "status": "completed" if ok else "failed",
+            "status": status,
             "objective": objective,
             "steps_requested": len(steps),
-            "steps_completed": sum(1 for receipt in receipts if receipt.get("ok")),
+            "steps_completed": completed_count,
             "receipts": receipts,
             "failures": failures,
+            "planner": planner,
             "research": {
                 "query": task_context.get("desktop_task_research_query"),
                 "sources": task_context.get("desktop_task_research_sources") or [],
                 "error": task_context.get("desktop_task_research_error"),
             } if research_context else None,
             "summary": (
-                f"Desktop task completed {sum(1 for receipt in receipts if receipt.get('ok'))}/"
-                f"{len(steps)} governed computer-use steps."
+                f"Desktop task completed {completed_count}/{len(steps)} governed "
+                f"computer-use steps through {planner or 'unknown'} planning."
             ),
         }

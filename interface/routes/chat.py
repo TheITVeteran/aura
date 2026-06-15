@@ -35,7 +35,7 @@ from core.runtime.desktop_objective_intent import (
 )
 from core.runtime.desktop_task_contract import (
     DESKTOP_TASK_ALLOWED_ACTIONS,
-    desktop_task_action_schema,
+    desktop_task_planning_schema,
 )
 from core.runtime.errors import record_degradation
 from core.runtime.structured_input import analyze_prompt_shape
@@ -2711,17 +2711,7 @@ async def _run_cognitive_engine_chat_turn(
         context.update(
             {
                 "desktop_execution_contract": True,
-                "desktop_task_planning_schema": {
-                    "document_body": "optional prose to type/write/export",
-                    "steps": [
-                        {
-                            "action": desktop_task_action_schema(),
-                            "target": "string or JSON payload; use {{document_body}} to reference the prose body",
-                            "reason": "why this step is needed",
-                            "expect": "observable effect evidence required after the step",
-                        }
-                    ],
-                },
+                "desktop_task_planning_schema": desktop_task_planning_schema(),
                 "desktop_task_allowed_actions": DESKTOP_TASK_ALLOWED_ACTIONS,
             }
         )
@@ -7996,6 +7986,7 @@ async def _execute_desktop_objective_from_chat(
         "objective": objective,
         "steps": [],
         "desktop_execution_contract": True,
+        "disable_outer_skill_retry": True,
         "foreground_request": True,
         "user_requested_action": True,
         "user_explicitly_authorized": True,
@@ -8013,6 +8004,7 @@ async def _execute_desktop_objective_from_chat(
             "source": "desktop_ui",
             "route": "chat.desktop_objective",
             "desktop_execution_contract": True,
+            "disable_outer_skill_retry": True,
             "user_visible_desktop_action": True,
             "local_desktop_action": True,
             "verification_required": True,

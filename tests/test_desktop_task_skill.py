@@ -114,6 +114,8 @@ def _fake_computer_use_result(params):
         }
     if action == "wait":
         return {"ok": True, "action": action, "seconds": float(target or 1.0)}
+    if action == "read_screen_text":
+        return {"ok": True, "action": action, "text": "visible desktop text"}
     if action == "type":
         return {
             "ok": True,
@@ -426,6 +428,225 @@ async def test_desktop_task_rejects_mixed_valid_and_invalid_cognitive_plan(monke
     assert calls == []
 
 
+@pytest.mark.asyncio
+async def test_live_desktop_contract_requires_structured_cognitive_plan(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    result = await DesktopTaskSkill().execute(
+        {
+            "objective": "Open Notes and write a timestamped note.",
+            "steps": [],
+        },
+        {
+            "origin": "desktop_ui",
+            "desktop_execution_contract": True,
+            "cognitive_reply": "I can do that now.",
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "desktop_task_plan_required"
+    assert result["planner"] == "required_cognitive_plan_missing"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_resolves_verified_prior_step_references(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    cognitive_plan = {
+        "steps": [
+            {"action": "create_folder", "target": {"path": "~/Desktop/Aura's Journal"}},
+            {
+                "action": "write_text_file",
+                "target": {
+                    "path": "{{steps.1.result.path}}/note.txt",
+                    "content": "step reference body",
+                },
+            },
+        ]
+    }
+
+    result = await DesktopTaskSkill().execute(
+        {"objective": "Create a journal folder and put a note inside it.", "steps": []},
+        {
+            "origin": "desktop_ui",
+            "desktop_execution_contract": True,
+            "cognitive_reply": json.dumps(cognitive_plan),
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["planner"] == "cognitive_reply_structured"
+    write_payload = json.loads(calls[1][1]["target"])
+    assert write_payload["path"] == "~/Desktop/Aura's Journal/note.txt"
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_unresolved_step_reference_fails_closed(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    cognitive_plan = {
+        "steps": [
+            {
+                "action": "write_text_file",
+                "target": {"path": "{{last.result.path}}/note.txt", "content": "body"},
+            }
+        ]
+    }
+
+    result = await DesktopTaskSkill().execute(
+        {"objective": "Write a file using a bad reference.", "steps": []},
+        {
+            "origin": "desktop_ui",
+            "desktop_execution_contract": True,
+            "cognitive_reply": json.dumps(cognitive_plan),
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "failed"
+    assert result["failures"][0]["result"]["status"] == "desktop_step_reference_unresolved"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_retries_only_safe_idempotent_steps(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            if params["action"] == "open_app" and len(calls) == 1:
+                return {"ok": False, "status": "timeout", "error": "transient timeout"}
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    result = await DesktopTaskSkill().execute(
+        {
+            "objective": "Open TextEdit.",
+            "steps": [DesktopTaskStep(action="open_app", target="TextEdit")],
+        },
+        {"origin": "desktop_ui"},
+    )
+
+    assert result["ok"] is True
+    assert result["receipts"][0]["attempts"] == 2
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_does_not_retry_unsafe_text_entry(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return {"ok": False, "status": "timeout", "error": "text entry timed out"}
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    result = await DesktopTaskSkill().execute(
+        {
+            "objective": "Type exactly once.",
+            "steps": [DesktopTaskStep(action="type", target="do not duplicate")],
+        },
+        {"origin": "desktop_ui"},
+    )
+
+    assert result["ok"] is False
+    assert result["receipts"][0]["attempts"] == 1
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_noncritical_failure_continues_with_warning(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            if params["action"] == "open_url":
+                return {"ok": False, "status": "browser_unavailable", "error": "no browser"}
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    result = await DesktopTaskSkill().execute(
+        {
+            "objective": "Try an optional browser step, then inspect the screen.",
+            "steps": [
+                DesktopTaskStep(action="open_url", target="https://example.test", critical=False),
+                DesktopTaskStep(action="read_screen_text"),
+            ],
+        },
+        {"origin": "desktop_ui"},
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "completed_with_warnings"
+    assert len(result["failures"]) == 1
+    assert len(calls) == 2
+
+
 def test_desktop_task_extracts_generic_named_app_mentions():
     assert DesktopTaskSkill._generic_open_app_mentions("Open TextEdit application and create a draft.") == [
         "TextEdit"
@@ -636,6 +857,46 @@ async def test_desktop_task_collects_research_before_document_composition(monkey
     assert "I will open the browser" not in clipboard_body
     assert result["research"]["query"] == "climate change"
     assert len(result["research"]["sources"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_research_document_fails_when_research_preflight_fails(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            if skill_name == "web_search":
+                return {"ok": False, "status": "timeout", "error": "search timeout"}
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    result = await DesktopTaskSkill().execute(
+        {
+            "objective": (
+                "Find 3 different articles on climate change, open Google Docs, "
+                "and summarize those articles."
+            ),
+            "steps": [],
+        },
+        {
+            "origin": "desktop_ui",
+            "allow_heuristic_desktop_plan": True,
+            "desktop_execution_contract": True,
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "desktop_task_research_unavailable"
+    assert result["research"]["error"] == "search timeout"
+    assert [call[0] for call in calls] == ["web_search"]
 
 
 def test_desktop_task_sequences_independent_work_products_without_losing_focus():

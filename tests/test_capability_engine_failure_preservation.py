@@ -76,3 +76,44 @@ async def test_retry_loop_preserves_structured_failure_payload():
     assert result["steps_requested"] == 10
     assert result["receipts"] == [{"action": "open_url", "ok": True}]
     assert result["failures"][0]["action"] == "set_wallpaper"
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_outer_retry_is_disabled_to_prevent_plan_replay():
+    engine = _bare_engine()
+    engine.max_retries = 3
+    calls = []
+
+    class FailingDesktopTask:
+        async def execute(self, params, context):
+            calls.append((dict(params), dict(context or {})))
+            return {
+                "ok": False,
+                "status": "failed",
+                "steps_completed": 2,
+                "steps_requested": 3,
+                "summary": "Desktop task completed 2/3 governed computer-use steps.",
+                "failures": [
+                    {
+                        "action": "open_url",
+                        "ok": False,
+                        "effect_evidence": "late transient timeout",
+                    }
+                ],
+                "receipts": [
+                    {"action": "type", "ok": True},
+                    {"action": "write_text_file", "ok": True},
+                ],
+            }
+
+    result = await engine._execute_with_retry(
+        FailingDesktopTask(),
+        "desktop_task",
+        {"objective": "do not replay this plan"},
+        {"desktop_execution_contract": True},
+    )
+
+    assert result["ok"] is False
+    assert result["steps_completed"] == 2
+    assert result["retries"] == 0
+    assert len(calls) == 1

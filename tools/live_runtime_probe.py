@@ -712,12 +712,27 @@ end tell
             lane = response.get("conversation_lane") or {}
             if not isinstance(lane, dict) or lane.get("governed_action_result") is not True:
                 raise AssertionError(f"regular chat desktop task lacked governed-action lane evidence: {response}")
+            desktop_result = ((response.get("data") or {}).get("desktop_result") or {})
+            if not isinstance(desktop_result, dict):
+                raise AssertionError(f"regular chat desktop task lacked desktop_result payload: {response}")
+            receipts = desktop_result.get("receipts") or []
+            requested = int(desktop_result.get("steps_requested") or 0)
+            completed = int(desktop_result.get("steps_completed") or 0)
+            if not bool(desktop_result.get("ok")):
+                raise AssertionError(f"regular chat desktop result was not ok: {desktop_result}")
+            if not receipts or requested <= 0:
+                raise AssertionError(f"regular chat desktop result lacked step receipts: {desktop_result}")
+            if len(receipts) != requested or completed != requested:
+                raise AssertionError(f"regular chat desktop receipts did not cover every step: {desktop_result}")
+            if not all(isinstance(item, dict) and item.get("ok") and item.get("effect_verified") for item in receipts):
+                raise AssertionError(f"regular chat desktop receipts lacked effect evidence: {desktop_result}")
             if "Desktop task completed" not in reply or "governed desktop steps" not in reply:
                 raise AssertionError(f"regular chat desktop task reply lacked verified receipt summary: {reply[:400]}")
             return "regular Aura chat routed the desktop request through generic governed desktop_task", {
                 "response": reply,
                 "status": status,
                 "conversation_lane": lane,
+                "desktop_result": desktop_result,
             }
         if status != "live_proof_desktop_chain":
             raise AssertionError(f"regular chat did not route to a governed desktop chain status={status}; reply={reply[:400]}")

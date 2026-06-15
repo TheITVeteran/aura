@@ -317,11 +317,13 @@ class ResponseGenerationPhase(BasePhase):
                         "object with optional `document_body` and a bounded `steps` array. Allowed step "
                         f"actions are {desktop_task_action_sentence()}. "
                         "Use `{{document_body}}` inside a step target when a long composed body should be "
-                        "typed, pasted, written, or exported. Each step needs a reason and an expected "
-                        "observable effect. Do not claim completion inside this draft; completion is only "
-                        "true after the downstream desktop_task receipts verify effects. Keep the plan "
-                        "general to the named apps/surfaces and requested artifacts; do not use a "
-                        "hardcoded demo shortcut."
+                        "typed, pasted, written, or exported. A later step may reference verified prior "
+                        "output with `{{steps.1.result.path}}` or `{{last.result.path}}`. Each step needs "
+                        "a reason, an expected observable effect, and may set `critical` false only when "
+                        "the objective can still succeed after that step fails. Do not claim completion "
+                        "inside this draft; completion is only true after downstream desktop_task "
+                        "receipts verify effects. Keep the plan general to the named apps/surfaces and "
+                        "requested artifacts; do not use a hardcoded demo shortcut."
                     )
                     if messages and messages[0].get("role") == "system":
                         messages[0]["content"] = f"{messages[0]['content']}\n\n{desktop_block}"

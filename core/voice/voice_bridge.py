@@ -9,7 +9,7 @@ from core.event_bus import get_event_bus
 from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 from core.runtime.desktop_task_contract import (
     DESKTOP_TASK_ALLOWED_ACTIONS,
-    desktop_task_action_schema,
+    desktop_task_planning_schema,
 )
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
@@ -81,20 +81,7 @@ class VoiceConversationBridge:
                 context.update(
                     {
                         "desktop_execution_contract": True,
-                        "desktop_task_planning_schema": {
-                            "document_body": "optional prose to type/write/export",
-                            "steps": [
-                                {
-                                    "action": desktop_task_action_schema(),
-                                    "target": (
-                                        "string or JSON payload; use {{document_body}} "
-                                        "to reference composed prose"
-                                    ),
-                                    "reason": "why this step is needed",
-                                    "expect": "observable effect evidence required after the step",
-                                }
-                            ],
-                        },
+                        "desktop_task_planning_schema": desktop_task_planning_schema(),
                         "desktop_task_allowed_actions": DESKTOP_TASK_ALLOWED_ACTIONS,
                         "max_tokens": 1024,
                         "num_predict": 1024,
@@ -152,6 +139,7 @@ class VoiceConversationBridge:
             "user_explicitly_authorized": True,
             "user_requested_action": True,
             "desktop_execution_contract": True,
+            "disable_outer_skill_retry": True,
             "user_visible_desktop_action": True,
             "local_desktop_action": True,
             "verification_required": True,
@@ -160,7 +148,7 @@ class VoiceConversationBridge:
         }
         result = await engine.execute(
             "desktop_task",
-            {"objective": text, "steps": []},
+            {"objective": text, "steps": [], "disable_outer_skill_retry": True},
             context=context,
         )
         if isinstance(result, dict):

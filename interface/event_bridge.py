@@ -217,12 +217,25 @@ def _map_event_to_ws_message(
         raise TypeError(f"{type(instance).__name__} does not expose a model dump method")
 
     if topic in ("thoughts", "neural_event", "cognition"):
-        return CognitiveThoughtPayload(
+        extra = {
+            key: value
+            for key, value in data.items()
+            if key
+            not in {
+                "content",
+                "message",
+                "urgency",
+                "phase",
+                "type",
+            }
+        }
+        return _model_dict(CognitiveThoughtPayload(
             type="thought",
             content=data.get("content", data.get("message", "...")),
             urgency=data.get("urgency", "NORMAL"),
             cognitive_phase=data.get("phase"),
-        ).dict()
+            **extra,
+        ))
 
     if topic == "telemetry":
         msg_type = data.get("type", "telemetry")

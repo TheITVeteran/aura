@@ -69,6 +69,7 @@ def test_desktop_cognitive_turn_carries_generic_execution_planning_contract():
     from core.runtime.desktop_task_contract import (
         DESKTOP_TASK_ALLOWED_ACTIONS,
         desktop_task_action_sentence,
+        desktop_task_planning_schema,
     )
 
     chat_source = inspect.getsource(chat._run_cognitive_engine_chat_turn)
@@ -76,10 +77,14 @@ def test_desktop_cognitive_turn_carries_generic_execution_planning_contract():
 
     assert "desktop_execution_contract" in chat_source
     assert "desktop_task_planning_schema" in chat_source
-    assert "{{document_body}}" in chat_source
+    schema = desktop_task_planning_schema()
+    assert "{{document_body}}" in schema["steps"][0]["target"]
+    assert "{{steps.1.result.path}}" in schema["steps"][0]["target"]
+    assert "critical" in schema["steps"][0]
     assert "DESKTOP_TASK_ALLOWED_ACTIONS" in chat_source
     assert "LIVE DESKTOP EXECUTION PLANNING CONTRACT" in response_source
-    assert "Do not claim completion inside this draft" in response_source
+    assert "Do not claim completion" in response_source
+    assert "inside this draft" in response_source
     action_sentence = desktop_task_action_sentence()
     for action in DESKTOP_TASK_ALLOWED_ACTIONS:
         assert action in action_sentence

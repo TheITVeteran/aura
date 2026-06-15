@@ -384,6 +384,7 @@ async def test_voice_bridge_executes_spoken_desktop_objective_after_cognition(mo
     assert calls[1]["params"] == {
         "objective": "can you open Notes, write a timestamped summary, and save it as a PDF in a folder?",
         "steps": [],
+        "disable_outer_skill_retry": True,
     }
     assert calls[1]["context"]["route"] == "voice.desktop_objective"
     assert calls[1]["context"]["origin"] == "voice"
@@ -460,6 +461,7 @@ async def test_voice_bridge_routes_generic_browser_document_objective(monkeypatc
     assert calls[1]["params"] == {
         "objective": "open a tab for Google Docs and start typing a coherent essay about climate adaptation.",
         "steps": [],
+        "disable_outer_skill_retry": True,
     }
     assert calls[1]["context"]["route"] == "voice.desktop_objective"
     assert calls[1]["context"]["desktop_task_document_body"].startswith("I will open the requested")
