@@ -1,12 +1,12 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import logging
+from collections.abc import Iterable
 from statistics import mean
-from typing import Any, Dict, Iterable
+from typing import Any
 
 from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.Evidence")
 
@@ -30,7 +30,7 @@ class ConsciousnessEvidenceEngine:
     grade runtime guarantees.
     """
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         audit_index = 0.0
         latest_phi = 0.0
         audit_count = 0
@@ -66,6 +66,17 @@ class ConsciousnessEvidenceEngine:
         conversation_history = list(getattr(orch, "conversation_history", []) or [])
         reply_queue = getattr(orch, "reply_queue", None)
         inference_gate = getattr(orch, "_inference_gate", None)
+        inference_ready = False
+        if inference_gate is not None:
+            try:
+                readiness_check = getattr(inference_gate, "is_inference_ready", None)
+                inference_ready = bool(callable(readiness_check) and readiness_check())
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "evidence_engine",
+                    exc,
+                    action="kept inference reliability evidence false after readiness probe failure",
+                )
         closure_score = None
         try:
             if executive_closure and hasattr(executive_closure, "get_status"):
@@ -136,8 +147,9 @@ class ConsciousnessEvidenceEngine:
             1.0 if phenom_fragment else 0.0,
             1.0 if dominant_emotions else 0.3,
         ])
-        # Inference gate scoring: alive=1.0, recovering=0.7, exists-but-dead=0.4, missing=0.0
-        if inference_gate and getattr(inference_gate, "is_alive", lambda: False)():
+        # Inference reliability requires a generation-ready backend, not merely
+        # a deferred safe-boot gate object or a resident-but-warming process.
+        if inference_ready:
             _ig_score = 1.0
         elif inference_gate and getattr(inference_gate, "_cortex_recovery_in_progress", False):
             _ig_score = 0.7  # actively recovering is better than dead
@@ -196,7 +208,8 @@ class ConsciousnessEvidenceEngine:
                 "self_report": self_report_text[:160],
                 "phenomenology": phenom_fragment[:160],
                 "reply_queue": reply_queue.__class__.__name__ if reply_queue else None,
-                "inference_alive": bool(inference_gate and getattr(inference_gate, "is_alive", lambda: False)()),
+                "inference_alive": inference_ready,
+                "inference_ready": inference_ready,
                 "closure_score": round(closure_score or 0.0, 4),
             },
             "assessment": assessment,

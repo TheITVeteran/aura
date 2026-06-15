@@ -536,6 +536,7 @@ class InferenceGate:
                 action="kept conservative boot warmup decision after desktop policy probe failed",
             )
             logger.debug("Boot warmup memory probe failed: %s", exc)
+            return False
 
         return True
 
@@ -1037,7 +1038,7 @@ class InferenceGate:
         lane = {
             "desired_model": "Cortex (32B)",
             "desired_endpoint": PRIMARY_ENDPOINT,
-            "foreground_endpoint": PRIMARY_ENDPOINT if self.is_alive() else None,
+            "foreground_endpoint": None,
             "background_endpoint": BRAINSTEM_ENDPOINT,
             "foreground_tier": "local",
             "background_tier": "local_fast",
@@ -1742,21 +1743,34 @@ class InferenceGate:
 
         # [STABILITY v53] Wrap fire-and-forget task with exception logging
         # so crashes are visible instead of silently lost.
+        # Reserve recovery ownership before scheduling. Without this reservation,
+        # the foreground caller can observe ``False`` immediately after this method
+        # returns and start a second inline warmup before the task gets CPU time.
+        self._cortex_recovery_in_progress = True
         recovery_coro = _background_recover()
         try:
             task = get_task_tracker().create_task(recovery_coro, name="cortex_recovery")
         except RuntimeError:
             recovery_coro.close()
+            self._cortex_recovery_in_progress = False
             logger.debug("Cortex recovery skipped: no running event loop.")
             return
         if not isinstance(task, asyncio.Task):
             recovery_coro.close()
+            self._cortex_recovery_in_progress = False
             logger.debug(
                 "Cortex recovery task scheduling returned non-Task %s; skipping callback wiring.",
                 type(task).__name__,
             )
             return
-        task.add_done_callback(self._log_task_exception)
+
+        def _finish_recovery(completed: asyncio.Task) -> None:
+            # Cancellation can happen before the coroutine reaches its ``finally``
+            # block, so the scheduling boundary also owns clearing this reservation.
+            self._cortex_recovery_in_progress = False
+            self._log_task_exception(completed)
+
+        task.add_done_callback(_finish_recovery)
 
     async def _respawn_cortex_if_needed(self) -> None:
         """Respawn the primary cortex if it's dead.
@@ -1976,8 +1990,13 @@ class InferenceGate:
                 )
             )
             return bool(vm.percent >= max_pressure or available_gb <= min_available_gb)
-        except _INFERENCE_RECOVERABLE_ERRORS:
-            return False
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            _record_inference_degradation(
+                exc,
+                action="failed closed and deferred background local inference after memory probe failure",
+                severity="warning",
+            )
+            return True
 
     def _background_local_deferral_reason(self, *, origin: str | None = None) -> str | None:
         try:
@@ -2638,6 +2657,7 @@ class InferenceGate:
             logger.debug("Primary restore skipped: no running event loop.")
             return
         if not isinstance(task, asyncio.Task):
+            restore_coro.close()
             logger.debug(
                 "Primary restore scheduling returned non-Task %s; skipping callback wiring.",
                 type(task).__name__,
@@ -4637,9 +4657,11 @@ class InferenceGate:
                     "inference_gate",
                     _swap_exc,
                     severity="warning",
-                    action="kept current tier after secondary admission probe failed",
+                    action="failed safe to primary after secondary coexistence probe failed",
                 )
                 logger.debug("Cortex lane probe before secondary admission failed: %s", _swap_exc)
+                requested_tier = "primary"
+                deep_handoff = False
 
         admission_snapshot: dict[str, Any] | None = None
         if not is_background and requested_tier in {"primary", "secondary"}:
@@ -6539,7 +6561,12 @@ class InferenceGate:
 
         primary_ready = _client_alive(self._mlx_client)
         if primary_ready:
-            return True
+            try:
+                lane = self.get_conversation_status()
+            except _INFERENCE_RECOVERABLE_ERRORS:
+                return False
+            if bool(lane.get("conversation_ready", False)):
+                return True
 
         try:
             from core.runtime.proof_policy import proof_model_tier, proof_run_active
@@ -6553,4 +6580,16 @@ class InferenceGate:
             local_clients = self._iter_local_clients()
         except _INFERENCE_RECOVERABLE_ERRORS:
             local_clients = {}
-        return any(_client_alive(client) for client in local_clients.values())
+        for client in local_clients.values():
+            if not _client_alive(client):
+                continue
+            get_lane_status = getattr(client, "get_lane_status", None)
+            if not callable(get_lane_status):
+                return True
+            try:
+                lane = get_lane_status()
+            except _INFERENCE_RECOVERABLE_ERRORS:
+                continue
+            if bool(isinstance(lane, dict) and lane.get("conversation_ready", False)):
+                return True
+        return False

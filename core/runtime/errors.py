@@ -507,6 +507,16 @@ class SubsystemRegistry:
                 for h in self._systems.values()
             )
 
+    def reset(self) -> None:
+        """Clear process-local subsystem health state.
+
+        Production callers normally retain this state for the life of the
+        process. Test and controlled-restart boundaries use this method to
+        prevent stale incidents from being attributed to a new runtime.
+        """
+        with self._lock:
+            self._systems.clear()
+
     def auto_recover_subsystems(self, timeout_seconds: float = 300.0) -> list[str]:
         """Automatically restores degraded/unavailable subsystems back to healthy if no new failures have occurred for a period."""
         recovered = []

@@ -43,6 +43,28 @@ class CognitiveFlowController:
                 return value
         return default
 
+    @staticmethod
+    def _inference_is_busy(inference_gate: Any) -> bool:
+        if inference_gate is None:
+            return False
+        lane_reader = getattr(inference_gate, "get_lane_status", None)
+        if not callable(lane_reader):
+            lane_reader = getattr(inference_gate, "get_conversation_status", None)
+        if callable(lane_reader):
+            try:
+                lane = lane_reader()
+                return bool(
+                    int(lane.get("active_generations", 0) or 0) > 0
+                    or lane.get("foreground_owned", False)
+                    or lane.get("warmup_in_flight", False)
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return True
+        try:
+            return bool(getattr(inference_gate, "is_alive", lambda: False)())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return True
+
     def snapshot(self, orch: Any) -> FlowSnapshot:
         message_queue = getattr(orch, "message_queue", None)
         reply_queue = getattr(orch, "reply_queue", None)
@@ -55,7 +77,7 @@ class CognitiveFlowController:
         reply_depth = int(reply_queue.qsize()) if reply_queue and hasattr(reply_queue, "qsize") else 0
         reply_capacity = self._capacity_of(reply_queue, 50)
         busy = bool(getattr(orch, "is_busy", False))
-        inference_busy = bool(inference_gate and getattr(inference_gate, "is_alive", lambda: False)())
+        inference_busy = self._inference_is_busy(inference_gate)
         lag_seconds = float(getattr(event_loop_monitor, "_last_lag", 0.0) or 0.0)
         governor_mode = str(getattr(getattr(governor, "current_mode", None), "value", "FULL"))
 

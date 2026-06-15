@@ -278,6 +278,18 @@ def _reset_shutdown_request_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def _reset_runtime_degradation_state_between_tests():
+    """Keep process-local incidents from contaminating later health assertions."""
+    from core.runtime.errors import get_degradation_tracker, get_subsystem_registry
+
+    get_degradation_tracker().reset()
+    get_subsystem_registry().reset()
+    yield
+    get_degradation_tracker().reset()
+    get_subsystem_registry().reset()
+
+
+@pytest.fixture(autouse=True)
 def _contain_governance_strictness_between_tests():
     """Order-independence for governance enforcement.
 

@@ -502,27 +502,18 @@ async def test_deep_handoff_uses_solver_then_returns_response():
                 return cortex
             raise AssertionError(f"Unexpected model path: {model_path}")
 
-        scheduled = []
-
-        def _capture_task(coro, **kwargs):
-            scheduled.append(coro)
-            return TaskProbe(done=False)
-
         # Fixed memory headroom so test doesn't depend on actual system RAM
         _low_pressure = {"tier": "secondary", "pressure_pct": 40.0, "total_gb": 64.0, "available_gb": 32.0, "max_pressure_pct": 84.0, "min_available_gb": 16.0, "can_admit": True}
-        with replace("asyncio.create_task", side_effect=_capture_task):
-            with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
-                with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
-                    with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
-                        with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
-                            with replace.object(InferenceGate, "_headroom_snapshot", staticmethod(lambda *a, **kw: _low_pressure)):
-                                result = await gate.generate(
-                                    "perform a flagship architecture deep dive",
-                                    context={"prefer_tier": "secondary", "deep_handoff": True},
-                                )
-
-        for coro in scheduled:
-            await coro
+        with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
+            with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
+                with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
+                    with replace("core.brain.llm.model_registry.ACTIVE_MODEL", "ACTIVE"):
+                        with replace.object(InferenceGate, "_headroom_snapshot", staticmethod(lambda *a, **kw: _low_pressure)):
+                            result = await gate.generate(
+                                "perform a flagship architecture deep dive",
+                                context={"prefer_tier": "secondary", "deep_handoff": True},
+                            )
+        await asyncio.sleep(0)
 
         assert result == "solver"
         solver.generate_text_async.assert_awaited()
@@ -2082,6 +2073,67 @@ async def test_secondary_requests_downgrade_to_primary_when_headroom_is_tight():
         os.environ.pop("AURA_ENABLE_LOCAL_DEEP_SOLVER", None)
 
 
+@pytest.mark.asyncio
+async def test_secondary_request_fails_safe_to_primary_when_coexistence_probe_errors():
+    os.environ["AURA_ENABLE_LOCAL_DEEP_SOLVER"] = "1"
+    try:
+        gate = InferenceGate()
+        cortex_reply = "Cortex handled the request after the coexistence probe failed closed."
+        cortex = _RecordingClient(cortex_reply)
+        solver = _RecordingClient("Solver must not run without a safe coexistence decision.")
+        brainstem = _FakeClient("brainstem")
+        gate._mlx_client = cortex
+
+        def _fake_get_mlx_client(model_path=None, **kwargs):
+            if model_path == "/models/deep":
+                return solver
+            if model_path == "/models/brainstem":
+                return brainstem
+            raise AssertionError(f"Unexpected model path: {model_path}")
+
+        with replace.object(gate, "_local_deep_solver_block_reason", return_value=None):
+            with replace.object(
+                gate,
+                "get_conversation_status",
+                side_effect=RuntimeError("lane telemetry unavailable"),
+            ):
+                with replace.object(
+                    gate,
+                    "_enforce_foreground_admission",
+                    return_value={
+                        "can_admit": True,
+                        "pressure_pct": 40.0,
+                        "available_gb": 32.0,
+                    },
+                ):
+                    with replace(
+                        "core.brain.llm.mlx_client.get_mlx_client",
+                        side_effect=_fake_get_mlx_client,
+                    ):
+                        with replace(
+                            "core.brain.llm.model_registry.get_deep_model_path",
+                            return_value="/models/deep",
+                        ):
+                            with replace(
+                                "core.brain.llm.model_registry.get_brainstem_path",
+                                return_value="/models/brainstem",
+                            ):
+                                result = await gate.generate(
+                                    "Analyze this architecture deeply.",
+                                    context={
+                                        "origin": "user",
+                                        "prefer_tier": "secondary",
+                                        "deep_handoff": True,
+                                    },
+                                )
+
+        assert result == cortex_reply
+        assert cortex.deadlines
+        assert not solver.deadlines
+    finally:
+        os.environ.pop("AURA_ENABLE_LOCAL_DEEP_SOLVER", None)
+
+
 def test_secondary_headroom_snapshot_blocks_64gb_solver_envelope_by_default(monkeypatch):
     monkeypatch.delenv("AURA_FOREGROUND_SECONDARY_MAX_PRESSURE_PCT", raising=False)
     monkeypatch.delenv("AURA_FOREGROUND_SECONDARY_MIN_AVAILABLE_GB", raising=False)
@@ -2097,8 +2149,8 @@ def test_secondary_headroom_snapshot_blocks_64gb_solver_envelope_by_default(monk
 
     snapshot = InferenceGate._headroom_snapshot("secondary")
 
-    assert snapshot["max_pressure_pct"] == 55.0
-    assert snapshot["min_available_gb"] == 38.0
+    assert snapshot["max_pressure_pct"] == 42.0
+    assert snapshot["min_available_gb"] == 52.0
     assert snapshot["can_admit"] is False
     assert "memory_pressure" in snapshot["reason"]
 
@@ -2234,6 +2286,26 @@ def test_cortex_warmup_probe_failure_is_not_admitted_without_override(monkeypatc
     memory_probe.assert_called_once()
 
 
+def test_eager_cortex_warmup_fails_closed_when_policy_probe_raises(monkeypatch):
+    monkeypatch.setenv("AURA_EAGER_CORTEX_WARMUP", "auto")
+    monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: False))
+    monkeypatch.setattr(
+        InferenceGate,
+        "_cortex_warmup_admission_snapshot",
+        staticmethod(lambda _context: (_ for _ in ()).throw(RuntimeError("probe unavailable"))),
+    )
+
+    assert InferenceGate._boot_should_eager_warmup() is False
+
+
+def test_background_memory_pressure_probe_failure_defers_background_inference(monkeypatch):
+    memory_probe = CallProbe(side_effect=OSError("vm statistics unavailable"))
+    monkeypatch.setattr("core.brain.inference_gate.psutil.virtual_memory", memory_probe)
+
+    assert InferenceGate._background_memory_pressure_active() is True
+    memory_probe.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_foreground_ready_blocks_cold_cortex_when_memory_probe_fails(monkeypatch):
     monkeypatch.delenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", raising=False)
@@ -2339,7 +2411,7 @@ async def test_deferred_cortex_prewarm_defers_active_generation_without_degradat
     degradation_probe = CallProbe(side_effect=AssertionError("busy prewarm is not degradation"))
     monkeypatch.setattr("core.brain.inference_gate.record_degradation", degradation_probe)
 
-    async def busy_foreground_ready(*, timeout=None):
+    async def busy_foreground_ready(*, timeout=None):  # noqa: ASYNC109
         handled.set()
         raise RuntimeError("active_generation_in_flight")
 
@@ -2358,6 +2430,60 @@ async def test_deferred_cortex_prewarm_defers_active_generation_without_degradat
             await gate._deferred_prewarm_task
 
 
+@pytest.mark.asyncio
+async def test_cortex_recovery_reserves_ownership_before_task_is_scheduled(monkeypatch):
+    gate = InferenceGate()
+    release_warmup = asyncio.Event()
+
+    class _DeadClient:
+        _lane_state = "cold"
+
+        def is_alive(self):
+            return False
+
+        async def warmup(self):
+            await release_warmup.wait()
+            return False
+
+    gate._mlx_client = _DeadClient()
+    monkeypatch.setattr(InferenceGate, "_foreground_user_turn_active", staticmethod(lambda: False))
+    monkeypatch.setattr(InferenceGate, "_foreground_owner_active", staticmethod(lambda: False))
+    monkeypatch.setattr(gate, "_cortex_warmup_deferral_reason", lambda _context: "")
+    monkeypatch.setattr(
+        gate,
+        "get_conversation_status",
+        lambda: {
+            "conversation_ready": False,
+            "state": "cold",
+            "warmup_in_flight": False,
+            "warmup_attempted": False,
+            "last_failure_reason": "",
+        },
+    )
+
+    scheduled = []
+
+    def _create_task(coro, **_kwargs):
+        assert gate._cortex_recovery_in_progress is True
+        task = asyncio.create_task(coro)
+        scheduled.append(task)
+        return task
+
+    monkeypatch.setattr(
+        "core.brain.inference_gate.get_task_tracker",
+        lambda: SimpleNamespace(create_task=_create_task),
+    )
+
+    await gate._ensure_cortex_recovery()
+
+    assert gate._cortex_recovery_in_progress is True
+    assert len(scheduled) == 1
+    scheduled[0].cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await scheduled[0]
+    assert gate._cortex_recovery_in_progress is False
+
+
 def test_inference_health_ready_rejects_deferred_safe_boot_without_live_worker(monkeypatch):
     gate = InferenceGate()
     gate._initialized = True
@@ -2371,15 +2497,60 @@ def test_inference_health_ready_rejects_deferred_safe_boot_without_live_worker(m
     assert gate.is_inference_ready() is False
 
 
-def test_inference_health_ready_accepts_live_primary_worker(monkeypatch):
+def test_inference_health_ready_rejects_live_but_unready_primary_worker(monkeypatch):
     gate = InferenceGate()
     gate._initialized = True
-    gate._mlx_client = SimpleNamespace(is_alive=lambda: True)
+    gate._mlx_client = SimpleNamespace(
+        is_alive=lambda: True,
+        get_lane_status=lambda: {
+            "state": "warming",
+            "conversation_ready": False,
+            "readiness_blockers": ["warmup_in_flight"],
+        },
+    )
+    monkeypatch.setattr(gate, "_iter_local_clients", lambda: {})
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monkeypatch.setenv("AURA_PROOF_MODEL_TIER", "primary")
+
+    assert gate.is_inference_ready() is False
+
+
+def test_inference_health_ready_accepts_conversation_ready_primary_worker(monkeypatch):
+    gate = InferenceGate()
+    gate._initialized = True
+    gate._mlx_client = SimpleNamespace(
+        is_alive=lambda: True,
+        get_lane_status=lambda: {
+            "state": "ready",
+            "conversation_ready": True,
+            "readiness_blockers": [],
+        },
+    )
     monkeypatch.setattr(gate, "_iter_local_clients", lambda: {})
     monkeypatch.setenv("AURA_PROOF_RUN", "1")
     monkeypatch.setenv("AURA_PROOF_MODEL_TIER", "primary")
 
     assert gate.is_inference_ready() is True
+
+
+def test_safe_boot_status_does_not_advertise_cold_cortex_as_active(monkeypatch):
+    gate = InferenceGate()
+    gate._initialized = True
+    gate._mlx_client = SimpleNamespace(
+        is_alive=lambda: False,
+        get_lane_status=lambda: {
+            "state": "cold",
+            "conversation_ready": False,
+            "readiness_blockers": ["worker_not_alive"],
+        },
+    )
+    monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: True))
+
+    lane = gate.get_conversation_status()
+
+    assert gate.is_alive() is True
+    assert lane["conversation_ready"] is False
+    assert lane["foreground_endpoint"] is None
 
 
 def test_background_local_deferral_protects_cold_cortex_during_safe_boot(monkeypatch):

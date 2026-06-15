@@ -138,7 +138,13 @@ def test_flow_controller_applies_backpressure_but_keeps_user_lane_open():
         reply_queue=SimpleNamespace(qsize=lambda: 30, maxsize=50),
         system_governor=SimpleNamespace(current_mode=SimpleNamespace(value="FULL")),
         _event_loop_monitor=SimpleNamespace(_last_lag=0.3),
-        _inference_gate=SimpleNamespace(is_alive=lambda: True),
+        _inference_gate=SimpleNamespace(
+            get_lane_status=lambda: {
+                "active_generations": 1,
+                "foreground_owned": True,
+                "warmup_in_flight": False,
+            }
+        ),
         is_busy=True,
     )
 
@@ -149,6 +155,30 @@ def test_flow_controller_applies_backpressure_but_keeps_user_lane_open():
     assert user_decision.reason == "user_facing"
     assert background_decision.allow is False
     assert background_decision.reason == "hard_backpressure"
+
+
+def test_flow_controller_does_not_treat_idle_live_inference_as_busy():
+    controller = CognitiveFlowController()
+    orch = SimpleNamespace(
+        message_queue=SimpleNamespace(qsize=lambda: 0, maxsize=100),
+        reply_queue=SimpleNamespace(qsize=lambda: 0, maxsize=50),
+        system_governor=SimpleNamespace(current_mode=SimpleNamespace(value="FULL")),
+        _event_loop_monitor=SimpleNamespace(_last_lag=0.0),
+        _inference_gate=SimpleNamespace(
+            is_alive=lambda: True,
+            get_lane_status=lambda: {
+                "active_generations": 0,
+                "foreground_owned": False,
+                "warmup_in_flight": False,
+            },
+        ),
+        is_busy=False,
+    )
+
+    snapshot = controller.snapshot(orch)
+
+    assert snapshot.inference_busy is False
+    assert snapshot.load == 0.0
 
 
 @pytest.mark.asyncio
@@ -191,7 +221,10 @@ def test_consciousness_evidence_snapshot_reflects_runtime_subjectivity(service_c
     orch = SimpleNamespace(
         conversation_history=[{"role": "user", "content": "hello"}],
         reply_queue=TaggedReplyQueue(maxsize=10),
-        _inference_gate=SimpleNamespace(is_alive=lambda: True),
+        _inference_gate=SimpleNamespace(
+            is_alive=lambda: True,
+            is_inference_ready=lambda: True,
+        ),
         status=SimpleNamespace(last_error=None),
         agency=object(),
     )
@@ -228,9 +261,29 @@ def test_consciousness_evidence_snapshot_reflects_runtime_subjectivity(service_c
     snapshot = ConsciousnessEvidenceEngine().snapshot()
 
     assert snapshot["signals"]["reply_queue"] == "TaggedReplyQueue"
+    assert snapshot["signals"]["inference_ready"] is True
     assert snapshot["dimensions"]["reliability"] >= 0.9
     assert snapshot["dimensions"]["personality_drive"] >= 0.9
     assert snapshot["subjectivity_evidence"] > 0.5
+
+
+def test_consciousness_evidence_does_not_count_deferred_gate_as_ready(service_container):
+    orch = SimpleNamespace(
+        conversation_history=[],
+        reply_queue=TaggedReplyQueue(maxsize=10),
+        _inference_gate=SimpleNamespace(
+            is_alive=lambda: True,
+            is_inference_ready=lambda: False,
+        ),
+        status=SimpleNamespace(last_error=None),
+        agency=None,
+    )
+    service_container.register_instance("orchestrator", orch)
+
+    snapshot = ConsciousnessEvidenceEngine().snapshot()
+
+    assert snapshot["signals"]["inference_alive"] is False
+    assert snapshot["signals"]["inference_ready"] is False
 
 
 @pytest.mark.asyncio

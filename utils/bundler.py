@@ -40,6 +40,9 @@ SOURCE_EXTS: frozenset[str] = frozenset({
 #: Extensions included only in full (non-lite) bundles
 BINARY_EXTS: frozenset[str] = frozenset({".db", ".sqlite", ".sqlite3"})
 
+#: Individual source files larger than this are omitted from text bundles.
+MAX_SOURCE_FILE_BYTES = 4_000_000
+
 #: Directories never included, regardless of mode
 EXCLUDE_DIRS: frozenset[str] = frozenset({
     "__pycache__", ".git", ".venv", "venv", "env",
@@ -56,6 +59,15 @@ EXCLUDE_FILES: frozenset[str] = frozenset({
     "aura_source.txt", "aura_source_code.txt",
     ".DS_Store", "server.pid",
 })
+
+
+def _is_generated_bundle(path: Path) -> bool:
+    name = path.name.lower()
+    return bool(
+        name.startswith("aura_source_")
+        and path.suffix.lower() in {".txt", ".md"}
+    )
+
 
 # ── Path Discovery ───────────────────────────────────────────
 
@@ -87,8 +99,20 @@ def iter_source_files(root: Path, lite: bool = False) -> Iterator[Path]:
         if any(part.startswith(".") for part in rel.parts):
             continue
 
-        if path.suffix.lower() in include_exts:
-            yield path
+        if path.suffix.lower() not in include_exts:
+            continue
+
+        if _is_generated_bundle(path):
+            continue
+
+        # Skip large generated data while preserving normal source and tests.
+        try:
+            if path.stat().st_size > MAX_SOURCE_FILE_BYTES:
+                continue
+        except OSError:
+            continue
+
+        yield path
 
 
 # ── Bundle Writing ───────────────────────────────────────────
