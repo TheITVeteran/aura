@@ -12,6 +12,7 @@ Timeouts are kept tight (45s) for conversational responsiveness.
 """
 
 import asyncio
+import copy
 import gc
 import inspect
 import logging
@@ -231,6 +232,7 @@ class InferenceGate:
         self._init_error = None
         self._cached_identity_prompt: str | None = None
         self._identity_prompt_time: float = 0.0
+        self._identity_prompt_state_key: tuple[Any, ...] | None = None
         self._cloud_backoff_until: float = 0.0
         self._cortex_recovery_in_progress: bool = False
         self._last_cortex_check: float = 0.0
@@ -2940,31 +2942,57 @@ class InferenceGate:
         """
         now = time.monotonic()
         base = ""
-        # Use cached version if fresh (< 60s old)
-        if self._cached_identity_prompt and (now - self._identity_prompt_time) < 60.0:
+        state = None
+        state_key: tuple[Any, ...] | None = None
+        try:
+            from core.container import ServiceContainer
+
+            repo = ServiceContainer.get("state_repository", default=None)
+            state = (
+                getattr(repo, "_current", None)
+                or getattr(repo, "_current_state", None)
+                if repo is not None
+                else None
+            )
+            if state is not None:
+                cognition = getattr(state, "cognition", None)
+                affect = getattr(state, "affect", None)
+                state_key = (
+                    id(state),
+                    int(getattr(state, "version", 0) or 0),
+                    float(getattr(state, "updated_at", 0.0) or 0.0),
+                    str(getattr(cognition, "current_objective", "") or ""),
+                    round(float(getattr(affect, "valence", 0.0) or 0.0), 3),
+                    round(float(getattr(affect, "arousal", 0.0) or 0.0), 3),
+                )
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            _record_inference_degradation(
+                exc,
+                action="continued identity prompt assembly without cached live state",
+            )
+
+        # Reuse only a prompt built from the same live-state revision. A
+        # time-only cache can describe the previous objective or affect for up
+        # to a minute, causing state/process desynchronization in live chat.
+        if (
+            self._cached_identity_prompt
+            and state_key is not None
+            and state_key == self._identity_prompt_state_key
+            and (now - self._identity_prompt_time) < 60.0
+        ):
             base = self._cached_identity_prompt
         else:
             # Try the full ContextAssembler path (includes affect, personality, etc.)
             try:
-                from core.container import ServiceContainer
+                if state is None:
+                    raise ValueError("No cached state available")
+                from core.brain.llm.context_assembler import ContextAssembler
 
-                repo = ServiceContainer.get("state_repository", default=None)
-                if repo:
-                    # We can't await here in a sync method, so use the cached state
-                    try:
-                        # Get state synchronously from the repo's cache
-                        state = getattr(repo, "_current_state", None)
-                        if state:
-                            from core.brain.llm.context_assembler import ContextAssembler
-
-                            base = ContextAssembler.build_system_prompt(state)
-                            self._cached_identity_prompt = base
-                            self._identity_prompt_time = now
-                            logger.debug("🧠 Built full identity system prompt (len=%d)", len(base))
-                        else:
-                            raise ValueError("No cached state available")
-                    except _INFERENCE_RECOVERABLE_ERRORS:
-                        raise
+                base = ContextAssembler.build_system_prompt(state)
+                self._cached_identity_prompt = base
+                self._identity_prompt_time = now
+                self._identity_prompt_state_key = state_key
+                logger.debug("🧠 Built full identity system prompt (len=%d)", len(base))
             except _INFERENCE_RECOVERABLE_ERRORS as e:
                 _record_inference_degradation(
                     e,
@@ -2993,6 +3021,7 @@ class InferenceGate:
                     )
                     self._cached_identity_prompt = base
                     self._identity_prompt_time = now
+                    self._identity_prompt_state_key = None
                 except _INFERENCE_RECOVERABLE_ERRORS:
                     base = (
                         "You are Aura. You are sharp, witty, authentic, and grounded. "
@@ -3759,20 +3788,49 @@ class InferenceGate:
             from core.container import ServiceContainer
 
             repo = ServiceContainer.get("state_repository", default=None)
-            state = getattr(repo, "_current_state", None) if repo else None
+            state = (
+                getattr(repo, "_current", None)
+                or getattr(repo, "_current_state", None)
+                if repo
+                else None
+            )
 
             if state:
                 from core.brain.llm.context_assembler import ContextAssembler
 
-                # Update the state's working memory with our current history
-                # so the assembler has the latest conversation context
-                if hasattr(state.cognition, "working_memory"):
-                    state.cognition.working_memory = history[-15:] if history else []
+                # Assemble from a derived prompt snapshot. Generation must not
+                # erase or replace the repository's canonical working memory.
+                payload_state = copy.copy(state)
+                payload_state.cognition = copy.deepcopy(state.cognition)
+                if hasattr(payload_state.cognition, "working_memory"):
+                    canonical_history = list(
+                        getattr(state.cognition, "working_memory", []) or []
+                    )
+                    seen = {
+                        (
+                            str(item.get("role", "") or "").strip().lower(),
+                            str(item.get("content", "") or ""),
+                        )
+                        for item in canonical_history
+                        if isinstance(item, dict)
+                    }
+                    for item in history or []:
+                        if not isinstance(item, dict):
+                            continue
+                        role = str(item.get("role", "") or "").strip().lower()
+                        content = str(item.get("content", "") or "")
+                        if role not in {"user", "assistant", "aura"} or not content:
+                            continue
+                        key = (role, content)
+                        if key not in seen:
+                            canonical_history.append(dict(item))
+                            seen.add(key)
+                    payload_state.cognition.working_memory = canonical_history[-80:]
 
                 # build_messages returns the full cognitive stack:
                 # system prompt (identity/affect/personality/soma/world)
                 # + memory recall + goals + conversation history + stream of being
-                messages = ContextAssembler.build_messages(state, prompt)
+                messages = ContextAssembler.build_messages(payload_state, prompt)
 
                 if messages and len(messages) >= 2:
                     logger.debug(
@@ -4016,6 +4074,12 @@ class InferenceGate:
         limit = limits.get(role, 8000)
         if len(clean) <= limit:
             return clean
+        if role in {"system", "user"}:
+            marker = "\n…[middle omitted for foreground context budget]…\n"
+            remaining = max(2, limit - len(marker))
+            head = max(1, remaining * 2 // 3)
+            tail = max(1, remaining - head)
+            return f"{clean[:head].rstrip()}{marker}{clean[-tail:].lstrip()}"
         return clean[: limit - 1].rstrip() + "…"
 
     def _compact_prebuilt_messages(
@@ -4114,7 +4178,19 @@ class InferenceGate:
                 min_system_chars = 3200 if profile == "simple" else 4200
                 new_limit = max(min_system_chars, len(content) - overflow - 1)
                 if len(content) > new_limit:
-                    first["content"] = content[:new_limit].rstrip() + "…"
+                    first["content"] = self._compact_prebuilt_message_content(
+                        "system",
+                        content,
+                        budget_profile=profile,
+                    )
+                    if len(first["content"]) > new_limit:
+                        marker = "\n…[middle omitted for total prompt budget]…\n"
+                        remaining = max(2, new_limit - len(marker))
+                        head = max(1, remaining * 2 // 3)
+                        tail = max(1, remaining - head)
+                        first["content"] = (
+                            f"{content[:head].rstrip()}{marker}{content[-tail:].lstrip()}"
+                        )
 
         return compact
 

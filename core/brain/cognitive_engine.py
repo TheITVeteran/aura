@@ -266,19 +266,6 @@ class CognitiveEngine:
         )  # Audit Fix: Mutex for recovery
         self._reasoning: ReasoningStrategies | None = None  # Lazy-init
 
-        try:
-            from core.brain.llm.context_assembler_patch import patch_context_assembler
-            patch_context_assembler()
-        except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as e:
-            record_degradation(
-                "cognitive_engine",
-                e,
-                severity="warning",
-                action="continued without optional context assembler patch",
-            )
-            logger.error("Failed to patch context assembler: %s", e)
-
-
     @property
     def consciousness(self) -> Any:
         """Unified access to the consciousness layer for metric aggregation."""

@@ -9,9 +9,66 @@ from types import SimpleNamespace
 import pytest
 
 from core.brain.inference_gate import InferenceGate
+from core.container import ServiceContainer
+from core.state.aura_state import AuraState
 from core.utils.deadlines import get_deadline
 
 _MISSING = object()
+
+
+def test_build_messages_uses_canonical_state_without_mutating_working_memory(monkeypatch):
+    state = AuraState.default()
+    state.cognition.working_memory = [
+        {"role": "user", "content": "canonical user turn"},
+        {"role": "assistant", "content": "canonical assistant turn"},
+    ]
+    original_memory = list(state.cognition.working_memory)
+    repo = SimpleNamespace(_current=state)
+    original_get = ServiceContainer.get
+
+    def _get(name, default=None):
+        if name == "state_repository":
+            return repo
+        return original_get(name, default)
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_get))
+
+    gate = InferenceGate()
+    messages = gate._build_messages(
+        "new objective",
+        "fallback system",
+        [{"role": "user", "content": "incoming history"}],
+    )
+
+    assert state.cognition.working_memory == original_memory
+    rendered = "\n".join(message["content"] for message in messages)
+    assert "canonical user turn" in rendered
+    assert "incoming history" in rendered
+    assert messages[-1] == {"role": "user", "content": "new objective"}
+
+
+def test_system_prompt_cache_tracks_live_state_revision(monkeypatch):
+    state = AuraState.default()
+    state.cognition.current_objective = "first objective"
+    repo = SimpleNamespace(_current=state)
+    original_get = ServiceContainer.get
+
+    def _get(name, default=None):
+        if name == "state_repository":
+            return repo
+        return original_get(name, default)
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_get))
+    gate = InferenceGate()
+
+    first = gate._build_system_prompt()
+    state.cognition.current_objective = "second objective"
+    second = gate._build_system_prompt()
+
+    assert first
+    assert second
+    assert gate._identity_prompt_state_key is not None
+    assert gate._identity_prompt_state_key[3] == "second objective"
 
 
 class CallProbe:
@@ -1140,8 +1197,8 @@ def test_repairable_user_facing_draft_is_preserved_for_downstream_shape_repair()
 
 def test_compact_prebuilt_messages_respects_runtime_context_budget(monkeypatch):
     gate = InferenceGate.__new__(InferenceGate)
-    long_system = "S" * 20_000
-    long_user = "U" * 12_000
+    long_system = "SYSTEM-HEAD\n" + ("S" * 20_000) + "\nSYSTEM-TAIL"
+    long_user = "USER-HEAD\n" + ("U" * 12_000) + "\nUSER-TAIL"
     long_assistant = "A" * 8_000
     messages = [
         {"role": "system", "content": long_system},
@@ -1157,7 +1214,23 @@ def test_compact_prebuilt_messages_respects_runtime_context_budget(monkeypatch):
 
     assert total_chars <= 15_000
     assert len(compact[0]["content"]) <= 9_000
+    assert compact[0]["content"].startswith("SYSTEM-HEAD")
+    assert compact[0]["content"].endswith("SYSTEM-TAIL")
     assert compact[-1]["content"].endswith("what I just said.")
+
+
+def test_compact_prebuilt_message_preserves_large_user_request_edges(monkeypatch):
+    gate = InferenceGate.__new__(InferenceGate)
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+
+    compact = gate._compact_prebuilt_message_content(
+        "user",
+        "REQUEST-START\n" + ("detail " * 3000) + "\nREQUEST-END",
+    )
+
+    assert compact.startswith("REQUEST-START")
+    assert compact.endswith("REQUEST-END")
+    assert "middle omitted for foreground context budget" in compact
 
 
 def test_compact_prebuilt_messages_uses_tighter_budget_for_deep_probes(monkeypatch):

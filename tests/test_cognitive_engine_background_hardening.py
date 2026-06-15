@@ -105,25 +105,14 @@ def test_cognitive_engine_preserves_desktop_origin_after_phase_derives(monkeypat
     assert committed_state.cognition.current_origin is None
 
 
-def test_cognitive_engine_context_patch_failure_is_reported(monkeypatch):
-    import core.brain.llm.context_assembler_patch as patch_module
-
-    tracker = get_degradation_tracker()
-    tracker.reset()
-
-    def _fail_patch():
-        attempted_patch = True
-        assert attempted_patch
-        raise RuntimeError("patch unavailable")
-
-    monkeypatch.setattr(patch_module, "patch_context_assembler", _fail_patch)
+def test_cognitive_engine_uses_canonical_context_assembler():
+    from core.brain.llm.context_assembler import ContextAssembler
 
     CognitiveEngine()
 
-    records = tracker.recent(subsystem="cognitive_engine", limit=1)
-    assert records
-    assert records[-1].action == "continued without optional context assembler patch"
-    tracker.reset()
+    assert ContextAssembler.build_system_prompt.__module__ == "core.brain.llm.context_assembler"
+    assert ContextAssembler.build_messages.__module__ == "core.brain.llm.context_assembler"
+    assert not getattr(ContextAssembler, "_patched_v1", False)
 
 
 @pytest.mark.asyncio

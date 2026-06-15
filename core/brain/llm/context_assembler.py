@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -10,7 +11,6 @@ try:
     import psutil
 except ImportError:
     psutil = None
-from typing import Any
 
 from core.brain.aura_persona import AURA_BIG_FIVE, AURA_FEW_SHOT_EXAMPLES, AURA_IDENTITY
 from core.runtime.conversation_support import build_conversational_context_blocks
@@ -467,16 +467,17 @@ class ContextAssembler:
             aura_now_block = ContextAssembler._build_aura_now_prompt_block(state, objective, compact=is_casual or elasticity >= 2)
 
         rolling_summary = ""
-        if elasticity < 3 and getattr(state.cognition, "rolling_summary", ""):
-            # At elasticity 2, cap to 600 chars instead of 1800
-            cap = 600 if elasticity >= 2 else 1800
+        if getattr(state.cognition, "rolling_summary", ""):
+            # Continuity becomes more important as the raw transcript grows.
+            # Keep a compact summary at maximum elasticity instead of deleting it.
+            cap = 400 if elasticity >= 3 else 600 if elasticity >= 2 else 1800
             rolling_summary = (
                 "## CONTINUITY SUMMARY\n"
                 f"{str(state.cognition.rolling_summary).strip()[:cap]}\n\n"
             )
 
         continuity_block = ""
-        continuity_obligations = (mods.get("continuity_obligations", {}) or {}) if elasticity < 3 else {}
+        continuity_obligations = mods.get("continuity_obligations", {}) or {}
         system_failure = mods.get("system_failure_state", {}) or {}
         if continuity_obligations:
             commitments = ", ".join((continuity_obligations.get("active_commitments", []) or [])[:3]) or "none"
@@ -488,20 +489,29 @@ class ContextAssembler:
                 if identity_mismatch else
                 "stable"
             )
-            continuity_block = (
-                "## TEMPORAL OBLIGATIONS\n"
-                f"- Session continuity: #{continuity_obligations.get('session_count', 0)}\n"
-                f"- Identity continuity: {continuity_status}\n"
-                f"- Gap carried forward: {float(continuity_obligations.get('gap_seconds', 0.0) or 0.0) / 3600.0:.2f} hours\n"
-                f"- Continuity pressure: {float(continuity_obligations.get('continuity_pressure', 0.0) or 0.0):.2f}\n"
-                f"- Re-entry burden: {continuity_obligations.get('continuity_scar') or 'light_trace'}\n"
-                f"- Previous objective: {continuity_obligations.get('current_objective') or 'none'}\n"
-                f"- Active commitments: {commitments}\n"
-                f"- Pending initiatives: {pending}\n"
-                f"- Active goals: {active_goals}\n"
-                f"- Contradictions carried forward: {continuity_obligations.get('contradiction_count', 0)}\n"
-                f"- Subject thread: {continuity_obligations.get('subject_thread') or 'none'}\n\n"
-            )
+            if elasticity >= 3:
+                continuity_block = (
+                    "## TEMPORAL OBLIGATIONS\n"
+                    f"Identity={continuity_status}; previous objective="
+                    f"{continuity_obligations.get('current_objective') or 'none'}; "
+                    f"commitments={commitments}; subject="
+                    f"{continuity_obligations.get('subject_thread') or 'none'}.\n\n"
+                )
+            else:
+                continuity_block = (
+                    "## TEMPORAL OBLIGATIONS\n"
+                    f"- Session continuity: #{continuity_obligations.get('session_count', 0)}\n"
+                    f"- Identity continuity: {continuity_status}\n"
+                    f"- Gap carried forward: {float(continuity_obligations.get('gap_seconds', 0.0) or 0.0) / 3600.0:.2f} hours\n"
+                    f"- Continuity pressure: {float(continuity_obligations.get('continuity_pressure', 0.0) or 0.0):.2f}\n"
+                    f"- Re-entry burden: {continuity_obligations.get('continuity_scar') or 'light_trace'}\n"
+                    f"- Previous objective: {continuity_obligations.get('current_objective') or 'none'}\n"
+                    f"- Active commitments: {commitments}\n"
+                    f"- Pending initiatives: {pending}\n"
+                    f"- Active goals: {active_goals}\n"
+                    f"- Contradictions carried forward: {continuity_obligations.get('contradiction_count', 0)}\n"
+                    f"- Subject thread: {continuity_obligations.get('subject_thread') or 'none'}\n\n"
+                )
 
         goal_execution_block = ""
         try:
@@ -781,13 +791,20 @@ class ContextAssembler:
         # [STABILITY v58] ZENITH PERSONA RELIANCE
         # For Sovereign and Trusted users, we trust the fine-tuning.
         # We strictly silence internal telemetry/vibes but PRESERVE tools and constraints.
+        elevated_trust = False
         try:
             from core.security.trust_engine import TrustLevel
             _trust_level = mods.get("trust_level", TrustLevel.GUEST)
-        except ImportError:
-            _trust_level = None
+            elevated_trust = _trust_level in (TrustLevel.SOVEREIGN, TrustLevel.TRUSTED)
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "context_assembler.trust",
+                exc,
+                severity="warning",
+                action="used guest prompt policy because trust context was unavailable",
+            )
 
-        if is_casual and _trust_level in (TrustLevel.SOVEREIGN, TrustLevel.TRUSTED):
+        if is_casual and elevated_trust:
             # 1. Identity + Requirements
             base = f"{identity_block}\n{requirements}\n"
             if aura_now_block:
@@ -795,6 +812,8 @@ class ContextAssembler:
             # 2. Vital continuity only
             if rolling_summary:
                 base += rolling_summary
+            if continuity_block:
+                base += continuity_block
             # 3. Social/Humor strategy
             if personhood_context:
                 base += personhood_context
@@ -814,6 +833,8 @@ class ContextAssembler:
             # 3. Continuity + Personhood
             if rolling_summary:
                 base += rolling_summary
+            if continuity_block:
+                base += continuity_block
             if personhood_context:
                 base += personhood_context
             if imagination_context:
@@ -943,14 +964,30 @@ class ContextAssembler:
 
         # ── World Model & Narrative ────────────────────────────────────────
         # Final World Model Beliefs
-        final_world = ServiceContainer.get("world_model", default=None)
-        if final_world and not is_casual:
-            base += f"\n{final_world.get_context_injection()}\n"
+        try:
+            final_world = ServiceContainer.get("world_model", default=None)
+            if final_world and not is_casual:
+                base += f"\n{final_world.get_context_injection()}\n"
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "context_assembler.world_model",
+                exc,
+                severity="warning",
+                action="continued prompt assembly without optional world-model context",
+            )
 
         # Narrative Identity Stability
-        narrative_id = ServiceContainer.get("narrative_identity", default=None)
-        if narrative_id and not is_casual:
-            base += f"\n{narrative_id.get_system_prompt_injection()}\n"
+        try:
+            narrative_id = ServiceContainer.get("narrative_identity", default=None)
+            if narrative_id and not is_casual:
+                base += f"\n{narrative_id.get_system_prompt_injection()}\n"
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "context_assembler.narrative_identity",
+                exc,
+                severity="warning",
+                action="continued prompt assembly without optional narrative context",
+            )
 
         # 6. Skill & Task Awareness — catalog so Aura knows what she can do
         #    CRITICAL: Only claim capability for skills that are actually registered.
@@ -1289,14 +1326,32 @@ class ContextAssembler:
             except (ImportError, AttributeError, RuntimeError):
                 max_tokens = 16384
 
-        char_limit = int(max_tokens) * 4  # Rough estimation: 1 token ~= 4 chars
+        char_limit = max(2048, int(max_tokens) * 4)  # Rough estimation: 1 token ~= 4 chars
         messages = []
         current_chars = 0
 
         def _estimate_chars(text: Any) -> int:
             return len(str(text))
 
-        # 1. PRIORITY 1: Core Identity & Constraints (Must Never Be Truncated)
+        def _fit_ends(text: Any, limit: int, marker: str) -> str:
+            clean = str(text or "")
+            if len(clean) <= limit:
+                return clean
+            if limit <= len(marker) + 2:
+                return clean[:max(0, limit)]
+            remaining = limit - len(marker)
+            head = max(1, remaining * 2 // 3)
+            tail = max(1, remaining - head)
+            return f"{clean[:head]}{marker}{clean[-tail:]}"
+
+        objective_text = str(objective or "")
+        # Both the governing system contract and the current user turn are
+        # mandatory. Reserve their budgets before admitting recalled/history
+        # context so an oversized prompt cannot create a negative slice.
+        user_budget = max(512, min(len(objective_text), int(char_limit * 0.42)))
+        system_budget = max(1024, char_limit - user_budget - 512)
+
+        # 1. PRIORITY 1: Core Identity & Constraints
         system_prompt = ContextAssembler.build_system_prompt(state)
         if cls._black_box_steering_enabled(state):
             dynamic_system = system_prompt
@@ -1318,21 +1373,38 @@ class ContextAssembler:
                     )
                     if goals_text:
                         dynamic_system += f"\nActive Drives: {goals_text}"
-            except (OSError, ConnectionError, TimeoutError):
+            except (OSError, ConnectionError, TimeoutError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "context_assembler.functional_state",
+                    exc,
+                    severity="warning",
+                    action="used the canonical system prompt without optional live-state enrichment",
+                )
                 dynamic_system = system_prompt
-        
+
+        dynamic_system = _fit_ends(
+            dynamic_system,
+            system_budget,
+            "\n\n[... optional system context omitted for budget ...]\n\n",
+        )
+
         system_msg = {"role": "system", "content": dynamic_system}
         messages.append(system_msg)
         current_chars += _estimate_chars(dynamic_system)
 
         # 2. PRIORITY 2: Current User Input
-        input_chars = _estimate_chars(objective)
-        if current_chars + input_chars > char_limit:
-            logger.critical("Input alone exceeds context limit! Forcing truncation.")
-            safe_input = objective[: (char_limit - current_chars - 100)] + "...[TRUNCATED]"
-            input_chars = _estimate_chars(safe_input)
-        else:
-            safe_input = objective
+        safe_input = _fit_ends(
+            objective_text,
+            user_budget,
+            "\n...[middle of current user input omitted for context budget]...\n",
+        )
+        input_chars = _estimate_chars(safe_input)
+        if safe_input != objective_text:
+            logger.warning(
+                "Current user input exceeded the %d-character foreground budget; "
+                "preserved its beginning and end.",
+                user_budget,
+            )
         
         # Note: input goes last, but we account for its size now.
 
@@ -1379,7 +1451,7 @@ class ContextAssembler:
         dropped_messages_count = 0
         
         if available_for_old_history > 500 and len(working_memory) > num_recent:
-            older_history = working_memory[:-num_recent]
+            older_history = working_memory[:-num_recent] if num_recent else working_memory
             old_retained = []
             for msg in reversed(older_history):
                 content = msg.get('content', '')
@@ -1388,11 +1460,7 @@ class ContextAssembler:
                     old_retained.insert(0, msg)
                     available_for_old_history -= msg_len
                     history_chars += msg_len
-                else:
-                    dropped_messages_count += 1
-                    
-            # Count the remaining messages that we didn't even iterate over
-            dropped_messages_count += (len(older_history) - len(old_retained) - (1 if dropped_messages_count > 0 else 0))
+            dropped_messages_count = len(older_history) - len(old_retained)
             
             retained_history = old_retained + retained_history
         elif len(working_memory) > num_recent:
@@ -1488,16 +1556,3 @@ class ContextAssembler:
             "  }\n"
             "}\n"
         )
-
-
-try:
-    from core.brain.llm.context_assembler_patch import patch_context_assembler
-
-    patch_context_assembler()
-except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-    record_degradation(
-        "context_assembler",
-        exc,
-        severity="warning",
-        action="continued with built-in context assembler because optional patch hook failed",
-    )
