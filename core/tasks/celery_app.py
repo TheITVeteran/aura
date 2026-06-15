@@ -37,9 +37,13 @@ if Celery is None or not getattr(config.redis, "enabled", True):
             return task
 
     celery_app = MockCelery()
+    # MockCelery.send_task only RECORDS tasks — callers must run work locally
+    # rather than hand it to a shim that never executes it.
+    CELERY_AVAILABLE = False
 else:
     redis_url = os.environ.get("REDIS_URL", config.redis.url)
     celery_app = Celery("aura_zenith", broker=redis_url, backend=redis_url)
+    CELERY_AVAILABLE = True
 
 # Configuration for Celery
 celery_app.conf.update(

@@ -280,8 +280,23 @@ class SafeModificationConfig(BaseModel):
 
 class RedisConfig(BaseModel):
     url: str = Field(default_factory=lambda: os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
-    enabled: bool = True
-    use_for_events: bool = True
+    # Desktop/consumer default: OFF. A consumer product must not require a local
+    # Redis server — a missing/crashed/firewalled broker would hang background
+    # tasks. When off, task dispatch runs in-process and events use the local
+    # bus, so no daemon is needed. Operators of distributed/server deployments
+    # opt in via AURA_REDIS_ENABLED=1 (and install the `distributed` extra).
+    enabled: bool = Field(
+        default_factory=lambda: os.environ.get("AURA_REDIS_ENABLED", "0")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
+    use_for_events: bool = Field(
+        default_factory=lambda: os.environ.get("AURA_REDIS_USE_FOR_EVENTS", "0")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
     required_for_events: bool = Field(
         default_factory=lambda: os.environ.get("AURA_REDIS_REQUIRED_FOR_EVENTS", "0")
         .strip()

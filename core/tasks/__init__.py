@@ -1,8 +1,9 @@
 import logging
+import threading
 
 from core.runtime.errors import record_degradation
 
-from .celery_app import celery_app
+from .celery_app import CELERY_AVAILABLE, celery_app
 from .managed_command import run_project_pytest, run_project_python
 
 logger = logging.getLogger("Aura.Tasks")
@@ -18,14 +19,65 @@ _RECOVERABLE_TASK_ERRORS = (
 )
 
 
+def _broker_active() -> bool:
+    """True only when a real Celery broker is configured AND importable.
+
+    Otherwise the active ``celery_app`` is the MockCelery shim, whose
+    ``send_task`` only RECORDS calls — work must run locally instead of being
+    handed to a no-op that silently drops it. The desktop/consumer default is
+    no broker (see RedisConfig in core/config.py).
+    """
+    from core.config import config
+
+    return CELERY_AVAILABLE and getattr(config.redis, "enabled", False)
+
+
 def dispatch_user_input(message: str):
     """Unified helper to dispatch user input, bypassing Celery to guarantee delivery."""
     try:
-        # Force local execution so the orchestrator actually receives the message
+        # Force local execution so the orchestrator actually receives the message.
+        # (process_user_input just publishes a fast, thread-safe EventBus event,
+        # which is itself Redis-bridged when running distributed.)
         process_user_input(message)
     except _RECOVERABLE_TASK_ERRORS as exc:
         record_degradation("tasks", exc)
         logger.error("Dispatch failed: %s.", exc)
+
+
+def dispatch_background(name: str, args=None, kwargs=None) -> str:
+    """Route a registered background task to Celery or a local daemon thread.
+
+    Returns the route taken: ``"celery"``, ``"local"`` or ``"skipped"``.
+
+    Running locally happens off the event loop (a daemon thread) so heavyweight
+    tasks (RL training, self-update) neither block the loop nor get silently
+    dropped by the MockCelery shim. The underlying entrypoints are themselves
+    bounded (see core/tasks/managed_command.py).
+    """
+    args = list(args or [])
+    kwargs = dict(kwargs or {})
+    if _broker_active():
+        try:
+            celery_app.send_task(name, args=args, kwargs=kwargs)
+            return "celery"
+        except _RECOVERABLE_TASK_ERRORS as exc:
+            record_degradation("tasks", exc)
+            logger.error("Celery dispatch of %s failed: %s. Running locally.", name, exc)
+    fn = _LOCAL_TASKS.get(name)
+    if fn is None:
+        logger.error("No local handler registered for background task %s; skipping.", name)
+        return "skipped"
+
+    def _runner():
+        try:
+            fn(*args, **kwargs)
+        except _RECOVERABLE_TASK_ERRORS as exc:
+            record_degradation("tasks", exc)
+            logger.error("Local background task %s failed: %s", name, exc)
+
+    short = name.rsplit(".", 1)[-1]
+    threading.Thread(target=_runner, name=f"aura-task-{short}", daemon=True).start()
+    return "local"
 
 # Configuration for Celery is now managed in core.tasks.celery_app
 
@@ -108,3 +160,14 @@ def run_mutation_tests(target_file: str):
     """Runs pytest in the background for code mutations."""
     logger.info("Running mutation tests for %s...", target_file)
     return run_project_pytest(target_file).mutation_payload()
+
+
+# Local handlers for dispatch_background when no Celery broker is configured.
+# Keep in sync with the @celery_app.task names above.
+_LOCAL_TASKS = {
+    "core.tasks.process_user_input": process_user_input,
+    "core.tasks.run_rl_training": run_rl_training,
+    "core.tasks.run_self_update": run_self_update,
+    "core.tasks.execute_skill_task": execute_skill_task,
+    "core.tasks.run_mutation_tests": run_mutation_tests,
+}

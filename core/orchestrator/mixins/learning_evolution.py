@@ -226,9 +226,9 @@ class LearningEvolutionMixin:
         """Trigger autonomous self-update (Fine-tuning)."""
         logger.info("🧬 EVO: Triggering self-update (GPU low-load window)...")
         try:
-            from core.tasks import celery_app
+            from core.tasks import dispatch_background
 
-            celery_app.send_task("core.tasks.run_self_update")
+            dispatch_background("core.tasks.run_self_update")
         except (ImportError, AttributeError, RuntimeError) as e:
             _record_learning_degradation(
                 e,

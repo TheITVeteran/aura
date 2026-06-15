@@ -28,8 +28,6 @@ dependencies = [
     "py2app>=0.28.0",                    # macOS app bundle
     "tenacity>=8.5.0",
     "sqlalchemy>=2.0.35",
-    "celery>=5.4.0",
-    "redis>=5.1.0",
     "playwright>=1.42.0",
     "playwright-stealth>=2.0.3",
     "piper-tts==1.4.2",
@@ -44,6 +42,13 @@ aura = "aura_main:main"
 voice-xtts = [
     "coqui-tts[codec]==0.27.5",
     "torchaudio==2.11.0",
+]
+# Distributed/server deployments only. The desktop/consumer build runs tasks
+# in-process (no broker) — see core/tasks.py and RedisConfig in core/config.py.
+# Enable with: pip install 'aura-zenith[distributed]' + AURA_REDIS_ENABLED=1
+distributed = [
+    "celery>=5.4.0",
+    "redis>=5.1.0",
 ]
 dev = [
     "pytest>=8.3.0",

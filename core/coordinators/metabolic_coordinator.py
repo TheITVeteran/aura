@@ -499,27 +499,16 @@ class MetabolicCoordinator:
                 try:
                     latent_summary = orch.latent_core.get_summary()
                     if hasattr(orch, 'predictive_model') and orch.predictive_model:
-                        try:
-                            from core.tasks import process_heavy_cognition
-                            process_heavy_cognition.delay(latent_summary)
-                            logger.info("🧠 Heavy cognition offloaded to worker queue.")
-                        except ImportError:
-                            logger.debug("Celery not available, routing math to native thread pool.")
-                            loop = asyncio.get_running_loop()
-                            await loop.run_in_executor(
-                                None,
-                                orch.predictive_model.observe_and_update,
-                                latent_summary
-                            )
-                        except _METABOLIC_BOUNDARY_ERRORS as e:
-                            _record_metabolic_degradation(e, action="heavy cognition queue failed; using executor")
-                            logger.debug("Delayed cognition failed: %s. Falling back...", e)
-                            loop = asyncio.get_running_loop()
-                            await loop.run_in_executor(
-                                None,
-                                orch.predictive_model.observe_and_update,
-                                latent_summary
-                            )
+                        # Heavy predictive math runs on the thread-pool executor so
+                        # it never blocks the event loop. This is the design — there
+                        # is no separate broker task for it — so we always run it
+                        # in-process rather than attempting a (nonexistent) offload.
+                        loop = asyncio.get_running_loop()
+                        await loop.run_in_executor(
+                            None,
+                            orch.predictive_model.observe_and_update,
+                            latent_summary,
+                        )
                 except _METABOLIC_BOUNDARY_ERRORS as lc_err:
                     _record_metabolic_degradation(lc_err, action="latent core heartbeat skipped")
                     logger.debug("Latent core heartbeat skipped: %s", lc_err)
@@ -1431,8 +1420,8 @@ class MetabolicCoordinator:
         """Trigger autonomous RL training."""
         logger.info("🧠 RL: Triggering policy optimization...")
         try:
-            from core.tasks import celery_app
-            celery_app.send_task("core.tasks.run_rl_training")
+            from core.tasks import dispatch_background
+            dispatch_background("core.tasks.run_rl_training")
         except _METABOLIC_BOUNDARY_ERRORS as e:
             _record_metabolic_degradation(e, action="RL training task dispatch failed")
             logger.error("RL training trigger failed: %s", e)
@@ -1441,8 +1430,8 @@ class MetabolicCoordinator:
         """Trigger autonomous self-update (Fine-tuning)."""
         logger.info("🧬 EVO: Triggering self-update (GPU low-load window)...")
         try:
-            from core.tasks import celery_app
-            celery_app.send_task("core.tasks.run_self_update")
+            from core.tasks import dispatch_background
+            dispatch_background("core.tasks.run_self_update")
         except _METABOLIC_BOUNDARY_ERRORS as e:
             _record_metabolic_degradation(e, action="self-update task dispatch failed")
             logger.error("Self-update trigger failed: %s", e)
