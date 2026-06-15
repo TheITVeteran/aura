@@ -227,6 +227,7 @@ _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S = _env_float(
     3.0,
     minimum=1.0,
 )
+_DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S = 8.0
 _CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME = "ChatTurnMemoryLogDrain"
 _CHAT_TURN_MEMORY_LOG_QUEUE_MAX = 64
 _CHAT_TURN_MEMORY_LOG_TIMEOUT_S = 20.0
@@ -2449,6 +2450,13 @@ async def _run_cognitive_engine_chat_turn(
             "Serving bounded desktop planning contract without foreground model allocation."
         )
         return bounded_planning_reply
+    if require_engine and timeout_s is not None and float(timeout_s) < _DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S:
+        logger.warning(
+            "Required desktop CognitiveEngine budget %.1fs is below %.1fs; refusing doomed foreground turn.",
+            float(timeout_s),
+            _DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S,
+        )
+        return None
     failure_mode_reply = _build_failure_mode_surface_reply(visible)
     if failure_mode_reply and require_engine:
         logger.info(

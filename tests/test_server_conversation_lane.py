@@ -2649,7 +2649,7 @@ async def test_desktop_cognitive_engine_repairs_weak_status_reply_before_fail_cl
         "How are you feeling? A lot of work has been done.",
         visible_user_message="How are you feeling? A lot of work has been done.",
         origin="user",
-        timeout_s=5.0,
+        timeout_s=10.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
@@ -2720,7 +2720,7 @@ async def test_desktop_cognitive_engine_retries_failed_reply_on_same_lane(monkey
         user_message,
         visible_user_message=user_message,
         origin="user",
-        timeout_s=5.0,
+        timeout_s=10.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
@@ -2781,7 +2781,7 @@ async def test_desktop_cognitive_engine_does_not_retry_failed_reply_by_default(m
         user_message,
         visible_user_message=user_message,
         origin="user",
-        timeout_s=5.0,
+        timeout_s=10.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
@@ -2845,7 +2845,7 @@ async def test_desktop_cognitive_engine_retries_empty_cycle_without_placeholder(
         user_message,
         visible_user_message=user_message,
         origin="user",
-        timeout_s=5.0,
+        timeout_s=10.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
@@ -3227,8 +3227,7 @@ async def test_desktop_required_cognitive_engine_timeout_does_not_retry_hidden_w
     )
 
     assert reply is None
-    assert len(calls) == 1
-    assert not any(call.get("unexpected_pool_retry") for call in calls)
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -3338,7 +3337,7 @@ async def test_desktop_cognitive_engine_keeps_preflight_context_out_of_objective
             "User message: Give me two concise sentences about reliable desktop tool use."
         ),
         origin="user",
-        timeout_s=5.0,
+        timeout_s=10.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
@@ -3426,6 +3425,30 @@ async def test_desktop_capability_inventory_uses_bounded_catalog_without_engine_
     assert "file_operation" in reply
     assert "not opening apps" in reply.lower()
     assert "will/authority" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_desktop_cognitive_engine_refuses_doomed_required_budget_before_allocation(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    def fake_get(name, default=None):
+        if name == "cognitive_engine":
+            raise AssertionError("doomed foreground budget must not allocate CognitiveEngine")
+        return default
+
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(fake_get))
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "Explain why long-running desktop conversations need stable memory continuity.",
+        visible_user_message="Explain why long-running desktop conversations need stable memory continuity.",
+        origin="user",
+        timeout_s=2.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply is None
 
 
 @pytest.mark.asyncio
