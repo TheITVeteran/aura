@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from collections import deque
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from core.consciousness.continuous_experience import (
 from core.container import ServiceContainer
 from core.environment.outcome_attribution import OutcomeAssessment
 from core.memory.procedural import ProceduralMemoryStore
+from core.runtime.atomic_writer import read_json_envelope
 from core.state.aura_state import AuraState
 from core.unity.runtime import UnityRuntime
 from core.unity.unity_state import BoundContent, UnityState
@@ -45,6 +47,46 @@ def test_continuous_experience_hash_chain_persists_and_replays(tmp_path):
     restored = ContinuousExperienceStream(persist_path=path)
     assert restored.validate_replay()["valid"] is True
     assert restored.current_frame.frame_hash == second.frame_hash
+
+
+def test_continuous_experience_persists_bounded_snapshot_and_append_journal(tmp_path, monkeypatch):
+    monkeypatch.setenv("AURA_CONTINUOUS_EXPERIENCE_SNAPSHOT_FRAMES", "25")
+    path = tmp_path / "stream.json"
+    stream = ContinuousExperienceStream(persist_path=path)
+    now = time.time()
+    latest = None
+
+    for idx in range(80):
+        latest = stream.append_frame(_frame(f"moment {idx}", timestamp=now + idx))
+
+    payload = read_json_envelope(path)["payload"]
+    assert len(payload["frames"]) == 25
+    assert payload["frame_count"] == 80
+    assert payload["latest_hash"] == latest.frame_hash
+    assert stream.journal_path is not None
+    journal_lines = stream.journal_path.read_text(encoding="utf-8").splitlines()
+    assert len(journal_lines) == 80
+    assert json.loads(journal_lines[-1])["frame_hash"] == latest.frame_hash
+
+    restored = ContinuousExperienceStream(persist_path=path)
+    assert len(restored.frames) == 25
+    assert restored.validate_replay()["valid"] is True
+    assert restored.current_frame.frame_hash == latest.frame_hash
+
+
+def test_continuous_experience_loads_from_journal_tail_when_snapshot_missing(tmp_path):
+    path = tmp_path / "stream.json"
+    stream = ContinuousExperienceStream(max_frames=30, persist_path=path)
+    latest = None
+    for idx in range(45):
+        latest = stream.append_frame(_frame(f"journal only {idx}", timestamp=time.time() + idx))
+    path.unlink()
+
+    restored = ContinuousExperienceStream(max_frames=30, persist_path=path)
+
+    assert len(restored.frames) == 30
+    assert restored.validate_replay()["valid"] is True
+    assert restored.current_frame.frame_hash == latest.frame_hash
 
 
 def test_unity_runtime_commits_movie_like_experience_frame(tmp_path):

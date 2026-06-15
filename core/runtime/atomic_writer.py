@@ -14,6 +14,7 @@ This module exposes:
 
 - atomic_write_bytes(path, payload)
 - atomic_write_text(path, text)
+- atomic_append_text(path, text)
 - atomic_write_json(path, obj, schema_version)
 
 with explicit schema-version envelopes so loaders can detect ancient
@@ -21,18 +22,17 @@ records and refuse rather than silently misread.
 """
 from __future__ import annotations
 
-
 import json
 import logging
 import os
 import tempfile
 import threading
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 logger = logging.getLogger("Aura.AtomicWriter")
 
-PathLike = Union[str, Path]
+PathLike = str | Path
 
 DEFAULT_TEMP_PREFIX = ".aura_atomic_"
 _append_locks: dict[Path, threading.Lock] = {}
@@ -79,7 +79,7 @@ def atomic_write_bytes(path: PathLike, payload: bytes) -> None:
             _fsync_file(fh.fileno())
         os.replace(tmp_path, target)
         _fsync_dir(parent)
-    except (OSError, IOError):
+    except OSError:
         try:
             if tmp_path.exists():
                 tmp_path.unlink()
@@ -93,21 +93,30 @@ def atomic_write_text(path: PathLike, text: str, *, encoding: str = "utf-8") -> 
 
 
 def atomic_append_text(path: PathLike, text: str, *, encoding: str = "utf-8") -> None:
-    """Atomically append text by replacing the target with old+new content.
-
-    This intentionally favors crash safety and auditability over raw append
-    speed. It prevents partial-line records from interrupted writes and gives
-    callers the same durable-replace semantics as ``atomic_write_text``.
-    """
+    """Durably append text without reading or rewriting the existing target."""
     target = Path(path)
     with _append_locks_guard:
         lock = _append_locks.setdefault(target.resolve(), threading.Lock())
     with lock:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
         try:
-            existing = target.read_bytes() if target.exists() else b""
+            fd = os.open(str(target), flags, 0o600)
         except OSError as exc:
-            raise AtomicWriteError(f"cannot read existing append target: {target}") from exc
-        atomic_write_bytes(target, existing + text.encode(encoding))
+            raise AtomicWriteError(f"cannot open append target: {target}") from exc
+        try:
+            payload = text.encode(encoding)
+            written = 0
+            while written < len(payload):
+                written += os.write(fd, payload[written:])
+            _fsync_file(fd)
+        except OSError as exc:
+            raise AtomicWriteError(f"cannot append to target: {target}") from exc
+        finally:
+            os.close(fd)
+        _fsync_dir(target.parent)
 
 
 def atomic_write_json(
@@ -115,8 +124,8 @@ def atomic_write_json(
     obj: Any,
     *,
     schema_version: int,
-    schema_name: Optional[str] = None,
-    indent: Optional[int] = 2,
+    schema_name: str | None = None,
+    indent: int | None = 2,
 ) -> None:
     """Atomically write a JSON envelope `{schema, version, payload}`."""
     if not isinstance(schema_version, int) or schema_version < 1:

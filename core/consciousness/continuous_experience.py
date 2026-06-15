@@ -20,11 +20,18 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from core.runtime.atomic_writer import AtomicWriteError, atomic_write_json, read_json_envelope
+from core.runtime.atomic_writer import (
+    AtomicWriteError,
+    atomic_append_text,
+    atomic_write_json,
+    read_json_envelope,
+)
 from core.runtime.errors import record_degradation
 
 STREAM_SCHEMA_VERSION = 1
 DEFAULT_MAX_FRAMES = 7200
+DEFAULT_SNAPSHOT_FRAME_LIMIT = 240
+DEFAULT_PENDING_JOURNAL_LIMIT = 1024
 PRIVATE_RETENTION_S = 24 * 60 * 60
 STANDARD_RETENTION_S = 30 * 24 * 60 * 60
 PUBLIC_REEL_LIMIT = 24
@@ -247,9 +254,19 @@ class ContinuousExperienceStream:
         self._episodes: dict[str, ExperienceEpisode] = {}
         self._scene_counter = 0
         self._compounding_report = CompoundingErrorReport(False)
+        self._snapshot_frame_limit = self._resolve_snapshot_frame_limit()
+        self._pending_journal_frames: deque[ExperienceFrame] = deque(
+            maxlen=max(64, min(self.max_frames, DEFAULT_PENDING_JOURNAL_LIMIT))
+        )
         self._lock = RLock()
-        if self.persist_path and self.persist_path.exists():
+        if self.persist_path and (self.persist_path.exists() or (self.journal_path and self.journal_path.exists())):
             self.load()
+
+    @property
+    def journal_path(self) -> Path | None:
+        if not self.persist_path:
+            return None
+        return self.persist_path.with_suffix(".jsonl")
 
     @property
     def frames(self) -> list[ExperienceFrame]:
@@ -284,6 +301,7 @@ class ContinuousExperienceStream:
                 previous_hash=previous.frame_hash if previous else "",
             )
             self._frames.append(committed)
+            self._pending_journal_frames.append(committed)
             self._episode_for(committed).add(committed)
             self._compounding_report = self._detect_compounding_errors_locked()
             self._enforce_retention_locked()
@@ -486,9 +504,9 @@ class ContinuousExperienceStream:
         return removed
 
     def validate_replay(self) -> dict[str, Any]:
-        previous_hash = ""
         with self._lock:
             frames = list(self._frames)
+        previous_hash = frames[0].previous_hash if frames and frames[0].sequence > 1 else ""
         for frame in frames:
             expected = frame.with_hashes(
                 sequence=frame.sequence,
@@ -511,6 +529,7 @@ class ContinuousExperienceStream:
         return {
             "valid": True,
             "frame_count": len(frames),
+            "replay_anchor_hash": frames[0].previous_hash if frames and frames[0].sequence > 1 else "",
             "latest_hash": previous_hash,
         }
 
@@ -518,14 +537,43 @@ class ContinuousExperienceStream:
         if not self.persist_path:
             return
         with self._lock:
+            pending = list(self._pending_journal_frames)
+            snapshot_frames = list(self._frames)[-self._snapshot_frame_limit :]
+            snapshot_frame_ids = {frame.frame_id for frame in snapshot_frames}
+            snapshot_episodes = [
+                episode.to_dict()
+                for episode in list(self._episodes.values())
+                if any(frame_id in snapshot_frame_ids for frame_id in episode.frame_ids)
+            ]
+            current = self._frames[-1] if self._frames else None
             payload = {
-                "frames": [frame.to_dict() for frame in list(self._frames)],
-                "episodes": [episode.to_dict() for episode in list(self._episodes.values())],
+                "frames": [frame.to_dict() for frame in snapshot_frames],
+                "episodes": snapshot_episodes,
                 "scene_counter": self._scene_counter,
                 "compounding_report": self._compounding_report.to_dict(),
+                "frame_count": len(self._frames),
+                "latest_hash": current.frame_hash if current else "",
+                "journal_path": str(self.journal_path) if self.journal_path else "",
                 "saved_at": time.time(),
             }
         try:
+            journal_path = self.journal_path
+            if journal_path and pending:
+                lines = "".join(
+                    json.dumps(frame.to_dict(), sort_keys=True, separators=(",", ":"), default=str) + "\n"
+                    for frame in pending
+                )
+                atomic_append_text(journal_path, lines)
+                pending_hashes = {frame.frame_hash for frame in pending}
+                with self._lock:
+                    self._pending_journal_frames = deque(
+                        (
+                            frame
+                            for frame in self._pending_journal_frames
+                            if frame.frame_hash not in pending_hashes
+                        ),
+                        maxlen=self._pending_journal_frames.maxlen,
+                    )
             atomic_write_json(
                 self.persist_path,
                 payload,
@@ -541,22 +589,26 @@ class ContinuousExperienceStream:
             )
 
     def load(self) -> None:
-        if not self.persist_path or not self.persist_path.exists():
+        if not self.persist_path:
             return
-        try:
-            envelope = read_json_envelope(self.persist_path)
-            payload = dict(envelope.get("payload") or {})
-        except AtomicWriteError:
+        payload: dict[str, Any] = {}
+        if self.persist_path.exists():
             try:
-                raw = json.loads(self.persist_path.read_text(encoding="utf-8"))
-                payload = raw if isinstance(raw, dict) else {}
-            except (OSError, json.JSONDecodeError):
-                raise
+                envelope = read_json_envelope(self.persist_path)
+                payload = dict(envelope.get("payload") or {})
+            except AtomicWriteError:
+                try:
+                    raw = json.loads(self.persist_path.read_text(encoding="utf-8"))
+                    payload = raw if isinstance(raw, dict) else {}
+                except (OSError, json.JSONDecodeError):
+                    raise
         frames = [
             ExperienceFrame.from_dict(item)
             for item in list(payload.get("frames") or [])
             if isinstance(item, dict)
         ]
+        if not frames:
+            frames = self._load_journal_tail(self.max_frames)
         with self._lock:
             self._frames = deque(frames[-self.max_frames :], maxlen=self.max_frames)
             self._episodes = {
@@ -564,6 +616,9 @@ class ContinuousExperienceStream:
                 for item in list(payload.get("episodes") or [])
                 if isinstance(item, dict) and item.get("scene_id")
             }
+            if not self._episodes:
+                for frame in self._frames:
+                    self._episode_for(frame).add(frame)
             self._scene_counter = int(payload.get("scene_counter", 0) or 0)
             report = payload.get("compounding_report") or {}
             self._compounding_report = CompoundingErrorReport(
@@ -574,6 +629,30 @@ class ContinuousExperienceStream:
                 affected_frame_ids=_as_tuple(report.get("affected_frame_ids")),
                 transfer_tags=_as_tuple(report.get("transfer_tags")),
             )
+            self._pending_journal_frames.clear()
+
+    def _resolve_snapshot_frame_limit(self) -> int:
+        raw = os.environ.get("AURA_CONTINUOUS_EXPERIENCE_SNAPSHOT_FRAMES", "")
+        try:
+            requested = int(raw) if raw else DEFAULT_SNAPSHOT_FRAME_LIMIT
+        except ValueError:
+            requested = DEFAULT_SNAPSHOT_FRAME_LIMIT
+        return max(20, min(self.max_frames, requested, 1000))
+
+    def _load_journal_tail(self, max_records: int) -> list[ExperienceFrame]:
+        journal_path = self.journal_path
+        if not journal_path or not journal_path.exists():
+            return []
+        lines = _read_text_tail_lines(journal_path, max_records=max_records)
+        frames: list[ExperienceFrame] = []
+        for line in lines:
+            try:
+                raw = json.loads(line)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(raw, dict):
+                frames.append(ExperienceFrame.from_dict(raw))
+        return frames[-max_records:]
 
     def _next_scene_id(self) -> str:
         self._scene_counter += 1
@@ -736,6 +815,25 @@ def get_continuous_experience_stream(
 def reset_continuous_experience_stream() -> None:
     global _CONTINUOUS_STREAM
     _CONTINUOUS_STREAM = None
+
+
+def _read_text_tail_lines(path: Path, *, max_records: int, chunk_size: int = 65536) -> list[str]:
+    if max_records <= 0:
+        return []
+    chunks: list[bytes] = []
+    remaining_newlines = max_records + 1
+    with path.open("rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        position = fh.tell()
+        while position > 0 and remaining_newlines > 0:
+            read_size = min(chunk_size, position)
+            position -= read_size
+            fh.seek(position)
+            chunk = fh.read(read_size)
+            chunks.append(chunk)
+            remaining_newlines -= chunk.count(b"\n")
+    data = b"".join(reversed(chunks))
+    return data.decode("utf-8", errors="replace").splitlines()[-max_records:]
 
 
 __all__ = [

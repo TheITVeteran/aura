@@ -4862,6 +4862,25 @@ def test_atomic_writer_rejects_invalid_schema_version(tmp_path):
         atomic_write_json(tmp_path / "x.json", {}, schema_version=0)
 
 
+def test_atomic_append_text_does_not_rewrite_existing_target(tmp_path, monkeypatch):
+    from core.runtime import atomic_writer
+
+    target = tmp_path / "events.jsonl"
+    target.write_text("old\n", encoding="utf-8")
+    replace_attempts = []
+
+    def _forbid_replace_write(*args, **kwargs):
+        replace_attempts.append((args, kwargs))
+        raise AssertionError("append must not rewrite existing file content")
+
+    monkeypatch.setattr(atomic_writer, "atomic_write_bytes", _forbid_replace_write)
+
+    atomic_writer.atomic_append_text(target, "new\n")
+
+    assert target.read_text(encoding="utf-8").splitlines() == ["old", "new"]
+    assert replace_attempts == []
+
+
 def test_atomic_writer_cleanup_partial_writes(tmp_path):
     from core.runtime.atomic_writer import (
         DEFAULT_TEMP_PREFIX,
