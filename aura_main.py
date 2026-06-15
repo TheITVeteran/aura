@@ -142,6 +142,37 @@ def _foreground_only_runtime() -> bool:
     return _env_flag("AURA_FOREGROUND_ONLY", False)
 
 
+def _bounded_memory_ceiling_mb(
+    total_mb: float,
+    requested_mb: Any | None = None,
+    *,
+    absolute_ceiling_mb: float = 46080.0,
+    ceiling_fraction: float = 0.70,
+    floor_mb: float = 8192.0,
+) -> float:
+    """Return a host-safe memory kill ceiling.
+
+    Environment overrides are useful for lab runs, but a stale or excessive
+    value must not let the live desktop process grow until macOS kills the
+    whole machine. Unsafe overrides require an explicit opt-in flag.
+    """
+
+    try:
+        total = max(float(total_mb), floor_mb)
+    except (TypeError, ValueError, OverflowError):
+        total = 65536.0
+    safe_ceiling = min(float(absolute_ceiling_mb), max(float(floor_mb), total * float(ceiling_fraction)))
+    if requested_mb is None:
+        return safe_ceiling
+    try:
+        requested = max(float(floor_mb), float(requested_mb))
+    except (TypeError, ValueError, OverflowError):
+        return safe_ceiling
+    if _env_flag("AURA_ALLOW_UNSAFE_MEMORY_LIMITS", False):
+        return requested
+    return min(requested, safe_ceiling)
+
+
 def _should_start_keep_awake_controller() -> bool:
     """Start macOS keep-awake only from the root Aura process.
 
@@ -1096,8 +1127,10 @@ def _install_systemwide_memory_protection() -> None:
         try:
             from core.container import ServiceContainer
 
-            lethal_mb = float(
-                os.environ.get("AURA_MEMWATCH_LETHAL_MB", "") or min(46080.0, total_mb * 0.70)
+            configured_lethal = os.environ.get("AURA_MEMWATCH_LETHAL_MB", "").strip()
+            lethal_mb = _bounded_memory_ceiling_mb(
+                total_mb,
+                configured_lethal if configured_lethal else None,
             )
             sentinel_interval_s = float(os.environ.get("AURA_MEMORY_SENTINEL_INTERVAL_S", "1.0") or 1.0)
             sentinel_log = Path("data/error_logs/memory")
