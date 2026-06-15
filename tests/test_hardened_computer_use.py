@@ -329,6 +329,7 @@ async def test_computer_use_create_folder_uses_allowed_artifact_roots(monkeypatc
 
     assert result["ok"] is True
     assert result["action"] == "create_folder"
+    assert result["effect_verified"] is True
     assert Path(result["path"]) == target
     assert target.is_dir()
 
@@ -417,6 +418,8 @@ async def test_computer_use_clipboard_actions_use_system_clipboard(monkeypatch):
     assert set_result["ok"] is True
     assert set_result["action"] == "set_clipboard"
     assert set_result["chars"] == 11
+    assert set_result["effect_verified"] is True
+    assert len(set_result["sha256"]) == 64
     assert set_result["welfare_transaction_id"]
     assert set_result["welfare_transaction_outcome"] == "success"
     assert get_result["ok"] is True
@@ -481,10 +484,48 @@ async def test_computer_use_desktop_file_pdf_and_move_receipts(monkeypatch, tmp_
     assert rendered["bytes"] > 100
     assert not source_pdf.exists()
     assert moved["ok"] is True
+    assert moved["effect_verified"] is True
+    assert len(moved["sha256"]) == 64
     assert moved_pdf.exists()
     assert moved_pdf.read_bytes().startswith(b"%PDF")
     assert written["ok"] is True
+    assert written["effect_verified"] is True
+    assert len(written["sha256"]) == 64
     assert receipt_file.read_text() == "moved PDF into proof folder"
+
+
+def test_desktop_artifact_verifier_rejects_unproven_mutations():
+    from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
+
+    cases = (
+        (
+            DesktopTaskStep(action="create_folder", target={"path": "Aura Proof"}),
+            {"ok": True, "path": "Aura Proof"},
+        ),
+        (
+            DesktopTaskStep(
+                action="write_text_file",
+                target={"path": "Aura Proof/note.txt", "content": "hello"},
+            ),
+            {"ok": True, "path": "Aura Proof/note.txt", "bytes": 5},
+        ),
+        (
+            DesktopTaskStep(action="set_clipboard", target="hello"),
+            {"ok": True, "chars": 5},
+        ),
+        (
+            DesktopTaskStep(
+                action="move_file",
+                target={"source": "a.txt", "destination": "b.txt"},
+            ),
+            {"ok": True, "destination": "b.txt", "bytes": 5},
+        ),
+    )
+
+    verifier = DesktopTaskSkill()
+    for step, result in cases:
+        verified, _evidence = verifier._verify_step_effect(step, result)
+        assert verified is False
 
 
 @pytest.mark.asyncio
@@ -800,6 +841,11 @@ async def test_open_url_targets_named_browser(monkeypatch):
     monkeypatch.setattr(
         "core.skills.computer_use.get_subprocess_gateway",
         lambda: FakeSubprocessGateway(),
+    )
+    monkeypatch.setattr(
+        skill,
+        "_wait_for_frontmost_app",
+        lambda expected: asyncio.sleep(0, result=(True, expected)),
     )
 
     target = json.dumps(

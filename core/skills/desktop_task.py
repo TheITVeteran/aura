@@ -933,6 +933,10 @@ class DesktopTaskSkill(BaseSkill):
                 return parsed
         return {}
 
+    @staticmethod
+    def _valid_sha256(value: Any) -> bool:
+        return bool(re.fullmatch(r"[0-9a-f]{64}", str(value or "").strip().lower()))
+
     @classmethod
     def _replace_document_body_tokens(cls, value: Any, document_body: str) -> Any:
         if not document_body:
@@ -975,7 +979,13 @@ class DesktopTaskSkill(BaseSkill):
         payload = cls._target_payload(step.target)
         if action == "create_folder":
             path = str(result.get("path") or "").strip()
-            return (bool(path), f"folder_path={path}" if path else "missing created folder path")
+            verified = bool(path) and bool(result.get("effect_verified"))
+            return (
+                verified,
+                f"folder_path={path};verified=true"
+                if verified
+                else str(result.get("verification") or "missing confirmed folder path"),
+            )
         if action == "open_app":
             opened = str(result.get("opened") or "").strip()
             frontmost = str(result.get("frontmost_app") or "").strip()
@@ -1007,7 +1017,14 @@ class DesktopTaskSkill(BaseSkill):
             content = str(payload.get("content") or "")
             if content and bytes_written <= 0:
                 return False, "non-empty file write reported zero bytes"
-            return True, f"path={path};bytes={bytes_written}"
+            digest = str(result.get("sha256") or "").strip()
+            verified = bool(result.get("effect_verified")) and cls._valid_sha256(digest)
+            return (
+                verified,
+                f"path={path};bytes={bytes_written};sha256={digest}"
+                if verified
+                else str(result.get("verification") or "missing file content read-back"),
+            )
         if action == "render_text_pdf":
             path = str(result.get("path") or "").strip()
             bytes_written = result.get("bytes")
@@ -1021,7 +1038,14 @@ class DesktopTaskSkill(BaseSkill):
                 return False, "missing rendered PDF page count"
             if not isinstance(chars, int) or chars <= 0:
                 return False, "missing rendered PDF character count"
-            return True, f"path={path};bytes={bytes_written};pages={pages};chars={chars}"
+            digest = str(result.get("sha256") or "").strip()
+            verified = bool(result.get("effect_verified")) and cls._valid_sha256(digest)
+            return (
+                verified,
+                f"path={path};bytes={bytes_written};pages={pages};chars={chars};sha256={digest}"
+                if verified
+                else str(result.get("verification") or "missing persisted PDF verification"),
+            )
         if action == "fetch_topic_image":
             img_path = str(result.get("path") or "").strip()
             img_bytes = result.get("bytes")
@@ -1030,7 +1054,14 @@ class DesktopTaskSkill(BaseSkill):
                 return False, "missing fetched image path"
             if not isinstance(img_bytes, int) or img_bytes <= 0:
                 return False, "missing fetched image byte count"
-            return True, f"path={img_path};bytes={img_bytes};source={page_url}"
+            digest = str(result.get("sha256") or "").strip()
+            verified = bool(result.get("effect_verified")) and cls._valid_sha256(digest)
+            return (
+                verified,
+                f"path={img_path};bytes={img_bytes};source={page_url};sha256={digest}"
+                if verified
+                else str(result.get("verification") or "missing downloaded image read-back"),
+            )
         if action == "system_control":
             domain = str(result.get("domain") or "").strip()
             applied = str(result.get("applied") or "").strip()
@@ -1049,12 +1080,25 @@ class DesktopTaskSkill(BaseSkill):
                 return False, "missing moved destination path"
             if not isinstance(bytes_moved, int) or bytes_moved < 0:
                 return False, "missing moved byte count"
-            return True, f"destination={destination};bytes={bytes_moved}"
+            verified = bool(result.get("effect_verified"))
+            return (
+                verified,
+                f"destination={destination};bytes={bytes_moved};verified=true"
+                if verified
+                else str(result.get("verification") or "missing move postcondition"),
+            )
         if action == "set_clipboard":
             chars = result.get("chars")
             if not isinstance(chars, int) or chars < 0:
                 return False, "missing clipboard character count"
-            return True, f"clipboard_chars={chars}"
+            digest = str(result.get("sha256") or "").strip()
+            verified = bool(result.get("effect_verified")) and cls._valid_sha256(digest)
+            return (
+                verified,
+                f"clipboard_chars={chars};sha256={digest}"
+                if verified
+                else str(result.get("verification") or "missing exact clipboard read-back"),
+            )
         if action == "get_clipboard":
             chars = result.get("chars")
             text = result.get("text")

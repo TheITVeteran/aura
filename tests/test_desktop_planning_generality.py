@@ -56,10 +56,20 @@ class _GovernedEngineDouble:
                 "effect_verified": True,
             }
         if action == "create_folder":
-            return {"ok": True, "path": parsed.get("path") or target}
+            return {
+                "ok": True,
+                "path": parsed.get("path") or target,
+                "effect_verified": True,
+            }
         if action == "write_text_file":
             content = str(parsed.get("content") or "")
-            return {"ok": True, "path": parsed.get("path"), "bytes": len(content)}
+            return {
+                "ok": True,
+                "path": parsed.get("path"),
+                "bytes": len(content),
+                "sha256": "0" * 64,
+                "effect_verified": True,
+            }
         if action == "render_text_pdf":
             content = str(parsed.get("content") or "")
             return {
@@ -68,11 +78,23 @@ class _GovernedEngineDouble:
                 "bytes": max(1, len(content)),
                 "pages": 1 + len(content) // 1800,
                 "chars": max(1, len(content)),
+                "sha256": "0" * 64,
+                "effect_verified": True,
             }
         if action == "move_file":
-            return {"ok": True, "destination": parsed.get("destination"), "bytes": 1024}
+            return {
+                "ok": True,
+                "destination": parsed.get("destination"),
+                "bytes": 1024,
+                "effect_verified": True,
+            }
         if action == "set_clipboard":
-            return {"ok": True, "chars": len(str(parsed.get("text") or target))}
+            return {
+                "ok": True,
+                "chars": len(str(parsed.get("text") or target)),
+                "sha256": "0" * 64,
+                "effect_verified": True,
+            }
         if action == "hotkey":
             return {
                 "ok": True,

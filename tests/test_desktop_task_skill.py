@@ -13,7 +13,12 @@ def _fake_computer_use_result(params):
     except (TypeError, json.JSONDecodeError):
         payload = {}
     if action == "create_folder":
-        return {"ok": True, "action": action, "path": payload.get("path", "Aura Proof")}
+        return {
+            "ok": True,
+            "action": action,
+            "path": payload.get("path", "Aura Proof"),
+            "effect_verified": True,
+        }
     if action == "open_app":
         return {
             "ok": True,
@@ -41,6 +46,8 @@ def _fake_computer_use_result(params):
             "action": action,
             "path": payload.get("path", "Aura Proof/receipt.txt"),
             "bytes": len(content.encode("utf-8")),
+            "sha256": "0" * 64,
+            "effect_verified": True,
         }
     if action == "fetch_topic_image":
         return {
@@ -51,6 +58,8 @@ def _fake_computer_use_result(params):
             "image_url": "https://upload.wikimedia.org/example.png",
             "page_url": "https://en.wikipedia.org/wiki/Robot",
             "topic": payload.get("topic", ""),
+            "sha256": "0" * 64,
+            "effect_verified": True,
         }
     if action == "render_text_pdf":
         body = str(payload.get("body") or "")
@@ -61,6 +70,8 @@ def _fake_computer_use_result(params):
             "bytes": max(128, len(body.encode("utf-8"))),
             "pages": 1,
             "chars": len(body),
+            "sha256": "0" * 64,
+            "effect_verified": True,
         }
     if action == "move_file":
         return {
@@ -68,9 +79,16 @@ def _fake_computer_use_result(params):
             "action": action,
             "destination": payload.get("destination", "Aura Proof/moved.txt"),
             "bytes": 12,
+            "effect_verified": True,
         }
     if action == "set_clipboard":
-        return {"ok": True, "action": action, "chars": len(str(target))}
+        return {
+            "ok": True,
+            "action": action,
+            "chars": len(str(target)),
+            "sha256": "0" * 64,
+            "effect_verified": True,
+        }
     if action == "hotkey":
         return {
             "ok": True,

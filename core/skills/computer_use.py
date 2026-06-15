@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -479,16 +480,34 @@ end tell
         return text
 
     def _set_clipboard(self, text: str) -> dict[str, Any]:
+        expected = str(text or "")
         result = get_subprocess_gateway().run(
             ["pbcopy"],
-            input=str(text or ""),
+            input=expected,
             capture_output=True,
             timeout=5,
             source="computer_use",
         )
         if result.returncode != 0:
             return {"ok": False, "error": (result.stderr or result.stdout or "pbcopy failed").strip()}
-        return {"ok": True, "action": "set_clipboard", "chars": len(str(text or ""))}
+        observed = self._get_clipboard()
+        actual = str(observed.get("text") or "") if observed.get("ok") else ""
+        verified = bool(observed.get("ok")) and actual == expected
+        response = {
+            "ok": verified,
+            "action": "set_clipboard",
+            "chars": len(expected),
+            "sha256": hashlib.sha256(expected.encode("utf-8")).hexdigest(),
+            "effect_verified": verified,
+            "verification": (
+                "Clipboard read-back matched the requested text."
+                if verified
+                else "Clipboard write completed, but exact read-back did not match."
+            ),
+        }
+        if not verified:
+            response["error"] = response["verification"]
+        return response
 
     @staticmethod
     def _get_clipboard() -> dict[str, Any]:
@@ -555,6 +574,21 @@ end tell
                 return candidate
         raise FileExistsError(f"No free versioned name for {path}")
 
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _has_pdf_header(path: Path) -> bool:
+        if not path.is_file() or path.stat().st_size <= 0:
+            return False
+        with path.open("rb") as handle:
+            return handle.read(5) == b"%PDF-"
+
     def _write_text_file(self, target: str) -> dict[str, Any]:
         payload = self._target_json(target)
         path = self._resolve_allowed_desktop_path(payload.get("path"))
@@ -565,13 +599,24 @@ end tell
             path = self._versioned_path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, content, encoding="utf-8")
+        expected_digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        actual_digest = self._file_sha256(path)
+        verified = path.is_file() and actual_digest == expected_digest
         return {
-            "ok": True,
+            "ok": verified,
             "action": "write_text_file",
             "path": str(path),
             "requested_path": str(requested),
             "versioned": path != requested,
             "bytes": path.stat().st_size,
+            "sha256": actual_digest,
+            "effect_verified": verified,
+            "verification": (
+                "File content matched after atomic write."
+                if verified
+                else "File write completed, but content read-back did not match."
+            ),
+            **({} if verified else {"error": "File content verification failed."}),
         }
 
     def _create_folder(self, target: str) -> dict[str, Any]:
@@ -581,11 +626,19 @@ end tell
         if existed and not path.is_dir():
             return {"ok": False, "error": f"Path exists and is not a folder: {path}"}
         path.mkdir(parents=True, exist_ok=True)
+        verified = path.is_dir()
         return {
-            "ok": True,
+            "ok": verified,
             "action": "create_folder",
             "path": str(path),
             "existed": existed,
+            "effect_verified": verified,
+            "verification": (
+                "Folder existence confirmed."
+                if verified
+                else "Folder creation returned without a readable directory."
+            ),
+            **({} if verified else {"error": "Folder existence verification failed."}),
         }
 
     async def _apply_system_control(self, target: str) -> dict[str, Any]:
@@ -760,14 +813,25 @@ end tell
             }
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_bytes(path, raw)
+        expected_digest = hashlib.sha256(raw).hexdigest()
+        actual_digest = self._file_sha256(path)
+        verified = path.is_file() and actual_digest == expected_digest
         return {
-            "ok": True,
+            "ok": verified,
             "action": "fetch_topic_image",
             "path": str(path),
             "bytes": len(raw),
+            "sha256": actual_digest,
             "image_url": image_url,
             "page_url": page_url,
             "topic": topic,
+            "effect_verified": verified,
+            "verification": (
+                "Downloaded image matched the governed network response."
+                if verified
+                else "Downloaded image did not match the governed network response."
+            ),
+            **({} if verified else {"error": "Downloaded image verification failed."}),
         }
 
     def _move_file(self, target: str) -> dict[str, Any]:
@@ -775,17 +839,33 @@ end tell
         source = self._resolve_allowed_desktop_path(payload.get("source"), must_exist=True)
         destination = self._resolve_allowed_desktop_path(payload.get("destination"))
         overwrite = bool(payload.get("overwrite", False))
+        source_was_file = source.is_file()
+        source_digest = self._file_sha256(source) if source_was_file else ""
         if destination.exists() and not overwrite:
             destination = self._versioned_path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         moved_to = shutil.move(str(source), str(destination))
         final_path = Path(moved_to).resolve(strict=True)
+        destination_digest = self._file_sha256(final_path) if source_was_file else ""
+        verified = (
+            not source.exists()
+            and final_path.exists()
+            and (not source_was_file or destination_digest == source_digest)
+        )
         return {
-            "ok": True,
+            "ok": verified,
             "action": "move_file",
             "source": str(source),
             "destination": str(final_path),
             "bytes": final_path.stat().st_size,
+            "sha256": destination_digest,
+            "effect_verified": verified,
+            "verification": (
+                "Destination exists, source is absent, and content matched."
+                if verified
+                else "Move completed without a matching postcondition."
+            ),
+            **({} if verified else {"error": "Moved artifact verification failed."}),
         }
 
     def _render_text_pdf_quartz(
@@ -900,7 +980,7 @@ end tell
             return None
 
         result: dict[str, Any] = {
-            "ok": True,
+            "ok": bool(path.exists() and path.stat().st_size > 0),
             "action": "render_text_pdf",
             "path": str(path),
             "renderer": "quartz_text_layer",
@@ -909,6 +989,18 @@ end tell
             "pages": max(1, page_count),
             "chars": len(title) + len(body),
         }
+        result["sha256"] = self._file_sha256(path) if result["ok"] else ""
+        result["effect_verified"] = bool(
+            result["ok"] and self._has_pdf_header(path)
+        )
+        result["ok"] = result["effect_verified"]
+        result["verification"] = (
+            "PDF header and persisted content confirmed."
+            if result["effect_verified"]
+            else "PDF renderer returned without a valid persisted PDF."
+        )
+        if not result["ok"]:
+            result["error"] = result["verification"]
         if image_error:
             result["image_error"] = image_error
         return result
@@ -1014,13 +1106,22 @@ end tell
         path.parent.mkdir(parents=True, exist_ok=True)
         first, rest = pages[0], pages[1:]
         first.save(path, "PDF", resolution=72.0, save_all=bool(rest), append_images=rest)
+        verified = self._has_pdf_header(path)
         return {
-            "ok": True,
+            "ok": verified,
             "action": "render_text_pdf",
             "path": str(path),
             "bytes": path.stat().st_size,
             "pages": len(pages),
             "chars": len(safe_body),
+            "sha256": self._file_sha256(path),
+            "effect_verified": verified,
+            "verification": (
+                "PDF header and persisted content confirmed."
+                if verified
+                else "PDF renderer returned without a valid persisted PDF."
+            ),
+            **({} if verified else {"error": "PDF artifact verification failed."}),
         }
 
     def _safe_directory_walk(self, start_dir: str, max_depth: int = 4, max_files: int = 250) -> str:

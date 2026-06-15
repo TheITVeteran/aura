@@ -123,10 +123,20 @@ class _GovernedEngineDouble:
                 "effect_verified": True,
             }
         if action == "create_folder":
-            return {"ok": True, "path": parsed.get("path") or target}
+            return {
+                "ok": True,
+                "path": parsed.get("path") or target,
+                "effect_verified": True,
+            }
         if action == "write_text_file":
             content = str(parsed.get("content") or "")
-            return {"ok": True, "path": parsed.get("path"), "bytes": len(content)}
+            return {
+                "ok": True,
+                "path": parsed.get("path"),
+                "bytes": len(content),
+                "sha256": "0" * 64,
+                "effect_verified": True,
+            }
         if action == "open_url":
             return {
                 "ok": True,
@@ -142,9 +152,16 @@ class _GovernedEngineDouble:
                 "bytes": max(1, len(content)),
                 "pages": 1,
                 "chars": max(1, len(content)),
+                "sha256": "0" * 64,
+                "effect_verified": True,
             }
         if action == "move_file":
-            return {"ok": True, "destination": parsed.get("destination"), "bytes": 4096}
+            return {
+                "ok": True,
+                "destination": parsed.get("destination"),
+                "bytes": 4096,
+                "effect_verified": True,
+            }
         return {"ok": True}
 
 
