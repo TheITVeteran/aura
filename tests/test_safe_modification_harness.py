@@ -43,6 +43,41 @@ def test_harness_runs_related_pytest_before_passing(tmp_path: Path) -> None:
 
     assert result.passed is True
     assert result.checks["pytest"] is True
+    assert result.checks["candidate_overlay"] is True
+    assert result.checks["source_immutable"] is True
+
+
+def test_harness_runs_pytest_against_candidate_bytes(tmp_path: Path) -> None:
+    source = tmp_path / "pkg" / "calculator.py"
+    tests = tmp_path / "tests" / "test_calculator.py"
+    source.parent.mkdir(parents=True)
+    tests.parent.mkdir(parents=True)
+    source.write_text(
+        "def add(a: int, b: int) -> int:\n    return a + b\n",
+        encoding="utf-8",
+    )
+    tests.write_text(
+        "from pkg.calculator import add\n\n"
+        "def test_add():\n"
+        "    assert add(2, 3) == 5\n",
+        encoding="utf-8",
+    )
+
+    staged = "def add(a: int, b: int) -> int:\n    return a - b\n"
+    result = asyncio.run(
+        SafeModificationHarness(tmp_path).run(
+            ["pkg/calculator.py"],
+            patch_content={"pkg/calculator.py": staged},
+        )
+    )
+
+    assert result.passed is False
+    assert result.checks["candidate_overlay"] is True
+    assert result.checks["pytest"] is False
+    assert result.checks["source_immutable"] is True
+    assert source.read_text(encoding="utf-8") == (
+        "def add(a: int, b: int) -> int:\n    return a + b\n"
+    )
 
 
 def test_harness_treats_changed_test_file_as_coverage(tmp_path: Path) -> None:
@@ -110,5 +145,14 @@ def test_harness_routes_temp_compile_and_pytest_through_gateways(tmp_path: Path,
     assert "core.self_modification.safe_modification_harness.rollback_backup" in file_write_sources
     assert subprocess_calls
     argv, kwargs = subprocess_calls[0]
-    assert argv[:4] == (harness_mod.sys.executable, "-m", "pytest", "-x")
+    assert argv[:6] == (
+        harness_mod.sys.executable,
+        "-m",
+        "pytest",
+        "-p",
+        "pytest_asyncio.plugin",
+        "-x",
+    )
     assert kwargs["source"] == "core.self_modification.safe_modification_harness.pytest"
+    assert kwargs["cwd"] != tmp_path
+    assert kwargs["env"]["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"

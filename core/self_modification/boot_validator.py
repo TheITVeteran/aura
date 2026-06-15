@@ -5,9 +5,9 @@ Verifies that Aura can still initialize after code modifications.
 import asyncio
 import logging
 import os
-import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -101,39 +101,48 @@ class GhostBootValidator:
 
         logger.info("👻 Starting Ghost Boot validation in %s...", sandbox_path)
 
-        # We use a specialized minimal boot script to speed up validation
-        # and avoid side effects (like connecting to real APIs)
-        boot_script = sandbox_path / ".ghost_boot.py"
-
-        overlay_target: Path | None = None
-        overlay_backup: bytes | None = None
-        overlay_had_original = False
+        validation_root = sandbox_path
+        isolated_workspace: tempfile.TemporaryDirectory[str] | None = None
+        boot_script = validation_root / ".ghost_boot.py"
 
         try:
-            await asyncio.to_thread(sandbox_path.mkdir, parents=True, exist_ok=True)
-            await asyncio.to_thread(self._create_minimal_boot_script, boot_script)
-
             if overlay_file:
                 target_file, staging_file = overlay_file
-                overlay_target = _sandbox_path(sandbox_path, target_file)
+                requested_target = _sandbox_path(sandbox_path, target_file)
                 staging_path = Path(staging_file)
                 staging_exists = await asyncio.to_thread(staging_path.exists)
                 if not staging_exists:
                     raise FileNotFoundError(f"ghost boot staging file missing: {staging_path}")
-                await asyncio.to_thread(overlay_target.parent.mkdir, parents=True, exist_ok=True)
-                overlay_had_original = await asyncio.to_thread(overlay_target.exists)
-                if overlay_had_original:
-                    overlay_backup = await asyncio.to_thread(overlay_target.read_bytes)
-                await asyncio.to_thread(shutil.copy2, staging_path, overlay_target)
+                sandbox_root = await asyncio.to_thread(sandbox_path.resolve)
+                relative_target = requested_target.relative_to(sandbox_root).as_posix()
+                staged_content = await asyncio.to_thread(staging_path.read_text, encoding="utf-8")
+                isolated_workspace = tempfile.TemporaryDirectory(
+                    prefix="aura-ghost-boot-candidate-"
+                )
+                validation_root = Path(isolated_workspace.name)
+                from core.self_modification.safe_modification_harness import (
+                    SafeModificationHarness,
+                )
+
+                harness = SafeModificationHarness(sandbox_path)
+                await asyncio.to_thread(
+                    harness.prepare_candidate_workspace,
+                    validation_root,
+                    {relative_target: staged_content},
+                )
+
+            await asyncio.to_thread(validation_root.mkdir, parents=True, exist_ok=True)
+            boot_script = validation_root / ".ghost_boot.py"
+            await asyncio.to_thread(self._create_minimal_boot_script, boot_script)
 
             # Run the boot script in a subprocess
             env = os.environ.copy()
-            env["PYTHONPATH"] = str(sandbox_path)
+            env["PYTHONPATH"] = str(validation_root)
             env["AURA_GHOST_BOOT"] = "1"  # Flag to skip heavy systems
 
             process = await get_subprocess_gateway().spawn_async(
                 [sys.executable, str(boot_script)],
-                cwd=str(sandbox_path),
+                cwd=str(validation_root),
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -174,20 +183,6 @@ class GhostBootValidator:
             logger.error("Ghost Boot execution error: %s", e)
             return False, str(e)
         finally:
-            if overlay_target is not None:
-                try:
-                    if overlay_had_original and overlay_backup is not None:
-                        await asyncio.to_thread(overlay_target.write_bytes, overlay_backup)
-                    elif await asyncio.to_thread(overlay_target.exists):
-                        await asyncio.to_thread(overlay_target.unlink)
-                except _BOOT_RECOVERABLE_ERRORS as e:
-                    _record_boot_degradation(
-                        e,
-                        action="left ghost boot overlay for operator cleanup after restore failed",
-                        stage="cleanup.overlay_restore",
-                        extra={"overlay_target": str(overlay_target)},
-                    )
-                    logger.debug("Failed to restore ghost boot overlay: %s", e)
             if await asyncio.to_thread(boot_script.exists):
                 try:
                     await asyncio.to_thread(boot_script.unlink)
@@ -199,6 +194,8 @@ class GhostBootValidator:
                         extra={"boot_script": str(boot_script)},
                     )
                     logger.debug("Failed to unlink ghost boot script: %s", e)
+            if isolated_workspace is not None:
+                await asyncio.to_thread(isolated_workspace.cleanup)
 
     def _create_minimal_boot_script(self, script_path: Path):
         """Creates a script that initializes key Aura subsystems for verification."""

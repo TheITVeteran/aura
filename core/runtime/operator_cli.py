@@ -108,7 +108,13 @@ def _is_writable(p: Path) -> bool:
 
 @register("conformance")
 def cmd_conformance(args: argparse.Namespace) -> Dict[str, Any]:
-    """Run the canonical invariant proofs against an empty registry snapshot."""
+    """Run static invariant proofs against a complete contract fixture.
+
+    This command validates conformance logic and launch-source contracts. It
+    intentionally does not claim that a currently running Aura instance was
+    observed; live ownership and liveness are reported by activation audit,
+    the runtime manifest, and the health contract.
+    """
     from core.runtime.conformance import (
         ConformanceReport,
         proof_boot_readiness,
@@ -126,17 +132,30 @@ def cmd_conformance(args: argparse.Namespace) -> Dict[str, Any]:
     report = ConformanceReport()
     report.results.append(proof_runtime_singularity(snapshot))
     report.results.append(proof_service_graph(snapshot))
-    report.results.append(proof_boot_readiness("READY", {"vault": True, "model": True}))
+    report.results.append(proof_boot_readiness("ready", {"vault": True, "model": True}))
     tmp = Path.home() / ".aura" / "conformance_probe"
     tmp.mkdir(parents=True, exist_ok=True)
     report.results.append(proof_persistence_atomic(tmp))
-    report.results.append(proof_event_delivery([{"status": "delivered"}], dispatched=1))
-    report.results.append(proof_shutdown_ordering(["output_flush", "memory_commit"]))
+    report.results.append(
+        proof_event_delivery(
+            [{"event_id": "contract-fixture-1", "status": "delivered"}],
+            dispatched=1,
+        )
+    )
+    from core.runtime.shutdown_coordinator import SHUTDOWN_PHASES
+
+    report.results.append(proof_shutdown_ordering(list(SHUTDOWN_PHASES)))
     main_path = Path(__file__).resolve().parent.parent.parent / "aura_main.py"
     main_src = main_path.read_text(encoding="utf-8") if main_path.exists() else ""
     report.results.append(proof_launch_authority(main_src))
     report.results.append(proof_strict_mode([]))
-    return {"command": "conformance", "ok": report.passed, "report": report.to_dict()}
+    return {
+        "command": "conformance",
+        "ok": report.passed,
+        "evidence_scope": "static_contract_fixture",
+        "live_runtime_verified": False,
+        "report": report.to_dict(),
+    }
 
 
 # --- backup / restore -------------------------------------------------------

@@ -20,6 +20,7 @@ import logging
 import os
 import py_compile
 import resource
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,26 @@ ALLOWED_SUBPROCESS_CALLERS = frozenset({
     "core/self_modification/safe_modification_harness.py",
     "core/self_modification/code_repair.py",  # ruff mechanical repair only
     "core/architect/ghost_boot.py",
+})
+
+_WORKSPACE_EXCLUDED_PARTS = frozenset({
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    ".venv_aura",
+    "__pycache__",
+    "artifacts",
+    "build",
+    "data",
+    "dist",
+    "logs",
+    "model_weights",
+    "models",
+    "node_modules",
+    "scratch",
+    "venv",
 })
 
 
@@ -86,6 +107,7 @@ class SafeModificationHarness:
         checks: dict[str, bool] = {}
         errors: list[str] = []
         baseline_rss_mb = self._current_rss_mb()
+        source_hashes_before = self._source_hashes(changed_files)
 
         # Use patch_content if provided, otherwise read from disk
         file_contents: dict[str, str] = {}
@@ -115,10 +137,37 @@ class SafeModificationHarness:
         checks["py_compile"] = compile_ok
         errors.extend(compile_errors)
 
-        # Check 3: pytest (if test files exist)
-        test_ok, test_errors = await self._check_pytest(changed_files)
-        checks["pytest"] = test_ok
-        errors.extend(test_errors)
+        # Check 3: pytest against the exact candidate bytes in an isolated
+        # workspace. Running tests in the live tree would exercise the old
+        # implementation and could falsely approve a broken patch.
+        try:
+            with tempfile.TemporaryDirectory(prefix="aura-candidate-workspace-") as tmpdir:
+                candidate_root = Path(tmpdir)
+                await asyncio.to_thread(
+                    self.prepare_candidate_workspace,
+                    candidate_root,
+                    file_contents,
+                )
+                overlay_ok, overlay_errors = self._verify_candidate_overlay(
+                    candidate_root,
+                    file_contents,
+                )
+                checks["candidate_overlay"] = overlay_ok
+                errors.extend(overlay_errors)
+                if overlay_ok:
+                    test_ok, test_errors = await self._check_pytest(
+                        changed_files,
+                        candidate_root=candidate_root,
+                    )
+                else:
+                    test_ok = False
+                    test_errors = ["candidate overlay verification failed"]
+                checks["pytest"] = test_ok
+                errors.extend(test_errors)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            checks["candidate_overlay"] = False
+            checks["pytest"] = False
+            errors.append(f"candidate workspace failed: {exc}")
 
         # Check 4: Resource delta
         resource_ok, resource_errors = self._check_resource_delta(baseline_rss_mb)
@@ -129,6 +178,12 @@ class SafeModificationHarness:
         rollback_ok, rollback_errors = await asyncio.to_thread(self._check_rollback_drill, changed_files)
         checks["rollback_drill"] = rollback_ok
         errors.extend(rollback_errors)
+
+        source_hashes_after = self._source_hashes(changed_files)
+        source_immutable = source_hashes_before == source_hashes_after
+        checks["source_immutable"] = source_immutable
+        if not source_immutable:
+            errors.append("live source changed while validating candidate workspace")
 
         passed = all(checks.values())
         duration = time.monotonic() - started
@@ -191,8 +246,105 @@ class SafeModificationHarness:
                     errors.append(f"py_compile failed for {fpath}: {e}")
         return len(errors) == 0, errors
 
-    async def _check_pytest(self, changed_files: list[str]) -> tuple[bool, list[str]]:
-        """Run pytest on related test files without importing the module."""
+    def _source_hashes(self, changed_files: list[str]) -> dict[str, str]:
+        hashes: dict[str, str] = {}
+        for relative in changed_files:
+            path = self.codebase_root / relative
+            if path.is_file():
+                hashes[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+        return hashes
+
+    def _workspace_files(self) -> list[Path]:
+        git_marker = self.codebase_root / ".git"
+        if git_marker.exists():
+            try:
+                result = get_subprocess_gateway().run(
+                    [
+                        "git",
+                        "-C",
+                        str(self.codebase_root),
+                        "ls-files",
+                        "-z",
+                        "--cached",
+                    ],
+                    capture_output=True,
+                    timeout=20,
+                    read_only=True,
+                    source="self_modification.safe_modification_harness.git_ls_files",
+                )
+                if result.returncode == 0:
+                    return [
+                        self.codebase_root / relative
+                        for relative in result.stdout.split("\0")
+                        if relative
+                    ]
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                pass
+        return [
+            path
+            for path in self.codebase_root.rglob("*")
+            if path.is_file()
+            and not set(path.relative_to(self.codebase_root).parts).intersection(
+                _WORKSPACE_EXCLUDED_PARTS
+            )
+        ]
+
+    def prepare_candidate_workspace(
+        self,
+        candidate_root: Path,
+        file_contents: dict[str, str],
+    ) -> None:
+        """Populate an isolated source tree and apply exact candidate bytes."""
+        for source in self._workspace_files():
+            try:
+                relative = source.relative_to(self.codebase_root)
+            except ValueError:
+                continue
+            if set(relative.parts).intersection(_WORKSPACE_EXCLUDED_PARTS):
+                continue
+            destination = candidate_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if relative.as_posix() in file_contents:
+                shutil.copy2(source, destination)
+                continue
+            try:
+                os.link(source, destination)
+            except OSError:
+                shutil.copy2(source, destination)
+
+        gateway = get_file_write_gateway()
+        for relative, content in file_contents.items():
+            gateway.write_text(
+                candidate_root / relative,
+                content,
+                encoding="utf-8",
+                source="core.self_modification.safe_modification_harness.candidate_overlay",
+            )
+
+    @staticmethod
+    def _verify_candidate_overlay(
+        candidate_root: Path,
+        file_contents: dict[str, str],
+    ) -> tuple[bool, list[str]]:
+        errors: list[str] = []
+        for relative, expected in file_contents.items():
+            candidate = candidate_root / relative
+            try:
+                actual = candidate.read_text(encoding="utf-8")
+            except OSError as exc:
+                errors.append(f"candidate overlay unreadable for {relative}: {exc}")
+                continue
+            if actual != expected:
+                errors.append(f"candidate overlay content mismatch for {relative}")
+        return not errors, errors
+
+    async def _check_pytest(
+        self,
+        changed_files: list[str],
+        *,
+        candidate_root: Path,
+    ) -> tuple[bool, list[str]]:
+        """Run related pytest files against the isolated candidate workspace."""
         errors: list[str] = []
         test_files: list[str] = []
 
@@ -213,7 +365,7 @@ class SafeModificationHarness:
                 f"tests/test_{base}.py",
             ]
             for tc in test_candidates:
-                if (self.codebase_root / tc).exists():
+                if (candidate_root / tc).exists():
                     test_files.append(tc)
 
         if not test_files:
@@ -227,12 +379,22 @@ class SafeModificationHarness:
         try:
             env = dict(os.environ)
             existing_pp = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = str(self.codebase_root) + (os.pathsep + existing_pp if existing_pp else "")
+            env["PYTHONPATH"] = str(candidate_root) + (os.pathsep + existing_pp if existing_pp else "")
+            env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+            env["AURA_TEST_MODE"] = "1"
             result = await get_subprocess_gateway().run_async(
-                [sys.executable, "-m", "pytest", "-x"] + test_files,
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "-p",
+                    "pytest_asyncio.plugin",
+                    "-x",
+                ]
+                + test_files,
                 capture_output=True,
                 timeout=60,
-                cwd=self.codebase_root,
+                cwd=candidate_root,
                 env=env,
                 source="core.self_modification.safe_modification_harness.pytest",
             )

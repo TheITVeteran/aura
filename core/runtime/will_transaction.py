@@ -18,25 +18,24 @@ Behavior:
 - approved=False -> the block runs but txn.approved is False; callers
   must short-circuit. Recording a result on a denied transaction is a
   hard error.
-- approved=True -> callers must call txn.record_result(...) before exit
-  in strict mode, otherwise a degraded event is logged.
+- approved=True -> callers must call txn.record_result(...) with non-empty
+  effect evidence before exit or the transaction raises.
 - the receipt is always returned via txn.receipt_id and is queryable
   through UnifiedWill.verify_receipt().
 
 The transaction never silently fails open: if Will is unavailable or
 raises, the transaction is treated as DENIED and a violation is logged.
 """
+
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
 
 import asyncio
 import logging
-import os
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.WillTransaction")
 
@@ -51,11 +50,11 @@ class WillTransactionRecord:
     cause: str
     started_at: float
     decision: Any = None
-    receipt_id: Optional[str] = None
+    receipt_id: str | None = None
     approved: bool = False
-    result: Optional[Dict[str, Any]] = None
-    finished_at: Optional[float] = None
-    failure: Optional[str] = None
+    result: dict[str, Any] | None = None
+    finished_at: float | None = None
+    failure: str | None = None
 
 
 class WillTransactionError(RuntimeError):
@@ -70,7 +69,7 @@ class WillTransaction:
         domain: str,
         action: str,
         cause: str,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
         will: Any = None,
     ):
         self.record = WillTransactionRecord(
@@ -89,7 +88,7 @@ class WillTransaction:
         return self.record.approved
 
     @property
-    def receipt_id(self) -> Optional[str]:
+    def receipt_id(self) -> str | None:
         return self.record.receipt_id
 
     @property
@@ -98,7 +97,7 @@ class WillTransaction:
 
     # --- async context ------------------------------------------------------
 
-    async def __aenter__(self) -> "WillTransaction":
+    async def __aenter__(self) -> WillTransaction:
         if self._entered:
             raise WillTransactionError("WillTransaction may not be re-entered")
         self._entered = True
@@ -107,8 +106,43 @@ class WillTransaction:
             decision = await self._invoke_decide(will)
             self.record.decision = decision
             approved = self._is_approved(decision)
-            self.record.approved = approved
             self.record.receipt_id = self._extract_receipt_id(decision)
+            if approved and not self.record.receipt_id:
+                error = RuntimeError("approved Will decision did not include a receipt")
+                record_degradation("will_transaction", error)
+                self.record.approved = False
+                self.record.failure = str(error)
+                logger.error(
+                    "WillTransaction governance violation: domain=%s action=%s: %s",
+                    self.record.domain,
+                    self.record.action,
+                    error,
+                )
+                return self
+            if approved:
+                verify_receipt = getattr(will, "verify_receipt", None)
+                try:
+                    receipt_verified = callable(verify_receipt) and bool(
+                        verify_receipt(str(self.record.receipt_id))
+                    )
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    receipt_verified = False
+                    logger.error("WillTransaction receipt verification failed: %s", exc)
+                if not receipt_verified:
+                    error = RuntimeError(
+                        "approved Will receipt was not recognized by its issuing authority"
+                    )
+                    record_degradation("will_transaction", error)
+                    self.record.approved = False
+                    self.record.failure = str(error)
+                    logger.error(
+                        "WillTransaction governance violation: domain=%s action=%s: %s",
+                        self.record.domain,
+                        self.record.action,
+                        error,
+                    )
+                    return self
+            self.record.approved = approved
             if not approved:
                 logger.info(
                     "WillTransaction DENIED: domain=%s action=%s cause=%s",
@@ -117,7 +151,7 @@ class WillTransaction:
                     self.record.cause,
                 )
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('will_transaction', exc)
+            record_degradation("will_transaction", exc)
             self.record.approved = False
             self.record.failure = repr(exc)
             logger.error(
@@ -131,35 +165,36 @@ class WillTransaction:
         if exc is not None:
             self.record.failure = self.record.failure or repr(exc)
             return False  # propagate
-        if (
-            self.record.approved
-            and self.record.result is None
-            and not self._committed
-            and os.environ.get("AURA_STRICT_RUNTIME") == "1"
-        ):
+        if self.record.approved and self.record.result is None and not self._committed:
+            error = WillTransactionError(
+                "approved WillTransaction exited without post-action effect evidence"
+            )
+            self.record.failure = str(error)
+            record_degradation("will_transaction", error)
             logger.error(
                 "WillTransaction approved but no result recorded; "
                 "potential ungoverned-effect path. domain=%s action=%s",
                 self.record.domain,
                 self.record.action,
             )
+            raise error
         return False
 
     # --- caller surface -----------------------------------------------------
 
-    def record_result(self, result: Dict[str, Any]) -> None:
+    def record_result(self, result: dict[str, Any]) -> None:
         if not self.record.approved:
-            raise WillTransactionError(
-                "cannot record result on a denied WillTransaction"
-            )
+            raise WillTransactionError("cannot record result on a denied WillTransaction")
         if self._committed:
+            raise WillTransactionError("WillTransaction result already recorded")
+        if not isinstance(result, dict) or not result:
             raise WillTransactionError(
-                "WillTransaction result already recorded"
+                "post-action effect evidence must be a non-empty dictionary"
             )
-        self.record.result = dict(result or {})
+        self.record.result = dict(result)
         self._committed = True
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "domain": self.record.domain,
             "action": self.record.action,
@@ -182,7 +217,7 @@ class WillTransaction:
 
             return get_will()
         except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation('will_transaction', exc)
+            record_degradation("will_transaction", exc)
             logger.debug("UnifiedWill unavailable: %s", exc)
             return None
 
@@ -234,7 +269,7 @@ class WillTransaction:
         return bool(decision)
 
     @staticmethod
-    def _extract_receipt_id(decision: Any) -> Optional[str]:
+    def _extract_receipt_id(decision: Any) -> str | None:
         if decision is None:
             return None
         if isinstance(decision, dict):

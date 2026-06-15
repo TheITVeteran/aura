@@ -901,10 +901,11 @@ class SafeSelfModification:
                 await self.git.delete_branch(branch_name)
             return False, f"Safe modification harness failed: {harness_msg}"
 
-        # Stage 4: Run comprehensive tests
-        # For now, we trust the sandbox tests
-        # Run full test suite
-        full_suite_passed = await self._run_full_test_suite()
+        # Stage 4b: Parse the remaining repository Python tree. The exact
+        # candidate bytes and related tests already ran in the isolated
+        # promotion harness above; this catches unrelated syntax damage
+        # without pretending to be a second behavioral test suite.
+        repository_parse_passed = await self._run_full_test_suite()
 
         # v6.2: Core Boot Integrity Check (Ghost Boot)
         ghost_boot_passed = True
@@ -920,7 +921,9 @@ class SafeSelfModification:
                 logger.error("✗ Ghost Boot FAILED in Quarantine: %s", ghost_msg)
 
         tests_passed = (
-            test_results.get("success", False) and full_suite_passed and ghost_boot_passed
+            test_results.get("success", False)
+            and repository_parse_passed
+            and ghost_boot_passed
         )
 
         if not tests_passed:
@@ -1249,12 +1252,12 @@ class SafeSelfModification:
             return False
 
     async def _run_full_test_suite(self) -> bool:
-        """Verify modified files using AST parsing instead of executing tests.
+        """Compatibility wrapper for repository-wide Python parse validation.
 
-        C-05 FIX: Replaced subprocess pytest execution with static AST
-        validation. Running pytest in production is dangerous because:
-        1. Tests may not exist in production deployments
-        2. Test imports can execute production code with side effects
-        3. The 60s timeout blocks the calling thread
+        Behavioral tests run against the exact staged bytes in
+        ``SafeModificationHarness``. This additional check parses all production
+        Python files so promotion also fails if the surrounding tree is already
+        syntactically invalid. The legacy method name remains for callers and
+        test doubles; it must not be reported as a full behavioral suite.
         """
         return await asyncio.to_thread(self._validate_python_tree_parse)

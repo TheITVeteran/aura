@@ -35,7 +35,9 @@ from core.self_modification.mutation_safety import (
 logger = logging.getLogger("Aura.SelfRepairLadder")
 
 _PROBE_FAILURES = (
+    AssertionError,
     AttributeError,
+    ImportError,
     LookupError,
     OSError,
     RuntimeError,
@@ -110,7 +112,10 @@ class LadderReport:
 
     @property
     def passed(self) -> bool:
-        return bool(self.rungs) and all(r.ok for r in self.rungs)
+        return (
+            [result.rung for result in self.rungs] == list(CANONICAL_RUNGS)
+            and all(result.ok for result in self.rungs)
+        )
 
     @property
     def first_failure(self) -> RungResult | None:
@@ -220,7 +225,7 @@ def _check_import(patch_source: str, module_name: str = "aura_self_repair_candid
 
 async def _run_probe(rung: str, probe: Probe | None) -> RungResult:
     if probe is None:
-        return RungResult(rung, True, reason="no probe provided")
+        return RungResult(rung, False, reason="required probe missing")
     try:
         result = probe()
         if hasattr(result, "__await__"):
@@ -289,5 +294,4 @@ async def validate_patch(
 
 def patch_is_acceptable(report: LadderReport) -> bool:
     """A patch may land only when every canonical rung is present and ok."""
-    rung_names = {r.rung for r in report.rungs if r.ok}
-    return all(name in rung_names for name in CANONICAL_RUNGS)
+    return report.passed

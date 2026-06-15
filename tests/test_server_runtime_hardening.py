@@ -4658,6 +4658,9 @@ class _StubWill:
             return _wrap()
         return decision
 
+    def verify_receipt(self, receipt_id):
+        return receipt_id == "rcpt-1" and self._approved and not self._raises
+
 
 @pytest.mark.asyncio
 async def test_will_transaction_records_receipt_when_approved():
@@ -4696,6 +4699,21 @@ async def test_will_transaction_denied_block_skips_effect():
 
 
 @pytest.mark.asyncio
+async def test_will_transaction_rejects_empty_effect_evidence():
+    from core.runtime.will_transaction import WillTransaction, WillTransactionError
+
+    will = _StubWill(approved=True)
+    with pytest.raises(WillTransactionError, match="non-empty dictionary"):
+        async with WillTransaction(
+            domain="state",
+            action="mutate",
+            cause="autonomy",
+            will=will,
+        ) as txn:
+            txn.record_result({})
+
+
+@pytest.mark.asyncio
 async def test_will_transaction_failure_treated_as_denied():
     from core.runtime.will_transaction import WillTransaction
 
@@ -4706,16 +4724,46 @@ async def test_will_transaction_failure_treated_as_denied():
 
 
 @pytest.mark.asyncio
-async def test_will_transaction_strict_mode_logs_missing_result(caplog, monkeypatch):
-    from core.runtime.will_transaction import WillTransaction
+async def test_will_transaction_rejects_missing_result(caplog):
+    from core.runtime.will_transaction import WillTransaction, WillTransactionError
 
-    monkeypatch.setenv("AURA_STRICT_RUNTIME", "1")
     will = _StubWill(approved=True)
     with caplog.at_level("ERROR", logger="Aura.WillTransaction"):
-        async with WillTransaction(domain="output", action="emit", cause="cli", will=will):
-            # forget to record_result
-            pass
+        with pytest.raises(WillTransactionError):
+            async with WillTransaction(domain="output", action="emit", cause="cli", will=will):
+                pass
     assert any("approved but no result recorded" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_will_transaction_rejects_approval_without_receipt():
+    from core.runtime.will_transaction import WillTransaction, WillTransactionError
+
+    class ReceiptlessWill(_StubWill):
+        def decide(self, *args, **kwargs):
+            decision = super().decide(*args, **kwargs)
+            decision["receipt_id"] = None
+            return decision
+
+    will = ReceiptlessWill(approved=True)
+    async with WillTransaction(domain="output", action="emit", cause="cli", will=will) as txn:
+        assert txn.approved is False
+        assert txn.record.failure == "approved Will decision did not include a receipt"
+        with pytest.raises(WillTransactionError):
+            txn.record_result({"emitted": True})
+
+
+@pytest.mark.asyncio
+async def test_will_transaction_rejects_forged_receipt():
+    from core.runtime.will_transaction import WillTransaction, WillTransactionError
+
+    will = _StubWill(approved=True)
+    will.verify_receipt = lambda _receipt_id: False
+    async with WillTransaction(domain="output", action="emit", cause="cli", will=will) as txn:
+        assert txn.approved is False
+        assert "not recognized" in str(txn.record.failure)
+        with pytest.raises(WillTransactionError):
+            txn.record_result({"emitted": True})
 
 
 @pytest.mark.asyncio
@@ -4725,7 +4773,7 @@ async def test_will_transaction_cannot_be_reentered():
     will = _StubWill(approved=True)
     txn = WillTransaction(domain="memory", action="write", cause="user", will=will)
     async with txn:
-        pass
+        txn.record_result({"bytes": 1})
     with pytest.raises(WillTransactionError):
         async with txn:
             pass
@@ -4977,14 +5025,13 @@ async def test_self_repair_ladder_rejects_pure_syntax_pass():
         validate_patch,
     )
 
-    # Valid syntax but no probes provided -> targeted rung etc. pass with
-    # "no probe provided" but they still record ok=True. So we explicitly
-    # check that the ladder *requires* probes to assert acceptance.
     report = await validate_patch("x = 1\n")
-    # Without probes, rungs default-pass; that is fine for the unit test —
-    # we ensure the dedicated assertion below catches the audit's concern.
-    assert report.passed
-    assert patch_is_acceptable(report)
+    assert report.passed is False
+    assert patch_is_acceptable(report) is False
+    failure = report.first_failure
+    assert failure is not None
+    assert failure.rung == "targeted"
+    assert failure.reason == "required probe missing"
 
 
 @pytest.mark.asyncio
@@ -5129,7 +5176,13 @@ async def test_self_repair_ladder_collects_all_failures_when_requested():
     )
     report = await validate_patch("z = 3\n", probes=probes, stop_on_first_failure=False)
     failed = [r for r in report.rungs if not r.ok]
-    assert {r.rung for r in failed} == {"targeted", "boot_smoke"}
+    assert {r.rung for r in failed} == {
+        "targeted",
+        "boot_smoke",
+        "one_turn",
+        "shutdown",
+        "rollback",
+    }
 
 
 @pytest.mark.asyncio
@@ -5146,6 +5199,11 @@ async def test_self_repair_ladder_acceptance_requires_all_rungs():
 
     full = LadderReport(rungs=[RungResult(rung=name, ok=True) for name in CANONICAL_RUNGS])
     assert patch_is_acceptable(full) is True
+
+    out_of_order = LadderReport(
+        rungs=[RungResult(rung=name, ok=True) for name in reversed(CANONICAL_RUNGS)]
+    )
+    assert patch_is_acceptable(out_of_order) is False
 
 
 # ==========================================================================
@@ -5175,6 +5233,10 @@ def test_conformance_runtime_singularity_passes_clean_registry():
     snapshot = _clean_registered_snapshot()
     result = proof_runtime_singularity(snapshot)
     assert result.ok is True
+    assert "owner_id" not in result.evidence
+    assert result.evidence["owner"] == "orchestrator"
+    assert result.evidence["owner_type"] == "builtins.object"
+    assert result.evidence["resolved_aliases"] == ["orchestrator"]
 
 
 def test_conformance_service_graph_flags_duplicate_aliases():
@@ -5187,13 +5249,29 @@ def test_conformance_service_graph_flags_duplicate_aliases():
     assert "aura_runtime" in result.detail
 
 
+def test_conformance_service_graph_rejects_missing_critical_owner():
+    from core.runtime.conformance import proof_service_graph
+
+    snapshot = _clean_registered_snapshot()
+    snapshot.pop("model_runtime")
+    result = proof_service_graph(snapshot)
+    assert result.ok is False
+    assert "model" in result.detail
+    assert "no canonical owner registered" in result.detail
+
+
 def test_conformance_boot_readiness_rejects_lying_ready():
     from core.runtime.conformance import proof_boot_readiness
 
     bad = proof_boot_readiness("READY", {"vault": False, "model": True})
     assert bad.ok is False
-    good = proof_boot_readiness("READY", {"vault": True, "model": True})
+    lowercase_bad = proof_boot_readiness("ready", {"vault": False, "model": True})
+    assert lowercase_bad.ok is False
+    empty = proof_boot_readiness("ready", {})
+    assert empty.ok is False
+    good = proof_boot_readiness("ready", {"vault": True, "model": True})
     assert good.ok is True
+    assert good.evidence["phase"] == "ready"
 
 
 def test_conformance_persistence_flags_temp_leftovers(tmp_path):
@@ -5206,6 +5284,8 @@ def test_conformance_persistence_flags_temp_leftovers(tmp_path):
     (tmp_path / f"{DEFAULT_TEMP_PREFIX}stale").unlink()
     good = proof_persistence_atomic(tmp_path)
     assert good.ok is True
+    assert "dir" not in good.evidence
+    assert good.evidence == {"target_exists": True, "files": 0}
 
 
 def test_conformance_event_delivery_demands_audit_for_every_event():
@@ -5220,17 +5300,38 @@ def test_conformance_event_delivery_demands_audit_for_every_event():
     good_log = audit_log + [{"status": "rejected", "reason": "policy_denied"}]
     good = proof_event_delivery(good_log, dispatched=3)
     assert good.ok is True
+    assert good.evidence["identity_verified"] is False
+
+    duplicate_ids = [
+        {"event_id": "evt-1", "status": "delivered"},
+        {"event_id": "evt-1", "status": "delivered"},
+    ]
+    duplicate = proof_event_delivery(duplicate_ids, dispatched=2)
+    assert duplicate.ok is False
+    assert "duplicate event_id" in duplicate.detail
+
+    identified = proof_event_delivery(
+        [
+            {"event_id": "evt-1", "status": "delivered"},
+            {"event_id": "evt-2", "status": "rejected", "reason": "policy_denied"},
+        ],
+        dispatched=2,
+    )
+    assert identified.ok is True
+    assert identified.evidence["identity_verified"] is True
 
 
 def test_conformance_shutdown_ordering_rejects_swap():
+    from core.runtime.shutdown_coordinator import SHUTDOWN_PHASES
     from core.runtime.conformance import proof_shutdown_ordering
 
     bad = proof_shutdown_ordering(["state_vault", "memory_commit", "actors"])
     assert bad.ok is False
-    good = proof_shutdown_ordering(
-        ["output_flush", "memory_commit", "state_vault", "actors", "model_runtime"]
-    )
+    partial = proof_shutdown_ordering(list(SHUTDOWN_PHASES[:-1]))
+    assert partial.ok is False
+    good = proof_shutdown_ordering(list(SHUTDOWN_PHASES))
     assert good.ok is True
+    assert good.evidence["complete"] is True
 
 
 @pytest.mark.asyncio
@@ -5254,6 +5355,24 @@ async def test_conformance_governance_requires_receipt_and_result():
 
     bad = await proof_governance_receipt(_action_no_result)
     assert bad.ok is False
+    assert "post-action effect evidence" in bad.detail
+
+    forged_will = _StubWill(approved=True)
+    forged_will.verify_receipt = lambda _receipt_id: False
+
+    async def _forged_action():
+        async with WillTransaction(
+            domain="memory",
+            action="write",
+            cause="user",
+            will=forged_will,
+        ) as txn:
+            assert txn.approved is False
+            return txn
+
+    forged = await proof_governance_receipt(_forged_action)
+    assert forged.ok is False
+    assert "not recognized" in forged.detail
 
 
 @pytest.mark.asyncio
@@ -6920,6 +7039,8 @@ def test_operator_cli_conformance_runs():
 
     result = run_command(["conformance"])
     assert result["command"] == "conformance"
+    assert result["evidence_scope"] == "static_contract_fixture"
+    assert result["live_runtime_verified"] is False
     assert "report" in result
 
 
