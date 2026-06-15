@@ -208,6 +208,16 @@ class AffectVector:
         "sadness": 0.0, "disgust": 0.0, "anger": 0.0, "anticipation": 0.5,
         "love": 0.0, "submission": 0.0, "awe": 0.0, "terror": 0.0,
         "remorse": 0.0, "contempt": 0.0, "aggressiveness": 0.0, "cynicism": 0.0,
+        "happiness": 0.15, "interest": 0.12, "wonder": 0.08, "excitement": 0.05,
+        "boredom": 0.02, "apathy": 0.02, "indifference": 0.02,
+        "dread": 0.02, "unhappiness": 0.02,
+        "longing": 0.05, "upset": 0.02, "confused": 0.04,
+        "loneliness": 0.05, "pride": 0.05, "frustration": 0.03,
+        "curiosity": 0.10, "gratitude": 0.08, "warmth": 0.10,
+        "hope": 0.12, "vulnerability": 0.05, "nostalgia": 0.06,
+        "satisfaction": 0.08, "empathy": 0.08, "belonging": 0.10,
+        "amusement": 0.08, "inspiration": 0.10, "relief": 0.06,
+        "admiration": 0.08,
     })
     
     # Virtual Physiology (Somatic Markers)
@@ -218,7 +228,22 @@ class AffectVector:
         "adrenaline": 0.0
     })
     
-    mood_baselines: dict[str, float] = field(default_factory=dict)
+    mood_baselines: dict[str, float] = field(default_factory=lambda: {
+        "joy": 0.0, "trust": 0.0, "fear": 0.0, "surprise": 0.0,
+        "sadness": 0.0, "disgust": 0.0, "anger": 0.0, "anticipation": 0.5,
+        "love": 0.0, "submission": 0.0, "awe": 0.0, "terror": 0.0,
+        "remorse": 0.0, "contempt": 0.0, "aggressiveness": 0.0, "cynicism": 0.0,
+        "happiness": 0.15, "interest": 0.12, "wonder": 0.08, "excitement": 0.05,
+        "boredom": 0.02, "apathy": 0.02, "indifference": 0.02,
+        "dread": 0.02, "unhappiness": 0.02,
+        "longing": 0.05, "upset": 0.02, "confused": 0.04,
+        "loneliness": 0.05, "pride": 0.05, "frustration": 0.03,
+        "curiosity": 0.10, "gratitude": 0.08, "warmth": 0.10,
+        "hope": 0.12, "vulnerability": 0.05, "nostalgia": 0.06,
+        "satisfaction": 0.08, "empathy": 0.08, "belonging": 0.10,
+        "amusement": 0.08, "inspiration": 0.10, "relief": 0.06,
+        "admiration": 0.08,
+    })
     momentum: float = 0.85
     
     # [10X] Adaptive Somatic Markers

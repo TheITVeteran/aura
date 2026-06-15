@@ -447,6 +447,10 @@ def test_consciousness_bridge_lookup_and_dispatch_failures_are_visible(monkeypat
         "get",
         _FailingCallable("service lookup unavailable"),
     )
+    monkeypatch.setattr(
+        "core.runtime.background_policy.background_activity_reason",
+        lambda *_args, **_kwargs: "",
+    )
 
     class _ClosedLoop:
         def __init__(self):
@@ -478,6 +482,33 @@ def test_consciousness_bridge_lookup_and_dispatch_failures_are_visible(monkeypat
         ("consciousness_bridge", "RuntimeError"),
     ]
     assert loop.calls == 1
+
+
+def test_consciousness_bridge_micro_evolve_respects_background_policy(monkeypatch):
+    monkeypatch.setattr(
+        "core.runtime.background_policy.background_activity_reason",
+        lambda *_args, **_kwargs: "foreground_generation_status_unavailable",
+    )
+
+    class _ClosedLoop:
+        def __init__(self):
+            self.calls = 0
+
+        def is_running(self):
+            return True
+
+        def call_soon_threadsafe(self, _callback):
+            self.calls += 1
+
+    loop = _ClosedLoop()
+    bridge = ConsciousnessBridge.__new__(ConsciousnessBridge)
+    bridge._cs = types.SimpleNamespace()
+    bridge.substrate_evolution = types.SimpleNamespace()
+    bridge._loop = loop
+
+    bridge._dispatch_micro_evolve("coherence_collapse", 0.9)
+
+    assert loop.calls == 0
 
 
 def test_somatic_marker_gate_recovery_paths_are_visible(monkeypatch):
@@ -947,7 +978,7 @@ def test_affective_steering_live_source_annotation_failures_are_visible(monkeypa
     thread._loop()
 
     assert hook.moods == {"arousal": 0.4, "coherence": 0.8}
-    assert hook.last_attempted_source == "live_mood"
+    assert hook.last_attempted_source == "live_mood_projection"
     assert recorded == [("affective_steering", "RuntimeError")]
 
 
@@ -1966,13 +1997,19 @@ def test_liquid_substrate_affect_and_chaos_recovery_are_visible(monkeypatch, tmp
     )
     substrate.x = np.array([], dtype=np.float64)
 
-    assert substrate.get_substrate_affect() == {
+    fallback_affect = substrate.get_substrate_affect()
+    assert {
+        key: fallback_affect[key]
+        for key in ("valence", "arousal", "dominance", "energy", "volatility")
+    } == {
         "valence": 0.0,
         "arousal": 0.3,
         "dominance": 0.0,
         "energy": 0.5,
         "volatility": 0.0,
     }
+    assert fallback_affect["snapshot_stale"] == 1.0
+    assert fallback_affect["update_rate_hz"] == 0.0
 
     substrate.x = np.zeros(4, dtype=np.float64)
     substrate.W = np.zeros((4, 4), dtype=np.float64)

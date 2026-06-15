@@ -811,7 +811,7 @@ class ConsciousnessBridge:
             )
 
             reason_blocked = background_activity_reason(
-                self._orch,
+                getattr(self, "_orch", None),
                 profile=MAINTENANCE_BACKGROUND_POLICY,
                 allow_no_user_anchor=False,
             )
@@ -932,14 +932,18 @@ class ConsciousnessBridge:
                 components[name] = {"status": "not_booted"}
 
         return {
-            "running": self._running,
-            "tick_count": self._tick_count,
-            "uptime_s": round(time.time() - self._start_time, 1) if self._start_time else 0,
-            "boot_errors": self._boot_errors,
+            "running": bool(getattr(self, "_running", False)),
+            "tick_count": int(getattr(self, "_tick_count", 0) or 0),
+            "uptime_s": round(time.time() - getattr(self, "_start_time", 0.0), 1) if getattr(self, "_start_time", 0.0) else 0,
+            "boot_errors": list(getattr(self, "_boot_errors", []) or []),
             "layers_active": self._layers_active(),
             "layers_total": self._BRIDGE_LAYER_COUNT,
-            "effective_integration_hz": round(float(self._last_effective_hz), 4),
-            "compute_budget_reason": self._last_compute_budget_reason,
-            "compute_budget_memory_percent": self._last_compute_budget_memory_percent,
+            "effective_integration_hz": round(
+                float(getattr(self, "_last_effective_hz", self._INTEGRATION_HZ)), 4
+            ),
+            "compute_budget_reason": getattr(self, "_last_compute_budget_reason", "unknown"),
+            "compute_budget_memory_percent": getattr(
+                self, "_last_compute_budget_memory_percent", None
+            ),
             "components": components,
         }

@@ -1454,6 +1454,31 @@ class StateRepository:
                 world.get("spatial_context", {}), max_items=24
             )
 
+        affect = snapshot.get("affect")
+        if isinstance(affect, dict):
+            emotions = dict(affect.get("emotions", {}) or {})
+            baselines = dict(affect.get("mood_baselines", {}) or {})
+            top_emotions = {
+                str(key): value
+                for key, value in sorted(
+                    emotions.items(),
+                    key=lambda item: float(item[1] or 0.0),
+                    reverse=True,
+                )[:8]
+            }
+            affect["emotions"] = self._bounded_transport_value(top_emotions, max_items=8)
+            affect["mood_baselines"] = {
+                key: baselines[key]
+                for key in top_emotions
+                if key in baselines
+            }
+            affect["markers"] = self._bounded_transport_value(
+                affect.get("markers", {}), max_items=12, max_text=512
+            )
+            affect["resonance"] = self._bounded_transport_value(
+                affect.get("resonance", {}), max_items=8
+            )
+
         snapshot["health"] = self._bounded_transport_value(snapshot.get("health", {}), max_items=64)
         snapshot["response_modifiers"] = self._bounded_transport_value(
             snapshot.get("response_modifiers", {}), max_items=48

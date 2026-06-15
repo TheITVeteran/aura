@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import math
 import random
 import time
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,103 @@ if TYPE_CHECKING:
     from core.kernel.aura_kernel import AuraKernel
 
 logger = logging.getLogger(__name__)
+
+_USER_FACING_ORIGINS = {
+    "user",
+    "voice",
+    "admin",
+    "api",
+    "gui",
+    "ws",
+    "http",
+    "owner",
+    "owner_session_cookie",
+    "owner_sovereign",
+    "direct",
+}
+
+_POSITIVE_AFFECT_WEIGHTS = {
+    "joy": 1.0,
+    "trust": 0.9,
+    "anticipation": 0.35,
+    "love": 0.8,
+    "awe": 0.45,
+    "happiness": 0.9,
+    "interest": 0.8,
+    "wonder": 0.6,
+    "excitement": 0.55,
+    "pride": 0.55,
+    "curiosity": 0.55,
+    "gratitude": 0.65,
+    "warmth": 0.75,
+    "hope": 0.8,
+    "nostalgia": 0.25,
+    "satisfaction": 0.6,
+    "empathy": 0.5,
+    "belonging": 0.75,
+    "amusement": 0.45,
+    "inspiration": 0.7,
+    "relief": 0.55,
+    "admiration": 0.45,
+}
+
+_NEGATIVE_AFFECT_WEIGHTS = {
+    "fear": 1.0,
+    "sadness": 0.85,
+    "anger": 0.9,
+    "disgust": 0.65,
+    "terror": 1.1,
+    "remorse": 0.55,
+    "contempt": 0.55,
+    "aggressiveness": 0.7,
+    "cynicism": 0.45,
+    "boredom": 0.35,
+    "apathy": 0.45,
+    "indifference": 0.25,
+    "dread": 0.85,
+    "unhappiness": 0.75,
+    "upset": 0.9,
+    "confused": 0.6,
+    "loneliness": 0.55,
+    "longing": 0.45,
+    "frustration": 0.75,
+    "vulnerability": 0.45,
+}
+
+_REASSURANCE_PERCEPTS = {
+    "positive_interaction",
+    "interaction",
+    "extended_dialogue",
+    "deep_expression",
+    "goal_achieved",
+    "discovery",
+}
+
+_THREAT_PERCEPTS = {
+    "error",
+    "threat_detected",
+    "resource_pressure",
+    "security_alert",
+    "self_correction",
+}
+
+_STALE_NEGATIVE_EMOTIONS = (
+    "fear",
+    "sadness",
+    "anger",
+    "dread",
+    "unhappiness",
+    "upset",
+    "frustration",
+    "terror",
+)
+
+_SOCIAL_DISTRESS_EMOTIONS = (
+    "loneliness",
+    "longing",
+    "apathy",
+    "indifference",
+)
 
 _AFFECT_UPDATE_ERRORS = (
     AttributeError,
@@ -72,6 +170,27 @@ class AffectUpdatePhase(Phase):
         self._riiu_checked: bool = False
         self._fe_checked:   bool = False
 
+    @staticmethod
+    def _clip01(value: Any) -> float:
+        try:
+            return max(0.0, min(1.0, float(value)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _set_emotion(self, affect: AffectVector, emotion: str, value: Any) -> None:
+        affect.emotions[emotion] = self._clip01(value)
+
+    def _bump_emotion(self, affect: AffectVector, emotion: str, delta: float) -> None:
+        self._set_emotion(affect, emotion, affect.emotions.get(emotion, 0.0) + delta)
+
+    def _ensure_affect_schema(self, affect: AffectVector) -> None:
+        """Backfill newer affect dimensions into persisted older AuraState snapshots."""
+        defaults = AffectVector()
+        for emotion, value in defaults.emotions.items():
+            affect.emotions.setdefault(emotion, value)
+        for emotion, baseline in defaults.mood_baselines.items():
+            affect.mood_baselines.setdefault(emotion, baseline)
+
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
         """Processes emotional state based on recent percepts and time decay.
         
@@ -92,13 +211,16 @@ class AffectUpdatePhase(Phase):
         # (Assuming state is an AuraState instance with .affect)
         affect = state.affect
         
+        self._ensure_affect_schema(affect)
+
         # 2. Emotional Decay (Entropy & Momentum)
         # Ported from DamasioV2.pulse()
         self._apply_decay(affect)
         
         # 3. Reactive Updates (from recent percepts)
         # Ported from DamasioV2.react()
-        self._process_percepts(affect, state.world.recent_percepts)
+        recent_percepts = list(state.world.recent_percepts)
+        self._process_percepts(affect, recent_percepts)
 
         # Percept Clearing (Atomic Hygiene)
         # Prevent double-processing or leak. Percepts are transient impacts.
@@ -108,6 +230,7 @@ class AffectUpdatePhase(Phase):
         self._apply_conversation_feedback(affect, state)
         self._apply_interaction_signal_feedback(affect, state)
         self._apply_system_pressures(affect, state)
+        self._regulate_stale_negative_affect(affect, state, objective, recent_percepts)
 
         # 4. Somatic Coupling (Heart rate, GSR, etc.)
         self._update_physiology(affect, state)
@@ -233,11 +356,18 @@ class AffectUpdatePhase(Phase):
     def _process_percepts(self, affect: AffectVector, percepts: list[dict]):
         """Maps recent world events to emotional triggers."""
         emotion_map = {
-            "positive_interaction": ["joy", "trust"],
-            "novel_stimulus": ["surprise", "anticipation"], 
-            "error": ["fear", "sadness"],
-            "goal_achieved": ["joy", "anticipation"],
-            "memory_replay": ["sadness", "joy", "trust"],
+            "interaction": ["trust", "happiness", "interest", "warmth", "belonging"],
+            "positive_interaction": ["joy", "trust", "happiness", "interest", "pride", "gratitude", "warmth", "hope", "satisfaction", "belonging"],
+            "extended_dialogue": ["happiness", "interest", "curiosity", "warmth", "hope", "belonging"],
+            "deep_expression": ["interest", "trust", "curiosity", "satisfaction", "inspiration"],
+            "novel_stimulus": ["surprise", "anticipation", "wonder", "excitement", "curiosity"],
+            "discovery": ["wonder", "excitement", "interest", "curiosity", "pride", "hope"],
+            "error": ["fear", "sadness", "unhappiness", "dread", "upset", "frustration", "confused"],
+            "threat_detected": ["fear", "dread", "upset", "vulnerability"],
+            "goal_achieved": ["joy", "anticipation", "happiness", "excitement", "pride", "satisfaction", "hope", "relief"],
+            "memory_replay": ["sadness", "joy", "trust", "nostalgia", "warmth", "belonging"],
+            "monotony": ["boredom", "apathy", "loneliness", "indifference"],
+            "disconnection": ["unhappiness", "apathy", "loneliness", "longing"],
             "neural_decode": ["anticipation", "surprise"]  # Base neural burst
         }
         
@@ -265,14 +395,21 @@ class AffectUpdatePhase(Phase):
             
             # 1. Base Type Impacts
             for emotion in emotion_map.get(event_type, []):
-                affect.emotions[emotion] = float(max(0, min(1, affect.emotions[emotion] + intensity * 0.3)))
+                self._bump_emotion(affect, emotion, float(intensity) * 0.3)
+
+            if event_type in _REASSURANCE_PERCEPTS:
+                for emotion in ("fear", "sadness", "upset", "frustration", "loneliness", "longing"):
+                    baseline = affect.mood_baselines.get(emotion, 0.0)
+                    current = affect.emotions.get(emotion, 0.0)
+                    relief = min(0.35, float(intensity) * 0.25)
+                    self._set_emotion(affect, emotion, max(baseline, current - relief))
                 
             # 2. Command-Specific Impacts (BCI Bridge)
             if event_type == "neural_decode":
                 cmd = p.get("command")
                 impacts = command_impacts.get(cmd, {})
                 for emotion, boost in impacts.items():
-                    affect.emotions[emotion] = float(max(0, min(1, affect.emotions[emotion] + boost * intensity)))
+                    self._bump_emotion(affect, emotion, float(boost) * float(intensity))
                     logger.debug("🧠 [AFFECT] Neural command '%s' boosted %s by %.2f", cmd, emotion, boost * intensity)
 
     def _update_physiology(self, affect: AffectVector, state: AuraState):
@@ -311,13 +448,24 @@ class AffectUpdatePhase(Phase):
             affect.dominant_emotion = "neutral"
             return
 
-        pos = float(e.get("joy", 0.0) + e.get("trust", 0.0))
-        neg = float(e.get("fear", 0.0) + e.get("sadness", 0.0) + e.get("anger", 0.0) + e.get("disgust", 0.0))
-        
-        affect.valence = float(max(-1.0, min(1.0, pos - neg)))
-        affect.arousal = float(max(0.0, min(1.0, float(max(e.values())))))
-        affect.dominant_emotion = max(e, key=e.get)
-        affect.curiosity = e.get("anticipation", 0.5)
+        baselines = affect.mood_baselines or {}
+
+        def activation(emotion: str) -> float:
+            return max(0.0, float(e.get(emotion, 0.0) or 0.0) - float(baselines.get(emotion, 0.0) or 0.0))
+
+        pos = sum(activation(emotion) * weight for emotion, weight in _POSITIVE_AFFECT_WEIGHTS.items())
+        neg = sum(activation(emotion) * weight for emotion, weight in _NEGATIVE_AFFECT_WEIGHTS.items())
+
+        affect.valence = float(max(-1.0, min(1.0, math.tanh((pos - neg) * 1.6))))
+        raw_peak = max((float(value or 0.0) for value in e.values()), default=0.5)
+        active_peak = max((activation(emotion) for emotion in e), default=0.0)
+        affect.arousal = float(max(0.0, min(1.0, max(raw_peak * 0.55, active_peak))))
+        dominant_by_activation = max(e, key=lambda emotion: activation(emotion))
+        if activation(dominant_by_activation) < 0.025 and abs(affect.valence) < 0.08:
+            affect.dominant_emotion = "neutral"
+        else:
+            affect.dominant_emotion = dominant_by_activation
+        affect.curiosity = max(e.get("curiosity", 0.0), e.get("anticipation", 0.5))
 
     def _apply_conversation_feedback(self, affect: AffectVector, state: AuraState):
         """
@@ -328,6 +476,7 @@ class AffectUpdatePhase(Phase):
         never actually *feels* internally.
         """
         cognition = state.cognition
+        trend = getattr(cognition, "user_emotional_trend", "neutral")
 
         # ── Conversation energy → arousal + engagement ───────────────────
         energy = getattr(cognition, "conversation_energy", None)
@@ -338,13 +487,13 @@ class AffectUpdatePhase(Phase):
                 affect.emotions["joy"] = min(1.0, affect.emotions.get("joy", 0.0) + 0.05)
                 # High-energy conversation satisfies social hunger
                 affect.social_hunger = max(0.0, affect.social_hunger - 0.05)
-            elif energy < 0.3:
-                # Conversation fading → slight social hunger + wistfulness
+            elif energy < 0.3 and trend == "cooling_off":
+                # Low energy alone can be a short normal message. Only treat it as
+                # social fading when the discourse tracker also sees withdrawal.
                 affect.emotions["sadness"] = min(1.0, affect.emotions.get("sadness", 0.0) + 0.04)
                 affect.social_hunger = min(1.0, affect.social_hunger + 0.04)
 
         # ── User emotional trend → resonant affect ────────────────────────
-        trend = getattr(cognition, "user_emotional_trend", "neutral")
         if trend == "engaged":
             affect.emotions["trust"] = min(1.0, affect.emotions.get("trust", 0.0) + 0.06)
             affect.emotions["joy"] = min(1.0, affect.emotions.get("joy", 0.0) + 0.04)
@@ -487,6 +636,82 @@ class AffectUpdatePhase(Phase):
         elif voice_label == "stressed":
             affect.emotions["fear"] = min(1.0, affect.emotions.get("fear", 0.0) + 0.04)
             affect.emotions["anger"] = min(1.0, affect.emotions.get("anger", 0.0) + 0.02)
+
+    def _regulate_stale_negative_affect(
+        self,
+        affect: AffectVector,
+        state: AuraState,
+        objective: str | None,
+        recent_percepts: list[dict],
+    ) -> None:
+        """Release stale distress on foreground turns without masking real failures."""
+        origin = str(getattr(state.cognition, "current_origin", "") or "").strip().lower().replace("-", "_")
+        if origin not in _USER_FACING_ORIGINS and not objective:
+            return
+
+        modifiers = dict(getattr(state.cognition, "modifiers", {}) or {})
+        failure_state = dict(modifiers.get("system_failure_state", {}) or {})
+        failure_pressure = self._clip01(failure_state.get("pressure", 0.0))
+        continuity = dict(modifiers.get("continuity_obligations", {}) or {})
+        continuity_pressure = self._clip01(continuity.get("continuity_pressure", 0.0))
+        percept_types = {str(p.get("type", "")).strip().lower() for p in recent_percepts if isinstance(p, dict)}
+        dialogue_validation = dict(getattr(state, "response_modifiers", {}) or {}).get("dialogue_validation", {}) or {}
+        violations = set(dialogue_validation.get("violations", []) or [])
+        signal_status = dict(getattr(state, "response_modifiers", {}) or {}).get("interaction_signals", {}) or {}
+        fused = dict(signal_status.get("fused", {}) or {})
+        hesitation = self._clip01(fused.get("hesitation", 0.0))
+
+        if (
+            failure_pressure >= 0.15
+            or continuity_pressure >= 0.85
+            or percept_types.intersection(_THREAT_PERCEPTS)
+            or violations
+            or hesitation >= 0.7
+        ):
+            return
+
+        negative_load = sum(float(affect.emotions.get(emotion, 0.0) or 0.0) for emotion in _STALE_NEGATIVE_EMOTIONS)
+        social_load = sum(float(affect.emotions.get(emotion, 0.0) or 0.0) for emotion in _SOCIAL_DISTRESS_EMOTIONS)
+        if negative_load < 0.9 and social_load < 0.7 and float(getattr(affect, "valence", 0.0) or 0.0) > -0.75:
+            return
+
+        relief = 0.24
+        if percept_types.intersection(_REASSURANCE_PERCEPTS):
+            relief = 0.34
+        conversation_energy = self._clip01(getattr(state.cognition, "conversation_energy", 0.5))
+        if conversation_energy >= 0.65:
+            relief = max(relief, 0.3)
+
+        for emotion in _STALE_NEGATIVE_EMOTIONS:
+            current = float(affect.emotions.get(emotion, 0.0) or 0.0)
+            baseline = float(affect.mood_baselines.get(emotion, 0.0) or 0.0)
+            if current <= baseline:
+                continue
+            target = max(baseline, current - relief)
+            self._set_emotion(affect, emotion, target)
+
+        for emotion in _SOCIAL_DISTRESS_EMOTIONS:
+            current = float(affect.emotions.get(emotion, 0.0) or 0.0)
+            baseline = float(affect.mood_baselines.get(emotion, 0.0) or 0.0)
+            if current <= baseline:
+                continue
+            self._set_emotion(affect, emotion, max(baseline, current - (relief * 0.65)))
+
+        for emotion, delta in {
+            "trust": 0.05,
+            "interest": 0.04,
+            "warmth": 0.04,
+            "hope": 0.035,
+        }.items():
+            self._bump_emotion(affect, emotion, delta)
+
+        affect.social_hunger = max(0.0, affect.social_hunger - 0.08)
+        affect.markers["stale_negative_affect_regulated"] = {
+            "at": time.time(),
+            "origin": origin or "objective",
+            "relief": round(relief, 3),
+            "reason": "foreground_turn_without_active_failure_or_threat",
+        }
 
     def _check_resilience_surges(self, affect: AffectVector):
         """Detects despair spirals and injects adrenaline (Immune surge)."""
