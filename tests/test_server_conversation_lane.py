@@ -751,6 +751,14 @@ async def test_api_chat_desktop_capability_inventory_bypasses_model_allocation(m
     assert fake_kernel.process_calls == 0
 
 
+def test_explicit_capability_inventory_classifier_covers_hypothetical_she_phrasing():
+    from interface.routes import chat as chat_routes
+
+    assert chat_routes._is_explicit_capability_inventory_request(
+        "What tools she could hypothetically do externally, and can she flex her muscles with a scenario?"
+    )
+
+
 def test_capability_catalog_snapshot_caps_unbounded_catalog(monkeypatch):
     from interface.routes import chat as chat_routes
 

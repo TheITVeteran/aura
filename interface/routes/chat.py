@@ -4817,6 +4817,22 @@ def _is_explicit_capability_inventory_request(user_message: str) -> bool:
     ):
         return True
     if re.search(
+        r"\bwhat\s+(?:tools?|apps?|desktop|browser|files?|documents?|capabilities)\s+"
+        r"(?:you|aura|she)\s+(?:can|could|would)\s+"
+        r"(?:hypothetically\s+)?(?:use|do|run|execute|control|open|access)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    if re.search(
+        r"\b(?:flex|show|demonstrate|describe|name)\b.{0,80}"
+        r"\b(?:tools?|capabilities|external(?:ly)?|desktop|computer)\b.{0,120}"
+        r"\b(?:hypothetical|scenario|example|could\s+do|can\s+do)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    if re.search(
         r"\bwhat\s+can\s+(?:you|aura|she)\s+do\b.{0,120}"
         r"\b(?:externally|on\s+(?:my|the)\s+computer|with\s+(?:my|the)?\s*"
         r"(?:computer|desktop|apps?|browser|tools?|files?|documents?))\b",

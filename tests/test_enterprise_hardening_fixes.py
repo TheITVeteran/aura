@@ -147,6 +147,93 @@ def test_flagship_doctor_detects_dict_foreground_generation(service_container, t
     assert ram_pressure is False
 
 
+def test_flagship_doctor_recovers_sustained_foreground_lag_without_heavy_heal(
+    monkeypatch,
+    service_container,
+    tmp_path: Path,
+):
+    from core.runtime import flagship_doctor
+    from core.runtime.flagship_doctor import FlagshipDoctorDaemon
+
+    class _Gate:
+        def __init__(self) -> None:
+            self.abort_reasons: list[str] = []
+            self.timeout_reasons: list[str] = []
+
+        def get_conversation_status(self):
+            return {
+                "foreground_owned": True,
+                "active_generations": 1,
+                "state": "ready",
+            }
+
+        def force_abort_active_generation(self, reason: str = "") -> int:
+            self.abort_reasons.append(reason)
+            return 1
+
+        def note_foreground_timeout(self, reason: str = "") -> None:
+            self.timeout_reasons.append(reason)
+
+    gate = _Gate()
+    service_container.register_instance("inference_gate", gate)
+    cleared: list[dict[str, object]] = []
+    degradations: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_client.force_clear_foreground_owner",
+        lambda **kwargs: cleared.append(kwargs) or {"cleared": True, "detail": "cleared"},
+    )
+    monkeypatch.setattr(
+        flagship_doctor,
+        "record_degradation",
+        lambda subsystem, error, **kwargs: degradations.append(
+            {"subsystem": subsystem, "error": error, **kwargs}
+        ),
+    )
+
+    daemon = FlagshipDoctorDaemon(root_dir=tmp_path, lag_threshold=1.0)
+    daemon.lightweight_lag_recovery_threshold = 2.0
+    daemon.lightweight_lag_recovery_cooldown = 10.0
+    now = time.time()
+
+    should_heal, context, ram_pressure = daemon._should_self_heal(
+        lag=daemon.active_lag_threshold + 60.0,
+        ram_percent=50.0,
+        now=now,
+    )
+
+    assert should_heal is False
+    assert context == "foreground_generation"
+    assert ram_pressure is False
+    assert cleared and cleared[0]["reason"] == "flagship_doctor_sustained_foreground_lag"
+    assert gate.abort_reasons == ["flagship_doctor_sustained_foreground_lag"]
+    assert gate.timeout_reasons == ["flagship_doctor_sustained_foreground_lag"]
+    assert daemon._last_lightweight_lag_recovery_at == now
+    assert not any(item.get("severity") == "critical" for item in degradations)
+
+
+def test_flagship_doctor_does_not_abort_idle_lag_only(monkeypatch, tmp_path: Path):
+    from core.runtime.flagship_doctor import FlagshipDoctorDaemon
+
+    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_client.force_clear_foreground_owner",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("idle lag must not clear owners")),
+    )
+    daemon = FlagshipDoctorDaemon(root_dir=tmp_path, lag_threshold=1.0, ram_threshold=80.0)
+    daemon.lightweight_lag_recovery_threshold = 2.0
+
+    should_heal, context, ram_pressure = daemon._should_self_heal(
+        lag=120.0,
+        ram_percent=50.0,
+        now=time.time(),
+    )
+
+    assert should_heal is False
+    assert context == "idle"
+    assert ram_pressure is False
+    assert daemon._last_lightweight_lag_recovery_at == 0.0
+
+
 def test_flagship_doctor_still_heals_ram_pressure_during_proof(monkeypatch, tmp_path: Path):
     from core.runtime.flagship_doctor import FlagshipDoctorDaemon
 

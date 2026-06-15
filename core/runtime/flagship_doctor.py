@@ -319,7 +319,29 @@ class FlagshipDoctorDaemon:
             )
         except (TypeError, ValueError):
             self.min_heal_interval = 30.0
+        try:
+            self.lightweight_lag_recovery_threshold = max(
+                self.active_lag_threshold,
+                float(os.getenv("AURA_FLAGSHIP_DOCTOR_LAG_RECOVERY_THRESHOLD_S", "60.0")),
+            )
+        except (TypeError, ValueError):
+            self.lightweight_lag_recovery_threshold = max(self.active_lag_threshold, 60.0)
+        try:
+            self.lightweight_lag_recovery_cooldown = max(
+                10.0,
+                float(os.getenv("AURA_FLAGSHIP_DOCTOR_LAG_RECOVERY_COOLDOWN_S", "90.0")),
+            )
+        except (TypeError, ValueError):
+            self.lightweight_lag_recovery_cooldown = 90.0
+        try:
+            self.lightweight_lag_recovery_owner_min_age = max(
+                10.0,
+                float(os.getenv("AURA_FLAGSHIP_DOCTOR_LAG_RECOVERY_OWNER_MIN_AGE_S", "60.0")),
+            )
+        except (TypeError, ValueError):
+            self.lightweight_lag_recovery_owner_min_age = 60.0
         self._last_heal_at = 0.0
+        self._last_lightweight_lag_recovery_at = 0.0
         self._running = False
         self._monitor_thread: threading.Thread | None = None
         self._loop: Any = None
@@ -524,6 +546,103 @@ class FlagshipDoctorDaemon:
             return self.active_lag_threshold, reason
         return self.lag_threshold, "idle"
 
+    @staticmethod
+    def _lag_context_allows_lightweight_recovery(lag_context: str) -> bool:
+        normalized = str(lag_context or "").strip().lower()
+        return normalized == "proof_run_active" or normalized.startswith("foreground")
+
+    def _attempt_lightweight_lag_recovery(
+        self,
+        *,
+        lag: float,
+        lag_context: str,
+        ram_percent: float,
+        now: float,
+    ) -> dict[str, Any]:
+        """Break a wedged foreground generation without broad self-healing.
+
+        Lag-only recovery must not run GC, VACUUM databases, or restart broad
+        runtime services. It only marks the foreground lane as timed out, clears
+        stale ownership, and asks the inference gateway to abort active local
+        generations so the live desktop path can return control before memory
+        pressure escalates into an OS-level crash.
+        """
+        if not self._lag_context_allows_lightweight_recovery(lag_context):
+            return {"attempted": False, "reason": "lag_context_not_recoverable"}
+        if lag < self.lightweight_lag_recovery_threshold:
+            return {"attempted": False, "reason": "lag_below_recovery_threshold"}
+        if now - self._last_lightweight_lag_recovery_at < self.lightweight_lag_recovery_cooldown:
+            return {"attempted": False, "reason": "cooldown_active"}
+
+        self._last_lightweight_lag_recovery_at = now
+        result: dict[str, Any] = {
+            "attempted": True,
+            "lag_s": round(float(lag), 3),
+            "lag_context": lag_context,
+            "ram_percent": round(float(ram_percent), 3),
+            "cleared_foreground_owner": False,
+            "noted_foreground_timeout": False,
+            "aborted_local_clients": 0,
+        }
+
+        try:
+            from core.brain.llm.mlx_client import force_clear_foreground_owner
+
+            clear_result = force_clear_foreground_owner(
+                reason="flagship_doctor_sustained_foreground_lag",
+                min_age_s=self.lightweight_lag_recovery_owner_min_age,
+            )
+            result["foreground_owner"] = clear_result
+            result["cleared_foreground_owner"] = bool(clear_result.get("cleared", False))
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            result["foreground_owner_error"] = f"{type(exc).__name__}: {exc}"
+            record_degradation(
+                "flagship_doctor",
+                exc,
+                severity="warning",
+                action="continued lightweight lag recovery after foreground-owner clear failed",
+            )
+
+        try:
+            from core.container import ServiceContainer
+
+            gate = ServiceContainer.get("inference_gate", default=None)
+            abort = getattr(gate, "force_abort_active_generation", None)
+            if callable(abort):
+                aborted = abort("flagship_doctor_sustained_foreground_lag")
+                result["aborted_local_clients"] = int(aborted or 0)
+            note_timeout = getattr(gate, "note_foreground_timeout", None)
+            if callable(note_timeout):
+                note_timeout("flagship_doctor_sustained_foreground_lag")
+                result["noted_foreground_timeout"] = True
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            result["inference_gate_error"] = f"{type(exc).__name__}: {exc}"
+            record_degradation(
+                "flagship_doctor",
+                exc,
+                severity="warning",
+                action="continued after lightweight lag recovery could not notify inference gate",
+            )
+
+        logger.warning(
+            "FlagshipDoctorDaemon applied lightweight foreground lag recovery "
+            "(lag=%.2fs context=%s RAM=%.1f%% aborted=%s cleared_owner=%s).",
+            lag,
+            lag_context,
+            ram_percent,
+            result["aborted_local_clients"],
+            result["cleared_foreground_owner"],
+        )
+        record_degradation(
+            "flagship_doctor",
+            RuntimeError("sustained_foreground_lag"),
+            severity="warning",
+            action="marked foreground timeout and aborted active local generation without broad self-healing",
+            extra=result,
+            enforce_failure_policy=False,
+        )
+        return result
+
     def _should_self_heal(self, lag: float, ram_percent: float, *, now: float | None = None) -> tuple[bool, str, bool]:
         now = float(now or time.time())
         lag_threshold, lag_context = self._lag_threshold_for_context()
@@ -540,6 +659,12 @@ class FlagshipDoctorDaemon:
                     lag_context,
                     lag_threshold,
                     ram_percent,
+                )
+                self._attempt_lightweight_lag_recovery(
+                    lag=lag,
+                    lag_context=lag_context,
+                    ram_percent=ram_percent,
+                    now=now,
                 )
             return False, lag_context, ram_pressure
 
