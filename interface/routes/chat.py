@@ -2836,7 +2836,10 @@ async def _run_cognitive_engine_chat_turn(
                 )
         return None
     try:
-        from core.conversation.response_reliability import assess_user_facing_reply, is_status_check_turn
+        from core.conversation.response_reliability import (
+            assess_user_facing_reply,
+            is_status_check_turn,
+        )
 
         assessment = assess_user_facing_reply(visible, text)
         if (
@@ -3636,6 +3639,15 @@ def _conversation_lane_user_message(
     # Hard infrastructure failures — keep these explicit for debugging
     if failure_reason.startswith(("mlx_runtime_unavailable:", "local_runtime_unavailable:")):
         return "The local 32B runtime could not start cleanly. I should not fake a normal answer; the launcher logs have the failure details."
+    if (
+        "memory_pressure_refused_worker_spawn" in failure_reason
+        or "projected_process_tree_rss" in failure_reason
+        or "model_load_headroom" in failure_reason
+    ):
+        return (
+            "The local model lane was blocked by the unified-memory guard before loading. "
+            "I am protecting the desktop from an unsafe RAM spike instead of pretending Cortex is merely warming."
+        )
 
     # Build a mood-aware prefix for softer messages
     _mood_prefix = ""
@@ -5284,7 +5296,7 @@ def _read_capability_catalog_snapshot() -> tuple[int, dict[str, list[str]], bool
         if capability_engine is not None and hasattr(capability_engine, "iter_tool_catalog"):
             raw_catalog = capability_engine.iter_tool_catalog(include_inactive=True)
         elif capability_engine is not None and hasattr(capability_engine, "get_tool_catalog"):
-            get_tool_catalog = getattr(capability_engine, "get_tool_catalog")
+            get_tool_catalog = capability_engine.get_tool_catalog
             if inspect.isgeneratorfunction(get_tool_catalog):
                 raw_catalog = get_tool_catalog(include_inactive=True)
             else:

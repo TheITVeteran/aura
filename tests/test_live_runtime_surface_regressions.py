@@ -1991,10 +1991,22 @@ def test_conversation_lane_degraded_messages_do_not_ask_user_to_repeat():
         _conversation_lane_user_message({"state": "recovering"}),
         _conversation_lane_user_message({"state": "failed"}),
         _conversation_lane_user_message({"state": "cold"}),
+        _conversation_lane_user_message(
+            {
+                "state": "failed",
+                "last_failure_reason": (
+                    "memory_pressure_refused_worker_spawn:"
+                    "projected_process_tree_rss:8.0GB+35.0GB=43.0GB > limit 38.0GB"
+                ),
+            }
+        ),
     ]
 
     for sample in samples:
         assert_no_live_reset_boilerplate(sample)
+
+    assert "unified-memory guard" in samples[-1]
+    assert "unsafe RAM spike" in samples[-1]
 
 
 def test_output_guardrail_degraded_messages_do_not_ask_user_to_repeat():
