@@ -258,6 +258,14 @@ async def test_computer_use_run_command_intercepts(monkeypatch, tmp_path):
         "core.skills.computer_use.get_subprocess_gateway",
         lambda: FakeSubprocessGateway(),
     )
+    async def confirmed_frontmost(_expected):
+        return True, "Google Chrome"
+
+    monkeypatch.setattr(
+        skill,
+        "_wait_for_frontmost_app",
+        confirmed_frontmost,
+    )
 
     result = await skill.execute({"action": "run_command", "target": "find . -name '*.py'"}, {})
     assert result["ok"] is True
@@ -793,6 +801,37 @@ async def test_open_url_targets_named_browser(monkeypatch):
     assert argv_seen == [
         ["open", "-a", "Google Chrome", "https://docs.google.com/document/u/0/create"]
     ]
+    assert result["effect_verified"] is True
+    assert result["frontmost_app"] == "Google Chrome"
+
+
+@pytest.mark.asyncio
+async def test_open_app_rejects_zero_exit_without_frontmost_confirmation(monkeypatch):
+    skill = ComputerUseSkill()
+
+    class FakeSubprocessGateway:
+        def run(self, argv, **kwargs):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+    async def mismatched_frontmost(_expected):
+        return False, "Finder"
+
+    monkeypatch.setattr(
+        skill,
+        "_wait_for_frontmost_app",
+        mismatched_frontmost,
+    )
+
+    result = await skill.execute({"action": "open_app", "target": "Notes"}, {})
+
+    assert result["ok"] is False
+    assert result["effect_verified"] is False
+    assert result["frontmost_app"] == "Finder"
+    assert "did not become frontmost" in result["error"]
 
 
 @pytest.mark.asyncio

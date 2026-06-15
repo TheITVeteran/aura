@@ -15,13 +15,24 @@ def _fake_computer_use_result(params):
     if action == "create_folder":
         return {"ok": True, "action": action, "path": payload.get("path", "Aura Proof")}
     if action == "open_app":
-        return {"ok": True, "opened": target, "returncode": 0}
+        return {
+            "ok": True,
+            "opened": target,
+            "returncode": 0,
+            "frontmost_app": target,
+            "effect_verified": True,
+            "verification": f"Frontmost app confirmed as {target}.",
+        }
     if action == "open_url":
+        browser = payload.get("browser") or "Safari"
         return {
             "ok": True,
             "action": action,
             "url": payload.get("url", target),
             "browser": payload.get("browser", ""),
+            "frontmost_app": browser,
+            "effect_verified": True,
+            "verification": f"Frontmost browser confirmed as {browser}.",
         }
     if action == "write_text_file":
         content = str(payload.get("content") or "")

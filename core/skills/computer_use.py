@@ -360,6 +360,29 @@ class ComputerUseSkill(BaseSkill):
             logger.debug("Frontmost app query failed: %s", exc)
             return ""
 
+    @staticmethod
+    def _frontmost_app_matches(actual: str, expected: str) -> bool:
+        actual_name = re.sub(r"[^a-z0-9]+", "", str(actual or "").lower())
+        expected_name = re.sub(r"[^a-z0-9]+", "", str(expected or "").lower())
+        aliases = {
+            "chrome": "googlechrome",
+            "googlechrome": "googlechrome",
+            "notesapp": "notes",
+        }
+        return bool(actual_name) and aliases.get(actual_name, actual_name) == aliases.get(
+            expected_name,
+            expected_name,
+        )
+
+    async def _wait_for_frontmost_app(self, expected: str) -> tuple[bool, str]:
+        last_seen = ""
+        for _attempt in range(6):
+            last_seen = await asyncio.to_thread(self._frontmost_app_name)
+            if self._frontmost_app_matches(last_seen, expected):
+                return True, last_seen
+            await asyncio.sleep(0.35)
+        return False, last_seen
+
     def _send_hotkey_system_events(self, keys: list[str]) -> str:
         """Send a keyboard shortcut via System Events; raise with the real
         error on refusal (e.g. missing Automation/Accessibility grants)."""
@@ -1707,7 +1730,24 @@ end tell
                 if result.returncode != 0:
                     error = (result.stderr or result.stdout or "open command failed").strip()
                     return {"ok": False, "error": error, "opened": params.target}
-                return {"ok": True, "opened": params.target, "returncode": result.returncode}
+                effect_verified, frontmost_app = await self._wait_for_frontmost_app(params.target)
+                verification = (
+                    f"Frontmost app confirmed as {frontmost_app}."
+                    if effect_verified
+                    else (
+                        "Application launch command succeeded, but the requested app "
+                        f"did not become frontmost (observed={frontmost_app or 'unavailable'})."
+                    )
+                )
+                return {
+                    "ok": effect_verified,
+                    "opened": params.target,
+                    "returncode": result.returncode,
+                    "frontmost_app": frontmost_app,
+                    "effect_verified": effect_verified,
+                    "verification": verification,
+                    **({} if effect_verified else {"error": verification}),
+                }
 
             elif action == "open_url":
                 raw_target = str(params.target or "").strip()
@@ -1753,13 +1793,37 @@ end tell
                     opened = await asyncio.to_thread(webbrowser.open, target_url, 2)
                     if not opened:
                         return {"ok": False, "error": "The default browser did not accept the URL."}
+                expected_browser = browser
+                if not expected_browser:
+                    observed_browser = await asyncio.to_thread(self._frontmost_app_name)
+                    expected_browser = (
+                        observed_browser if observed_browser in _ALLOWED_URL_BROWSERS else ""
+                    )
+                effect_verified = False
+                frontmost_app = ""
+                if expected_browser:
+                    effect_verified, frontmost_app = await self._wait_for_frontmost_app(
+                        expected_browser
+                    )
                 surface = f" in {browser}" if browser else ""
+                verification = (
+                    f"Frontmost browser confirmed as {frontmost_app}."
+                    if effect_verified
+                    else (
+                        "URL dispatch succeeded, but the target browser could not be "
+                        f"confirmed frontmost (observed={frontmost_app or 'unavailable'})."
+                    )
+                )
                 return {
-                    "ok": True,
+                    "ok": effect_verified,
                     "action": "open_url",
                     "url": target_url,
                     "browser": browser,
+                    "frontmost_app": frontmost_app,
+                    "effect_verified": effect_verified,
+                    "verification": verification,
                     "summary": f"I opened a browser tab for {target_url}{surface}.",
+                    **({} if effect_verified else {"error": verification}),
                 }
 
             else:

@@ -978,11 +978,25 @@ class DesktopTaskSkill(BaseSkill):
             return (bool(path), f"folder_path={path}" if path else "missing created folder path")
         if action == "open_app":
             opened = str(result.get("opened") or "").strip()
-            return (bool(opened), f"opened={opened}" if opened else "missing opened app evidence")
+            frontmost = str(result.get("frontmost_app") or "").strip()
+            verified = bool(result.get("effect_verified")) and bool(opened) and bool(frontmost)
+            return (
+                verified,
+                f"opened={opened};frontmost={frontmost}"
+                if verified
+                else str(result.get("verification") or "missing frontmost app confirmation"),
+            )
         if action == "open_url":
             url = str(result.get("url") or "").strip()
             valid_url = url.startswith(("http://", "https://"))
-            return (valid_url, f"url={url}" if valid_url else "missing opened URL evidence")
+            frontmost = str(result.get("frontmost_app") or "").strip()
+            verified = valid_url and bool(result.get("effect_verified")) and bool(frontmost)
+            return (
+                verified,
+                f"url={url};frontmost={frontmost}"
+                if verified
+                else str(result.get("verification") or "missing browser foreground confirmation"),
+            )
         if action == "write_text_file":
             path = str(result.get("path") or "").strip()
             bytes_written = result.get("bytes")

@@ -116,14 +116,24 @@ class _GovernedEngineDouble:
         except (TypeError, ValueError):
             parsed = {}
         if action == "open_app":
-            return {"ok": True, "opened": target}
+            return {
+                "ok": True,
+                "opened": target,
+                "frontmost_app": target,
+                "effect_verified": True,
+            }
         if action == "create_folder":
             return {"ok": True, "path": parsed.get("path") or target}
         if action == "write_text_file":
             content = str(parsed.get("content") or "")
             return {"ok": True, "path": parsed.get("path"), "bytes": len(content)}
         if action == "open_url":
-            return {"ok": True, "url": target}
+            return {
+                "ok": True,
+                "url": parsed.get("url") or target,
+                "frontmost_app": parsed.get("browser") or "Safari",
+                "effect_verified": True,
+            }
         if action == "render_text_pdf":
             content = str(parsed.get("content") or "")
             return {
