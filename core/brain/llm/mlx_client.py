@@ -136,6 +136,29 @@ def _model_load_min_available_gb(model_path: str) -> float:
     return _env_float("AURA_MLX_LOAD_MIN_AVAILABLE_GB", 8.0)
 
 
+def _projected_model_footprint_gb(model_path: str) -> float:
+    def _env_float(name: str, default: float) -> float:
+        try:
+            return float(os.environ.get(name, str(default)))
+        except (TypeError, ValueError):
+            return default
+
+    lowered = str(model_path or "").lower()
+    if any(token in lowered for token in ("72b", "solver")):
+        return _env_float("AURA_MLX_72B_PROJECTED_FOOTPRINT_GB", 41.0)
+    if any(token in lowered for token in ("32b", "cortex", "zenith")):
+        if "4bit" in lowered or "q4" in lowered:
+            default = 20.0
+        else:
+            default = 35.0
+        return _env_float("AURA_MLX_32B_PROJECTED_FOOTPRINT_GB", default)
+    if "14b" in lowered:
+        return _env_float("AURA_MLX_14B_PROJECTED_FOOTPRINT_GB", 10.0)
+    if "7b" in lowered:
+        return _env_float("AURA_MLX_7B_PROJECTED_FOOTPRINT_GB", 5.0)
+    return _env_float("AURA_MLX_PROJECTED_FOOTPRINT_GB", 4.0)
+
+
 def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
     try:
         snapshot = get_memory_pressure_snapshot()
@@ -150,6 +173,20 @@ def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
         return (
             f"model_load_headroom:{snapshot.available_gb:.1f}GB "
             f"< required {min_available_gb:.1f}GB"
+        )
+    process_rss_gb = float(getattr(snapshot, "process_rss_gb", 0.0) or 0.0)
+    process_rss_limit_gb = float(getattr(snapshot, "process_rss_limit_gb", 0.0) or 0.0)
+    projected_footprint_gb = _projected_model_footprint_gb(model_path)
+    projected_process_rss_gb = process_rss_gb + projected_footprint_gb
+    if (
+        process_rss_limit_gb > 0.0
+        and projected_footprint_gb > 0.0
+        and projected_process_rss_gb > process_rss_limit_gb
+    ):
+        return (
+            f"projected_process_tree_rss:{process_rss_gb:.1f}GB"
+            f"+{projected_footprint_gb:.1f}GB={projected_process_rss_gb:.1f}GB "
+            f"> limit {process_rss_limit_gb:.1f}GB"
         )
     return None
 
