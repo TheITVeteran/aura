@@ -10,8 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from core.runtime.desktop_task_contract import DESKTOP_TASK_ALLOWED_ACTIONS
 from core.runtime.desktop_objective_intent import looks_like_desktop_objective
+from core.runtime.desktop_task_contract import DESKTOP_TASK_ALLOWED_ACTIONS
 from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
 from core.skills.os_affordances import detect_os_settings, get_affordance
@@ -619,6 +619,66 @@ class DesktopTaskSkill(BaseSkill):
             return body
         return f"{body.rstrip()}\n\nArtifact references:\n" + "\n".join(f"- {item}" for item in references)
 
+    @classmethod
+    def _compose_research_synthesis_from_sources(
+        cls,
+        *,
+        objective: str,
+        query: str,
+        summary: str,
+        sources: list[dict[str, str]],
+    ) -> str:
+        """Compose a bounded source-backed document without a second model call."""
+
+        summary = " ".join(str(summary or "").split())[:1400]
+        source_lines: list[str] = []
+        for item in (sources or [])[:3]:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or item.get("url") or "Untitled source").strip()
+            snippet = " ".join(str(item.get("snippet") or "").split())
+            if snippet:
+                source_lines.append(f"{title}: {snippet[:240]}")
+            else:
+                source_lines.append(title[:240])
+        topic = str(query or "the requested research topic").strip()
+        parts = [
+            f"I reviewed the available source evidence on {topic}.",
+        ]
+        if summary:
+            parts.append(summary)
+        if source_lines:
+            parts.append("The clearest source signals were: " + " ".join(source_lines))
+        if cls._objective_requests_opinion(objective):
+            parts.append(
+                "In my view, the reliable path is to treat the articles as evidence to compare, "
+                "not as a single conclusion to repeat: where the sources converge I can summarize confidently, "
+                "and where they differ I should preserve that uncertainty in the final document."
+            )
+        return "\n\n".join(part for part in parts if part).strip()[:4000]
+
+    @staticmethod
+    def _allow_research_model_synthesis(context: dict[str, Any] | None) -> bool:
+        context = context or {}
+        if not bool(context.get("allow_desktop_task_model_synthesis")):
+            return False
+        try:
+            from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+            snapshot = get_memory_pressure_snapshot()
+            return not (
+                bool(getattr(snapshot, "warning", False))
+                or bool(getattr(snapshot, "refuse_heavy_local_generation", False))
+            )
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError) as exc:
+            record_degradation(
+                "desktop_task",
+                exc,
+                action="disabled optional desktop research model synthesis because memory safety probe failed",
+                severity="warning",
+            )
+            return False
+
     async def _collect_research_context(
         self,
         *,
@@ -695,13 +755,23 @@ class DesktopTaskSkill(BaseSkill):
             "desktop_task_research_sources": sources,
             "desktop_task_research_result": result,
         }
-        # When the objective asks Aura to summarize AND give her own view,
-        # she actually composes one — a first-person synthesis of the
-        # findings — instead of dumping the raw search summary. This is the
-        # document the reader sees; it must read as her, not as a search dump.
-        synthesis = await self._synthesize_research_document(
-            objective=objective, query=query, summary=summary, sources=sources
+        synthesis = self._compose_research_synthesis_from_sources(
+            objective=objective,
+            query=query,
+            summary=summary,
+            sources=sources,
         )
+        # Optional model synthesis is an explicitly enabled enhancement, not a
+        # hidden second foreground allocation during visible desktop work.
+        if self._allow_research_model_synthesis(context):
+            model_synthesis = await self._synthesize_research_document(
+                objective=objective,
+                query=query,
+                summary=summary,
+                sources=sources,
+            )
+            if model_synthesis:
+                synthesis = model_synthesis
         if synthesis:
             research_ctx["desktop_task_research_synthesis"] = synthesis
         return research_ctx

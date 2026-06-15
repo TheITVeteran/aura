@@ -559,8 +559,10 @@ async def test_desktop_task_collects_research_before_document_composition(monkey
     assert "https://example.test/extreme-weather" in opened_urls
     assert desktop_actions[6] == "set_clipboard"
     clipboard_body = next(call[1]["target"] for call in desktop_calls if call[1]["action"] == "set_clipboard")
-    assert "Research summary for: climate change" in clipboard_body
+    assert "I reviewed the available source evidence on climate change" in clipboard_body
     assert "Climate assessment" in clipboard_body
+    assert "Adaptation briefing" in clipboard_body
+    assert "Extreme weather report" in clipboard_body
     assert "https://example.test/climate-assessment" in clipboard_body
     assert "I will open the browser" not in clipboard_body
     assert result["research"]["query"] == "climate change"
@@ -1103,9 +1105,51 @@ def test_research_section_leads_with_first_person_synthesis():
 
 
 @pytest.mark.asyncio
-async def test_collect_research_synthesizes_first_person_opinion(monkeypatch):
-    """_collect_research_context composes a first-person opinion through the
-    model router when the objective asks for one."""
+async def test_collect_research_synthesizes_first_person_opinion_without_hidden_model(monkeypatch):
+    """_collect_research_context composes a first-person opinion without a
+    hidden second model allocation during visible desktop work."""
+    from core.container import ServiceContainer
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            return {
+                "ok": True,
+                "summary": "Climate findings.",
+                "citations": [
+                    {"title": "A", "url": "https://a", "snippet": "warming"},
+                    {"title": "B", "url": "https://b", "snippet": "adaptation"},
+                    {"title": "C", "url": "https://c", "snippet": "extremes"},
+                ],
+            }
+
+    routed = {}
+
+    class FakeRouter:
+        async def generate(self, *, prompt, **kwargs):
+            routed["prompt"] = prompt
+            raise AssertionError("desktop_task must not allocate hidden model synthesis by default")
+
+    monkeypatch.setattr(
+        ServiceContainer, "get",
+        staticmethod(lambda name, default=None: FakeRouter() if name == "llm_router" else default),
+    )
+
+    skill = DesktopTaskSkill()
+    ctx = await skill._collect_research_context(
+        capability_engine=FakeCapabilityEngine(),
+        objective=(
+            "find 3 different recent articles on climate change and summarize "
+            "them and your own opinion in a Google Doc"
+        ),
+        context={},
+    )
+    assert "In my view" in ctx["desktop_task_research_synthesis"]
+    assert routed == {}
+
+
+@pytest.mark.asyncio
+async def test_collect_research_model_synthesis_is_explicit_and_memory_guarded(monkeypatch):
     from types import SimpleNamespace
 
     from core.container import ServiceContainer
@@ -1131,8 +1175,13 @@ async def test_collect_research_synthesizes_first_person_opinion(monkeypatch):
             return "Three articles converge on rising risk. In my view, the evidence is compelling."
 
     monkeypatch.setattr(
-        ServiceContainer, "get",
+        ServiceContainer,
+        "get",
         staticmethod(lambda name, default=None: FakeRouter() if name == "llm_router" else default),
+    )
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(warning=False, refuse_heavy_local_generation=False),
     )
 
     skill = DesktopTaskSkill()
@@ -1142,8 +1191,8 @@ async def test_collect_research_synthesizes_first_person_opinion(monkeypatch):
             "find 3 different recent articles on climate change and summarize "
             "them and your own opinion in a Google Doc"
         ),
-        context={},
+        context={"allow_desktop_task_model_synthesis": True},
     )
+
     assert "In my view" in ctx["desktop_task_research_synthesis"]
-    # The synthesis prompt asked for a first-person opinion.
-    assert "In my view" in routed["prompt"] or "first-person opinion" in routed["prompt"]
+    assert "first-person opinion" in routed["prompt"]
