@@ -582,6 +582,44 @@ async def test_desktop_task_retries_only_safe_idempotent_steps(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_desktop_task_emits_durable_tool_receipts_for_each_step(monkeypatch, tmp_path):
+    from core.container import ServiceContainer
+    from core.runtime.receipts import get_receipt_store, reset_receipt_store
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+    reset_receipt_store()
+    store = get_receipt_store(tmp_path / "receipts")
+    try:
+        result = await DesktopTaskSkill().execute(
+            {
+                "objective": "Create a durable proof folder.",
+                "steps": [DesktopTaskStep(action="create_folder", target={"path": "Aura Proof"})],
+            },
+            {"origin": "desktop_ui"},
+        )
+
+        assert result["ok"] is True
+        durable_id = result["receipts"][0]["durable_receipt_id"]
+        durable = store.get(durable_id)
+        assert durable is not None
+        assert durable.kind == "tool_execution"
+        assert durable.tool == "computer_use"
+        assert durable.status == "success_verified"
+        assert durable.verification_evidence["action"] == "create_folder"
+        assert durable.verification_evidence["effect_verified"] is True
+    finally:
+        reset_receipt_store()
+
+
+@pytest.mark.asyncio
 async def test_desktop_task_does_not_retry_unsafe_text_entry(monkeypatch):
     from core.container import ServiceContainer
 

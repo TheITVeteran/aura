@@ -847,6 +847,11 @@ async def test_open_url_targets_named_browser(monkeypatch):
         "_wait_for_frontmost_app",
         lambda expected: asyncio.sleep(0, result=(True, expected)),
     )
+    monkeypatch.setattr(
+        skill,
+        "_active_browser_location",
+        lambda browser: ("https://docs.google.com/document/u/0/create", "New document"),
+    )
 
     target = json.dumps(
         {"url": "https://docs.google.com/document/u/0/create", "browser": "Google Chrome"}
@@ -859,6 +864,45 @@ async def test_open_url_targets_named_browser(monkeypatch):
     ]
     assert result["effect_verified"] is True
     assert result["frontmost_app"] == "Google Chrome"
+    assert result["active_url"] == "https://docs.google.com/document/u/0/create"
+
+
+@pytest.mark.asyncio
+async def test_open_url_rejects_frontmost_browser_with_wrong_active_tab(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    class FakeSubprocessGateway:
+        def run(self, argv, **kwargs):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+    monkeypatch.setattr(
+        skill,
+        "_wait_for_frontmost_app",
+        lambda expected: asyncio.sleep(0, result=(True, expected)),
+    )
+    monkeypatch.setattr(
+        skill,
+        "_active_browser_location",
+        lambda browser: ("https://example.test/wrong-tab", "Wrong tab"),
+    )
+
+    target = json.dumps({"url": "https://docs.google.com/document/u/0/create", "browser": "Google Chrome"})
+    result = await skill.execute({"action": "open_url", "target": target}, {})
+
+    assert result["ok"] is False
+    assert result["effect_verified"] is False
+    assert result["frontmost_app"] == "Google Chrome"
+    assert result["active_url"] == "https://example.test/wrong-tab"
+    assert "could not be semantically confirmed" in result["error"]
 
 
 @pytest.mark.asyncio

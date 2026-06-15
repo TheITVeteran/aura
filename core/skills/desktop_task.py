@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -1123,6 +1124,67 @@ class DesktopTaskSkill(BaseSkill):
                 severity="warning",
             )
 
+    @staticmethod
+    def _digest_payload(payload: Any) -> str:
+        try:
+            encoded = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            encoded = str(payload).encode("utf-8", errors="replace")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
+    async def _emit_durable_step_receipt(
+        cls,
+        receipt: dict[str, Any],
+        *,
+        objective: str,
+        planner: str,
+        tool: str = "computer_use",
+    ) -> None:
+        try:
+            from core.runtime.receipts import ToolExecutionReceipt, get_receipt_store
+
+            store = get_receipt_store()
+            durable = ToolExecutionReceipt(
+                cause=str(objective or "desktop_task")[:240],
+                tool=tool,
+                governance_receipt_id=str(
+                    (receipt.get("result") or {}).get("governance_receipt_id")
+                    or (receipt.get("result") or {}).get("authority_receipt_id")
+                    or ""
+                )
+                or None,
+                capability_receipt_id=str(
+                    (receipt.get("result") or {}).get("capability_receipt_id") or ""
+                )
+                or None,
+                status="success_verified" if receipt.get("ok") else "failed",
+                output_digest=cls._digest_payload(receipt.get("result") or {}),
+                verification_evidence={
+                    "step_index": receipt.get("index"),
+                    "action": receipt.get("action"),
+                    "critical": receipt.get("critical", True),
+                    "effect_verified": receipt.get("effect_verified"),
+                    "effect_evidence": receipt.get("effect_evidence"),
+                    "planner": planner,
+                    "attempts": receipt.get("attempts", 0),
+                },
+            )
+            emitted = await asyncio.to_thread(store.emit, durable)
+            receipt["durable_receipt_id"] = emitted.receipt_id
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+            record_degradation(
+                "desktop_task",
+                exc,
+                action="continued desktop task after durable step receipt emission failed",
+                severity="warning",
+            )
+
     @classmethod
     def _verify_step_effect(cls, step: DesktopTaskStep, result: dict[str, Any]) -> tuple[bool, str]:
         if not result.get("ok"):
@@ -2091,6 +2153,21 @@ class DesktopTaskSkill(BaseSkill):
         if research_context:
             task_context.update(research_context)
             if task_context.get("desktop_task_research_error") and self._objective_requests_research_document(objective):
+                failure_receipt = {
+                    "index": 0,
+                    "action": "web_search",
+                    "ok": False,
+                    "critical": True,
+                    "effect_verified": False,
+                    "effect_evidence": str(task_context.get("desktop_task_research_error") or ""),
+                    "result": task_context.get("desktop_task_research_result") or {},
+                }
+                await self._emit_durable_step_receipt(
+                    failure_receipt,
+                    objective=objective,
+                    planner=planner or "research_preflight",
+                    tool="web_search",
+                )
                 return {
                     "ok": False,
                     "status": "desktop_task_research_unavailable",
@@ -2099,17 +2176,7 @@ class DesktopTaskSkill(BaseSkill):
                     "steps_requested": 0,
                     "steps_completed": 0,
                     "receipts": [],
-                    "failures": [
-                        {
-                            "index": 0,
-                            "action": "web_search",
-                            "ok": False,
-                            "critical": True,
-                            "effect_verified": False,
-                            "effect_evidence": str(task_context.get("desktop_task_research_error") or ""),
-                            "result": task_context.get("desktop_task_research_result") or {},
-                        }
-                    ],
+                    "failures": [failure_receipt],
                     "planner": planner or "research_preflight",
                     "research": {
                         "query": task_context.get("desktop_task_research_query"),
@@ -2172,6 +2239,12 @@ class DesktopTaskSkill(BaseSkill):
                     },
                 }
                 receipts.append(receipt)
+                await self._emit_durable_step_receipt(
+                    receipt,
+                    objective=objective,
+                    planner=planner,
+                    tool="desktop_task",
+                )
                 failures.append(receipt)
                 self._emit_progress(
                     index=index,
@@ -2209,6 +2282,12 @@ class DesktopTaskSkill(BaseSkill):
                             },
                         }
                         receipts.append(receipt)
+                        await self._emit_durable_step_receipt(
+                            receipt,
+                            objective=objective,
+                            planner=planner,
+                            tool="desktop_task",
+                        )
                         failures.append(receipt)
                         if resolved_step.critical and params.stop_on_error:
                             break
@@ -2234,6 +2313,12 @@ class DesktopTaskSkill(BaseSkill):
                             },
                         }
                         receipts.append(receipt)
+                        await self._emit_durable_step_receipt(
+                            receipt,
+                            objective=objective,
+                            planner=planner,
+                            tool="desktop_task",
+                        )
                         failures.append(receipt)
                         if resolved_step.critical and params.stop_on_error:
                             break
@@ -2336,6 +2421,12 @@ class DesktopTaskSkill(BaseSkill):
                 "result": result,
             }
             receipts.append(receipt)
+            await self._emit_durable_step_receipt(
+                receipt,
+                objective=objective,
+                planner=planner,
+                tool="computer_use",
+            )
             if resolved_step.action == "fetch_topic_image" and receipt["ok"]:
                 last_image_page_url = str(result.get("page_url") or "") or last_image_page_url
             if not receipt["ok"]:

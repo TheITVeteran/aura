@@ -1931,17 +1931,29 @@ end tell
                     )
                 effect_verified = False
                 frontmost_app = ""
+                active_url = ""
+                active_title = ""
                 if expected_browser:
                     effect_verified, frontmost_app = await self._wait_for_frontmost_app(
                         expected_browser
                     )
+                    if effect_verified:
+                        active_url, active_title = await asyncio.to_thread(
+                            self._active_browser_location,
+                            expected_browser,
+                        )
+                        effect_verified = self._url_semantically_matches(
+                            target_url,
+                            active_url,
+                        )
                 surface = f" in {browser}" if browser else ""
                 verification = (
-                    f"Frontmost browser confirmed as {frontmost_app}."
+                    f"Frontmost browser confirmed as {frontmost_app}; active URL verified as {active_url}."
                     if effect_verified
                     else (
-                        "URL dispatch succeeded, but the target browser could not be "
-                        f"confirmed frontmost (observed={frontmost_app or 'unavailable'})."
+                        "URL dispatch succeeded, but the target browser/tab could not be "
+                        f"semantically confirmed (frontmost={frontmost_app or 'unavailable'}, "
+                        f"active_url={active_url or 'unavailable'})."
                     )
                 )
                 return {
@@ -1950,6 +1962,8 @@ end tell
                     "url": target_url,
                     "browser": browser,
                     "frontmost_app": frontmost_app,
+                    "active_url": active_url,
+                    "active_title": active_title,
                     "effect_verified": effect_verified,
                     "verification": verification,
                     "summary": f"I opened a browser tab for {target_url}{surface}.",
@@ -1972,6 +1986,75 @@ end tell
                 return runtime_permission_error
             logger.error("ComputerUse action '%s' failed: %s", action, e)
             return {"ok": False, "error": str(e)}
+
+    @staticmethod
+    def _url_semantically_matches(expected: str, observed: str) -> bool:
+        expected = str(expected or "").strip()
+        observed = str(observed or "").strip()
+        if not expected or not observed:
+            return False
+        if observed.rstrip("/") == expected.rstrip("/") or observed.startswith(expected):
+            return True
+        try:
+            expected_parts = urllib.parse.urlparse(expected)
+            observed_parts = urllib.parse.urlparse(observed)
+        except ValueError:
+            return False
+        if expected_parts.netloc.lower() != observed_parts.netloc.lower():
+            return False
+        expected_path = expected_parts.path.rstrip("/")
+        observed_path = observed_parts.path.rstrip("/")
+        if expected_path and observed_path.startswith(expected_path):
+            return True
+        # Google document creation URLs redirect to a concrete document URL.
+        if expected_parts.netloc.lower() == "docs.google.com":
+            expected_tokens = {token for token in expected_path.split("/") if token}
+            observed_tokens = {token for token in observed_path.split("/") if token}
+            return bool(expected_tokens & observed_tokens & {"document", "spreadsheets", "presentation"})
+        return False
+
+    @staticmethod
+    def _browser_location_script(browser: str) -> str:
+        if browser in {"Google Chrome", "Arc", "Microsoft Edge"}:
+            return f'''
+tell application "{browser}"
+    if (count of windows) is 0 then return ""
+    set activeUrl to URL of active tab of front window
+    set activeTitle to title of active tab of front window
+    return activeUrl & linefeed & activeTitle
+end tell
+'''
+        if browser == "Safari":
+            return '''
+tell application "Safari"
+    if (count of windows) is 0 then return ""
+    set activeUrl to URL of current tab of front window
+    set activeTitle to name of current tab of front window
+    return activeUrl & linefeed & activeTitle
+end tell
+'''
+        return ""
+
+    def _active_browser_location(self, browser: str) -> tuple[str, str]:
+        script = self._browser_location_script(str(browser or "").strip())
+        if not script:
+            return "", ""
+        try:
+            result = get_subprocess_gateway().run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                timeout=5,
+                source="computer_use",
+            )
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            logger.debug("Active browser URL readback failed: %s", exc)
+            return "", ""
+        if result.returncode != 0:
+            return "", ""
+        lines = [line.strip() for line in str(result.stdout or "").splitlines()]
+        active_url = lines[0] if lines else ""
+        active_title = lines[1] if len(lines) > 1 else ""
+        return active_url, active_title
 
     def read_screen_text(self) -> str:
         """Helper for AgencyCore to read screen text directly."""
