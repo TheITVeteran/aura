@@ -627,6 +627,7 @@ class LocalServerClient:
             timeout=2.0,
             source="maintenance_tooling:local_server_health",
             read_only=True,
+            suppress_degradation=True,
         )
         if response.get("status_code") == 200:
             data = (response.get("content") or b"").decode("utf-8", errors="ignore")

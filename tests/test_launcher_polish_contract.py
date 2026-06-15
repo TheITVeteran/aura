@@ -29,6 +29,8 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "terminalHandoffIsFresh" in swift
     assert "terminalHandoffIsStaleWithoutRuntime" in swift
     assert "age >= staleMarkerWithoutRuntimeWindow" in swift
+    assert "AURA_LOCAL_BACKEND" in swift
+    assert 'env["AURA_LOCAL_BACKEND"] = "llama_cpp"' in swift
     assert "AURA_SAFE_BOOT_DESKTOP" in swift
     assert "AURA_EAGER_CORTEX_WARMUP" in swift
     assert "AURA_DEFERRED_CORTEX_PREWARM" in swift
@@ -72,6 +74,7 @@ def test_launch_script_supports_gui_window_mode():
     assert 'cd -P "$(dirname "$0")"' in shell
     assert "AURA_EAGER_CORTEX_WARMUP" in shell
     assert "AURA_DEFERRED_CORTEX_PREWARM" in shell
+    assert "AURA_LOCAL_BACKEND:=llama_cpp" in shell
     assert "AURA_ENABLE_PERMANENT_SWARM:=0" in shell
     assert "AURA_EXTERNAL_GUI_OWNER:=1" in shell
     assert "AURA_SAFE_BOOT_METAL_CACHE_RATIO:=0.16" in shell

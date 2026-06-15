@@ -118,6 +118,7 @@ def build_safe_boot_env(
 
     env = dict(os.environ if base_env is None else base_env)
     mode = str(mode or "headless").strip().lower()
+    env.setdefault("AURA_LOCAL_BACKEND", "llama_cpp")
     env.setdefault("AURA_SAFE_BOOT_DESKTOP", "1")
     if mode == "desktop":
         env["AURA_HEADLESS"] = "0"

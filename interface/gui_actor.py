@@ -177,6 +177,7 @@ def gui_actor_entry(port: int, token: str = None):
                         timeout=5,
                         source="gui_actor.watchdog",
                         read_only=True,
+                        suppress_degradation=True,
                     )
                     if _gateway_heartbeat_healthy(resp):
                         consecutive_failures = 0

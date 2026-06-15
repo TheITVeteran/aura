@@ -117,8 +117,23 @@ def test_gui_actor_watchdog_uses_readiness_heartbeat():
     assert "/api/health/heartbeat" in gui_actor
     assert "get_network_gateway().request" in gui_actor
     assert "_gateway_heartbeat_healthy(resp)" in gui_actor
+    assert "source=\"gui_actor.watchdog\"" in gui_actor
+    assert "suppress_degradation=True" in gui_actor
     assert "resp.status_code == 200" not in gui_actor
     assert "REQUIRED_HEALTH_PROBE_GROUPS" in gui_actor
+
+
+def test_local_server_health_poll_does_not_poison_runtime_health():
+    local_server = (PROJECT_ROOT / "core" / "brain" / "llm" / "local_server_client.py").read_text(
+        encoding="utf-8"
+    )
+
+    health_slice = local_server.split("def _http_health_check_sync_impl", 1)[1].split(
+        "def _http_health_check_sync", 1
+    )[0]
+
+    assert 'source="maintenance_tooling:local_server_health"' in health_slice
+    assert "suppress_degradation=True" in health_slice
 
 
 def test_desktop_api_wait_accounts_for_32b_warmup():
