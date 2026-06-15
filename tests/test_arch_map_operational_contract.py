@@ -117,10 +117,12 @@ def test_architecture_report_is_machine_readable_and_persisted(tmp_path, monkeyp
 
     monkeypatch.setattr(arch_map, "ROOT", root)
     monkeypatch.setattr(arch_map, "CORE", core)
+    monkeypatch.setenv("AURA_ARCH_MAP_GENERATED_AT_UNIX", "12345")
 
     report = arch_map.build_architecture_report()
 
     assert report["schema"] == arch_map.ARCH_MAP_SCHEMA
+    assert report["generated_at_unix"] == 12345.0
     assert report["totals"]["subsystems"] >= 2
     assert report["service_container"]["get_call_count"] == 1
     assert report["operational_surfaces"]["memory_write"]["review_candidate_count"] == 1

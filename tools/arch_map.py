@@ -13,9 +13,9 @@ Outputs:
 import ast
 import argparse
 import json
+import os
 import re
 import sys
-import time
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -50,6 +50,27 @@ class OperationalCall:
     call: str
     source: str
     owner_path: bool
+
+
+def _generated_at_unix() -> float:
+    """Return a reproducible architecture-map timestamp.
+
+    The tracked `artifacts/architecture/latest.*` files are part of the closeout
+    evidence. They must not change just because a certification gate was rerun.
+    Prefer an explicit source-date override. Without one, use a stable
+    reproducible value; tracked generated artifacts cannot embed the timestamp
+    of the commit that will contain them without becoming dirty immediately
+    after that commit is created.
+    """
+    explicit = os.environ.get("AURA_ARCH_MAP_GENERATED_AT_UNIX") or os.environ.get(
+        "SOURCE_DATE_EPOCH"
+    )
+    if explicit:
+        try:
+            return float(explicit)
+        except (TypeError, ValueError, OverflowError):
+            pass
+    return 0.0
 
 
 OPERATIONAL_SURFACES: tuple[OperationalSurface, ...] = (
@@ -641,7 +662,7 @@ def build_architecture_report() -> dict:
 
     return {
         "schema": ARCH_MAP_SCHEMA,
-        "generated_at_unix": time.time(),
+        "generated_at_unix": _generated_at_unix(),
         "root": PORTABLE_ROOT_LABEL,
         "boot_contract": boot_contract_report(ROOT),
         "inputs": {
