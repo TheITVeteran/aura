@@ -925,9 +925,33 @@ async def websocket_endpoint(ws: WebSocket):
                                     user_content,
                                     reply,
                                 )
+                                desktop_result = await chat_routes._execute_desktop_objective_from_chat(
+                                    user_content,
+                                    cognitive_reply=reply,
+                                )
+                                if isinstance(desktop_result, dict):
+                                    await ws_ref.send_text(json.dumps({
+                                        "type": "aura_message",
+                                        "content": desktop_result.get("response") or reply,
+                                        "status": desktop_result.get("status"),
+                                        "data": {
+                                            "desktop_result": desktop_result.get("result"),
+                                        },
+                                        "conversation_lane": {
+                                            "source": "desktop_websocket",
+                                            "governed_action_result": bool(desktop_result.get("ok")),
+                                            "governed_action_status": desktop_result.get("status"),
+                                        },
+                                    }, default=str))
+                                    return
                                 await ws_ref.send_text(json.dumps({
                                     "type": "aura_message",
                                     "content": reply,
+                                    "status": "ok",
+                                    "conversation_lane": {
+                                        "source": "desktop_websocket",
+                                        "governed_action_result": False,
+                                    },
                                 }))
                             except TimeoutError:
                                 logger.error("WS: live CognitiveEngine processing timed out")

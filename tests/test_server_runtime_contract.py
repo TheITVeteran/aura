@@ -42,6 +42,14 @@ def test_websocket_chat_uses_desktop_cognitive_engine_trace_metadata():
     assert "desktop WebSocket chat path requires CognitiveEngine" in source
 
 
+def test_websocket_desktop_objective_uses_rest_desktop_executor_contract():
+    source = inspect.getsource(server.websocket_endpoint)
+
+    assert "_execute_desktop_objective_from_chat" in source
+    assert '"desktop_result"' in source
+    assert '"governed_action_status"' in source
+
+
 def test_websocket_desktop_path_has_no_legacy_kernel_or_orchestrator_fallback():
     source = inspect.getsource(server.websocket_endpoint)
 
