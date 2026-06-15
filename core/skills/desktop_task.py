@@ -1732,7 +1732,20 @@ class DesktopTaskSkill(BaseSkill):
                     "desktop_task_expect": step.expect,
                 }
             )
-            result = await capability_engine.execute("computer_use", payload, context=step_context)
+            try:
+                result = await capability_engine.execute("computer_use", payload, context=step_context)
+            except (AttributeError, RuntimeError, TypeError, ValueError, OSError, TimeoutError) as exc:
+                record_degradation(
+                    "desktop_task",
+                    exc,
+                    action="recorded failed desktop step after governed computer_use exception",
+                    severity="degraded",
+                )
+                result = {
+                    "ok": False,
+                    "status": "computer_use_exception",
+                    "error": str(exc),
+                }
             if not isinstance(result, dict):
                 result = {"ok": bool(result), "result": result}
             effect_verified, effect_evidence = self._verify_step_effect(step, result)

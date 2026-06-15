@@ -94,16 +94,19 @@ def _journal_steps() -> list[dict[str, Any]]:
 class _GovernedEngineDouble:
     """Returns the evidence shape the effect verifier demands per action."""
 
-    def __init__(self, fail_at_index: int | None = None):
+    def __init__(self, fail_at_index: int | None = None, raise_at_index: int | None = None):
         self.calls: list[dict[str, Any]] = []
         self.contexts: list[dict[str, Any]] = []
         self._fail_at_index = fail_at_index
+        self._raise_at_index = raise_at_index
 
     async def execute(self, capability: str, payload: dict, *, context: dict):
         assert capability == "computer_use"
         self.calls.append(dict(payload))
         self.contexts.append(dict(context))
         index = int(context.get("desktop_task_step") or 0)
+        if self._raise_at_index is not None and index == self._raise_at_index:
+            raise RuntimeError("computer_use driver crashed")
         if self._fail_at_index is not None and index == self._fail_at_index:
             return {"ok": False, "error": "AppleScript timed out"}
         action = payload.get("action")
@@ -192,6 +195,25 @@ def test_journal_demo_midchain_failure_is_loud_and_ordered():
     failure = result["failures"][0]
     assert failure["action"] == "open_url"
     assert "AppleScript timed out" in str(failure["effect_evidence"])
+
+
+def test_journal_demo_midchain_exception_becomes_failed_receipt():
+    engine = _GovernedEngineDouble(raise_at_index=4)  # the open_url step
+    result = _run_chain(engine)
+
+    assert result["ok"] is False
+    assert result["status"] == "failed"
+    assert [c["action"] for c in engine.calls] == [
+        "open_app",
+        "create_folder",
+        "write_text_file",
+        "open_url",
+    ]
+    assert len(result["failures"]) == 1
+    failure = result["failures"][0]
+    assert failure["action"] == "open_url"
+    assert failure["result"]["status"] == "computer_use_exception"
+    assert "computer_use driver crashed" in str(failure["effect_evidence"])
 
 
 def test_journal_demo_steps_carry_governed_context():
