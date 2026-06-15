@@ -263,3 +263,50 @@ def test_throttle_reads_foreground_inference_lane(monkeypatch) -> None:
         assert pump._cognitive_load_throttle_active() is True
     finally:
         ServiceContainer.clear()
+
+
+def test_throttle_uses_lightweight_foreground_probe_without_full_lane_status(monkeypatch) -> None:
+    pump = PerceptualPump()
+    status_calls = []
+
+    class Gate:
+        def _foreground_user_turn_active(self):
+            return False
+
+        def _foreground_owner_active(self):
+            return True
+
+        def get_conversation_status(self):
+            status_calls.append("called")
+            return {"foreground_owned": False, "active_generations": 0}
+
+    ServiceContainer.register_instance("inference_gate", Gate(), required=False)
+    try:
+        assert pump._cognitive_load_throttle_active() is True
+        assert status_calls == []
+    finally:
+        ServiceContainer.clear()
+
+
+def test_throttle_still_honors_memory_pressure_after_lightweight_probe(monkeypatch) -> None:
+    pump = PerceptualPump()
+    pump._system = SystemState(memory_percent=90.0)
+    status_calls = []
+
+    class Gate:
+        def _foreground_user_turn_active(self):
+            return False
+
+        def _foreground_owner_active(self):
+            return False
+
+        def get_conversation_status(self):
+            status_calls.append("called")
+            return {"foreground_owned": False, "active_generations": 0}
+
+    ServiceContainer.register_instance("inference_gate", Gate(), required=False)
+    try:
+        assert pump._cognitive_load_throttle_active() is True
+        assert status_calls == []
+    finally:
+        ServiceContainer.clear()

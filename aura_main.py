@@ -994,7 +994,9 @@ async def _boot_runtime_orchestrator(
 def _install_fault_forensics() -> None:
     """A death with no traceback is forbidden: faulthandler dumps every
     thread's stack to a persistent file on native faults (SIGSEGV/BUS/
-    ABRT/ILL) and on SIGTERM, so the next silent exit names its killer."""
+    ABRT/ILL) and on SIGTERM, so the next silent exit names its killer.
+    SIGUSR1 is also registered without chaining so a live-but-stuck runtime can
+    be sampled without killing it."""
     try:
         import faulthandler
         import signal as _signal
@@ -1008,6 +1010,8 @@ def _install_fault_forensics() -> None:
         crash_file.flush()
         faulthandler.enable(file=crash_file, all_threads=True)
         faulthandler.register(_signal.SIGTERM, file=crash_file, all_threads=True, chain=True)
+        if hasattr(_signal, "SIGUSR1"):
+            faulthandler.register(_signal.SIGUSR1, file=crash_file, all_threads=True, chain=False)
         logger.info("🛡️ Fault forensics armed: data/error_logs/crash/faulthandler.log")
     except (OSError, ValueError, RuntimeError, AttributeError) as exc:
         record_degradation(
@@ -1215,9 +1219,17 @@ def _install_liveness_sentinel() -> None:
             "AURA_LIVENESS_HEARTBEAT_FILE", "data/runtime/liveness_heartbeat.json"
         )
         Path(heartbeat).parent.mkdir(parents=True, exist_ok=True)
-        stale_ceiling = os.environ.get("AURA_LIVENESS_STALE_CEILING_S", "180")
-        grace = os.environ.get("AURA_LIVENESS_GRACE_S", "300")
-        interval = os.environ.get("AURA_LIVENESS_INTERVAL_S", "5")
+        desktop_foreground = (
+            str(os.environ.get("AURA_SAFE_BOOT_DESKTOP", "")).strip().lower()
+            in {"1", "true", "yes", "on"}
+            or "--headless" in sys.argv
+        )
+        default_stale_ceiling = "45" if desktop_foreground else "180"
+        default_grace = "90" if desktop_foreground else "300"
+        default_interval = "2" if desktop_foreground else "5"
+        stale_ceiling = os.environ.get("AURA_LIVENESS_STALE_CEILING_S", default_stale_ceiling)
+        grace = os.environ.get("AURA_LIVENESS_GRACE_S", default_grace)
+        interval = os.environ.get("AURA_LIVENESS_INTERVAL_S", default_interval)
         log_dir = Path("data/error_logs/liveness")
         log_dir.mkdir(parents=True, exist_ok=True)
         subprocess.Popen(

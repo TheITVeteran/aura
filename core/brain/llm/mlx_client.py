@@ -394,7 +394,12 @@ def _clear_stale_foreground_owner(max_age_s: float = 200.0) -> str | None:
     """
     global _FOREGROUND_OWNER_NAME, _FOREGROUND_OWNER_ACQUIRED_AT
 
-    with _FOREGROUND_OWNER_LOCK:
+    acquired = _FOREGROUND_OWNER_LOCK.acquire(False)
+    if not acquired:
+        # Status reads run on foreground HTTP/pump paths. They must never wait
+        # behind a leaked owner-lock holder; recovery paths can still force-clear.
+        return None
+    try:
         holder = _FOREGROUND_OWNER_NAME
         if holder is None:
             return None
@@ -404,6 +409,8 @@ def _clear_stale_foreground_owner(max_age_s: float = 200.0) -> str | None:
         _FOREGROUND_OWNER_NAME = None
         _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
         return holder
+    finally:
+        _FOREGROUND_OWNER_LOCK.release()
 
 
 def force_clear_foreground_owner(
@@ -489,6 +496,8 @@ async def _foreground_owner_context(
 
     while max(0.0, loop.time() - wait_started) <= wait_budget:
         acquired = _FOREGROUND_OWNER_LOCK.acquire(False)
+        cleared_holder: str | None = None
+        cleared_holder_age = 0.0
         try:
             if acquired:
                 holder = _FOREGROUND_OWNER_NAME
@@ -499,18 +508,21 @@ async def _foreground_owner_context(
                     owner_acquired = True
                     break
                 if stale_after is not None and holder != owner_name and holder_age > stale_after:
-                    logger.warning(
-                        "♻️ [MLX] Clearing stale foreground owner %s after %.1fs so %s can proceed.",
-                        holder,
-                        holder_age,
-                        owner_name,
-                    )
                     _FOREGROUND_OWNER_NAME = None
                     _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
-                    continue
+                    cleared_holder = holder
+                    cleared_holder_age = holder_age
         finally:
             if acquired:
                 _FOREGROUND_OWNER_LOCK.release()
+        if cleared_holder is not None:
+            logger.warning(
+                "♻️ [MLX] Cleared stale foreground owner %s after %.1fs so %s can proceed.",
+                cleared_holder,
+                cleared_holder_age,
+                owner_name,
+            )
+            continue
 
         now = loop.time()
         waited = max(0.0, now - wait_started)

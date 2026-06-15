@@ -643,6 +643,44 @@ async def test_desktop_task_escalates_unrepresented_desktop_workflow_to_os_autom
 
 
 @pytest.mark.asyncio
+async def test_desktop_task_prefers_durable_primitives_over_freeform_ui_compiler(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            assert skill_name == "computer_use"
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    objective = (
+        "Use my computer to click a Calculator equation, copy the equation body, "
+        "put it into Notes, produce a PDF, move that PDF into a Desktop proof folder, "
+        "and report the paths."
+    )
+    skill = DesktopTaskSkill()
+    result = await skill.execute({"objective": objective, "steps": []}, {"origin": "desktop_ui"})
+
+    assert result["ok"] is True
+    assert result["status"] == "completed"
+    assert "governed computer-use steps" in result["summary"]
+    assert [call[0] for call in calls]
+    assert "os_automation" not in [call[0] for call in calls]
+    actions = [call[1]["action"] for call in calls]
+    assert "create_folder" in actions
+    assert "open_app" in actions
+    assert "write_text_file" in actions
+    assert "render_text_pdf" in actions
+
+
+@pytest.mark.asyncio
 async def test_desktop_task_escalates_app_plus_unrepresented_action(monkeypatch):
     from core.container import ServiceContainer
 

@@ -510,6 +510,22 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "laneNotReady && !laneStandby" not in aura_js
 
 
+def test_fault_forensics_supports_nonfatal_stack_dump_signal():
+    source = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
+
+    assert "faulthandler.register(_signal.SIGTERM" in source
+    assert "faulthandler.register(_signal.SIGUSR1" in source
+    assert "chain=False" in source
+
+
+def test_desktop_liveness_sentinel_defaults_are_foreground_bounded():
+    source = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
+
+    assert "default_stale_ceiling = \"45\" if desktop_foreground else \"180\"" in source
+    assert "default_grace = \"90\" if desktop_foreground else \"300\"" in source
+    assert "default_interval = \"2\" if desktop_foreground else \"5\"" in source
+
+
 def test_desktop_shell_renders_tool_results_without_inline_html_handlers():
     aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
     aura_css = (PROJECT_ROOT / "interface" / "static" / "aura.css").read_text(encoding="utf-8")

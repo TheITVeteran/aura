@@ -625,7 +625,14 @@ class PerceptualPump:
         """
         try:
             gate = ServiceContainer.get("inference_gate", default=None)
-            if gate and hasattr(gate, "get_conversation_status"):
+            used_lightweight_probe = False
+            for probe_name in ("_foreground_user_turn_active", "_foreground_owner_active"):
+                probe = getattr(gate, probe_name, None)
+                if callable(probe):
+                    used_lightweight_probe = True
+                    if bool(probe()):
+                        return True
+            if not used_lightweight_probe and gate and hasattr(gate, "get_conversation_status"):
                 lane = gate.get_conversation_status() or {}
                 if lane.get("foreground_owned") or int(lane.get("active_generations", 0) or 0) > 0:
                     return True

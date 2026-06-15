@@ -302,6 +302,33 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertIn("warmup_in_flight", lane["readiness_blockers"])
         self.assertIn("warmup_foreground_owner", lane["readiness_blockers"])
 
+    def test_stale_foreground_owner_clear_is_nonblocking_when_lock_is_busy(self):
+        import core.brain.llm.mlx_client as mlx_module
+
+        old_owner = mlx_module._FOREGROUND_OWNER_NAME
+        old_owned_at = mlx_module._FOREGROUND_OWNER_ACQUIRED_AT
+        lock = mlx_module._FOREGROUND_OWNER_LOCK
+        self.assertTrue(lock.acquire(False))
+        result: list[str | None] = []
+
+        def _status_clear() -> None:
+            result.append(mlx_module._clear_stale_foreground_owner(max_age_s=0.0))
+
+        thread = threading.Thread(target=_status_clear, daemon=True)
+        try:
+            mlx_module._FOREGROUND_OWNER_NAME = "chat_api:test"
+            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = time.time() - 500.0
+            thread.start()
+            thread.join(0.2)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(result, [None])
+            self.assertEqual(mlx_module._FOREGROUND_OWNER_NAME, "chat_api:test")
+        finally:
+            lock.release()
+            thread.join(1.0)
+            mlx_module._FOREGROUND_OWNER_NAME = old_owner
+            mlx_module._FOREGROUND_OWNER_ACQUIRED_AT = old_owned_at
+
     def test_replace_ipc_queues_closes_previous_queues_before_recreation(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
         old_req_q = self._FakeQueue()

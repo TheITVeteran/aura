@@ -694,6 +694,23 @@ class TestOwnerAutonomyGating(unittest.TestCase):
             self.assertEqual(result["receipt_id"], host.last_receipt.receipt_id)
             self.assertEqual(len(host.executed_scripts), 1)
 
+            # A malformed compiler reply must not break safe, common desktop
+            # intents. The skill should recover through its deterministic
+            # intent compiler while preserving the same guard/authority/receipt
+            # path.
+            cog.response = "I can do that by opening Notes and creating a note."
+            note_params = OSAutomationInput(
+                goal="Open Notes and write a timestamped status note.",
+                script_type="applescript",
+            )
+            result_fallback = asyncio.run(
+                skill.safe_execute(note_params, {"source": "unit", "user_requested_action": True})
+            )
+            self.assertTrue(result_fallback["ok"])
+            self.assertEqual(result_fallback["compiler_fallback"], "deterministic_intent_compiler")
+            self.assertIn("tell application \"Notes\"", result_fallback["script"])
+            self.assertGreaterEqual(len(host.executed_scripts), 2)
+
             # Test validation guard failure on unsafe script
             cog.response = "```applescript\ndo shell script \"sudo rm -rf /\"\n```"
             result_unsafe = asyncio.run(skill.safe_execute(params, {"source": "unit"}))

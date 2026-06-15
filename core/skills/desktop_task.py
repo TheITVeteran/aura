@@ -1380,6 +1380,66 @@ class DesktopTaskSkill(BaseSkill):
                 return False
         return True
 
+    @staticmethod
+    def _steps_cover_durable_artifact_intent(objective: str, steps: list[DesktopTaskStep]) -> bool:
+        """Prefer verified primitives for file/document/PDF objectives.
+
+        Free-form OS automation is useful for true window/UI manipulation,
+        but it is the least deterministic lane. If the planner already
+        derived a bounded artifact plan with read-backable effects, do not
+        discard it merely because the natural-language objective also says
+        "click", "copy", or "type".
+        """
+        lowered = str(objective or "").lower()
+        actions = {step.action for step in steps}
+        if not actions:
+            return False
+        wants_folder = any(token in lowered for token in ("folder", "directory"))
+        wants_document = any(
+            token in lowered
+            for token in (
+                "write",
+                "summary",
+                "summarize",
+                "note",
+                "document",
+                "doc",
+                "pdf",
+                "save",
+                "journal",
+                "essay",
+                "report",
+                "artifact",
+            )
+        )
+        wants_pdf = "pdf" in lowered or bool(
+            re.search(r"\b(?:export|save)\b[^.\n]{0,60}\bas\s+(?:a\s+)?pdf\b", lowered)
+        )
+        if not (wants_folder or wants_document or wants_pdf):
+            return False
+        if wants_folder and "create_folder" not in actions:
+            return False
+        if wants_document and not actions & {"write_text_file", "set_clipboard", "render_text_pdf"}:
+            return False
+        if wants_pdf and "render_text_pdf" not in actions:
+            return False
+        if "image" in lowered and "fetch_topic_image" not in actions and "open_url" not in actions:
+            return False
+        return any(
+            action in actions
+            for action in ("create_folder", "write_text_file", "render_text_pdf", "move_file", "fetch_topic_image")
+        )
+
+    @staticmethod
+    def _objective_requires_true_window_automation(objective: str) -> bool:
+        return bool(
+            re.search(
+                r"\b(?:arrange|resize|drag|minimi[sz]e|maximi[sz]e|organize|tile|snap)\b",
+                str(objective or ""),
+                flags=re.IGNORECASE,
+            )
+        )
+
     @classmethod
     def _should_escalate_to_os_automation(
         cls,
@@ -1395,6 +1455,11 @@ class DesktopTaskSkill(BaseSkill):
         if cls._objective_needs_general_os_automation(objective) and not any(
             step.action == "run_applescript" for step in steps
         ):
+            if (
+                cls._steps_cover_durable_artifact_intent(objective, steps)
+                and not cls._objective_requires_true_window_automation(objective)
+            ):
+                return False
             if cls._steps_cover_general_os_intent(objective, steps):
                 return False
             return looks_like_desktop_objective(objective) or any(
