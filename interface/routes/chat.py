@@ -6295,7 +6295,7 @@ async def _stabilize_user_facing_reply(
                         desktop_cognitive_engine_required=strict_desktop_repair,
                         deep_handoff=False,
                         allow_deep_handoff=False,
-                        allow_cloud_fallback=True,
+                        allow_cloud_fallback=False,
                         skip_runtime_payload=True,
                         disable_prompt_cache=True,
                         clear_prompt_cache=True,
