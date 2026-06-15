@@ -357,6 +357,46 @@ async def test_desktop_task_structured_plan_uses_document_body_token(monkeypatch
     assert '"steps"' not in calls[1][1]["target"]
 
 
+@pytest.mark.asyncio
+async def test_desktop_task_rejects_mixed_valid_and_invalid_cognitive_plan(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+    cognitive_plan = {
+        "steps": [
+            {"action": "open_app", "target": "TextEdit"},
+            {"action": "invent_unverified_action", "target": "must not be skipped"},
+        ]
+    }
+
+    result = await DesktopTaskSkill().execute(
+        {
+            "objective": "Open a writing app and create a draft.",
+            "steps": [],
+        },
+        {
+            "origin": "desktop_ui",
+            "cognitive_reply": f"```json\n{json.dumps(cognitive_plan)}\n```",
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "invalid_desktop_task_plan"
+    assert "invalid or unsupported" in result["error"]
+    assert calls == []
+
+
 def test_desktop_task_extracts_generic_named_app_mentions():
     assert DesktopTaskSkill._generic_open_app_mentions("Open TextEdit application and create a draft.") == [
         "TextEdit"
@@ -567,6 +607,98 @@ async def test_desktop_task_collects_research_before_document_composition(monkey
     assert "I will open the browser" not in clipboard_body
     assert result["research"]["query"] == "climate change"
     assert len(result["research"]["sources"]) == 3
+
+
+def test_desktop_task_sequences_independent_work_products_without_losing_focus():
+    skill = DesktopTaskSkill()
+    objective = (
+        "Open Notes, visibly type a timestamped summary of who you are, and export "
+        "it as a PDF to a new folder titled Aura's Journal on my Desktop. Then open "
+        "Google Chrome, find 3 articles on climate change, open Google Docs, summarize "
+        "them, and export that as a PDF to the same folder."
+    )
+    context = {
+        "desktop_task_document_body": "CognitiveEngine draft.",
+        "desktop_task_research_sources": [
+            {"title": f"Source {index}", "url": f"https://example.test/{index}", "snippet": "Evidence."}
+            for index in range(1, 4)
+        ],
+        "desktop_task_research_summary": "Three source-backed climate notes.",
+    }
+
+    steps = skill._derive_steps_from_objective(objective, context)
+    actions = [step.action for step in steps]
+    notes_index = next(
+        index for index, step in enumerate(steps)
+        if step.action == "open_app" and step.target == "Notes"
+    )
+    chrome_index = next(
+        index for index, step in enumerate(steps)
+        if step.action == "open_app" and step.target == "Google Chrome"
+    )
+    notes_paste_index = actions.index("hotkey", notes_index)
+    docs_url_index = next(
+        index for index, step in enumerate(steps)
+        if step.action == "open_url"
+        and isinstance(step.target, dict)
+        and step.target.get("url") == "https://docs.google.com/document/u/0/create"
+    )
+    docs_paste_index = actions.index("hotkey", docs_url_index)
+
+    assert notes_index < notes_paste_index < chrome_index
+    assert chrome_index < docs_url_index < docs_paste_index
+    assert actions.count("create_folder") == 1
+    pdf_targets = [
+        skill._target_payload(step.target)["path"]
+        for step in steps
+        if step.action == "render_text_pdf"
+    ]
+    assert len(pdf_targets) == 2
+    assert len(set(pdf_targets)) == 2
+    assert all(path.startswith("~/Desktop/Aura's Journal/") for path in pdf_targets)
+
+
+def test_desktop_task_does_not_split_conditional_then_language():
+    objective = "If the report exists then open it, otherwise inspect the current screen."
+    assert DesktopTaskSkill._sequenced_objective_segments(objective) == [objective]
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_rejects_oversized_derived_plan_before_execution(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+    skill = DesktopTaskSkill()
+    monkeypatch.setattr(
+        skill,
+        "_derive_steps_from_objective",
+        lambda objective, context: [
+            DesktopTaskStep(action="wait", target="0", reason=f"step {index}")
+            for index in range(21)
+        ],
+    )
+
+    result = await skill.execute(
+        {"objective": "Perform a bounded but oversized generated plan.", "steps": []},
+        {"origin": "desktop_ui"},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "desktop_task_plan_too_large"
+    assert result["steps_requested"] > 20
+    assert result["steps_completed"] == 0
+    assert calls == []
 
 
 @pytest.mark.asyncio

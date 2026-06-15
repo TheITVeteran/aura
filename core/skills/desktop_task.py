@@ -265,6 +265,25 @@ class DesktopTaskSkill(BaseSkill):
         )
         return wants_research and wants_written_output
 
+    @classmethod
+    def _artifact_filename_stem(cls, objective: str) -> str:
+        """Name an artifact from its content intent, not its destination."""
+        if cls._objective_requests_self_summary(objective):
+            return "aura_self_summary"
+        if cls._objective_requests_research_document(objective):
+            query = cls._extract_search_query(objective)
+            if query:
+                return cls._safe_filename(f"{query} summary")
+        match = re.search(
+            r"\b(?:essay|report|summary|note|document|draft)\s+"
+            r"(?:on|about|of|for)\s+([^.;,\n]{2,100})",
+            str(objective or ""),
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return cls._safe_filename(match.group(1))
+        return "aura_desktop_summary"
+
     @staticmethod
     def _search_url(query: str, *, images: bool = False, engine: str = "") -> str:
         encoded = urllib.parse.quote_plus(str(query or "").strip())
@@ -850,12 +869,14 @@ class DesktopTaskSkill(BaseSkill):
             payload = payload.get("steps")
         if not isinstance(payload, list):
             return []
+        if len(payload) > 20:
+            return []
         steps: list[DesktopTaskStep] = []
-        for item in payload[:20]:
+        for item in payload:
             try:
                 steps.append(item if isinstance(item, DesktopTaskStep) else DesktopTaskStep(**dict(item)))
             except (TypeError, ValueError):
-                continue
+                return []
         return steps
 
     @classmethod
@@ -882,6 +903,22 @@ class DesktopTaskSkill(BaseSkill):
             if steps:
                 return steps
         return []
+
+    @classmethod
+    def _declared_plan_validation_error(cls, context: dict[str, Any] | None) -> str:
+        payload = cls._structured_payload_from_context(context)
+        if "steps" not in payload:
+            return ""
+        raw_steps = payload.get("steps")
+        if raw_steps in (None, []):
+            return ""
+        if not isinstance(raw_steps, list):
+            return "Structured desktop plan 'steps' must be a list."
+        if len(raw_steps) > 20:
+            return "Structured desktop plan exceeds the 20-step execution limit."
+        if len(cls._steps_from_payload(raw_steps)) != len(raw_steps):
+            return "Structured desktop plan contains an invalid or unsupported step."
+        return ""
 
     @staticmethod
     def _target_payload(target: Any) -> dict[str, Any]:
@@ -1108,7 +1145,160 @@ class DesktopTaskSkill(BaseSkill):
                     apps.append(candidate)
         return apps[:4]
 
+    @classmethod
+    def _sequenced_objective_segments(cls, objective: str) -> list[str]:
+        """Split only explicit discourse-level sequencing markers.
+
+        A single heuristic plan cannot safely keep focus across independent
+        work products. Continuations of the same product stay together so
+        research-to-document and compose-to-export chains retain shared state.
+        """
+        text = str(objective or "").strip()
+        if not text:
+            return []
+        parts = re.split(
+            r"(?:[.!?;]\s+|,\s+)(?:and\s+)?(?:then|after that|next)\s*,?\s*",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if len(parts) <= 1:
+            return [text]
+        candidates = [part.strip(" \t\r\n,.;") for part in parts if part.strip(" \t\r\n,.;")]
+        if len(candidates) <= 1:
+            return [text]
+
+        def _surfaces(value: str) -> set[str]:
+            surfaces = {app.lower() for app in cls._extract_apps(value)}
+            web_surface = cls._web_document_url(value)
+            if web_surface:
+                surfaces.add(web_surface)
+            return surfaces
+
+        def _completes_product(value: str) -> bool:
+            lowered = value.lower()
+            return bool(
+                re.search(r"\b(?:export|save|render)\b[^.;\n]{0,80}\b(?:pdf|file|document|artifact)\b", lowered)
+                or (
+                    re.search(r"\b(?:write|compose|draft|create)\b", lowered)
+                    and any(token in lowered for token in ("note", "document", "essay", "report", "summary"))
+                    and bool(_surfaces(value))
+                )
+            )
+
+        segments = [candidates[0]]
+        for candidate in candidates[1:]:
+            previous = segments[-1]
+            starts_distinct_surface = bool(_surfaces(candidate) - _surfaces(previous))
+            if _completes_product(previous) and starts_distinct_surface:
+                segments.append(candidate)
+            else:
+                segments[-1] = f"{previous}. Then {candidate}"
+        return segments
+
+    @staticmethod
+    def _has_explicit_folder_name(objective: str) -> bool:
+        text = str(objective or "")
+        return bool(
+            re.search(
+                r"\b(?:folder|directory)\s+(?:named|called|titled)\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+            or re.search(
+                r"(?:\"[^\"]+\"|'(?:[^']|'(?=\w))+')\s+(?:folder|directory)\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @classmethod
+    def _inherit_shared_destination(cls, segment: str, objective: str) -> str:
+        """Resolve a later phase's explicit "same folder" reference.
+
+        This carries only a destination the user explicitly named. It does not
+        invent cross-phase state or make every artifact share one directory.
+        """
+        if not re.search(
+            r"\b(?:same|that|the previously (?:named|created))\s+(?:folder|directory)\b",
+            segment,
+            flags=re.IGNORECASE,
+        ):
+            return segment
+        if cls._has_explicit_folder_name(segment) or not cls._has_explicit_folder_name(objective):
+            return segment
+
+        folder_name = cls._extract_folder_name(objective)
+        root_hint = cls._extract_root_hint(objective)
+        root_phrase = {
+            "~/Desktop": " on my Desktop",
+            "~/Documents": " in my Documents folder",
+            "~/Downloads": " in my Downloads folder",
+        }.get(root_hint, "")
+        return (
+            f'{segment.rstrip(" .")}, using the folder titled '
+            f'"{folder_name}"{root_phrase}.'
+        )
+
+    @classmethod
+    def _deduplicate_segment_artifact_paths(
+        cls,
+        segment_steps: list[DesktopTaskStep],
+        used_paths: set[str],
+    ) -> list[DesktopTaskStep]:
+        """Give each phase distinct durable outputs inside shared folders."""
+        resolved: list[DesktopTaskStep] = []
+        for step in segment_steps:
+            if step.action not in {"write_text_file", "render_text_pdf"}:
+                resolved.append(step)
+                continue
+            payload = cls._target_payload(step.target)
+            path = str(payload.get("path") or "").strip()
+            if not path:
+                resolved.append(step)
+                continue
+            if path in used_paths:
+                candidate = Path(path)
+                path = next(
+                    str(candidate.with_name(f"{candidate.stem}_{index}{candidate.suffix}"))
+                    for index in range(2, 42)
+                    if str(candidate.with_name(f"{candidate.stem}_{index}{candidate.suffix}"))
+                    not in used_paths
+                )
+            used_paths.add(path)
+            payload["path"] = path
+            resolved.append(step.model_copy(update={"target": payload}))
+        return resolved
+
     def _derive_steps_from_objective(
+        self,
+        objective: str,
+        context: dict[str, Any] | None,
+    ) -> list[DesktopTaskStep]:
+        """Derive a focus-safe plan for one or more explicit task phases."""
+        segments = self._sequenced_objective_segments(objective)
+        if len(segments) <= 1:
+            return self._derive_single_objective_steps(objective, context)
+
+        steps: list[DesktopTaskStep] = []
+        created_folders: set[str] = set()
+        used_artifact_paths: set[str] = set()
+        for segment in segments:
+            resolved_segment = self._inherit_shared_destination(segment, objective)
+            segment_steps = self._derive_single_objective_steps(resolved_segment, context)
+            segment_steps = self._deduplicate_segment_artifact_paths(
+                segment_steps,
+                used_artifact_paths,
+            )
+            for step in segment_steps:
+                if step.action == "create_folder":
+                    folder_path = str(self._target_payload(step.target).get("path") or step.target)
+                    if folder_path in created_folders:
+                        continue
+                    created_folders.add(folder_path)
+                steps.append(step)
+        return steps
+
+    def _derive_single_objective_steps(
         self,
         objective: str,
         context: dict[str, Any] | None,
@@ -1355,7 +1545,7 @@ class DesktopTaskSkill(BaseSkill):
                 filename_stem = self._safe_filename(Path(explicit_filename).stem)
                 text_path = f"{folder_path}/{explicit_filename}"
             else:
-                filename_stem = self._safe_filename("aura_journal_entry" if "journal" in lowered else "aura_desktop_summary")
+                filename_stem = self._artifact_filename_stem(text)
                 text_path = f"{folder_path}/{filename_stem}.txt"
             steps.append(
                 DesktopTaskStep(
@@ -1394,7 +1584,7 @@ class DesktopTaskSkill(BaseSkill):
                     expect="Foreground screen text or an explicit permission failure is returned.",
                 )
             )
-        return steps[:20]
+        return steps
 
     @staticmethod
     def _primitive_steps_are_only_observational(steps: list[DesktopTaskStep]) -> bool:
@@ -1664,6 +1854,18 @@ class DesktopTaskSkill(BaseSkill):
             task_context.update(research_context)
         steps = list(params.steps)
         if not steps:
+            plan_error = self._declared_plan_validation_error(task_context)
+            if plan_error:
+                return {
+                    "ok": False,
+                    "status": "invalid_desktop_task_plan",
+                    "error": plan_error,
+                    "objective": objective,
+                    "steps_requested": 0,
+                    "steps_completed": 0,
+                    "receipts": [],
+                    "failures": [],
+                }
             steps = self._steps_from_context(task_context)
         if not steps:
             steps = self._derive_steps_from_objective(objective, task_context)
@@ -1672,6 +1874,20 @@ class DesktopTaskSkill(BaseSkill):
                 steps,
                 self._document_body(objective, task_context),
             )
+        if len(steps) > 20:
+            return {
+                "ok": False,
+                "status": "desktop_task_plan_too_large",
+                "error": (
+                    f"Desktop task requires {len(steps)} steps, exceeding the "
+                    "20-step bounded execution limit."
+                ),
+                "objective": objective,
+                "steps_requested": len(steps),
+                "steps_completed": 0,
+                "receipts": [],
+                "failures": [],
+            }
 
         if self._should_escalate_to_os_automation(objective, steps, task_context):
             return await self._execute_os_automation_escalation(
