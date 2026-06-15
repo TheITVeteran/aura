@@ -1620,7 +1620,7 @@ async def test_api_chat_desktop_owner_name_recall_preempts_cognitive_engine_when
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_surface_executes_governed_desktop_objective_without_freeform_generation(monkeypatch):
+async def test_api_chat_desktop_surface_plans_with_cognitive_engine_before_execution(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface import server as server_module
     from interface.routes import chat as chat_routes
@@ -1631,8 +1631,20 @@ async def test_api_chat_desktop_surface_executes_governed_desktop_objective_with
 
     class _FakeCognitiveEngine:
         async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
-            pytest.fail(
-                "desktop objectives must not wait on freeform CognitiveEngine generation"
+            return SimpleNamespace(
+                content=json.dumps(
+                    {
+                        "document_body": "Timestamped Aura summary from CognitiveEngine.",
+                        "steps": [
+                            {
+                                "action": "open_app",
+                                "target": "Notes",
+                                "reason": "Use the requested writing surface.",
+                                "expect": "Notes accepts focus.",
+                            }
+                        ],
+                    }
+                )
             )
 
     class _FakePool:
@@ -1765,19 +1777,10 @@ async def test_api_chat_desktop_surface_executes_governed_desktop_objective_with
         "user_visible_desktop_action": True,
         "local_desktop_action": True,
         "verification_required": True,
-        "desktop_task_document_body": (
-            "Execute the user's explicit desktop objective through Aura's governed desktop_task lane. "
-            "Do not claim success until the tool result verifies the effect. Objective: Can you open "
-            "my Notes app, write a timestamped summary, save it as a PDF in a new folder titled "
-            "Aura's Journal, and search for a robot image?"
-        ),
-        "cognitive_reply": (
-            "Execute the user's explicit desktop objective through Aura's governed desktop_task lane. "
-            "Do not claim success until the tool result verifies the effect. Objective: Can you open "
-            "my Notes app, write a timestamped summary, save it as a PDF in a new folder titled "
-            "Aura's Journal, and search for a robot image?"
-        ),
+        "desktop_task_document_body": skill_calls[0]["extra_context"]["cognitive_reply"],
+        "cognitive_reply": skill_calls[0]["extra_context"]["cognitive_reply"],
     }
+    assert "Timestamped Aura summary from CognitiveEngine." in skill_calls[0]["extra_context"]["cognitive_reply"]
     assert completed_exchanges
     assert completed_exchanges[-1][0][0] == "desktop-objective"
     assert "Desktop task completed 5/5 governed computer-use steps" in completed_exchanges[-1][0][2]
@@ -1853,15 +1856,38 @@ async def test_chat_desktop_objective_uses_capability_engine_without_agency_wrap
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_objective_executes_without_cognitive_preflight(monkeypatch):
+async def test_api_chat_desktop_objective_requires_cognitive_planning(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
     skill_calls = []
     output_receipts = []
+    cognitive_calls = []
 
     async def _slow_or_empty_cognitive_turn(*args, **kwargs):
-        pytest.fail("desktop objective execution should not allocate a freeform preflight")
+        cognitive_calls.append((args, kwargs))
+        return json.dumps(
+            {
+                "document_body": "Planned local file body.",
+                "steps": [
+                    {
+                        "action": "create_folder",
+                        "target": {"path": "~/Documents/Aura Live Proof"},
+                        "reason": "Create the requested destination.",
+                        "expect": "Folder exists.",
+                    },
+                    {
+                        "action": "write_text_file",
+                        "target": {
+                            "path": "~/Documents/Aura Live Proof/live_proof.txt",
+                            "content": "{{document_body}}",
+                        },
+                        "reason": "Write the requested file.",
+                        "expect": "File exists with the planned body.",
+                    },
+                ],
+            }
+        )
 
     async def _fake_execute_governed_live_skill(skill_name, params, *, objective, extra_context=None):
         skill_calls.append(
@@ -1925,7 +1951,8 @@ async def test_api_chat_desktop_objective_executes_without_cognitive_preflight(m
     assert payload["conversation_lane"]["governed_action_status"] == "desktop_objective_completed"
     assert "Desktop task completed 2/2 governed computer-use steps" in payload["response"]
     assert skill_calls and skill_calls[0]["skill_name"] == "desktop_task"
-    assert "Execute the user's explicit desktop objective" in skill_calls[0]["extra_context"]["desktop_task_document_body"]
+    assert cognitive_calls
+    assert "Planned local file body." in skill_calls[0]["extra_context"]["desktop_task_document_body"]
     assert output_receipts
 
 

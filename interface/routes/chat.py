@@ -2959,6 +2959,18 @@ async def _run_cognitive_engine_chat_turn(
                     cognitive_engine_handled=True,
                 )
         return None
+    if desktop_execution_contract:
+        try:
+            from core.skills.desktop_task import DesktopTaskSkill
+
+            structured_plan = DesktopTaskSkill._structured_payload_from_text(text)
+        except (ImportError, AttributeError, TypeError, ValueError):
+            structured_plan = {}
+        if "steps" in structured_plan:
+            # This is an internal execution draft, not user-visible prose.
+            # The downstream desktop_task input contract validates every step
+            # and fails closed on malformed or unsupported plans.
+            return text
     try:
         from core.conversation.response_reliability import (
             assess_user_facing_reply,
@@ -7876,22 +7888,6 @@ def _looks_like_desktop_objective(user_message: str) -> bool:
     return _shared_looks_like_desktop_objective(user_message)
 
 
-def _build_desktop_objective_execution_brief(user_message: str) -> str:
-    """Bounded execution brief used when freeform planning is too slow.
-
-    This text is never presented as completion. It gives desktop_task a stable
-    body to write from while final user-visible claims remain receipt-backed.
-    """
-    objective = " ".join(str(user_message or "").split())
-    if len(objective) > 420:
-        objective = objective[:420].rsplit(" ", 1)[0].strip() + "..."
-    return (
-        "Execute the user's explicit desktop objective through Aura's governed "
-        "desktop_task lane. Do not claim success until the tool result verifies "
-        f"the effect. Objective: {objective}"
-    )
-
-
 async def _execute_desktop_objective_from_chat(
     user_message: str,
     *,
@@ -8524,6 +8520,12 @@ async def api_chat(
     # directive scaffolding that belong in generation context, not in reply
     # quality classification or conversational memory.
     _semantic_user_message = _original_user_message
+    if not is_benchmark and _looks_like_desktop_objective(_semantic_user_message):
+        # A consequential desktop request always needs the same CognitiveEngine
+        # planning lane as the desktop UI, even when it arrives through the
+        # plain REST surface. The governed executor remains downstream.
+        desktop_requires_cognitive_engine = True
+        request_surface = request_surface or "desktop-objective"
     if not is_benchmark:
         try:
             from core.runtime.foreground_guard import notify_user_spoke as _guard_notify_user_spoke
@@ -9086,7 +9088,7 @@ async def api_chat(
                 return None
             return stabilized
 
-        async def _execute_desktop_objective_before_freeform_reply() -> JSONResponse | None:
+        async def _execute_narrow_desktop_objective_before_cognition() -> JSONResponse | None:
             if is_benchmark or not _looks_like_desktop_objective(_semantic_user_message):
                 return None
 
@@ -9105,19 +9107,9 @@ async def api_chat(
                     _apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
                     status=str(explicit_file.get("status") or "file_operation"),
                 )
-
-            desktop_objective = await _run_desktop_objective_tracked(
-                _semantic_user_message,
-                cognitive_reply=_build_desktop_objective_execution_brief(_semantic_user_message),
-            )
-            if desktop_objective:
-                return await _finalize_fastpath(
-                    _apply_aura_voice_shaping(str(desktop_objective.get("response") or "")),
-                    status=str(desktop_objective.get("status") or "desktop_objective"),
-                )
             return None
 
-        desktop_objective_response = await _execute_desktop_objective_before_freeform_reply()
+        desktop_objective_response = await _execute_narrow_desktop_objective_before_cognition()
         if desktop_objective_response is not None:
             return desktop_objective_response
 
