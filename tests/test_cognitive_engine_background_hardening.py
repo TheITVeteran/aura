@@ -298,7 +298,9 @@ async def test_cognitive_engine_user_recovery_uses_bounded_primary_router(monkey
 
 
 @pytest.mark.asyncio
-async def test_cognitive_engine_reactive_recovery_rolls_back_inside_state_governance(monkeypatch):
+async def test_cognitive_engine_reactive_recovery_delegates_rollback_governance_to_repository(
+    monkeypatch,
+):
     from core.governance_context import get_active_governance
 
     engine = CognitiveEngine()
@@ -308,8 +310,7 @@ async def test_cognitive_engine_reactive_recovery_rolls_back_inside_state_govern
         async def rollback(self, reason):
             token = get_active_governance()
             captured["reason"] = reason
-            captured["token_domain"] = getattr(token, "domain", "")
-            captured["token_source"] = getattr(token, "source", "")
+            captured["token"] = token
 
     class _Router:
         async def think(self, **_kwargs):
@@ -330,8 +331,7 @@ async def test_cognitive_engine_reactive_recovery_rolls_back_inside_state_govern
 
     assert thought.content.startswith("I recovered the live user-facing turn")
     assert captured["reason"] == "recovery: timeout"
-    assert captured["token_domain"] == "state_mutation"
-    assert captured["token_source"] == "cognitive_engine.reactive_recovery.rollback"
+    assert captured["token"] is None
 
 
 @pytest.mark.asyncio
@@ -435,6 +435,57 @@ async def test_cognitive_engine_desktop_quick_reply_includes_recent_context(monk
     assert "live desktop lane lost context" in user_message
     assert "[CURRENT USER MESSAGE]" in user_message
     assert "Continue from there." in user_message
+
+
+@pytest.mark.asyncio
+async def test_cognitive_engine_desktop_quick_failure_does_not_enter_second_model_path(
+    monkeypatch,
+):
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = StateRepositoryFixture(state)
+    phase_calls = 0
+    router_calls = 0
+
+    class _Phase:
+        async def execute(self, *_args, **_kwargs):
+            nonlocal phase_calls
+            phase_calls += 1
+            raise AssertionError("failed compact desktop turn must not enter the full phase loop")
+
+    class _Router:
+        async def think(self, **_kwargs):
+            nonlocal router_calls
+            router_calls += 1
+            raise TimeoutError("cold Cortex exceeded compact deadline")
+
+    engine._phases = [_Phase()]
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router() if name == "llm_router" else default
+        ),
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "Tell me about distributed systems.",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+        },
+        is_background=False,
+        timeout_s=90.0,
+    )
+
+    assert router_calls == 1
+    assert phase_calls == 0
+    assert thought.metadata["desktop_cognitive_engine_failure"] is True
+    assert thought.metadata["model_retry_suppressed"] is True
+    assert "won't fabricate" in thought.content
 
 
 @pytest.mark.asyncio

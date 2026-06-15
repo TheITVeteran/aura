@@ -297,6 +297,7 @@ def test_foreground_timeout_for_cold_or_recovering_lane():
         foreground_timeout=108.0,
         elapsed_s=20.0,
     ) == 85.0
+    assert server_module._desktop_required_cognitive_budget(foreground_timeout=210.0) == 207.0
 
 
 def test_reply_topicality_flags_unbridged_relevance_challenge():
@@ -2694,7 +2695,7 @@ async def test_desktop_cognitive_engine_repairs_weak_status_reply_before_fail_cl
         "How are you feeling? A lot of work has been done.",
         visible_user_message="How are you feeling? A lot of work has been done.",
         origin="user",
-        timeout_s=10.0,
+        timeout_s=60.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
@@ -2765,7 +2766,7 @@ async def test_desktop_cognitive_engine_retries_failed_reply_on_same_lane(monkey
         user_message,
         visible_user_message=user_message,
         origin="user",
-        timeout_s=10.0,
+        timeout_s=60.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
@@ -2826,7 +2827,7 @@ async def test_desktop_cognitive_engine_does_not_retry_failed_reply_by_default(m
         user_message,
         visible_user_message=user_message,
         origin="user",
-        timeout_s=10.0,
+        timeout_s=60.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
@@ -2890,7 +2891,7 @@ async def test_desktop_cognitive_engine_retries_empty_cycle_without_placeholder(
         user_message,
         visible_user_message=user_message,
         origin="user",
-        timeout_s=10.0,
+        timeout_s=60.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
@@ -3510,7 +3511,7 @@ async def test_desktop_required_cognitive_engine_does_not_retry_transient_error_
         "Answer directly about reliable desktop chat recovery.",
         visible_user_message="Answer directly about reliable desktop chat recovery.",
         origin="user",
-        timeout_s=12.0,
+        timeout_s=60.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
@@ -3578,7 +3579,7 @@ async def test_desktop_required_cognitive_engine_can_opt_into_transient_retry_sa
         "Answer directly about reliable desktop chat recovery.",
         visible_user_message="Answer directly about reliable desktop chat recovery.",
         origin="user",
-        timeout_s=12.0,
+        timeout_s=60.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
@@ -3637,7 +3638,7 @@ async def test_desktop_cognitive_engine_keeps_preflight_context_out_of_objective
             "User message: Give me two concise sentences about reliable desktop tool use."
         ),
         origin="user",
-        timeout_s=10.0,
+        timeout_s=60.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
@@ -3897,7 +3898,7 @@ async def test_cognitive_engine_desktop_status_repair_uses_live_state_after_thin
         visible_user_message="You ok?",
         preflight_context_message="",
         origin="api_chat",
-        timeout_s=10.0,
+        timeout_s=60.0,
         lane={
             "conversation_ready": True,
             "state": "ready",

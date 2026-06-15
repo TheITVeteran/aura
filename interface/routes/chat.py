@@ -223,7 +223,7 @@ _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S = _env_float(
 )
 _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S",
-    120.0,
+    207.0,
     minimum=30.0,
 )
 _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S = _env_float(
@@ -231,7 +231,7 @@ _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S = _env_float(
     3.0,
     minimum=1.0,
 )
-_DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S = 8.0
+_DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S = 45.0
 _CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME = "ChatTurnMemoryLogDrain"
 _CHAT_TURN_MEMORY_LOG_QUEUE_MAX = 64
 _CHAT_TURN_MEMORY_LOG_TIMEOUT_S = 20.0
@@ -8302,7 +8302,10 @@ async def api_chat_regenerate(
         cognitive_budget = _desktop_required_cognitive_budget(
             foreground_timeout=foreground_timeout,
         )
-        if desktop_requires_cognitive_engine and cognitive_budget >= 8.0:
+        if (
+            desktop_requires_cognitive_engine
+            and cognitive_budget >= _DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S
+        ):
             reply_text = await _run_cognitive_engine_chat_turn(
                 user_msg,
                 visible_user_message=user_msg,
@@ -9583,7 +9586,7 @@ async def api_chat(
                 foreground_timeout=foreground_timeout,
                 elapsed_s=time.monotonic() - request_started_at,
             )
-            if cognitive_budget >= 8.0:
+            if cognitive_budget >= _DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S:
                 reply_text = await _run_cognitive_engine_chat_turn(
                     effective_user_message,
                     visible_user_message=_semantic_user_message,

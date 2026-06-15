@@ -9,7 +9,6 @@ from collections import deque
 from typing import Any
 
 from core.consciousness.executive_authority import get_executive_authority
-from core.governance_context import local_internal_governed_scope
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime import background_policy
 from core.runtime.errors import record_degradation
@@ -1143,7 +1142,7 @@ class CognitiveEngine:
             mode,
             origin,
             context,
-            timeout_s=min(cycle_timeout, 40.0),
+            timeout_s=cycle_timeout,
         )
         if direct_quick_reply is not None:
             state.cognition.working_memory.append(
@@ -1180,7 +1179,13 @@ class CognitiveEngine:
             except TimeoutError:
                 logger.error("🛑 [COGNITION] Watchdog: Cognitive cycle TIMEOUT (%.1fs).", cycle_timeout)
                 # Immediate Reactive Recovery
-                return await self._reactive_recovery(objective, mode, origin, "timeout")
+                return await self._reactive_recovery(
+                    objective,
+                    mode,
+                    origin,
+                    "timeout",
+                    context=context,
+                )
             except (sqlite3.Error, OSError) as e:
                 record_degradation(
                     "cognitive_engine",
@@ -1196,7 +1201,13 @@ class CognitiveEngine:
                     )
                     return await self.think(objective, mode=ThinkingMode.FAST, origin=origin, **kwargs)
 
-                return await self._reactive_recovery(objective, mode, origin, f"crash: {e}")
+                return await self._reactive_recovery(
+                    objective,
+                    mode,
+                    origin,
+                    f"crash: {e}",
+                    context=context,
+                )
             finally:
                 try:
                     # vResilience: Avoid locals().get() for type stability
@@ -1310,24 +1321,33 @@ class CognitiveEngine:
                 reward=1.0,
             )
 
-            thought = Thought(
-                id=str(uuid.uuid4()),
-                content=last_msg["content"],
-                mode=mode,
-                confidence=0.9,
-                reasoning=["Phase-based cognitive cycle completed successfully."],
-                metadata={
-                    "spiking_active_inference": context.get("spiking_active_inference")
-                    if isinstance(context, dict)
-                    else None,
+            if direct_quick_reply is not None:
+                thought = direct_quick_reply
+                thought.metadata = {
+                    **dict(thought.metadata or {}),
                     "spiking_active_inference_feedback": feedback,
                     "imagination_workspace_feedback": imagination_feedback,
-                    "bicameral_advisory": context.get("bicameral_advisory")
-                    if isinstance(context, dict)
-                    else None,
                     "bicameral_advisory_feedback": bicameral_feedback,
-                },
-            )
+                }
+            else:
+                thought = Thought(
+                    id=str(uuid.uuid4()),
+                    content=last_msg["content"],
+                    mode=mode,
+                    confidence=0.9,
+                    reasoning=["Phase-based cognitive cycle completed successfully."],
+                    metadata={
+                        "spiking_active_inference": context.get("spiking_active_inference")
+                        if isinstance(context, dict)
+                        else None,
+                        "spiking_active_inference_feedback": feedback,
+                        "imagination_workspace_feedback": imagination_feedback,
+                        "bicameral_advisory": context.get("bicameral_advisory")
+                        if isinstance(context, dict)
+                        else None,
+                        "bicameral_advisory_feedback": bicameral_feedback,
+                    },
+                )
             self.thoughts.append(thought)
             return thought
 
@@ -1508,6 +1528,30 @@ class CognitiveEngine:
         self.thoughts.append(thought)
         return thought
 
+    def _desktop_cognitive_failure_thought(
+        self,
+        mode: ThinkingMode,
+        reason: str,
+    ) -> Thought:
+        thought = Thought(
+            id=str(uuid.uuid4()),
+            content=(
+                "I couldn't produce a reliable answer to that turn, and I won't "
+                "fabricate one. The live Cortex attempt failed its output checks, "
+                "so I recorded the failure instead of sending nonsense."
+            ),
+            mode=ThinkingMode.FAST,
+            confidence=0.1,
+            reasoning=[f"Desktop CognitiveEngine failure surfaced without model retry: {reason}"],
+            metadata={
+                "desktop_cognitive_engine_failure": True,
+                "failure_reason": str(reason or "unknown")[:240],
+                "model_retry_suppressed": True,
+            },
+        )
+        self.thoughts.append(thought)
+        return thought
+
     async def _direct_desktop_quick_reply(
         self,
         objective: str,
@@ -1547,7 +1591,7 @@ class CognitiveEngine:
                 if 0.25 <= factor_value <= 1.25:
                     max_tokens = max(128, int(max_tokens * factor_value))
         max_tokens = max(128, min(max_tokens, 768))
-        request_timeout = max(12.0, min(float(timeout_s or 32.0), 40.0))
+        request_timeout = max(12.0, min(max(12.0, float(timeout_s or 32.0) - 5.0), 180.0))
         style_contract = str(context.get("response_style_contract") or "").strip()
         visible_user_message = str(context.get("visible_user_message") or objective or "").strip()
         recent_conversation_context = str(context.get("recent_conversation_context") or "").strip()
@@ -1625,13 +1669,41 @@ class CognitiveEngine:
                 "cognitive_engine",
                 exc,
                 severity="degraded",
-                action="fell back to full phase loop after compact desktop quick reply failed",
+                action=(
+                    "surfaced bounded desktop inference failure without entering "
+                    "a second heavyweight model path"
+                ),
             )
             logger.warning("Desktop quick CognitiveEngine generation failed: %s", exc)
+            if bool(
+                context.get("desktop_cognitive_engine_required", False)
+                or context.get("cognitive_engine_required", False)
+            ):
+                return self._desktop_cognitive_failure_thought(
+                    mode,
+                    f"compact_desktop_generation_failed:{type(exc).__name__}",
+                )
             return None
 
         text = str(content or "").strip()
         if not text or text == "…" or text.startswith("background_thought_suppressed"):
+            if bool(
+                context.get("desktop_cognitive_engine_required", False)
+                or context.get("cognitive_engine_required", False)
+            ):
+                record_degradation(
+                    "cognitive_engine",
+                    RuntimeError("compact desktop generation returned no usable text"),
+                    severity="degraded",
+                    action=(
+                        "surfaced bounded desktop inference failure without entering "
+                        "a second heavyweight model path"
+                    ),
+                )
+                return self._desktop_cognitive_failure_thought(
+                    mode,
+                    "compact_desktop_generation_empty",
+                )
             return None
         imagination_feedback = self._learn_imagination_workspace_outcome(
             context,
@@ -1669,7 +1741,13 @@ class CognitiveEngine:
         )
 
     async def _reactive_recovery(
-        self, objective: str, mode: ThinkingMode, origin: str, reason: str
+        self,
+        objective: str,
+        mode: ThinkingMode,
+        origin: str,
+        reason: str,
+        *,
+        context: dict[str, Any] | None = None,
     ) -> Thought:
         """
         Emergency reactive response when the main cognitive loop fails.
@@ -1714,14 +1792,9 @@ class CognitiveEngine:
             # 1. Rollback state to last stable version (with timeout + guard)
             try:
                 async with asyncio.timeout(5.0):
-                    with local_internal_governed_scope(
-                        "cognitive_engine.reactive_recovery.rollback",
-                        domain="state_mutation",
-                        constraints={
-                            "reason": str(reason or "unknown")[:160],
-                            "origin": "cognitive_engine_recovery",
-                        },
-                    ):
+                    if self.state_repository is not None:
+                        # StateRepository is the canonical rollback owner and
+                        # creates the state-mutation receipt around persistence.
                         await self.state_repository.rollback(f"recovery: {reason}")
             except (RuntimeError, AttributeError, TypeError, ValueError) as rollback_err:
                 record_degradation(
@@ -1731,6 +1804,15 @@ class CognitiveEngine:
                     action="continued reactive recovery without state rollback",
                 )
                 logger.warning("Rollback failed during recovery: %s", rollback_err)
+
+            if isinstance(context, dict) and bool(
+                context.get("desktop_cognitive_engine_required", False)
+                or context.get("cognitive_engine_required", False)
+            ):
+                return self._desktop_cognitive_failure_thought(
+                    mode,
+                    f"reactive_recovery:{reason}",
+                )
 
             # 2. Get a quick reflex response if possible
             container = get_container()
