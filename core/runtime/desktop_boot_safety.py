@@ -67,9 +67,9 @@ def compute_mlx_memory_limit(total_ram_bytes: int, env: Mapping[str, str] | None
 
     total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
     if desktop_safe_boot_enabled(env):
-        ratio = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_RATIO", "0.52"))
-        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "34"))
-        floor_gb = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB", "20"))
+        ratio = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_RATIO", "0.44"))
+        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "28"))
+        floor_gb = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB", "18"))
         limit = min(int(total_ram_bytes * ratio), int(hard_cap_gb * _GIB))
         return max(int(floor_gb * _GIB), limit)
 
@@ -79,6 +79,39 @@ def compute_mlx_memory_limit(total_ram_bytes: int, env: Mapping[str, str] | None
     if hard_cap_gb > 0:
         limit = min(limit, int(hard_cap_gb * _GIB))
     return max(8 * _GIB, limit)
+
+
+def compute_process_rss_limit(total_ram_bytes: int, env: Mapping[str, str] | None = None) -> int:
+    """Return the process-tree RSS guard used by desktop safe boot.
+
+    This is intentionally lower than the external sentinel kill ceiling. The
+    in-process guard should refuse/recycle before the out-of-process sentinel
+    has to SIGKILL Aura to protect the host.
+    """
+
+    env = env or os.environ
+    configured = str(env.get("AURA_PROCESS_RSS_LIMIT_GB", "") or "").strip()
+    if configured:
+        try:
+            configured_gb = float(configured)
+        except (TypeError, ValueError, OverflowError):
+            configured_gb = 0.0
+        if configured_gb > 0.0:
+            return int(configured_gb * _GIB)
+
+    total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
+    if desktop_safe_boot_enabled(env):
+        ratio = float(env.get("AURA_SAFE_BOOT_PROCESS_RSS_RATIO", "0.56"))
+        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", "36"))
+        floor_gb = float(env.get("AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB", "24"))
+        limit = min(int(total_ram_bytes * ratio), int(hard_cap_gb * _GIB))
+        return max(int(floor_gb * _GIB), limit)
+
+    ratio = float(env.get("AURA_PROCESS_RSS_RATIO", "0.56"))
+    hard_cap_gb = float(env.get("AURA_PROCESS_RSS_CAP_GB", "38"))
+    floor_gb = float(env.get("AURA_PROCESS_RSS_FLOOR_GB", "30"))
+    limit = min(int(total_ram_bytes * ratio), int(hard_cap_gb * _GIB))
+    return max(int(floor_gb * _GIB), limit)
 
 
 def _truthy(value: str | None) -> bool:

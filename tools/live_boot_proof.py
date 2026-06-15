@@ -87,7 +87,7 @@ def build_safe_boot_env(
     operator overrides.
     """
 
-    env = dict(base_env or os.environ)
+    env = dict(os.environ if base_env is None else base_env)
     mode = str(mode or "headless").strip().lower()
     env.setdefault("AURA_SAFE_BOOT_DESKTOP", "1")
     if mode == "desktop":
@@ -102,7 +102,13 @@ def build_safe_boot_env(
     env.setdefault("AURA_ENABLE_PROACTIVE_VISION", "0")
     env.setdefault("AURA_SAFE_BOOT_METAL_CACHE_RATIO", "0.16")
     env.setdefault("AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", "10")
-    env.setdefault("AURA_FOREGROUND_CHAT_MAX_TOKENS", "3072")
+    env.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_RATIO", "0.44")
+    env.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "28")
+    env.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB", "18")
+    env.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_RATIO", "0.56")
+    env.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", "36")
+    env.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB", "24")
+    env.setdefault("AURA_FOREGROUND_CHAT_MAX_TOKENS", "2048")
     env.setdefault("AURA_WATCHDOG_BOOT_GRACE_S", "240")
 
     if "AURA_MLX_MEMORY_LIMIT_GB" not in env:
@@ -110,10 +116,19 @@ def build_safe_boot_env(
             from core.runtime.desktop_boot_safety import compute_mlx_memory_limit
 
             limit_bytes = compute_mlx_memory_limit(psutil.virtual_memory().total, env)
-            limit_gb = max(1.0, min(34.0, limit_bytes / float(1024 ** 3)))
+            limit_gb = max(1.0, min(28.0, limit_bytes / float(1024 ** 3)))
         except (ImportError, RuntimeError, TypeError, ValueError, OSError, psutil.Error):
-            limit_gb = 34.0
+            limit_gb = 28.0
         env["AURA_MLX_MEMORY_LIMIT_GB"] = f"{limit_gb:.0f}"
+    if "AURA_PROCESS_RSS_LIMIT_GB" not in env:
+        try:
+            from core.runtime.desktop_boot_safety import compute_process_rss_limit
+
+            limit_bytes = compute_process_rss_limit(psutil.virtual_memory().total, env)
+            limit_gb = max(1.0, min(36.0, limit_bytes / float(1024 ** 3)))
+        except (ImportError, RuntimeError, TypeError, ValueError, OSError, psutil.Error):
+            limit_gb = 36.0
+        env["AURA_PROCESS_RSS_LIMIT_GB"] = f"{limit_gb:.0f}"
     return env
 
 

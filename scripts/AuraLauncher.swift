@@ -1106,9 +1106,14 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         env["AURA_DEFERRED_CORTEX_PREWARM"] = "auto"
         env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] = "0.16"
         env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] = "10"
-        env["AURA_SAFE_BOOT_MLX_MEMORY_RATIO"] = "0.52"
-        env["AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB"] = "34"
-        env["AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB"] = "20"
+        env["AURA_SAFE_BOOT_MLX_MEMORY_RATIO"] = "0.44"
+        env["AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB"] = "28"
+        env["AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB"] = "18"
+        env["AURA_SAFE_BOOT_PROCESS_RSS_RATIO"] = "0.56"
+        env["AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB"] = "36"
+        env["AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB"] = "24"
+        env["AURA_PROCESS_RSS_LIMIT_GB"] = "36"
+        env["AURA_FOREGROUND_CHAT_MAX_TOKENS"] = "2048"
         env["AURA_EXTERNAL_GUI_OWNER"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
         env["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
@@ -1164,9 +1169,14 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         export AURA_DEFERRED_CORTEX_PREWARM=0
         export AURA_SAFE_BOOT_METAL_CACHE_RATIO=0.16
         export AURA_SAFE_BOOT_METAL_CACHE_CAP_GB=10
-        export AURA_SAFE_BOOT_MLX_MEMORY_RATIO=0.52
-        export AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB=34
-        export AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB=20
+        export AURA_SAFE_BOOT_MLX_MEMORY_RATIO=0.44
+        export AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB=28
+        export AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB=18
+        export AURA_SAFE_BOOT_PROCESS_RSS_RATIO=0.56
+        export AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB=36
+        export AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB=24
+        export AURA_PROCESS_RSS_LIMIT_GB=36
+        export AURA_FOREGROUND_CHAT_MAX_TOKENS=2048
         \(pieces.joined(separator: " "))
         """
         let helperURL = terminalLaunchScriptURL()

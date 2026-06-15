@@ -1115,14 +1115,22 @@ def _install_systemwide_memory_protection() -> None:
     # the prime suspect in a silent native death mid-generation during
     # live proof round 5. Workers apply the limit on their side.
     try:
-        from core.runtime.desktop_boot_safety import compute_mlx_memory_limit
+        from core.runtime.desktop_boot_safety import (
+            compute_mlx_memory_limit,
+            compute_process_rss_limit,
+        )
 
         default_mlx_limit_gb = max(
             8.0,
             compute_mlx_memory_limit(int(total_mb * 1024 * 1024)) / float(1024**3),
         )
+        default_process_rss_limit_gb = max(
+            8.0,
+            compute_process_rss_limit(int(total_mb * 1024 * 1024)) / float(1024**3),
+        )
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
-        default_mlx_limit_gb = 34.0
+        default_mlx_limit_gb = 28.0
+        default_process_rss_limit_gb = 36.0
         record_degradation(
             _AURA_MAIN_DEGRADATION_KEY,
             exc,
@@ -1134,6 +1142,11 @@ def _install_systemwide_memory_protection() -> None:
         or f"{default_mlx_limit_gb:.0f}"
     )
     os.environ.setdefault("AURA_MLX_MEMORY_LIMIT_GB", mlx_gb)
+    process_rss_gb = str(
+        os.environ.get("AURA_PROCESS_RSS_LIMIT_GB", f"{default_process_rss_limit_gb:.0f}")
+        or f"{default_process_rss_limit_gb:.0f}"
+    )
+    os.environ.setdefault("AURA_PROCESS_RSS_LIMIT_GB", process_rss_gb)
 
     sentinel_enabled = str(os.environ.get("AURA_MEMORY_SENTINEL", "1")).strip().lower() not in {"0", "false", "no", "off"}
     if sentinel_enabled:

@@ -16,6 +16,7 @@ from core.runtime.boot_safety import main_process_camera_policy, uvloop_allowed
 from core.runtime.desktop_boot_safety import (
     compute_mlx_cache_limit,
     compute_mlx_memory_limit,
+    compute_process_rss_limit,
     desktop_safe_boot_enabled,
     inprocess_mlx_metal_enabled,
 )
@@ -227,7 +228,17 @@ def test_compute_mlx_memory_limit_uses_desktop_safe_active_memory_ceiling(monkey
     total = 64 * 1024 ** 3
     limit = compute_mlx_memory_limit(total)
 
-    assert limit == int(total * 0.52)
+    assert limit == 28 * 1024 ** 3
+
+
+def test_compute_process_rss_limit_uses_desktop_safe_guard_ceiling(monkeypatch):
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    monkeypatch.delenv("AURA_PROCESS_RSS_LIMIT_GB", raising=False)
+
+    total = 64 * 1024 ** 3
+    limit = compute_process_rss_limit(total)
+
+    assert limit == int(total * 0.56)
 
 
 def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
@@ -246,8 +257,9 @@ def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
     assert env["AURA_ENABLE_PROACTIVE_VISION"] == "0"
     assert env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] == "0.16"
     assert env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] == "10"
-    assert env["AURA_FOREGROUND_CHAT_MAX_TOKENS"] == "3072"
-    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "33"
+    assert env["AURA_FOREGROUND_CHAT_MAX_TOKENS"] == "2048"
+    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "28"
+    assert env["AURA_PROCESS_RSS_LIMIT_GB"] == "36"
 
 
 def test_live_boot_proof_desktop_mode_mirrors_packaged_launcher(monkeypatch):
