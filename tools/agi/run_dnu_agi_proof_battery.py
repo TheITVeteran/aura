@@ -468,7 +468,14 @@ def dnu_model_recycle_interval(requested_tier: str, *, total_tasks: int, smoke: 
     if smoke or total_tasks <= 40:
         return 0
     if requested_tier == "primary":
-        return 40
+        # Recycle every 25 (was 40). Over a long 100-task run, accumulated
+        # MLX/Metal/KV worker state drives event-loop lag + vault-pipe
+        # saturation that crawled a run to a stall by ~task 79 (round 33).
+        # More frequent worker resets bound that cumulative degradation —
+        # verified clean (lag~0, vault_sat=0) through task 62 of round 34,
+        # vs round 33 already saturating by the same point. (Does NOT prevent
+        # the separate intermittent Metal GPU deadlock — see #45/#50.)
+        return 25
     return 0
 
 
