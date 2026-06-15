@@ -788,12 +788,13 @@ class StabilityGuardian:
         if slow_foreground and not slow_background:
             return HealthCheckResult(
                 "tick_rate",
-                True,
+                False,
                 (
                     f"Foreground turns are slow ({len(slow_foreground)} sample(s), mean={mean_ms:.0f}ms) "
-                    f"but event-loop lag is healthy (max={max_loop_lag:.0f}ms)"
+                    f"even though event-loop lag is bounded (max={max_loop_lag:.0f}ms)"
                 ),
-                severity="info",
+                severity="warning",
+                action_taken="withhold healthy status until foreground latency recovers",
             )
         if slow_samples:
             return HealthCheckResult(

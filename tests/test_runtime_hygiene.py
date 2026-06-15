@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.resilience.stability_guardian import StabilityGuardian
+from core.resilience.stability_guardian import HealthCheckResult, StabilityGuardian
 from core.runtime import runtime_hygiene as runtime_hygiene_module
 from core.runtime.runtime_hygiene import MemorySample, RuntimeHygieneManager
 from core.utils.task_tracker import TaskTracker
@@ -682,7 +682,7 @@ async def test_stability_guardian_rejects_runtime_hygiene_report_without_health_
     assert "runtime hygiene did not emit healthy" in result.message
 
 
-def test_stability_guardian_treats_slow_user_facing_ticks_as_info():
+def test_stability_guardian_treats_slow_user_facing_ticks_as_unhealthy():
     guardian = StabilityGuardian(SimpleNamespace(start_time=time.time()))
     now = time.time()
 
@@ -699,9 +699,47 @@ def test_stability_guardian_treats_slow_user_facing_ticks_as_info():
 
     result = guardian._check_tick_rate()
 
-    assert result.healthy is True
-    assert result.severity == "info"
+    assert result.healthy is False
+    assert result.severity == "warning"
     assert "Foreground turns are slow" in result.message
+    assert "withhold healthy status" in (result.action_taken or "")
+
+
+@pytest.mark.asyncio
+async def test_stability_guardian_overall_health_false_for_slow_foreground(monkeypatch):
+    guardian = StabilityGuardian(SimpleNamespace(start_time=time.time()))
+
+    for _ in range(4):
+        guardian.record_tick_health(
+            SimpleNamespace(
+                tick_duration_ms=24000.0,
+                origin="user",
+                priority=True,
+                is_user_facing=True,
+            )
+        )
+
+    def _healthy(name):
+        return HealthCheckResult(name, True, "ok")
+
+    for attr in (
+        "_check_memory",
+        "_check_asyncio_tasks",
+        "_check_lock_watchdog",
+        "_check_state_integrity",
+        "_check_state_repository_pressure",
+        "_check_llm_circuit",
+        "_check_db_connections",
+        "_check_backup_maintenance",
+        "_check_runtime_hygiene",
+        "_check_background_tasks",
+    ):
+        monkeypatch.setattr(guardian, attr, lambda attr=attr: _healthy(attr))
+
+    report = await guardian.run_checks()
+
+    assert report.overall_healthy is False
+    assert any(check.name == "tick_rate" and check.healthy is False for check in report.checks)
 
 
 def test_stability_guardian_flags_actual_event_loop_lag():

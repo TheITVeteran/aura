@@ -2615,7 +2615,7 @@ def test_stability_guardian_treats_single_slow_tick_as_non_degraded_signal():
     assert "not sustained" in result.message.lower()
 
 
-def test_stability_guardian_does_not_degrade_on_long_foreground_ticks():
+def test_stability_guardian_degrades_on_long_foreground_ticks():
     guardian = StabilityGuardian(SimpleNamespace(start_time=time.time()))
     now = time.time()
     guardian._tick_times.extend(
@@ -2631,8 +2631,10 @@ def test_stability_guardian_does_not_degrade_on_long_foreground_ticks():
 
     result = guardian._check_tick_rate()
 
-    assert result.healthy is True
+    assert result.healthy is False
+    assert result.severity == "warning"
     assert "foreground" in result.message.lower()
+    assert "withhold healthy status" in (result.action_taken or "")
 
 
 @pytest.mark.asyncio
