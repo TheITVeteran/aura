@@ -1114,9 +1114,10 @@ class MindTick:
                             elapsed, interval,
                         )
                 sleep_time = max(1.0, interval - elapsed)
-                if not self._running or is_shutdown_requested():
-                    break
-                await asyncio.sleep(sleep_time)
+                if is_shutdown_requested():
+                    self._running = False
+                if self._running:
+                    await asyncio.sleep(sleep_time)
 
     def _get_actual_from_state(self, state: AuraState) -> str | None:
         """Extract the last actual cognitive output for prediction evaluation."""

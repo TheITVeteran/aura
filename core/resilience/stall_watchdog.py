@@ -25,6 +25,7 @@ from importlib import import_module
 from pathlib import Path
 
 from core.governance_context import local_internal_governed_scope
+from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.task_ownership import create_tracked_task
@@ -140,11 +141,13 @@ class StallWatchdog(threading.Thread):
                 '{"pid": %d, "last_loop_run": %.3f, "written_at": %.3f}'
                 % (os.getpid(), self._last_loop_run, now)
             )
-            tmp = self._heartbeat_file.with_suffix(".tmp")
-            tmp.write_text(payload)
-            os.replace(tmp, self._heartbeat_file)
-        except OSError:
-            pass  # The beacon must never crash the watchdog.
+            atomic_write_text(self._heartbeat_file, payload, encoding="utf-8")
+        except (OSError, RuntimeError) as exc:
+            self._log_suppression(
+                "_last_heartbeat_write_error_log_at",
+                "StallWatchdog liveness beacon write failed: %s",
+                exc,
+            )
 
     @staticmethod
     def _suppression_log_interval_s() -> float:
