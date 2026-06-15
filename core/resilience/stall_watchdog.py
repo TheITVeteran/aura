@@ -105,6 +105,46 @@ class StallWatchdog(threading.Thread):
         self._diagnostic_only_notice_logged: bool = False
         self._last_boot_suppression_log_at: float = 0.0
         self._last_foreground_suppression_log_at: float = 0.0
+        # Out-of-process liveness beacon. This daemon thread writes _last_loop_run
+        # to a heartbeat file each tick; the external liveness_sentinel watches
+        # it and kills+restarts the tree when it goes stale. This covers the case
+        # the in-process hard-exit below CANNOT: a Metal GPU deadlock that holds
+        # the GIL so no Python thread (this one included) can run — the file then
+        # simply stops updating and the out-of-process sentinel acts.
+        self._heartbeat_file: Path | None = self._resolve_heartbeat_file()
+        self._last_heartbeat_file_write: float = 0.0
+
+    @staticmethod
+    def _resolve_heartbeat_file() -> Path | None:
+        raw = os.getenv("AURA_LIVENESS_HEARTBEAT_FILE", "data/runtime/liveness_heartbeat.json")
+        if not str(raw).strip():
+            return None
+        try:
+            path = Path(raw)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return path
+        except OSError:
+            return None
+
+    def _write_liveness_heartbeat(self) -> None:
+        """Append-free atomic write of the loop-liveness beacon (best-effort)."""
+        if self._heartbeat_file is None:
+            return
+        now = time.time()
+        # Throttle to ~1s; the run loop already ticks at 1s but guard anyway.
+        if now - self._last_heartbeat_file_write < 1.0:
+            return
+        self._last_heartbeat_file_write = now
+        try:
+            payload = (
+                '{"pid": %d, "last_loop_run": %.3f, "written_at": %.3f}'
+                % (os.getpid(), self._last_loop_run, now)
+            )
+            tmp = self._heartbeat_file.with_suffix(".tmp")
+            tmp.write_text(payload)
+            os.replace(tmp, self._heartbeat_file)
+        except OSError:
+            pass  # The beacon must never crash the watchdog.
 
     @staticmethod
     def _suppression_log_interval_s() -> float:
@@ -146,6 +186,12 @@ class StallWatchdog(threading.Thread):
                 logger.debug("Watchdog heartbeat schedule issue: %s", e)
 
             time.sleep(1.0)  # Check every second
+
+            # Refresh the out-of-process liveness beacon every tick. When the
+            # loop wedges, _last_loop_run stops advancing; when the GIL is held
+            # by a Metal deadlock, this write stops entirely — either way the
+            # external liveness_sentinel sees staleness and restarts the tree.
+            self._write_liveness_heartbeat()
 
             # Absolute loop-liveness ceiling — checked FIRST and immune to all
             # stall suppression. _last_loop_run is advanced only when the loop

@@ -1198,6 +1198,57 @@ def _install_systemwide_memory_protection() -> None:
             )
 
 
+def _install_liveness_sentinel() -> None:
+    """Spawn the external event-loop liveness sentinel (out-of-process).
+
+    The in-process StallWatchdog hard-exit cannot fire when a Metal GPU deadlock
+    holds the GIL (no Python thread runs). This external process watches the
+    heartbeat file the StallWatchdog refreshes; when it goes stale past the
+    ceiling it SIGKILLs the tree so the launchd supervisor restarts the runtime.
+    """
+    if str(os.environ.get("AURA_LIVENESS_SENTINEL", "1")).strip().lower() in {"0", "false", "no", "off"}:
+        return
+    try:
+        import subprocess
+
+        heartbeat = os.environ.get(
+            "AURA_LIVENESS_HEARTBEAT_FILE", "data/runtime/liveness_heartbeat.json"
+        )
+        Path(heartbeat).parent.mkdir(parents=True, exist_ok=True)
+        stale_ceiling = os.environ.get("AURA_LIVENESS_STALE_CEILING_S", "180")
+        grace = os.environ.get("AURA_LIVENESS_GRACE_S", "300")
+        interval = os.environ.get("AURA_LIVENESS_INTERVAL_S", "5")
+        log_dir = Path("data/error_logs/liveness")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve().parent / "tools" / "liveness_sentinel.py"),
+                "--pid", str(os.getpid()),
+                "--heartbeat", str(heartbeat),
+                "--stale-ceiling", str(stale_ceiling),
+                "--grace", str(grace),
+                "--interval", str(interval),
+            ],
+            stdout=open(log_dir / "liveness_sentinel.log", "a"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            cwd=str(Path(__file__).resolve().parent),
+        )
+        logger.info(
+            "🛡️ External liveness sentinel armed: heartbeat=%s stale_ceiling=%ss "
+            "(kills+restarts a GIL-locked/wedged loop from outside).",
+            heartbeat, stale_ceiling,
+        )
+    except (ImportError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        record_degradation(
+            _AURA_MAIN_DEGRADATION_KEY,
+            exc,
+            action="continued boot without external liveness sentinel",
+            severity="degraded",
+        )
+
+
 async def boot_aura_runtime(
     *,
     profile: str,
@@ -1212,6 +1263,7 @@ async def boot_aura_runtime(
     """
     _install_fault_forensics()
     _install_systemwide_memory_protection()
+    _install_liveness_sentinel()
     if profile == "minimal":
         os.environ["AURA_BOOT_PROFILE"] = "minimal"
         os.environ["AURA_USE_MOCK_LLM"] = "1"

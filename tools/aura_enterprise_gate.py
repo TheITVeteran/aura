@@ -109,6 +109,10 @@ ALLOW_SUBPROCESS = {
     # supervisor-restart code. A real os._exit in a child is the only way to
     # prove the end-to-end recovery mechanism; subprocess is the point.
     "tests/test_stall_watchdog_hard_exit.py",
+    # Recovery test: spawns the external liveness sentinel + a victim process to
+    # prove the out-of-process kill path (a GIL-locked deadlock can only be
+    # broken from outside). Subprocess IS the point.
+    "tests/test_liveness_sentinel.py",
     # Legitimate production modules requiring OS/subprocess interface
     "core/architect/safety_gate.py",
     "core/architect/shadow_workspace.py",
