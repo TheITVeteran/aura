@@ -7,6 +7,10 @@ from typing import Any
 from core.container import ServiceContainer
 from core.event_bus import get_event_bus
 from core.runtime.desktop_objective_intent import looks_like_desktop_objective
+from core.runtime.desktop_task_contract import (
+    DESKTOP_TASK_ALLOWED_ACTIONS,
+    desktop_task_action_schema,
+)
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
@@ -65,16 +69,47 @@ class VoiceConversationBridge:
         try:
             from core.brain.cognitive_engine import ThinkingMode
 
+            desktop_execution_contract = self._looks_like_desktop_objective(text)
+            context = {
+                "route": "voice_desktop",
+                "source": "voice",
+                "origin": "voice",
+                "foreground_request": True,
+                "user_facing": True,
+            }
+            if desktop_execution_contract:
+                context.update(
+                    {
+                        "desktop_execution_contract": True,
+                        "desktop_task_planning_schema": {
+                            "document_body": "optional prose to type/write/export",
+                            "steps": [
+                                {
+                                    "action": desktop_task_action_schema(),
+                                    "target": (
+                                        "string or JSON payload; use {{document_body}} "
+                                        "to reference composed prose"
+                                    ),
+                                    "reason": "why this step is needed",
+                                    "expect": "observable effect evidence required after the step",
+                                }
+                            ],
+                        },
+                        "desktop_task_allowed_actions": DESKTOP_TASK_ALLOWED_ACTIONS,
+                        "max_tokens": 1024,
+                        "num_predict": 1024,
+                        "deep_handoff": False,
+                        "allow_deep_handoff": False,
+                    }
+                )
             thought = await engine.think(
                 text,
-                context={
-                    "route": "voice_desktop",
-                    "source": "voice",
-                    "origin": "voice",
-                    "foreground_request": True,
-                    "user_facing": True,
-                },
-                mode=ThinkingMode.FAST,
+                context=context,
+                mode=(
+                    ThinkingMode.SLOW
+                    if desktop_execution_contract
+                    else ThinkingMode.FAST
+                ),
                 origin="voice",
                 foreground_request=True,
                 is_background=False,
@@ -116,6 +151,10 @@ class VoiceConversationBridge:
             "foreground_request": True,
             "user_explicitly_authorized": True,
             "user_requested_action": True,
+            "desktop_execution_contract": True,
+            "user_visible_desktop_action": True,
+            "local_desktop_action": True,
+            "verification_required": True,
             "desktop_task_document_body": cognitive_reply,
             "cognitive_reply": cognitive_reply,
         }

@@ -326,7 +326,14 @@ async def test_voice_bridge_executes_spoken_desktop_objective_after_cognition(mo
 
     class CognitiveEngine:
         async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
-            calls.append({"engine": "cognitive", "objective": objective})
+            calls.append(
+                {
+                    "engine": "cognitive",
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "mode": mode,
+                }
+            )
             return SimpleNamespace(
                 content="Timestamped Aura summary from the cognitive engine.",
                 mode=mode,
@@ -364,10 +371,14 @@ async def test_voice_bridge_executes_spoken_desktop_objective_after_cognition(mo
     )
 
     assert response == "Desktop task completed 4/4 governed computer-use steps."
-    assert calls[0] == {
-        "engine": "cognitive",
-        "objective": "can you open Notes, write a timestamped summary, and save it as a PDF in a folder?",
-    }
+    assert calls[0]["engine"] == "cognitive"
+    assert calls[0]["objective"] == (
+        "can you open Notes, write a timestamped summary, and save it as a PDF in a folder?"
+    )
+    assert calls[0]["context"]["desktop_execution_contract"] is True
+    assert calls[0]["context"]["desktop_task_allowed_actions"]
+    assert calls[0]["context"]["desktop_task_planning_schema"]["steps"]
+    assert calls[0]["mode"].name == "SLOW"
     assert calls[1]["engine"] == "capability"
     assert calls[1]["skill_name"] == "desktop_task"
     assert calls[1]["params"] == {
@@ -377,6 +388,8 @@ async def test_voice_bridge_executes_spoken_desktop_objective_after_cognition(mo
     assert calls[1]["context"]["route"] == "voice.desktop_objective"
     assert calls[1]["context"]["origin"] == "voice"
     assert calls[1]["context"]["foreground_request"] is True
+    assert calls[1]["context"]["desktop_execution_contract"] is True
+    assert calls[1]["context"]["verification_required"] is True
     assert calls[1]["context"]["desktop_task_document_body"] == "Timestamped Aura summary from the cognitive engine."
 
 
@@ -440,6 +453,8 @@ async def test_voice_bridge_routes_generic_browser_document_objective(monkeypatc
     assert response == "Desktop task completed 3/3 governed computer-use steps."
     assert calls[0]["engine"] == "cognitive"
     assert calls[0]["objective"] == "open a tab for Google Docs and start typing a coherent essay about climate adaptation."
+    assert calls[0]["context"]["desktop_execution_contract"] is True
+    assert calls[0]["context"]["max_tokens"] == 1024
     assert calls[1]["engine"] == "capability"
     assert calls[1]["skill_name"] == "desktop_task"
     assert calls[1]["params"] == {
