@@ -86,6 +86,8 @@ class PermissionGuard(AuraBaseModule):
             result = await self._check_screen_permission()
         elif ptype == PermissionType.MIC:
             result = await self._check_mic_permission()
+        elif ptype == PermissionType.CAMERA:
+            result = await self._check_camera_permission()
         elif ptype == PermissionType.ACCESSIBILITY:
             result = await self._check_accessibility_permission()
         elif ptype == PermissionType.AUTOMATION:
@@ -224,8 +226,56 @@ class PermissionGuard(AuraBaseModule):
             ),
         }
 
+    def _av_media_authorization_probe(
+        self, media_attr: str, ptype: PermissionType
+    ) -> dict[str, Any]:
+        """Passively read the AVFoundation TCC status for audio/video.
+
+        ``authorizationStatusForMediaType_`` reports the current grant WITHOUT
+        prompting (only ``requestAccessForMediaType_`` prompts). Status codes:
+        0 notDetermined, 1 restricted, 2 denied, 3 authorized. When AVFoundation
+        isn't importable we assume granted so a missing pyobjc framework never
+        hard-blocks a feature — the feature path surfaces its own real error.
+        """
+        if sys.platform != "darwin":
+            return {"granted": True, "status": "not_applicable", "guidance": ""}
+        try:
+            import AVFoundation  # type: ignore
+
+            media_type = getattr(AVFoundation, media_attr)
+            status = int(
+                AVFoundation.AVCaptureDevice.authorizationStatusForMediaType_(media_type)
+            )
+        except _PERMISSION_RECOVERABLE_ERRORS as exc:
+            record_degradation("permission_guard", exc)
+            self.logger.debug("AVFoundation %s probe unavailable: %s", ptype.name, exc)
+            return {"granted": True, "status": "assumed", "guidance": ""}
+
+        if status == 3:  # authorized
+            return {"granted": True, "status": "active", "guidance": ""}
+        if status == 0:  # notDetermined — macOS prompts on first use
+            return {
+                "granted": False,
+                "status": "undetermined",
+                "guidance": (
+                    f"macOS will ask for {ptype.name.title()} access the first time "
+                    "Aura uses it — click Allow. " + self.get_guidance(ptype)
+                ),
+            }
+        # restricted (1) or denied (2): user must enable it in System Settings.
+        return {"granted": False, "status": "denied", "guidance": self.get_guidance(ptype)}
+
     async def _check_mic_permission(self) -> dict[str, Any]:
-        return {"granted": True, "status": "assumed", "guidance": ""}
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._av_media_authorization_probe, "AVMediaTypeAudio", PermissionType.MIC
+        )
+
+    async def _check_camera_permission(self) -> dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._av_media_authorization_probe, "AVMediaTypeVideo", PermissionType.CAMERA
+        )
 
     async def _check_accessibility_permission(self) -> dict[str, Any]:
         loop = asyncio.get_running_loop()
@@ -256,6 +306,13 @@ class PermissionGuard(AuraBaseModule):
                 "2. Go to Privacy & Security\n"
                 "3. Select Microphone\n"
                 "4. Ensure Aura/Terminal is switched ON."
+            )
+        if ptype == PermissionType.CAMERA:
+            return (
+                "1. Open System Settings\n"
+                "2. Go to Privacy & Security\n"
+                "3. Select Camera\n"
+                "4. Ensure Aura/Terminal is switched ON for visual processing."
             )
         if ptype == PermissionType.ACCESSIBILITY:
             return (

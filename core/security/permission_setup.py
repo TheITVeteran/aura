@@ -43,6 +43,16 @@ _PANE_URLS: dict[PermissionType, str] = {
 }
 
 
+# A not-granted permission only belongs in the actionable "missing" list when
+# the user can fix it in System Settings right now. "undetermined" (macOS will
+# prompt on first use) and "deferred" (Aura requests it only when the feature is
+# used) are soft states — the app may not even appear in the Settings pane yet,
+# so nagging the user about them would be wrong.
+_SOFT_NOT_GRANTED_STATES = frozenset(
+    {"undetermined", "deferred", "assumed", "not_applicable", "asserted_env"}
+)
+
+
 @dataclass(frozen=True)
 class PermissionStatus:
     name: str
@@ -51,6 +61,16 @@ class PermissionStatus:
     guidance: str
     settings_url: str | None = None
     detail: str = ""
+    status: str = ""
+
+    @property
+    def actionable(self) -> bool:
+        """True when the user must enable this in System Settings now."""
+        return (
+            self.available
+            and not self.granted
+            and self.status not in _SOFT_NOT_GRANTED_STATES
+        )
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -60,6 +80,7 @@ class PermissionStatus:
             "guidance": self.guidance,
             "settings_url": self.settings_url,
             "detail": self.detail,
+            "status": self.status,
         }
 
 
@@ -100,12 +121,14 @@ async def check_all_permissions(*, refresh: bool = False) -> PermissionReport:
             granted = bool(result.get("granted"))
             available = bool(result.get("available", True))
             detail = str(result.get("detail") or "")
+            status = str(result.get("status") or "")
         except _PERMISSION_SETUP_RECOVERABLE_ERRORS as exc:
             record_degradation("permission_setup", exc)
             logger.debug("Permission check failed for %s: %s", ptype, exc)
             granted = False
             available = False
             detail = f"check_failed: {type(exc).__name__}"
+            status = "check_failed"
         statuses.append(
             PermissionStatus(
                 name=ptype.name,
@@ -114,9 +137,10 @@ async def check_all_permissions(*, refresh: bool = False) -> PermissionReport:
                 guidance=guard.get_guidance(ptype),
                 settings_url=_PANE_URLS.get(ptype),
                 detail=detail,
+                status=status,
             )
         )
-    missing = [s.name for s in statuses if not s.granted and s.available]
+    missing = [s.name for s in statuses if s.actionable]
     all_granted = all(status.granted for status in statuses)
     return PermissionReport(
         platform=system,
@@ -157,13 +181,27 @@ def format_report(report: PermissionReport) -> str:
         return f"Platform {report.platform}: TCC permissions not applicable."
     if report.all_granted:
         return "All required macOS permissions are granted."
-    lines = ["Missing macOS permissions:"]
-    for status in report.statuses:
-        if not status.granted and status.available:
+    lines: list[str] = []
+    actionable = [s for s in report.statuses if s.actionable]
+    soft = [
+        s
+        for s in report.statuses
+        if not s.granted and s.available and not s.actionable
+    ]
+    if actionable:
+        lines.append("Missing macOS permissions (enable in System Settings):")
+        for status in actionable:
             lines.append(f"  - {status.name}: not granted")
             lines.append(f"    Fix: {status.guidance}")
             if status.settings_url:
                 lines.append(f"    Settings: {status.settings_url}")
+    if soft:
+        # These resolve automatically (macOS prompts, or Aura requests on first
+        # use) — informational, not a required user action.
+        labels = ", ".join(f"{s.name} ({s.status or 'pending'})" for s in soft)
+        lines.append(f"Will be requested when first used: {labels}")
+    if not lines:
+        return "All required macOS permissions are granted."
     return "\n".join(lines)
 
 

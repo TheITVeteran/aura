@@ -1249,6 +1249,38 @@ def _install_liveness_sentinel() -> None:
         )
 
 
+async def _log_macos_permission_preflight(profile: str) -> None:
+    """Log a one-shot macOS TCC permission summary at boot.
+
+    Surfaces denied permissions (mic/camera/screen/accessibility/automation) at
+    startup instead of letting the dependent feature fail silently later. Purely
+    informational and bounded — never blocks or fails boot. Skipped on non-macOS,
+    the minimal/proof profile, or when AURA_PERMISSION_PREFLIGHT=0.
+    """
+    if sys.platform != "darwin" or profile == "minimal":
+        return
+    if str(os.environ.get("AURA_PERMISSION_PREFLIGHT", "1")).strip().lower() in {
+        "0", "false", "no", "off",
+    }:
+        return
+    try:
+        from core.security.permission_setup import check_all_permissions, format_report
+
+        report = await asyncio.wait_for(check_all_permissions(), timeout=8.0)
+        summary = format_report(report).replace("\n", " | ")
+        if report.missing:
+            logger.warning("🔐 macOS permissions need attention: %s", summary)
+        else:
+            logger.info("🔐 macOS permission preflight: %s", summary)
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation(
+            _AURA_MAIN_DEGRADATION_KEY,
+            exc,
+            action="continued boot without a macOS permission preflight summary",
+            severity="debug",
+        )
+
+
 async def boot_aura_runtime(
     *,
     profile: str,
@@ -1264,6 +1296,7 @@ async def boot_aura_runtime(
     _install_fault_forensics()
     _install_systemwide_memory_protection()
     _install_liveness_sentinel()
+    await _log_macos_permission_preflight(profile)
     if profile == "minimal":
         os.environ["AURA_BOOT_PROFILE"] = "minimal"
         os.environ["AURA_USE_MOCK_LLM"] = "1"

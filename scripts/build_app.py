@@ -1,8 +1,7 @@
-
 import os
-import sys
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 # Add project root to path
@@ -15,8 +14,10 @@ def build_app():
     # Clean previous builds
     dist_dir = PROJECT_ROOT / "dist"
     build_dir = PROJECT_ROOT / "build"
-    if dist_dir.exists(): shutil.rmtree(dist_dir)
-    if build_dir.exists(): shutil.rmtree(build_dir)
+    if dist_dir.exists():
+        shutil.rmtree(dist_dir)
+    if build_dir.exists():
+        shutil.rmtree(build_dir)
     
     # PyInstaller Command
     # We use aura_main.py as entrypoint
@@ -91,13 +92,32 @@ def build_app():
              # dist/Aura.app
              source_app = dist_dir / "Aura.app"
              if source_app.exists():
-                 # Post-build: Add TCC permissions to Info.plist
+                 # Post-build: Add TCC permissions to Info.plist from the single
+                 # source of truth (core/security/macos_bundle_manifest.py) so the
+                 # shipped bundle never drifts from what Aura actually needs —
+                 # crucially including NSAppleEventsUsageDescription, without which
+                 # all Notes/Mail/Finder/browser automation is killed (-1743).
+                 from core.security.macos_bundle_manifest import (
+                     info_plist_overrides,
+                     write_entitlements_plist,
+                 )
+
                  plist_path = source_app / "Contents" / "Info.plist"
                  if plist_path.exists():
                      print("🔐 Injecting TCC Privacy Permissions into Info.plist...")
-                     subprocess.run(["plutil", "-replace", "NSCameraUsageDescription", "-string", "Aura needs camera access for visual processing and spatial awareness.", str(plist_path)])
-                     subprocess.run(["plutil", "-replace", "NSMicrophoneUsageDescription", "-string", "Aura needs microphone access for voice interaction and auditory processing.", str(plist_path)])
-                     subprocess.run(["plutil", "-replace", "NSSpeechRecognitionUsageDescription", "-string", "Aura needs speech recognition for conversion of audio to text.", str(plist_path)])
+                     for key, reason in info_plist_overrides().items():
+                         subprocess.run(
+                             ["plutil", "-replace", key, "-string", reason, str(plist_path)],
+                             check=False,
+                         )
+
+                 # Write the hardened-runtime entitlements alongside the bundle so
+                 # a later `codesign --entitlements` step (optional, for signing)
+                 # has them. Harmless for an unsigned "unknown developer" build.
+                 entitlements_path = write_entitlements_plist(
+                     source_app.parent / "aura.entitlements"
+                 )
+                 print(f"🔏 Wrote hardened-runtime entitlements: {entitlements_path}")
 
                  # 1. Desktop
                  shutil.copytree(source_app, target)
