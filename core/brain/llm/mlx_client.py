@@ -312,6 +312,31 @@ def _bounded_max_tokens(requested: Any, bridged: Any, fallback: int) -> int:
     return max(1, min(max(1, requested_int), max(1, bridged_int)))
 
 
+def _apply_memory_pressure_generation_controls(
+    options: dict[str, Any],
+    snapshot: Any,
+    *,
+    default_max_tokens: int = 1,
+) -> dict[str, Any]:
+    """Reduce admitted generation work under unified-memory pressure."""
+
+    max_token_cap = getattr(snapshot, "max_token_cap", None)
+    if max_token_cap is None:
+        return options
+
+    options["max_tokens"] = _bounded_max_tokens(
+        options.get("max_tokens"),
+        max_token_cap,
+        default_max_tokens,
+    )
+    if (
+        bool(options.get("clean_user_surface_contract", False))
+        or "clean_user_surface_recurrent_loops" in options
+    ):
+        options["clean_user_surface_recurrent_loops"] = 1
+    return options
+
+
 def _coerce_timeout_seconds(value: Any) -> float | None:
     """Normalize public timeout kwargs into positive request deadlines."""
     if value is None or isinstance(value, Deadline):
@@ -2970,9 +2995,11 @@ class MLXLocalClient:
         # push macOS into swap or jetsam before a token is produced.
         try:
             memory_snapshot = get_memory_pressure_snapshot()
-            if memory_snapshot.max_token_cap is not None:
-                current_max = int(kwargs.get("max_tokens", self.max_tokens) or self.max_tokens)
-                kwargs["max_tokens"] = min(current_max, memory_snapshot.max_token_cap)
+            kwargs = _apply_memory_pressure_generation_controls(
+                kwargs,
+                memory_snapshot,
+                default_max_tokens=self.max_tokens,
+            )
             if memory_snapshot.should_gc:
                 gc.collect()
             if (

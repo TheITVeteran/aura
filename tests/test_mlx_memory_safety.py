@@ -3,6 +3,57 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 
+def test_memory_pressure_generation_controls_clamp_tokens_and_recurrent_depth():
+    from core.brain.llm.mlx_client import _apply_memory_pressure_generation_controls
+
+    options = {
+        "max_tokens": 2048,
+        "clean_user_surface_contract": True,
+        "clean_user_surface_recurrent_loops": 2,
+    }
+    snapshot = SimpleNamespace(max_token_cap=192)
+
+    controlled = _apply_memory_pressure_generation_controls(options, snapshot)
+
+    assert controlled["max_tokens"] == 192
+    assert controlled["clean_user_surface_recurrent_loops"] == 1
+
+
+def test_memory_pressure_generation_controls_preserve_depth_without_cap():
+    from core.brain.llm.mlx_client import _apply_memory_pressure_generation_controls
+
+    options = {
+        "max_tokens": 2048,
+        "clean_user_surface_contract": True,
+        "clean_user_surface_recurrent_loops": 2,
+    }
+    snapshot = SimpleNamespace(max_token_cap=None)
+
+    controlled = _apply_memory_pressure_generation_controls(options, snapshot)
+
+    assert controlled["max_tokens"] == 2048
+    assert controlled["clean_user_surface_recurrent_loops"] == 2
+
+
+def test_memory_pressure_generation_controls_use_model_default_when_unspecified():
+    from core.brain.llm.mlx_client import _apply_memory_pressure_generation_controls
+
+    options = {
+        "clean_user_surface_contract": True,
+        "clean_user_surface_recurrent_loops": 2,
+    }
+    snapshot = SimpleNamespace(max_token_cap=192)
+
+    controlled = _apply_memory_pressure_generation_controls(
+        options,
+        snapshot,
+        default_max_tokens=4096,
+    )
+
+    assert controlled["max_tokens"] == 192
+    assert controlled["clean_user_surface_recurrent_loops"] == 1
+
+
 def test_mlx_worker_spawn_blocks_32b_when_headroom_is_too_low(monkeypatch):
     from core.brain.llm import mlx_client
 
