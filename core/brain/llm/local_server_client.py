@@ -645,6 +645,7 @@ class LocalServerClient:
         *,
         payload: dict[str, Any] | None = None,
         timeout: float = 30.0,  # noqa: ASYNC109 - forwarded to network gateway request.
+        suppress_degradation: bool = False,
     ) -> tuple[int, dict[str, Any], str]:
         response = await asyncio.to_thread(
             get_network_gateway().request,
@@ -655,6 +656,7 @@ class LocalServerClient:
             timeout=timeout,
             source=f"llm_provider:local_server:{self._lane_name}",
             read_only=True,
+            suppress_degradation=suppress_degradation,
         )
         content = response.get("content") or b""
         text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
@@ -839,6 +841,7 @@ class LocalServerClient:
                 "GET",
                 f"{self._runtime_url}/health",
                 timeout=5.0,
+                suppress_degradation=True,
             )
             if status_code != 200:
                 return False, False
@@ -855,6 +858,7 @@ class LocalServerClient:
                 "GET",
                 f"{self._runtime_url}/v1/models",
                 timeout=5.0,
+                suppress_degradation=True,
             )
             if status_code != 200:
                 self._runtime_identity_ok = False

@@ -2976,6 +2976,7 @@ class CapabilityEngine(AuraBaseModule):
                 constitution = get_constitutional_core(self.orchestrator)
                 constitutional_args = dict(params or {})
                 for context_key in (
+                    "allow_heuristic_desktop_plan",
                     "desktop_execution_contract",
                     "foreground_request",
                     "local_desktop_action",

@@ -82,6 +82,7 @@ class LocalLLMServer(ABC):
                 timeout=2,
                 source="maintenance_tooling:local_llm_health",
                 read_only=True,
+                suppress_degradation=True,
             )
             return int(response.get("status_code") or 0) == 200
         except (AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:

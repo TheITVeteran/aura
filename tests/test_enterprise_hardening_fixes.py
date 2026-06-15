@@ -1979,6 +1979,51 @@ def test_generation_gate_saturation_aborts_stale_lease_and_retries(monkeypatch):
         get_degradation_tracker().reset()
 
 
+def test_generation_gate_does_not_abort_active_user_foreground_lease(monkeypatch):
+    import threading
+
+    from core.brain import llm_health_router as router_module
+    from core.brain.llm_health_router import HealthAwareLLMRouter
+    from core.runtime.errors import get_degradation_tracker
+
+    gate = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(router_module, "_GENERATION_GATE", gate)
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_WAIT_S", 0.01)
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_ACTIVE_LEASES", {})
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_FORCED_LEASES", set())
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_NEXT_LEASE_ID", 0)
+
+    assert gate.acquire(False) is True
+    foreground_lease = router_module._mark_generation_gate_acquired(
+        "response_generation_user:reply"
+    )
+    get_degradation_tracker().reset()
+
+    async def scenario():
+        router = HealthAwareLLMRouter()
+        return await router.generate_with_metadata(
+            "second request must not force-release the active foreground turn",
+            origin="parallel_thought",
+            purpose="background_probe",
+            foreground_request=False,
+        )
+
+    try:
+        result = asyncio.run(scenario())
+        assert result["ok"] is False
+        assert result["endpoint"] == "generation_gate_busy_foreground"
+        assert "active foreground user generation" in result["error"]
+        assert gate.acquire(False) is False
+        events = get_degradation_tracker().recent()
+        assert not [
+            event for event in events
+            if getattr(event, "subsystem", "") == "llm_health_router"
+        ]
+    finally:
+        router_module._release_generation_gate_after_call(foreground_lease)
+        get_degradation_tracker().reset()
+
+
 def test_agency_baseline_watchdog_accepts_dict_and_list_endpoint_maps():
     from tools.agency.run_agency_emergence_battery import _force_abort_router_generation
 

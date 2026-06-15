@@ -1767,6 +1767,7 @@ async def test_api_chat_desktop_surface_plans_with_cognitive_engine_before_execu
     )
     assert skill_calls[0]["params"]["steps"] == []
     assert skill_calls[0]["params"]["desktop_execution_contract"] is True
+    assert skill_calls[0]["params"]["allow_heuristic_desktop_plan"] is True
     assert skill_calls[0]["params"]["user_visible_desktop_action"] is True
     assert skill_calls[0]["params"]["verification_required"] is True
     assert skill_calls[0]["objective"] == skill_calls[0]["params"]["objective"]
@@ -1775,6 +1776,8 @@ async def test_api_chat_desktop_surface_plans_with_cognitive_engine_before_execu
         "source": "desktop_ui",
         "route": "chat.desktop_objective",
         "desktop_execution_contract": True,
+        "allow_heuristic_desktop_plan": True,
+        "disable_outer_skill_retry": True,
         "user_visible_desktop_action": True,
         "local_desktop_action": True,
         "verification_required": True,
@@ -1847,6 +1850,7 @@ async def test_chat_desktop_objective_uses_capability_engine_without_agency_wrap
     assert calls[0]["params"]["objective"] == objective
     assert calls[0]["params"]["steps"] == []
     assert calls[0]["params"]["desktop_execution_contract"] is True
+    assert calls[0]["params"]["allow_heuristic_desktop_plan"] is True
     assert calls[0]["params"]["user_visible_desktop_action"] is True
     assert calls[0]["params"]["verification_required"] is True
     assert calls[0]["context"]["route"] == "chat.desktop_objective"
@@ -1854,6 +1858,7 @@ async def test_chat_desktop_objective_uses_capability_engine_without_agency_wrap
     assert calls[0]["context"]["desktop_task_owned_by"] == "chat.desktop_objective"
     assert calls[0]["context"]["foreground_request"] is True
     assert calls[0]["context"]["user_explicitly_authorized"] is True
+    assert calls[0]["context"]["allow_heuristic_desktop_plan"] is True
 
 
 @pytest.mark.asyncio
@@ -2032,6 +2037,108 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
     assert kernel_calls == []
     assert b"refused the legacy fallback" in response.body
     assert b"desktop_cognitive_engine_required_no_reply" in response.body
+
+
+@pytest.mark.asyncio
+async def test_api_chat_desktop_no_reply_executes_self_sufficient_objective(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    skill_calls = []
+    output_receipts = []
+    completed_exchanges = []
+
+    class _ForbiddenKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            pytest.fail("desktop objective must not use kernel fallback")
+
+    async def _no_cognitive_reply(*_args, **_kwargs):
+        return None
+
+    async def _fake_execute_governed_live_skill(skill_name, params, *, objective, extra_context=None):
+        skill_calls.append(
+            {
+                "skill_name": skill_name,
+                "params": dict(params),
+                "objective": objective,
+                "extra_context": dict(extra_context or {}),
+            }
+        )
+        return {
+            "ok": True,
+            "status": "completed",
+            "summary": "Desktop task completed 2/2 governed computer-use steps.",
+            "steps_requested": 2,
+            "steps_completed": 2,
+        }
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-self-sufficient"
+
+    async def _fake_complete_exchange(*args, **kwargs):
+        completed_exchanges.append((args, kwargs))
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
+    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _ForbiddenKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message=(
+                "Please create a folder named 'Aura Live Proof' in my Documents folder "
+                "and write a file inside it called live_proof.txt with one sentence "
+                "about who you are and the current timestamp."
+            )
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["status"] == "desktop_objective_completed"
+    assert "Desktop task completed 2/2 governed computer-use steps" in payload["response"]
+    assert skill_calls and skill_calls[0]["skill_name"] == "desktop_task"
+    assert skill_calls[0]["params"]["allow_heuristic_desktop_plan"] is True
+    assert skill_calls[0]["extra_context"]["allow_heuristic_desktop_plan"] is True
+    assert completed_exchanges
+    assert output_receipts
 
 
 @pytest.mark.asyncio
@@ -3467,6 +3574,67 @@ async def test_desktop_required_cognitive_engine_timeout_does_not_retry_hidden_w
 
     assert reply is None
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_desktop_execution_contract_uses_bounded_planning_context(monkeypatch):
+    from core.brain.types import ThinkingMode
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, mode=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "mode": mode,
+                    "timeout_s": kwargs.get("timeout_s"),
+                }
+            )
+            return SimpleNamespace(content='{"steps": []}')
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, *_args, **_kwargs):
+            calls.append({"unexpected_pool_retry": True})
+            return SimpleNamespace(content="unexpected pool retry")
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "Open Notes and write a timestamped note.",
+        visible_user_message="Open Notes and write a timestamped note.",
+        origin="user",
+        timeout_s=105.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply == '{"steps": []}'
+    assert calls and calls[0]["mode"] is ThinkingMode.SLOW
+    assert calls[0]["context"]["desktop_execution_contract"] is True
+    assert calls[0]["context"]["allow_heuristic_desktop_plan"] is True
+    assert calls[0]["context"]["max_tokens"] == 1024
+    assert calls[0]["context"]["num_predict"] == 1024
+    assert calls[0]["context"]["skip_runtime_payload"] is True
+    assert calls[0]["context"]["disable_prompt_cache"] is True
+    assert calls[0]["context"]["clear_prompt_cache"] is True
+    assert calls[0]["context"]["desktop_task_planning_schema"]["steps"]
 
 
 @pytest.mark.asyncio

@@ -464,6 +464,93 @@ async def test_live_desktop_contract_requires_structured_cognitive_plan(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_live_desktop_contract_allows_explicit_bounded_heuristic_fallback(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    result = await DesktopTaskSkill().execute(
+        {
+            "objective": (
+                "Please create a folder named 'Aura Live Proof' in my Documents folder "
+                "and write a file inside it called live_proof.txt."
+            ),
+            "steps": [],
+        },
+        {
+            "origin": "desktop_ui",
+            "desktop_execution_contract": True,
+            "allow_heuristic_desktop_plan": True,
+            "cognitive_reply": "I can do that now.",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["planner"] == "heuristic_compat"
+    assert [call[1]["action"] for call in calls] == ["create_folder", "write_text_file"]
+    folder_payload = json.loads(calls[0][1]["target"])
+    assert folder_payload["path"] == "~/Documents/Aura Live Proof"
+    write_payload = json.loads(calls[1][1]["target"])
+    assert write_payload["path"] == "~/Documents/Aura Live Proof/live_proof.txt"
+    assert "I can do that now." in write_payload["content"]
+    assert calls[1][2]["desktop_task_planner"] == "heuristic_compat"
+
+
+@pytest.mark.asyncio
+async def test_live_desktop_contract_rejects_malformed_plan_even_with_heuristic_fallback(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    result = await DesktopTaskSkill().execute(
+        {
+            "objective": "Create a local file from the planned body.",
+            "steps": [],
+        },
+        {
+            "origin": "desktop_ui",
+            "desktop_execution_contract": True,
+            "allow_heuristic_desktop_plan": True,
+            "cognitive_reply": json.dumps(
+                {
+                    "steps": [
+                        {"action": "write_text_file", "target": {"path": "ok.txt", "content": "body"}},
+                        {"action": "raw_unverified_magic", "target": "must fail closed"},
+                    ]
+                }
+            ),
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "invalid_desktop_task_plan"
+    assert "invalid or unsupported" in result["error"]
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_desktop_task_resolves_verified_prior_step_references(monkeypatch):
     from core.container import ServiceContainer
 

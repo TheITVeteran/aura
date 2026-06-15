@@ -1961,10 +1961,20 @@ async def test_chat_live_desktop_proof_routes_through_generic_desktop_task(monke
             "Run a live proof: open Calculator, copy the result into Notes, export a PDF, and move it into a folder."
         ),
         "steps": [],
+        "desktop_execution_contract": True,
+        "allow_heuristic_desktop_plan": True,
+        "foreground_request": True,
+        "user_requested_action": True,
+        "user_explicitly_authorized": True,
+        "user_visible_desktop_action": True,
+        "local_desktop_action": True,
+        "verification_required": True,
     }
     assert calls[0]["context"]["route"] == "chat.live_runtime_proof.desktop_task"
     assert calls[0]["context"]["agency_capability_token_id"] == "cap-token-desktop"
     assert calls[0]["context"]["foreground_request"] is True
+    assert calls[0]["context"]["desktop_execution_contract"] is True
+    assert calls[0]["context"]["allow_heuristic_desktop_plan"] is True
     assert "Completed 6/6" in result["response"] or "6/6 governed" in result["response"]
 
 

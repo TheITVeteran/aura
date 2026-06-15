@@ -148,11 +148,12 @@ async def test_message_payload_sanitization_drops_non_json_metadata():
 
     captured = {}
 
-    async def request_json(method, url, *, payload=None, timeout=30.0):
+    async def request_json(method, url, *, payload=None, timeout=30.0, suppress_degradation=False):
         captured["method"] = method
         captured["url"] = url
         captured["json"] = payload
         captured["timeout"] = timeout
+        captured["suppress_degradation"] = suppress_degradation
         return 200, {"choices": [{"message": {"content": "Hello from Cortex."}}]}, ""
 
     client._request_json = request_json
@@ -173,6 +174,7 @@ async def test_message_payload_sanitization_drops_non_json_metadata():
 
     assert result == "Hello from Cortex."
     assert captured["json"]["messages"] == [{"role": "user", "content": '{"text": "hello"}'}]
+    assert captured["suppress_degradation"] is False
 
 
 def test_is_alive_repairs_adopted_runtime_without_owned_process():
@@ -224,7 +226,7 @@ async def test_response_parser_handles_part_arrays_and_reasoning_fallback():
         ]
     )
 
-    async def request_json(_method, _url, *, payload=None, timeout=30.0):
+    async def request_json(_method, _url, *, payload=None, timeout=30.0, suppress_degradation=False):
         response = responses.popleft()
         return response.status_code, response.json(), response.text
 
@@ -384,8 +386,10 @@ async def test_generate_text_records_latent_bridge_fallback(monkeypatch):
 @pytest.mark.asyncio
 async def test_server_health_detects_wrong_model_on_reserved_lane_port():
     client = LocalServerClient(QWEN32_GGUF)
+    calls = []
 
-    async def request_json(_method, url, *, payload=None, timeout=30.0):
+    async def request_json(_method, url, *, payload=None, timeout=30.0, suppress_degradation=False):
+        calls.append({"url": url, "suppress_degradation": suppress_degradation})
         if url.endswith("/health"):
             return 200, {"status": "ok"}, ""
         if url.endswith("/v1/models"):
@@ -405,6 +409,8 @@ async def test_server_health_detects_wrong_model_on_reserved_lane_port():
         "qwen2.5-72b-instruct-q3_k_m-00001-of-00009.gguf"
     ]
     assert client.get_lane_status()["last_error"].startswith("runtime_model_mismatch:")
+    assert calls
+    assert all(call["suppress_degradation"] is True for call in calls)
 
 
 def test_spawn_server_uses_single_slot_and_disables_prompt_cache_by_default(tmp_path, monkeypatch):

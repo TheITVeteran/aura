@@ -81,6 +81,7 @@ class VoiceConversationBridge:
                 context.update(
                     {
                         "desktop_execution_contract": True,
+                        "allow_heuristic_desktop_plan": True,
                         "desktop_task_planning_schema": desktop_task_planning_schema(),
                         "desktop_task_allowed_actions": DESKTOP_TASK_ALLOWED_ACTIONS,
                         "max_tokens": 1024,
@@ -139,6 +140,7 @@ class VoiceConversationBridge:
             "user_explicitly_authorized": True,
             "user_requested_action": True,
             "desktop_execution_contract": True,
+            "allow_heuristic_desktop_plan": True,
             "disable_outer_skill_retry": True,
             "user_visible_desktop_action": True,
             "local_desktop_action": True,
@@ -148,7 +150,13 @@ class VoiceConversationBridge:
         }
         result = await engine.execute(
             "desktop_task",
-            {"objective": text, "steps": [], "disable_outer_skill_retry": True},
+            {
+                "objective": text,
+                "steps": [],
+                "disable_outer_skill_retry": True,
+                "desktop_execution_contract": True,
+                "allow_heuristic_desktop_plan": True,
+            },
             context=context,
         )
         if isinstance(result, dict):

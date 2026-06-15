@@ -376,6 +376,7 @@ async def test_voice_bridge_executes_spoken_desktop_objective_after_cognition(mo
         "can you open Notes, write a timestamped summary, and save it as a PDF in a folder?"
     )
     assert calls[0]["context"]["desktop_execution_contract"] is True
+    assert calls[0]["context"]["allow_heuristic_desktop_plan"] is True
     assert calls[0]["context"]["desktop_task_allowed_actions"]
     assert calls[0]["context"]["desktop_task_planning_schema"]["steps"]
     assert calls[0]["mode"].name == "SLOW"
@@ -385,11 +386,14 @@ async def test_voice_bridge_executes_spoken_desktop_objective_after_cognition(mo
         "objective": "can you open Notes, write a timestamped summary, and save it as a PDF in a folder?",
         "steps": [],
         "disable_outer_skill_retry": True,
+        "desktop_execution_contract": True,
+        "allow_heuristic_desktop_plan": True,
     }
     assert calls[1]["context"]["route"] == "voice.desktop_objective"
     assert calls[1]["context"]["origin"] == "voice"
     assert calls[1]["context"]["foreground_request"] is True
     assert calls[1]["context"]["desktop_execution_contract"] is True
+    assert calls[1]["context"]["allow_heuristic_desktop_plan"] is True
     assert calls[1]["context"]["verification_required"] is True
     assert calls[1]["context"]["desktop_task_document_body"] == "Timestamped Aura summary from the cognitive engine."
 
@@ -455,6 +459,7 @@ async def test_voice_bridge_routes_generic_browser_document_objective(monkeypatc
     assert calls[0]["engine"] == "cognitive"
     assert calls[0]["objective"] == "open a tab for Google Docs and start typing a coherent essay about climate adaptation."
     assert calls[0]["context"]["desktop_execution_contract"] is True
+    assert calls[0]["context"]["allow_heuristic_desktop_plan"] is True
     assert calls[0]["context"]["max_tokens"] == 1024
     assert calls[1]["engine"] == "capability"
     assert calls[1]["skill_name"] == "desktop_task"
@@ -462,8 +467,11 @@ async def test_voice_bridge_routes_generic_browser_document_objective(monkeypatc
         "objective": "open a tab for Google Docs and start typing a coherent essay about climate adaptation.",
         "steps": [],
         "disable_outer_skill_retry": True,
+        "desktop_execution_contract": True,
+        "allow_heuristic_desktop_plan": True,
     }
     assert calls[1]["context"]["route"] == "voice.desktop_objective"
+    assert calls[1]["context"]["allow_heuristic_desktop_plan"] is True
     assert calls[1]["context"]["desktop_task_document_body"].startswith("I will open the requested")
 
 

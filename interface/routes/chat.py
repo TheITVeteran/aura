@@ -2708,11 +2708,26 @@ async def _run_cognitive_engine_chat_turn(
             }
         )
     if desktop_execution_contract:
+        from core.brain.types import ThinkingMode
+
+        mode = ThinkingMode.SLOW
         context.update(
             {
                 "desktop_execution_contract": True,
+                "allow_heuristic_desktop_plan": True,
                 "desktop_task_planning_schema": desktop_task_planning_schema(),
                 "desktop_task_allowed_actions": DESKTOP_TASK_ALLOWED_ACTIONS,
+                "max_tokens": 1024,
+                "num_predict": 1024,
+                "skip_runtime_payload": True,
+                "disable_prompt_cache": True,
+                "clear_prompt_cache": True,
+                "response_style_contract": (
+                    "Produce a bounded desktop-task execution draft. Prefer valid JSON "
+                    "with optional document_body and steps from the provided schema. "
+                    "If prose is more appropriate, keep it concise and do not claim "
+                    "desktop completion before desktop_task receipts verify it."
+                ),
             }
         )
     timeout_s = max(2.0, float(timeout_s if timeout_s is not None else 120.0))
@@ -7967,6 +7982,56 @@ def _looks_like_desktop_objective(user_message: str) -> bool:
     return _shared_looks_like_desktop_objective(user_message)
 
 
+def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str) -> bool:
+    """Whether desktop_task can honestly complete without a model-composed body.
+
+    This is deliberately narrower than "looks like desktop objective": it only
+    admits objectives where the executor owns the missing prose through a
+    canonical source (Aura self-summary, live research synthesis) or where the
+    objective is primarily an observable desktop/file operation. Free-form
+    essays, letters, and creative prose still require CognitiveEngine text.
+    """
+    if not _looks_like_desktop_objective(user_message):
+        return False
+    text = str(user_message or "").strip()
+    lowered = text.lower()
+    try:
+        from core.skills.desktop_task import DesktopTaskSkill
+
+        if DesktopTaskSkill._objective_requests_self_summary(text):
+            return True
+        if DesktopTaskSkill._objective_requests_research_document(text):
+            return True
+        steps = DesktopTaskSkill()._derive_steps_from_objective(text, {})
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+    actions = {str(getattr(step, "action", "") or "") for step in steps}
+    if not actions:
+        return False
+    prose_actions = {"set_clipboard", "write_text_file", "render_text_pdf", "type"}
+    if not (actions & prose_actions):
+        return True
+    explicit_content_markers = (
+        "essay",
+        "letter",
+        "poem",
+        "story",
+        "blog post",
+        "article",
+        "report",
+        "summary",
+        "summarize",
+        "in your own words",
+        "opinion",
+        "explain",
+        "describe",
+    )
+    if any(marker in lowered for marker in explicit_content_markers):
+        return False
+    return bool(actions & {"create_folder", "open_app", "open_url", "move_file", "system_control"})
+
+
 async def _execute_desktop_objective_from_chat(
     user_message: str,
     *,
@@ -7986,6 +8051,7 @@ async def _execute_desktop_objective_from_chat(
         "objective": objective,
         "steps": [],
         "desktop_execution_contract": True,
+        "allow_heuristic_desktop_plan": True,
         "disable_outer_skill_retry": True,
         "foreground_request": True,
         "user_requested_action": True,
@@ -8004,6 +8070,7 @@ async def _execute_desktop_objective_from_chat(
             "source": "desktop_ui",
             "route": "chat.desktop_objective",
             "desktop_execution_contract": True,
+            "allow_heuristic_desktop_plan": True,
             "disable_outer_skill_retry": True,
             "user_visible_desktop_action": True,
             "local_desktop_action": True,
@@ -8120,12 +8187,28 @@ async def _execute_live_runtime_proof(user_message: str) -> dict[str, Any] | Non
     if kind == "desktop":
         result = await _execute_governed_live_skill(
             "desktop_task",
-            {"objective": objective, "steps": []},
+            {
+                "objective": objective,
+                "steps": [],
+                "desktop_execution_contract": True,
+                "allow_heuristic_desktop_plan": True,
+                "foreground_request": True,
+                "user_requested_action": True,
+                "user_explicitly_authorized": True,
+                "user_visible_desktop_action": True,
+                "local_desktop_action": True,
+                "verification_required": True,
+            },
             objective=objective,
             extra_context={
                 "origin": "desktop_ui",
                 "source": "desktop_ui",
                 "route": "chat.live_runtime_proof.desktop_task",
+                "desktop_execution_contract": True,
+                "allow_heuristic_desktop_plan": True,
+                "user_visible_desktop_action": True,
+                "local_desktop_action": True,
+                "verification_required": True,
                 "desktop_task_document_body": (
                     f"Live desktop proof request received at {_utc_now_iso()}.\n\n"
                     f"Objective: {objective}"
@@ -9598,6 +9681,21 @@ async def api_chat(
 
         desktop_engine_failed = desktop_requires_cognitive_engine and not reply_text
         if desktop_engine_failed:
+            if _desktop_objective_self_sufficient_without_cognitive_text(_semantic_user_message):
+                try:
+                    executed = await _run_desktop_objective_tracked(
+                        _semantic_user_message,
+                        cognitive_reply="",
+                    )
+                except _CHAT_RECOVERABLE_ERRORS as exec_exc:
+                    record_degradation("chat", exec_exc)
+                    executed = None
+                if isinstance(executed, dict) and executed.get("response"):
+                    return await _finalize_fastpath(
+                        _apply_aura_voice_shaping(str(executed.get("response") or "")),
+                        status=str(executed.get("status") or "desktop_objective"),
+                    )
+
             lane = _mark_conversation_lane_state(
                 "desktop_cognitive_engine_required_no_reply",
                 state="failed",

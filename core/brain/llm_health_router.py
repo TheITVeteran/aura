@@ -128,6 +128,43 @@ def _generation_gate_owner(origin: str, purpose: str) -> str:
     return f"{origin}:{purpose}"
 
 
+def _generation_owner_is_user_foreground(owner: str) -> bool:
+    owner = str(owner or "").strip().lower()
+    if not owner:
+        return False
+    return any(
+        marker in owner
+        for marker in (
+            "user:",
+            "desktop",
+            "voice",
+            "foreground",
+            "response_generation_user",
+        )
+    )
+
+
+def _oldest_generation_gate_lease() -> tuple[int, float, str] | None:
+    with _GENERATION_GATE_STATE_LOCK:
+        if not _GENERATION_GATE_ACTIVE_LEASES:
+            return None
+        lease_id, (acquired_at, owner) = min(
+            _GENERATION_GATE_ACTIVE_LEASES.items(),
+            key=lambda item: item[1][0],
+        )
+        return lease_id, float(acquired_at), str(owner or "unknown")
+
+
+def _generation_gate_busy_result(owner: str) -> dict[str, Any]:
+    result = dict(_GATE_SATURATION_RESULT)
+    result["endpoint"] = "generation_gate_busy_foreground"
+    result["error"] = (
+        "local generation lane is busy with an active foreground user generation; "
+        f"refusing to force-release owner={str(owner or 'unknown')[:120]}"
+    )
+    return result
+
+
 def _mark_generation_gate_acquired(owner: str) -> int:
     global _GENERATION_GATE_NEXT_LEASE_ID, _GENERATION_GATE_LAST_ACQUIRED_AT, _GENERATION_GATE_LAST_OWNER
     with _GENERATION_GATE_STATE_LOCK:
@@ -970,6 +1007,11 @@ class HealthAwareLLMRouter:
             _GENERATION_GATE.acquire, True, _GENERATION_GATE_WAIT_S
         )
         if not acquired:
+            oldest_lease = _oldest_generation_gate_lease()
+            if oldest_lease is not None:
+                _lease_id, _acquired_at, owner = oldest_lease
+                if _generation_owner_is_user_foreground(owner):
+                    return _generation_gate_busy_result(owner)
             aborted = self.force_abort_active_generation(
                 reason=f"generation_gate_wait_timeout:{_GENERATION_GATE_WAIT_S:.1f}s"
             )
