@@ -23,6 +23,7 @@ from core.runtime.errors import record_degradation
 import ast
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -74,11 +75,15 @@ class ArchitectureIndex:
         self._index: Dict[str, ModuleRecord] = {}
         self._built_at: float = 0.0
         self._building = False
+        self._created_at_monotonic = time.monotonic()
+        self._deferred_reason: str | None = None
 
     # ─── Public API ───────────────────────────────────────────────────────────
 
     def build(self, force: bool = False) -> int:
         """Build the index synchronously. Returns number of files indexed."""
+        if not force and self._foreground_build_deferred():
+            return len(self._index)
         if not force and self._index and (time.monotonic() - self._built_at) < _INDEX_TTL:
             return len(self._index)
         if self._building:
@@ -136,6 +141,33 @@ class ArchitectureIndex:
                 # Pick a representative module from this subsystem
                 lines.append(f"  • **{subsys}**: {rec.module_doc[:100].strip() or '(no doc)'}")
         return "\n".join(lines)
+
+    def _foreground_build_deferred(self) -> bool:
+        foreground = os.getenv("AURA_FOREGROUND_ONLY", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if not foreground:
+            return False
+        if os.getenv("AURA_ALLOW_FOREGROUND_ARCHITECTURE_INDEX", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return False
+        try:
+            quiet_s = float(os.getenv("AURA_FOREGROUND_ARCHITECTURE_INDEX_QUIET_S", "180") or 180.0)
+        except (TypeError, ValueError):
+            quiet_s = 180.0
+        age_s = max(0.0, time.monotonic() - self._created_at_monotonic)
+        if age_s < max(0.0, quiet_s):
+            self._deferred_reason = f"foreground_quiet_window:{age_s:.1f}s/{max(0.0, quiet_s):.1f}s"
+            logger.info("🧠 ArchitectureIndex build deferred (%s).", self._deferred_reason)
+            return True
+        return False
 
     def get_subsystem_detail(self, subsystem: str) -> str:
         """Return full detail for all modules in a named subsystem."""
@@ -323,8 +355,7 @@ def get_architecture_index() -> ArchitectureIndex:
     global _index
     if _index is None:
         _index = ArchitectureIndex()
-        # Build on first access in background to avoid blocking
-        import threading
-        t = threading.Thread(target=_index.build, daemon=True, name="ArchitectureIndexBuild")
-        t.start()
+        if not _index._foreground_build_deferred():
+            t = threading.Thread(target=_index.build, daemon=True, name="ArchitectureIndexBuild")
+            t.start()
     return _index
