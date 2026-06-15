@@ -123,9 +123,7 @@ class LiquidSubstrate:
         # (prevents saturation at ±1 which collapses phi's state space)
         n = self.config.neuron_count
         self._rng = np.random.default_rng(seed=42)  # Deterministic RNG
-        self.W: np.ndarray = self._rng.standard_normal((n, n)).astype(np.float64) * (
-            1.0 / np.sqrt(n)
-        )
+        self.W: np.ndarray = self._rng.standard_normal((n, n)) * (1.0 / np.sqrt(n))
 
         # Operational Flags
         self.running: bool = False
@@ -136,10 +134,13 @@ class LiquidSubstrate:
         # --- PyTorch Substrate State (Evolution 1) ---
         self.device = DEVICE
         self.x_torch = torch.zeros(self.config.neuron_count, device=self.device)
-        self.W_torch = torch.tensor(self.W, dtype=torch.float32, device=self.device)
+        self.W_torch = torch.empty((n, n), dtype=torch.float32, device=self.device)
         self.v_torch = torch.zeros(self.config.neuron_count, device=self.device)
-        self._weight_cache_dirty: bool = False
-        self._cached_connectivity_norm: float = float(np.linalg.norm(self.W))
+        self._weight_cache_dirty: bool = True
+        self._cached_connectivity_norm: float = 0.0
+        self._cached_connectivity_array_id: int = 0
+        self._cached_connectivity_signature: tuple[Any, ...] = ()
+        self._sync_weight_cache_locked()
 
         # --- Unified Qualia State Variables (Phase XVI) ---
         self.microtubule_coherence: float = 1.0  # 1.0 = Max quantum coherence (Orch OR)
@@ -302,11 +303,37 @@ class LiquidSubstrate:
     def _mark_weight_cache_dirty(self) -> None:
         self._weight_cache_dirty = True
 
+    @staticmethod
+    def _weight_cache_signature(weights: np.ndarray) -> tuple[Any, ...]:
+        arr = np.asarray(weights)
+        if arr.size == 0:
+            samples: tuple[float, ...] = ()
+        else:
+            flat = arr.ravel()
+            last = flat.size - 1
+            indices = sorted({
+                0,
+                last,
+                last // 4,
+                last // 2,
+                (last * 3) // 4,
+            })
+            samples = tuple(float(flat[idx]) for idx in indices)
+        return (id(weights), tuple(arr.shape), str(arr.dtype), samples)
+
     def _sync_weight_cache_locked(self) -> None:
-        w = np.nan_to_num(self.W, nan=0.0, posinf=5.0, neginf=-5.0)
-        self.W = w
-        self.W_torch = torch.tensor(w, dtype=torch.float32, device=self.device)
-        self._cached_connectivity_norm = float(np.linalg.norm(w))
+        raw = np.asarray(self.W)
+        if not np.isfinite(raw).all():
+            self.W = np.nan_to_num(raw, copy=True, nan=0.0, posinf=5.0, neginf=-5.0)
+            raw = np.asarray(self.W)
+        w_torch_source = np.ascontiguousarray(raw, dtype=np.float32)
+        if self.device.type == "cpu":
+            self.W_torch = torch.from_numpy(w_torch_source)
+        else:
+            self.W_torch = torch.from_numpy(w_torch_source).to(self.device)
+        self._cached_connectivity_norm = float(np.linalg.norm(raw))
+        self._cached_connectivity_array_id = id(self.W)
+        self._cached_connectivity_signature = self._weight_cache_signature(self.W)
         self._weight_cache_dirty = False
 
     def _freshness_threshold_s(self) -> float:
@@ -563,6 +590,9 @@ class LiquidSubstrate:
                 state_copy = self.x.copy()
                 if (
                     self._weight_cache_dirty
+                    or id(self.W) != self._cached_connectivity_array_id
+                    or self._weight_cache_signature(self.W)
+                    != self._cached_connectivity_signature
                     or tuple(self.W_torch.shape) != tuple(self.W.shape)
                 ):
                     self._sync_weight_cache_locked()
@@ -1352,15 +1382,13 @@ class LiquidSubstrate:
                             n,
                         )
                         self.x = np.zeros(n)
-                        self.W = self._rng.standard_normal((n, n)).astype(np.float64) * (
+                        self.W = self._rng.standard_normal((n, n)).astype(np.float32) * (
                             1.0 / np.sqrt(max(n, 1))
                         )
-                        self.W_torch = torch.tensor(self.W, dtype=torch.float32, device=self.device)
                         self.x_torch = torch.tensor(self.x, dtype=torch.float32, device=self.device)
                         self.v = np.zeros(n)
                         self.v_torch = torch.zeros(n, device=self.device)
-                        self._cached_connectivity_norm = float(np.linalg.norm(self.W))
-                        self._weight_cache_dirty = False
+                        self._sync_weight_cache_locked()
                         return
                     logger.warning(
                         "Substrate state x dimension (%d) differs from configured n=%d; "
@@ -1381,13 +1409,11 @@ class LiquidSubstrate:
                         n,
                     )
                     self.x = np.zeros(n)
-                    self.W = self._rng.standard_normal((n, n)).astype(np.float64) * 0.1
-                    self.W_torch = torch.tensor(self.W, dtype=torch.float32, device=self.device)
+                    self.W = self._rng.standard_normal((n, n)).astype(np.float32) * 0.1
                     self.x_torch = torch.tensor(self.x, dtype=torch.float32, device=self.device)
                     self.v = np.zeros(n)
                     self.v_torch = torch.zeros(n, device=self.device)
-                    self._cached_connectivity_norm = float(np.linalg.norm(self.W))
-                    self._weight_cache_dirty = False
+                    self._sync_weight_cache_locked()
                     return
                 self.x = np.nan_to_num(loaded_x, nan=0.0, posinf=1.0, neginf=-1.0)
                 if loaded_weights.shape == (n, n):
@@ -1398,14 +1424,12 @@ class LiquidSubstrate:
                         loaded_weights.shape,
                         n,
                     )
-                    self.W = self._rng.standard_normal((n, n)).astype(np.float64) * (
+                    self.W = self._rng.standard_normal((n, n)).astype(np.float32) * (
                         1.0 / np.sqrt(max(n, 1))
                     )
-                self.W_torch = torch.tensor(self.W, dtype=torch.float32, device=self.device)
                 self.x_torch = torch.tensor(self.x, dtype=torch.float32, device=self.device)
                 self.v_torch = torch.tensor(self.v, dtype=torch.float32, device=self.device)
-                self._cached_connectivity_norm = float(np.linalg.norm(self.W))
-                self._weight_cache_dirty = False
+                self._sync_weight_cache_locked()
                 self.tick_count = int(data["tick"])
             logger.info("Substrate state restored.")
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
@@ -1415,15 +1439,13 @@ class LiquidSubstrate:
             self.W = (
                 self._rng.standard_normal(
                     (self.config.neuron_count, self.config.neuron_count)
-                ).astype(np.float64)
+                ).astype(np.float32)
                 * 0.1
             )
-            self.W_torch = torch.tensor(self.W, dtype=torch.float32, device=self.device)
             self.x_torch = torch.tensor(self.x, dtype=torch.float32, device=self.device)
             self.v = np.zeros(self.config.neuron_count)
             self.v_torch = torch.zeros(self.config.neuron_count, device=self.device)
-            self._cached_connectivity_norm = float(np.linalg.norm(self.W))
-            self._weight_cache_dirty = False
+            self._sync_weight_cache_locked()
 
     def _apply_idle_decay(self, idle_seconds: float):
         """Apply accumulated natural decay for time spent in deep idle.

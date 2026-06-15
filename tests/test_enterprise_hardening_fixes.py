@@ -2450,7 +2450,6 @@ def test_runtime_boot_noise_regressions_are_closed():
 def test_proof_ablation_guard_blocks_only_proof_runs(monkeypatch: pytest.MonkeyPatch):
     from core.runtime.proof_policy import (
         active_proof_ablation_services,
-        proof_ablation_blocked_response,
         structured_proof_solver_enabled,
     )
 
@@ -2461,7 +2460,6 @@ def test_proof_ablation_guard_blocks_only_proof_runs(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("AURA_ACTIVE_ABLATION_SERVICES", "memory_facade,unified_will")
 
     assert active_proof_ablation_services(origin="api") == ()
-    assert proof_ablation_blocked_response(origin="api") is None
     assert structured_proof_solver_enabled(origin="api") is False
 
     monkeypatch.setenv("AURA_PROOF_RUN", "1")
@@ -2469,7 +2467,6 @@ def test_proof_ablation_guard_blocks_only_proof_runs(monkeypatch: pytest.MonkeyP
     active = set(active_proof_ablation_services(origin="api"))
     assert "memory_facade" in active
     assert "unified_will" in active
-    assert proof_ablation_blocked_response(origin="api") is None
     assert structured_proof_solver_enabled(origin="api") is False
 
     monkeypatch.setenv("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", "1")

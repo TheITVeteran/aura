@@ -2467,7 +2467,7 @@ async def _run_cognitive_engine_chat_turn(
                 "prefer_tier": "primary",
                 "deep_handoff": False,
                 "allow_deep_handoff": False,
-                "allow_cloud_fallback": False,
+                "allow_cloud_fallback": True,
             }
         )
     if capability_inventory_contract:
@@ -2640,7 +2640,7 @@ async def _run_cognitive_engine_chat_turn(
                 "prefer_tier": "primary",
                 "deep_handoff": False,
                 "allow_deep_handoff": False,
-                "allow_cloud_fallback": False,
+                "allow_cloud_fallback": True,
                 "original_visible_user_message": visible[:1000],
                 "response_repair_directive": repair_directive,
                 "failed_reply_reasons": tuple(reasons or ()),
@@ -6174,7 +6174,7 @@ async def _stabilize_user_facing_reply(
                         desktop_cognitive_engine_required=strict_desktop_repair,
                         deep_handoff=False,
                         allow_deep_handoff=False,
-                        allow_cloud_fallback=False,
+                        allow_cloud_fallback=True,
                         skip_runtime_payload=True,
                         disable_prompt_cache=True,
                         clear_prompt_cache=True,
@@ -6529,7 +6529,7 @@ async def _repair_final_degraded_reply(
         and not (repaired_assessment is not None and repaired_assessment.retryable)
     )
     if repaired_same_diff_only:
-        return repaired, repaired_stale, False, repaired_off_topic, repaired_off_topic_reason, True
+        return repaired, repaired_stale, repaired_same_diff, repaired_off_topic, repaired_off_topic_reason, True
 
     floor = reliability_floor_for_user(user_message) if reliability_floor_for_user else ""
     if floor:

@@ -1,7 +1,7 @@
 """tests/test_macos_permission_onboarding.py
 ================================================
 A shippable macOS app must (a) report the *real* mic/camera TCC state — not a
-stub that always says "granted" — so a denied permission surfaces in onboarding
+test double that always says "granted" — so a denied permission surfaces in onboarding
 instead of failing voice/vision silently, and (b) declare the usage strings and
 entitlements the bundle needs (especially Apple Events, without which all
 Notes/Mail/Finder/browser automation dies with -1743).

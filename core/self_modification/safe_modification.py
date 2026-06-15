@@ -893,6 +893,7 @@ class SafeSelfModification:
         harness_passed, harness_msg = await self._run_promotion_harness(
             target_rel,
             staged_content,
+            test_results=test_results,
         )
         if not harness_passed:
             logger.error("✗ Stage 4a: Safe modification harness failed: %s", harness_msg)
@@ -992,12 +993,19 @@ class SafeSelfModification:
         self,
         target_rel: str,
         staged_content: str,
+        *,
+        test_results: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
         """Validate the exact staged bytes before live source promotion."""
+        extra_test_targets = []
+        raw_tests = (test_results or {}).get("tests_run")
+        if isinstance(raw_tests, (list, tuple)):
+            extra_test_targets = [str(item) for item in raw_tests if str(item or "").strip()]
         try:
             result = await SafeModificationHarness(self.code_base).run(
                 [target_rel],
                 patch_content={target_rel: staged_content},
+                extra_test_targets=extra_test_targets,
             )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation("safe_modification", exc)

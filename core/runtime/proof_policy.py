@@ -106,17 +106,6 @@ def active_proof_ablation_services(*, origin: Any = None) -> tuple[str, ...]:
     return tuple(sorted(active_ablation_services()))
 
 
-def proof_ablation_blocked_response(*, origin: Any = None) -> str | None:
-    """Deprecated compatibility shim.
-
-    Ablation proof turns must execute through the complete runtime with the
-    target service actually lesioned. Returning a fixed sentinel answer proves
-    only harness enforcement, not architecture dependence.
-    """
-
-    return None
-
-
 def is_strict_proof_answer_prompt(prompt: Any, *, origin: Any = None) -> bool:
     """Detect sealed proof tasks that require a strict ``<answer>`` envelope."""
 

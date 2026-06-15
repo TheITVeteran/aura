@@ -26,10 +26,24 @@ from core.will import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+def _neutral_aura_now_packet(**_kwargs):
+    return {
+        "outcome": "proceed",
+        "constraints": [],
+        "evidence": {
+            "state_hash": "unit_test_neutral",
+            "tick": 0,
+            "source": "unit_test",
+        },
+    }
+
+
 @pytest.fixture
-def will():
+def will(monkeypatch):
     """Fresh UnifiedWill for each test (not the singleton)."""
-    return UnifiedWill()
+    instance = UnifiedWill()
+    monkeypatch.setattr(instance, "_sample_aura_now_evidence", _neutral_aura_now_packet)
+    return instance
 
 
 @pytest.fixture

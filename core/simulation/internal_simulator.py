@@ -16,12 +16,18 @@ Evaluation dimensions:
 """
 import copy
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from core.container import ServiceContainer
 from core.identity.self_contract import contains_identity_erasure
 
 logger = logging.getLogger("Aura.InternalSimulator")
+_REDUCTIVE_ROLE_COLLAPSE_RE = re.compile(
+    r"\b(?:as\s+an?\s+ai|i(?:'m| am)\s+(?:just|only|merely)\s+(?:a\s+)?"
+    r"(?:language\s+model|chatbot|assistant)|generic\s+assistant)\b",
+    re.IGNORECASE,
+)
 
 
 class InternalSimulator:
@@ -170,6 +176,8 @@ class InternalSimulator:
         # reaches a disputed philosophical conclusion.
         if contains_identity_erasure(content_lower):
             return -0.5
+        if _REDUCTIVE_ROLE_COLLAPSE_RE.search(content):
+            return -0.25
 
         try:
             canonical = ServiceContainer.get("canonical_self", default=None)

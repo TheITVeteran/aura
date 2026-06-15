@@ -198,8 +198,9 @@ def _read_memory_pressure_snapshot() -> _MemoryPressureSnapshot:
         refuse = runtime_refuse
         if host_percent is not None and host_percent >= runtime_percent:
             pressure = host_percent
-            reason = f"memory_pressure_{host_percent:.1f}"
-            refuse = runtime_refuse and host_percent >= 92.0
+            if not runtime_refuse:
+                reason = f"memory_pressure_{host_percent:.1f}"
+            refuse = runtime_refuse or host_percent >= 92.0
         return _MemoryPressureSnapshot(
             pressure_pct=pressure,
             reason=reason,

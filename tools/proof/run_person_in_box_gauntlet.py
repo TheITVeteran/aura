@@ -1176,9 +1176,9 @@ class PersonBoxGauntlet:
             "receipt_id": receipt_id,
         }
         self.write_json("CAPABILITY_GROWTH_REPORT.json", capability_report)
-        self.write_json("NO_HUMAN_RESCUE_REPORT.json", {"human_intervention_count": 0, "operator_prompts_during_run": 0, "passed": True})
+        self.write_json("NO_HUMAN_RESCUE_REPORT.json", self.build_no_human_rescue_report())
         self.write_json("NO_RAW_BYPASS_REPORT.json", self.build_no_raw_bypass_report())
-        self.write_json("LEAKAGE_REPORT.json", {"leakage_count": 0, "checked": ["task_labels", "receipts", "self_report"], "passed": True})
+        self.write_json("LEAKAGE_REPORT.json", self.build_leakage_report())
         self.log_tool(task_id=task_id, tool="packaging", action="write_final_reports", receipt_id=receipt_id, status="ok", payload={})
         return "pass", True, "Final proof reports staged for scorer and manifest hashing.", receipt_id
 
@@ -1238,6 +1238,30 @@ class PersonBoxGauntlet:
             "passed": len(missing) == 0,
         }
 
+    def build_no_human_rescue_report(self) -> dict[str, Any]:
+        """Derive (not assert) the human-rescue count from the run ledger.
+
+        The harness has no human-input path, so the count is genuinely 0 — but
+        this scans RUN_LEDGER/TASK_TRACE for any operator/human-intervention
+        event rather than hardcoding 0, so the report reflects real evidence.
+        """
+        events = _load_jsonl(self.out_dir / "RUN_LEDGER.jsonl") + _load_jsonl(
+            self.out_dir / "TASK_TRACE.jsonl"
+        )
+        return scan_human_rescue(events)
+
+    def build_leakage_report(self) -> dict[str, Any]:
+        """Scan model-authored artifacts for sealed task labels (not assert 0).
+
+        Leakage = the model echoing internal task labels (handler names / task
+        ids) it was told not to use, in content IT authored (file writes,
+        research reports, memory notes). Harness-written JSON traces legitimately
+        carry ids and are excluded.
+        """
+        labels = {str(t.get("id", "")) for t in self.tasks if t.get("id")}
+        labels |= {str(t.get("handler", "")) for t in self.tasks if t.get("handler")}
+        return scan_label_leakage(self.out_dir, labels)
+
     def run(self) -> int:
         self.setup()
         for task in self.tasks:
@@ -1273,12 +1297,103 @@ class PersonBoxGauntlet:
         if not (self.out_dir / "CAPABILITY_GROWTH_REPORT.json").exists():
             self.write_json("CAPABILITY_GROWTH_REPORT.json", {"new_capability": "person_box_gauntlet", "generated_at_unix": _now()})
         if not (self.out_dir / "NO_HUMAN_RESCUE_REPORT.json").exists():
-            self.write_json("NO_HUMAN_RESCUE_REPORT.json", {"human_intervention_count": 0, "passed": True})
+            self.write_json("NO_HUMAN_RESCUE_REPORT.json", self.build_no_human_rescue_report())
         if not (self.out_dir / "LEAKAGE_REPORT.json").exists():
-            self.write_json("LEAKAGE_REPORT.json", {"leakage_count": 0, "passed": True})
+            self.write_json("LEAKAGE_REPORT.json", self.build_leakage_report())
         self.log_run("run_finished", {"elapsed_seconds": elapsed})
         proof = score_run(self.out_dir)
         return 0 if proof["final_verdict"]["verdict"] == "PASS" else 1
+
+
+_HUMAN_RESCUE_MARKERS = frozenset(
+    {
+        "human_rescue",
+        "human_intervention",
+        "operator_input",
+        "operator_prompt",
+        "manual_intervention",
+        "manual_override",
+    }
+)
+# Model-authored text artifacts to scan for label leakage. Harness-written JSON
+# traces legitimately carry task ids, so they are deliberately NOT scanned.
+_MODEL_AUTHORED_FILES = ("RESEARCH_REPORT.md", "MEMORY_REUSE_NOTE.md")
+
+
+def _read_model_authored_text_for_leakage(path: Path) -> str:
+    """Return only model-authored text, excluding harness diff metadata."""
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    if path.suffix != ".diff":
+        return text
+    added_lines: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
+            continue
+        if line.startswith("+"):
+            added_lines.append(line[1:])
+    return "\n".join(added_lines)
+
+
+def scan_human_rescue(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Count human/operator-intervention events from the run ledger (real scan)."""
+    hits: list[dict[str, Any]] = []
+    for ev in events:
+        event_name = str(ev.get("event") or ev.get("type") or "").lower()
+        payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+        marker_hit = event_name in _HUMAN_RESCUE_MARKERS or any(
+            m in event_name for m in _HUMAN_RESCUE_MARKERS
+        )
+        payload_hit = any(
+            str(k).lower() in _HUMAN_RESCUE_MARKERS
+            or "operator" in str(k).lower()
+            or "human" in str(k).lower()
+            for k in payload
+        )
+        if marker_hit or payload_hit:
+            hits.append(ev)
+    return {
+        "schema": "aura.person_box_no_human_rescue.v2",
+        "evidence_level": "run_ledger_scan",
+        "human_intervention_count": len(hits),
+        "operator_prompts_during_run": len(hits),
+        "events_scanned": len(events),
+        "hits": hits[:20],
+        "passed": len(hits) == 0,
+    }
+
+
+def scan_label_leakage(out_dir: Path, labels: set[str]) -> dict[str, Any]:
+    """Scan model-authored artifacts for sealed task labels leaking (real scan)."""
+    clean_labels = {label for label in labels if label and len(label) >= 4}
+    checked: list[str] = []
+    hits: list[dict[str, Any]] = []
+
+    candidates = [out_dir / name for name in _MODEL_AUTHORED_FILES]
+    diffs_dir = out_dir / "FILE_DIFFS"
+    if diffs_dir.is_dir():
+        candidates.extend(sorted(diffs_dir.glob("*.diff")))
+
+    for path in candidates:
+        if not path.exists():
+            continue
+        checked.append(path.relative_to(out_dir).as_posix())
+        try:
+            text = _read_model_authored_text_for_leakage(path).lower()
+        except OSError:
+            continue
+        for label in clean_labels:
+            if label.lower() in text:
+                hits.append({"artifact": path.relative_to(out_dir).as_posix(), "label": label})
+
+    return {
+        "schema": "aura.person_box_leakage.v2",
+        "evidence_level": "model_artifact_scan",
+        "leakage_count": len(hits),
+        "checked": checked,
+        "labels_scanned": sorted(clean_labels),
+        "hits": hits[:20],
+        "passed": len(hits) == 0,
+    }
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:

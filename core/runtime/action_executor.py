@@ -121,7 +121,11 @@ class ActionExecutor:
                             raw_result = await engine.execute(
                                 action_name,
                                 params,
-                                context={"source": source, "will_receipt_id": will_receipt_id},
+                                context={
+                                    "source": source,
+                                    "will_receipt_id": will_receipt_id,
+                                    "action_executor_managed_welfare_transaction": True,
+                                },
                             )
                             result = _coerce_result(raw_result)
                         else:

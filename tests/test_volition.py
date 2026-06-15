@@ -21,6 +21,16 @@ def engine(orchestrator, monkeypatch, tmp_path):
     paths.brain_dir.mkdir(parents=True, exist_ok=True)
     paths.data_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(volition_module.config, "paths", paths)
+    monkeypatch.setattr(
+        "core.will.get_will",
+        lambda: SimpleNamespace(
+            decide=lambda *args, **kwargs: SimpleNamespace(
+                is_approved=lambda: True,
+                receipt_id="will_unit_test",
+            ),
+            verify_receipt=lambda _receipt_id: True,
+        ),
+    )
     return VolitionEngine(orchestrator)
 
 

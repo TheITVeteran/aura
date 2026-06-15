@@ -15,6 +15,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from core.being.body_state_service import BodyStateService
+from core.being.welfare_state import WelfareState
+from core.being.welfare_transaction import WelfareTransaction
 from core.runtime.atomic_writer import atomic_write_bytes, atomic_write_text
 from core.runtime.desktop_action_gateway import get_desktop_action_gateway
 from core.runtime.errors import FallbackClassification, record_degradation
@@ -1091,6 +1094,62 @@ end tell
         return self._run_applescript(script, timeout=8)
 
     async def execute(self, params: Any, context: dict[str, Any]) -> dict[str, Any]:
+        if isinstance(params, dict):
+            params = ComputerUseParams(**params)
+        context = dict(context or {})
+        if context.get("action_executor_managed_welfare_transaction"):
+            return await self._execute_action(params, context)
+
+        action = str(params.action or "").strip().lower()
+        tx = None
+        body_service = None
+        welfare_service = None
+        try:
+            body_service = BodyStateService.get()
+            welfare_service = WelfareState.get()
+            tx = WelfareTransaction.begin(
+                domain="tool_execution",
+                action=f"computer_use.{action}",
+                welfare_before=welfare_service.last_outputs,
+                body_before=body_service.snapshot(),
+                predicted_welfare_delta={"agency": 0.05, "stability": -0.02},
+                will_receipt_id=context.get("will_receipt_id"),
+            )
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            _record_computer_use_degradation(
+                exc,
+                action="continued computer-use action after welfare transaction begin failed",
+                stage="welfare_transaction.begin",
+                severity="warning",
+                extra={"requested_action": action},
+            )
+
+        result = await self._execute_action(params, context)
+        if tx is None or body_service is None or welfare_service is None:
+            return result
+
+        try:
+            record = tx.complete(
+                outcome="success" if result.get("ok") else "failure",
+                welfare_after=welfare_service.last_outputs,
+                body_after=body_service.snapshot(),
+                recovery_required=not bool(result.get("ok")),
+                error=str(result.get("error", "") or ""),
+            )
+            result["welfare_transaction_id"] = record.tx_id
+            result["welfare_transaction_outcome"] = record.outcome
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            _record_computer_use_degradation(
+                exc,
+                action="returned computer-use result after welfare transaction completion failed",
+                stage="welfare_transaction.complete",
+                severity="warning",
+                extra={"requested_action": action},
+            )
+            result["welfare_transaction_error"] = str(exc)
+        return result
+
+    async def _execute_action(self, params: Any, context: dict[str, Any]) -> dict[str, Any]:
         if isinstance(params, dict):
             params = ComputerUseParams(**params)
 

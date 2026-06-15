@@ -106,6 +106,7 @@ def test_emit_thought_stream_falls_back_to_thought_emitter(monkeypatch):
 
 
 def test_background_initiative_gate_does_not_depend_on_chat_lane_readiness(monkeypatch):
+    import core.runtime.background_policy as background_policy
     from core.autonomous_initiative_loop import _background_initiative_allowed
 
     monkeypatch.setattr(
@@ -115,6 +116,15 @@ def test_background_initiative_gate_does_not_depend_on_chat_lane_readiness(monke
     monkeypatch.setattr(
         "core.runtime.background_policy.get_unified_failure_state",
         lambda: {"pressure": 0.0},
+    )
+    monkeypatch.setattr(
+        background_policy,
+        "_read_memory_pressure_snapshot",
+        lambda: background_policy._MemoryPressureSnapshot(
+            pressure_pct=35.0,
+            reason="memory_pressure_35.0",
+            refuse_heavy_local_generation=False,
+        ),
     )
 
     orchestrator = SimpleNamespace(

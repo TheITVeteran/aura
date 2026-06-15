@@ -35,6 +35,22 @@ async def test_computer_use_read_screen_text_fallback_on_permission_block(monkey
 
 
 @pytest.mark.asyncio
+async def test_computer_use_direct_execution_records_welfare_transaction(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_denial(capability, *permission_names):
+        return {"ok": False, "status": "denied", "error": "permission denied by test guard"}
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_denial)
+
+    result = await skill.execute({"action": "read_menu_clock", "target": ""}, {})
+
+    assert result["ok"] is True
+    assert result["welfare_transaction_id"]
+    assert result["welfare_transaction_outcome"] == "success"
+
+
+@pytest.mark.asyncio
 async def test_computer_use_read_screen_text_fallback_on_unavailable(monkeypatch):
     skill = ComputerUseSkill()
 
@@ -390,9 +406,15 @@ async def test_computer_use_clipboard_actions_use_system_clipboard(monkeypatch):
     set_result = await skill.execute({"action": "set_clipboard", "target": "copied text"}, {})
     get_result = await skill.execute({"action": "get_clipboard", "target": ""}, {})
 
-    assert set_result == {"ok": True, "action": "set_clipboard", "chars": 11}
+    assert set_result["ok"] is True
+    assert set_result["action"] == "set_clipboard"
+    assert set_result["chars"] == 11
+    assert set_result["welfare_transaction_id"]
+    assert set_result["welfare_transaction_outcome"] == "success"
     assert get_result["ok"] is True
     assert get_result["text"] == "copied text"
+    assert get_result["welfare_transaction_id"]
+    assert get_result["welfare_transaction_outcome"] == "success"
     assert calls[0][0] == ["pbcopy"]
     assert calls[1][0] == ["pbpaste"]
 

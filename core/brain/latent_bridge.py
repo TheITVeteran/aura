@@ -46,6 +46,30 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.LatentBridge")
 
+DEFAULT_SUBSTRATE_STATE: dict[str, float] = {
+    "vitality": 0.7,
+    "phi": 0.0,
+    "free_energy": 0.5,
+    "acetylcholine": 0.5,
+    "serotonin": 0.5,
+    "norepinephrine": 0.5,
+    "cortisol": 0.3,
+    "frustration": 0.0,
+    "curiosity": 0.5,
+    "valence": 0.0,
+    "arousal": 0.5,
+    "active_uncertainty": 0.0,
+    "active_tool_pressure": 0.0,
+    "active_error_pressure": 0.0,
+    "active_reduce_load": 0.0,
+    "active_seek_information": 0.0,
+    "organismal_coherence": 0.6,
+    "causal_verification_need": 0.0,
+    "causal_governance_pressure": 0.0,
+    "causal_metabolic_budget": 0.7,
+    "sentience_candidate_strength": 0.0,
+}
+
 
 # ---------------------------------------------------------------------------
 # Live substrate read-through
@@ -65,29 +89,7 @@ def _safe_get(eng: Any, attr: str, default: float) -> float:
 
 
 def _read_substrate() -> dict[str, float]:
-    out: dict[str, float] = {
-        "vitality": 0.7,
-        "phi": 0.0,
-        "free_energy": 0.5,
-        "acetylcholine": 0.5,
-        "serotonin": 0.5,
-        "norepinephrine": 0.5,
-        "cortisol": 0.3,
-        "frustration": 0.0,
-        "curiosity": 0.5,
-        "valence": 0.0,
-        "arousal": 0.5,
-        "active_uncertainty": 0.0,
-        "active_tool_pressure": 0.0,
-        "active_error_pressure": 0.0,
-        "active_reduce_load": 0.0,
-        "active_seek_information": 0.0,
-        "organismal_coherence": 0.6,
-        "causal_verification_need": 0.0,
-        "causal_governance_pressure": 0.0,
-        "causal_metabolic_budget": 0.7,
-        "sentience_candidate_strength": 0.0,
-    }
+    out: dict[str, float] = dict(DEFAULT_SUBSTRATE_STATE)
     try:
         from core.container import ServiceContainer
         homeo = ServiceContainer.get("homeostasis_engine", default=None) or ServiceContainer.get("homeostatic_engine", default=None)
@@ -198,7 +200,12 @@ def compute_inference_params(
 ) -> InferenceParams:
     """Compute the live inference params from substrate state."""
 
-    s = _read_substrate()
+    s = dict(DEFAULT_SUBSTRATE_STATE)
+    try:
+        s.update(_read_substrate() or {})
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation("latent_bridge", exc)
+        logger.debug("latent_bridge defaulted substrate state after read failure: %s", exc)
     rationale: list[str] = []
 
     # ─── temperature ────────────────────────────────────────────────────

@@ -106,7 +106,7 @@ def test_primary_full_dnu_defaults_to_periodic_model_recycling(monkeypatch):
             total_tasks=100,
             smoke=False,
         )
-        == 40
+        == 25
     )
     assert (
         dnu_runner.dnu_model_recycle_interval(

@@ -199,6 +199,7 @@ async def test_background_quiet_window_blocks_brainstem_until_cortex_ready(route
     assert result["error"] in {
         "foreground_quiet_window",
         "background_deferred:cortex_startup_quiet",
+        "background_deferred:conversation_lane_warming",
     }
     assert clients["brainstem"].calls == []
 

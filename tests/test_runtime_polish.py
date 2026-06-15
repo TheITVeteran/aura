@@ -1116,6 +1116,15 @@ def test_constitutive_compute_budget_throttles_under_foreground_activity(monkeyp
     )
     monkeypatch.setattr(background_policy, "get_unified_failure_state", lambda: {"pressure": 0.0})
     monkeypatch.setattr("core.runtime.proof_policy.proof_run_active", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        background_policy,
+        "_read_memory_pressure_snapshot",
+        lambda: background_policy._MemoryPressureSnapshot(
+            pressure_pct=40.0,
+            reason="memory_pressure_40.0",
+            refuse_heavy_local_generation=False,
+        ),
+    )
 
     budget = background_policy.constitutive_compute_budget("liquid_substrate", 20.0)
 
@@ -1137,6 +1146,15 @@ def test_constitutive_compute_budget_throttles_under_memory_pressure(monkeypatch
     )
     monkeypatch.setattr(background_policy, "get_unified_failure_state", lambda: {"pressure": 0.0})
     monkeypatch.setattr("core.runtime.proof_policy.proof_run_active", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        background_policy,
+        "_read_memory_pressure_snapshot",
+        lambda: background_policy._MemoryPressureSnapshot(
+            pressure_pct=88.0,
+            reason="memory_pressure_88.0",
+            refuse_heavy_local_generation=False,
+        ),
+    )
 
     budget = background_policy.constitutive_compute_budget("unified_field", 20.0)
 

@@ -6,6 +6,15 @@ from core.will import ActionDomain, UnifiedWill, WillOutcome
 def _neutral_will() -> UnifiedWill:
     will = UnifiedWill()
     will._started = True
+    will._sample_aura_now_evidence = lambda **_kwargs: {
+        "outcome": "proceed",
+        "constraints": [],
+        "evidence": {
+            "state_hash": "unit_test_neutral",
+            "tick": 0,
+            "source": "unit_test",
+        },
+    }
     return will
 
 

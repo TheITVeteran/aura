@@ -52,6 +52,7 @@ _MEMORY_HYDRATION_REQUEST_RE = re.compile(
     r"\b(?:"
     r"remember|recall|memory|memories|memor(?:y|ies)|earlier|previous|last time|"
     r"what did (?:i|you|we)|what have (?:i|you|we)|across sessions|"
+    r"relationship|between us|our dynamic|dynamic changed|changed between us|evolved between us|"
     r"ground(?:ed|ing)?|evidence|receipt|source|cite|search|look up|web|browser|"
     r"open|create|write|save|export|file|folder|document|note|tool|tools"
     r")\b",

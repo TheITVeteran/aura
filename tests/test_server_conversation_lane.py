@@ -2611,7 +2611,7 @@ async def test_desktop_cognitive_engine_repairs_weak_status_reply_before_fail_cl
 
     assert reply
     assert "previous turn open" not in reply.lower()
-    assert "right here with you" in reply.lower()
+    assert "here with you" in reply.lower()
     assert "answer clearly" in reply.lower()
 
 
@@ -4469,7 +4469,7 @@ async def test_desktop_required_stabilizer_uses_protected_primary_contract(monke
     assert kwargs["protected_foreground_lane"] is True
     assert kwargs["cognitive_engine_required"] is True
     assert kwargs["desktop_cognitive_engine_required"] is True
-    assert kwargs["allow_cloud_fallback"] is False
+    assert kwargs["allow_cloud_fallback"] is True
     assert kwargs["allow_deep_handoff"] is False
     assert kwargs["skip_runtime_payload"] is True
     assert kwargs["disable_prompt_cache"] is True

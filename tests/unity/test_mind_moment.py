@@ -69,6 +69,19 @@ def test_mind_moment_lesion_specific_degradation():
 def test_will_blocks_external_action_when_mind_moment_closure_collapses(monkeypatch):
     ServiceContainer.clear()
     will = UnifiedWill()
+    monkeypatch.setattr(
+        will,
+        "_sample_aura_now_evidence",
+        lambda **_kwargs: {
+            "outcome": "proceed",
+            "constraints": [],
+            "evidence": {
+                "state_hash": "unit_test_neutral",
+                "tick": 0,
+                "source": "unit_test",
+            },
+        },
+    )
     monkeypatch.setattr(will, "_consult_substrate", lambda *args, **kwargs: (0.9, 0.0, "receipt"))
     monkeypatch.setattr(will, "_read_affect_valence", lambda: 0.0)
     monkeypatch.setattr(

@@ -1,5 +1,4 @@
 from core.runtime.errors import record_degradation
-import json
 import multiprocessing
 import multiprocessing.connection
 import time
@@ -10,6 +9,7 @@ import sys
 import threading
 from typing import Dict, Any, Callable, Optional, List
 from dataclasses import dataclass, field
+from core.bus.pipe_control import send_supervisor_stop
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 
 logger = logging.getLogger("Aura.Supervisor")
@@ -138,26 +138,8 @@ class SupervisionTree:
 
     def _send_actor_stop(self, pipe: Any, name: str) -> bool:
         """Best-effort cooperative actor stop over the existing pipe transport."""
-        if pipe is None:
-            return False
-        write_endpoint = pipe[1] if isinstance(pipe, tuple) and len(pipe) >= 2 else pipe
-        if getattr(write_endpoint, "closed", False):
-            return False
         try:
-            write_endpoint.send(
-                json.dumps(
-                    {
-                        "type": "stop",
-                        "payload": {
-                            "source": "supervision_tree",
-                            "reason": "graceful_shutdown",
-                            "actor": name,
-                        },
-                        "trace_id": f"supervisor-stop:{name}:{time.time_ns()}",
-                    }
-                )
-            )
-            return True
+            return send_supervisor_stop(pipe, name)
         except (BrokenPipeError, EOFError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             logger.debug("Cooperative actor stop send failed for %s: %s", name, exc)
             return False

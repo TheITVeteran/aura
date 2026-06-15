@@ -20,12 +20,43 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+_FAILED_NODE_RE = re.compile(r"^(?:FAILED|ERROR)\s+([^\s].*?)(?:\s+-\s+.*)?$")
+
+
+def _is_valid_pytest_node_id(value: str) -> bool:
+    node_id = str(value or "").strip()
+    if not node_id:
+        return False
+    if node_id in {"-", "=", "FAILED", "ERROR"}:
+        return False
+    if node_id.startswith(("=", "_", "short", "warnings", "summary")):
+        return False
+    return ".py" in node_id and not any(ch.isspace() for ch in node_id)
+
+
+def parse_failed_node_ids(output: str) -> list[str]:
+    """Extract concrete pytest node ids from summary lines.
+
+    A malformed empty node id must never be retried: ``pytest ""`` is
+    interpreted as a whole-suite invocation, which is unsafe on this repo.
+    """
+
+    ids: list[str] = []
+    for line in str(output or "").splitlines():
+        match = _FAILED_NODE_RE.match(line.strip())
+        if not match:
+            continue
+        node_id = match.group(1).strip()
+        if _is_valid_pytest_node_id(node_id):
+            ids.append(node_id)
+    return ids
 
 
 def discover_test_files(tests_dir: Path) -> list[Path]:
@@ -69,11 +100,7 @@ def run_chunk(
         return False, f"chunk {index}/{total} TIMEOUT after {timeout_s:.0f}s", []
     sys.stdout.write(proc.stdout)
     sys.stderr.write(proc.stderr)
-    failed_ids = [
-        line.split(" ", 2)[1]
-        for line in proc.stdout.splitlines()
-        if line.startswith(("FAILED ", "ERROR ")) and len(line.split(" ", 2)) > 1
-    ]
+    failed_ids = parse_failed_node_ids(proc.stdout)
     elapsed = time.monotonic() - started
     if proc.returncode == 0:
         return True, f"chunk {index}/{total} passed in {elapsed:.0f}s", []
@@ -96,6 +123,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--chunk-timeout", type=float, default=2400.0)
     parser.add_argument("--tests-dir", type=Path, default=ROOT / "tests")
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument(
+        "--continue-on-failure",
+        action="store_true",
+        help="run later chunks after a failed chunk instead of stopping immediately",
+    )
     parser.add_argument("extra", nargs="*", help="extra pytest args")
     args = parser.parse_args(argv)
 
@@ -107,17 +139,23 @@ def main(argv: list[str] | None = None) -> int:
     chunk_lists = split_chunks(files, args.chunks)
     results: list[tuple[bool, str, list[str]]] = []
     for i, chunk in enumerate(chunk_lists, start=1):
-        results.append(
-            run_chunk(
-                i,
-                len(chunk_lists),
-                chunk,
-                marker=args.marker,
-                timeout_s=args.chunk_timeout,
-                python=args.python,
-                extra_args=list(args.extra),
-            )
+        result = run_chunk(
+            i,
+            len(chunk_lists),
+            chunk,
+            marker=args.marker,
+            timeout_s=args.chunk_timeout,
+            python=args.python,
+            extra_args=list(args.extra),
         )
+        results.append(result)
+        if not result[0] and not args.continue_on_failure:
+            print(
+                f"stopping after chunk {i}/{len(chunk_lists)} failure; "
+                "rerun with --continue-on-failure to collect later chunk failures",
+                flush=True,
+            )
+            break
 
     # Isolated retry: a test that fails in-chunk but passes alone is an
     # ORDER-DEPENDENCE defect — reported loudly in its own register, but
@@ -129,8 +167,13 @@ def main(argv: list[str] | None = None) -> int:
     if all_failed_ids:
         print(f"\n━━ isolated retry of {len(all_failed_ids)} failed test(s) ━━", flush=True)
         for fid in all_failed_ids:
+            retry_cmd = [args.python, "-m", "pytest", fid, "-q", "-p", "no:cacheprovider"]
+            if args.marker:
+                retry_cmd.extend(["-m", args.marker])
+            retry_cmd.extend(list(args.extra))
+            print(f"  retry: {fid}", flush=True)
             retry = subprocess.run(
-                [args.python, "-m", "pytest", fid, "-q", "-p", "no:cacheprovider"],
+                retry_cmd,
                 cwd=ROOT,
                 timeout=600,
                 capture_output=True,

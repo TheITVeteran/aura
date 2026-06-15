@@ -91,7 +91,13 @@ class SafeModificationHarness:
     def __init__(self, codebase_root: str | Path = ".") -> None:
         self.codebase_root = Path(codebase_root).resolve()
 
-    async def run(self, changed_files: list[str], *, patch_content: dict[str, str] | None = None) -> HarnessResult:
+    async def run(
+        self,
+        changed_files: list[str],
+        *,
+        patch_content: dict[str, str] | None = None,
+        extra_test_targets: list[str] | None = None,
+    ) -> HarnessResult:
         """Run all safety checks on the given changed files.
 
         Args:
@@ -158,6 +164,7 @@ class SafeModificationHarness:
                     test_ok, test_errors = await self._check_pytest(
                         changed_files,
                         candidate_root=candidate_root,
+                        extra_test_targets=extra_test_targets,
                     )
                 else:
                     test_ok = False
@@ -266,6 +273,8 @@ class SafeModificationHarness:
                         "ls-files",
                         "-z",
                         "--cached",
+                        "--others",
+                        "--exclude-standard",
                     ],
                     capture_output=True,
                     timeout=20,
@@ -277,6 +286,7 @@ class SafeModificationHarness:
                         self.codebase_root / relative
                         for relative in result.stdout.split("\0")
                         if relative
+                        and self._workspace_path_allowed(Path(relative))
                     ]
             except (OSError, RuntimeError, subprocess.SubprocessError):
                 pass
@@ -284,10 +294,16 @@ class SafeModificationHarness:
             path
             for path in self.codebase_root.rglob("*")
             if path.is_file()
-            and not set(path.relative_to(self.codebase_root).parts).intersection(
-                _WORKSPACE_EXCLUDED_PARTS
-            )
+            and self._workspace_path_allowed(path.relative_to(self.codebase_root))
         ]
+
+    @staticmethod
+    def _workspace_path_allowed(relative: Path) -> bool:
+        if set(relative.parts).intersection(_WORKSPACE_EXCLUDED_PARTS):
+            return False
+        if relative.name.startswith("aura_codebase_ai_audit") and relative.suffix == ".txt":
+            return False
+        return True
 
     def prepare_candidate_workspace(
         self,
@@ -304,6 +320,9 @@ class SafeModificationHarness:
                 continue
             destination = candidate_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_symlink():
+                destination.symlink_to(os.readlink(source))
+                continue
             if relative.as_posix() in file_contents:
                 shutil.copy2(source, destination)
                 continue
@@ -343,6 +362,7 @@ class SafeModificationHarness:
         changed_files: list[str],
         *,
         candidate_root: Path,
+        extra_test_targets: list[str] | None = None,
     ) -> tuple[bool, list[str]]:
         """Run related pytest files against the isolated candidate workspace."""
         errors: list[str] = []
@@ -368,6 +388,7 @@ class SafeModificationHarness:
                 if (candidate_root / tc).exists():
                     test_files.append(tc)
 
+        test_files.extend(self._resolve_extra_test_targets(candidate_root, extra_test_targets or []))
         if not test_files:
             preview = ", ".join(changed_files[:5])
             if len(changed_files) > 5:
@@ -412,6 +433,52 @@ class SafeModificationHarness:
             return False, errors
 
         return True, []
+
+    @staticmethod
+    def _resolve_extra_test_targets(candidate_root: Path, targets: list[str]) -> list[str]:
+        resolved: list[str] = []
+        tests_root = candidate_root / "tests"
+        for raw in targets:
+            target = str(raw or "").strip()
+            if not target:
+                continue
+            path_part = target.split("::", 1)[0]
+            if ".py" in path_part and (candidate_root / path_part).exists():
+                try:
+                    source = (candidate_root / path_part).read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    source = ""
+                if SafeModificationHarness._is_recursive_self_mod_test(source):
+                    continue
+                resolved.append(target)
+                continue
+            if not tests_root.exists():
+                continue
+            needle = target.split("::")[-1]
+            if not needle:
+                continue
+            for test_file in tests_root.rglob("test_*.py"):
+                try:
+                    source = test_file.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+                if SafeModificationHarness._is_recursive_self_mod_test(source):
+                    continue
+                if f"def {needle}" in source or f"async def {needle}" in source:
+                    resolved.append(test_file.relative_to(candidate_root).as_posix())
+                    break
+        return resolved
+
+    @staticmethod
+    def _is_recursive_self_mod_test(source: str) -> bool:
+        text = str(source or "")
+        return (
+            "AutonomousSelfModificationEngine" in text
+            and ".apply_fix(" in text
+        ) or (
+            "SafeModificationHarness" in text
+            and ".run(" in text
+        )
 
     def _current_rss_mb(self) -> float:
         try:
