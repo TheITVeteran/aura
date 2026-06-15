@@ -201,6 +201,80 @@ class ConversationPersistence:
         )
         return turn_id
 
+    def record_exchange(
+        self,
+        user_content: str,
+        aura_content: str,
+        *,
+        origin: str = "",
+        cid: str | None = None,
+        session_id: str | None = None,
+    ) -> tuple[str, str]:
+        """Atomically persist a completed user/Aura exchange."""
+
+        sid = _safe_text(session_id or self._current_session_id, max_chars=64)
+        if not sid:
+            sid = self.start_session()
+
+        user_turn_id = str(uuid.uuid4())[:12]
+        aura_turn_id = str(uuid.uuid4())[:12]
+        now = time.time()
+        safe_user_content = _safe_text(user_content, max_chars=MAX_CONTENT_CHARS)
+        safe_aura_content = _safe_text(aura_content, max_chars=MAX_CONTENT_CHARS)
+        safe_origin = _safe_text(origin, max_chars=MAX_ORIGIN_CHARS)
+        safe_cid = _safe_text(cid, max_chars=MAX_CID_CHARS)
+        user_cid = _safe_text(f"{safe_cid}:user", max_chars=MAX_CID_CHARS)
+        aura_cid = _safe_text(f"{safe_cid}:aura", max_chars=MAX_CID_CHARS)
+
+        with self._connect() as con:
+            con.execute(
+                "INSERT INTO turns VALUES (?,?,?,?,?,?,?)",
+                (
+                    user_turn_id,
+                    sid,
+                    "user",
+                    safe_user_content,
+                    safe_origin,
+                    now,
+                    user_cid,
+                ),
+            )
+            con.execute(
+                "INSERT INTO turns VALUES (?,?,?,?,?,?,?)",
+                (
+                    aura_turn_id,
+                    sid,
+                    "aura",
+                    safe_aura_content,
+                    safe_origin,
+                    now + 1e-6,
+                    aura_cid,
+                ),
+            )
+            con.execute(
+                "UPDATE sessions SET last_active = ? WHERE id = ?",
+                (now + 1e-6, sid),
+            )
+            con.commit()
+
+        self._publish_turn_recorded(
+            role="user",
+            content=safe_user_content,
+            origin=safe_origin,
+            cid=user_cid,
+            session_id=sid,
+            turn_id=user_turn_id,
+        )
+        self._publish_turn_recorded(
+            role="aura",
+            content=safe_aura_content,
+            origin=safe_origin,
+            cid=aura_cid,
+            session_id=sid,
+            turn_id=aura_turn_id,
+        )
+        return user_turn_id, aura_turn_id
+
     def _publish_turn_recorded(
         self,
         *,
@@ -258,7 +332,10 @@ class ConversationPersistence:
         limit = _safe_limit(limit, 100)
         with self._connect() as con:
             rows = con.execute(
-                "SELECT * FROM turns WHERE session_id = ? ORDER BY created_at ASC LIMIT ?",
+                "SELECT * FROM ("
+                "SELECT * FROM turns WHERE session_id = ? "
+                "ORDER BY created_at DESC, rowid DESC LIMIT ?"
+                ") ORDER BY created_at ASC",
                 (sid, limit),
             ).fetchall()
         return [dict(r) for r in rows]

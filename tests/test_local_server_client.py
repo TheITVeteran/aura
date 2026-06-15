@@ -254,9 +254,10 @@ async def test_warmup_rejects_empty_generation_as_runtime_readiness():
 
     client._client = _fake_client
 
-    await client.warmup()
+    result = await client.warmup()
 
     lane = client.get_lane_status()
+    assert result is False
     assert lane["state"] == "recovering"
     assert lane["conversation_ready"] is False
     assert lane["last_error"] == "warmup_no_text"
@@ -267,8 +268,9 @@ async def test_solver_background_warmup_preserves_background_runtime_intent():
     client = LocalServerClient(QWEN72_GGUF)
     client._ensure_runtime_ready = AsyncCallRecorder(result=False)
 
-    await client.warmup(foreground_request=False)
+    result = await client.warmup(foreground_request=False)
 
+    assert result is False
     assert client._ensure_runtime_ready.await_args.kwargs["foreground_request"] is False
 
 

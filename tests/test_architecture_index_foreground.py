@@ -34,6 +34,45 @@ def test_architecture_index_force_build_overrides_foreground_deferral(monkeypatc
     assert "sample module" in index.query("sample module").lower()
 
 
+def test_architecture_index_defers_during_desktop_safe_boot(monkeypatch, tmp_path):
+    from core.self.architecture_index import ArchitectureIndex
+
+    (tmp_path / "core").mkdir()
+    (tmp_path / "interface").mkdir()
+    (tmp_path / "core" / "sample.py").write_text(
+        '"""sample module"""\nclass Sample:\n    """sample class"""\n',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    monkeypatch.setenv("AURA_FOREGROUND_ARCHITECTURE_INDEX_QUIET_S", "180")
+
+    index = ArchitectureIndex(project_root=tmp_path)
+
+    assert index.build() == 0
+    assert str(index._deferred_reason).startswith("foreground_quiet_window:")
+
+
+def test_architecture_query_never_blocks_interactive_runtime_on_full_scan(monkeypatch, tmp_path):
+    from core.self.architecture_index import ArchitectureIndex
+
+    (tmp_path / "core").mkdir()
+    (tmp_path / "interface").mkdir()
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+
+    index = ArchitectureIndex(project_root=tmp_path)
+    scheduled = []
+    monkeypatch.setattr(index, "schedule_background_build", lambda: scheduled.append(True))
+    monkeypatch.setattr(
+        index,
+        "_walk_and_index",
+        lambda: (_ for _ in ()).throw(AssertionError("foreground query performed a full scan")),
+    )
+
+    assert index.query("memory gateway") == ""
+    assert scheduled == [True]
+
+
 def test_architecture_index_getter_does_not_start_foreground_build(monkeypatch):
     from core.self import architecture_index as module
 

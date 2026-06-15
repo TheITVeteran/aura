@@ -147,6 +147,8 @@ def _get_convo_lock(): return _locks.setdefault("convo", asyncio.Lock())
 _conversation_log_lock = _get_convo_lock()
 _session_memory_pins: list[dict] = []
 _MAX_CONVERSATION_LOG_EXCHANGES = 500
+_DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S = 1.5
+_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT = 3
 _SESSION_MEMORY_PIN_LEDGER_LIMIT = 500
 class PreemptibleChatLock:
     def __init__(self):
@@ -295,6 +297,12 @@ async def _complete_logged_exchange(
         if regenerated:
             target["regenerated"] = True
         _trim_conversation_log_locked()
+
+    await _persist_completed_conversation_exchange(
+        exchange_id=str(target.get("id") or exchange_id or ""),
+        user_message=recorded_user,
+        aura_response=final_response,
+    )
 
     if not record_experience:
         return
@@ -1370,7 +1378,141 @@ async def _recent_completed_conversation_exchanges(
         if len(exchanges) >= max(1, int(limit)):
             break
     exchanges.reverse()
-    return exchanges
+
+    if len(exchanges) >= max(1, int(limit)):
+        return exchanges
+
+    durable = await _load_durable_conversation_exchanges(limit=max(1, int(limit)))
+    in_memory_keys = {
+        (
+            str(entry.get("user") or "").strip(),
+            str(entry.get("aura") or "").strip(),
+        )
+        for entry in exchanges
+    }
+    merged: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in durable:
+        user_text = str(entry.get("user") or "").strip()
+        aura_text = str(entry.get("aura") or "").strip()
+        key = (user_text, aura_text)
+        if current and user_text == current:
+            continue
+        if not user_text and not aura_text:
+            continue
+        if key in in_memory_keys or key in seen:
+            continue
+        seen.add(key)
+        merged.append(entry)
+    merged.extend(exchanges)
+    return merged[-max(1, int(limit)) :]
+
+
+async def _persist_completed_conversation_exchange(
+    *,
+    exchange_id: str,
+    user_message: str,
+    aura_response: str,
+) -> bool:
+    """Synchronously commit a bounded live exchange before returning it to the UI."""
+    try:
+        persistence = ServiceContainer.get("persistence", default=None)
+        record_exchange = getattr(persistence, "record_exchange", None)
+        record_turn = getattr(persistence, "record_turn", None)
+        if not callable(record_exchange) and not callable(record_turn):
+            return False
+
+        safe_exchange_id = str(exchange_id or uuid.uuid4().hex[:8])[:64]
+
+        def _commit() -> None:
+            if callable(record_exchange):
+                record_exchange(
+                    str(user_message or ""),
+                    str(aura_response or ""),
+                    origin="desktop_ui",
+                    cid=safe_exchange_id,
+                )
+                return
+            record_turn(
+                "user",
+                str(user_message or ""),
+                origin="desktop_ui",
+                cid=f"{safe_exchange_id}:user",
+            )
+            record_turn(
+                "aura",
+                str(aura_response or ""),
+                origin="desktop_ui",
+                cid=f"{safe_exchange_id}:aura",
+            )
+
+        await asyncio.wait_for(
+            asyncio.to_thread(_commit),
+            timeout=_DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S,
+        )
+        return True
+    except (TimeoutError, *_CHAT_RECOVERABLE_ERRORS) as exc:
+        record_degradation("chat.conversation_persistence", exc)
+        logger.warning("Durable conversation transcript commit failed: %s", exc)
+        return False
+
+
+def _load_durable_conversation_exchanges_sync(*, limit: int) -> list[dict[str, str]]:
+    persistence = ServiceContainer.get("persistence", default=None)
+    get_recent_sessions = getattr(persistence, "get_recent_sessions", None)
+    get_session_history = getattr(persistence, "get_session_history", None)
+    if not callable(get_recent_sessions) or not callable(get_session_history):
+        return []
+
+    sessions = list(
+        get_recent_sessions(limit=_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT) or []
+    )
+    rows: list[dict[str, Any]] = []
+    for session in reversed(sessions):
+        if not isinstance(session, dict):
+            continue
+        session_id = str(session.get("id") or "").strip()
+        if not session_id:
+            continue
+        history = get_session_history(session_id, limit=max(4, limit * 3))
+        rows.extend(item for item in list(history or []) if isinstance(item, dict))
+
+    exchanges: list[dict[str, str]] = []
+    pending_user: dict[str, Any] | None = None
+    for row in rows:
+        role = str(row.get("role") or "").strip().lower()
+        content = str(row.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "user":
+            pending_user = row
+            continue
+        if role not in {"aura", "assistant"} or pending_user is None:
+            continue
+        exchanges.append(
+            {
+                "user": str(pending_user.get("content") or "").strip(),
+                "aura": content,
+                "timestamp": str(row.get("created_at") or pending_user.get("created_at") or ""),
+            }
+        )
+        pending_user = None
+    return exchanges[-limit:]
+
+
+async def _load_durable_conversation_exchanges(*, limit: int) -> list[dict[str, str]]:
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                _load_durable_conversation_exchanges_sync,
+                limit=max(1, int(limit)),
+            ),
+            timeout=_DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S,
+        )
+    except (TimeoutError, *_CHAT_RECOVERABLE_ERRORS) as exc:
+        record_degradation("chat.conversation_persistence", exc)
+        logger.debug("Durable conversation context load skipped: %s", exc)
+        return []
 
 
 def _format_recent_conversation_context(exchanges: list[dict[str, str]], *, limit_chars: int = 1400) -> str:

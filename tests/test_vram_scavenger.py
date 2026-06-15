@@ -16,10 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 import time
+from pathlib import Path
 
 import core.brain.llm.mlx_client as mc
 from core.brain.llm.mlx_client import MLXLocalClient, scavenge_idle_model_vram
+
+_TEST_MODEL_PATH = str(Path(tempfile.gettempdir()) / "aura-test-fake-model")
 
 
 class _FakeProc:
@@ -51,7 +55,7 @@ class _Snap:
 def _make_alive_client(monkeypatch, *, idle_s: float) -> MLXLocalClient:
     """An MLXLocalClient that looks alive+initialized and idle for idle_s, with
     the teardown path stubbed so the test exercises only scavenge logic."""
-    c = MLXLocalClient(model_path="/tmp/fake-model")
+    c = MLXLocalClient(model_path=_TEST_MODEL_PATH)
     c._init_done = True
     c._process = _FakeProc(alive=True)
     now = time.time()
@@ -74,13 +78,13 @@ def _make_alive_client(monkeypatch, *, idle_s: float) -> MLXLocalClient:
 
 
 def test_idle_age_zero_without_anchor():
-    c = MLXLocalClient(model_path="/tmp/fake-model")
+    c = MLXLocalClient(model_path=_TEST_MODEL_PATH)
     # No activity anchors set at all → never treated as idle.
     assert c.idle_age() == 0.0
 
 
 def test_idle_age_tracks_latest_anchor():
-    c = MLXLocalClient(model_path="/tmp/fake-model")
+    c = MLXLocalClient(model_path=_TEST_MODEL_PATH)
     now = time.time()
     c._last_generation_completed_at = now - 300.0
     c._last_progress_at = now - 10.0  # most recent activity

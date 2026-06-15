@@ -3603,8 +3603,8 @@ class MLXLocalClient:
         *,
         foreground_request: bool | None = None,
         skip_swap_cooldown: bool = False,
-    ):
-        """Boot-time warmup: spawn worker + 1-token pre-compile."""
+    ) -> bool:
+        """Boot the worker and prove the visible conversation path is ready."""
         if foreground_request is None:
             foreground_request = self._is_primary_or_deep_lane()
         else:
@@ -3650,7 +3650,7 @@ class MLXLocalClient:
                             logger.info(
                                 "⏸️ [MLX] Warmup deferred for %s.", os.path.basename(self.model_path)
                             )
-                            return
+                            return False
 
                         try:
                             await self._run_warmup_precompile(
@@ -3674,6 +3674,7 @@ class MLXLocalClient:
                                 foreground_request=foreground_request,
                             )
                             logger.warning("⚠️ [MLX] Warmup pre-compile skipped: %s (non-fatal)", e)
+                            return False
                 except TimeoutError as exc:
                     self._set_lane_state("recovering", "warmup_foreground_owner_timeout")
                     self._record_degraded_event(
@@ -3685,14 +3686,15 @@ class MLXLocalClient:
                     logger.info(
                         "⏸️ [MLX] Warmup deferred for %s: %s", os.path.basename(self.model_path), exc
                     )
-                return
+                    return False
+                return True
 
             if _runtime_shutdown_requested():
                 logger.info(
                     "🛑 [MLX] Warmup skipped for %s: runtime is shutting down.",
                     os.path.basename(self.model_path),
                 )
-                return
+                return False
 
             alive = await self._ensure_worker_alive(
                 request_is_background=request_is_background,
@@ -3703,7 +3705,7 @@ class MLXLocalClient:
                 if self._lane_state != "failed":
                     self._set_lane_state("recovering", "warmup_deferred")
                 logger.info("⏸️ [MLX] Warmup deferred for %s.", os.path.basename(self.model_path))
-                return
+                return False
 
             try:
                 await self._run_warmup_precompile(
@@ -3725,6 +3727,8 @@ class MLXLocalClient:
                     foreground_request=foreground_request,
                 )
                 logger.warning("⚠️ [MLX] Warmup pre-compile skipped: %s (non-fatal)", e)
+                return False
+            return True
         finally:
             self._warmup_in_flight = False
 

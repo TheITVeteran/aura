@@ -1165,6 +1165,40 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(readiness_kwargs["disable_prompt_cache"])
         self.assertEqual(readiness_kwargs["max_tokens"], 3)
 
+    async def test_warmup_returns_false_when_worker_start_is_deferred(self):
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+
+        with ReplaceAttr(client, "_ensure_worker_alive", AsyncCallProbe(return_value=False)):
+            result = await client.warmup(foreground_request=False)
+
+        self.assertFalse(result)
+        self.assertEqual(client.get_lane_status()["state"], "recovering")
+
+    async def test_warmup_returns_true_only_after_visible_readiness(self):
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        client._process = ProcessProbe(alive=True)
+        client._init_done = True
+        client._recurrent_depth_status = {
+            "active": True,
+            "config": {"n_loops": 2},
+            "expected_loops": 2,
+            "required": True,
+        }
+
+        async def _mark_ready(**_kwargs):
+            now = time.time()
+            client._set_lane_state("ready")
+            client._last_ready_at = now
+            client._last_progress_at = now
+            client._last_visible_readiness_at = now
+
+        with ReplaceAttr(client, "_ensure_worker_alive", AsyncCallProbe(return_value=True)):
+            with ReplaceAttr(client, "_run_warmup_precompile", AsyncCallProbe(side_effect=_mark_ready)):
+                result = await client.warmup(foreground_request=False)
+
+        self.assertTrue(result)
+        self.assertTrue(client.get_lane_status()["conversation_ready"])
+
     async def test_warmup_precompile_rejects_empty_readiness_probe(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
         client._warmup_in_flight = True

@@ -53,12 +53,18 @@ class ChatTurnLogger:
     
     async def _initialize(self):
         """Initialize memory system references."""
+        self._refresh_services()
+
+    def _refresh_services(self) -> None:
+        """Resolve memory services that may have completed boot after this singleton."""
         try:
             from core.container import ServiceContainer
-            
-            self._episodic_memory = ServiceContainer.get("episodic_memory", default=None)
-            self._memory_facade = ServiceContainer.get("memory_facade", default=None)
-            
+
+            if self._episodic_memory is None:
+                self._episodic_memory = ServiceContainer.get("episodic_memory", default=None)
+            if self._memory_facade is None:
+                self._memory_facade = ServiceContainer.get("memory_facade", default=None)
+
             if self._episodic_memory:
                 logger.debug("✓ ChatTurnLogger linked to episodic memory")
             if self._memory_facade:
@@ -116,8 +122,8 @@ class ChatTurnLogger:
         if not self._is_meaningful_turn(user_message, aura_response):
             logger.debug("Skipping hollow turn (too short or error response)")
             return False
-        
-        # Ensure systems are initialized
+
+        self._refresh_services()
         if not self._episodic_memory:
             return False
         
@@ -129,7 +135,7 @@ class ChatTurnLogger:
             outcome = aura_response[:300]
             
             # Record with metadata
-            episode_metadata = metadata or {}
+            episode_metadata = dict(metadata or {})
             episode_metadata["session_id"] = session_id
             episode_metadata["turn_type"] = "conversation"
             episode_metadata["conversation_lane"] = True
@@ -196,12 +202,13 @@ class ChatTurnLogger:
         """Log just a user message (early capture, before response)."""
         if len(user_message.strip()) < 5:
             return False
-        
+
+        self._refresh_services()
         if not self._memory_facade:
             return False
         
         try:
-            metadata = metadata or {}
+            metadata = dict(metadata or {})
             metadata["session_id"] = session_id
             metadata["message_type"] = "user_input"
             metadata["conversation_lane"] = True

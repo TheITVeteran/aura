@@ -250,17 +250,38 @@ class AutonomicCore:
             gc.collect()
 
             # Warm up brainstem (7B) so it's ready for the next request
+            brainstem_ready = False
             try:
                 brainstem = ServiceContainer.get("brainstem_client", default=None)
                 if brainstem and hasattr(brainstem, 'warmup'):
-                    await brainstem.warmup()
-                    logger.info("Idle model swap: 7B brainstem warmed up.")
+                    warmup_result = await brainstem.warmup()
+                    lane = (
+                        brainstem.get_lane_status()
+                        if hasattr(brainstem, "get_lane_status")
+                        else {}
+                    )
+                    if warmup_result is not False and lane.get("conversation_ready", False):
+                        brainstem_ready = True
+                        logger.info("Idle model swap: 7B brainstem warmed up.")
+                    else:
+                        logger.warning(
+                            "Idle model swap: 7B brainstem warmup did not establish readiness "
+                            "(state=%s, reason=%s).",
+                            lane.get("state", "unknown"),
+                            lane.get("last_error", "warmup_not_ready"),
+                        )
             except (ImportError, AttributeError, RuntimeError) as bs_err:
                 record_degradation('core_monitor', bs_err)
                 logger.debug("Brainstem warmup after idle swap skipped: %s", bs_err)
 
             self._idle_swap_done = True
-            await self._emit_status("Cortex hibernated (idle). Brainstem active.")
+            if brainstem_ready:
+                await self._emit_status("Cortex hibernated (idle). Brainstem active.")
+            else:
+                await self._emit_status(
+                    "Cortex hibernated (idle). Brainstem warmup incomplete; "
+                    "foreground demand will restore the Cortex."
+                )
 
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('core_monitor', e)

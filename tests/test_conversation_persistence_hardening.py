@@ -44,6 +44,46 @@ def test_conversation_persistence_records_turn_and_publishes_threadsafe(monkeypa
     assert published[0][1]["content_chars"] == len("hello from persistence")
 
 
+def test_conversation_persistence_records_exchange_atomically(monkeypatch, tmp_path):
+    published: list[tuple[str, dict[str, object]]] = []
+
+    class Bus:
+        def publish_threadsafe(self, topic, payload):
+            published.append((topic, payload))
+
+    _install_event_bus(monkeypatch, Bus())
+
+    store = ConversationPersistence(tmp_path / "conversations.db")
+    session_id = store.start_session()
+    turn_ids = store.record_exchange(
+        "Remember the live desktop path.",
+        "I will carry it across restart.",
+        origin="desktop_ui",
+        cid="exchange-42",
+    )
+
+    history = store.get_session_history(session_id)
+
+    assert len(turn_ids) == 2
+    assert [row["role"] for row in history] == ["user", "aura"]
+    assert [row["cid"] for row in history] == [
+        "exchange-42:user",
+        "exchange-42:aura",
+    ]
+    assert len(published) == 2
+
+
+def test_conversation_persistence_bounded_history_returns_newest_turns(tmp_path):
+    store = ConversationPersistence(tmp_path / "conversations.db")
+    session_id = store.start_session()
+    for index in range(8):
+        store.record_turn("user", f"turn-{index}")
+
+    history = store.get_session_history(session_id, limit=3)
+
+    assert [row["content"] for row in history] == ["turn-5", "turn-6", "turn-7"]
+
+
 def test_conversation_persistence_async_publish_is_scheduled(monkeypatch, tmp_path):
     published: list[tuple[str, dict[str, object]]] = []
     scheduled: list[str] = []

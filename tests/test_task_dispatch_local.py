@@ -106,15 +106,18 @@ def test_dispatch_background_routes_to_celery_when_active(monkeypatch):
 
 def test_dispatch_background_celery_failure_falls_back_local(monkeypatch):
     ran = threading.Event()
+    send_attempts = []
     monkeypatch.setattr(tasks_module, "_broker_active", lambda: True)
 
     def _boom(*a, **k):
+        send_attempts.append((a, k))
         raise RuntimeError("broker unreachable")
 
     monkeypatch.setattr(tasks_module.celery_app, "send_task", _boom)
     monkeypatch.setitem(tasks_module._LOCAL_TASKS, "test.fallback", lambda: ran.set())
     route = dispatch_background("test.fallback")
     assert route == "local"
+    assert len(send_attempts) == 1
     assert ran.wait(timeout=5.0), "fallback to local handler did not run"
 
 
@@ -137,12 +140,14 @@ def test_local_task_registry_matches_celery_task_names():
 def test_local_background_failure_does_not_raise(monkeypatch):
     """A failing local handler must be recorded as degradation, not crash."""
     degraded: list[tuple] = []
+    handler_attempted = threading.Event()
     monkeypatch.setattr(tasks_module, "_broker_active", lambda: False)
     monkeypatch.setattr(
         tasks_module, "record_degradation", lambda *a, **k: degraded.append((a, k))
     )
 
     def _boom():
+        handler_attempted.set()
         raise ValueError("handler exploded")
 
     monkeypatch.setitem(tasks_module._LOCAL_TASKS, "test.boom", _boom)
@@ -152,4 +157,5 @@ def test_local_background_failure_does_not_raise(monkeypatch):
     deadline = time.time() + 5.0
     while not degraded and time.time() < deadline:
         time.sleep(0.02)
+    assert handler_attempted.is_set()
     assert degraded, "local handler failure was not recorded as degradation"

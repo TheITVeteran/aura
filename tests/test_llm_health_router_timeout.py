@@ -113,6 +113,18 @@ class _HangingAbortableClient:
         return True
 
 
+class _DeferredWarmupClient:
+    async def warmup(self):
+        return False
+
+    def get_lane_status(self):
+        return {
+            "state": "recovering",
+            "last_error": "warmup_deferred",
+            "conversation_ready": False,
+        }
+
+
 def _block_event_loop_for(seconds: float) -> None:
     time.sleep(seconds)
 
@@ -153,6 +165,25 @@ async def test_direct_client_think_receives_timeout_budget():
     assert result["ok"] is True
     assert result["text"] == "ready"
     assert client.calls[0]["timeout"] == 67.0
+
+
+@pytest.mark.asyncio
+async def test_deep_handoff_restore_does_not_claim_deferred_primary_is_ready(caplog):
+    router = HealthAwareLLMRouter()
+    router.register(
+        name="Cortex",
+        url="internal",
+        model="test",
+        is_local=True,
+        tier="local",
+        client=_DeferredWarmupClient(),
+    )
+
+    with caplog.at_level("INFO"):
+        await router._restore_primary_after_deep_handoff()
+
+    assert "restored Cortex after deep handoff" not in caplog.text
+    assert "restore remained unavailable" in caplog.text
 
 
 @pytest.mark.asyncio

@@ -77,6 +77,8 @@ class ArchitectureIndex:
         self._building = False
         self._created_at_monotonic = time.monotonic()
         self._deferred_reason: str | None = None
+        self._build_thread: threading.Thread | None = None
+        self._schedule_lock = threading.Lock()
 
     # ─── Public API ───────────────────────────────────────────────────────────
 
@@ -108,6 +110,9 @@ class ArchitectureIndex:
         Suitable for direct injection into an LLM system prompt or context block.
         """
         if not self._index:
+            if self._interactive_runtime():
+                self.schedule_background_build()
+                return ""
             self.build()
 
         hits = self._search(topic, max_results)
@@ -130,6 +135,9 @@ class ArchitectureIndex:
         Returns a high-level subsystem map: one line per module with a summary.
         """
         if not self._index:
+            if self._interactive_runtime():
+                self.schedule_background_build()
+                return ""
             self.build()
 
         lines = ["## AURA ARCHITECTURE OVERVIEW"]
@@ -142,21 +150,28 @@ class ArchitectureIndex:
                 lines.append(f"  • **{subsys}**: {rec.module_doc[:100].strip() or '(no doc)'}")
         return "\n".join(lines)
 
-    def _foreground_build_deferred(self) -> bool:
-        foreground = os.getenv("AURA_FOREGROUND_ONLY", "0").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        if not foreground:
+    @staticmethod
+    def _env_flag(name: str, default: bool = False) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _interactive_runtime(cls) -> bool:
+        return any(
+            cls._env_flag(name)
+            for name in (
+                "AURA_FOREGROUND_ONLY",
+                "AURA_SAFE_BOOT_DESKTOP",
+                "AURA_HEADLESS",
+            )
+        )
+
+    def _foreground_build_deferred(self, *, emit_log: bool = True) -> bool:
+        if not self._interactive_runtime():
             return False
-        if os.getenv("AURA_ALLOW_FOREGROUND_ARCHITECTURE_INDEX", "0").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
+        if self._env_flag("AURA_ALLOW_FOREGROUND_ARCHITECTURE_INDEX"):
             return False
         try:
             quiet_s = float(os.getenv("AURA_FOREGROUND_ARCHITECTURE_INDEX_QUIET_S", "180") or 180.0)
@@ -165,13 +180,52 @@ class ArchitectureIndex:
         age_s = max(0.0, time.monotonic() - self._created_at_monotonic)
         if age_s < max(0.0, quiet_s):
             self._deferred_reason = f"foreground_quiet_window:{age_s:.1f}s/{max(0.0, quiet_s):.1f}s"
-            logger.info("🧠 ArchitectureIndex build deferred (%s).", self._deferred_reason)
+            if emit_log:
+                logger.info("🧠 ArchitectureIndex build deferred (%s).", self._deferred_reason)
+            return True
+        try:
+            from core.runtime.foreground_guard import foreground_activity_reason
+
+            activity_reason = str(foreground_activity_reason() or "").strip()
+            if activity_reason:
+                self._deferred_reason = activity_reason
+                if emit_log:
+                    logger.info("🧠 ArchitectureIndex build deferred (%s).", activity_reason)
+                return True
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("architecture_index", exc)
+            self._deferred_reason = "foreground_guard_unavailable"
             return True
         return False
+
+    def schedule_background_build(self) -> None:
+        """Build once the interactive runtime has been quiet long enough."""
+
+        if self._index or self._building:
+            return
+        with self._schedule_lock:
+            if self._build_thread is not None and self._build_thread.is_alive():
+                return
+            self._build_thread = threading.Thread(
+                target=self._build_when_quiet,
+                daemon=True,
+                name="ArchitectureIndexBuild",
+            )
+            self._build_thread.start()
+
+    def _build_when_quiet(self) -> None:
+        while not self._index:
+            if not self._foreground_build_deferred(emit_log=False):
+                self.build()
+                return
+            time.sleep(5.0)
 
     def get_subsystem_detail(self, subsystem: str) -> str:
         """Return full detail for all modules in a named subsystem."""
         if not self._index:
+            if self._interactive_runtime():
+                self.schedule_background_build()
+                return f"Architecture index is warming; no modules are available yet for '{subsystem}'."
             self.build()
 
         matches = [
@@ -355,7 +409,8 @@ def get_architecture_index() -> ArchitectureIndex:
     global _index
     if _index is None:
         _index = ArchitectureIndex()
-        if not _index._foreground_build_deferred():
-            t = threading.Thread(target=_index.build, daemon=True, name="ArchitectureIndexBuild")
-            t.start()
+        if _index._interactive_runtime():
+            _index._foreground_build_deferred()
+        else:
+            _index.schedule_background_build()
     return _index

@@ -1125,7 +1125,8 @@ class LocalServerClient:
             self.note_lane_failed(f"restart_failed:{type(e).__name__}")
             logger.error("[%s] Server restart failed: %s", self._lane_name, e)
 
-    async def warmup(self, *, foreground_request: bool | None = None, **kwargs):
+    async def warmup(self, *, foreground_request: bool | None = None, **kwargs) -> bool:
+        """Warm the server and return whether its visible chat lane is ready."""
         self._warmup_attempted = True
         self._warmup_in_flight = True
         self._set_lane_state("warming")
@@ -1140,7 +1141,7 @@ class LocalServerClient:
                 foreground_request=request_is_foreground,
             )
             if not ready:
-                return
+                return False
 
             # Compile the chat path before the first user-facing turn.
             text = await self.generate_text_async(
@@ -1161,8 +1162,10 @@ class LocalServerClient:
                 self._set_lane_state("ready")
                 self._last_ready_at = time.time()
                 logger.info("✅ [%s] Local runtime warmup complete.", self._lane_name)
+                return True
             else:
                 self.note_lane_recovering("warmup_no_text")
+                return False
         finally:
             self._warmup_in_flight = False
 

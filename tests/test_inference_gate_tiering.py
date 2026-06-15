@@ -266,6 +266,9 @@ class _LaneWarmupClient:
             "last_transition_at": 1.0,
         }
 
+    def is_alive(self):
+        return self.state == "ready"
+
     def note_lane_recovering(self, reason):
         self.state = "recovering"
         self.last_error = str(reason or "")
@@ -2097,6 +2100,35 @@ async def test_cortex_recovery_does_not_spawn_under_memory_pressure(monkeypatch)
     await gate._ensure_cortex_recovery()
 
     client.warmup.assert_not_awaited()
+    assert gate._cortex_recovery_in_progress is False
+
+
+@pytest.mark.asyncio
+async def test_cortex_recovery_does_not_report_deferred_warmup_as_ready(monkeypatch):
+    gate = InferenceGate()
+    client = _LaneWarmupClient()
+
+    async def _defer_warmup():
+        client.state = "recovering"
+        client.last_error = "runtime_shutdown"
+        return False
+
+    client.warmup = AsyncCallProbe(side_effect=_defer_warmup)
+    gate._mlx_client = client
+    monkeypatch.setattr(InferenceGate, "_foreground_user_turn_active", staticmethod(lambda: False))
+    monkeypatch.setattr(InferenceGate, "_foreground_owner_active", staticmethod(lambda: False))
+    monkeypatch.setattr(gate, "_cortex_warmup_deferral_reason", lambda _context: None)
+    monkeypatch.setattr("core.brain.inference_gate.is_shutdown_requested", lambda: False)
+
+    await gate._ensure_cortex_recovery()
+    for _ in range(20):
+        if not gate._cortex_recovery_in_progress and client.warmup.calls:
+            break
+        await asyncio.sleep(0.01)
+
+    client.warmup.assert_awaited_once()
+    assert client.state == "recovering"
+    assert gate._cortex_recovery_attempts == 1
     assert gate._cortex_recovery_in_progress is False
 
 

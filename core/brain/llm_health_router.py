@@ -1752,8 +1752,22 @@ class HealthAwareLLMRouter:
             primary = self.endpoints.get(PRIMARY_ENDPOINT)
             primary_client = self._unwrap_model_client(primary.client if primary else None)
             if primary_client and hasattr(primary_client, "warmup"):
-                await primary_client.warmup()
-                logger.info("♻️ Router: restored %s after deep handoff.", PRIMARY_ENDPOINT)
+                warmup_result = await primary_client.warmup()
+                lane = (
+                    primary_client.get_lane_status()
+                    if hasattr(primary_client, "get_lane_status")
+                    else {}
+                )
+                if warmup_result is not False and lane.get("conversation_ready", False):
+                    logger.info("♻️ Router: restored %s after deep handoff.", PRIMARY_ENDPOINT)
+                else:
+                    logger.warning(
+                        "Router: %s restore remained unavailable after deep handoff "
+                        "(state=%s, reason=%s).",
+                        PRIMARY_ENDPOINT,
+                        lane.get("state", "unknown"),
+                        lane.get("last_error", "warmup_not_ready"),
+                    )
         except (httpx.HTTPError, OSError, ConnectionError, TimeoutError) as exc:
             _record_router_degradation(
                 exc,

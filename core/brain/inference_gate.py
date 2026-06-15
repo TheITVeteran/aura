@@ -1506,6 +1506,46 @@ class InferenceGate:
             raise RuntimeError(str(lane.get("last_failure_reason") or "foreground_lane_not_ready"))
         return lane
 
+    def _confirmed_cortex_warmup(
+        self, warmup_result: Any
+    ) -> tuple[bool, dict[str, Any], str]:
+        """Require process and lane evidence before reporting a warmup as successful."""
+        lane = self.get_conversation_status()
+        state = str(lane.get("state", "") or "").strip().lower()
+        blockers = [
+            str(blocker)
+            for blocker in (lane.get("readiness_blockers") or [])
+            if str(blocker or "").strip()
+        ]
+        try:
+            worker_alive = bool(self._mlx_client and self._mlx_client.is_alive())
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            worker_alive = False
+            blockers.append(f"worker_probe_failed:{type(exc).__name__}")
+
+        ready = bool(
+            warmup_result is not False
+            and not is_shutdown_requested()
+            and worker_alive
+            and state == "ready"
+            and lane.get("conversation_ready")
+        )
+        if ready:
+            return True, lane, ""
+        if is_shutdown_requested():
+            reason = "runtime_shutdown"
+        elif warmup_result is False:
+            reason = str(lane.get("last_failure_reason") or "warmup_deferred")
+        elif not worker_alive:
+            reason = "worker_not_alive"
+        elif state != "ready":
+            reason = f"lane_{state or 'unknown'}"
+        elif not lane.get("conversation_ready"):
+            reason = ",".join(blockers[:3]) or "conversation_not_ready"
+        else:
+            reason = "warmup_not_confirmed"
+        return False, lane, reason
+
     async def _ensure_cortex_recovery(self) -> None:
         """Proactively recover the 32B primary brain if it died (e.g., laptop sleep).
 
@@ -1631,7 +1671,25 @@ class InferenceGate:
                 # crash; the previous 60s budget guaranteed five back-to-back
                 # timeouts and a 5-minute lockout. Give warmup the room it
                 # actually needs.
-                await asyncio.wait_for(asyncio.shield(self._prewarm_task), timeout=420.0)
+                warmup_result = await asyncio.wait_for(
+                    asyncio.shield(self._prewarm_task), timeout=420.0
+                )
+                ready, recovered_lane, incomplete_reason = self._confirmed_cortex_warmup(
+                    warmup_result
+                )
+                if not ready:
+                    if is_shutdown_requested():
+                        logger.info(
+                            "🛑 [RECOVERY] Primary 32B cortex warmup stopped during runtime shutdown."
+                        )
+                    else:
+                        logger.warning(
+                            "⚠️ [RECOVERY] Primary 32B cortex warmup did not establish readiness "
+                            "(state=%s, reason=%s).",
+                            recovered_lane.get("state", "unknown"),
+                            incomplete_reason,
+                        )
+                    return
                 if cold_start_recovery:
                     logger.info("✅ [STARTUP] Primary 32B cortex warmup complete.")
                 else:
@@ -2509,13 +2567,26 @@ class InferenceGate:
             # Give the conversational 32B lane enough time to swap back after
             # a 72B deep handoff; otherwise the next ordinary turn inherits a
             # preventable "cortex warming" failure.
-            await asyncio.wait_for(
+            warmup_result = await asyncio.wait_for(
                 primary_client.warmup(
                     foreground_request=True,
                     skip_swap_cooldown=True,
                 ),
                 timeout=300.0,
             )
+            lane = (
+                primary_client.get_lane_status()
+                if hasattr(primary_client, "get_lane_status")
+                else {}
+            )
+            if (
+                warmup_result is False
+                or not primary_client.is_alive()
+                or not lane.get("conversation_ready", False)
+            ):
+                raise RuntimeError(
+                    str(lane.get("last_error") or "primary_restore_not_conversation_ready")
+                )
             logger.info("♻️ Restored %s after deep handoff.", PRIMARY_ENDPOINT)
         except TimeoutError:
             logger.error(
@@ -2762,9 +2833,22 @@ class InferenceGate:
                     )
                     # Eager boot warmup gets the same load budget as the
                     # foreground lane to avoid starting chat half-initialized.
-                    await asyncio.wait_for(asyncio.shield(self._prewarm_task), timeout=300.0)
-                    self._extend_startup_quiet_window(5.0)
-                    logger.info("✅ InferenceGate ONLINE (Cortex fully warmed).")
+                    warmup_result = await asyncio.wait_for(
+                        asyncio.shield(self._prewarm_task), timeout=300.0
+                    )
+                    ready, lane, incomplete_reason = self._confirmed_cortex_warmup(
+                        warmup_result
+                    )
+                    if ready:
+                        self._extend_startup_quiet_window(5.0)
+                        logger.info("✅ InferenceGate ONLINE (Cortex fully warmed).")
+                    else:
+                        logger.warning(
+                            "⚠️ InferenceGate ONLINE with Cortex warmup incomplete "
+                            "(state=%s, reason=%s). Will retry on foreground demand.",
+                            lane.get("state", "unknown"),
+                            incomplete_reason,
+                        )
                 except _INFERENCE_RECOVERABLE_ERRORS as warmup_err:
                     _record_inference_degradation(
                         warmup_err,
