@@ -3038,6 +3038,183 @@ async def test_desktop_cognitive_engine_receives_recent_completed_conversation_c
 
 
 @pytest.mark.asyncio
+async def test_recent_desktop_context_is_deep_but_strictly_bounded():
+    from interface.routes import chat as chat_routes
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+        for index in range(20):
+            chat_routes._conversation_log.append(
+                {
+                    "user": f"user-{index} " + ("u" * 4000),
+                    "aura": f"aura-{index} " + ("a" * 5000),
+                    "status": "complete",
+                }
+            )
+
+    exchanges = await chat_routes._recent_completed_conversation_exchanges(
+        current_user_message="continue",
+        limit=chat_routes._RECENT_CONVERSATION_CONTEXT_EXCHANGES,
+    )
+    rendered = chat_routes._format_recent_conversation_context(exchanges)
+
+    assert len(exchanges) == 12
+    assert exchanges[0]["user"].startswith("user-8 ")
+    assert exchanges[-1]["user"].startswith("user-19 ")
+    assert all(
+        len(entry["user"]) <= chat_routes._RECENT_CONVERSATION_USER_CHARS
+        for entry in exchanges
+    )
+    assert all(
+        len(entry["aura"]) <= chat_routes._RECENT_CONVERSATION_AURA_CHARS
+        for entry in exchanges
+    )
+    assert len(rendered) <= chat_routes._RECENT_CONVERSATION_RENDERED_CHARS
+
+
+@pytest.mark.asyncio
+async def test_chat_exchange_persists_user_before_reply_without_duplicate(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _Persistence:
+        def record_turn(self, role, content, **kwargs):
+            calls.append(("turn", role, content, dict(kwargs)))
+            return f"{role}-turn"
+
+        def record_exchange(self, user, aura, **kwargs):
+            calls.append(("exchange", user, aura, dict(kwargs)))
+            return ("user-turn", "aura-turn")
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _Persistence()
+            if name == "persistence"
+            else default
+        ),
+    )
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+
+    exchange_id = await chat_routes._begin_logged_exchange(
+        "The desktop process exhausted memory.",
+        session_id="desktop-client-session",
+    )
+
+    assert calls == [
+        (
+            "turn",
+            "user",
+            "The desktop process exhausted memory.",
+            {
+                "origin": "desktop_ui",
+                "cid": f"{exchange_id}:user",
+            },
+        )
+    ]
+
+    await chat_routes._complete_logged_exchange(
+        exchange_id,
+        "The desktop process exhausted memory.",
+        "I preserved this turn before reasoning and completed it afterward.",
+        record_experience=False,
+    )
+
+    assert [call[0] for call in calls] == ["turn", "turn"]
+    assert calls[1][1] == "aura"
+    assert calls[1][3]["cid"] == f"{exchange_id}:aura"
+
+
+@pytest.mark.asyncio
+async def test_chat_exchange_falls_back_to_atomic_exchange_when_prelog_fails(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _Persistence:
+        def record_turn(self, role, content, **kwargs):
+            calls.append(("turn_failed", role, content, dict(kwargs)))
+            raise RuntimeError("pending write unavailable")
+
+        def record_exchange(self, user, aura, **kwargs):
+            calls.append(("exchange", user, aura, dict(kwargs)))
+            return ("user-turn", "aura-turn")
+
+    persistence = _Persistence()
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+
+    exchange_id = await chat_routes._begin_logged_exchange("Preserve me before inference.")
+    await chat_routes._complete_logged_exchange(
+        exchange_id,
+        "Preserve me before inference.",
+        "The completion path used an atomic exchange write.",
+        record_experience=False,
+    )
+
+    assert [call[0] for call in calls] == ["turn_failed", "exchange"]
+    assert calls[1][1:3] == (
+        "Preserve me before inference.",
+        "The completion path used an atomic exchange write.",
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_restart_recovers_completed_exchange_from_canonical_persistence(
+    monkeypatch,
+    tmp_path,
+):
+    from core.conversation.persistence import ConversationPersistence
+    from interface.routes import chat as chat_routes
+
+    persistence = ConversationPersistence(tmp_path / "conversation.db")
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+
+    exchange_id = await chat_routes._begin_logged_exchange(
+        "Remember the live desktop continuity contract."
+    )
+    await chat_routes._complete_logged_exchange(
+        exchange_id,
+        "Remember the live desktop continuity contract.",
+        "I will recover this completed exchange after process memory is cleared.",
+        record_experience=False,
+    )
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+
+    recovered = await chat_routes._recent_completed_conversation_exchanges(
+        current_user_message="Continue from before the restart.",
+        limit=6,
+    )
+
+    assert recovered
+    assert recovered[-1]["user"] == "Remember the live desktop continuity contract."
+    assert "recover this completed exchange" in recovered[-1]["aura"]
+
+
+@pytest.mark.asyncio
 async def test_desktop_required_runtime_status_avoids_foreground_model_allocation(monkeypatch):
     from interface.routes import chat as chat_routes
 

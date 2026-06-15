@@ -150,6 +150,10 @@ _session_memory_pins: list[dict] = []
 _MAX_CONVERSATION_LOG_EXCHANGES = 500
 _DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S = 1.5
 _DURABLE_CONVERSATION_SESSION_SCAN_LIMIT = 3
+_RECENT_CONVERSATION_CONTEXT_EXCHANGES = 12
+_RECENT_CONVERSATION_USER_CHARS = 800
+_RECENT_CONVERSATION_AURA_CHARS = 1200
+_RECENT_CONVERSATION_RENDERED_CHARS = 6000
 _SESSION_MEMORY_PIN_LEDGER_LIMIT = 500
 class PreemptibleChatLock:
     def __init__(self):
@@ -249,8 +253,38 @@ def _trim_conversation_log_locked() -> None:
         _conversation_log.pop(0)
 
 
-async def _begin_logged_exchange(user_msg: str) -> str:
-    """Create an in-flight exchange record and return its identifier."""
+async def _persist_pending_conversation_user(
+    *,
+    exchange_id: str,
+    user_message: str,
+    session_id: str = "",
+) -> bool:
+    """Commit the user side of a turn before foreground inference starts."""
+    try:
+        persistence = ServiceContainer.get("persistence", default=None)
+        record_turn = getattr(persistence, "record_turn", None)
+        if not callable(record_turn):
+            return False
+
+        await asyncio.wait_for(
+            asyncio.to_thread(
+                record_turn,
+                "user",
+                str(user_message or ""),
+                origin="desktop_ui",
+                cid=f"{str(exchange_id or '')[:64]}:user",
+            ),
+            timeout=_DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S,
+        )
+        return True
+    except (TimeoutError, *_CHAT_RECOVERABLE_ERRORS) as exc:
+        record_degradation("chat.conversation_persistence", exc)
+        logger.warning("Durable pending user-turn commit failed: %s", exc)
+        return False
+
+
+async def _begin_logged_exchange(user_msg: str, *, session_id: str = "") -> str:
+    """Create and durably pre-log an in-flight exchange."""
     exchange_id = _new_exchange_id()
     async with _get_convo_lock():
         _conversation_log.append(
@@ -260,9 +294,22 @@ async def _begin_logged_exchange(user_msg: str) -> str:
                 "user": user_msg,
                 "aura": "",
                 "status": "pending",
+                "session_id": str(session_id or "")[:64],
+                "user_persisted": False,
             }
         )
         _trim_conversation_log_locked()
+
+    user_persisted = await _persist_pending_conversation_user(
+        exchange_id=exchange_id,
+        user_message=user_msg,
+        session_id=session_id,
+    )
+    async with _get_convo_lock():
+        for entry in reversed(_conversation_log):
+            if str(entry.get("id") or "") == exchange_id:
+                entry["user_persisted"] = user_persisted
+                break
     return exchange_id
 
 
@@ -306,6 +353,8 @@ async def _complete_logged_exchange(
         exchange_id=str(target.get("id") or exchange_id or ""),
         user_message=recorded_user,
         aura_response=final_response,
+        session_id=str(target.get("session_id") or ""),
+        user_already_persisted=bool(target.get("user_persisted")),
     )
 
     if not record_experience:
@@ -320,9 +369,15 @@ async def _complete_logged_exchange(
         logger.debug("Conversation experience recording skipped: %s", exc)
 
 
-async def _log_exchange(user_msg: str, aura_response: str, *, record_experience: bool = True):
+async def _log_exchange(
+    user_msg: str,
+    aura_response: str,
+    *,
+    record_experience: bool = True,
+    session_id: str = "",
+):
     """Record a conversation exchange for session tracking."""
-    exchange_id = await _begin_logged_exchange(user_msg)
+    exchange_id = await _begin_logged_exchange(user_msg, session_id=session_id)
     await _complete_logged_exchange(
         exchange_id,
         user_msg,
@@ -1449,7 +1504,9 @@ def _clip_conversation_text(text: Any, *, limit: int = 420) -> str:
     clipped = " ".join(str(text or "").strip().split())
     if len(clipped) <= limit:
         return clipped
-    return clipped[: max(0, limit - 1)].rstrip() + "..."
+    if limit <= 3:
+        return clipped[: max(0, limit)]
+    return clipped[: limit - 3].rstrip() + "..."
 
 
 async def _recent_completed_conversation_exchanges(
@@ -1475,8 +1532,14 @@ async def _recent_completed_conversation_exchanges(
             continue
         exchanges.append(
             {
-                "user": user_text,
-                "aura": aura_text,
+                "user": _clip_conversation_text(
+                    user_text,
+                    limit=_RECENT_CONVERSATION_USER_CHARS,
+                ),
+                "aura": _clip_conversation_text(
+                    aura_text,
+                    limit=_RECENT_CONVERSATION_AURA_CHARS,
+                ),
                 "timestamp": str(entry.get("completed_at") or entry.get("timestamp") or ""),
             }
         )
@@ -1498,8 +1561,14 @@ async def _recent_completed_conversation_exchanges(
     merged: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for entry in durable:
-        user_text = str(entry.get("user") or "").strip()
-        aura_text = str(entry.get("aura") or "").strip()
+        user_text = _clip_conversation_text(
+            entry.get("user"),
+            limit=_RECENT_CONVERSATION_USER_CHARS,
+        )
+        aura_text = _clip_conversation_text(
+            entry.get("aura"),
+            limit=_RECENT_CONVERSATION_AURA_CHARS,
+        )
         key = (user_text, aura_text)
         if current and user_text == current:
             continue
@@ -1518,6 +1587,8 @@ async def _persist_completed_conversation_exchange(
     exchange_id: str,
     user_message: str,
     aura_response: str,
+    session_id: str = "",
+    user_already_persisted: bool = False,
 ) -> bool:
     """Synchronously commit a bounded live exchange before returning it to the UI."""
     try:
@@ -1530,6 +1601,14 @@ async def _persist_completed_conversation_exchange(
         safe_exchange_id = str(exchange_id or uuid.uuid4().hex[:8])[:64]
 
         def _commit() -> None:
+            if user_already_persisted and callable(record_turn):
+                record_turn(
+                    "aura",
+                    str(aura_response or ""),
+                    origin="desktop_ui",
+                    cid=f"{safe_exchange_id}:aura",
+                )
+                return
             if callable(record_exchange):
                 record_exchange(
                     str(user_message or ""),
@@ -1596,8 +1675,14 @@ def _load_durable_conversation_exchanges_sync(*, limit: int) -> list[dict[str, s
             continue
         exchanges.append(
             {
-                "user": str(pending_user.get("content") or "").strip(),
-                "aura": content,
+                "user": _clip_conversation_text(
+                    pending_user.get("content"),
+                    limit=_RECENT_CONVERSATION_USER_CHARS,
+                ),
+                "aura": _clip_conversation_text(
+                    content,
+                    limit=_RECENT_CONVERSATION_AURA_CHARS,
+                ),
                 "timestamp": str(row.get("created_at") or pending_user.get("created_at") or ""),
             }
         )
@@ -1620,7 +1705,11 @@ async def _load_durable_conversation_exchanges(*, limit: int) -> list[dict[str, 
         return []
 
 
-def _format_recent_conversation_context(exchanges: list[dict[str, str]], *, limit_chars: int = 1400) -> str:
+def _format_recent_conversation_context(
+    exchanges: list[dict[str, str]],
+    *,
+    limit_chars: int = _RECENT_CONVERSATION_RENDERED_CHARS,
+) -> str:
     lines: list[str] = []
     for entry in exchanges:
         user_text = _clip_conversation_text(entry.get("user"), limit=220)
@@ -2549,7 +2638,7 @@ async def _run_cognitive_engine_chat_turn(
     )
     recent_exchanges = await _recent_completed_conversation_exchanges(
         current_user_message=visible,
-        limit=6,
+        limit=_RECENT_CONVERSATION_CONTEXT_EXCHANGES,
     )
     recent_conversation_context = _format_recent_conversation_context(recent_exchanges)
     context = {
@@ -9479,7 +9568,10 @@ async def api_chat(
         try:
             if not is_benchmark:
                 await _preserve_large_user_paste(_semantic_user_message)
-            pending_exchange_id = await _begin_logged_exchange(_semantic_user_message)
+            pending_exchange_id = await _begin_logged_exchange(
+                _semantic_user_message,
+                session_id=_chat_session_id,
+            )
         except _CHAT_RECOVERABLE_ERRORS as exc:
             record_degradation("chat", exc)
             logger.debug("Conversation exchange prelogging skipped: %s", exc)
