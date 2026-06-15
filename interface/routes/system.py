@@ -1809,8 +1809,21 @@ async def api_health(request: Request):
         conversation_ready = bool(conversation_lane.get("conversation_ready", False))
         lane_is_standby = _conversation_lane_is_standby_resilient(conversation_lane)
         service_ok = bool(boot_snapshot.get("system_ready", False))
-        required_probes_ok = required_probe_groups_pass(boot_snapshot.get("required_probes", {}))
-        healthy_ready = bool(service_ok and required_probes_ok and conversation_ready)
+        required_probes = boot_snapshot.get("required_probes", {})
+        probe_blockers = required_probe_blockers(required_probes)
+        required_probes_ok = required_probe_groups_pass(required_probes)
+        health_blockers = list(dict.fromkeys(
+            [str(item) for item in (boot_snapshot.get("blockers", []) or []) if str(item)]
+            + probe_blockers
+        ))
+        if not conversation_ready and "conversation_ready" not in health_blockers:
+            health_blockers.append("conversation_ready")
+        healthy_ready = bool(
+            service_ok
+            and required_probes_ok
+            and conversation_ready
+            and not health_blockers
+        )
         diagnostics_data = {
             "stability_guardian": _collect_stability_details(),
             "recent_degraded_events": _collect_recent_degraded_events(),
@@ -1867,6 +1880,16 @@ async def api_health(request: Request):
             "interaction_signals": interaction_signals_data,
             "conversation_lane": conversation_lane,
             "diagnostics": diagnostics_data,
+            "readiness_contract": {
+                "healthy": healthy_ready,
+                "system_ready": service_ok,
+                "conversation_ready": conversation_ready,
+                "runtime_probe_healthy": required_probes_ok,
+                "required_probes": required_probes,
+                "blockers": health_blockers,
+            },
+            "runtime_probe_healthy": required_probes_ok,
+            "blockers": health_blockers,
             "runtime":        rt,
             "scheduler":      scheduler.get_health(),
             "boot":           boot_snapshot,

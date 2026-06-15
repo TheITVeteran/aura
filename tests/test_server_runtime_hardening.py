@@ -479,6 +479,11 @@ async def test_api_health_reports_cold_standby_without_healthy_claim(service_con
     assert payload["conversation_lane"]["state"] == "cold"
     assert payload["boot"]["status"] == "warming"
     assert "conversation_ready" in payload["boot"]["blockers"]
+    assert payload["runtime_probe_healthy"] is False
+    assert payload["readiness_contract"]["healthy"] is False
+    assert payload["readiness_contract"]["conversation_ready"] is False
+    assert "runtime_required_probes" in payload["blockers"]
+    assert "conversation_ready" in payload["blockers"]
 
 
 @pytest.mark.asyncio
