@@ -3811,6 +3811,137 @@ class MLXLocalClient:
                 self._lock.release()
         self._set_lane_state("failed" if mark_failed else "cold", reason if mark_failed else "")
 
+    def idle_age(self, now: float | None = None) -> float:
+        """Seconds since this lane last did anything meaningful.
+
+        Anchored on the most recent of: generation completion, user-facing
+        completion, token/stream progress, or worker start. Returns 0.0 when
+        the lane has no activity anchor yet (freshly spawned, never used) so a
+        brand-new worker is never treated as idle.
+        """
+        now = float(now if now is not None else time.time())
+        anchors = (
+            self._last_generation_completed_at,
+            self._last_user_facing_completed_at,
+            self._last_progress_at,
+            self._last_token_progress_at,
+            self._process_started_at,
+        )
+        last = max((float(a or 0.0) for a in anchors), default=0.0)
+        if last <= 0.0:
+            return 0.0
+        return max(0.0, now - last)
+
+    def _unload_safety_blocker(self) -> str | None:
+        """Return why an idle VRAM unload is unsafe right now, or None if safe.
+
+        An unload tears down the worker (≈model size of unified memory). It must
+        never interrupt in-flight or imminent work, so we refuse while any
+        generation, warmup, queued request, pending future, or foreground owner
+        is active — and during shutdown (close handles that path).
+        """
+        if self._closed:
+            return "closed"
+        if _runtime_shutdown_requested():
+            return "shutdown"
+        if not self.is_alive():
+            return "already_unloaded"
+        if self._active_generations > 0:
+            return "active_generation"
+        if self._warmup_in_flight:
+            return "warming"
+        if self._current_request_started_at > 0.0:
+            return "request_in_flight"
+        pending = [
+            f
+            for f in (
+                *self._pending_generations.values(),
+                self._current_gen_future,
+                self._init_future,
+            )
+            if f is not None and not f.done()
+        ]
+        if pending:
+            return "pending_future"
+        if _foreground_owner_active():
+            return "foreground_active"
+        return None
+
+    async def maybe_unload_idle(
+        self,
+        *,
+        pressure_idle_s: float = 90.0,
+        hard_idle_s: float = 900.0,
+    ) -> dict[str, Any]:
+        """Unload the model from memory if the lane has been safely idle.
+
+        Two triggers, whichever fires first:
+          - under memory pressure → unload after ``pressure_idle_s`` of idle
+            (reclaim ~model-size of RAM/VRAM for the system when it's needed),
+          - regardless of pressure → unload after ``hard_idle_s`` of idle (be a
+            good citizen during long quiet periods).
+
+        The next request transparently respawns the worker via
+        ``_ensure_worker_alive``. This is a normal lifecycle event, not a
+        failure, so it records no degradation. Returns a telemetry dict.
+        """
+        blocker = self._unload_safety_blocker()
+        if blocker:
+            return {"unloaded": False, "reason": blocker}
+        age = self.idle_age()
+        if age <= 0.0:
+            return {"unloaded": False, "reason": "no_idle_anchor"}
+
+        under_pressure = False
+        try:
+            snapshot = get_memory_pressure_snapshot()
+            under_pressure = bool(getattr(snapshot, "warning", False))
+        except (RuntimeError, OSError, ValueError, AttributeError) as exc:
+            logger.debug("Idle scavenge pressure probe unavailable: %s", exc)
+
+        threshold = pressure_idle_s if under_pressure else hard_idle_s
+        if age < threshold:
+            return {
+                "unloaded": False,
+                "reason": "not_idle_enough",
+                "idle_age_s": round(age, 1),
+                "threshold_s": threshold,
+                "under_pressure": under_pressure,
+            }
+
+        # Capture the worker's resident memory for an honest freed estimate
+        # before the process is torn down.
+        freed_bytes = 0
+        process = self._process
+        if process is not None and getattr(process, "pid", None):
+            try:
+                freed_bytes = int(psutil.Process(process.pid).memory_info().rss)
+            except (psutil.Error, OSError, ValueError):
+                freed_bytes = 0
+
+        # Re-check safety immediately before the teardown to shrink the race
+        # window against a request that arrived since the first check.
+        blocker = self._unload_safety_blocker()
+        if blocker:
+            return {"unloaded": False, "reason": blocker}
+
+        logger.info(
+            "🧹 [MLX] Idle VRAM scavenge: unloading %s after %.0fs idle "
+            "(pressure=%s, ~%.1fGB).",
+            os.path.basename(self.model_path),
+            age,
+            under_pressure,
+            freed_bytes / float(1024**3),
+        )
+        await self.reboot_worker(reason="idle_vram_scavenge")
+        return {
+            "unloaded": True,
+            "model": os.path.basename(self.model_path),
+            "idle_age_s": round(age, 1),
+            "under_pressure": under_pressure,
+            "freed_gb_estimate": round(freed_bytes / float(1024**3), 2),
+        }
+
     def close(self) -> None:
         """Release worker process and multiprocessing IPC resources."""
         pending_futures = {
@@ -3916,3 +4047,50 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
     if client_key not in _CLIENTS:
         _CLIENTS[client_key] = MLXLocalClient(model_path=runtime_path, **kwargs)
     return _CLIENTS[client_key]
+
+
+def _scavenge_env_float(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, "").strip())
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0.0 else default
+
+
+async def scavenge_idle_model_vram(
+    *,
+    pressure_idle_s: float | None = None,
+    hard_idle_s: float | None = None,
+) -> dict[str, Any]:
+    """Reclaim unified memory by unloading idle local model lanes.
+
+    Iterates every live MLX lane and unloads the model when it has been safely
+    idle (see ``MLXLocalClient.maybe_unload_idle``). Disabled when
+    ``AURA_VRAM_SCAVENGER=0``. Thresholds are env-tunable
+    (``AURA_VRAM_SCAVENGE_PRESSURE_IDLE_S`` default 90s,
+    ``AURA_VRAM_SCAVENGE_HARD_IDLE_S`` default 900s). Safe to call on a periodic
+    maintenance tick; it never touches a busy lane and respawn is transparent.
+    """
+    if os.environ.get("AURA_VRAM_SCAVENGER", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return {"enabled": False, "unloaded": 0, "lanes": []}
+
+    if pressure_idle_s is None:
+        pressure_idle_s = _scavenge_env_float("AURA_VRAM_SCAVENGE_PRESSURE_IDLE_S", 90.0)
+    if hard_idle_s is None:
+        hard_idle_s = _scavenge_env_float("AURA_VRAM_SCAVENGE_HARD_IDLE_S", 900.0)
+
+    results: list[dict[str, Any]] = []
+    unloaded = 0
+    for client in list(_CLIENTS.values()):
+        unload = getattr(client, "maybe_unload_idle", None)
+        if unload is None:
+            continue
+        try:
+            outcome = await unload(pressure_idle_s=pressure_idle_s, hard_idle_s=hard_idle_s)
+        except (RuntimeError, OSError, ValueError, AttributeError) as exc:
+            logger.debug("Idle VRAM scavenge skipped a lane: %s", exc)
+            continue
+        if outcome.get("unloaded"):
+            unloaded += 1
+            results.append(outcome)
+    return {"enabled": True, "unloaded": unloaded, "lanes": results}

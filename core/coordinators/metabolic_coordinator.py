@@ -232,6 +232,10 @@ class MetabolicCoordinator:
 
         self._is_processing = True
         _tick_start = time.monotonic()
+        # Reclaim idle model memory BEFORE any throttle/early-return below, so it
+        # still fires under memory pressure — the exact condition where unloading
+        # an idle model frees the most-needed RAM. Cheap when lanes are busy.
+        await self._scavenge_idle_model_vram()
         try:
             orch = self.orch
             if not orch:
@@ -1415,6 +1419,26 @@ class MetabolicCoordinator:
     # ------------------------------------------------------------------
     # RL & Self-Update
     # ------------------------------------------------------------------
+
+    async def _scavenge_idle_model_vram(self) -> None:
+        """Unload idle local model lanes to reclaim unified memory.
+
+        Delegates to the lane-safe scavenger (it refuses any busy/foreground
+        lane and respawns transparently on the next request). Best-effort: never
+        let a maintenance reclaim disturb the metabolic cycle.
+        """
+        try:
+            from core.brain.llm.mlx_client import scavenge_idle_model_vram
+
+            outcome = await scavenge_idle_model_vram()
+            if outcome.get("unloaded"):
+                logger.info(
+                    "🧹 Metabolism: idle VRAM scavenge unloaded %d model lane(s).",
+                    outcome["unloaded"],
+                )
+        except _METABOLIC_BOUNDARY_ERRORS as exc:
+            _record_metabolic_degradation(exc, action="idle VRAM scavenge skipped")
+            logger.debug("Idle VRAM scavenge skipped: %s", exc)
 
     async def run_rl_training(self):
         """Trigger autonomous RL training."""
