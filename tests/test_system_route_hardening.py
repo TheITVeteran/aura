@@ -465,7 +465,7 @@ def test_runtime_manifest_health_fallback_preserves_required_probe_shape(tmp_pat
     (artifact_root / "runtime_manifest.json").write_text(
         json.dumps(
             {
-                "generated_at_unix": 123.0,
+                "generated_at_unix": time.time(),
                 "readiness_snapshot": {
                     "ready": True,
                     "status": "healthy",
@@ -494,6 +494,42 @@ def test_runtime_manifest_health_fallback_preserves_required_probe_shape(tmp_pat
         assert payload["required_probes"][group]["components"] == {
             component: True for component in components
         }
+
+
+def test_runtime_manifest_health_fallback_rejects_stale_ready_manifest(tmp_path, monkeypatch):
+    from interface.routes import system as system_routes
+
+    project_root = tmp_path
+    artifact_root = project_root / "artifacts" / "current"
+    artifact_root.mkdir(parents=True)
+    (artifact_root / "runtime_manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at_unix": 1.0,
+                "readiness_snapshot": {
+                    "ready": True,
+                    "status": "healthy",
+                    "required_probe_blockers": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "config",
+        SimpleNamespace(paths=SimpleNamespace(project_root=project_root)),
+    )
+    monkeypatch.setattr(system_routes, "_HEALTH_MANIFEST_FALLBACK_TTL_S", 15.0)
+
+    payload, status_code = system_routes._runtime_manifest_boot_health_payload(
+        "health_probe_timeout"
+    )
+
+    assert status_code == 503
+    assert payload["ready"] is False
+    assert payload["cache_status"] == "manifest_stale"
+    assert "health_manifest_stale" in payload["blockers"]
 
 
 def test_boot_health_probe_single_flight_fails_closed_instead_of_stacking():

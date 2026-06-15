@@ -99,6 +99,10 @@ _HEALTH_PROBE_EXECUTOR = ThreadPoolExecutor(
     thread_name_prefix="AuraHealthProbe",
 )
 _HEALTH_CACHE_TTL_S = _env_positive_float("AURA_HEALTH_CACHE_TTL_S", 5.0)
+_HEALTH_MANIFEST_FALLBACK_TTL_S = _env_positive_float(
+    "AURA_HEALTH_MANIFEST_FALLBACK_TTL_S",
+    15.0,
+)
 _boot_health_cache_lock = threading.Lock()
 _boot_health_cache: dict[str, Any] = {
     "captured_at": 0.0,
@@ -330,6 +334,26 @@ def _runtime_manifest_boot_health_payload(reason: str) -> tuple[dict[str, Any], 
         readiness = manifest.get("readiness_snapshot")
         if not isinstance(readiness, dict):
             return None
+        generated_at = _safe_float(manifest.get("generated_at_unix"), 0.0)
+        manifest_age_s = max(0.0, time.time() - generated_at) if generated_at > 0.0 else float("inf")
+        if manifest_age_s > _HEALTH_MANIFEST_FALLBACK_TTL_S:
+            return (
+                {
+                    "ready": False,
+                    "status": "unhealthy",
+                    "system_ready": False,
+                    "launcher_ready": False,
+                    "conversation_ready": False,
+                    "boot_phase": "manifest_stale",
+                    "required_probes": {"all_passed": False},
+                    "blockers": ["health_manifest_stale", reason],
+                    "cache_status": "manifest_stale",
+                    "cache_reason": reason,
+                    "manifest_age_s": round(manifest_age_s, 3),
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                },
+                503,
+            )
         ready = bool(readiness.get("ready") is True)
         blockers = [str(item) for item in readiness.get("required_probe_blockers", []) if str(item)]
         if not ready and not blockers:
@@ -354,6 +378,7 @@ def _runtime_manifest_boot_health_payload(reason: str) -> tuple[dict[str, Any], 
                 "cache_status": "manifest",
                 "cache_reason": reason,
                 "manifest_generated_at_unix": manifest.get("generated_at_unix"),
+                "manifest_age_s": round(manifest_age_s, 3),
                 "timestamp": datetime.now(tz=UTC).isoformat(),
             },
             status_code,
