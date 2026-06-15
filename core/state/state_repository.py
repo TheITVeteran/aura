@@ -1622,7 +1622,20 @@ class StateRepository:
             # Commit the stabilized state
             try:
                 serialized = self._serialize(stabilized_state)
-                await self._commit_to_db(stabilized_state, serialized)
+                from core.governance_context import is_governed, local_internal_governed_scope
+
+                if is_governed():
+                    await self._commit_to_db(stabilized_state, serialized)
+                else:
+                    with local_internal_governed_scope(
+                        "state_repository.rollback",
+                        domain="state_mutation",
+                        constraints={
+                            "reason": str(reason or "unknown")[:160],
+                            "operation": "rollback_persistence",
+                        },
+                    ):
+                        await self._commit_to_db(stabilized_state, serialized)
                 self._current = stabilized_state
                 logger.info(
                     "✅ [STATE] Rollback complete. Restored to version %d", stabilized_state.version

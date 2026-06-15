@@ -65,6 +65,36 @@ async def test_state_repair_reports_deferred_consumer_restart(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
+async def test_state_repository_rollback_self_governs_recovery_commit(monkeypatch):
+    from core.governance_context import get_active_governance
+    from core.state.aura_state import AuraState
+
+    previous = AuraState.default()
+    current = previous.derive("current", origin="test")
+    repo = StateRepository(is_vault_owner=True)
+    repo._current = current
+    observed_tokens = []
+
+    async def fake_history(limit=2):
+        return [current, previous][:limit]
+
+    async def fake_commit(_state, _serialized):
+        token = get_active_governance()
+        observed_tokens.append(token)
+
+    monkeypatch.setattr(repo, "get_history", fake_history)
+    monkeypatch.setattr(repo, "_commit_to_db", fake_commit)
+
+    result = await repo.rollback("recovery: timeout")
+
+    assert result is repo._current
+    assert observed_tokens
+    assert observed_tokens[0] is not None
+    assert observed_tokens[0].domain == "state_mutation"
+    assert observed_tokens[0].source == "state_repository.rollback"
+
+
+@pytest.mark.asyncio
 async def test_shutdown_proxy_commit_deferral_logs_as_lifecycle_event(tmp_path, caplog):
     repo = StateRepository(db_path=str(tmp_path / "state.db"), is_vault_owner=False)
     payload = {"state": {"version": 1}, "cause": "shutdown", "trace_id": "shutdown-test"}
