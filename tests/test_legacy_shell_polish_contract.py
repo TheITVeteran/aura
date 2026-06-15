@@ -63,6 +63,23 @@ def test_legacy_shell_presents_active_generation_as_working_not_unavailable():
     assert "lane.conversation_ready === false && !laneHasActiveGeneration(lane)" in js
 
 
+def test_legacy_shell_does_not_hide_lane_failures_as_generic_warming():
+    js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+
+    assert "function laneFailureClass" in js
+    assert "memory_pressure_refused_worker_spawn" in js
+    assert "projected_process_tree_rss" in js
+    assert "model_load_headroom" in js
+    assert "visible_conversation_probe_missing" in js
+    assert "endpoint_timeout" in js
+    assert "if (failureClass === 'memory_guard') return 'cortex memory guard';" in js
+    assert "if (failureClass === 'cognitive_engine') return 'cortex route blocked';" in js
+    assert "if (failureClass === 'timeout') return 'cortex timeout';" in js
+    assert "CORTEX MEMORY GUARD" in js
+    assert "CORTEX ROUTE BLOCKED" in js
+    assert "CORTEX TIMEOUT" in js
+
+
 def test_legacy_shell_matches_conversation_lane_timeout_budget():
     js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
 

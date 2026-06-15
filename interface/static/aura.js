@@ -2974,6 +2974,46 @@ function laneHasActiveGeneration(lane) {
         || reason === 'active_generation_in_flight';
 }
 
+function laneFailureClass(lane) {
+    if (!lane || typeof lane !== 'object') return '';
+    const reason = String(lane.last_failure_reason || '').toLowerCase();
+    const blockers = Array.isArray(lane.readiness_blockers)
+        ? lane.readiness_blockers.map(item => String(item || '').toLowerCase())
+        : [];
+    const combined = `${reason} ${blockers.join(' ')}`;
+    if (
+        combined.includes('memory_pressure_refused_worker_spawn')
+        || combined.includes('projected_process_tree_rss')
+        || combined.includes('model_load_headroom')
+        || combined.includes('unified_memory_pressure')
+    ) {
+        return 'memory_guard';
+    }
+    if (
+        combined.includes('desktop_cognitive_engine_required_no_reply')
+        || combined.includes('visible_conversation_probe_missing')
+        || combined.includes('cognitive_engine')
+    ) {
+        return 'cognitive_engine';
+    }
+    if (
+        combined.includes('foreground_http_timeout')
+        || combined.includes('foreground_timeout')
+        || combined.includes('endpoint_timeout')
+        || combined.includes('heartbeat_stalled_during_generation')
+    ) {
+        return 'timeout';
+    }
+    if (
+        combined.includes('mlx_runtime_unavailable')
+        || combined.includes('local_runtime_unavailable')
+        || combined.includes('runtime_model_mismatch')
+    ) {
+        return 'runtime_unavailable';
+    }
+    return '';
+}
+
 function laneHealthIsOperational(lane, healthStatus = '') {
     const normalized = String(healthStatus || '').toLowerCase();
     if (!state.runtimeHealthy) return false;
@@ -3082,8 +3122,13 @@ function applyRuntimeHeartbeat(payload) {
 function conversationLaneStatusText(lane) {
     if (!lane) return 'online';
     const laneState = String(lane.state || 'warming').toLowerCase();
+    const failureClass = laneFailureClass(lane);
     if (lane.conversation_ready) return 'online';
     if (laneHasActiveGeneration(lane)) return 'cortex thinking';
+    if (failureClass === 'memory_guard') return 'cortex memory guard';
+    if (failureClass === 'cognitive_engine') return 'cortex route blocked';
+    if (failureClass === 'timeout') return 'cortex timeout';
+    if (failureClass === 'runtime_unavailable') return 'cortex unavailable';
     if (laneIsStandby(lane)) return 'cortex preparing';
     if (laneState === 'recovering') return 'cortex recovering';
     if (laneState === 'failed') return 'cortex unavailable';
@@ -3137,6 +3182,9 @@ function applyConversationLane(lane, healthStatus = '') {
                 laneText === 'cortex thinking' ? 'CORTEX THINKING' :
                 laneText === 'cortex preparing' ? 'CORTEX PREPARING' :
                 laneText === 'cortex recovering' ? 'CORTEX RECOVERING' :
+                laneText === 'cortex memory guard' ? 'CORTEX MEMORY GUARD' :
+                laneText === 'cortex route blocked' ? 'CORTEX ROUTE BLOCKED' :
+                laneText === 'cortex timeout' ? 'CORTEX TIMEOUT' :
                 laneText === 'cortex unavailable' ? 'CORTEX UNAVAILABLE' :
                 'CORTEX WARMING';
             tierEl.textContent = stateLabel;
