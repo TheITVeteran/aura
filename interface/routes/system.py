@@ -29,6 +29,7 @@ from core.container import ServiceContainer
 from core.health.boot_status import build_boot_health_snapshot
 from core.runtime.errors import record_degradation
 from core.runtime.health_contract import (
+    REQUIRED_HEALTH_PROBE_GROUPS,
     required_probe_blockers,
     required_probe_groups_pass,
 )
@@ -97,6 +98,13 @@ _HEALTH_PROBE_EXECUTOR = ThreadPoolExecutor(
     max_workers=max(2, min(4, _safe_int(os.getenv("AURA_HEALTH_PROBE_WORKERS", ""), 2))),
     thread_name_prefix="AuraHealthProbe",
 )
+_HEALTH_CACHE_TTL_S = _env_positive_float("AURA_HEALTH_CACHE_TTL_S", 5.0)
+_boot_health_cache_lock = threading.Lock()
+_boot_health_cache: dict[str, Any] = {
+    "captured_at": 0.0,
+    "payload": None,
+    "status_code": 503,
+}
 _desktop_access_cache: dict[str, Any] = {
     "captured_at": 0.0,
     "payload": None,
@@ -249,31 +257,118 @@ def _build_boot_health_payload_sync(*, is_gui_proxy: bool) -> tuple[dict[str, An
         rt = _get_runtime_state_safe()
         conversation_lane = _collect_conversation_lane_status_resilient()
         try:
-            return build_boot_health_snapshot(
+            payload, status_code = build_boot_health_snapshot(
                 orch,
                 rt,
                 is_gui_proxy=is_gui_proxy,
                 conversation_lane=conversation_lane,
             )
+            _store_boot_health_cache(payload, status_code)
+            return payload, status_code
         except _SYSTEM_RECOVERABLE_ERRORS as exc:
             record_degradation("system", exc)
             logger.error("Boot health snapshot failed: %s", exc, exc_info=True)
-            return (
-                {
-                    "ready": False,
-                    "status": "degraded",
-                    "issues": [str(exc)],
-                    "conversation_lane": conversation_lane,
-                    "timestamp": datetime.now(tz=UTC).isoformat(),
-                },
-                503,
-            )
+            payload = {
+                "ready": False,
+                "status": "degraded",
+                "issues": [str(exc)],
+                "conversation_lane": conversation_lane,
+                "timestamp": datetime.now(tz=UTC).isoformat(),
+            }
+            _store_boot_health_cache(payload, 503)
+            return payload, 503
     finally:
         _HEALTH_PROBE_LOCK.release()
 
 
+def _store_boot_health_cache(payload: dict[str, Any], status_code: int) -> None:
+    with _boot_health_cache_lock:
+        _boot_health_cache["captured_at"] = time.monotonic()
+        _boot_health_cache["payload"] = dict(payload)
+        _boot_health_cache["status_code"] = int(status_code)
+
+
+def _cached_boot_health_payload(reason: str) -> tuple[dict[str, Any], int]:
+    now = time.monotonic()
+    with _boot_health_cache_lock:
+        captured_at = float(_boot_health_cache.get("captured_at") or 0.0)
+        payload = _boot_health_cache.get("payload")
+        status_code = int(_boot_health_cache.get("status_code") or 503)
+
+    if isinstance(payload, dict) and now - captured_at <= _HEALTH_CACHE_TTL_S:
+        cached = dict(payload)
+        cached["cache_status"] = "fresh"
+        cached["cache_reason"] = reason
+        cached["cache_age_s"] = round(now - captured_at, 3)
+        return cached, status_code
+
+    manifest_payload = _runtime_manifest_boot_health_payload(reason)
+    if manifest_payload is not None:
+        return manifest_payload
+
+    return (
+        {
+            "ready": False,
+            "status": "unhealthy",
+            "issues": [reason],
+            "required_probes": {"all_passed": False},
+            "blockers": [reason],
+            "boot_phase": reason,
+            "conversation_ready": False,
+            "cache_status": "miss",
+            "cache_reason": reason,
+            "timestamp": datetime.now(tz=UTC).isoformat(),
+        },
+        503,
+    )
+
+
+def _runtime_manifest_boot_health_payload(reason: str) -> tuple[dict[str, Any], int] | None:
+    try:
+        manifest_path = config.paths.project_root / "artifacts" / "current" / "runtime_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        readiness = manifest.get("readiness_snapshot")
+        if not isinstance(readiness, dict):
+            return None
+        ready = bool(readiness.get("ready") is True)
+        blockers = [str(item) for item in readiness.get("required_probe_blockers", []) if str(item)]
+        if not ready and not blockers:
+            blockers = [reason]
+        status_code = 200 if ready and not blockers else 503
+        required_probes: dict[str, Any] = {"all_passed": ready}
+        for group_name, components in REQUIRED_HEALTH_PROBE_GROUPS.items():
+            required_probes[group_name] = {
+                "ok": ready,
+                "components": {component: ready for component in components},
+            }
+        return (
+            {
+                "ready": ready,
+                "status": "ready" if status_code == 200 else "unhealthy",
+                "system_ready": ready,
+                "launcher_ready": ready,
+                "conversation_ready": ready,
+                "boot_phase": "manifest_ready" if ready else "manifest_unhealthy",
+                "required_probes": required_probes,
+                "blockers": blockers,
+                "cache_status": "manifest",
+                "cache_reason": reason,
+                "manifest_generated_at_unix": manifest.get("generated_at_unix"),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
+            },
+            status_code,
+        )
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation("system", exc)
+        logger.debug("Runtime manifest health fallback failed: %s", exc)
+        return None
+
+
 async def _build_boot_health_payload_bounded(*, is_gui_proxy: bool) -> tuple[dict[str, Any], int]:
     """Return a boot-health snapshot without allowing probes to hang the HTTP loop."""
+
+    if _HEALTH_PROBE_LOCK.locked():
+        return _cached_boot_health_payload("health_probe_already_running")
 
     loop = asyncio.get_running_loop()
     try:
@@ -288,26 +383,15 @@ async def _build_boot_health_payload_bounded(*, is_gui_proxy: bool) -> tuple[dic
         failure_reason = str(exc) or "health_probe_timeout"
         if failure_reason not in {"health_probe_already_running"}:
             failure_reason = "health_probe_timeout"
-        record_degradation(
-            "system",
-            exc,
-            severity="warning",
-            action="failed health readiness probe closed instead of hanging HTTP response",
-            enforce_failure_policy=False,
-        )
-        return (
-            {
-                "ready": False,
-                "status": "unhealthy",
-                "issues": [failure_reason],
-                "required_probes": {"all_passed": False},
-                "blockers": [failure_reason],
-                "boot_phase": failure_reason,
-                "conversation_ready": False,
-                "timestamp": datetime.now(tz=UTC).isoformat(),
-            },
-            503,
-        )
+        if failure_reason != "health_probe_already_running":
+            record_degradation(
+                "system",
+                exc,
+                severity="warning",
+                action="failed health readiness probe closed instead of hanging HTTP response",
+                enforce_failure_policy=False,
+            )
+        return _cached_boot_health_payload(failure_reason)
 
 
 def _get_runtime_state_safe() -> dict[str, Any]:

@@ -876,8 +876,22 @@ class OrchestratorBootMixin(
 
                 self.swarm = SwarmProtocol()
                 ServiceContainer.register_instance("swarm_protocol", self.swarm)
-                # Trigger infrastructure mapping (Soul Graph)
-                mycelium.setup()
+                # Trigger infrastructure mapping (Soul Graph) outside the
+                # live foreground boot path. The mapper is a repo-wide AST
+                # scan; even on a daemon thread it can contend with Cortex
+                # warmup through the GIL and create first-turn lag. Foreground
+                # launches keep mapping lazy/on-demand.
+                if os.getenv("AURA_FOREGROUND_ONLY", "0").lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }:
+                    logger.info(
+                        "🍄 [MYCELIUM] Infrastructure mapping deferred for foreground-only boot."
+                    )
+                else:
+                    mycelium.setup()
 
                 logger.info("🛡️ [ORCHESTRATOR] Subsystems synchronously initialized.")
 

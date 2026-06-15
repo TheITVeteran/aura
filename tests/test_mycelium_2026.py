@@ -82,4 +82,30 @@ def test_infrastructure_mapping(network):
     assert network.hyphae["phys_1"].strength > 1.0
 
 
+def test_foreground_boot_defers_infrastructure_mapping_quiet_window(network, monkeypatch, tmp_path):
+    (tmp_path / "core").mkdir()
+    (tmp_path / "core" / "sample.py").write_text("import os\n", encoding="utf-8")
+    monkeypatch.setenv("AURA_FOREGROUND_ONLY", "1")
+    monkeypatch.setenv("AURA_FOREGROUND_INFRASTRUCTURE_MAPPING_QUIET_S", "180")
+
+    network.map_infrastructure(str(tmp_path))
+
+    report = network.get_infrastructure_report()
+    assert report["mapped"] is False
+    assert report["total_modules"] == 0
+    assert str(report["deferred_reason"]).startswith("foreground_quiet_window:")
+
+
+def test_foreground_infrastructure_mapping_force_override(network, monkeypatch, tmp_path):
+    (tmp_path / "core").mkdir()
+    (tmp_path / "core" / "sample.py").write_text("import os\n", encoding="utf-8")
+    monkeypatch.setenv("AURA_FOREGROUND_ONLY", "1")
+
+    network.map_infrastructure(str(tmp_path), force=True)
+
+    report = network.get_infrastructure_report()
+    assert report["mapped"] is True
+    assert report["total_modules"] == 1
+
+
 ##

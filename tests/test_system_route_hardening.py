@@ -1,5 +1,6 @@
 import asyncio
 import json
+from types import SimpleNamespace
 import threading
 import time
 
@@ -363,6 +364,9 @@ async def test_boot_health_probe_times_out_instead_of_hanging_http_loop(monkeypa
         time.sleep(0.2)
         return ({"ready": True, "required_probes": {"all_passed": True}}, 200)
 
+    system_routes._store_boot_health_cache({}, 503)
+    monkeypatch.setattr(system_routes, "_HEALTH_CACHE_TTL_S", 0.001)
+    monkeypatch.setattr(system_routes, "_runtime_manifest_boot_health_payload", lambda _reason: None)
     monkeypatch.setattr(system_routes, "_HEALTH_PROBE_TIMEOUT_S", 0.01)
     monkeypatch.setattr(system_routes, "_build_boot_health_payload_sync", slow_health_snapshot)
 
@@ -381,9 +385,17 @@ async def test_boot_health_probe_times_out_instead_of_hanging_http_loop(monkeypa
 @pytest.mark.asyncio
 async def test_boot_health_probe_reports_single_flight_while_prior_probe_is_wedged(monkeypatch):
     from interface.routes import system as system_routes
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 
     started = threading.Event()
     release = threading.Event()
+    required_probes = {
+        "all_passed": True,
+        **{
+            group: {"ok": True, "components": {component: True for component in components}}
+            for group, components in REQUIRED_HEALTH_PROBE_GROUPS.items()
+        },
+    }
 
     def slow_snapshot(*_args, **_kwargs):
         started.set()
@@ -392,13 +404,25 @@ async def test_boot_health_probe_reports_single_flight_while_prior_probe_is_wedg
             {
                 "ready": True,
                 "system_ready": True,
-                "required_probes": {"all_passed": True},
+                "required_probes": required_probes,
                 "blockers": [],
                 "conversation_ready": True,
             },
             200,
         )
 
+    system_routes._store_boot_health_cache(
+        {
+            "ready": True,
+            "system_ready": True,
+            "launcher_ready": True,
+            "required_probes": required_probes,
+            "blockers": [],
+            "conversation_ready": True,
+        },
+        200,
+    )
+    monkeypatch.setattr(system_routes, "_HEALTH_CACHE_TTL_S", 30.0)
     monkeypatch.setattr(system_routes, "_HEALTH_PROBE_TIMEOUT_S", 0.05)
     monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
     monkeypatch.setattr(system_routes, "_get_runtime_state_safe", lambda: {})
@@ -421,10 +445,55 @@ async def test_boot_health_probe_reports_single_flight_while_prior_probe_is_wedg
     release.set()
     first_payload, first_status_code = await first_probe
 
-    assert status_code == 503
-    assert payload["blockers"] == ["health_probe_already_running"]
-    assert first_status_code == 503
-    assert first_payload["blockers"] == ["health_probe_timeout"]
+    assert status_code == 200
+    assert payload["ready"] is True
+    assert payload["cache_status"] == "fresh"
+    assert payload["cache_reason"] == "health_probe_already_running"
+    assert first_status_code == 200
+    assert first_payload["ready"] is True
+    assert first_payload["cache_status"] == "fresh"
+    assert first_payload["cache_reason"] == "health_probe_timeout"
+
+
+def test_runtime_manifest_health_fallback_preserves_required_probe_shape(tmp_path, monkeypatch):
+    from interface.routes import system as system_routes
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+
+    project_root = tmp_path
+    artifact_root = project_root / "artifacts" / "current"
+    artifact_root.mkdir(parents=True)
+    (artifact_root / "runtime_manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at_unix": 123.0,
+                "readiness_snapshot": {
+                    "ready": True,
+                    "status": "healthy",
+                    "required_probe_blockers": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "config",
+        SimpleNamespace(paths=SimpleNamespace(project_root=project_root)),
+    )
+
+    payload, status_code = system_routes._runtime_manifest_boot_health_payload(
+        "health_probe_timeout"
+    )
+
+    assert status_code == 200
+    assert payload["ready"] is True
+    assert payload["cache_status"] == "manifest"
+    assert payload["required_probes"]["all_passed"] is True
+    for group, components in REQUIRED_HEALTH_PROBE_GROUPS.items():
+        assert payload["required_probes"][group]["ok"] is True
+        assert payload["required_probes"][group]["components"] == {
+            component: True for component in components
+        }
 
 
 def test_boot_health_probe_single_flight_fails_closed_instead_of_stacking():

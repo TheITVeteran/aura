@@ -60,10 +60,50 @@ def test_canonical_boot_refreshes_health_before_manifest():
     )[0]
 
     assert "await _enforce_boot_probes(ready_label)" in boot_slice
-    assert "_refresh_orchestrator_health_before_manifest(orchestrator, ready_label)" in boot_slice
+    assert "readiness_snapshot = _refresh_orchestrator_health_before_manifest(orchestrator, ready_label)" in boot_slice
+    assert "readiness_snapshot=readiness_snapshot" in boot_slice
+    assert "_schedule_runtime_manifest_ready_refresh(" in boot_slice
+    assert "initial_readiness=readiness_snapshot" in boot_slice
     assert boot_slice.index("_refresh_orchestrator_health_before_manifest") < boot_slice.index(
         "_write_runtime_manifest("
     )
+
+
+def test_runtime_manifest_pre_ready_snapshot_gets_bounded_refresh_task():
+    aura_main = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
+    refresh_slice = aura_main.split("def _schedule_runtime_manifest_ready_refresh", 1)[1].split(
+        "def _register_runtime_singletons",
+        1,
+    )[0]
+
+    assert "if bool(initial_readiness.get(\"ready\")):" in refresh_slice
+    assert "AURA_RUNTIME_MANIFEST_READY_REFRESH_SECONDS" in refresh_slice
+    assert "_refresh_runtime_manifest_until_ready(" in refresh_slice
+    assert "runtime_manifest.ready_refresh" in refresh_slice
+    assert "if bool(snapshot.get(\"ready\")):" in refresh_slice
+    assert "readiness_snapshot=snapshot" in refresh_slice
+
+
+def test_runtime_manifest_records_pre_ready_boot_contract_snapshot(tmp_path):
+    from core.runtime.runtime_manifest import build_runtime_manifest
+
+    manifest = build_runtime_manifest(
+        profile="desktop",
+        ready_label="Server",
+        project_root=PROJECT_ROOT,
+        artifact_root=tmp_path,
+        readiness_snapshot={
+            "ready": False,
+            "status": "booting",
+            "critical": ["inference_gate"],
+            "important": [],
+            "required_probe_blockers": ["probe:inference"],
+        },
+    )
+
+    assert manifest["readiness_snapshot"]["ready"] is False
+    assert manifest["readiness_snapshot"]["critical"] == ["inference_gate"]
+    assert manifest["readiness_snapshot"]["required_probe_blockers"] == ["probe:inference"]
 
 
 def test_foreground_start_keeps_scheduler_heartbeat_alive():
@@ -82,6 +122,19 @@ def test_foreground_start_keeps_scheduler_heartbeat_alive():
     assert "heartbeat remains active for runtime health" in foreground_slice
     assert "if not scheduler.is_alive():" in foreground_slice
     assert "await asyncio.wait_for(scheduler.start(), timeout=5.0)" in foreground_slice
+
+
+def test_foreground_boot_defers_mycelium_infrastructure_mapping():
+    boot_source = (PROJECT_ROOT / "core" / "orchestrator" / "boot.py").read_text(
+        encoding="utf-8"
+    )
+    mapping_slice = boot_source.split("ServiceContainer.register_instance(\"swarm_protocol\"", 1)[
+        1
+    ].split("logger.info(\"🛡️ [ORCHESTRATOR] Subsystems synchronously initialized.", 1)[0]
+
+    assert "Infrastructure mapping deferred for foreground-only boot" in mapping_slice
+    assert "AURA_FOREGROUND_ONLY" in mapping_slice
+    assert mapping_slice.index("AURA_FOREGROUND_ONLY") < mapping_slice.index("mycelium.setup()")
 
 
 def test_orchestrator_main_loop_refreshes_watchdog_heartbeat():

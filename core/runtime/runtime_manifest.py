@@ -134,6 +134,7 @@ def build_runtime_manifest(
     ready_label: str,
     project_root: Path,
     artifact_root: Path,
+    readiness_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     services = _service_snapshot()
     roles = _role_snapshot()
@@ -172,6 +173,12 @@ def build_runtime_manifest(
             "foreground_only": os.environ.get("AURA_FOREGROUND_ONLY", "0"),
             "test_mode": os.environ.get("AURA_TEST_MODE", "0"),
         },
+        "readiness_snapshot": readiness_snapshot
+        or {
+            "ready": "unknown",
+            "status": "not_captured",
+            "required_probe_blockers": ["readiness_snapshot_missing"],
+        },
         "artifact_root": str(artifact_root),
     }
     serialized = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
@@ -185,6 +192,7 @@ def write_runtime_manifest(
     ready_label: str,
     project_root: Path,
     artifact_root: Path,
+    readiness_snapshot: dict[str, Any] | None = None,
 ) -> Path:
     artifact_root.mkdir(parents=True, exist_ok=True)
     manifest = build_runtime_manifest(
@@ -192,6 +200,7 @@ def write_runtime_manifest(
         ready_label=ready_label,
         project_root=project_root,
         artifact_root=artifact_root,
+        readiness_snapshot=readiness_snapshot,
     )
     path = artifact_root / "runtime_manifest.json"
     atomic_write_text(path, json.dumps(manifest, indent=2, sort_keys=True, default=str))

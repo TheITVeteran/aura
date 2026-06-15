@@ -226,6 +226,8 @@ class MycelialNetwork:
             self._critical_modules: List[str] = []
             self._cross_links: Dict[str, List[str]] = {}
             self._is_mapping: bool = False
+            self._created_at_monotonic = time.monotonic()
+            self._deferred_mapping_reason: Optional[str] = None
             self._stop_event = threading.Event()
             
             # Legacy compat
@@ -309,7 +311,7 @@ class MycelialNetwork:
         super().__setattr__(name, value)
 
 
-    def setup(self):
+    def setup(self, *, force: bool = False):
         """Dependency Injection Gateway. 
         Triggers lazy infrastructure mapping if not already done.
         """
@@ -319,7 +321,13 @@ class MycelialNetwork:
              mapping_base = config.paths.base_dir
              logger.info("🍄 [MYCELIUM] Triggering infrastructure mapping via setup() at: %s", mapping_base)
              # Start mapping in a background thread to not block orchestrator setup
-             threading.Thread(target=self.map_infrastructure, args=(str(mapping_base),), daemon=True).start()
+             threading.Thread(
+                 target=self.map_infrastructure,
+                 args=(str(mapping_base),),
+                 kwargs={"force": force},
+                 daemon=True,
+                 name="MyceliumInfrastructureMap",
+             ).start()
 
     # ======================================================================
     # HARDWIRED PATHWAYS — The Core Intent Router
@@ -810,7 +818,13 @@ class MycelialNetwork:
     # INFRASTRUCTURE MAPPING — Codebase Unification
     # ======================================================================
 
-    def map_infrastructure(self, base_dir: str, scan_dirs: Optional[List[str]] = None):
+    def map_infrastructure(
+        self,
+        base_dir: str,
+        scan_dirs: Optional[List[str]] = None,
+        *,
+        force: bool = False,
+    ):
         """Dynamically scan the codebase and map all modules into the network graph.
 
         Walks the specified directories, parses Python imports via AST, and
@@ -821,6 +835,8 @@ class MycelialNetwork:
             base_dir: Absolute path to the project root (e.g., autonomy_engine/).
             scan_dirs: Subdirectories under base_dir to scan. Defaults to ['core', 'skills'].
         """
+        if not force and self._foreground_mapping_deferred():
+            return
         # C-12 FIX: Use a proper mapping state to prevent race conditions.
         # infrastructure_mapped = True should only be set AFTER scanning is complete.
         # We use a primitive lock-like check to ensure serial execution.
@@ -1034,6 +1050,45 @@ class MycelialNetwork:
             elapsed, len(all_files), physical_connections, annotated, len(self._critical_modules)
         )
 
+    def _foreground_mapping_deferred(self) -> bool:
+        foreground = os.getenv("AURA_FOREGROUND_ONLY", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if not foreground:
+            return False
+        if os.getenv("AURA_ALLOW_FOREGROUND_INFRASTRUCTURE_MAPPING", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return False
+        try:
+            quiet_s = float(
+                os.getenv("AURA_FOREGROUND_INFRASTRUCTURE_MAPPING_QUIET_S", "180")
+                or 180.0
+            )
+        except (TypeError, ValueError):
+            quiet_s = 180.0
+        age_s = max(
+            0.0,
+            time.monotonic()
+            - float(getattr(self, "_created_at_monotonic", time.monotonic())),
+        )
+        if age_s < max(0.0, quiet_s):
+            self._deferred_mapping_reason = (
+                f"foreground_quiet_window:{age_s:.1f}s/{max(0.0, quiet_s):.1f}s"
+            )
+            logger.info(
+                "🍄 [MYCELIUM] Infrastructure mapping deferred (%s).",
+                self._deferred_mapping_reason,
+            )
+            return True
+        return False
+
     def _extract_imports(self, file_path: Path, base_dir: Path) -> List[str]:
         """Parse a Python file's AST and extract import targets as dotted module keys."""
         imports: List[str] = []
@@ -1088,6 +1143,7 @@ class MycelialNetwork:
 
         return {
             "mapped": self.infrastructure_mapped,
+            "deferred_reason": self._deferred_mapping_reason,
             "total_modules": len(self.mapped_files),
             "physical_connections": len(physical_hyphae),
             "annotated_pathways": annotated_pathways,

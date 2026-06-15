@@ -799,11 +799,19 @@ async def _boot_runtime_orchestrator(
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
         logger.warning("⚠️ Failed to write runtime service ownership manifest: %s", exc)
     await _enforce_boot_probes(ready_label)
-    _refresh_orchestrator_health_before_manifest(orchestrator, ready_label)
+    readiness_snapshot = _refresh_orchestrator_health_before_manifest(orchestrator, ready_label)
     _write_runtime_manifest(
         profile=profile or ready_label.lower(),
         ready_label=ready_label,
         artifact_root=artifact_root,
+        readiness_snapshot=readiness_snapshot,
+    )
+    _schedule_runtime_manifest_ready_refresh(
+        orchestrator=orchestrator,
+        profile=profile or ready_label.lower(),
+        ready_label=ready_label,
+        artifact_root=artifact_root,
+        initial_readiness=readiness_snapshot,
     )
     logger.info("🛡️ Registry Locked. Aura Ready (%s).", ready_label)
 
@@ -1254,14 +1262,20 @@ async def boot_aura_runtime(
     )
 
 
-def _refresh_orchestrator_health_before_manifest(orchestrator: Any, ready_label: str) -> bool:
+def _refresh_orchestrator_health_before_manifest(orchestrator: Any, ready_label: str) -> dict[str, Any]:
     """Refresh live runtime health immediately before writing proof/desktop manifests."""
 
     try:
         healthy = bool(orchestrator.health_check())
         if healthy:
             logger.info("✅ Runtime health confirmed before manifest (%s).", ready_label)
-            return True
+            return {
+                "ready": True,
+                "status": "healthy",
+                "critical": [],
+                "important": [],
+                "required_probe_blockers": [],
+            }
 
         from core.runtime.health_contract import (
             required_probe_blockers,
@@ -1290,7 +1304,13 @@ def _refresh_orchestrator_health_before_manifest(orchestrator: Any, ready_label:
             important,
             probes,
         )
-        return False
+        return {
+            "ready": False,
+            "status": str(contract.get("status", "unhealthy")) if isinstance(contract, dict) else "unhealthy",
+            "critical": critical,
+            "important": important,
+            "required_probe_blockers": probes,
+        }
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
         record_degradation(
             _AURA_MAIN_DEGRADATION_KEY,
@@ -1299,7 +1319,14 @@ def _refresh_orchestrator_health_before_manifest(orchestrator: Any, ready_label:
             severity="critical",
         )
         logger.warning("⚠️ Runtime health refresh before manifest failed: %s", exc)
-        return False
+        return {
+            "ready": False,
+            "status": "refresh_failed",
+            "critical": ["runtime_health_refresh_failed"],
+            "important": [],
+            "required_probe_blockers": ["runtime_health_refresh_failed"],
+            "error": f"{type(exc).__name__}: {exc}",
+        }
 
 
 def _write_runtime_manifest(
@@ -1307,6 +1334,7 @@ def _write_runtime_manifest(
     profile: str,
     ready_label: str,
     artifact_root: str | Path | None = None,
+    readiness_snapshot: dict[str, Any] | None = None,
 ) -> None:
     try:
         from core.runtime.runtime_manifest import write_runtime_manifest
@@ -1318,6 +1346,7 @@ def _write_runtime_manifest(
             ready_label=ready_label,
             project_root=PROJECT_ROOT,
             artifact_root=Path(artifact_root),
+            readiness_snapshot=readiness_snapshot,
         )
         logger.info("🧾 Runtime manifest written: %s", path)
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
@@ -1327,6 +1356,84 @@ def _write_runtime_manifest(
             action="continued canonical boot after runtime manifest emission failed",
         )
         logger.warning("Runtime manifest emission failed: %s", exc)
+
+
+def _schedule_runtime_manifest_ready_refresh(
+    *,
+    orchestrator: Any,
+    profile: str,
+    ready_label: str,
+    artifact_root: str | Path | None,
+    initial_readiness: dict[str, Any],
+) -> None:
+    """Refresh the manifest once live readiness catches up after model warmup."""
+
+    if bool(initial_readiness.get("ready")):
+        return
+
+    try:
+        timeout_s = float(os.environ.get("AURA_RUNTIME_MANIFEST_READY_REFRESH_SECONDS", "240"))
+        interval_s = float(os.environ.get("AURA_RUNTIME_MANIFEST_READY_REFRESH_INTERVAL_SECONDS", "2"))
+    except (TypeError, ValueError):
+        timeout_s = 240.0
+        interval_s = 2.0
+
+    if timeout_s <= 0:
+        return
+
+    try:
+        get_task_tracker().create_task(
+            _refresh_runtime_manifest_until_ready(
+                orchestrator=orchestrator,
+                profile=profile,
+                ready_label=ready_label,
+                artifact_root=artifact_root,
+                timeout_s=timeout_s,
+                interval_s=max(0.25, interval_s),
+            ),
+            name="runtime_manifest.ready_refresh",
+        )
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation(
+            _AURA_MAIN_DEGRADATION_KEY,
+            exc,
+            action="runtime manifest ready refresh scheduling failed",
+            severity="warning",
+        )
+
+
+async def _refresh_runtime_manifest_until_ready(
+    *,
+    orchestrator: Any,
+    profile: str,
+    ready_label: str,
+    artifact_root: str | Path | None,
+    timeout_s: float,
+    interval_s: float,
+) -> None:
+    deadline = time.monotonic() + timeout_s
+    last_snapshot: dict[str, Any] | None = None
+    while time.monotonic() < deadline and not is_shutdown_requested():
+        await asyncio.sleep(interval_s)
+        snapshot = _refresh_orchestrator_health_before_manifest(orchestrator, ready_label)
+        last_snapshot = snapshot
+        if bool(snapshot.get("ready")):
+            _write_runtime_manifest(
+                profile=profile,
+                ready_label=ready_label,
+                artifact_root=artifact_root,
+                readiness_snapshot=snapshot,
+            )
+            logger.info("🧾 Runtime manifest refreshed after readiness settled: %s", ready_label)
+            return
+
+    if last_snapshot is not None:
+        logger.warning(
+            "Runtime manifest readiness refresh expired for %s: status=%s blockers=%s",
+            ready_label,
+            last_snapshot.get("status"),
+            last_snapshot.get("required_probe_blockers"),
+        )
 
 
 def _register_runtime_singletons(orchestrator: Any) -> None:
