@@ -65,6 +65,33 @@ def test_loop_wedge_detected_even_when_daemon_still_writes():
     ) is False
 
 
+def test_stallwatchdog_writes_liveness_beacon(tmp_path, monkeypatch):
+    """The StallWatchdog must refresh the heartbeat file the sentinel reads —
+    with a fresh last_loop_run while the loop is alive."""
+    import asyncio
+
+    hb = tmp_path / "beacon.json"
+    monkeypatch.setenv("AURA_LIVENESS_HEARTBEAT_FILE", str(hb))
+    from core.resilience.stall_watchdog import StallWatchdog
+
+    async def _drive():
+        loop = asyncio.get_running_loop()
+        dog = StallWatchdog(loop, threshold=5.0)
+        dog.start()
+        try:
+            await asyncio.sleep(3.0)  # let the loop run + the daemon write
+            assert hb.exists(), "beacon file was not written"
+            llr, written_at, _ = read_heartbeat(hb)
+            assert llr and llr > 0.0
+            # last_loop_run is fresh because the loop is alive and running callbacks.
+            assert time.time() - llr < 5.0
+            assert written_at and written_at > 0.0
+        finally:
+            dog.stop()
+
+    asyncio.run(_drive())
+
+
 def test_end_to_end_sentinel_kills_wedged_process(tmp_path):
     """A child writes one heartbeat then 'wedges' (stops updating); the sentinel
     must SIGKILL it. Proves the out-of-process kill path end-to-end."""
