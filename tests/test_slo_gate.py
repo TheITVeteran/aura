@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 
 from slo.check import compare
-from slo.measure import measure_doctor_bundle_p95_ms
+from slo.measure import (
+    measure_audit_chain_verify_per_entry_us,
+    measure_doctor_bundle_p95_ms,
+)
 
 
 def _baseline(slos, hard_limits=None):
@@ -160,3 +163,9 @@ def test_doctor_bundle_measurement_uses_isolated_receipt_store(monkeypatch):
     assert len(store_roots) == 1
     assert store_roots[0] is not None
     assert store_roots[0].name == "receipts"
+
+
+def test_audit_chain_verify_measurement_samples_repeated_runs():
+    measured = measure_audit_chain_verify_per_entry_us(samples=8, repeats=3)
+
+    assert measured > 0.0

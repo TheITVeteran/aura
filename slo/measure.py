@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from statistics import median
 from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
@@ -68,7 +69,10 @@ def measure_audit_chain_append_p95_ms(samples: int = 200) -> float:
         return _percentile(latencies, 95.0)
 
 
-def measure_audit_chain_verify_per_entry_us(samples: int = 500) -> float:
+def measure_audit_chain_verify_per_entry_us(
+    samples: int = 500,
+    repeats: int = 5,
+) -> float:
     from core.runtime.audit_chain import AuditChain
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -80,11 +84,14 @@ def measure_audit_chain_verify_per_entry_us(samples: int = 500) -> float:
                 body={"i": i},
                 timestamp=time.time(),
             )
-        t0 = time.perf_counter()
-        ok, problems = chain.verify()
-        elapsed = time.perf_counter() - t0
-        assert ok, f"chain unexpectedly failed verification: {problems[:3]}"
-        return (elapsed / samples) * 1_000_000.0
+        per_entry_us: list[float] = []
+        for _ in range(max(1, int(repeats))):
+            t0 = time.perf_counter()
+            ok, problems = chain.verify()
+            elapsed = time.perf_counter() - t0
+            assert ok, f"chain unexpectedly failed verification: {problems[:3]}"
+            per_entry_us.append((elapsed / samples) * 1_000_000.0)
+        return float(median(per_entry_us))
 
 
 # ---------------------------------------------------------------------------

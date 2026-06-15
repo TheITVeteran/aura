@@ -3102,11 +3102,27 @@ def test_conversation_recall_classifier_handles_natural_memory_questions():
         == "last_user"
     )
     assert (
+        chat_routes._classify_conversation_recall_request("Can you remind me what I asked?")
+        == "last_user"
+    )
+    assert (
+        chat_routes._classify_conversation_recall_request("What was my last message?")
+        == "last_user"
+    )
+    assert (
         chat_routes._classify_conversation_recall_request("Do you remember what you said?")
         == "last_aura"
     )
     assert (
+        chat_routes._classify_conversation_recall_request("Can you remind me what you answered?")
+        == "last_aura"
+    )
+    assert (
         chat_routes._classify_conversation_recall_request("What did we discuss earlier in this conversation?")
+        == "topic"
+    )
+    assert (
+        chat_routes._classify_conversation_recall_request("Can you remind me what we talked about?")
         == "topic"
     )
 

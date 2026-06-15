@@ -74,6 +74,52 @@ async def test_completed_live_exchange_survives_process_memory_clear(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_durable_recall_reply_survives_process_memory_clear(monkeypatch):
+    persistence = _PersistenceFixture()
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence if name == "persistence" else default
+        ),
+    )
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+
+    exchange_id = await chat_routes._begin_logged_exchange(
+        "The live desktop failure involved the 32B lane losing CognitiveEngine continuity."
+    )
+    await chat_routes._complete_logged_exchange(
+        exchange_id,
+        "The live desktop failure involved the 32B lane losing CognitiveEngine continuity.",
+        "I tracked that as a live desktop continuity problem, not a backend-only issue.",
+        record_experience=False,
+    )
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+
+    user_recall = await chat_routes._build_conversation_recall_reply(
+        "Can you remind me what I said earlier?"
+    )
+    aura_recall = await chat_routes._build_conversation_recall_reply(
+        "Can you remind me what you answered?"
+    )
+    topic_recall = await chat_routes._build_conversation_recall_reply(
+        "Can you remind me what we discussed?"
+    )
+
+    assert user_recall is not None
+    assert "32B lane losing CognitiveEngine continuity" in user_recall
+    assert aura_recall is not None
+    assert "live desktop continuity problem" in aura_recall
+    assert topic_recall is not None
+    assert "32B lane" in topic_recall
+    assert "live desktop continuity problem" in topic_recall
+
+
+@pytest.mark.asyncio
 async def test_recent_context_deduplicates_durable_and_in_memory_exchange(monkeypatch):
     persistence = _PersistenceFixture()
     persistence.record_turn("user", "Keep this one copy.", origin="desktop_ui")
