@@ -859,6 +859,21 @@ def test_multi_part_foreground_prompt_retains_deep_compute_profile():
     assert loops == 2
 
 
+def test_multi_step_tool_chain_foreground_prompt_uses_deep_compute_profile():
+    prompt = (
+        "Open a desktop app, write a timestamped note, export it as a PDF, "
+        "then search three web articles and summarize them in a document."
+    )
+
+    floor, cap, loops = InferenceGate._foreground_compute_profile(prompt)
+    profile = InferenceGate._foreground_prompt_profile(prompt, {})
+
+    assert floor >= 2048
+    assert cap >= floor
+    assert loops == 2
+    assert profile == "extended"
+
+
 def test_user_facing_primary_default_budget_allows_expressive_opening(monkeypatch):
     monkeypatch.delenv("AURA_FOREGROUND_CHAT_MAX_TOKENS", raising=False)
 

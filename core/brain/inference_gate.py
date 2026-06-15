@@ -64,6 +64,22 @@ _LONG_FORM_REQUEST_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_FOREGROUND_ACTION_VERB_RE = re.compile(
+    r"\b(?:open|launch|create|write|type|search|find|summari[sz]e|export|save|"
+    r"attach|insert|navigate|click|copy|paste|move|rename|download|upload|run|"
+    r"test|debug|commit|push|install|read|compare)\b",
+    re.IGNORECASE,
+)
+_FOREGROUND_ACTION_SURFACE_RE = re.compile(
+    r"\b(?:desktop|screen|window|app|application|browser|chrome|tab|web|article|"
+    r"document|docs?|notes?|folder|file|pdf|terminal|shell|clipboard|tool|tools)\b",
+    re.IGNORECASE,
+)
+_FOREGROUND_ACTION_SEQUENCE_RE = re.compile(
+    r"\b(?:then|next|after(?:ward| that)?|finally|before|while|all in one|"
+    r"multi[- ]step|step\s*\d+)\b|[,;]",
+    re.IGNORECASE,
+)
 
 _STATE_SIGNAL_REWRITES = (
     ("phenomenological", "state-grounded"),
@@ -2409,8 +2425,15 @@ class InferenceGate:
         shape = analyze_prompt_shape(text)
         word_count = len(text.split())
         long_form_requested = bool(_LONG_FORM_REQUEST_RE.search(text))
+        action_hits = len(_FOREGROUND_ACTION_VERB_RE.findall(text))
+        action_chain_requested = bool(
+            action_hits >= 2
+            and _FOREGROUND_ACTION_SURFACE_RE.search(text)
+            and _FOREGROUND_ACTION_SEQUENCE_RE.search(text)
+        )
         extended = bool(
             long_form_requested
+            or action_chain_requested
             or shape.prefers_extended_answer
             or shape.requires_single_reply_coverage
             or shape.question_parts >= 2
@@ -2489,8 +2512,15 @@ class InferenceGate:
         text = str(prompt or "").strip()
         shape = analyze_prompt_shape(text)
         long_form_requested = bool(_LONG_FORM_REQUEST_RE.search(text))
+        action_hits = len(_FOREGROUND_ACTION_VERB_RE.findall(text))
+        action_chain_requested = bool(
+            action_hits >= 2
+            and _FOREGROUND_ACTION_SURFACE_RE.search(text)
+            and _FOREGROUND_ACTION_SEQUENCE_RE.search(text)
+        )
         if (
             long_form_requested
+            or action_chain_requested
             or shape.prefers_extended_answer
             or shape.requires_single_reply_coverage
             or shape.question_parts >= 2
