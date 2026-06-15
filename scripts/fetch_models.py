@@ -1,156 +1,90 @@
+#!/usr/bin/env python3
+"""Aura model fetcher — inventory, disk preflight, and resumable download.
+
+Thin CLI over core.brain.llm.model_lifecycle.ModelLifecycleManager so the
+download path the launcher uses and the one a human runs are the same code.
+
+    python scripts/fetch_models.py            # download any missing models
+    python scripts/fetch_models.py --status   # just print the inventory
+"""
 from __future__ import annotations
-"""Aura model fetcher for both MLX and managed GGUF runtimes."""
 
-
-from pathlib import Path
-import re
+import argparse
 import sys
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.brain.llm.model_registry import (
-    ACTIVE_MODEL,
-    BRAINSTEM_MODEL,
-    DEEP_MODEL,
-    FALLBACK_MODEL,
-    GGUF_DIR,
-    GGUF_MODEL_PATHS,
-    MODEL_PATHS,
-    get_local_backend,
-    get_runtime_download_target,
-)
+from core.brain.llm.model_lifecycle import ModelLifecycleManager  # noqa: E402
+
+_GB = float(1024**3)
 
 
-MODEL_PLAN = [
-    (BRAINSTEM_MODEL, "⚡ Brainstem (Background/Reflex)"),
-    (ACTIVE_MODEL, "🧠 Cortex (Daily Executive Brain)"),
-    (DEEP_MODEL, "🔮 Solver (Hot-Swap Deep Thinker)"),
-    (FALLBACK_MODEL, "🚨 Fallback (Emergency Last Resort)"),
-]
-
-MLX_REPOS = {
-    "Qwen2.5-1.5B-Instruct-4bit": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
-    "Qwen2.5-7B-Instruct-4bit": "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    "Qwen2.5-32B-Instruct-4bit": "mlx-community/Qwen2.5-32B-Instruct-4bit",
-    "Qwen2.5-32B-Instruct-8bit": "mlx-community/Qwen2.5-32B-Instruct-8bit",
-    "Qwen2.5-72B-Instruct-4bit": "mlx-community/Qwen2.5-72B-Instruct-4bit",
-}
-
-
-_SHARD_RE = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$")
-
-
-def _repair_sharded_layout(target: Path, pattern: str) -> list[Path]:
-    matches = sorted(target.parent.glob(pattern))
-    sharded = [path for path in matches if _SHARD_RE.search(path.name)]
-    if target.exists() and sharded and not any("-00001-of-" in path.name for path in sharded):
-        shard_match = _SHARD_RE.search(sharded[0].name)
-        if shard_match:
-            shard_one = target.parent / f"{target.stem}-00001-of-{shard_match.group(2)}.gguf"
-            if not shard_one.exists():
-                get_task_tracker().create_task(get_storage_gateway().rename(target, shard_one, cause='_repair_sharded_layout'))
-            matches = sorted(target.parent.glob(pattern))
-    return matches
-
-
-def _gguf_artifact_ready(target: Path, pattern: str) -> tuple[bool, list[Path]]:
-    matches = _repair_sharded_layout(target, pattern)
-    if target.exists() and not matches:
-        return True, [target]
-    sharded = [path for path in matches if _SHARD_RE.search(path.name)]
-    if sharded:
-        totals = {int(_SHARD_RE.search(path.name).group(2)) for path in sharded if _SHARD_RE.search(path.name)}
-        if len(totals) == 1:
-            total = next(iter(totals))
-            present = {
-                int(_SHARD_RE.search(path.name).group(1))
-                for path in sharded
-                if _SHARD_RE.search(path.name)
-            }
-            return present == set(range(1, total + 1)), matches
-    return bool(target.exists() or matches), matches
-
-
-def _ensure_gguf_artifact(target: Path, pattern: str) -> list[Path]:
-    ready, matches = _gguf_artifact_ready(target, pattern)
-    if ready:
-        return matches
-    if matches:
-        return matches
-    raise FileNotFoundError(f"No GGUF matched {pattern} in {target.parent}")
-
-
-def _fetch_mlx_models() -> None:
-    from huggingface_hub import snapshot_download
-
-    base_dir = Path(__file__).resolve().parent.parent / "models"
-    get_task_tracker().create_task(get_storage_gateway().create_dir(base_dir, cause='_fetch_mlx_models'))
-
-    print("🧠 Aura Model Fetcher — MLX artifact mode")
-    print("=" * 45)
-
-    for index, (model_name, description) in enumerate(MODEL_PLAN, 1):
-        repo = MLX_REPOS[model_name]
-        target = MODEL_PATHS[model_name]
-        if target.exists() and any(target.iterdir()):
-            print(f"  [{index}/{len(MODEL_PLAN)}] {description}: Already exists, skipping")
-            continue
-
-        print(f"  [{index}/{len(MODEL_PLAN)}] {description}: Downloading {repo}...")
-        snapshot_download(
-            repo_id=repo,
-            local_dir=str(target),
-            local_dir_use_symlinks=False,
+def _print_inventory(manager: ModelLifecycleManager) -> None:
+    print("🧠 Aura model inventory")
+    print("=" * 60)
+    for status in manager.inventory():
+        mark = "✅" if status.present else "⬇️ "
+        where = (
+            status.location
+            if status.present
+            else f"would fetch {status.source_repo or '(no source)'}"
         )
-        print(f"    ✅ Downloaded to {target}")
-
-
-def _fetch_gguf_models() -> None:
-    from huggingface_hub import snapshot_download
-
-    get_task_tracker().create_task(get_storage_gateway().create_dir(GGUF_DIR, cause='_fetch_gguf_models'))
-
-    print("🧠 Aura Model Fetcher — Managed local runtime (GGUF mode)")
-    print("=" * 58)
-
-    for index, (model_name, description) in enumerate(MODEL_PLAN, 1):
-        spec = get_runtime_download_target(model_name)
-        target = GGUF_MODEL_PATHS[model_name]
-        ready, existing_matches = _gguf_artifact_ready(target, pattern=spec["pattern"]) if spec else (target.exists(), [])
-        if ready:
-            print(f"  [{index}/{len(MODEL_PLAN)}] {description}: Already exists, skipping")
-            continue
-        if not spec:
-            print(f"  [{index}/{len(MODEL_PLAN)}] {description}: No GGUF target configured, skipping")
-            continue
-
-        repo = spec["repo"]
-        pattern = spec["pattern"]
-        print(f"  [{index}/{len(MODEL_PLAN)}] {description}: Downloading {repo} ({pattern})...")
-        snapshot_download(
-            repo_id=repo,
-            local_dir=str(target.parent),
-            local_dir_use_symlinks=False,
-            allow_patterns=[pattern],
+        size = (
+            f"{status.size_bytes / _GB:.1f}GB"
+            if status.present
+            else f"~{status.approx_download_gb:.0f}GB"
         )
-        resolved_matches = _ensure_gguf_artifact(target, pattern)
-        if target.exists():
-            resolved_path = target
-        elif resolved_matches:
-            resolved_path = resolved_matches[0]
-        else:
-            resolved_path = target
-        print(f"    ✅ Downloaded to {resolved_path}")
+        print(f"  {mark} {status.role:9s} {status.name:32s} {size:>8s}  {where}")
+
+
+def _progress(event: dict) -> None:
+    name = event.get("name", "")
+    kind = event.get("event", "")
+    if kind == "download_start":
+        print(f"  ⬇️  {name}: downloading {event.get('repo')} (attempt {event.get('attempt')})...")
+    elif kind == "download_ok":
+        print(f"     ✅ {name} ready.")
+    elif kind == "download_failed":
+        print(f"     ❌ {name} failed: {event.get('error')}")
+    elif kind == "disk_insufficient":
+        print(f"  ⚠️  Not enough disk: need ~{event.get('required_gb')}GB, free {event.get('free_gb')}GB")
+    elif kind == "all_present":
+        print("  ✅ All models already present.")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--status", action="store_true", help="print inventory and exit")
+    parser.add_argument("--no-disk-check", action="store_true", help="skip the disk preflight")
+    args = parser.parse_args(argv)
+
+    manager = ModelLifecycleManager()
+    _print_inventory(manager)
+
+    if args.status:
+        return 0
+
+    pf = manager.disk_preflight()
+    print(
+        f"\n💽 Disk at {pf.target}: free {pf.free_bytes / _GB:.1f}GB, "
+        f"need ~{pf.required_bytes / _GB:.1f}GB → {'OK' if pf.ok else 'INSUFFICIENT'}"
+    )
+
+    print("\n⬇️  Fetching missing models...")
+    report = manager.ensure_present(progress=_progress, check_disk=not args.no_disk_check)
+
+    if report.get("failed"):
+        print(f"\n❌ Some downloads failed: {[f['name'] for f in report['failed']]}")
+        return 1
+    if report.get("skipped_disk"):
+        print("\n⚠️  Skipped: insufficient disk space.")
+        return 1
+    print("\n✅ Model fetch complete.")
+    return 0
 
 
 if __name__ == "__main__":
-    backend = get_local_backend()
-    if backend == "mlx":
-        _fetch_mlx_models()
-    else:
-        _fetch_gguf_models()
-
-    print()
-    print("✅ Model fetch complete.")
+    raise SystemExit(main())

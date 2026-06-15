@@ -1281,6 +1281,37 @@ async def _log_macos_permission_preflight(profile: str) -> None:
         )
 
 
+def _warn_if_active_model_missing(profile: str) -> None:
+    """Log a clear, actionable warning when the cortex model isn't on disk.
+
+    A fresh install otherwise stalls silently on the first generation while a
+    multi-GB model downloads with no surfaced progress. Best-effort and bounded
+    (filesystem-only); skipped on the minimal profile and offline-LLM runs.
+    """
+    if profile == "minimal" or os.environ.get("AURA_USE_MOCK_LLM") == "1":
+        return
+    try:
+        from core.brain.llm.model_lifecycle import get_model_lifecycle_manager
+
+        manager = get_model_lifecycle_manager()
+        if manager.active_model_present():
+            return
+        missing = [s.name for s in manager.missing()]
+        logger.warning(
+            "🧠 Cortex model not found on disk (missing: %s). Run "
+            "`python scripts/fetch_models.py` to download it, or the first "
+            "generation will block while it downloads.",
+            ", ".join(missing) or "active model",
+        )
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation(
+            _AURA_MAIN_DEGRADATION_KEY,
+            exc,
+            action="continued boot without a model-presence check",
+            severity="debug",
+        )
+
+
 async def boot_aura_runtime(
     *,
     profile: str,
@@ -1297,6 +1328,7 @@ async def boot_aura_runtime(
     _install_systemwide_memory_protection()
     _install_liveness_sentinel()
     await _log_macos_permission_preflight(profile)
+    _warn_if_active_model_missing(profile)
     if profile == "minimal":
         os.environ["AURA_BOOT_PROFILE"] = "minimal"
         os.environ["AURA_USE_MOCK_LLM"] = "1"
