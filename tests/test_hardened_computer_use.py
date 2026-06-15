@@ -658,10 +658,8 @@ async def test_hotkey_dispatch_failure_carries_real_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_hotkey_dispatch_receipt_accepted_when_screen_unverifiable(monkeypatch):
-    """When the screen layer cannot testify (Accessibility text unavailable
-    before AND after), a clean System Events dispatch is honest evidence —
-    the step must not fail closed on a working keystroke."""
+async def test_hotkey_dispatch_without_focused_control_readback_is_rejected(monkeypatch):
+    """A clean dispatch is not proof that a browser editor accepted it."""
     skill = ComputerUseSkill()
 
     async def controlled_permission_pass(capability, *permission_names):
@@ -673,11 +671,14 @@ async def test_hotkey_dispatch_receipt_accepted_when_screen_unverifiable(monkeyp
 
     def recording_applescript(script, *, timeout=10):
         scripts.append(script)
+        if "frontmost is true" in script:
+            return "Google Chrome"
         if "System Events" in script and "keystroke" in script:
             return ""
-        return "[Accessibility error or UI unresponsive]"
+        return ""
 
     monkeypatch.setattr(skill, "_run_applescript", recording_applescript)
+    monkeypatch.setattr(skill, "_focused_element_snapshot", lambda: "")
 
     async def controlled_sleep(secs):
         return None
@@ -685,10 +686,10 @@ async def test_hotkey_dispatch_receipt_accepted_when_screen_unverifiable(monkeyp
     monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
 
     result = await skill.execute({"action": "hotkey", "target": "command+v"}, {})
-    assert result["ok"] is True
+    assert result["ok"] is False
     assert result["effect_verified"] is False
     assert result["dispatch"].startswith("system_events:")
-    assert "verification unavailable" in result["verification"].lower()
+    assert "verification was unavailable" in result["verification"].lower()
     assert any('keystroke "v" using {command down}' in s for s in scripts)
 
     from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
@@ -700,7 +701,8 @@ async def test_hotkey_dispatch_receipt_accepted_when_screen_unverifiable(monkeyp
         expect="The focused writing surface accepts the paste shortcut.",
     )
     verified, evidence = DesktopTaskSkill()._verify_step_effect(step, result)
-    assert verified, evidence
+    assert verified is False
+    assert "verification was unavailable" in evidence.lower()
 
 
 @pytest.mark.asyncio
@@ -757,6 +759,12 @@ async def test_hotkey_skips_screen_reads_on_browser_surface(monkeypatch):
         raise AssertionError("screen-text walk must be skipped on browser surfaces")
 
     monkeypatch.setattr(skill, "_run_applescript", recording_applescript)
+    focused_snapshots = iter(("AXTextArea\tbefore", "AXTextArea\tbefore and after"))
+    monkeypatch.setattr(
+        skill,
+        "_focused_element_snapshot",
+        lambda: next(focused_snapshots),
+    )
 
     async def controlled_sleep(secs):
         return None
@@ -765,6 +773,8 @@ async def test_hotkey_skips_screen_reads_on_browser_surface(monkeypatch):
 
     result = await skill.execute({"action": "hotkey", "target": "command+v"}, {})
     assert result["ok"] is True
+    assert result["effect_verified"] is True
+    assert result["verification"] == "Focused element changed."
     assert result["dispatch"].startswith("system_events:")
     assert not any("entire contents" in s for s in scripts)
 

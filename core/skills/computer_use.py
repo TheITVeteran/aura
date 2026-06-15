@@ -383,6 +383,29 @@ class ComputerUseSkill(BaseSkill):
             await asyncio.sleep(0.35)
         return False, last_seen
 
+    def _focused_element_snapshot(self) -> str:
+        """Read only the focused control, avoiding a full accessibility walk."""
+        script = """
+tell application "System Events"
+    set frontProc to first application process whose frontmost is true
+    set focusedElement to value of attribute "AXFocusedUIElement" of frontProc
+    set roleName to ""
+    set valueText to ""
+    try
+        set roleName to value of attribute "AXRole" of focusedElement as string
+    end try
+    try
+        set valueText to value of attribute "AXValue" of focusedElement as string
+    end try
+    return roleName & tab & valueText
+end tell
+""".strip()
+        try:
+            return self._run_applescript(script, timeout=4).strip()
+        except (TimeoutError, RuntimeError) as exc:
+            logger.debug("Focused element snapshot failed: %s", exc)
+            return ""
+
     def _send_hotkey_system_events(self, keys: list[str]) -> str:
         """Send a keyboard shortcut via System Events; raise with the real
         error on refusal (e.g. missing Automation/Accessibility grants)."""
@@ -1471,13 +1494,15 @@ end tell
             elif action == "hotkey":
                 # On browser surfaces the 'entire contents' accessibility
                 # walk is pathological (a loading Google Docs tab held
-                # System Events busy so long the keystroke itself timed
-                # out). Browsers skip the screen-text reads; the governed
-                # dispatch receipt is the honest evidence there.
+                # System Events busy so long the keystroke itself timed out).
+                # Read only AXFocusedUIElement there; dispatch alone is not
+                # evidence that the web editor accepted the shortcut.
                 front_app = await asyncio.to_thread(self._frontmost_app_name)
-                screen_reads_allowed = front_app not in _ALLOWED_URL_BROWSERS
-                pre_state = ""
-                if screen_reads_allowed:
+                browser_surface = front_app in _ALLOWED_URL_BROWSERS
+                if browser_surface:
+                    pre_state = await asyncio.to_thread(self._focused_element_snapshot)
+                else:
+                    pre_state = ""
                     try:
                         pre_state = await asyncio.to_thread(self._read_screen_text_macos)
                     except (
@@ -1507,8 +1532,10 @@ end tell
                         "error": f"keystroke dispatch failed: {exc}",
                     }
                 await asyncio.sleep(0.4)
-                post_state = ""
-                if screen_reads_allowed:
+                if browser_surface:
+                    post_state = await asyncio.to_thread(self._focused_element_snapshot)
+                else:
+                    post_state = ""
                     try:
                         post_state = await asyncio.to_thread(self._read_screen_text_macos)
                     except (
@@ -1527,15 +1554,17 @@ end tell
                 )
                 effect_verified = screen_verifiable and post_state != pre_state
                 if effect_verified:
-                    ok, verification = True, "State shifted."
-                elif not screen_verifiable:
-                    # The keystroke went through the governed gateway with
-                    # rc=0; the screen layer simply cannot testify here.
                     ok = True
                     verification = (
-                        "Keystroke dispatched through System Events without "
-                        "error; screen-text verification unavailable on this "
-                        "surface."
+                        "Focused element changed."
+                        if browser_surface
+                        else "State shifted."
+                    )
+                elif not screen_verifiable:
+                    ok = False
+                    verification = (
+                        "Keystroke dispatched, but focused-control verification "
+                        "was unavailable."
                     )
                 else:
                     ok = False

@@ -10,6 +10,7 @@ from slo.check import compare
 from slo.measure import (
     measure_audit_chain_verify_per_entry_us,
     measure_doctor_bundle_p95_ms,
+    measure_prediction_ledger_register_p95_ms,
 )
 
 
@@ -169,3 +170,18 @@ def test_audit_chain_verify_measurement_samples_repeated_runs():
     measured = measure_audit_chain_verify_per_entry_us(samples=8, repeats=3)
 
     assert measured > 0.0
+
+
+def test_prediction_ledger_latency_uses_median_of_complete_p95_trials(monkeypatch):
+    from slo import measure
+
+    values = iter(
+        [1.0, 1.0, 1.0, 1.0]
+        + [20.0, 20.0, 20.0, 20.0]
+        + [2.0, 2.0, 2.0, 2.0]
+    )
+    monkeypatch.setattr(measure, "_time_ms", lambda _fn: next(values))
+
+    measured = measure_prediction_ledger_register_p95_ms(samples=4, repeats=3)
+
+    assert measured == 2.0

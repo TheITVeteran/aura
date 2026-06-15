@@ -1085,18 +1085,10 @@ class DesktopTaskSkill(BaseSkill):
         if action == "hotkey":
             hotkey = str(result.get("hotkey") or "").strip()
             verification = str(result.get("verification") or "").strip()
-            dispatch = str(result.get("dispatch") or "").strip()
-            # Screen-shift is the strong evidence; when the screen layer
-            # cannot testify (no Accessibility text on this surface), the
-            # governed System Events dispatch receipt is the honest fallback.
             verified = (
                 bool(result.get("effect_verified"))
                 or "state shifted" in verification.lower()
-                or (
-                    bool(result.get("ok"))
-                    and dispatch.startswith("system_events:")
-                    and "verification unavailable" in verification.lower()
-                )
+                or "focused element changed" in verification.lower()
             )
             return (
                 bool(hotkey) and verified,

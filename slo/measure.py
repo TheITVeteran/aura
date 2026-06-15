@@ -97,25 +97,34 @@ def measure_audit_chain_verify_per_entry_us(
 # ---------------------------------------------------------------------------
 # prediction ledger
 # ---------------------------------------------------------------------------
-def measure_prediction_ledger_register_p95_ms(samples: int = 200) -> float:
+def measure_prediction_ledger_register_p95_ms(
+    samples: int = 200,
+    repeats: int = 5,
+) -> float:
     from core.runtime.prediction_ledger import PredictionLedger
 
     with tempfile.TemporaryDirectory() as tmp:
         ledger = PredictionLedger(Path(tmp) / "ledger.db")
-        latencies = []
-        for i in range(samples):
-            latencies.append(
-                _time_ms(
-                    lambda i=i: ledger.register(
-                        belief=f"b{i}",
-                        modality="text",
-                        action="probe",
-                        expected={"i": i},
-                        prior_prob=0.5,
+        trial_p95_ms: list[float] = []
+        sequence = 0
+        for _ in range(max(1, int(repeats))):
+            latencies = []
+            for _sample in range(samples):
+                i = sequence
+                sequence += 1
+                latencies.append(
+                    _time_ms(
+                        lambda i=i: ledger.register(
+                            belief=f"b{i}",
+                            modality="text",
+                            action="probe",
+                            expected={"i": i},
+                            prior_prob=0.5,
+                        )
                     )
                 )
-            )
-        return _percentile(latencies, 95.0)
+            trial_p95_ms.append(_percentile(latencies, 95.0))
+        return float(median(trial_p95_ms))
 
 
 def measure_prediction_ledger_brier_correctness() -> float:
