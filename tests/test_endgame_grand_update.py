@@ -533,6 +533,41 @@ def test_activation_audit_rejects_duplicate_long_lived_task_owners(monkeypatch):
     assert status.evidence["ownership_conflict"]["distinct_task_owners"] == 2
 
 
+def test_activation_audit_rejects_registered_but_unready_service():
+    from core.container import ServiceContainer
+    from core.runtime.activation_audit import ActivationAuditor, ActivationSpec
+
+    class UnreadyOutputGate:
+        @staticmethod
+        def is_ready():
+            return False
+
+    ServiceContainer.clear()
+    try:
+        ServiceContainer.register_instance(
+            "output_gate",
+            UnreadyOutputGate(),
+            required=False,
+        )
+        auditor = ActivationAuditor(
+            (
+                ActivationSpec(
+                    name="output_gate",
+                    service_keys=("output_gate",),
+                    required=True,
+                ),
+            )
+        )
+
+        status = asyncio.run(auditor.audit()).statuses[0]
+
+        assert status.active is False
+        assert status.ownership_conflict is False
+        assert status.evidence["service_liveness"]["output_gate"]["ok"] is False
+    finally:
+        ServiceContainer.clear()
+
+
 def test_caa_validator_reads_existing_vector_artifacts():
     from training.caa_32b_validation import CAA32BValidator
 

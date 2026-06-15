@@ -17,6 +17,17 @@ from core.runtime.atomic_writer import atomic_write_text
 _GIT_ERRORS = (OSError, UnicodeDecodeError, ValueError)
 _MANIFEST_ERRORS = (OSError, TypeError, ValueError, RuntimeError, AttributeError)
 
+_ROLE_HEALTH_KEYS: dict[str, tuple[str, ...]] = {
+    "runtime": ("kernel_interface",),
+    "model": ("inference_gate", "llm_router"),
+    "memory_writer": ("memory_write_gateway",),
+    "memory_interface": ("memory_facade",),
+    "state_writer": ("state_repository",),
+    "event_bus": ("event_bus",),
+    "output_gate": ("output_gate",),
+    "governance": ("unified_will", "authority_gateway", "capability_engine"),
+}
+
 
 def _git_commit(root: Path) -> str:
     try:
@@ -54,9 +65,26 @@ def _source_owner(obj: Any) -> str:
         return str(path)
 
 
-def _service_snapshot() -> dict[str, dict[str, Any]]:
+def _health_contract_snapshot() -> dict[str, dict[str, Any]]:
+    try:
+        from core.runtime.health_contract import runtime_health_report
+
+        report = runtime_health_report()
+        return {
+            str(service.get("container_key")): dict(service)
+            for service in report.get("services", [])
+            if isinstance(service, dict) and service.get("container_key")
+        }
+    except _MANIFEST_ERRORS:
+        return {}
+
+
+def _service_snapshot(
+    health_by_key: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
     from core.container import ServiceContainer
 
+    contract_health = health_by_key or {}
     try:
         statuses = ServiceContainer.get_all_subsystem_statuses()
     except _MANIFEST_ERRORS:
@@ -70,21 +98,32 @@ def _service_snapshot() -> dict[str, dict[str, Any]]:
         instance = getattr(desc, "instance", None)
         factory = getattr(desc, "factory", None)
         owner_target = instance if instance is not None else factory
+        health_evidence = contract_health.get(name)
+        if health_evidence is not None:
+            present = bool(health_evidence.get("present", False))
+            liveness = str(health_evidence.get("liveness", "") or "")
+            health_status = "ok" if present and liveness == "ok" else "liveness_failed"
+        else:
+            health_status = statuses.get(name, "registered_unchecked")
         services[name] = {
             "service": name,
             "owner": _source_owner(owner_target) if owner_target is not None else "unknown",
             "required": bool(getattr(desc, "required", False)),
             "initialized": bool(getattr(desc, "initialized", False)),
-            "health_status": statuses.get(name, "registered_unchecked"),
+            "health_status": health_status,
+            "health_contract": health_evidence,
             "dependencies": list(getattr(desc, "dependencies", []) or []),
         }
     return dict(sorted(services.items()))
 
 
-def _role_snapshot() -> dict[str, dict[str, Any]]:
+def _role_snapshot(
+    health_by_key: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
     from core.container import ServiceContainer
     from core.runtime.service_manifest import SERVICE_MANIFEST, verify_manifest
 
+    contract_health = health_by_key or {}
     with ServiceContainer._lock:
         registered = {
             name: desc.instance
@@ -103,6 +142,25 @@ def _role_snapshot() -> dict[str, dict[str, Any]]:
     for role_name, role in SERVICE_MANIFEST.items():
         candidates = [role.canonical_owner, *sorted(role.aliases)]
         resolved = [name for name in candidates if name in registered]
+        health_keys = _ROLE_HEALTH_KEYS.get(role_name, ())
+        health_evidence = {
+            key: contract_health.get(key)
+            for key in health_keys
+        }
+        if by_role.get(role_name):
+            health_status = "violation"
+        elif not resolved:
+            health_status = "missing"
+        elif health_keys:
+            probes_ok = all(
+                isinstance(health_evidence.get(key), dict)
+                and bool(health_evidence[key].get("present", False))
+                and str(health_evidence[key].get("liveness", "") or "") == "ok"
+                for key in health_keys
+            )
+            health_status = "ok" if probes_ok else "liveness_failed"
+        else:
+            health_status = "registered_unchecked"
         roles[role_name] = {
             "service": role.canonical_owner,
             "description": role.description,
@@ -122,7 +180,8 @@ def _role_snapshot() -> dict[str, dict[str, Any]]:
             },
             "allowed_callers": ["AuraRuntime.boot", "aura_main._boot_runtime_orchestrator"],
             "resolved_owners": resolved,
-            "health_status": "ok" if resolved and not by_role.get(role_name) else "violation",
+            "health_status": health_status,
+            "health_evidence": health_evidence,
             "violations": by_role.get(role_name, []),
         }
     return roles
@@ -136,8 +195,9 @@ def build_runtime_manifest(
     artifact_root: Path,
     readiness_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    services = _service_snapshot()
-    roles = _role_snapshot()
+    health_by_key = _health_contract_snapshot()
+    services = _service_snapshot(health_by_key)
+    roles = _role_snapshot(health_by_key)
     payload = {
         "schema": "aura.runtime_manifest.v1",
         "generated_at_unix": time.time(),
@@ -161,12 +221,14 @@ def build_runtime_manifest(
         "enabled_subsystems": {
             name: data
             for name, data in services.items()
-            if data.get("health_status") not in {"missing", "optional_missing"}
+            if data.get("health_status")
+            not in {"missing", "optional_missing", "liveness_failed"}
         },
         "disabled_subsystems": {
             name: data
             for name, data in services.items()
-            if data.get("health_status") in {"missing", "optional_missing"}
+            if data.get("health_status")
+            in {"missing", "optional_missing", "liveness_failed"}
         },
         "policy": {
             "strict_runtime": os.environ.get("AURA_STRICT_RUNTIME", "0"),

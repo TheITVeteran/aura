@@ -372,19 +372,39 @@ class ActivationAuditor:
 
     async def audit(self, orchestrator: Any = None, *, reconcile: bool = False) -> ActivationReport:
         statuses: list[ActivationStatus] = []
+        health_by_key = self._health_statuses()
         for spec in self.specs:
-            status = self._check(spec)
+            status = self._check(spec, health_by_key)
             if reconcile and not status.active and spec.auto_start and spec.starter is not None:
                 status = await self._reconcile(spec, orchestrator, status)
             statuses.append(status)
         return ActivationReport(generated_at=time.time(), statuses=tuple(statuses))
 
-    def _check(self, spec: ActivationSpec) -> ActivationStatus:
+    @staticmethod
+    def _health_statuses() -> dict[str, Any]:
+        try:
+            from core.runtime.health_contract import evaluate_health
+
+            return {
+                status.requirement.container_key: status
+                for status in evaluate_health().services
+            }
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return {}
+
+    def _check(
+        self,
+        spec: ActivationSpec,
+        health_by_key: dict[str, Any] | None = None,
+    ) -> ActivationStatus:
         evidence: dict[str, Any] = {}
         service_hits: list[str] = []
         task_hits: list[str] = []
         service_owner_ids: dict[str, int] = {}
         task_owner_ids: list[int] = []
+        service_liveness: dict[str, Any] = {}
+        liveness_failed = False
+        contract_health = health_by_key or {}
         try:
             from core.container import ServiceContainer
 
@@ -395,6 +415,18 @@ class ActivationAuditor:
                     if value is not None:
                         service_hits.append(key)
                         service_owner_ids[key] = id(value)
+                        health_status = contract_health.get(key)
+                        if health_status is not None:
+                            service_liveness[key] = {
+                                "present": bool(health_status.present),
+                                "ok": health_status.liveness_ok,
+                                "error": health_status.error,
+                            }
+                            if (
+                                not health_status.present
+                                or health_status.liveness_ok is False
+                            ):
+                                liveness_failed = True
                         status_fn = getattr(value, "status", None)
                         if callable(status_fn):
                             try:
@@ -419,6 +451,8 @@ class ActivationAuditor:
             evidence["task_error"] = repr(exc)
         evidence["service_hits"] = service_hits
         evidence["task_hits"] = task_hits
+        if service_liveness:
+            evidence["service_liveness"] = service_liveness
         ownership_conflict = (
             len(set(service_owner_ids.values())) > 1
             or len(set(task_owner_ids)) > 1
@@ -428,7 +462,11 @@ class ActivationAuditor:
                 "distinct_service_owners": len(set(service_owner_ids.values())),
                 "distinct_task_owners": len(set(task_owner_ids)),
             }
-        active = bool(service_hits or task_hits) and not ownership_conflict
+        active = (
+            bool(service_hits or task_hits)
+            and not ownership_conflict
+            and not liveness_failed
+        )
         if spec.name == "scheduler":
             try:
                 from core.scheduler import scheduler
@@ -436,7 +474,11 @@ class ActivationAuditor:
                 health = scheduler.get_health()
                 main_loop_task = getattr(scheduler, "_main_loop_task", None)
                 scheduler_active = bool(main_loop_task is not None and not main_loop_task.done())
-                active = (active or scheduler_active) and not ownership_conflict
+                active = (
+                    (active or scheduler_active)
+                    and not ownership_conflict
+                    and not liveness_failed
+                )
                 evidence["scheduler_health"] = self._safe_json(health)
                 evidence["scheduler_main_loop_active"] = scheduler_active
                 if scheduler_active and "aura.scheduler.main_loop" not in task_hits:
@@ -470,7 +512,7 @@ class ActivationAuditor:
             result = spec.starter(orchestrator) if spec.starter else None
             if asyncio.iscoroutine(result):
                 result = await result
-            status = self._check(spec)
+            status = self._check(spec, self._health_statuses())
             return ActivationStatus(
                 name=status.name,
                 active=status.active,

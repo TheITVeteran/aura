@@ -106,6 +106,38 @@ def test_runtime_manifest_records_pre_ready_boot_contract_snapshot(tmp_path):
     assert manifest["readiness_snapshot"]["required_probe_blockers"] == ["probe:inference"]
 
 
+def test_runtime_manifest_does_not_mark_registered_unready_role_healthy(tmp_path):
+    from core.runtime.runtime_manifest import build_runtime_manifest
+
+    class UnreadyOutputGate:
+        @staticmethod
+        def is_ready():
+            return False
+
+    ServiceContainer.clear()
+    try:
+        ServiceContainer.register_instance(
+            "output_gate",
+            UnreadyOutputGate(),
+            required=False,
+        )
+        manifest = build_runtime_manifest(
+            profile="desktop",
+            ready_label="Server",
+            project_root=PROJECT_ROOT,
+            artifact_root=tmp_path,
+        )
+
+        service = manifest["services"]["output_gate"]
+        role = manifest["service_roles"]["output_gate"]
+        assert service["health_status"] == "liveness_failed"
+        assert role["health_status"] == "liveness_failed"
+        assert role["health_evidence"]["output_gate"]["liveness"] == "failed"
+        assert "output_gate" in manifest["disabled_subsystems"]
+    finally:
+        ServiceContainer.clear()
+
+
 def test_foreground_start_keeps_scheduler_heartbeat_alive():
     main_source = (PROJECT_ROOT / "core" / "orchestrator" / "main.py").read_text(
         encoding="utf-8"
