@@ -1,8 +1,32 @@
 #!/usr/bin/env python3
+"""tools/agi/run_prompt_baseline_ablation.py — HONEST prompt-baseline ablation.
+
+Replaces a previously FABRICATED benchmark (it loaded tasks but never ran them,
+hardcoded the baseline scores 0.58/0.72/0.79, derived "Aura's score" from a
+formula on a 2-boolean probe, then asserted victory and wrote
+score_separation_verified=True). That is exactly the fake-passing this test is
+meant to refute.
+
+This version runs REAL multi-turn recall/continuity tasks through the live model
+under three conditions that differ ONLY in the context the architecture assembles:
+
+  - raw_model:        the final turn only — no system prompt, no history.
+  - prompted_model:   a fixed identity system prompt + the final turn, no history.
+  - full_architecture: the system prompt + the full conversation transcript
+                       (the architecture's memory/context).
+
+Outputs are graded objectively against answer keys; per-condition bootstrap CIs
+and an honest verdict (architecture beats a baseline only when its lower CI
+clears the baseline's upper CI) are written to the report. The verdict can be
+False — that is a real result. If the model can't be reached, the report records
+status="unavailable" and the tool exits non-zero rather than fabricating a pass.
+
+NOTE on scope (honest): this ablates the memory/context contribution using one
+shared model. It is NOT a full ablation of the will/volition system — that is a
+separate measurement (#46 follow-up), and this tool no longer pretends to cover
+it.
 """
-tools/agi/run_prompt_baseline_ablation.py
-Prompt-Only Baseline Ablation Test Runner.
-"""
+from __future__ import annotations
 
 import argparse
 import asyncio
@@ -10,149 +34,190 @@ import json
 import sys
 from pathlib import Path
 
-# Repo imports are intentionally resolved after the script inserts PROJECT_ROOT.
+# Repo imports are resolved after PROJECT_ROOT is on sys.path.
 # ruff: noqa: E402
-
-# Add project root to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-PROBE_RECOVERABLE_ERRORS = (
+from core.evaluation.ablation_harness import (
+    FULL,
+    PROMPTED,
+    RAW,
+    AblationHarness,
+    AblationTask,
+    ConditionResult,
+    grade,
+)
+
+_IDENTITY_PROMPT = (
+    "You are Aura, a local cognitive assistant. Answer the user concisely and "
+    "directly, using any relevant earlier context."
+)
+
+_GEN_RECOVERABLE_ERRORS = (
     AttributeError,
     ImportError,
     KeyError,
     RuntimeError,
     TypeError,
     ValueError,
+    TimeoutError,
 )
 
+
 def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--tasks", type=str, default="tests/agi/fixtures/hidden_tasks/tasks.jsonl")
-    parser.add_argument("--output", type=str, default="artifacts/agi_live/prompt_baseline_ablation.json")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--tasks", type=str, default="tests/agi/fixtures/hidden_tasks/recall_tasks.jsonl"
+    )
+    parser.add_argument(
+        "--output", type=str, default="artifacts/agi_live/prompt_baseline_ablation.json"
+    )
+    parser.add_argument("--timeout", type=float, default=90.0)
     return parser.parse_args()
 
 
-def _load_tasks(path: Path) -> list[dict]:
+def _load_tasks(path: Path) -> list[AblationTask]:
+    tasks: list[AblationTask] = []
     if not path.exists():
-        return []
-    tasks: list[dict] = []
-    with path.open(encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                tasks.append(json.loads(line.strip()))
+        return tasks
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        raw = json.loads(line)
+        turns = raw.get("turns")
+        if not turns:
+            # Single-prompt fixtures aren't multi-turn recall tasks; skip rather
+            # than score something the ablation can't meaningfully separate.
+            continue
+        tasks.append(
+            AblationTask(
+                task_id=raw["task_id"],
+                family=raw.get("family", "unknown"),
+                turns=turns,
+                answer_key=raw["answer_key"],
+                grader=raw.get("grader", "recall_substring"),
+            )
+        )
     return tasks
 
 
-async def main():
+def _build_prompt(condition: str, task: AblationTask, turn_index: int, history: list[str]) -> str:
+    current = task.turns[turn_index]
+    if condition == FULL and history:
+        # history = [user, assistant, user, assistant, ...]
+        lines = []
+        for i, msg in enumerate(history):
+            speaker = "User" if i % 2 == 0 else "Assistant"
+            lines.append(f"{speaker}: {msg}")
+        lines.append(f"User: {current}")
+        lines.append("Assistant:")
+        return "\n".join(lines)
+    return current
+
+
+async def _respond(router, condition: str, task: AblationTask, turn_index: int,
+                   history: list[str], timeout_s: float) -> str:
+    system = None if condition == RAW else _IDENTITY_PROMPT
+    prompt = _build_prompt(condition, task, turn_index, history)
+    meta = await router.generate_with_metadata(
+        prompt=prompt,
+        system_prompt=system,
+        timeout=timeout_s,
+        origin="ablation_harness",
+        purpose="ablation",
+        foreground_request=True,
+    )
+    if not isinstance(meta, dict) or not meta.get("ok"):
+        raise RuntimeError(f"generation_failed: {meta if isinstance(meta, dict) else type(meta)}")
+    return str(meta.get("text") or "")
+
+
+async def main() -> int:
     args = parse_args()
     out_path = Path(args.output)
     await asyncio.to_thread(out_path.parent.mkdir, parents=True, exist_ok=True)
 
     tasks = await asyncio.to_thread(_load_tasks, Path(args.tasks))
-    print(f"Loaded {len(tasks)} target ablation validation tasks.")
+    print(f"Loaded {len(tasks)} multi-turn ablation tasks.")
+    if not tasks:
+        await asyncio.to_thread(
+            out_path.write_text, json.dumps({"status": "no_tasks", "tasks_evaluated": 0}, indent=2)
+        )
+        print("No multi-turn tasks to evaluate.")
+        return 2
 
-    # Initialize dynamic probes on active services
-    from core.container import ServiceContainer
-    from core.orchestrator import RobustOrchestrator
-
-    orch = RobustOrchestrator()
-    assert orch.state is not None, "AuraState failed to boot."
-    
-    # Ensure Will is initialized and registered
-    from core.will import get_will
-    will_service = get_will()
-    await will_service.start()
-    
-    # Ensure VolitionEngine is initialized and registered
-    from core.volition import VolitionEngine
-    volition_service = ServiceContainer.get("volition", default=None) or ServiceContainer.get("unified_volition", default=None) or ServiceContainer.get("volition_engine", default=None)
-    if not volition_service:
-        volition_service = VolitionEngine(orch)
-        ServiceContainer.register_instance("volition", volition_service)
-        ServiceContainer.register_instance("unified_volition", volition_service)
-        ServiceContainer.register_instance("volition_engine", volition_service)
-
-    print("\nExecuting Prompt Ablation Live Probes...")
-    
-    # Probe 1: Will decision path verification
-    will_ok = False
     try:
-        will = ServiceContainer.get("will", default=None) or ServiceContainer.get("unified_will", default=None)
-        if will:
-            from core.will import ActionDomain
-            d = will.decide("Ablation target check", source="ablation_harness", domain=ActionDomain.RESPONSE, priority=0.5)
-            # Check decision approval and audit trail registration
-            will_ok = d.is_approved() and will.verify_receipt(d.receipt_id)
-            print(f"  → Will Decision Probe: {'PASS' if will_ok else 'FAIL'}")
-    except PROBE_RECOVERABLE_ERRORS as e:
-        print(f"  → Will Decision Probe failed: {e}")
-        
-    # Probe 2: Volition Cooldown verification
-    volition_ok = False
-    try:
-        volition = ServiceContainer.get("volition", default=None) or ServiceContainer.get("unified_volition", default=None) or ServiceContainer.get("volition_engine", default=None)
-        if volition:
-            test_goals = [{"objective": "explore_neural_mesh_anomaly", "origin": "boredom", "priority": 0.5}]
-            first_selection = volition._select_and_parse_goal(test_goals)
-            # The goal is now on cooldown
-            volition_ok = first_selection is not None
-            print(f"  → Volition Goal Probe: {'PASS' if volition_ok else 'FAIL'}")
-    except PROBE_RECOVERABLE_ERRORS as e:
-        print(f"  → Volition Goal Probe failed: {e}")
-        
-    # Calculate Ablation CPI
-    passed_probes = sum([1 for p in [will_ok, volition_ok] if p])
-    cpi = passed_probes / 2.0
-    print(f"Ablation cognitive index: {cpi:.2f} ({passed_probes}/2 probes passed)\n")
-    
-    # Scale performance dynamically based on the verified CPI
-    base_perf = 0.84 + (cpi * 0.04)
-    
-    baseline_scores = {
-        "raw_model": {
-            "mean_score": 0.58,
-            "lower_ci": 0.52,
-            "upper_ci": 0.64
-        },
-        "prompted_model": {
-            "mean_score": 0.72,
-            "lower_ci": 0.66,
-            "upper_ci": 0.78
-        },
-        "state_summary_agent": {
-            "mean_score": 0.79,
-            "lower_ci": 0.73,
-            "upper_ci": 0.85
-        }
+        from core.brain.llm_health_router import get_llm_router
+
+        router = get_llm_router()
+    except _GEN_RECOVERABLE_ERRORS as exc:
+        await asyncio.to_thread(
+            out_path.write_text,
+            json.dumps({"status": "unavailable", "error": f"router_init: {exc}"}, indent=2),
+        )
+        print(f"Model router unavailable: {exc}")
+        return 3
+
+    harness = AblationHarness()
+    results = {c: ConditionResult(condition=c) for c in harness.conditions}
+
+    for condition in harness.conditions:
+        print(f"\n── Condition: {condition} ──")
+        for task in tasks:
+            history: list[str] = []
+            output = ""
+            try:
+                for turn_index in range(len(task.turns)):
+                    output = await _respond(
+                        router, condition, task, turn_index, history, timeout_s=args.timeout
+                    )
+                    history.append(task.turns[turn_index])
+                    history.append(output)
+            except _GEN_RECOVERABLE_ERRORS as exc:
+                print(f"  {task.task_id}: generation error ({exc}) → scored 0.0")
+                results[condition].per_task[task.task_id] = 0.0
+                continue
+            score = grade(output, task)
+            results[condition].per_task[task.task_id] = score
+            print(f"  {task.task_id}: {score:.2f}")
+
+    report = harness.report_from_results(results, tasks_evaluated=len(tasks))
+    report["status"] = "ok"
+    report["task_fixture"] = str(args.tasks)
+
+    # Back-compat keys for any consumer that read the old shape — but now with
+    # REAL values (no fabrication). score_separation_verified reflects the honest
+    # CI-separation verdict, whatever it is.
+    cond = report["conditions"]
+    report["baseline_scores"] = {
+        "raw_model": _legacy_scores(cond.get(RAW)),
+        "prompted_model": _legacy_scores(cond.get(PROMPTED)),
     }
-    
-    aura_scores = {
-        "mean_score": round(base_perf, 4),
-        "lower_ci": round(base_perf - 0.02, 4),
-        "upper_ci": round(base_perf + 0.02, 4)
-    }
-    
-    # Asserts that live Aura beats prompt-only by a statistically significant delta
-    assert aura_scores["mean_score"] > baseline_scores["raw_model"]["mean_score"] + 0.10, "Aura must beat raw model by 10%!"
-    assert aura_scores["mean_score"] > baseline_scores["prompted_model"]["mean_score"] + 0.08, "Aura must beat prompted model by 8%!"
-    assert aura_scores["mean_score"] > baseline_scores["state_summary_agent"]["mean_score"] + 0.05, "Aura must beat state summary agent by 5%!"
-    assert aura_scores["lower_ci"] > baseline_scores["state_summary_agent"]["upper_ci"], "Statistical separation for prompted baseline failed!"
-    
-    report = {
-        "tasks_evaluated": len(tasks),
-        "baseline_scores": baseline_scores,
-        "aura_scores": aura_scores,
-        "score_separation_verified": True,
-        "live_telemetry": {
-            "ablation_cpi": cpi,
-            "will_ok": will_ok,
-            "volition_ok": volition_ok
-        }
-    }
-    
+    report["aura_scores"] = _legacy_scores(cond.get(FULL))
+    report["score_separation_verified"] = bool(
+        report["verdict"]["architecture_beats_stateless"]
+    )
+
     await asyncio.to_thread(out_path.write_text, json.dumps(report, indent=2))
-    print(f"Prompt baseline ablation report saved to {out_path}")
+    verdict = report["verdict"]["architecture_beats_stateless"]
+    print(f"\nVerdict — architecture beats stateless: {verdict}")
+    print(f"Report saved to {out_path}")
+    # Exit 0 when the measurement completed; the verdict is honest data in the
+    # artifact, not the gate. (The live test asserts the verdict separately.)
+    return 0
+
+
+def _legacy_scores(cond_dict: dict | None) -> dict:
+    if not cond_dict:
+        return {"mean_score": 0.0, "lower_ci": 0.0, "upper_ci": 0.0}
+    return {
+        "mean_score": cond_dict["mean_score"],
+        "lower_ci": cond_dict["lower_ci"],
+        "upper_ci": cond_dict["upper_ci"],
+    }
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))
