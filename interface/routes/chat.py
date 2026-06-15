@@ -357,6 +357,27 @@ async def _emit_chat_output_receipt(
         logger.debug("Chat output receipt emit skipped: %s", exc)
 
 
+async def _shed_generation_for_memory_pressure(reason: str) -> None:
+    """Best-effort bounded cleanup before refusing heavy foreground work."""
+
+    try:
+        gate = ServiceContainer.get("inference_gate", default=None)
+        if gate is not None and hasattr(gate, "_shed_background_workers_for_memory_pressure"):
+            result = gate._shed_background_workers_for_memory_pressure(
+                reason=str(reason or "foreground_memory_pressure_guard")
+            )
+            if inspect.isawaitable(result):
+                await asyncio.wait_for(result, timeout=2.5)
+        import gc
+
+        gc.collect()
+    except TimeoutError:
+        logger.warning("Timed out shedding background workers under memory pressure.")
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Memory-pressure worker shedding unavailable: %s", exc)
+
+
 async def _preserve_large_user_paste(user_msg: str) -> None:
     """Keep large pasted text in live working memory for follow-up references."""
     content = str(user_msg or "").strip()
@@ -8590,6 +8611,7 @@ async def api_chat(
                     live_state.cognition.current_mode = 0  # CognitiveMode.REACTIVE
                     live_state.response_modifiers["sys_pressure"] = "CRITICAL MEMORY LIMIT"
                 if memory_snapshot.refuse_heavy_local_generation and not is_benchmark:
+                    await _shed_generation_for_memory_pressure(memory_snapshot.reason)
                     return JSONResponse(
                         {
                             "response": (

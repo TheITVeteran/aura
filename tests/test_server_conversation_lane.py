@@ -1206,15 +1206,22 @@ async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(
 
     gib = 1024**3
     calls = []
+    shed_calls = []
 
     class _FakeCognitiveEngine:
         async def think(self, *_args, **_kwargs):
             calls.append("engine_think")
             return SimpleNamespace(content="unexpected engine reply")
 
+    class _FakeInferenceGate:
+        async def _shed_background_workers_for_memory_pressure(self, *, reason):
+            shed_calls.append(reason)
+
     def _fake_get(name, default=None):
         if name == "cognitive_engine":
             return _FakeCognitiveEngine()
+        if name == "inference_gate":
+            return _FakeInferenceGate()
         return default
 
     monkeypatch.setattr(
@@ -1260,6 +1267,8 @@ async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(
     assert b"memory_pressure_guard" in response.body
     assert b"memory_pressure" in response.body
     assert calls == []
+    assert shed_calls
+    assert any("memory_pressure" in reason for reason in shed_calls)
 
 
 @pytest.mark.asyncio
@@ -1270,11 +1279,16 @@ async def test_api_chat_desktop_surface_blocks_process_tree_memory_before_cognit
 
     gib = 1024**3
     calls = []
+    shed_calls = []
 
     class _FakeCognitiveEngine:
         async def think(self, *_args, **_kwargs):
             calls.append("engine_think")
             return SimpleNamespace(content="unexpected engine reply")
+
+    class _FakeInferenceGate:
+        async def _shed_background_workers_for_memory_pressure(self, *, reason):
+            shed_calls.append(reason)
 
     class _Process:
         def __init__(self, *_args, _rss_gb=None, **_kwargs):
@@ -1289,6 +1303,8 @@ async def test_api_chat_desktop_surface_blocks_process_tree_memory_before_cognit
     def _fake_get(name, default=None):
         if name == "cognitive_engine":
             return _FakeCognitiveEngine()
+        if name == "inference_gate":
+            return _FakeInferenceGate()
         return default
 
     monkeypatch.setenv("AURA_PROCESS_RSS_LIMIT_GB", "40")
@@ -1336,6 +1352,8 @@ async def test_api_chat_desktop_surface_blocks_process_tree_memory_before_cognit
     assert b"memory_pressure_guard" in response.body
     assert b"process_tree_rss" in response.body
     assert calls == []
+    assert shed_calls
+    assert any("process_tree_rss" in reason for reason in shed_calls)
 
 
 @pytest.mark.asyncio
