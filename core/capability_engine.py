@@ -23,6 +23,9 @@ from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("core.capability_engine")
 
+_TOOL_AFFORDANCE_SCAN_BUDGET_SECONDS = 0.05
+_TOOL_AFFORDANCE_SCAN_LIMIT = 192
+
 try:
     from RestrictedPython import compile_restricted, safe_builtins, utility_builtins
     from RestrictedPython.PrintCollector import PrintCollector
@@ -2173,6 +2176,55 @@ class CapabilityEngine(AuraBaseModule):
             }
         return catalog
 
+    def _bounded_tool_affordance_catalog(
+        self,
+        *,
+        ranked_names: Iterable[str],
+        max_available: int,
+        max_unavailable: int,
+        include_inactive: bool = True,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Return a bounded prompt catalog without materializing the full registry."""
+
+        ranked_names_tuple = tuple(ranked_names)
+        requested = max_available + max_unavailable + len(ranked_names_tuple)
+        max_items = max(24, min(_TOOL_AFFORDANCE_SCAN_LIMIT, requested + 48))
+        deadline = time.monotonic() + _TOOL_AFFORDANCE_SCAN_BUDGET_SECONDS
+        seen: set[str] = set()
+        items: list[dict[str, Any]] = []
+        truncated = False
+
+        def _append_catalog_item(item: dict[str, Any]) -> bool:
+            nonlocal truncated
+            name = str(item.get("name") or "")
+            if not name or name in seen:
+                return True
+            seen.add(name)
+            items.append(item)
+            if len(items) >= max_items:
+                truncated = True
+                return False
+            if time.monotonic() >= deadline:
+                truncated = True
+                return False
+            return True
+
+        for ranked_name in ranked_names_tuple:
+            skill_name = self.resolve_skill_name(ranked_name)
+            meta = self.skills.get(skill_name)
+            if meta is None:
+                continue
+            if not meta.enabled and not include_inactive:
+                continue
+            if not _append_catalog_item(self._catalog_item_for_skill(skill_name, meta)):
+                return items, truncated
+
+        for item in self.iter_tool_catalog(include_inactive=include_inactive):
+            if not _append_catalog_item(item):
+                break
+
+        return items, truncated
+
     def build_tool_affordance_block(
         self,
         *,
@@ -2182,13 +2234,20 @@ class CapabilityEngine(AuraBaseModule):
         max_unavailable: int = 8,
         compact: bool = False,
     ) -> str:
-        catalog = self.get_tool_catalog(include_inactive=True)
+        max_available = max(0, min(int(max_available or 0), 32))
+        max_unavailable = max(0, min(int(max_unavailable or 0), 16))
         ranked_names = self._rank_tool_candidates(
             objective=objective,
             matched_skills=matched_skills,
             max_tools=max(max_available + max_unavailable, 6),
         )
         priority = {name: idx for idx, name in enumerate(ranked_names)}
+        catalog, catalog_truncated = self._bounded_tool_affordance_catalog(
+            ranked_names=ranked_names,
+            max_available=max_available,
+            max_unavailable=max_unavailable,
+            include_inactive=True,
+        )
         catalog.sort(
             key=lambda item: (
                 0 if item["name"] in priority else 1,
@@ -2234,6 +2293,9 @@ class CapabilityEngine(AuraBaseModule):
             for tool in unavailable:
                 reason = tool.get("degraded_reason") or tool.get("last_error") or "unavailable"
                 lines.append(f"- {tool['name']}: unavailable ({reason})")
+
+        if catalog_truncated:
+            lines.append("Tool listing truncated to keep the live prompt bounded.")
 
         if compact:
             lines.append(

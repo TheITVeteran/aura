@@ -112,6 +112,56 @@ def test_tool_affordance_block_prioritizes_relevant_tools_for_turn():
     assert "Do not narrate tool selection" in block
 
 
+def test_tool_affordance_block_streams_catalog_without_materializing_full_registry():
+    engine = CapabilityEngine.__new__(CapabilityEngine)
+    engine.skills = {
+        "computer_use": SkillMetadata(
+            name="computer_use",
+            description="Control visible desktop applications through governed actions.",
+            trigger_patterns=[r"on my computer", r"desktop"],
+            metabolic_cost=1,
+        ),
+        "web_search": SkillMetadata(
+            name="web_search",
+            description="Search the web for current information.",
+            trigger_patterns=[r"search", r"look up"],
+            metabolic_cost=1,
+        ),
+    }
+    for index in range(500):
+        engine.skills[f"bulk_tool_{index:03d}"] = SkillMetadata(
+            name=f"bulk_tool_{index:03d}",
+            description="Synthetic catalog entry that should not force full prompt materialization.",
+            metabolic_cost=1,
+        )
+    engine.skill_states = {name: "READY" for name in engine.skills}
+    engine.skill_last_errors = {}
+    engine.active_skills = set(engine.skills)
+    engine._explicitly_deactivated_skills = set()
+
+    materialized_catalog_calls = []
+
+    def _record_materialized_catalog_call(*_args, **_kwargs):
+        materialized_catalog_calls.append(True)
+        return []
+
+    engine.get_tool_catalog = _record_materialized_catalog_call
+
+    block = CapabilityEngine.build_tool_affordance_block(
+        engine,
+        objective="Open a tab on my computer and search for current climate news.",
+        compact=True,
+        max_available=4,
+        max_unavailable=0,
+    )
+
+    assert "computer_use" in block
+    assert "web_search" in block
+    assert "Tool listing truncated" in block
+    assert len(block) < 2500
+    assert materialized_catalog_calls == []
+
+
 @pytest.mark.asyncio
 async def test_ui_bootstrap_returns_state_and_tool_catalog(service_container, monkeypatch):
     from interface import server as server_module
