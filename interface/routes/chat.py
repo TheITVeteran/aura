@@ -15,6 +15,7 @@ import logging
 import math
 import os
 import re
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -226,10 +227,12 @@ _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S = _env_float(
     3.0,
     minimum=1.0,
 )
-_CHAT_TURN_MEMORY_LOG_TASK_NAME = "ChatTurnMemoryLog"
-_CHAT_TURN_MEMORY_LOG_MAX_ACTIVE = 2
+_CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME = "ChatTurnMemoryLogDrain"
+_CHAT_TURN_MEMORY_LOG_QUEUE_MAX = 64
 _CHAT_TURN_MEMORY_LOG_TIMEOUT_S = 20.0
 _CHAT_TURN_CONSCIOUSNESS_UPDATE_TIMEOUT_S = 8.0
+_CHAT_TURN_MEMORY_LOG_QUEUE: collections.deque[dict[str, str]] = collections.deque()
+_CHAT_TURN_MEMORY_LOG_QUEUE_LOCK = threading.RLock()
 
 
 def _new_exchange_id() -> str:
@@ -397,6 +400,67 @@ def _active_task_count_by_name(tracker: Any, task_name: str) -> int:
     return active
 
 
+async def _run_chat_turn_memory_log_item(payload: dict[str, str]) -> None:
+    user_message = str(payload.get("user_message") or "")
+    aura_response = str(payload.get("aura_response") or "")
+    session_id = str(payload.get("session_id") or "")
+    chat_origin = str(payload.get("chat_origin") or "unknown")
+    try:
+        from core.memory.chat_turn_logger import log_chat_turn_auto
+
+        await asyncio.wait_for(
+            log_chat_turn_auto(
+                user_message=user_message,
+                aura_response=aura_response,
+                session_id=session_id,
+                emotional_valence=0.0,
+                metadata={"conversation_lane": True, "origin": chat_origin},
+            ),
+            timeout=_CHAT_TURN_MEMORY_LOG_TIMEOUT_S,
+        )
+
+        try:
+            from core.consciousness.coordinator import get_consciousness_coordinator
+
+            coordinator = await get_consciousness_coordinator()
+            await asyncio.wait_for(
+                coordinator.on_chat_turn(user_message, aura_response),
+                timeout=_CHAT_TURN_CONSCIOUSNESS_UPDATE_TIMEOUT_S,
+            )
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat.consciousness_update", exc)
+            logger.debug("Consciousness update skipped: %s", exc)
+    except TimeoutError as exc:
+        record_degradation("chat.memory_log_timeout", exc)
+        logger.warning(
+            "Chat turn memory log exceeded %.1fs and was cancelled.",
+            _CHAT_TURN_MEMORY_LOG_TIMEOUT_S,
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Chat turn logging failed: %s", exc)
+
+
+async def _drain_chat_turn_memory_log_queue() -> None:
+    max_items = max(1, _CHAT_TURN_MEMORY_LOG_QUEUE_MAX)
+    for _ in range(max_items):
+        with _CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
+            if not _CHAT_TURN_MEMORY_LOG_QUEUE:
+                return
+            payload = _CHAT_TURN_MEMORY_LOG_QUEUE.popleft()
+        await _run_chat_turn_memory_log_item(payload)
+    with _CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
+        remaining = len(_CHAT_TURN_MEMORY_LOG_QUEUE)
+    if remaining:
+        record_degradation(
+            "chat.memory_log_backpressure",
+            RuntimeError("chat turn memory log drain yielded with queued items remaining"),
+            severity="warning",
+            action="left remaining chat memory logs queued for next drain to keep worker bounded",
+            extra={"remaining": remaining, "batch_max": max_items},
+        )
+
+
 def _schedule_chat_turn_memory_log(
     *,
     user_message: str,
@@ -404,59 +468,37 @@ def _schedule_chat_turn_memory_log(
     session_id: str,
     chat_origin: str,
 ) -> bool:
-    """Schedule post-response memory logging without allowing task pileups."""
+    """Queue post-response memory logging without dropping turns under normal backpressure."""
     try:
+        with _CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
+            if len(_CHAT_TURN_MEMORY_LOG_QUEUE) >= _CHAT_TURN_MEMORY_LOG_QUEUE_MAX:
+                dropped = _CHAT_TURN_MEMORY_LOG_QUEUE.popleft()
+                record_degradation(
+                    "chat.memory_log_backpressure",
+                    RuntimeError("chat turn memory log queue overflow"),
+                    severity="warning",
+                    action="dropped oldest queued chat memory log to keep live desktop bounded",
+                    extra={
+                        "dropped_origin": str(dropped.get("chat_origin") or "unknown"),
+                        "queue_max": _CHAT_TURN_MEMORY_LOG_QUEUE_MAX,
+                    },
+                )
+            _CHAT_TURN_MEMORY_LOG_QUEUE.append(
+                {
+                    "user_message": str(user_message or ""),
+                    "aura_response": str(aura_response or ""),
+                    "session_id": str(session_id or ""),
+                    "chat_origin": str(chat_origin or "unknown"),
+                }
+            )
+
         task_tracker = get_task_tracker()
-        active_logs = _active_task_count_by_name(task_tracker, _CHAT_TURN_MEMORY_LOG_TASK_NAME)
-        if active_logs >= _CHAT_TURN_MEMORY_LOG_MAX_ACTIVE:
-            record_degradation(
-                "chat.memory_log_backpressure",
-                RuntimeError(
-                    f"{_CHAT_TURN_MEMORY_LOG_TASK_NAME} active limit reached: {active_logs}"
-                ),
-            )
-            logger.warning(
-                "Skipping chat turn memory log because %d %s task(s) are already active.",
-                active_logs,
-                _CHAT_TURN_MEMORY_LOG_TASK_NAME,
-            )
-            return False
-
-        from core.memory.chat_turn_logger import log_chat_turn_auto
-
-        async def _log_and_continue() -> None:
-            try:
-                await asyncio.wait_for(
-                    log_chat_turn_auto(
-                        user_message=user_message,
-                        aura_response=aura_response,
-                        session_id=session_id,
-                        emotional_valence=0.0,
-                        metadata={"conversation_lane": True, "origin": chat_origin},
-                    ),
-                    timeout=_CHAT_TURN_MEMORY_LOG_TIMEOUT_S,
-                )
-
-                try:
-                    from core.consciousness.coordinator import get_consciousness_coordinator
-
-                    coordinator = await get_consciousness_coordinator()
-                    await asyncio.wait_for(
-                        coordinator.on_chat_turn(user_message, aura_response),
-                        timeout=_CHAT_TURN_CONSCIOUSNESS_UPDATE_TIMEOUT_S,
-                    )
-                except _CHAT_RECOVERABLE_ERRORS as exc:
-                    record_degradation("chat.consciousness_update", exc)
-                    logger.debug("Consciousness update skipped: %s", exc)
-            except TimeoutError as exc:
-                record_degradation("chat.memory_log_timeout", exc)
-                logger.warning(
-                    "Chat turn memory log exceeded %.1fs and was cancelled.",
-                    _CHAT_TURN_MEMORY_LOG_TIMEOUT_S,
-                )
-            except _CHAT_RECOVERABLE_ERRORS as exc:
-                record_degradation("chat", exc)
-                logger.debug("Chat turn logging failed: %s", exc)
+        active_drains = _active_task_count_by_name(
+            task_tracker,
+            _CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME,
+        )
+        if active_drains > 0:
+            return True
 
         schedule = getattr(task_tracker, "bounded_track", None) or getattr(
             task_tracker,
@@ -465,7 +507,12 @@ def _schedule_chat_turn_memory_log(
         )
         if not callable(schedule):
             raise RuntimeError("task_tracker_has_no_scheduler")
-        schedule(_log_and_continue(), name=_CHAT_TURN_MEMORY_LOG_TASK_NAME)
+        drain_coro = _drain_chat_turn_memory_log_queue()
+        try:
+            schedule(drain_coro, name=_CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME)
+        except _CHAT_RECOVERABLE_ERRORS:
+            drain_coro.close()
+            raise
         return True
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)

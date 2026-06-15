@@ -915,19 +915,22 @@ def test_capability_inventory_skips_catalog_under_memory_pressure(monkeypatch):
     assert "Will/Authority approval" in reply
 
 
-def test_chat_turn_memory_log_scheduler_skips_when_active_limit_reached(monkeypatch):
+def test_chat_turn_memory_log_scheduler_queues_when_drain_is_active(monkeypatch):
     from interface.routes import chat as chat_routes
+
+    with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
+        chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE.clear()
 
     class _FakeTask:
         def done(self):
             return False
 
         def get_name(self):
-            return chat_routes._CHAT_TURN_MEMORY_LOG_TASK_NAME
+            return chat_routes._CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME
 
     class _FakeTracker:
         def __init__(self):
-            self.tasks = {_FakeTask(), _FakeTask()}
+            self.tasks = {_FakeTask()}
             self.bounded_calls = 0
 
         def bounded_track(self, *_args, **_kwargs):
@@ -944,8 +947,11 @@ def test_chat_turn_memory_log_scheduler_skips_when_active_limit_reached(monkeypa
         chat_origin="desktop_ui",
     )
 
-    assert scheduled is False
+    assert scheduled is True
     assert tracker.bounded_calls == 0
+    with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
+        assert len(chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE) == 1
+        chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE.clear()
 
 
 @pytest.mark.asyncio
@@ -953,6 +959,9 @@ async def test_chat_turn_memory_log_scheduler_uses_bounded_track(monkeypatch):
     from core.consciousness import coordinator as consciousness_coordinator
     from core.memory import chat_turn_logger
     from interface.routes import chat as chat_routes
+
+    with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
+        chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE.clear()
 
     log_calls = []
     consciousness_calls = []
@@ -996,7 +1005,7 @@ async def test_chat_turn_memory_log_scheduler_uses_bounded_track(monkeypatch):
     )
 
     assert scheduled is True
-    assert tracker.scheduled[0][1] == chat_routes._CHAT_TURN_MEMORY_LOG_TASK_NAME
+    assert tracker.scheduled[0][1] == chat_routes._CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME
     await tracker.scheduled[0][0]
     assert log_calls[0]["user_message"] == "remember this"
     assert log_calls[0]["metadata"]["origin"] == "desktop_ui"
@@ -1007,6 +1016,9 @@ async def test_chat_turn_memory_log_scheduler_uses_bounded_track(monkeypatch):
 async def test_chat_turn_memory_log_scheduler_times_out_slow_logger(monkeypatch):
     from core.memory import chat_turn_logger
     from interface.routes import chat as chat_routes
+
+    with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
+        chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE.clear()
 
     async def _slow_log_chat_turn_auto(**_kwargs):
         await asyncio.sleep(1.0)
@@ -1035,6 +1047,40 @@ async def test_chat_turn_memory_log_scheduler_times_out_slow_logger(monkeypatch)
 
     assert scheduled is True
     await tracker.scheduled[0]
+
+
+def test_chat_turn_memory_log_queue_overflow_drops_oldest(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
+        chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE.clear()
+
+    class _FakeTask:
+        def done(self):
+            return False
+
+        def get_name(self):
+            return chat_routes._CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME
+
+    class _FakeTracker:
+        tasks = {_FakeTask()}
+
+    monkeypatch.setattr(chat_routes, "get_task_tracker", lambda: _FakeTracker())
+    monkeypatch.setattr(chat_routes, "_CHAT_TURN_MEMORY_LOG_QUEUE_MAX", 2)
+
+    for item in ("oldest", "middle", "newest"):
+        assert chat_routes._schedule_chat_turn_memory_log(
+            user_message=item,
+            aura_response=f"reply {item}",
+            session_id="test-session",
+            chat_origin="desktop_ui",
+        )
+
+    with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:
+        queued = list(chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE)
+        chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE.clear()
+
+    assert [item["user_message"] for item in queued] == ["middle", "newest"]
 
 
 @pytest.mark.asyncio
