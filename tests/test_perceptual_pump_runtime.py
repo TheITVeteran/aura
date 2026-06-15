@@ -142,14 +142,22 @@ def test_screen_probe_timeout_does_not_propagate_and_sets_backoff(monkeypatch) -
     import core.perception.perceptual_pump as pump_mod
 
     monkeypatch.setattr(pump_mod, "_LAST_SCREEN_PROBE_TIMEOUT_AT", 0.0)
+    degradation_calls = []
+    monkeypatch.setattr(
+        pump_mod,
+        "record_degradation",
+        lambda *args, **kwargs: degradation_calls.append((args, kwargs)),
+    )
 
     class HangingGateway:
         def __init__(self):
             self.calls = 0
+            self.kwargs = []
 
         def run(self, argv, **kwargs):
             self.calls += 1
-            raise subprocess.TimeoutExpired(cmd=argv, timeout=2.0)
+            self.kwargs.append(kwargs)
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=kwargs.get("timeout"))
 
     gateway = HangingGateway()
     monkeypatch.setattr(
@@ -162,6 +170,11 @@ def test_screen_probe_timeout_does_not_propagate_and_sets_backoff(monkeypatch) -
     state = _collect_screen_state("")
     assert state.active_app == ""
     assert gateway.calls == 1
+    assert gateway.kwargs[0]["timeout"] == pump_mod._SCREEN_PROBE_TIMEOUT_S
+    assert degradation_calls
+    assert degradation_calls[-1][1]["severity"] == "warning"
+    assert degradation_calls[-1][1]["enforce_failure_policy"] is False
+    assert "backed off" in degradation_calls[-1][1]["action"]
 
     # Backoff: the next collection skips the subprocess entirely.
     state = _collect_screen_state("")

@@ -2252,6 +2252,21 @@ async def _run_cognitive_engine_chat_turn(
             "Serving bounded desktop failure-mode contract without foreground model allocation."
         )
         return failure_mode_reply
+    grounded_private_model_reply = (
+        _build_grounded_introspection_reply(visible)
+        if require_engine and _is_private_cognitive_model_request(visible)
+        else None
+    )
+    if grounded_private_model_reply:
+        logger.info(
+            "Serving grounded desktop private cognitive-model report inside CognitiveEngine-required path."
+        )
+        return _ground_runtime_fact_status_reply(
+            visible,
+            grounded_private_model_reply,
+            lane,
+            cognitive_engine_handled=True,
+        )
 
     engine = ServiceContainer.get("cognitive_engine", default=None)
     if engine is None or not hasattr(engine, "think"):
@@ -5609,6 +5624,8 @@ async def _stabilize_user_facing_reply(
     grounded_traceability = await _build_grounded_traceability_reply(user_message)
     if grounded_traceability:
         return grounded_traceability
+    if grounded and _is_private_cognitive_model_request(user_message):
+        return grounded
     recent_user_messages = await _gather_recent_user_messages_for_relevance(user_message)
     recent_user_context = _build_recent_user_context_block(recent_user_messages)
     generic, generic_reason = _looks_generic_assistantish(user_message, text)
@@ -6589,6 +6606,15 @@ def _classify_grounded_introspection_request(user_message: str) -> tuple[bool, b
     # so Aura responds like a person, not a telemetry dashboard.
     internal_state_markers = (
         "internal state",
+        "private mental model",
+        "private model",
+        "mental model of yourself",
+        "current cognitive architecture",
+        "cognitive architecture look",
+        "inside your own architecture",
+        "your architecture right now",
+        "model change your next answer",
+        "change your next answer",
         "what are you experiencing",
         "what's going on inside",
         "what is going on inside",
@@ -6666,6 +6692,40 @@ def _classify_grounded_introspection_request(user_message: str) -> tuple[bool, b
             asks_internal_state = False
 
     return asks_internal_state, asks_free_energy, asks_topology, asks_authority
+
+
+def _is_private_cognitive_model_request(user_message: str) -> bool:
+    text = _normalize_user_message(user_message)
+    if not text:
+        return False
+    has_model_language = any(
+        marker in text
+        for marker in (
+            "private mental model",
+            "private model",
+            "mental model of yourself",
+            "model yourself",
+            "model of yourself",
+            "current cognitive architecture",
+            "cognitive architecture",
+            "inside your own architecture",
+            "inside your architecture",
+        )
+    )
+    asks_causal_effect = any(
+        marker in text
+        for marker in (
+            "change your next answer",
+            "affect your next answer",
+            "influence your next answer",
+            "shape your next answer",
+            "change how you answer",
+            "affect how you answer",
+            "influence how you answer",
+            "shape how you answer",
+        )
+    )
+    return has_model_language or (asks_causal_effect and any(marker in text for marker in ("inside", "architecture", "model")))
 
 
 def _build_grounded_introspection_reply(
@@ -6840,6 +6900,36 @@ def _build_grounded_introspection_reply(
         "engage": "My attention is pulled into direct interaction.",
         "rest": "The system is settling and conserving effort.",
     }
+
+    if asks_internal_state and _is_private_cognitive_model_request(user_message):
+        dominant_need = str(closure_status.get("dominant_need") or "").strip()
+        if fe_state is not None:
+            action = str(getattr(fe_state, "dominant_action", "") or "").strip()
+            causal_pull = action_explanations.get(action, "") or (
+                f"My current action pull is {action}." if action else ""
+            )
+        else:
+            causal_pull = ""
+        focus = attention_focus or "the current foreground conversation"
+        reply_parts = [
+            (
+                "As a private mental model, I would represent my current cognitive architecture "
+                "as a foreground attention loop over memory, affect, planning, and governed tool/action gateways."
+            ),
+            (
+                f"Right now that model points my attention at {focus}, so it should change my next answer "
+                "by making me check the live request, keep the plan bounded, and verify consequential claims before acting."
+            ),
+        ]
+        if dominant_need:
+            reply_parts.append(f"The live need exerting the most pressure is {dominant_need}.")
+        if causal_pull:
+            reply_parts.append(causal_pull)
+        reply_parts.append(
+            "That is functional self-model telemetry, not proof of phenomenal consciousness or private qualia; "
+            "tool use, memory writes, and external claims still have to pass governance and observable verification."
+        )
+        return " ".join(part for part in reply_parts if part)
 
     # ── Authority / governance introspection ────────────────────────
     if asks_authority:

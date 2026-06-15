@@ -375,6 +375,71 @@ class UnitaryResponsePhase(Phase):
         )
         return cleaned.strip() or str(text or "").strip()
 
+    @staticmethod
+    def _complete_substantive_truncated_foreground_reply(text: Any) -> str:
+        """Close a useful foreground draft that was clipped only at the tail."""
+
+        repaired = str(text or "").strip()
+        if len(repaired) < 80 or len(repaired.split()) < 12:
+            return ""
+
+        repaired = re.sub(r"[\s,;:—-]+$", "", repaired).rstrip()
+        incomplete_tail_words = {
+            "a",
+            "an",
+            "and",
+            "as",
+            "because",
+            "but",
+            "by",
+            "for",
+            "from",
+            "if",
+            "in",
+            "into",
+            "of",
+            "or",
+            "that",
+            "the",
+            "then",
+            "to",
+            "with",
+            "without",
+        }
+        safe_short_tail_words = {
+            "act",
+            "code",
+            "data",
+            "live",
+            "mind",
+            "plan",
+            "safe",
+            "state",
+            "task",
+            "test",
+            "tool",
+            "user",
+            "work",
+        }
+        for _ in range(3):
+            match = re.search(r"\s+([A-Za-z]+)$", repaired)
+            if not match:
+                break
+            tail = match.group(1).lower()
+            likely_partial_stem = len(tail) <= 4 and tail not in safe_short_tail_words
+            if tail in incomplete_tail_words or likely_partial_stem:
+                repaired = repaired[: match.start()].rstrip(" ,;:—-")
+                continue
+            break
+
+        if len(repaired) < 80 or len(repaired.split()) < 12:
+            return ""
+        if not repaired.endswith((".", "!", "?", '"', "'", "”", "’", ")", "]")):
+            repaired = f"{repaired}."
+        if repaired == str(text or "").strip():
+            return ""
+        return repaired
+
     @classmethod
     def _resolve_skill_name(cls, skill_name: Any) -> str:
         normalized = cls._normalize_text(skill_name, 80)
@@ -1720,6 +1785,7 @@ class UnitaryResponsePhase(Phase):
         shaped = str(text or "").strip()
         if not shaped:
             return shaped
+        shaped = re.sub(r"^\s*[.。]\s+(?=[A-Z0-9\"'“‘])", "", shaped).strip()
         try:
             from core.synthesis import cure_personality_leak, stabilize_user_facing_response
 
@@ -1756,6 +1822,7 @@ class UnitaryResponsePhase(Phase):
             _record_response_degradation(
                 exc, "UnitaryResponse: final user-facing stabilization skipped: %s"
             )
+        shaped = re.sub(r"^\s*[.。]\s+(?=[A-Z0-9\"'“‘])", "", shaped).strip()
         return shaped
 
     def _build_router_messages(
@@ -6044,6 +6111,21 @@ class UnitaryResponsePhase(Phase):
                                 response_text = shaped_repair
                                 quality = repair_quality
                         response_text_s = str(response_text or "").strip()
+                        if quality.retryable and set(quality.reasons or ()) == {"truncated_tail"}:
+                            completed_response = self._complete_substantive_truncated_foreground_reply(
+                                response_text_s
+                            )
+                            if completed_response:
+                                completed_quality = assess_user_facing_reply(objective, completed_response)
+                                if not completed_quality.retryable:
+                                    logger.warning(
+                                        "🛡️ UnitaryResponse completed clipped foreground draft without another 32B retry (len=%d -> %d).",
+                                        len(response_text_s),
+                                        len(completed_response),
+                                    )
+                                    response_text = completed_response
+                                    response_text_s = completed_response
+                                    quality = completed_quality
                         keep_substantive_soft_failure = bool(
                             quality.retryable
                             and not quality.hard_failure

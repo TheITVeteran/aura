@@ -110,6 +110,54 @@ def test_simple_foreground_floor_handles_live_headless_fix_first_followup():
     assert "repeated diagnostic floor" in reply.lower()
 
 
+def test_substantive_truncated_foreground_reply_is_completed_without_new_model_call():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    prompt = "Explain how you would keep a live desktop conversation coherent under load."
+    draft = (
+        "I would keep the foreground lane bounded by preserving the current user objective, "
+        "checking the response contract before surfacing text, holding tool work behind governance, "
+        "and treating memory or screen sensors as supporting evidence rather than blockers with"
+    )
+
+    initial = assess_user_facing_reply(prompt, draft)
+    assert set(initial.reasons) == {"truncated_tail"}
+
+    repaired = UnitaryResponsePhase._complete_substantive_truncated_foreground_reply(draft)
+    repaired_quality = assess_user_facing_reply(prompt, repaired)
+
+    assert repaired
+    assert repaired.endswith(".")
+    assert " with." not in repaired.lower()
+    assert not repaired_quality.retryable
+
+
+def test_substantive_truncated_foreground_reply_trims_partial_stem():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    prompt = "Describe your private cognitive architecture in one grounded paragraph."
+    draft = (
+        "I model myself as a foreground attention loop over memory, affect, planning, and governed "
+        "action gateways. That model changes my answer by making me check the live request, keep "
+        "the plan bounded, and verify external claims before acting through cogn"
+    )
+
+    repaired = UnitaryResponsePhase._complete_substantive_truncated_foreground_reply(draft)
+
+    assert repaired
+    assert "cogn." not in repaired.lower()
+    assert not assess_user_facing_reply(prompt, repaired).retryable
+
+
+def test_user_facing_shape_removes_orphan_leading_period():
+    shaped = UnitaryResponsePhase._shape_user_facing_response(
+        ". Glass arithmetic keeps a running clarity score and connects each operation to a visible example.",
+        "Stay with glass arithmetic.",
+    )
+
+    assert shaped.startswith("Glass arithmetic")
+
+
 def test_simple_foreground_floor_ignores_structured_learning_bundle():
     bundle = """
 Priority of how to consume content.

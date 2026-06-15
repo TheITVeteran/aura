@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -190,6 +191,49 @@ def test_frontier_style_120_turn_transcript_is_inspectable_and_gate_clean(tmp_pa
     assert len(transcript) == 120
     assert transcript[0]["aura"] != transcript[-1]["aura"]
     assert out_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_dialogue_contract_repairs_low_signal_preamble_without_retry():
+    from core.phases.dialogue_policy import enforce_dialogue_contract
+
+    contract = SimpleNamespace(
+        is_user_facing=True,
+        avoid_question_fishing=True,
+        prefers_dialogue_participation=True,
+        requires_aura_stance=False,
+        requires_aura_question=False,
+        requires_state_reflection=False,
+        requires_memory_grounding=False,
+        requires_biographical_grounding=False,
+        requires_recent_specific_grounding=False,
+        requires_reasoned_defense=False,
+        requires_identity_defense=False,
+        requires_self_preservation=False,
+        requires_exact_format=False,
+    )
+    draft = (
+        "Okay, I would treat that as a live desktop tool-use request with two obligations. "
+        "First I need a plan that names the target application and confirms each visible step. "
+        "Second I need receipts that prove the tool action happened before I claim it is complete."
+    )
+    retry_called = False
+
+    async def record_retry(_repair_block: str) -> str:
+        nonlocal retry_called
+        retry_called = True
+        return "I should not need this retry path for a substantive low-signal opener."
+
+    repaired, validation, retried = await enforce_dialogue_contract(
+        draft,
+        contract,
+        retry_generate=record_retry,
+    )
+
+    assert not retried
+    assert not retry_called
+    assert validation.ok
+    assert repaired.startswith("I would treat")
 
 
 @pytest.mark.parametrize(

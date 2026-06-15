@@ -57,7 +57,26 @@ _PUMP_RUNTIME_ERRORS = (
 # After an AppleScript probe times out, skip subprocess-based screen
 # probes for this long. A hung System Events under host load otherwise
 # costs 2s of a worker thread every 500ms, forever.
-_SCREEN_PROBE_BACKOFF_S = 10.0
+def _env_float(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.environ.get(name, default))
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return max(minimum, min(maximum, value))
+
+
+_SCREEN_PROBE_BACKOFF_S = _env_float(
+    "AURA_PERCEPTUAL_SCREEN_PROBE_BACKOFF_S",
+    60.0,
+    minimum=5.0,
+    maximum=300.0,
+)
+_SCREEN_PROBE_TIMEOUT_S = _env_float(
+    "AURA_PERCEPTUAL_SCREEN_PROBE_TIMEOUT_S",
+    0.75,
+    minimum=0.25,
+    maximum=2.0,
+)
 _LAST_SCREEN_PROBE_TIMEOUT_AT: float = 0.0
 
 # ---------------------------------------------------------------------------
@@ -170,7 +189,7 @@ def _collect_screen_state(prev_hash: str) -> ScreenState:
             result = gw.run(
                 ["osascript", "-e",
                  'tell application "System Events" to get name of first application process whose frontmost is true'],
-                capture_output=True, timeout=2.0, read_only=True, source="perceptual_pump.screen.app",
+                capture_output=True, timeout=_SCREEN_PROBE_TIMEOUT_S, read_only=True, source="perceptual_pump.screen.app",
             )
             if result.returncode == 0 and result.stdout:
                 state.active_app = result.stdout.strip()
@@ -180,20 +199,32 @@ def _collect_screen_state(prev_hash: str) -> ScreenState:
                 result = gw.run(
                     ["osascript", "-e",
                      f'tell application "System Events" to get name of front window of process "{state.active_app}"'],
-                    capture_output=True, timeout=2.0, read_only=True, source="perceptual_pump.screen.title",
+                    capture_output=True, timeout=_SCREEN_PROBE_TIMEOUT_S, read_only=True, source="perceptual_pump.screen.title",
                 )
                 if result.returncode == 0 and result.stdout:
                     state.window_title = result.stdout.strip()[:200]
     except subprocess.SubprocessError as e:
         _LAST_SCREEN_PROBE_TIMEOUT_AT = time.time()
-        record_degradation("perceptual_pump.screen", e)
+        record_degradation(
+            "perceptual_pump.screen",
+            e,
+            severity="warning",
+            action=f"screen probe unavailable; backed off AppleScript for {_SCREEN_PROBE_BACKOFF_S:.0f}s",
+            enforce_failure_policy=False,
+        )
         logger.debug(
             "Screen probe timed out; backing off AppleScript for %.0fs: %s",
             _SCREEN_PROBE_BACKOFF_S,
             e,
         )
     except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
-        record_degradation("perceptual_pump.screen", e)
+        record_degradation(
+            "perceptual_pump.screen",
+            e,
+            severity="warning",
+            action="screen probe unavailable; continuing without active-window telemetry",
+            enforce_failure_policy=False,
+        )
         logger.debug("Screen state AppleScript probe failed: %s", e)
 
     # 2. Screen content from ScreenObserver JSON (if vision service is running)

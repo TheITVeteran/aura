@@ -82,3 +82,17 @@ def test_foreground_start_keeps_scheduler_heartbeat_alive():
     assert "heartbeat remains active for runtime health" in foreground_slice
     assert "if not scheduler.is_alive():" in foreground_slice
     assert "await asyncio.wait_for(scheduler.start(), timeout=5.0)" in foreground_slice
+
+
+def test_orchestrator_main_loop_refreshes_watchdog_heartbeat():
+    main_source = (PROJECT_ROOT / "core" / "orchestrator" / "main.py").read_text(
+        encoding="utf-8"
+    )
+    loop_slice = main_source.split(
+        "logger.info(\"🚩 [ORCHESTRATOR] Main Heartbeat Active",
+        1,
+    )[1].split("await asyncio.sleep(0.05)", 1)[0]
+
+    assert "self.status.cycle_count += 1" in loop_slice
+    assert "self._update_heartbeat()" in loop_slice
+    assert "watchdog.heartbeat(\"orchestrator_loop\")" in loop_slice

@@ -3879,6 +3879,119 @@ async def test_stabilize_user_facing_reply_blocks_ungrounded_search_turn_fallbac
     assert "stick to the source instead of guessing" in result
 
 
+def test_grounded_private_cognitive_model_reply_has_causal_contract(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(chat_routes, "_resolve_live_voice_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda _name, default=None: default),
+    )
+
+    reply = chat_routes._build_grounded_introspection_reply(
+        "As a private mental model, what does your current cognitive architecture look like, "
+        "and how should that model change your next answer?"
+    )
+
+    assert reply
+    lowered = reply.lower()
+    assert "private mental model" in lowered
+    assert "cognitive architecture" in lowered
+    assert "attention" in lowered
+    assert "next answer" in lowered
+    assert "verify" in lowered or "governance" in lowered
+    assert "not proof" in lowered
+    assert "phenomenal" in lowered
+
+
+@pytest.mark.asyncio
+async def test_stabilize_private_cognitive_model_uses_grounded_reply_before_tail_completion(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(chat_routes, "_resolve_live_voice_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda _name, default=None: default),
+    )
+
+    result = await chat_routes._stabilize_user_facing_reply(
+        "As a private mental model, what does your current cognitive architecture look like, "
+        "and how should that model change your next answer?",
+        (
+            "I'm a cognitive engine with governed skill surfaces. My private mental canvas is shaped "
+            "by recent event memory, the current affordance space where pressure becomes visible in a cogn"
+        ),
+    )
+
+    lowered = result.lower()
+    assert "private mental model" in lowered
+    assert "next answer" in lowered
+    assert "not proof" in lowered
+    assert "cogn." not in lowered
+
+
+@pytest.mark.asyncio
+async def test_cognitive_engine_required_private_model_report_stays_bounded(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    def _service_get(name, default=None):
+        if name == "cognitive_engine":
+            raise AssertionError("private model report should not allocate CognitiveEngine foreground generation")
+        return default
+
+    async def _fake_log_exchange(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(chat_routes, "_resolve_live_voice_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_service_get))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message=(
+                "What would your current cognitive architecture look like as a private mental "
+                "model, and how should that model change your next answer? Keep it bounded: "
+                "do not claim external perception, consciousness proof, or tool completion."
+            )
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 200
+    body = response.body.decode("utf-8")
+    lowered = body.lower()
+    assert "private mental model" in lowered
+    assert "attention" in lowered
+    assert "next answer" in lowered
+    assert "not proof" in lowered
+    assert "governance" in lowered or "verify" in lowered
+
+
 @pytest.mark.asyncio
 async def test_stabilize_user_facing_reply_rejects_objective_parrot(monkeypatch):
     from interface.routes import chat as chat_routes

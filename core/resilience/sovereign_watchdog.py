@@ -6,6 +6,7 @@ If a deadlock or cognitive stall is detected, it triggers a recovery sequence.
 """
 import asyncio
 import logging
+import os
 import time
 from typing import Any
 
@@ -52,6 +53,7 @@ class SovereignWatchdog:
         self._recovery_cooldown = 300.0  # 5 minutes between recoveries
         self._recovery_failure_streak = 0
         self._last_recovery_result: dict[str, Any] = {}
+        self._last_foreground_deferral_log_at = 0.0
 
     async def start(self):
         """Start the watchdog loop."""
@@ -88,6 +90,55 @@ class SovereignWatchdog:
             "last_recovery_result": dict(self._last_recovery_result),
         }
 
+    @staticmethod
+    def _env_float(name: str, default: float, *, minimum: float, maximum: float) -> float:
+        try:
+            value = float(os.environ.get(name, default))
+        except (TypeError, ValueError, OverflowError):
+            return default
+        return max(minimum, min(maximum, value))
+
+    def _foreground_inference_snapshot(self) -> dict[str, Any]:
+        try:
+            from core.container import ServiceContainer
+
+            gate = ServiceContainer.get("inference_gate", default=None)
+            if not gate or not hasattr(gate, "get_conversation_status"):
+                return {}
+            lane = dict(gate.get_conversation_status() or {})
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            logger.debug("SovereignWatchdog foreground inference probe unavailable: %s", exc)
+            return {}
+
+        lane_state = str(lane.get("state") or "").lower()
+        active = bool(
+            lane.get("foreground_owned")
+            or int(lane.get("active_generations", 0) or 0) > 0
+            or lane.get("warmup_in_flight")
+            or lane_state in {"spawning", "handshaking", "warming", "recovering"}
+        )
+        if not active:
+            return {}
+        return lane
+
+    def _should_defer_recovery_for_foreground_inference(
+        self,
+        lane: dict[str, Any],
+    ) -> bool:
+        if not lane:
+            return False
+        max_request_age = self._env_float(
+            "AURA_SOVEREIGN_WATCHDOG_FOREGROUND_GRACE_S",
+            max(self._timeout * 2.0, 240.0),
+            minimum=self._timeout,
+            maximum=900.0,
+        )
+        try:
+            request_age = float(lane.get("request_age_s", 0.0) or 0.0)
+        except (TypeError, ValueError, OverflowError):
+            request_age = 0.0
+        return request_age <= 0.0 or request_age <= max_request_age
+
     async def _watch_loop(self):
         """Periodic check for system vitality."""
         while self._running:
@@ -101,6 +152,25 @@ class SovereignWatchdog:
                     if now - self._last_recovery_time < self._recovery_cooldown:
                         logger.debug("Watchdog: stall detected but cooling down (last recovery %.0fs ago).",
                                      now - self._last_recovery_time)
+                        continue
+                    foreground_lane = self._foreground_inference_snapshot()
+                    if self._should_defer_recovery_for_foreground_inference(foreground_lane):
+                        self.heartbeat("foreground_inference")
+                        if now - self._last_foreground_deferral_log_at >= 30.0:
+                            self._last_foreground_deferral_log_at = now
+                            try:
+                                request_age = float(foreground_lane.get("request_age_s", 0.0) or 0.0)
+                            except (TypeError, ValueError, OverflowError):
+                                request_age = 0.0
+                            logger.info(
+                                "⏳ SOVEREIGN WATCHDOG: deferring stall recovery during active foreground inference "
+                                "(elapsed=%.1fs state=%s active=%s owner=%s request_age=%.1fs).",
+                                elapsed,
+                                foreground_lane.get("state"),
+                                foreground_lane.get("active_generations", 0),
+                                foreground_lane.get("foreground_owner", ""),
+                                request_age,
+                            )
                         continue
                     logger.critical("🚨 SOVEREIGN WATCHDOG: HEARTBEAT STALL DETECTED (%.1fs elapsed)", elapsed)
                     await self._execute_recovery()

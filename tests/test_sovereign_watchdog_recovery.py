@@ -30,6 +30,56 @@ def _reset_tracker():
     get_degradation_tracker().reset()
 
 
+def test_watchdog_defers_recovery_during_active_foreground_inference(monkeypatch):
+    orchestrator = _Orchestrator()
+    watchdog = SovereignWatchdog(orchestrator, timeout=120.0)
+
+    class _Gate:
+        def get_conversation_status(self):
+            return {
+                "state": "ready",
+                "foreground_owned": True,
+                "foreground_owner": "desktop_chat",
+                "active_generations": 1,
+                "request_age_s": 37.0,
+            }
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda name, default=None: _Gate() if name == "inference_gate" else default),
+    )
+
+    lane = watchdog._foreground_inference_snapshot()
+
+    assert lane["foreground_owner"] == "desktop_chat"
+    assert watchdog._should_defer_recovery_for_foreground_inference(lane) is True
+
+
+def test_watchdog_does_not_defer_over_grace_foreground_stall(monkeypatch):
+    orchestrator = _Orchestrator()
+    watchdog = SovereignWatchdog(orchestrator, timeout=120.0)
+
+    class _Gate:
+        def get_conversation_status(self):
+            return {
+                "state": "ready",
+                "foreground_owned": True,
+                "foreground_owner": "desktop_chat",
+                "active_generations": 1,
+                "request_age_s": 901.0,
+            }
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda name, default=None: _Gate() if name == "inference_gate" else default),
+    )
+
+    lane = watchdog._foreground_inference_snapshot()
+
+    assert lane["foreground_owner"] == "desktop_chat"
+    assert watchdog._should_defer_recovery_for_foreground_inference(lane) is False
+
+
 @pytest.mark.asyncio
 async def test_watchdog_recovery_continues_when_gpu_sentinel_fails(monkeypatch):
     bus = _Bus()

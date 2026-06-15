@@ -506,6 +506,8 @@ def repair_dialogue_surface(text: str, contract: object | None) -> str:
     body = str(text or "").strip()
     if not body:
         return body
+    if bool(getattr(contract, "requires_exact_format", False)):
+        return body
 
     cleaned_lines = []
     for line in body.splitlines():
@@ -516,6 +518,12 @@ def repair_dialogue_surface(text: str, contract: object | None) -> str:
     body = _collapse_repeated_sentences(body)
 
     sentences = _sentences(body)
+    if sentences and _LOW_SIGNAL_PREFIX.match(sentences[0]):
+        low_signal_match = _LOW_SIGNAL_PREFIX.match(sentences[0])
+        stripped_first = sentences[0][low_signal_match.end() :].lstrip(" ,;:—-").strip()
+        candidate_sentences = ([stripped_first] if stripped_first else []) + sentences[1:]
+        if sum(len(sentence.split()) for sentence in candidate_sentences) >= 8:
+            sentences = candidate_sentences
     if any(_contains_generic_assistant_language(sentence) for sentence in sentences):
         kept = [
             sentence

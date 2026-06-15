@@ -1634,6 +1634,10 @@ class RobustOrchestrator(
             try:
                 # Heartbeat cycle count — ensures UI sees progress
                 self.status.cycle_count += 1
+                self._update_heartbeat()
+                watchdog = getattr(self, "watchdog", None)
+                if watchdog and hasattr(watchdog, "heartbeat"):
+                    watchdog.heartbeat("orchestrator_loop")
 
                 # Short sleep to prevent CPU spinning while remaining responsive
                 await asyncio.sleep(0.05)
