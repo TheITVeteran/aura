@@ -47,9 +47,10 @@ sys.path.insert(0, str(ROOT))
 
 PROOF_DIR = ROOT / "artifacts" / "live_proof"
 
-# Abort the whole proof if Aura's process tree exceeds this. Generous
-# enough for a full model load on the 64GB target, far below host danger.
-RSS_ABORT_MB = 45_000.0
+# Abort the whole proof if Aura's process tree exceeds this. The runtime should
+# refuse/recycle before this external guard fires; the guard exists to protect
+# the host if local inference leaks past the in-process policy.
+DEFAULT_RSS_ABORT_MB = 38_000.0
 LIVE_FALLBACK_RE = re.compile(
     r"(say that again|try (?:again|me again|that again)|ask me again|"
     r"give me a moment|i'?m with you|could you repeat|repeat your question|"
@@ -72,6 +73,34 @@ LIVE_CONVERSATION_SOAK_PROMPTS = (
     "Give a practical multi-step desktop task you could attempt after authorization.",
     "Finish with a short status: are you still coherent, on the same thread, and able to continue?",
 )
+
+
+def _env_float(env: dict[str, str], name: str, default: float) -> float:
+    try:
+        return float(env.get(name, str(default)))
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _truthy_env(env: dict[str, str], name: str) -> bool:
+    return str(env.get(name, "") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def live_proof_rss_abort_mb(env: dict[str, str] | None = None) -> float:
+    """Return the outside proof kill ceiling for Aura's process tree."""
+
+    env = dict(os.environ if env is None else env)
+    process_limit_gb = _env_float(env, "AURA_PROCESS_RSS_LIMIT_GB", 0.0)
+    derived = DEFAULT_RSS_ABORT_MB
+    if process_limit_gb > 0.0:
+        derived = min(DEFAULT_RSS_ABORT_MB, (process_limit_gb * 1024.0) + 2048.0)
+
+    configured = _env_float(env, "AURA_LIVE_PROOF_RSS_ABORT_MB", 0.0)
+    if configured > 0.0:
+        if _truthy_env(env, "AURA_ALLOW_UNSAFE_MEMORY_LIMITS"):
+            return configured
+        return min(configured, derived)
+    return derived
 
 
 def build_safe_boot_env(
@@ -111,24 +140,23 @@ def build_safe_boot_env(
     env.setdefault("AURA_FOREGROUND_CHAT_MAX_TOKENS", "2048")
     env.setdefault("AURA_WATCHDOG_BOOT_GRACE_S", "240")
 
-    if "AURA_MLX_MEMORY_LIMIT_GB" not in env:
-        try:
-            from core.runtime.desktop_boot_safety import compute_mlx_memory_limit
+    try:
+        from core.runtime.desktop_boot_safety import compute_mlx_memory_limit
 
-            limit_bytes = compute_mlx_memory_limit(psutil.virtual_memory().total, env)
-            limit_gb = max(1.0, min(28.0, limit_bytes / float(1024 ** 3)))
-        except (ImportError, RuntimeError, TypeError, ValueError, OSError, psutil.Error):
-            limit_gb = 28.0
-        env["AURA_MLX_MEMORY_LIMIT_GB"] = f"{limit_gb:.0f}"
-    if "AURA_PROCESS_RSS_LIMIT_GB" not in env:
-        try:
-            from core.runtime.desktop_boot_safety import compute_process_rss_limit
+        limit_bytes = compute_mlx_memory_limit(psutil.virtual_memory().total, env)
+        limit_gb = max(1.0, min(28.0, limit_bytes / float(1024 ** 3)))
+    except (ImportError, RuntimeError, TypeError, ValueError, OSError, psutil.Error):
+        limit_gb = min(28.0, max(1.0, _env_float(env, "AURA_MLX_MEMORY_LIMIT_GB", 28.0)))
+    env["AURA_MLX_MEMORY_LIMIT_GB"] = f"{limit_gb:.0f}"
 
-            limit_bytes = compute_process_rss_limit(psutil.virtual_memory().total, env)
-            limit_gb = max(1.0, min(36.0, limit_bytes / float(1024 ** 3)))
-        except (ImportError, RuntimeError, TypeError, ValueError, OSError, psutil.Error):
-            limit_gb = 36.0
-        env["AURA_PROCESS_RSS_LIMIT_GB"] = f"{limit_gb:.0f}"
+    try:
+        from core.runtime.desktop_boot_safety import compute_process_rss_limit
+
+        limit_bytes = compute_process_rss_limit(psutil.virtual_memory().total, env)
+        limit_gb = max(1.0, min(36.0, limit_bytes / float(1024 ** 3)))
+    except (ImportError, RuntimeError, TypeError, ValueError, OSError, psutil.Error):
+        limit_gb = min(36.0, max(1.0, _env_float(env, "AURA_PROCESS_RSS_LIMIT_GB", 36.0)))
+    env["AURA_PROCESS_RSS_LIMIT_GB"] = f"{limit_gb:.0f}"
     return env
 
 
@@ -159,6 +187,7 @@ class LiveProof:
         self.transcript_path = PROOF_DIR / f"live_proof_{stamp}.jsonl"
         self.verdict_path = PROOF_DIR / f"live_proof_{stamp}_verdict.json"
         self.stdout_path = PROOF_DIR / f"live_proof_{stamp}_stdout.log"
+        self.rss_abort_mb = DEFAULT_RSS_ABORT_MB
         self._stdout_handle = None
         self._boot_count = 0
 
@@ -204,11 +233,11 @@ class LiveProof:
 
     def guard_rss(self) -> None:
         mb = self.tree_rss_mb()
-        if mb > RSS_ABORT_MB:
+        if mb > self.rss_abort_mb:
             self.record(
                 "rss_guard",
                 False,
-                summary=f"ABORT: tree RSS {mb:.0f}MB exceeded {RSS_ABORT_MB:.0f}MB",
+                summary=f"ABORT: tree RSS {mb:.0f}MB exceeded {self.rss_abort_mb:.0f}MB",
             )
             self.kill_hard()
             raise RuntimeError("live proof aborted on RSS ceiling")
@@ -244,6 +273,7 @@ class LiveProof:
             )
 
         env = build_safe_boot_env(os.environ, mode=self.mode)
+        self.rss_abort_mb = live_proof_rss_abort_mb(env)
         self._boot_count += 1
         if self._stdout_handle is not None:
             self._stdout_handle.close()

@@ -22,6 +22,17 @@ def env_flag_enabled(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_float(env: Mapping[str, str], name: str, default: float) -> float:
+    try:
+        return float(env.get(name, str(default)))
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _unsafe_memory_limits_allowed(env: Mapping[str, str]) -> bool:
+    return env_flag_enabled(env.get("AURA_ALLOW_UNSAFE_MEMORY_LIMITS"))
+
+
 def desktop_safe_boot_enabled(env: Mapping[str, str] | None = None) -> bool:
     env = env or os.environ
     explicit = str(env.get("AURA_SAFE_BOOT_DESKTOP", "")).strip().lower()
@@ -37,16 +48,19 @@ def compute_mlx_cache_limit(total_ram_bytes: int, env: Mapping[str, str] | None 
     total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
 
     if desktop_safe_boot_enabled(env):
-        ratio = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_RATIO", "0.16"))
-        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", "10"))
-        floor_gb = float(env.get("AURA_SAFE_BOOT_METAL_CACHE_FLOOR_GB", "4"))
+        ratio = _env_float(env, "AURA_SAFE_BOOT_METAL_CACHE_RATIO", 0.16)
+        hard_cap_gb = _env_float(env, "AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", 10.0)
+        floor_gb = _env_float(env, "AURA_SAFE_BOOT_METAL_CACHE_FLOOR_GB", 4.0)
         limit = int(total_ram_bytes * ratio)
         limit = min(limit, int(hard_cap_gb * _GIB))
-        return max(int(floor_gb * _GIB), limit)
+        limit = max(int(floor_gb * _GIB), limit)
+        if not _unsafe_memory_limits_allowed(env):
+            limit = min(limit, 10 * _GIB)
+        return limit
 
-    ratio = float(env.get("AURA_METAL_CACHE_RATIO", "0.75"))
+    ratio = _env_float(env, "AURA_METAL_CACHE_RATIO", 0.75)
     limit = int(total_ram_bytes * ratio)
-    hard_cap_gb = float(env.get("AURA_METAL_CACHE_CAP_GB", "0"))
+    hard_cap_gb = _env_float(env, "AURA_METAL_CACHE_CAP_GB", 0.0)
     if hard_cap_gb > 0:
         limit = min(limit, int(hard_cap_gb * _GIB))
     return max(8 * _GIB, limit)
@@ -56,6 +70,9 @@ def compute_mlx_memory_limit(total_ram_bytes: int, env: Mapping[str, str] | None
     """Return the active MLX memory ceiling for model/KV allocations."""
 
     env = env or os.environ
+    total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
+    safe_boot = desktop_safe_boot_enabled(env)
+    unsafe_allowed = _unsafe_memory_limits_allowed(env)
     configured = str(env.get("AURA_MLX_MEMORY_LIMIT_GB", "") or "").strip()
     if configured:
         try:
@@ -63,19 +80,24 @@ def compute_mlx_memory_limit(total_ram_bytes: int, env: Mapping[str, str] | None
         except (TypeError, ValueError, OverflowError):
             configured_gb = 0.0
         if configured_gb > 0.0:
-            return int(configured_gb * _GIB)
+            configured_limit = int(configured_gb * _GIB)
+            if safe_boot and not unsafe_allowed:
+                return min(configured_limit, 28 * _GIB)
+            return configured_limit
 
-    total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
-    if desktop_safe_boot_enabled(env):
-        ratio = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_RATIO", "0.44"))
-        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "28"))
-        floor_gb = float(env.get("AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB", "18"))
+    if safe_boot:
+        ratio = _env_float(env, "AURA_SAFE_BOOT_MLX_MEMORY_RATIO", 0.44)
+        hard_cap_gb = _env_float(env, "AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", 28.0)
+        floor_gb = _env_float(env, "AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB", 18.0)
         limit = min(int(total_ram_bytes * ratio), int(hard_cap_gb * _GIB))
-        return max(int(floor_gb * _GIB), limit)
+        limit = max(int(floor_gb * _GIB), limit)
+        if not unsafe_allowed:
+            limit = min(limit, 28 * _GIB)
+        return limit
 
-    ratio = float(env.get("AURA_MLX_MEMORY_RATIO", "0.72"))
+    ratio = _env_float(env, "AURA_MLX_MEMORY_RATIO", 0.72)
     limit = int(total_ram_bytes * ratio)
-    hard_cap_gb = float(env.get("AURA_MLX_MEMORY_CAP_GB", "0"))
+    hard_cap_gb = _env_float(env, "AURA_MLX_MEMORY_CAP_GB", 0.0)
     if hard_cap_gb > 0:
         limit = min(limit, int(hard_cap_gb * _GIB))
     return max(8 * _GIB, limit)
@@ -90,6 +112,9 @@ def compute_process_rss_limit(total_ram_bytes: int, env: Mapping[str, str] | Non
     """
 
     env = env or os.environ
+    total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
+    safe_boot = desktop_safe_boot_enabled(env)
+    unsafe_allowed = _unsafe_memory_limits_allowed(env)
     configured = str(env.get("AURA_PROCESS_RSS_LIMIT_GB", "") or "").strip()
     if configured:
         try:
@@ -97,19 +122,24 @@ def compute_process_rss_limit(total_ram_bytes: int, env: Mapping[str, str] | Non
         except (TypeError, ValueError, OverflowError):
             configured_gb = 0.0
         if configured_gb > 0.0:
-            return int(configured_gb * _GIB)
+            configured_limit = int(configured_gb * _GIB)
+            if safe_boot and not unsafe_allowed:
+                return min(configured_limit, 36 * _GIB)
+            return configured_limit
 
-    total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
-    if desktop_safe_boot_enabled(env):
-        ratio = float(env.get("AURA_SAFE_BOOT_PROCESS_RSS_RATIO", "0.56"))
-        hard_cap_gb = float(env.get("AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", "36"))
-        floor_gb = float(env.get("AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB", "24"))
+    if safe_boot:
+        ratio = _env_float(env, "AURA_SAFE_BOOT_PROCESS_RSS_RATIO", 0.56)
+        hard_cap_gb = _env_float(env, "AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", 36.0)
+        floor_gb = _env_float(env, "AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB", 24.0)
         limit = min(int(total_ram_bytes * ratio), int(hard_cap_gb * _GIB))
-        return max(int(floor_gb * _GIB), limit)
+        limit = max(int(floor_gb * _GIB), limit)
+        if not unsafe_allowed:
+            limit = min(limit, 36 * _GIB)
+        return limit
 
-    ratio = float(env.get("AURA_PROCESS_RSS_RATIO", "0.56"))
-    hard_cap_gb = float(env.get("AURA_PROCESS_RSS_CAP_GB", "38"))
-    floor_gb = float(env.get("AURA_PROCESS_RSS_FLOOR_GB", "30"))
+    ratio = _env_float(env, "AURA_PROCESS_RSS_RATIO", 0.56)
+    hard_cap_gb = _env_float(env, "AURA_PROCESS_RSS_CAP_GB", 38.0)
+    floor_gb = _env_float(env, "AURA_PROCESS_RSS_FLOOR_GB", 30.0)
     limit = min(int(total_ram_bytes * ratio), int(hard_cap_gb * _GIB))
     return max(int(floor_gb * _GIB), limit)
 

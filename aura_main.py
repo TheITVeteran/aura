@@ -1118,6 +1118,8 @@ def _install_systemwide_memory_protection() -> None:
         from core.runtime.desktop_boot_safety import (
             compute_mlx_memory_limit,
             compute_process_rss_limit,
+            desktop_safe_boot_enabled,
+            env_flag_enabled,
         )
 
         default_mlx_limit_gb = max(
@@ -1128,9 +1130,14 @@ def _install_systemwide_memory_protection() -> None:
             8.0,
             compute_process_rss_limit(int(total_mb * 1024 * 1024)) / float(1024**3),
         )
+        safe_desktop_memory_limits = (
+            desktop_safe_boot_enabled()
+            and not env_flag_enabled(os.environ.get("AURA_ALLOW_UNSAFE_MEMORY_LIMITS"))
+        )
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
         default_mlx_limit_gb = 28.0
         default_process_rss_limit_gb = 36.0
+        safe_desktop_memory_limits = True
         record_degradation(
             _AURA_MAIN_DEGRADATION_KEY,
             exc,
@@ -1141,12 +1148,20 @@ def _install_systemwide_memory_protection() -> None:
         os.environ.get("AURA_MLX_MEMORY_LIMIT_GB", f"{default_mlx_limit_gb:.0f}")
         or f"{default_mlx_limit_gb:.0f}"
     )
-    os.environ.setdefault("AURA_MLX_MEMORY_LIMIT_GB", mlx_gb)
+    if safe_desktop_memory_limits:
+        mlx_gb = f"{default_mlx_limit_gb:.0f}"
+        os.environ["AURA_MLX_MEMORY_LIMIT_GB"] = mlx_gb
+    else:
+        os.environ.setdefault("AURA_MLX_MEMORY_LIMIT_GB", mlx_gb)
     process_rss_gb = str(
         os.environ.get("AURA_PROCESS_RSS_LIMIT_GB", f"{default_process_rss_limit_gb:.0f}")
         or f"{default_process_rss_limit_gb:.0f}"
     )
-    os.environ.setdefault("AURA_PROCESS_RSS_LIMIT_GB", process_rss_gb)
+    if safe_desktop_memory_limits:
+        process_rss_gb = f"{default_process_rss_limit_gb:.0f}"
+        os.environ["AURA_PROCESS_RSS_LIMIT_GB"] = process_rss_gb
+    else:
+        os.environ.setdefault("AURA_PROCESS_RSS_LIMIT_GB", process_rss_gb)
 
     sentinel_enabled = str(os.environ.get("AURA_MEMORY_SENTINEL", "1")).strip().lower() not in {"0", "false", "no", "off"}
     if sentinel_enabled:
