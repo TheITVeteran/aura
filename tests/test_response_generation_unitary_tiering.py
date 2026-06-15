@@ -450,6 +450,54 @@ async def test_desktop_descriptive_context_bounds_foreground_generation(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_desktop_cognitive_contract_forwards_flags_and_does_not_model_retry(monkeypatch):
+    state = AuraState()
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_objective = "Tell me what you think about distributed systems."
+
+    llm = SimpleNamespace(think=AsyncCallProbe(return_value="How can I assist?"))
+    phase = UnitaryResponsePhase(SimpleNamespace(organs={}))
+
+    monkeypatch.setattr(
+        "core.phases.response_generation_unitary.ContextAssembler.build_messages",
+        staticmethod(
+            lambda _state, objective: [
+                {"role": "system", "content": "desktop_context"},
+                {"role": "user", "content": objective},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda name, default=None: llm if name == "llm_router" else default),
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation_unitary.build_response_contract",
+        lambda _state, _objective, is_user_facing=False: ResponseContract(
+            is_user_facing=is_user_facing,
+            reason="ordinary_dialogue",
+        ),
+    )
+
+    new_state = await phase.execute(
+        state,
+        objective=state.cognition.current_objective,
+        priority=True,
+        context={
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+        },
+    )
+
+    llm.think.assert_awaited_once()
+    _, call_kwargs = llm.think.await_args
+    assert call_kwargs["cognitive_engine_required"] is True
+    assert call_kwargs["desktop_cognitive_engine_required"] is True
+    assert call_kwargs["protected_foreground_lane"] is True
+    assert "won't fabricate" in new_state.cognition.last_response
+
+
+@pytest.mark.asyncio
 async def test_unitary_response_injects_active_grounding_evidence_for_targeted_followup(monkeypatch):
     state = AuraState()
     state.cognition.current_origin = "api"

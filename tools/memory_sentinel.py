@@ -97,14 +97,22 @@ except (OSError, AttributeError):  # non-macOS or restricted
     _LIBPROC = None
 
 
+def current_phys_footprint_bytes(usage: _RUsageV4) -> int:
+    """Return current footprint; the lifetime maximum is telemetry, not usage."""
+    current = int(getattr(usage, "ri_phys_footprint", 0) or 0)
+    if current > 0:
+        return current
+    return int(getattr(usage, "ri_resident_size", 0) or 0)
+
+
 def phys_footprint_mb(pid: int) -> float:
-    """RSS + compressed + IOKit-mapped: the metric memorystatus kills on."""
+    """Current RSS + compressed + IOKit-mapped footprint."""
     if _LIBPROC is None:
         return 0.0
     ru = _RUsageV4()
     if _LIBPROC.proc_pid_rusage(int(pid), 4, ctypes.byref(ru)) != 0:
         return 0.0
-    return max(ru.ri_phys_footprint, ru.ri_lifetime_max_phys_footprint) / (1024 * 1024)
+    return current_phys_footprint_bytes(ru) / (1024 * 1024)
 
 
 def child_pids(root_pid: int, *, recursive: bool = True, max_children: int = 128) -> list[int]:

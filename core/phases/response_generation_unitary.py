@@ -3738,6 +3738,10 @@ class UnitaryResponsePhase(Phase):
         runtime_context = kwargs.get("context")
         if not isinstance(runtime_context, dict):
             runtime_context = {}
+        desktop_cognitive_engine_required = bool(
+            runtime_context.get("desktop_cognitive_engine_required", False)
+            or runtime_context.get("cognitive_engine_required", False)
+        )
         if not objective:
             return state
         new_state = state.derive("unitary_response", origin="UnitaryResponsePhase")
@@ -5058,6 +5062,14 @@ class UnitaryResponsePhase(Phase):
                 "timeout": request_timeout,
                 "state": new_state,
             }
+            if desktop_cognitive_engine_required:
+                llm_kwargs.update(
+                    {
+                        "cognitive_engine_required": True,
+                        "desktop_cognitive_engine_required": True,
+                        "protected_foreground_lane": True,
+                    }
+                )
             try:
                 foreground_cap = int(runtime_context.get("max_tokens") or 0)
             except (TypeError, ValueError, OverflowError):
@@ -5756,6 +5768,7 @@ class UnitaryResponsePhase(Phase):
                     and not proof_evaluation_turn
                     and not benchmark_turn
                     and not contract.tool_evidence_available
+                    and not desktop_cognitive_engine_required
                     and strategies._is_logical_check(objective)
                 ):
                     logger.info("⚡ [Critique] Running System 2 self-critique on response...")
@@ -5814,6 +5827,12 @@ class UnitaryResponsePhase(Phase):
                 response_text = self._shape_user_facing_response(response_text, objective)
 
             async def _retry_dialogue(repair_block: str) -> str:
+                if desktop_cognitive_engine_required:
+                    logger.warning(
+                        "🛡️ UnitaryResponse skipped a second heavyweight desktop generation; "
+                        "deterministic dialogue repair remains authoritative for this turn."
+                    )
+                    return ""
                 retry_messages = [dict(msg) for msg in messages]
                 if retry_messages and retry_messages[0].get("role") == "system":
                     retry_messages[0]["content"] = (
@@ -5881,7 +5900,11 @@ class UnitaryResponsePhase(Phase):
                     retried_text = self._shape_user_facing_response(retried_text, objective)
                 return retried_text
 
-            if operator_evidence_turn and not self._operator_evidence_reply_is_substantive(response_text):
+            if (
+                operator_evidence_turn
+                and not desktop_cognitive_engine_required
+                and not self._operator_evidence_reply_is_substantive(response_text)
+            ):
                 operator_retry_block = (
                     "The previous draft missed the operator-evidence contract. Regenerate one plain "
                     "paragraph that directly answers the current user message. It must include these "
@@ -5918,7 +5941,11 @@ class UnitaryResponsePhase(Phase):
                 ) = await enforce_dialogue_contract(
                     response_text,
                     contract,
-                    retry_generate=_retry_dialogue if is_user_facing else None,
+                    retry_generate=(
+                        _retry_dialogue
+                        if is_user_facing and not desktop_cognitive_engine_required
+                        else None
+                    ),
                     state=new_state,
                 )
                 if is_user_facing and dialogue_retried and pre_dialogue_response:
@@ -6153,7 +6180,9 @@ class UnitaryResponsePhase(Phase):
                                 "without occult accusations, invented danger, prompt artifacts, or filler."
                             )
                             retried_text = (
-                                await _retry_dialogue(retry_block) if is_user_facing else ""
+                                await _retry_dialogue(retry_block)
+                                if is_user_facing and not desktop_cognitive_engine_required
+                                else ""
                             )
                             if retried_text:
                                 retried_quality = assess_user_facing_reply(objective, retried_text)
@@ -6187,6 +6216,25 @@ class UnitaryResponsePhase(Phase):
                                         len(str(response_text or "")),
                                     )
                                     response_text = shaped_floor
+                                elif desktop_cognitive_engine_required:
+                                    failure_reply = (
+                                        "I couldn't produce a reliable answer to that turn, and I won't "
+                                        "fabricate one. The Cortex draft failed its output checks, so I "
+                                        "recorded the failure instead of sending nonsense."
+                                    )
+                                    _record_response_degradation(
+                                        RuntimeError(
+                                            "desktop Cortex draft and deterministic repair floor "
+                                            "both failed user-facing reliability checks"
+                                        ),
+                                        "UnitaryResponse emitted an explicit desktop inference failure: %s",
+                                        action=(
+                                            "surfaced a bounded desktop runtime failure instead of "
+                                            "retrying the heavyweight model or returning HTTP 503"
+                                        ),
+                                        severity="degraded",
+                                    )
+                                    response_text = failure_reply
                                 else:
                                     raise TimeoutError(
                                         "Foreground conversation lane produced only unsafe drafts: "

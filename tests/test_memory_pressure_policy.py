@@ -138,6 +138,28 @@ def test_memory_pressure_snapshot_uses_darwin_footprint_when_larger_than_rss(mon
     assert "process_tree_rss:21.0GB/18.0GB" in snapshot.reason
 
 
+def test_darwin_footprint_uses_current_value_not_lifetime_peak():
+    import core.utils.memory_monitor as memory_monitor
+
+    usage = memory_monitor._DarwinRUsageInfoV4()
+    usage.ri_resident_size = 2 * 1024**3
+    usage.ri_phys_footprint = 6 * 1024**3
+    usage.ri_lifetime_max_phys_footprint = 105 * 1024**3
+
+    assert memory_monitor._current_darwin_footprint_bytes(usage) == 6 * 1024**3
+
+
+def test_darwin_footprint_falls_back_to_current_resident_size():
+    import core.utils.memory_monitor as memory_monitor
+
+    usage = memory_monitor._DarwinRUsageInfoV4()
+    usage.ri_resident_size = 3 * 1024**3
+    usage.ri_phys_footprint = 0
+    usage.ri_lifetime_max_phys_footprint = 105 * 1024**3
+
+    assert memory_monitor._current_darwin_footprint_bytes(usage) == 3 * 1024**3
+
+
 def test_background_policy_blocks_on_process_tree_rss_even_when_system_memory_is_low(
     monkeypatch,
 ):

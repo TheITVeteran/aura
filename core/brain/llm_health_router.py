@@ -22,6 +22,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -72,8 +73,27 @@ logger = logging.getLogger("Brain.HealthRouter")
 # never happen again.
 import threading as _threading  # noqa: E402 - gate lives with its rationale block
 
+
+def generation_concurrency_limit(env: Mapping[str, str] | None = None) -> int:
+    """Return the process-wide generation limit for the active runtime profile."""
+
+    env = env or os.environ
+    raw_limit = str(env.get("AURA_MAX_CONCURRENT_GENERATIONS", "2") or "2").strip()
+    try:
+        configured = max(1, int(raw_limit))
+    except (TypeError, ValueError, OverflowError):
+        configured = 2
+
+    allow_desktop_parallelism = str(
+        env.get("AURA_ALLOW_CONCURRENT_DESKTOP_GENERATIONS", "")
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if desktop_safe_boot_enabled(env) and not allow_desktop_parallelism:
+        return 1
+    return configured
+
+
 _GENERATION_GATE = _threading.BoundedSemaphore(
-    max(1, int(os.environ.get("AURA_MAX_CONCURRENT_GENERATIONS", "2") or 2))
+    generation_concurrency_limit()
 )
 _GENERATION_GATE_STATE_LOCK = _threading.Lock()
 _GENERATION_GATE_ACTIVE_LEASES: dict[int, tuple[float, str]] = {}

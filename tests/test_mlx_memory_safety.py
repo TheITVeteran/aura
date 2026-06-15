@@ -3,6 +3,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 
+def test_external_memory_sentinel_uses_current_footprint_not_lifetime_peak():
+    from tools.memory_sentinel import _RUsageV4, current_phys_footprint_bytes
+
+    usage = _RUsageV4()
+    usage.ri_resident_size = 2 * 1024**3
+    usage.ri_phys_footprint = 7 * 1024**3
+    usage.ri_lifetime_max_phys_footprint = 105 * 1024**3
+
+    assert current_phys_footprint_bytes(usage) == 7 * 1024**3
+
+
 def test_memory_pressure_generation_controls_clamp_tokens_and_recurrent_depth():
     from core.brain.llm.mlx_client import _apply_memory_pressure_generation_controls
 

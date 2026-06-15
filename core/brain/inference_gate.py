@@ -6608,6 +6608,8 @@ class InferenceGate:
             "strict_value_contract",
             "proof_evaluation_contract",
             "operator_evidence_contract",
+            "cognitive_engine_required",
+            "desktop_cognitive_engine_required",
             "clean_user_surface_contract",
             "clean_user_surface_steering_alpha",
             "clean_user_surface_recurrent_loops",

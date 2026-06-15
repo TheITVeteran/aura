@@ -90,8 +90,22 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def _current_darwin_footprint_bytes(info: _DarwinRUsageInfoV4) -> int:
+    """Return current macOS footprint without retaining a historical peak.
+
+    ``ri_lifetime_max_phys_footprint`` is a process-lifetime high-water mark.
+    Using it as current usage makes every memory gate stay tripped after one
+    transient spike, even after the allocation has been released.
+    """
+
+    current = int(getattr(info, "ri_phys_footprint", 0) or 0)
+    if current > 0:
+        return current
+    return int(getattr(info, "ri_resident_size", 0) or 0)
+
+
 def _darwin_phys_footprint_bytes(pid: int) -> int:
-    """Return macOS phys_footprint when available.
+    """Return current macOS phys_footprint when available.
 
     Activity Monitor's "Memory" column tracks process footprint more closely
     than plain RSS for unified-memory-heavy MLX workers. RSS remains the
@@ -119,7 +133,7 @@ def _darwin_phys_footprint_bytes(pid: int) -> int:
         )
         if rc != 0:
             return 0
-        return int(max(info.ri_phys_footprint, info.ri_lifetime_max_phys_footprint))
+        return _current_darwin_footprint_bytes(info)
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError, ctypes.ArgumentError):
         _DARWIN_LIBPROC_UNAVAILABLE = True
         return 0

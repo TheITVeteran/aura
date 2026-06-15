@@ -51,3 +51,31 @@ def test_foreground_retry_schedule_only_retries_fast_failures() -> None:
         primary_attempt_elapsed=61.0,
         primary_timeout=150.0,
     ) == ()
+
+
+def test_think_preserves_desktop_cognitive_engine_contract() -> None:
+    async def run() -> None:
+        gate = InferenceGate()
+        captured: dict[str, object] = {}
+
+        async def fake_generate(prompt, context=None, timeout=None):
+            captured["prompt"] = prompt
+            captured["context"] = dict(context or {})
+            captured["timeout"] = timeout
+            return "ready"
+
+        gate.generate = fake_generate  # type: ignore[method-assign]
+        gate._post_inference_update = lambda _text: None  # type: ignore[method-assign]
+
+        result = await gate.think(
+            "hello",
+            origin="desktop_ui",
+            cognitive_engine_required=True,
+            desktop_cognitive_engine_required=True,
+        )
+
+        assert result == "ready"
+        assert captured["context"]["cognitive_engine_required"] is True
+        assert captured["context"]["desktop_cognitive_engine_required"] is True
+
+    asyncio.run(run())

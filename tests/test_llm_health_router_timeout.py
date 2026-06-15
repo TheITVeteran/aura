@@ -10,8 +10,31 @@ from core.brain.llm_health_router import (
     HealthAwareLLMRouter,
     _endpoint_call_budgets,
     _endpoint_call_timeout,
+    generation_concurrency_limit,
 )
 from tools.audit_degradation import analyze_file
+
+
+def test_generation_concurrency_limit_serializes_desktop_safe_boot():
+    assert generation_concurrency_limit(
+        {
+            "AURA_SAFE_BOOT_DESKTOP": "1",
+            "AURA_MAX_CONCURRENT_GENERATIONS": "8",
+        }
+    ) == 1
+    assert generation_concurrency_limit(
+        {
+            "AURA_SAFE_BOOT_DESKTOP": "1",
+            "AURA_MAX_CONCURRENT_GENERATIONS": "3",
+            "AURA_ALLOW_CONCURRENT_DESKTOP_GENERATIONS": "1",
+        }
+    ) == 3
+    assert generation_concurrency_limit(
+        {
+            "AURA_SAFE_BOOT_DESKTOP": "0",
+            "AURA_MAX_CONCURRENT_GENERATIONS": "invalid",
+        }
+    ) == 2
 
 
 def test_llm_health_router_degradation_audit_is_clean():
