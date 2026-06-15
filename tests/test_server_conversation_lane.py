@@ -3231,7 +3231,7 @@ async def test_desktop_required_cognitive_engine_timeout_does_not_retry_hidden_w
 
 
 @pytest.mark.asyncio
-async def test_desktop_required_cognitive_engine_retries_transient_engine_error_same_path(monkeypatch):
+async def test_desktop_required_cognitive_engine_does_not_retry_transient_error_by_default(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -3246,14 +3246,7 @@ async def test_desktop_required_cognitive_engine_retries_transient_engine_error_
                     "timeout_s": kwargs.get("timeout_s"),
                 }
             )
-            if len(calls) == 1:
-                raise RuntimeError("transient live cognitive turn reset")
-            return SimpleNamespace(
-                content=(
-                    "Reliable desktop chat has to recover from a transient engine reset without "
-                    "leaving the governed CognitiveEngine path."
-                )
-            )
+            raise RuntimeError("transient live cognitive turn reset")
 
     class _Pool:
         async def acquire_engine_connection(self, *_args, **_kwargs):
@@ -3264,6 +3257,7 @@ async def test_desktop_required_cognitive_engine_retries_transient_engine_error_
             return SimpleNamespace(content="unexpected pool retry")
 
     monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.delenv("AURA_DESKTOP_ALLOW_TRANSIENT_ENGINE_RETRY", raising=False)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -3284,8 +3278,76 @@ async def test_desktop_required_cognitive_engine_retries_transient_engine_error_
         require_engine=True,
     )
 
+    assert reply is None
+    assert len(calls) == 1
+    assert not any(call.get("unexpected_pool_retry") for call in calls)
+    assert all(call["context"]["desktop_cognitive_engine_required"] is True for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_desktop_required_cognitive_engine_can_opt_into_transient_retry_same_path(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "timeout_s": kwargs.get("timeout_s"),
+                }
+            )
+            if len(calls) == 1:
+                raise RuntimeError("transient live cognitive turn reset")
+            return SimpleNamespace(
+                content=(
+                    "Reliable desktop chat can retry an explicitly enabled transient reset without "
+                    "leaving the governed CognitiveEngine path. The retry still uses the same protected "
+                    "foreground context, keeps legacy fallbacks disabled, and returns only after the "
+                    "second draft satisfies the normal user-facing response contract."
+                )
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, *_args, **_kwargs):
+            calls.append({"unexpected_pool_retry": True})
+            return SimpleNamespace(content="unexpected pool retry")
+
+    monkeypatch.setenv("AURA_DESKTOP_ALLOW_TRANSIENT_ENGINE_RETRY", "1")
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_transient_engine_retry_allowed",
+        lambda *, reason: (True, reason),
+    )
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "Answer directly about reliable desktop chat recovery.",
+        visible_user_message="Answer directly about reliable desktop chat recovery.",
+        origin="user",
+        timeout_s=12.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
     assert reply
-    assert "transient engine reset" in reply
+    assert "transient reset" in reply
     assert "CognitiveEngine path" in reply
     assert len(calls) == 2
     assert not any(call.get("unexpected_pool_retry") for call in calls)

@@ -2637,7 +2637,19 @@ async def _run_cognitive_engine_chat_turn(
                 timeout=operation_timeout,
             )
 
-        attempts = 2 if require_engine else 1
+        attempts = 1
+        if require_engine:
+            allowed, block_reason = _desktop_transient_engine_retry_allowed(
+                reason="transient_cognitive_engine_error"
+            )
+            if allowed:
+                attempts = 2
+            else:
+                logger.debug(
+                    "%s will not retry transient desktop engine errors (%s).",
+                    label,
+                    block_reason,
+                )
         deadline = time.monotonic() + max(0.1, float(operation_timeout))
         last_error: BaseException | None = None
         for attempt in range(1, attempts + 1):
@@ -5749,6 +5761,34 @@ def _desktop_secondary_model_repair_allowed(*, reason: str) -> tuple[bool, str]:
     enabled = str(os.environ.get("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", "")).strip().lower()
     if enabled not in {"1", "true", "yes", "on"}:
         return False, "secondary_desktop_model_repair_disabled"
+
+    try:
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        snapshot = get_memory_pressure_snapshot()
+        if bool(getattr(snapshot, "warning", False)) or bool(
+            getattr(snapshot, "refuse_heavy_local_generation", False)
+        ):
+            return False, str(getattr(snapshot, "reason", "") or "memory_pressure")
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        return False, f"memory_probe_unavailable:{exc}"
+
+    return True, reason
+
+
+def _desktop_transient_engine_retry_allowed(*, reason: str) -> tuple[bool, str]:
+    """Return whether a required desktop turn may retry after a transient engine error.
+
+    Required desktop turns default to one foreground CognitiveEngine allocation.
+    Retrying a recoverable engine exception can be useful for diagnostics, but
+    it is not safe as the default live UX policy because it can duplicate heavy
+    32B/72B pressure during a single chat turn.
+    """
+
+    enabled = str(os.environ.get("AURA_DESKTOP_ALLOW_TRANSIENT_ENGINE_RETRY", "")).strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return False, "transient_desktop_engine_retry_disabled"
 
     try:
         from core.utils.memory_monitor import get_memory_pressure_snapshot
