@@ -469,6 +469,70 @@ def test_scheduler_activation_detects_existing_scheduler_singleton_loop():
         scheduler._main_loop_task = old_task
 
 
+def test_activation_audit_rejects_distinct_service_alias_owners():
+    from core.container import ServiceContainer
+    from core.runtime.activation_audit import ActivationAuditor, ActivationSpec
+
+    ServiceContainer.clear()
+    try:
+        ServiceContainer.register_instance("canonical_test_service", object(), required=False)
+        ServiceContainer.register_instance("legacy_test_alias", object(), required=False)
+        auditor = ActivationAuditor(
+            (
+                ActivationSpec(
+                    name="owned_service",
+                    service_keys=("canonical_test_service", "legacy_test_alias"),
+                    required=True,
+                ),
+            )
+        )
+
+        status = asyncio.run(auditor.audit()).statuses[0]
+
+        assert status.active is False
+        assert status.ownership_conflict is True
+        assert status.evidence["ownership_conflict"]["distinct_service_owners"] == 2
+    finally:
+        ServiceContainer.clear()
+
+
+def test_activation_audit_rejects_duplicate_long_lived_task_owners(monkeypatch):
+    from core.runtime.activation_audit import ActivationAuditor, ActivationSpec
+
+    class FakeTask:
+        def __init__(self, name):
+            self._name = name
+
+        def get_name(self):
+            return self._name
+
+        def done(self):
+            return False
+
+    tracker = SimpleNamespace(
+        tasks={
+            FakeTask("aura.owned_loop"),
+            FakeTask("aura.owned_loop"),
+        }
+    )
+    monkeypatch.setattr("core.utils.task_tracker.get_task_tracker", lambda: tracker)
+    auditor = ActivationAuditor(
+        (
+            ActivationSpec(
+                name="owned_loop",
+                task_name_contains=("aura.owned_loop",),
+                required=True,
+            ),
+        )
+    )
+
+    status = asyncio.run(auditor.audit()).statuses[0]
+
+    assert status.active is False
+    assert status.ownership_conflict is True
+    assert status.evidence["ownership_conflict"]["distinct_task_owners"] == 2
+
+
 def test_caa_validator_reads_existing_vector_artifacts():
     from training.caa_32b_validation import CAA32BValidator
 

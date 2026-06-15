@@ -40,6 +40,7 @@ class ActivationStatus:
     auto_start: bool
     reason: str
     evidence: dict[str, Any] = field(default_factory=dict)
+    ownership_conflict: bool = False
     reconciled: bool = False
     error: str = ""
 
@@ -51,6 +52,7 @@ class ActivationStatus:
             "auto_start": self.auto_start,
             "reason": self.reason,
             "evidence": self.evidence,
+            "ownership_conflict": self.ownership_conflict,
             "reconciled": self.reconciled,
             "error": self.error,
         }
@@ -381,6 +383,8 @@ class ActivationAuditor:
         evidence: dict[str, Any] = {}
         service_hits: list[str] = []
         task_hits: list[str] = []
+        service_owner_ids: dict[str, int] = {}
+        task_owner_ids: list[int] = []
         try:
             from core.container import ServiceContainer
 
@@ -390,6 +394,7 @@ class ActivationAuditor:
                     value = ServiceContainer.get(key, default=None)
                     if value is not None:
                         service_hits.append(key)
+                        service_owner_ids[key] = id(value)
                         status_fn = getattr(value, "status", None)
                         if callable(status_fn):
                             try:
@@ -409,11 +414,21 @@ class ActivationAuditor:
                 if any(part in name for part in spec.task_name_contains):
                     if not task.done():
                         task_hits.append(name)
+                        task_owner_ids.append(id(task))
         except (ImportError, AttributeError, RuntimeError) as exc:
             evidence["task_error"] = repr(exc)
         evidence["service_hits"] = service_hits
         evidence["task_hits"] = task_hits
-        active = bool(service_hits or task_hits)
+        ownership_conflict = (
+            len(set(service_owner_ids.values())) > 1
+            or len(set(task_owner_ids)) > 1
+        )
+        if ownership_conflict:
+            evidence["ownership_conflict"] = {
+                "distinct_service_owners": len(set(service_owner_ids.values())),
+                "distinct_task_owners": len(set(task_owner_ids)),
+            }
+        active = bool(service_hits or task_hits) and not ownership_conflict
         if spec.name == "scheduler":
             try:
                 from core.scheduler import scheduler
@@ -421,7 +436,7 @@ class ActivationAuditor:
                 health = scheduler.get_health()
                 main_loop_task = getattr(scheduler, "_main_loop_task", None)
                 scheduler_active = bool(main_loop_task is not None and not main_loop_task.done())
-                active = active or scheduler_active
+                active = (active or scheduler_active) and not ownership_conflict
                 evidence["scheduler_health"] = self._safe_json(health)
                 evidence["scheduler_main_loop_active"] = scheduler_active
                 if scheduler_active and "aura.scheduler.main_loop" not in task_hits:
@@ -447,6 +462,7 @@ class ActivationAuditor:
             auto_start=spec.auto_start,
             reason=spec.reason,
             evidence=evidence,
+            ownership_conflict=ownership_conflict,
         )
 
     async def _reconcile(self, spec: ActivationSpec, orchestrator: Any, prior: ActivationStatus) -> ActivationStatus:
@@ -462,6 +478,7 @@ class ActivationAuditor:
                 auto_start=status.auto_start,
                 reason=status.reason,
                 evidence={**status.evidence, "starter_result": self._safe_json(result)},
+                ownership_conflict=status.ownership_conflict,
                 reconciled=True,
             )
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
@@ -473,6 +490,7 @@ class ActivationAuditor:
                 auto_start=prior.auto_start,
                 reason=prior.reason,
                 evidence=prior.evidence,
+                ownership_conflict=prior.ownership_conflict,
                 reconciled=True,
                 error=repr(exc),
             )

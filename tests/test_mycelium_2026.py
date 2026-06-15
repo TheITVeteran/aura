@@ -36,6 +36,15 @@ def test_pathway_validation(network):
     pw, params = match
     assert params["prompt"] == "a neon cat"
 
+
+@pytest.mark.parametrize(
+    "message",
+    ["who are you", "status", "how are you", "help", "what can you do"],
+)
+def test_conversation_is_not_intercepted_by_canned_mycelium_reflexes(network, message):
+    assert network.match_hardwired(message) is None
+    assert all(pathway.direct_response is None for pathway in network.pathways.values())
+
 def test_hypha_pydantic(network):
     network.establish_connection("A", "B", priority=2.0)
     assert "A->B" in network.hyphae
@@ -92,6 +101,7 @@ def test_foreground_boot_defers_infrastructure_mapping_quiet_window(network, mon
 
     report = network.get_infrastructure_report()
     assert report["mapped"] is False
+    assert report["mapping_state"] == "deferred"
     assert report["total_modules"] == 0
     assert str(report["deferred_reason"]).startswith("foreground_quiet_window:")
 
@@ -105,7 +115,52 @@ def test_foreground_infrastructure_mapping_force_override(network, monkeypatch, 
 
     report = network.get_infrastructure_report()
     assert report["mapped"] is True
+    assert report["mapping_state"] == "ready"
     assert report["total_modules"] == 1
+
+
+def test_setup_schedules_only_one_owned_mapping_thread(network, monkeypatch):
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    started = []
+
+    class FakeThread:
+        def __init__(self, *, target, args, kwargs, daemon, name):
+            self.target = target
+            self.args = args
+            self.kwargs = kwargs
+            self.daemon = daemon
+            self.name = name
+            self._alive = False
+
+        def start(self):
+            self._alive = True
+            started.append(self)
+
+        def is_alive(self):
+            return self._alive
+
+    monkeypatch.setattr("core.mycelium.threading.Thread", FakeThread)
+
+    assert network.setup() is True
+    assert network.setup() is False
+    assert len(started) == 1
+    assert started[0].name == "MyceliumInfrastructureMap"
+
+
+def test_mapping_worker_clears_running_state_after_failure(network, monkeypatch):
+    def fail_mapping(*args, **kwargs):
+        network._is_mapping = True
+        raise OSError("scan failed")
+
+    monkeypatch.setattr(network, "map_infrastructure", fail_mapping)
+
+    network._mapping_worker("/tmp")
+
+    report = network.get_infrastructure_report()
+    assert report["mapping_state"] == "failed"
+    assert report["mapped"] is False
+    assert network._is_mapping is False
+    assert "OSError: scan failed" == report["mapping_last_error"]
 
 
 ##

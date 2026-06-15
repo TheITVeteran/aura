@@ -544,9 +544,11 @@ class CognitiveRoutingPhase(Phase):
             reflective_mode = CognitiveMode.REACTIVE
             if (
                 analysis.suggests_deliberate_mode
-                or contract.requires_aura_question
                 or (contract.requires_memory_grounding and memory_salience > 0.55)
-                or affective_complexity > 0.45
+                or (
+                    contract.requires_state_reflection
+                    and affective_complexity > 0.65
+                )
             ):
                 reflective_mode = CognitiveMode.DELIBERATE
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
 import tarfile
+
+import pytest
 
 from core.runtime import archive_gateway
 
@@ -29,3 +32,24 @@ def test_archive_gateway_creates_multi_source_tar_gz(
         names = set(tar.getnames())
         assert "memory/trace.txt" in names
         assert "wallet/ledger.txt" in names
+
+
+def test_archive_gateway_rejects_link_outside_target(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(archive_gateway, "governance_runtime_active", lambda: False)
+    archive_path = tmp_path / "unsafe.tar.gz"
+    with tarfile.open(archive_path, "w:gz") as tar:
+        payload = b"safe"
+        regular = tarfile.TarInfo("safe.txt")
+        regular.size = len(payload)
+        tar.addfile(regular, io.BytesIO(payload))
+        link = tarfile.TarInfo("escape-link")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "../../outside"
+        tar.addfile(link)
+
+    with pytest.raises(tarfile.TarError):
+        archive_gateway.ArchiveGateway().extract_tar_gz(
+            archive_path,
+            tmp_path / "restore",
+            source_label="test.archive_gateway.unsafe_link",
+        )

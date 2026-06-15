@@ -543,6 +543,7 @@ class OrchestratorBootMixin(
 
                 register_core_pathways(mycelium)
                 mycelium.establish_unification_hyphae()
+                mycelium.establish_consciousness_hyphae()
 
                 proof_boot_active = False
                 try:
@@ -561,29 +562,6 @@ class OrchestratorBootMixin(
                     _spawn_boot_task(
                         mycelium.pulse_check(),
                         "orchestrator.mycelium.pulse_check",
-                    )
-
-                async def _background_mapping():
-                    try:
-                        from core.config import config
-
-                        await asyncio.to_thread(
-                            mycelium.map_infrastructure,
-                            str(config.paths.base_dir),
-                            scan_dirs=["core", "skills"],
-                        )
-                        mycelium.establish_consciousness_hyphae()
-                    except (ImportError, AttributeError, RuntimeError) as e:
-                        _record_boot_degradation(
-                            e,
-                            action="continued without background mycelium infrastructure map",
-                        )
-                        logger.error("🍄 [MYCELIUM] Mapping failed: %s", e)
-
-                if not lightweight_test_boot and not proof_boot_active:
-                    _spawn_boot_task(
-                        _background_mapping(),
-                        "orchestrator.mycelium.background_mapping",
                     )
 
                 # Phase 5: Supplementary Deep Hardening (Claude Feedback)
@@ -876,22 +854,16 @@ class OrchestratorBootMixin(
 
                 self.swarm = SwarmProtocol()
                 ServiceContainer.register_instance("swarm_protocol", self.swarm)
-                # Trigger infrastructure mapping (Soul Graph) outside the
-                # live foreground boot path. The mapper is a repo-wide AST
-                # scan; even on a daemon thread it can contend with Cortex
-                # warmup through the GIL and create first-turn lag. Foreground
-                # launches keep mapping lazy/on-demand.
-                if os.getenv("AURA_FOREGROUND_ONLY", "0").lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                    "on",
-                }:
-                    logger.info(
-                        "🍄 [MYCELIUM] Infrastructure mapping deferred for foreground-only boot."
-                    )
-                else:
-                    mycelium.setup()
+                # The Mycelium is the sole owner of mapping scheduling.
+                # Foreground policy defers the repo-wide AST scan and setup()
+                # is idempotent when another caller already requested it.
+                mapping_scheduled = mycelium.setup()
+                logger.info(
+                    "🍄 [MYCELIUM] Infrastructure mapping state: %s.",
+                    "scheduled"
+                    if mapping_scheduled
+                    else mycelium.get_infrastructure_report()["mapping_state"],
+                )
 
                 logger.info("🛡️ [ORCHESTRATOR] Subsystems synchronously initialized.")
 

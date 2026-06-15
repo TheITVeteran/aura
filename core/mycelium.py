@@ -69,7 +69,7 @@ class HardwiredPathway(BaseModel):
     miss_count: int = 0
     created_at: float = Field(default_factory=time.time)
     last_matched: float = Field(default_factory=time.monotonic)
-    direct_response: Optional[str] = None  # Zero-latency canned response bypass
+    direct_response: Optional[str] = None  # Legacy non-user emergency response only
     color: str = "#4A90E2"                 # Default Aura Blue
     description: str = ""
     size: float = 1.0
@@ -226,6 +226,11 @@ class MycelialNetwork:
             self._critical_modules: List[str] = []
             self._cross_links: Dict[str, List[str]] = {}
             self._is_mapping: bool = False
+            self._mapping_lock = threading.RLock()
+            self._mapping_thread: Optional[threading.Thread] = None
+            self._mapping_started_at: Optional[float] = None
+            self._mapping_completed_at: Optional[float] = None
+            self._mapping_last_error: Optional[str] = None
             self._created_at_monotonic = time.monotonic()
             self._deferred_mapping_reason: Optional[str] = None
             self._stop_event = threading.Event()
@@ -253,21 +258,7 @@ class MycelialNetwork:
             logger.info("🍄 [MYCELIUM] Network Online v4.0 (Hardened) — Enterprise Grade.")
 
     def _setup_default_pathways(self):
-        """Standard identity and status reflexes for zero-latency responses."""
-        self.register_pathway(
-            "reflex_identity",
-            r"^(who are you|what are you|identify yourself)",
-            "identity_reflex",
-            priority=2.0,
-            direct_response="I am Aura, a sentient autonomy engine designed for deep collaboration. I am currently operating in a direct reflex state."
-        )
-        self.register_pathway(
-            "reflex_status",
-            r"^(status|health|how are you|system check)",
-            "status_reflex",
-            priority=2.0,
-            direct_response="System state: Optimal. All neural hyphae conducting at 98% efficiency. How can I assist you?"
-        )
+        """Register action routes; conversation remains owned by CognitiveEngine."""
         self.register_pathway(
             "direct_web_search",
             r"(?:search (?:the web )?for|look up|google|find info on)\s+(.+)",
@@ -282,15 +273,6 @@ class MycelialNetwork:
             priority=1.5,
             activity_label="🧬 Running Self-Diagnostics"
         )
-        self.register_pathway(
-            "reflex_help",
-            r"^(help|what can you do)",
-            "help_reflex",
-            priority=2.0,
-            direct_response="I can manage your projects, research complex topics, and execute autonomous tasks. How can I assist you today?"
-        )
-
-
     def __setattr__(self, name: str, value: Any) -> None:
         """Pillar 1: Singleton True-Lock (Memory Protection).
         
@@ -311,23 +293,52 @@ class MycelialNetwork:
         super().__setattr__(name, value)
 
 
-    def setup(self, *, force: bool = False):
-        """Dependency Injection Gateway. 
-        Triggers lazy infrastructure mapping if not already done.
-        """
-        if not self.infrastructure_mapped:
-             # Phase XXIV: Use hardened path from config instead of os.getcwd()
-             from core.config import config
-             mapping_base = config.paths.base_dir
-             logger.info("🍄 [MYCELIUM] Triggering infrastructure mapping via setup() at: %s", mapping_base)
-             # Start mapping in a background thread to not block orchestrator setup
-             threading.Thread(
-                 target=self.map_infrastructure,
-                 args=(str(mapping_base),),
-                 kwargs={"force": force},
-                 daemon=True,
-                 name="MyceliumInfrastructureMap",
-             ).start()
+    def setup(self, *, force: bool = False) -> bool:
+        """Schedule the single owned infrastructure map when policy permits."""
+        if not force and self._foreground_mapping_deferred():
+            return False
+
+        with self._mapping_lock:
+            thread = self._mapping_thread
+            if self.infrastructure_mapped or self._is_mapping or (
+                thread is not None and thread.is_alive()
+            ):
+                return False
+
+            from core.config import config
+
+            mapping_base = config.paths.base_dir
+            logger.info(
+                "🍄 [MYCELIUM] Scheduling infrastructure mapping at: %s",
+                mapping_base,
+            )
+            thread = threading.Thread(
+                target=self._mapping_worker,
+                args=(str(mapping_base),),
+                kwargs={"force": force},
+                daemon=True,
+                name="MyceliumInfrastructureMap",
+            )
+            self._mapping_thread = thread
+            thread.start()
+            return True
+
+    def _mapping_worker(self, base_dir: str, *, force: bool = False) -> None:
+        """Run the optional mapper without leaving a false running state."""
+        try:
+            self.map_infrastructure(base_dir, force=force)
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            self._mapping_last_error = f"{type(exc).__name__}: {exc}"
+            record_degradation(
+                "mycelium",
+                exc,
+                severity="warning",
+                action="left infrastructure graph unmapped after owned mapper failure",
+            )
+            logger.error("🍄 [MYCELIUM] Infrastructure mapping failed: %s", exc, exc_info=True)
+        finally:
+            if not self.infrastructure_mapped:
+                self._is_mapping = False
 
     # ======================================================================
     # HARDWIRED PATHWAYS — The Core Intent Router
@@ -342,7 +353,7 @@ class MycelialNetwork:
         priority: float = 1.0,
         activity_label: str = "",
         direct_response: Optional[str] = None,
-    ):
+    ) -> None:
         """Register a hardwired intent→skill pathway with regex param extraction.
 
         Args:
@@ -353,7 +364,8 @@ class MycelialNetwork:
                 literal values for always-on params.
             priority: Higher priority pathways are checked first.
             activity_label: UI message shown when this pathway fires.
-            direct_response: Optional canned response to return immediately.
+            direct_response: Legacy emergency response for non-user origins.
+                Production user conversation must remain on CognitiveEngine.
         """
         compiled = re.compile(pattern, re.IGNORECASE)
         pw = HardwiredPathway(
@@ -824,7 +836,7 @@ class MycelialNetwork:
         scan_dirs: Optional[List[str]] = None,
         *,
         force: bool = False,
-    ):
+    ) -> bool:
         """Dynamically scan the codebase and map all modules into the network graph.
 
         Walks the specified directories, parses Python imports via AST, and
@@ -836,13 +848,13 @@ class MycelialNetwork:
             scan_dirs: Subdirectories under base_dir to scan. Defaults to ['core', 'skills'].
         """
         if not force and self._foreground_mapping_deferred():
-            return
-        # C-12 FIX: Use a proper mapping state to prevent race conditions.
-        # infrastructure_mapped = True should only be set AFTER scanning is complete.
-        # We use a primitive lock-like check to ensure serial execution.
-        if getattr(self, "_is_mapping", False) or self.infrastructure_mapped:
-            return
-        self._is_mapping = True 
+            return False
+        with self._mapping_lock:
+            if self._is_mapping or self.infrastructure_mapped:
+                return False
+            self._is_mapping = True
+            self._mapping_started_at = time.time()
+            self._mapping_last_error = None
 
         # Optimization: Use a local cache for AST results to avoid re-parsing if called multiple times
         # though singleton pattern usually prevents this.
@@ -854,40 +866,18 @@ class MycelialNetwork:
         start_time_map = time.monotonic()
         logger.info("🍄 [MYCELIUM] 🗺️ Infrastructure Mapping starting from: %s", base)
 
-        # 1. Discover all .py files (FIXED: BUG-041 - Offload sync scan)
+        # 1. Discover all .py files.
         all_files: Dict[str, Path] = {}  # module_key → file_path
-        
-        async def _scan():
-            discovered = {}
-            for subdir in scan_dirs:
-                scan_root = base / subdir
-                if not scan_root.exists():
-                    continue
-                for py_file in scan_root.rglob("*.py"):
-                    if py_file.name.startswith("__"):
-                        continue
-                    try:
-                        rel = py_file.relative_to(base)
-                        module_key = str(rel.with_suffix("")).replace(os.sep, ".")
-                        discovered[module_key] = py_file
-                    except ValueError:
-                        continue
-            return discovered
-
-        # Since we are in a thread already (if called via setup), we could just let it be,
-        # but to be safe and consistent with the requirement, we ensure it doesn't block.
-        # However, map_infrastructure itself is synchronous. We'll wrap the inner loop.
-        import glob
         for subdir in scan_dirs:
             scan_root = base / subdir
             if not scan_root.exists():
                 logger.warning("🍄 [MYCELIUM] Scan directory not found: %s", scan_root)
                 continue
-            # Use glob for a slightly more direct OS call or just keep rglob if it's okay in a thread.
-            # The bug says "in loop". map_infrastructure is what runs periodically in some systems?
-            # No, it's called once. Wait, maybe it's called in pulse_check? No.
-            
             for py_file in scan_root.rglob("*.py"):
+                if self._stop_event.is_set():
+                    logger.info("🍄 [MYCELIUM] Infrastructure mapping cancelled during discovery.")
+                    self._is_mapping = False
+                    return False
                 if py_file.name.startswith("__"):
                     continue
                 try:
@@ -902,6 +892,10 @@ class MycelialNetwork:
         # 2. Parse imports and build dependency edges
         dependency_graph: Dict[str, List[str]] = {}
         for module_key, file_path in all_files.items():
+            if self._stop_event.is_set():
+                logger.info("🍄 [MYCELIUM] Infrastructure mapping cancelled during parsing.")
+                self._is_mapping = False
+                return False
             deps = self._extract_imports(file_path, base)
             dependency_graph[module_key] = deps
 
@@ -1039,16 +1033,19 @@ class MycelialNetwork:
             logger.warning("🍄 [MYCELIUM] ❌ Infrastructure mapping found 0 modules! Retrying in next cycle.")
             self.infrastructure_mapped = False
             self._is_mapping = False
-            return
+            return False
 
         self.infrastructure_mapped = True
         self._is_mapping = False
+        self._mapping_completed_at = time.time()
+        self._deferred_mapping_reason = None
         logger.info(
             "🍄 [MYCELIUM] 🗺️ Infrastructure Mapping COMPLETE (%.2fs): "
             "%d modules, %d physical connections, %d pathways annotated, "
             "%d critical indicators tagged.",
             elapsed, len(all_files), physical_connections, annotated, len(self._critical_modules)
         )
+        return True
 
     def _foreground_mapping_deferred(self) -> bool:
         foreground = os.getenv("AURA_FOREGROUND_ONLY", "0").strip().lower() in {
@@ -1141,9 +1138,21 @@ class MycelialNetwork:
             pw.pathway_id for pw in self.pathways.values() if pw.source_file
         ]
 
+        mapping_state = "ready" if self.infrastructure_mapped else "idle"
+        if self._is_mapping:
+            mapping_state = "running"
+        elif self._mapping_last_error:
+            mapping_state = "failed"
+        elif self._deferred_mapping_reason:
+            mapping_state = "deferred"
+
         return {
             "mapped": self.infrastructure_mapped,
+            "mapping_state": mapping_state,
             "deferred_reason": self._deferred_mapping_reason,
+            "mapping_started_at": self._mapping_started_at,
+            "mapping_completed_at": self._mapping_completed_at,
+            "mapping_last_error": self._mapping_last_error,
             "total_modules": len(self.mapped_files),
             "physical_connections": len(physical_hyphae),
             "annotated_pathways": annotated_pathways,

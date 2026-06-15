@@ -93,7 +93,9 @@ class ArchiveGateway:
                 destination = (target_root / member.name).resolve()
                 if os.path.commonpath([str(target_root), str(destination)]) != str(target_root):
                     raise ValueError(f"archive member escapes target directory: {member.name}")
-            tf.extractall(target_path, members=members)
+            # ``data`` rejects device files and unsafe links in addition to
+            # the explicit destination traversal check above.
+            tf.extractall(target_path, members=members, filter="data")
         return target_path
 
 

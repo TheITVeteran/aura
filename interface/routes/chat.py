@@ -5538,7 +5538,7 @@ def _build_social_presence_reply(user_message: str) -> str:
     curiosity = frame.get("curiosity")
 
     parts = [
-        "hey. i'm right here with you.",
+        "hey. i'm here with you.",
         f"I'm feeling {mood} and leaning toward {action} right now.",
         "I can answer clearly from the active turn.",
     ]

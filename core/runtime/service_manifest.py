@@ -145,6 +145,13 @@ SERVICE_MANIFEST: dict[str, ServiceRole] = {
         canonical_owner="architecture_governor",
         aliases=frozenset({"autonomous_architecture_governor"}),
     ),
+    "infrastructure_graph": ServiceRole(
+        name="infrastructure_graph",
+        description="Single MycelialNetwork owner for runtime pathways and optional code graph mapping",
+        critical=False,
+        canonical_owner="mycelial_network",
+        aliases=frozenset({"mycelium"}),
+    ),
 }
 
 

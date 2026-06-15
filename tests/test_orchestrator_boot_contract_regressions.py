@@ -128,13 +128,10 @@ def test_foreground_boot_defers_mycelium_infrastructure_mapping():
     boot_source = (PROJECT_ROOT / "core" / "orchestrator" / "boot.py").read_text(
         encoding="utf-8"
     )
-    mapping_slice = boot_source.split("ServiceContainer.register_instance(\"swarm_protocol\"", 1)[
-        1
-    ].split("logger.info(\"🛡️ [ORCHESTRATOR] Subsystems synchronously initialized.", 1)[0]
-
-    assert "Infrastructure mapping deferred for foreground-only boot" in mapping_slice
-    assert "AURA_FOREGROUND_ONLY" in mapping_slice
-    assert mapping_slice.index("AURA_FOREGROUND_ONLY") < mapping_slice.index("mycelium.setup()")
+    assert boot_source.count("mycelium.setup()") == 1
+    assert "orchestrator.mycelium.background_mapping" not in boot_source
+    assert "mapping_scheduled = mycelium.setup()" in boot_source
+    assert "mycelium.get_infrastructure_report()[\"mapping_state\"]" in boot_source
 
 
 def test_orchestrator_main_loop_refreshes_watchdog_heartbeat():
