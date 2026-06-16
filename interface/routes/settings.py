@@ -216,14 +216,24 @@ class SettingsStore:
 _STORE: SettingsStore | None = None
 
 
-def _apply_safe_mode_to_runtime(key: str, _previous: Any, new: Any) -> None:
-    """Apply the ``safety.safe_mode`` toggle to the live runtime on change.
+# Settings keys that drive the live runtime into restricted ("safe") mode. Both
+# were dead before: persisted but never enforced. The runtime is restricted when
+# the safe-mode kill switch is on OR autonomy is explicitly paused.
+_RUNTIME_MODE_KEYS = frozenset({"safety.safe_mode", "autonomy.level"})
 
-    Without this the setting was dead — persisted but never enforced. Now
-    flipping it in the settings panel immediately halts destructive/self-directed
-    behavior via core.safe_mode.set_safe_mode (best-effort; never breaks a patch).
+
+def _runtime_should_restrict(store: SettingsStore) -> bool:
+    return bool(store.get("safety.safe_mode")) or str(store.get("autonomy.level")) == "paused"
+
+
+def _apply_runtime_mode_from_settings(key: str, _previous: Any, _new: Any) -> None:
+    """Apply the safe-mode / autonomy-paused kill switches to the live runtime.
+
+    Either control restricts the runtime (halts self-modification, persona
+    evolution, dream cycles, consolidation) via core.safe_mode.set_safe_mode.
+    Best-effort: never breaks a settings patch.
     """
-    if key != "safety.safe_mode":
+    if key not in _RUNTIME_MODE_KEYS:
         return
     try:
         from core.container import ServiceContainer
@@ -231,18 +241,23 @@ def _apply_safe_mode_to_runtime(key: str, _previous: Any, new: Any) -> None:
 
         orch = ServiceContainer.get("orchestrator", default=None)
         if orch is not None:
-            set_safe_mode(orch, bool(new))
-            logger.info("🛡️ Safe mode %s applied to live runtime.", "ENABLED" if new else "disabled")
+            restrict = _runtime_should_restrict(get_settings())
+            set_safe_mode(orch, restrict)
+            logger.info(
+                "🛡️ Runtime %s applied from settings (%s).",
+                "RESTRICTED" if restrict else "full",
+                key,
+            )
     except _SETTINGS_RECOVERABLE_ERRORS as exc:
         record_degradation("settings", exc)
-        logger.debug("Safe-mode runtime apply failed for %s: %s", key, exc)
+        logger.debug("Runtime-mode apply failed for %s: %s", key, exc)
 
 
 def get_settings() -> SettingsStore:
     global _STORE
     if _STORE is None:
         _STORE = SettingsStore()
-        _STORE.subscribe(_apply_safe_mode_to_runtime)
+        _STORE.subscribe(_apply_runtime_mode_from_settings)
     return _STORE
 
 

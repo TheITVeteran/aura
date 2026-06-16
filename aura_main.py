@@ -738,8 +738,8 @@ async def bootstrap_aura(orchestrator: Any):
         # toggle (previously boot always forced full mode, making the setting dead).
         boot_safe_mode = False
         try:
-            from interface.routes.settings import get_settings
-            boot_safe_mode = bool(get_settings().get("safety.safe_mode"))
+            from interface.routes.settings import _runtime_should_restrict, get_settings
+            boot_safe_mode = _runtime_should_restrict(get_settings())
         except _AURA_MAIN_BOUNDARY_ERRORS as exc:
             record_degradation('aura_main', exc, severity="debug")
         apply_orchestrator_patches(orchestrator, safe_mode=boot_safe_mode)
@@ -2303,7 +2303,6 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
                             # which is how "multiple versions in the background"
                             # happens.
                             logger.info("🎨 GUI closed by user — initiating full shutdown.")
-                            shutdown_reason = "gui_closed"
                             try:
                                 supervisor._is_running = False
                             except AttributeError as exc:

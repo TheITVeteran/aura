@@ -62,21 +62,57 @@ def test_is_safe_mode_defaults_false_on_unpatched_orch():
     assert is_safe_mode(_Orch()) is False
 
 
-def test_settings_bridge_applies_to_live_orchestrator(monkeypatch):
-    """Changing safety.safe_mode in the store must apply to the live runtime."""
-    import core.container as container
+def _fresh_store(monkeypatch):
+    """A fresh settings store wired with the runtime-mode bridge, isolated."""
     import interface.routes.settings as settings
 
+    monkeypatch.setattr(settings, "_STORE", None)
+    monkeypatch.setattr(settings, "_SETTINGS_PATH", settings._SETTINGS_PATH.with_name("nope.json"))
+    return settings, settings.get_settings()
+
+
+def test_settings_bridge_applies_safe_mode_to_live_orchestrator(monkeypatch):
+    """Changing safety.safe_mode in the store must apply to the live runtime."""
+    import core.container as container
+
+    settings, store = _fresh_store(monkeypatch)
     orch = _Orch(volition=3)
     monkeypatch.setattr(container.ServiceContainer, "get", staticmethod(
         lambda name, default=None: orch if name == "orchestrator" else default
     ))
-
-    # Drive the bridge directly (it is what the store subscriber invokes).
-    settings._apply_safe_mode_to_runtime("safety.safe_mode", False, True)
+    store.set("safety.safe_mode", True)
     assert is_safe_mode(orch) is True
-    settings._apply_safe_mode_to_runtime("safety.safe_mode", True, False)
+    store.set("safety.safe_mode", False)
     assert is_safe_mode(orch) is False
+
+
+def test_autonomy_paused_restricts_runtime(monkeypatch):
+    """The autonomy 'paused' level is the second kill switch — it must restrict."""
+    import core.container as container
+
+    settings, store = _fresh_store(monkeypatch)
+    orch = _Orch(volition=3)
+    monkeypatch.setattr(container.ServiceContainer, "get", staticmethod(
+        lambda name, default=None: orch if name == "orchestrator" else default
+    ))
+    store.set("autonomy.level", "paused")
+    assert is_safe_mode(orch) is True
+    # Returning to a non-paused level (with safe_mode off) restores full mode.
+    store.set("autonomy.level", "balanced")
+    assert is_safe_mode(orch) is False
+
+
+def test_safe_mode_holds_even_if_autonomy_not_paused(monkeypatch):
+    import core.container as container
+
+    settings, store = _fresh_store(monkeypatch)
+    orch = _Orch(volition=3)
+    monkeypatch.setattr(container.ServiceContainer, "get", staticmethod(
+        lambda name, default=None: orch if name == "orchestrator" else default
+    ))
+    store.set("safety.safe_mode", True)
+    store.set("autonomy.level", "balanced")  # autonomy not paused, but safe_mode on
+    assert is_safe_mode(orch) is True
 
 
 def test_settings_bridge_ignores_other_keys(monkeypatch):
@@ -88,15 +124,10 @@ def test_settings_bridge_ignores_other_keys(monkeypatch):
     monkeypatch.setattr(container.ServiceContainer, "get", staticmethod(
         lambda name, default=None: orch if name == "orchestrator" else default
     ))
-    # An unrelated key must not touch safe mode.
-    settings._apply_safe_mode_to_runtime("theme.mode", "auto", "dark")
+    settings._apply_runtime_mode_from_settings("theme.mode", "auto", "dark")
     assert is_safe_mode(orch) is True
 
 
-def test_settings_store_registers_safe_mode_subscriber(monkeypatch, tmp_path):
-    """get_settings() must wire the safe-mode bridge as a subscriber."""
-    import interface.routes.settings as settings
-
-    monkeypatch.setattr(settings, "_STORE", None)
-    store = settings.get_settings()
-    assert settings._apply_safe_mode_to_runtime in store._subscribers
+def test_settings_store_registers_runtime_mode_subscriber(monkeypatch):
+    settings, store = _fresh_store(monkeypatch)
+    assert settings._apply_runtime_mode_from_settings in store._subscribers
