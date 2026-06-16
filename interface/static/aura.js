@@ -1876,8 +1876,107 @@ function formatToolAction(toolName) {
         return TOOL_LABELS[toolName];
     }
 
-    // Dynamic fallback for any other tool:
-    // e.g. "my_custom_tool" -> "running my custom tool"
+    const VERB_GERUNDS = {
+        'open': 'opening',
+        'close': 'closing',
+        'write': 'writing',
+        'read': 'reading',
+        'create': 'creating',
+        'delete': 'deleting',
+        'remove': 'removing',
+        'add': 'adding',
+        'update': 'updating',
+        'modify': 'modifying',
+        'check': 'checking',
+        'verify': 'verifying',
+        'find': 'finding',
+        'search': 'searching',
+        'seek': 'seeking',
+        'scan': 'scanning',
+        'analyze': 'analyzing',
+        'run': 'running',
+        'exec': 'executing',
+        'execute': 'executing',
+        'launch': 'launching',
+        'start': 'starting',
+        'stop': 'stopping',
+        'kill': 'killing',
+        'manage': 'managing',
+        'save': 'saving',
+        'load': 'loading',
+        'fetch': 'fetching',
+        'get': 'getting',
+        'set': 'setting',
+        'send': 'sending',
+        'receive': 'receiving',
+        'export': 'exporting',
+        'import': 'importing',
+        'sync': 'syncing',
+        'train': 'training',
+        'optimize': 'optimizing',
+        'evaluate': 'evaluating',
+        'eval': 'evaluating',
+        'spawn': 'spawning',
+        'dream': 'dreaming',
+        'listen': 'listening',
+        'speak': 'speaking',
+        'talk': 'talking',
+        'mute': 'muting',
+        'unmute': 'unmuting',
+        'play': 'playing',
+        'remember': 'remembering',
+        'recall': 'recalling',
+        'repair': 'repairing',
+        'evolve': 'evolving',
+        'audit': 'auditing',
+        'propriocept': 'introspecting',
+        'introspect': 'introspecting',
+        'browse': 'browsing',
+        'scrape': 'scraping',
+        'click': 'clicking',
+        'type': 'typing',
+        'press': 'pressing',
+        'move': 'moving',
+        'scroll': 'scrolling',
+        'take': 'taking',
+        'capture': 'capturing',
+        'screenshot': 'screenshotting',
+        'make': 'making',
+        'generate': 'generating',
+        'produce': 'producing',
+        'compile': 'compiling',
+        'build': 'building',
+        'install': 'installing',
+        'configure': 'configuring',
+        'show': 'showing',
+        'hide': 'hiding',
+        'display': 'displaying',
+        'view': 'viewing',
+        'preview': 'previewing',
+        'render': 'rendering',
+        'clear': 'clearing',
+        'reset': 'resetting',
+        'restart': 'restarting',
+        'reboot': 'rebooting'
+    };
+
+    const words = toolName.split(/[-_]+/);
+    let verbIndex = -1;
+    for (let i = 0; i < words.length; i++) {
+        const word = words[i].toLowerCase();
+        if (VERB_GERUNDS[word]) {
+            verbIndex = i;
+            break;
+        }
+    }
+
+    if (verbIndex !== -1) {
+        const verb = words[verbIndex].toLowerCase();
+        const gerund = VERB_GERUNDS[verb];
+        const remaining = [...words.slice(0, verbIndex), ...words.slice(verbIndex + 1)].join(' ');
+        return remaining ? `${gerund} ${remaining}` : gerund;
+    }
+
     const clean = toolName.replace(/_/g, ' ').replace(/-/g, ' ').trim().toLowerCase();
     return `running ${clean}`;
 }
