@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -80,6 +81,13 @@ def _looks_like_simple_dialogue_request(text: str) -> bool:
 
 def _compact_skill_result_payload(result: object) -> dict[str, object]:
     return compact_result_payload(result)
+
+
+def _objective_fingerprint(objective: object) -> str:
+    text = " ".join(str(objective or "").split()).strip()
+    if not text:
+        return ""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -700,6 +708,13 @@ class GodModeToolPhase(Phase):
                 "trace the output",
                 "compute the printed output",
                 "determine the exact output",
+                "determine the result",
+                "determine the boolean result",
+                "determine the length",
+                "determine the value",
+                "evaluate the exact printed output",
+                "provide the final boolean result",
+                "analyze the behavior",
                 "what is printed",
                 "what does this print",
                 "printed output",
@@ -1452,11 +1467,19 @@ class GodModeToolPhase(Phase):
                     "role": "system",
                     "content": f"[SKILL RESULT: {skill_name}] {'✅' if ok else '⚠️'} {summary}",
                     "timestamp": time.time(),
-                    "metadata": {"type": "skill_result", "skill": skill_name, "ok": ok},
+                    "metadata": {
+                        "type": "skill_result",
+                        "skill": skill_name,
+                        "ok": ok,
+                        "objective_hash": _objective_fingerprint(objective),
+                    },
                 }
             )
             state.response_modifiers["last_skill_run"] = skill_name
             state.response_modifiers["last_skill_ok"] = ok
+            state.response_modifiers["last_skill_objective_hash"] = _objective_fingerprint(
+                objective
+            )
             state.response_modifiers["last_skill_result_payload"] = _compact_skill_result_payload(
                 result
             )

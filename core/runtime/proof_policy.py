@@ -50,6 +50,7 @@ TRANSIENT_RESPONSE_MODIFIER_KEYS = frozenset(
         "intent_type",
         "interaction_signals",
         "last_skill_ok",
+        "last_skill_objective_hash",
         "last_skill_result_payload",
         "last_skill_run",
         "last_task_id",

@@ -25,6 +25,7 @@ After this rewrite:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -105,6 +106,13 @@ class UnitaryResponsePhase(Phase):
     @staticmethod
     def _normalize_origin(origin: str | None) -> str:
         return background_policy.normalize_origin(origin)
+
+    @staticmethod
+    def _objective_fingerprint(objective: Any) -> str:
+        text = " ".join(str(objective or "").split()).strip()
+        if not text:
+            return ""
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _response_contract_attr(contract: Any, key: str, default: Any = None) -> Any:
@@ -2773,6 +2781,64 @@ class UnitaryResponsePhase(Phase):
         return ""
 
     @classmethod
+    def _fresh_skill_payload_for_objective(
+        cls,
+        state: AuraState,
+        objective: str,
+        *,
+        skill_name: str,
+    ) -> dict[str, Any]:
+        modifiers = dict(getattr(state, "response_modifiers", {}) or {})
+        if str(modifiers.get("last_skill_run", "") or "").strip() != skill_name:
+            return {}
+        if modifiers.get("last_skill_ok") is not True:
+            return {}
+        payload = modifiers.get("last_skill_result_payload")
+        if not isinstance(payload, dict):
+            return {}
+        expected_hash = cls._objective_fingerprint(objective)
+        actual_hash = str(modifiers.get("last_skill_objective_hash", "") or "").strip()
+        if not expected_hash or actual_hash != expected_hash:
+            return {}
+        return dict(payload)
+
+    @classmethod
+    def _build_strict_run_code_answer_from_state(
+        cls,
+        state: AuraState,
+        objective: str,
+    ) -> str:
+        payload = cls._fresh_skill_payload_for_objective(
+            state,
+            objective,
+            skill_name="run_code",
+        )
+        if not payload:
+            return ""
+        if payload.get("ok") is False:
+            return ""
+        try:
+            exit_code = int(payload.get("exit_code", 0) or 0)
+        except (TypeError, ValueError, OverflowError):
+            exit_code = 0
+        if exit_code != 0:
+            return ""
+        stdout = cls._normalize_text(payload.get("stdout", ""), 400)
+        if not stdout:
+            return ""
+        envelope = cls._canonicalize_strict_answer_envelope(
+            objective,
+            f"<answer>{stdout}</answer>",
+        )
+        if not envelope:
+            return ""
+        answer_value = cls._strict_answer_value_from_envelope(envelope)
+        validation = cls._validate_strict_answer_symbolically(objective, answer_value)
+        if validation is not None and getattr(validation, "valid", False) is False:
+            return ""
+        return envelope
+
+    @classmethod
     def _build_deterministic_task_reply(
         cls,
         state: AuraState,
@@ -2857,6 +2923,15 @@ class UnitaryResponsePhase(Phase):
         lower = text.lower()
         if not lower:
             return ""
+
+        strict_answer_prompt = is_strict_proof_answer_prompt(text, origin=origin)
+        if strict_answer_prompt:
+            run_code_reply = cls._build_strict_run_code_answer_from_state(
+                state,
+                objective,
+            )
+            if run_code_reply:
+                return run_code_reply
 
         open_ended_markers = (
             "explain",
@@ -3073,7 +3148,7 @@ class UnitaryResponsePhase(Phase):
             )
 
         planning_markers = ("simulate", "formulate", "debug", "plan", "pathway", "analyze")
-        if any(marker in lower for marker in planning_markers):
+        if not strict_answer_prompt and any(marker in lower for marker in planning_markers):
             return (
                 "I would handle this as a bounded planning task: define the goal state, list the "
                 "available actions, identify the failure modes, and choose the next step that preserves "

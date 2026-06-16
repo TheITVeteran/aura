@@ -57,6 +57,98 @@ def test_prefixed_user_origin_is_foreground_in_unitary_response():
     assert UnitaryResponsePhase._normalize_origin("routing_user") == "user"
 
 
+def test_strict_proof_task_reply_uses_fresh_run_code_stdout():
+    objective = (
+        "Analyze the exact reference status and compute the printed output.\n"
+        "```python\n"
+        "x = [1, 2, 3, 4, 5]\n"
+        "y = x[1:4]\n"
+        "y[0] = 99\n"
+        "print(x[1], y[0])\n"
+        "```\n"
+        "Output your final answer inside <answer>...</answer> tags."
+    )
+    state = AuraState.default()
+    state.cognition.current_origin = "proof"
+    state.response_modifiers.update(
+        {
+            "last_skill_run": "run_code",
+            "last_skill_ok": True,
+            "last_skill_objective_hash": UnitaryResponsePhase._objective_fingerprint(
+                objective
+            ),
+            "last_skill_result_payload": {
+                "ok": True,
+                "stdout": "2 99\n",
+                "exit_code": 0,
+            },
+        }
+    )
+
+    reply = UnitaryResponsePhase._build_structured_proof_task_reply(
+        state,
+        objective,
+        SimpleNamespace(requires_search=False),
+    )
+
+    assert reply == "<answer>2 99</answer>"
+
+
+def test_strict_proof_task_reply_rejects_stale_run_code_stdout():
+    objective = (
+        "Analyze the behavior of this function and determine the length result.\n"
+        "```python\n"
+        "def f(a, b=[]):\n"
+        "    b.append(a)\n"
+        "    return b\n"
+        "print(len(f(1)), len(f(2)), len(f(3)))\n"
+        "```\n"
+        "Output your final answer inside <answer>...</answer> tags."
+    )
+    state = AuraState.default()
+    state.cognition.current_origin = "proof"
+    state.response_modifiers.update(
+        {
+            "last_skill_run": "run_code",
+            "last_skill_ok": True,
+            "last_skill_objective_hash": UnitaryResponsePhase._objective_fingerprint(
+                "different objective"
+            ),
+            "last_skill_result_payload": {
+                "ok": True,
+                "stdout": "2 99\n",
+                "exit_code": 0,
+            },
+        }
+    )
+
+    reply = UnitaryResponsePhase._build_structured_proof_task_reply(
+        state,
+        objective,
+        SimpleNamespace(requires_search=False),
+    )
+
+    assert reply == ""
+
+
+def test_strict_proof_run_code_detector_handles_result_wording():
+    from core.kernel.upgrades_10x import GodModeToolPhase
+
+    objective = (
+        "Analyze the behavior of the following simplified registry tracking function:\n"
+        "```python\n"
+        "def f(a, b=[]):\n"
+        "    b.append(a)\n"
+        "    return b\n"
+        "print(len(f(1)), len(f(2)), len(f(3)))\n"
+        "```\n"
+        "Determine the length of the list returned by each invocation. "
+        "Output your final answer inside <answer>...</answer> tags."
+    )
+
+    assert GodModeToolPhase._looks_like_direct_run_code_request(objective) is True
+
+
 def test_background_unitary_response_timeout_is_short():
     assert UnitaryResponsePhase._timeout_for_request(
         is_user_facing=False,
