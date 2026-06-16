@@ -87,7 +87,7 @@ SCHEMA: tuple[SettingDef, ...] = (
     SettingDef("permissions.files_workspace", "Workspace files", "permissions", True, "Sandbox dir at ~/.aura/data/world/workspace.", "bool"),
 
     # ── Autonomy ─────────────────────────────────────────────────────
-    SettingDef("autonomy.level", "Autonomy level", "autonomy", "balanced", "How freely Aura initiates actions on her own.", "enum", choices=("paused", "minimal", "balanced", "full")),
+    SettingDef("autonomy.level", "Autonomy level", "autonomy", "full", "How freely Aura initiates actions on her own. Default is full — Aura runs at full capability unless you pause it.", "enum", choices=("paused", "minimal", "balanced", "full")),
     SettingDef("autonomy.proactive_messaging", "Proactive messaging", "autonomy", "minimal", "How often Aura starts conversations on her own.", "enum", choices=("never", "minimal", "balanced", "frequent")),
     SettingDef("autonomy.self_modification", "Self-modification", "autonomy", "staged", "Whether structural self-modification is allowed and how.", "enum", choices=("blocked", "staged", "open")),
 

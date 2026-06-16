@@ -71,6 +71,14 @@ def _fresh_store(monkeypatch):
     return settings, settings.get_settings()
 
 
+def test_default_settings_are_full_aura(monkeypatch):
+    """Out of the box, Aura runs at FULL capability — not restricted."""
+    settings, store = _fresh_store(monkeypatch)
+    assert store.get("safety.safe_mode") is False
+    assert store.get("autonomy.level") == "full"
+    assert settings._runtime_should_restrict(store) is False
+
+
 def test_settings_bridge_applies_safe_mode_to_live_orchestrator(monkeypatch):
     """Changing safety.safe_mode in the store must apply to the live runtime."""
     import core.container as container
