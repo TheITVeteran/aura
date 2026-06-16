@@ -216,6 +216,44 @@ def test_bounded_planning_reply_uses_ram_guard_only_for_system_memory():
 
 
 @pytest.mark.asyncio
+async def test_self_sufficient_desktop_objective_skips_foreground_model_allocation(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _ForbiddenCognitiveEngine:
+        async def think(self, *_args, **_kwargs):
+            pytest.fail("self-sufficient desktop objective should not allocate foreground model")
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _ForbiddenCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    objective = (
+        "Please create a folder named 'Aura Live Proof' in my Documents folder "
+        "and write a file inside it called live_proof.txt with one sentence "
+        "about who you are and the current timestamp."
+    )
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        objective,
+        visible_user_message=objective,
+        origin="user",
+        timeout_s=105.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply is not None
+    assert "governed desktop_task lane" in reply
+    assert "receipt-verified effects" in reply
+
+
+@pytest.mark.asyncio
 async def test_preemptible_chat_lock_stale_release_cannot_release_new_owner():
     from interface.routes import chat as chat_routes
 
@@ -3616,8 +3654,8 @@ async def test_desktop_execution_contract_uses_bounded_planning_context(monkeypa
     )
 
     reply = await chat_routes._run_cognitive_engine_chat_turn(
-        "Open Notes and write a timestamped note.",
-        visible_user_message="Open Notes and write a timestamped note.",
+        "Open Google Docs and write an essay about climate adaptation.",
+        visible_user_message="Open Google Docs and write an essay about climate adaptation.",
         origin="user",
         timeout_s=105.0,
         lane={"conversation_ready": True, "state": "ready"},

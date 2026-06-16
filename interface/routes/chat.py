@@ -2571,6 +2571,7 @@ async def _run_cognitive_engine_chat_turn(
     mode = _select_cognitive_chat_mode(visible, effective_user_message)
     shape = analyze_prompt_shape(visible)
     capability_inventory_contract = _is_explicit_capability_inventory_request(visible)
+    desktop_execution_contract = _looks_like_desktop_objective(visible)
     if capability_inventory_contract and require_engine:
         logger.info(
             "Serving bounded desktop capability inventory from governed catalog without foreground model allocation."
@@ -2595,6 +2596,19 @@ async def _run_cognitive_engine_chat_turn(
             "Serving bounded desktop failure-mode contract without foreground model allocation."
         )
         return failure_mode_reply
+    if (
+        desktop_execution_contract
+        and require_engine
+        and _desktop_objective_self_sufficient_without_cognitive_text(visible)
+    ):
+        logger.info(
+            "Serving self-sufficient desktop execution contract without foreground model allocation."
+        )
+        return (
+            "I will execute this through the governed desktop_task lane and report only "
+            "receipt-verified effects. If desktop_task cannot prove the effect, I will "
+            "report the blocker instead of claiming completion."
+        )
     grounded_private_model_reply = (
         _build_grounded_introspection_reply(visible)
         if require_engine and _is_private_cognitive_model_request(visible)
@@ -2629,7 +2643,6 @@ async def _run_cognitive_engine_chat_turn(
         from core.brain.types import ThinkingMode
 
         mode = ThinkingMode.FAST
-    desktop_execution_contract = _looks_like_desktop_objective(visible)
     compact_desktop_chat_contract = _is_compact_desktop_chat_contract(
         visible,
         effective_user_message,
