@@ -272,8 +272,13 @@ def build_boot_health_snapshot(
             and runtime_required_probes_ok
             and (running or runtime_fresh or cycle_count > 0)
         )
+        launcher_openable = bool(
+            orchestrator is not None
+            and initialized
+            and (running or runtime_fresh or cycle_count > 0)
+        )
         user_ready = bool(system_ready)
-        launcher_ready = bool(system_ready)
+        launcher_ready = launcher_openable
         status_text = "ready" if system_ready else "booting"
         http_status = 200 if system_ready else 503
 
@@ -303,7 +308,7 @@ def build_boot_health_snapshot(
             boot_phase = "kernel_warming"
             status_text = "booting"
             user_ready = False
-            launcher_ready = False
+            launcher_ready = launcher_openable
         else:
             boot_phase = "kernel_bootstrap"
             status_text = "booting"

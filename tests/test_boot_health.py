@@ -241,6 +241,7 @@ def test_boot_health_fails_closed_when_runtime_contract_is_not_operational():
 
     assert status_code == 503
     assert payload["ready"] is False
+    assert payload["launcher_ready"] is True
     assert payload["checks"]["runtime_contract_operational"] is False
     assert payload["runtime_contract"]["status"] == "dead"
     assert "runtime_contract" in payload["blockers"]
@@ -272,6 +273,7 @@ def test_boot_health_fails_closed_when_required_runtime_probe_fails():
 
     assert status_code == 503
     assert payload["ready"] is False
+    assert payload["launcher_ready"] is True
     assert payload["checks"]["runtime_required_probes"] is False
     assert payload["required_probes"]["scheduler"]["ok"] is False
     assert "runtime_required_probes" in payload["blockers"]
@@ -312,6 +314,7 @@ def test_boot_health_records_health_check_failure_as_structured_degradation():
 
     assert status_code == 503
     assert payload["ready"] is False
+    assert payload["launcher_ready"] is True
     assert payload["health_check_error"] == "orchestrator probe timed out"
     assert records
     assert records[-1].severity == "degraded"
