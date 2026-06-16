@@ -5901,6 +5901,50 @@ def _build_social_continuity_repair_reply(user_message: str) -> str:
     return _build_social_presence_reply(user_message)
 
 
+def _build_bounded_desktop_repair_reply(user_message: str, frame: dict[str, Any] | None = None) -> str:
+    """Build a user-facing repair when a second live desktop model pass is unsafe.
+
+    This is the desktop pressure-safe path. It must never expose quality-gate,
+    foreground-generation, or memory-guard implementation details as the answer.
+    Prefer deterministic general contracts that are already grounded in runtime
+    state; fall back to a short conversational repair only when no narrower
+    contract fits.
+    """
+
+    if _is_low_risk_social_continuity_request(user_message):
+        return _build_social_continuity_repair_reply(user_message)
+
+    if _is_explicit_capability_inventory_request(user_message):
+        return _build_grounded_capability_inventory_reply(user_message)
+
+    planning = _build_bounded_planning_reply(user_message)
+    if planning:
+        return _apply_aura_voice_shaping(planning)
+
+    failure_mode = _build_failure_mode_surface_reply(user_message)
+    if failure_mode:
+        return _apply_aura_voice_shaping(failure_mode)
+
+    try:
+        from core.conversation.response_reliability import reliability_floor_for_user
+
+        floor = reliability_floor_for_user(user_message)
+        if floor:
+            return _apply_aura_voice_shaping(floor)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Bounded desktop reliability floor unavailable: %s", exc)
+
+    active_frame = frame or _build_aura_expression_frame(user_message)
+    mood = str(active_frame.get("mood") or "steady")
+    action = str(active_frame.get("dominant_action") or "engage")
+    return _apply_aura_voice_shaping(
+        "I'm here with the thread intact. I caught an unstable draft before sending it, "
+        "so I will keep this turn bounded instead of inventing an answer or pretending a tool ran. "
+        f"My state is {mood}, leaning toward {action}. Ask me again in a moment and I will answer from the live path."
+    )
+
+
 _CJK_SCRIPT_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 _CJK_PUNCT_RE = re.compile(r"[\u3000-\u303f\uff00-\uffef]")
 
@@ -6411,15 +6455,7 @@ async def _stabilize_user_facing_reply(
                     ):
                         _record_recent_response(text, user_message)
                         return text
-                    if _is_low_risk_social_continuity_request(user_message):
-                        bounded_failure = _build_social_continuity_repair_reply(user_message)
-                    else:
-                        bounded_failure = (
-                            "I caught a bad live draft before it reached you. "
-                            "I'm keeping this desktop turn on the governed cognitive path instead of "
-                            "answering from a generic fallback. Try that last request again when the "
-                            "memory guard clears."
-                        )
+                    bounded_failure = _build_bounded_desktop_repair_reply(user_message, frame)
                     _record_recent_response(bounded_failure, user_message)
                     return bounded_failure
             # Length cap is structural (output token budget), not behavioral.

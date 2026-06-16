@@ -4940,6 +4940,88 @@ async def test_desktop_required_stabilizer_skips_second_model_pass_by_default(mo
 
 
 @pytest.mark.asyncio
+async def test_desktop_required_capability_repair_uses_grounded_inventory_without_second_pass(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _Gate:
+        def validate_output(self, text, enforce_supervision=False):
+            if "ai language model" in str(text).lower():
+                return False, "assistant_disclaimer", 0.0
+            return True, "ok", 1.0
+
+        def sanitize(self, _text):
+            return ""
+
+    class _InferenceGate:
+        def __init__(self):
+            self.calls = []
+
+        async def think(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return "unexpected rewrite"
+
+    inference_gate = _InferenceGate()
+
+    monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
+    monkeypatch.setattr(chat_routes, "_resolve_live_aura_state", lambda: None)
+    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
+    monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping", lambda text: str(text))
+    monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping_compat", lambda text, _msg: str(text))
+    monkeypatch.setattr(
+        chat_routes,
+        "_looks_generic_assistantish",
+        lambda _msg, text: ("ai language model" in str(text).lower(), "assistant_disclaimer"),
+    )
+    monkeypatch.setattr(chat_routes, "_is_objective_parrot_reply", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
+    monkeypatch.setattr(chat_routes, "_evaluate_reply_topicality", lambda *_args, **_kwargs: (False, ""))
+    monkeypatch.setattr(chat_routes, "_is_stale_repeated_response", lambda _text: False)
+    monkeypatch.setattr(chat_routes, "_is_same_answer_different_prompt", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(chat_routes, "_looks_truncated_tail", lambda _text: False)
+    monkeypatch.setattr(chat_routes, "_looks_semantically_glitched", lambda *_args, **_kwargs: (False, ""))
+    monkeypatch.setattr(chat_routes, "_record_recent_response", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        chat_routes,
+        "_read_capability_catalog_snapshot",
+        lambda: (
+            7,
+            {
+                "desktop and app control": ["desktop_task", "computer_use"],
+                "web and browser research": ["grounded_search", "sovereign_browser"],
+                "files, documents, and workspace operations": ["file_operation", "document_ingest"],
+            },
+            True,
+            False,
+        ),
+    )
+    monkeypatch.setattr("core.identity.identity_guard.PersonaEnforcementGate", lambda: _Gate())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: inference_gate if name == "inference_gate" else default),
+    )
+
+    result = await chat_routes._stabilize_user_facing_reply(
+        "What tools can you use externally? Name a hypothetical scenario of using them.",
+        "As an AI language model, I cannot use tools on your computer.",
+        desktop_cognitive_engine_required=True,
+        protected_foreground_lane=True,
+    )
+
+    assert inference_gate.calls == []
+    assert "desktop and app control" in result
+    assert "web and browser research" in result
+    assert "files, documents, and workspace operations" in result
+    assert "governance path" in result
+    assert "AI language model" not in result
+    assert "bad live draft" not in result
+    assert "memory guard" not in result
+    assert "second foreground generation" not in result
+
+
+@pytest.mark.asyncio
 async def test_stabilizer_skips_second_generation_under_critical_memory_pressure(monkeypatch):
     from interface.routes import chat as chat_routes
 
@@ -5978,5 +6060,12 @@ def test_live_desktop_quality_recovery_does_not_surface_gate_jargon():
 
     assert "failed the reply-quality gate" not in source
     assert "not starting a second foreground generation" not in source
-    assert "_is_low_risk_social_continuity_request(user_message)" in stabilizer_slice
-    assert "_build_social_continuity_repair_reply(user_message)" in stabilizer_slice
+    assert "_build_bounded_desktop_repair_reply(user_message, frame)" in stabilizer_slice
+    bounded_repair_slice = source.split("def _build_bounded_desktop_repair_reply", 1)[1].split(
+        "_CJK_SCRIPT_RE",
+        1,
+    )[0]
+    assert "_is_low_risk_social_continuity_request(user_message)" in bounded_repair_slice
+    assert "_build_social_continuity_repair_reply(user_message)" in bounded_repair_slice
+    assert "_build_grounded_capability_inventory_reply(user_message)" in bounded_repair_slice
+    assert "_build_bounded_planning_reply(user_message)" in bounded_repair_slice
