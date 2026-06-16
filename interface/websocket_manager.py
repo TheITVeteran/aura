@@ -260,7 +260,19 @@ def _normalize_ui_event(message: Any) -> dict[str, Any]:
 
     kind = str(normalized.get("kind") or normalized.get("type") or "message")
     event_id = str(normalized.get("event_id") or normalized.get("id") or uuid.uuid4().hex)
-    event_ts = float(normalized.get("event_ts") or normalized.get("timestamp") or time.time())
+    raw_ts = normalized.get("event_ts") or normalized.get("timestamp")
+    if raw_ts:
+        try:
+            event_ts = float(raw_ts)
+        except (TypeError, ValueError):
+            try:
+                from datetime import datetime
+                ts_str = str(raw_ts).rstrip("Z")
+                event_ts = datetime.fromisoformat(ts_str).timestamp()
+            except (TypeError, ValueError):
+                event_ts = time.time()
+    else:
+        event_ts = time.time()
 
     if "payload" not in normalized:
         normalized["payload"] = {
