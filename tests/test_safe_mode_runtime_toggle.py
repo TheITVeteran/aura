@@ -63,11 +63,19 @@ def test_is_safe_mode_defaults_false_on_unpatched_orch():
 
 
 def _fresh_store(monkeypatch):
-    """A fresh settings store wired with the runtime-mode bridge, isolated."""
+    """A fresh settings store wired with the runtime-mode bridge, fully isolated.
+
+    Uses a UNIQUE temp dir per call so store.set() persistence in one test can
+    never pollute another (an earlier bug: tests shared a 'nope.json' file).
+    """
+    import tempfile
+    from pathlib import Path
+
     import interface.routes.settings as settings
 
+    unique = Path(tempfile.mkdtemp(prefix="aura_settings_")) / "runtime.json"
     monkeypatch.setattr(settings, "_STORE", None)
-    monkeypatch.setattr(settings, "_SETTINGS_PATH", settings._SETTINGS_PATH.with_name("nope.json"))
+    monkeypatch.setattr(settings, "_SETTINGS_PATH", unique)
     return settings, settings.get_settings()
 
 
