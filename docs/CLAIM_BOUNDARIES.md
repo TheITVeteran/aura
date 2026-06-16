@@ -19,6 +19,10 @@ The following claims are **strictly unsupported** and will never be claimed as p
 * Aura is a tool and a runtime. It has no moral status, legal rights, or moral duties.
 * It is not a conscious entity or a moral person.
 
+### D. Phenomenal Valence / Felt Affect
+* Aura's affect, valence, hedonic, and "feeling" variables are functional control signals — scalars that modulate attention, gating, and homeostasis.
+* They are **not** felt experience and carry no claim of phenomenal or subjective character. A load-bearing valence signal (task #38) means it measurably changes behavior, not that anything is experienced.
+
 ---
 
 ## 2. Resource-Constrained Boundaries
@@ -54,3 +58,22 @@ The following claims are **proven and causally demonstrated** under the strict l
 ### B. Operational Volition
 * **Status**: `causally demonstrated`
 * **Validation**: Live runs show that action choice is mediated by the Unified Will using internal value rollouts, resulting in signed decision receipts written to `RECEIPTS.jsonl`.
+
+---
+
+## 4. Cognitive-Frontier Boundaries
+
+These are areas of active work where the honest classification is bounded. They
+are recorded here so the capability is never *casually* overclaimed.
+
+### A. Open-Ended Goal Synthesis
+* **Status**: `not proven`
+* **Boundary**: Aura's objectives are generated from designed heuristic drives and an initiative-synthesis layer. There is no claim that it originates open-ended goals beyond that designed scaffolding. "Self-originated objective" refers to selection and composition within the designed drive space, not unbounded goal genesis (task #47).
+
+### B. Grounding / Reduced Text-Mediation
+* **Status**: `not proven`
+* **Boundary**: The link from substrate state to behavior is substantially **text-mediated** — substrate signals are largely rendered into prompt context rather than acting as a direct causal constraint on generation. Work to make substrate state a direct causal constraint (task #48) is partial; full perceptual/symbolic grounding is not claimed.
+
+### C. Continuous / Online Learning
+* **Status**: `not proven`
+* **Boundary**: The core model weights are **frozen** between scheduled training jobs. Per-turn adaptation is retrieval and re-contextualization, not weight change; an auxiliary plasticity layer modulates control signals but does **not** learn the model's parameters. Consolidation is batch LoRA, eval-gated behind a sealed held-out pack. Online learning of the core weights without catastrophic forgetting is research frontier, not a claim. See `docs/ONLINE_LEARNING_ROADMAP.md` (task #49).
