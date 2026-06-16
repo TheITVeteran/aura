@@ -126,6 +126,65 @@ def test_primary_full_dnu_defaults_to_periodic_model_recycling(monkeypatch):
     )
 
 
+def test_primary_dnu_proof_memory_envelope_disables_desktop_safe_boot():
+    env = {
+        "AURA_SAFE_BOOT_DESKTOP": "1",
+        "AURA_LAUNCHED_FROM_APP": "1",
+        "AURA_HEADLESS": "0",
+        "AURA_PROCESS_RSS_LIMIT_GB": "36",
+        "AURA_MLX_MEMORY_LIMIT_GB": "28",
+        "AURA_MLX_WORKER_RSS_LIMIT_GB": "28",
+        "AURA_METAL_CACHE_CAP_GB": "10",
+    }
+
+    report = dnu_runner.configure_dnu_proof_memory_envelope("primary", env=env)
+
+    assert env["AURA_SAFE_BOOT_DESKTOP"] == "0"
+    assert env["AURA_LAUNCHED_FROM_APP"] == "0"
+    assert env["AURA_EXTERNAL_GUI_OWNER"] == "0"
+    assert env["AURA_HEADLESS"] == "1"
+    assert env["AURA_PROCESS_RSS_LIMIT_GB"] == "38"
+    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "36"
+    assert env["AURA_MLX_WORKER_RSS_LIMIT_GB"] == "36"
+    assert env["AURA_METAL_CACHE_CAP_GB"] == "12"
+    assert report["desktop_safe_boot_disabled_for_proof"] is True
+    assert report["app_launch_context_disabled_for_proof"] is True
+    assert report["inherited"]["AURA_PROCESS_RSS_LIMIT_GB"] == "36"
+
+
+def test_primary_dnu_proof_memory_envelope_clamps_unsafe_overrides():
+    env = {
+        "AURA_DNU_PRIMARY_PROCESS_RSS_LIMIT_GB": "96",
+        "AURA_DNU_PRIMARY_MLX_MEMORY_LIMIT_GB": "96",
+        "AURA_DNU_PRIMARY_WORKER_RSS_LIMIT_GB": "96",
+        "AURA_DNU_PRIMARY_METAL_CACHE_CAP_GB": "96",
+    }
+
+    report = dnu_runner.configure_dnu_proof_memory_envelope("primary", env=env)
+
+    assert report["process_rss_limit_gb"] == "40"
+    assert report["mlx_memory_limit_gb"] == "38"
+    assert report["worker_rss_limit_gb"] == "38"
+    assert report["metal_cache_cap_gb"] == "16"
+
+
+def test_tertiary_dnu_proof_memory_envelope_stays_lightweight():
+    env = {
+        "AURA_SAFE_BOOT_DESKTOP": "1",
+        "AURA_PROCESS_RSS_LIMIT_GB": "36",
+        "AURA_MLX_MEMORY_LIMIT_GB": "28",
+    }
+
+    report = dnu_runner.configure_dnu_proof_memory_envelope("tertiary", env=env)
+
+    assert env["AURA_SAFE_BOOT_DESKTOP"] == "0"
+    assert env["AURA_HEADLESS"] == "1"
+    assert report["process_rss_limit_gb"] == "24"
+    assert report["mlx_memory_limit_gb"] == "18"
+    assert report["worker_rss_limit_gb"] == "12"
+    assert report["metal_cache_cap_gb"] == "8"
+
+
 def test_dnu_model_recycle_rewarms_requested_lane(tmp_path):
     class FakeClient:
         def __init__(self):

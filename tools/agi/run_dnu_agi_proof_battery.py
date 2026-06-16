@@ -479,6 +479,144 @@ def dnu_model_recycle_interval(requested_tier: str, *, total_tasks: int, smoke: 
     return 0
 
 
+def _bounded_env_float(
+    env: dict[str, str],
+    name: str,
+    *,
+    default: float,
+    minimum: float,
+    maximum: float,
+) -> float:
+    raw = str(env.get(name, "") or "").strip()
+    try:
+        value = float(raw) if raw else float(default)
+    except (TypeError, ValueError, OverflowError):
+        value = float(default)
+    return max(float(minimum), min(float(value), float(maximum)))
+
+
+def configure_dnu_proof_memory_envelope(
+    requested_tier: str,
+    *,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Install a bounded memory policy for the headless DNU proof runtime.
+
+    The packaged desktop profile intentionally clamps the process-tree guard to
+    36GB. A primary DNU proof run uses the same canonical Aura boot path, but it
+    is headless and periodically replaces the 32B worker. The replacement-load
+    admission check projects the newly spawned worker before it is live, so a
+    stale inherited desktop cap can falsely block a same-lane recycle at about
+    36.4GB. This policy gives the primary proof lane enough room for that
+    replacement load while keeping the worker RSS and Metal cache bounded.
+    """
+
+    env = env if env is not None else os.environ
+    tier = str(requested_tier or "").strip().lower()
+    if tier not in {"primary", "tertiary"}:
+        tier = "primary"
+
+    inherited = {
+        key: env.get(key)
+        for key in (
+            "AURA_SAFE_BOOT_DESKTOP",
+            "AURA_LAUNCHED_FROM_APP",
+            "AURA_HEADLESS",
+            "AURA_PROCESS_RSS_LIMIT_GB",
+            "AURA_MLX_MEMORY_LIMIT_GB",
+            "AURA_MLX_WORKER_RSS_LIMIT_GB",
+            "AURA_METAL_CACHE_CAP_GB",
+        )
+    }
+
+    # DNU proof runs are not the live desktop launcher profile. They still use
+    # canonical boot, but should not inherit app-launch safe-boot clamps.
+    env["AURA_SAFE_BOOT_DESKTOP"] = "0"
+    env["AURA_LAUNCHED_FROM_APP"] = "0"
+    env["AURA_EXTERNAL_GUI_OWNER"] = "0"
+    env["AURA_HEADLESS"] = "1"
+
+    if tier == "primary":
+        process_limit_gb = _bounded_env_float(
+            env,
+            "AURA_DNU_PRIMARY_PROCESS_RSS_LIMIT_GB",
+            default=38.0,
+            minimum=37.0,
+            maximum=40.0,
+        )
+        mlx_limit_gb = _bounded_env_float(
+            env,
+            "AURA_DNU_PRIMARY_MLX_MEMORY_LIMIT_GB",
+            default=36.0,
+            minimum=32.0,
+            maximum=38.0,
+        )
+        worker_limit_gb = _bounded_env_float(
+            env,
+            "AURA_DNU_PRIMARY_WORKER_RSS_LIMIT_GB",
+            default=36.0,
+            minimum=32.0,
+            maximum=38.0,
+        )
+        cache_cap_gb = _bounded_env_float(
+            env,
+            "AURA_DNU_PRIMARY_METAL_CACHE_CAP_GB",
+            default=12.0,
+            minimum=8.0,
+            maximum=16.0,
+        )
+        env["AURA_PROCESS_RSS_LIMIT_GB"] = f"{process_limit_gb:g}"
+        env["AURA_MLX_MEMORY_LIMIT_GB"] = f"{mlx_limit_gb:g}"
+        env["AURA_MLX_WORKER_RSS_LIMIT_GB"] = f"{worker_limit_gb:g}"
+        env["AURA_METAL_CACHE_CAP_GB"] = f"{cache_cap_gb:g}"
+    else:
+        process_limit_gb = _bounded_env_float(
+            env,
+            "AURA_DNU_TERTIARY_PROCESS_RSS_LIMIT_GB",
+            default=24.0,
+            minimum=12.0,
+            maximum=32.0,
+        )
+        mlx_limit_gb = _bounded_env_float(
+            env,
+            "AURA_DNU_TERTIARY_MLX_MEMORY_LIMIT_GB",
+            default=18.0,
+            minimum=8.0,
+            maximum=28.0,
+        )
+        worker_limit_gb = _bounded_env_float(
+            env,
+            "AURA_DNU_TERTIARY_WORKER_RSS_LIMIT_GB",
+            default=12.0,
+            minimum=8.0,
+            maximum=20.0,
+        )
+        cache_cap_gb = _bounded_env_float(
+            env,
+            "AURA_DNU_TERTIARY_METAL_CACHE_CAP_GB",
+            default=8.0,
+            minimum=4.0,
+            maximum=12.0,
+        )
+        env["AURA_PROCESS_RSS_LIMIT_GB"] = f"{process_limit_gb:g}"
+        env["AURA_MLX_MEMORY_LIMIT_GB"] = f"{mlx_limit_gb:g}"
+        env["AURA_MLX_WORKER_RSS_LIMIT_GB"] = f"{worker_limit_gb:g}"
+        env["AURA_METAL_CACHE_CAP_GB"] = f"{cache_cap_gb:g}"
+
+    return {
+        "schema": "aura.dnu_proof_memory_envelope.v1",
+        "requested_tier": tier,
+        "headless": env.get("AURA_HEADLESS"),
+        "desktop_safe_boot_disabled_for_proof": env.get("AURA_SAFE_BOOT_DESKTOP") == "0",
+        "app_launch_context_disabled_for_proof": env.get("AURA_LAUNCHED_FROM_APP") == "0",
+        "process_rss_limit_gb": env.get("AURA_PROCESS_RSS_LIMIT_GB"),
+        "mlx_memory_limit_gb": env.get("AURA_MLX_MEMORY_LIMIT_GB"),
+        "worker_rss_limit_gb": env.get("AURA_MLX_WORKER_RSS_LIMIT_GB"),
+        "metal_cache_cap_gb": env.get("AURA_METAL_CACHE_CAP_GB"),
+        "inherited": inherited,
+    }
+
+
 def _cmdline_invokes_script(cmdline: list[Any], script_name: str) -> bool:
     """Return true only when ``script_name`` is an argv entry, not shell text."""
 
@@ -2607,6 +2745,7 @@ async def main():
         )
         requested_proof_model_tier = "primary"
     os.environ["AURA_PROOF_MODEL_TIER"] = requested_proof_model_tier
+    proof_memory_envelope = configure_dnu_proof_memory_envelope(requested_proof_model_tier)
 
     if args.out:
         artifacts_base = Path(args.out).resolve()
@@ -2631,12 +2770,20 @@ async def main():
         "proof_model_tier": requested_proof_model_tier,
         "proof_live_message_origin": PROOF_LIVE_MESSAGE_ORIGIN,
         "structured_proof_solver_enabled": structured_solver_enabled_for_run,
+        "proof_memory_envelope": proof_memory_envelope,
     }
 
     print(f"Run ID: {run_id}")
     print(f"Commit SHA: {commit_sha}")
     print(f"Run Directory: {run_dir}")
     print(f"Proof Model Tier: {requested_proof_model_tier}")
+    print(
+        "Proof Memory Envelope: "
+        f"process={proof_memory_envelope['process_rss_limit_gb']}GB, "
+        f"mlx={proof_memory_envelope['mlx_memory_limit_gb']}GB, "
+        f"worker={proof_memory_envelope['worker_rss_limit_gb']}GB, "
+        f"cache_cap={proof_memory_envelope['metal_cache_cap_gb']}GB"
+    )
     lifecycle_events = 0
     write_run_status(
         run_dir,
@@ -2892,6 +3039,7 @@ async def main():
         "structured_proof_solver_enabled": structured_solver_enabled_for_run,
         "exclusive_runtime_required": not args.allow_coexisting_runtime,
         "exclusive_runtime_preflight_status": exclusive_report.get("status"),
+        "proof_memory_envelope": proof_memory_envelope,
         "model_recycle_interval_tasks": dnu_model_recycle_interval(
             requested_proof_model_tier,
             total_tasks=len(all_tasks),
