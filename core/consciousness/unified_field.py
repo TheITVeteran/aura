@@ -58,6 +58,7 @@ try:  # scipy is an acceleration path here; dense numpy remains correct.
 except ImportError:  # pragma: no cover - exercised on lean CI/runtime images
     sp = None
 
+from core.consciousness.substrate_accel import field_integrate as _field_integrate
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
 
@@ -546,10 +547,11 @@ class UnifiedField:
             * noise_scale
         )
 
-        # ── Integration ──────────────────────────────────────────────
-        df = (-cfg.decay * self.F + activity + noise) * dt
+        # ── Integration (Rust-accelerated when aura_m1_ext is built; #40) ──
+        # next = clip(F + (-decay*F + activity + noise)*dt, -1, 1). The NumPy
+        # fallback is byte-identical to the prior inline expression.
         self._prev_F = self.F.copy()
-        next_field = np.clip(self.F + df, -1.0, 1.0).astype(np.float32)
+        next_field = _field_integrate(self.F, activity, noise, cfg.decay, dt)
 
         # Non-finite guard
         if not np.all(np.isfinite(next_field)):
