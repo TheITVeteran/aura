@@ -59,6 +59,27 @@ LIVE_FALLBACK_RE = re.compile(
     re.IGNORECASE,
 )
 
+LIVE_STREAM_FAILURE_MARKERS = (
+    "ERROR",
+    "CRITICAL",
+    "Traceback",
+    "Exception in callback",
+    "RuntimeError:",
+    "ModuleNotFoundError",
+    "MemoryError",
+    "[DEGRADATION]",
+    "NEW INCIDENT",
+    "Runtime: DEGRADED",
+    "generation gate forcibly",
+    "Cognitive cycle TIMEOUT",
+    "Network gateway request failed",
+    "desktop_cognitive_engine_required_no_reply",
+    "high lag",
+    "out of application memory",
+    "Cortex Warming",
+    "CORTEX UNAVAILABLE",
+)
+
 LIVE_CONVERSATION_SOAK_PROMPTS = (
     "Answer directly in two sentences: what lane are you using for this live desktop chat?",
     "What tools can you use externally, and what governance has to approve before you act?",
@@ -159,6 +180,45 @@ def build_safe_boot_env(
         limit_gb = min(36.0, max(1.0, _env_float(env, "AURA_PROCESS_RSS_LIMIT_GB", 36.0)))
     env["AURA_PROCESS_RSS_LIMIT_GB"] = f"{limit_gb:.0f}"
     return env
+
+
+def current_git_commit() -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def current_git_dirty() -> bool | None:
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return bool(proc.stdout.strip())
+
+
+def artifact_display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
 
 class LiveProof:
@@ -723,6 +783,41 @@ class LiveProof:
             "vitals", ok, summary=f"rss {vitals['tree_rss_mb']}MB", **vitals
         )
 
+    def scan_runtime_stream(self) -> bool:
+        """Fail the proof if the captured runtime stream exposes known live-path breaks."""
+
+        if self._stdout_handle is not None:
+            self._stdout_handle.flush()
+        if not self.stdout_path.exists():
+            return self.record(
+                "runtime_stream_scan",
+                True,
+                summary="no runtime stdout log was created",
+                skipped=True,
+            )
+        text = self.stdout_path.read_text(errors="replace")
+        matches: dict[str, list[str]] = {}
+        for marker in LIVE_STREAM_FAILURE_MARKERS:
+            lines = [
+                line[:700]
+                for line in text.splitlines()
+                if marker in line
+            ][:5]
+            if lines:
+                matches[marker] = lines
+        ok = not matches
+        return self.record(
+            "runtime_stream_scan",
+            ok,
+            summary=(
+                "no failure markers in runtime stdout"
+                if ok
+                else f"failure markers found: {', '.join(sorted(matches))}"
+            ),
+            stdout_log=artifact_display_path(self.stdout_path),
+            markers=matches,
+        )
+
     # ── shutdown ──────────────────────────────────────────────────────
 
     def shutdown(self, *, step: str = "shutdown") -> bool:
@@ -816,16 +911,25 @@ class LiveProof:
         finally:
             if self.proc is not None and self.proc.poll() is None:
                 passed &= self.shutdown()
+            passed &= self.scan_runtime_stream()
+
+        finished_at = time.time()
+        git_commit = current_git_commit()
+        git_dirty = current_git_dirty()
 
         verdict = {
             "schema": "aura.live_boot_proof.v1",
             "passed": passed,
             "started_at": self.started_at,
-            "finished_at": time.time(),
+            "finished_at": finished_at,
+            "ended_at": finished_at,
+            "git_commit": git_commit,
+            "git_dirty": git_dirty,
             "peak_rss_mb": round(self.peak_rss_mb, 1),
             "mode": self.mode,
             "steps": self.steps,
-            "transcript": str(self.transcript_path.relative_to(ROOT)),
+            "transcript": artifact_display_path(self.transcript_path),
+            "stdout_log": artifact_display_path(self.stdout_path),
         }
         self.verdict_path.write_text(json.dumps(verdict, indent=2, default=str))
         print(f"\n{'✅ LIVE PROOF PASSED' if passed else '❌ LIVE PROOF FAILED'}")

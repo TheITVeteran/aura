@@ -369,6 +369,42 @@ def test_live_boot_proof_uses_readiness_heartbeat_contract():
     assert "X-Aura-Require-CognitiveEngine" in source
 
 
+def test_live_boot_proof_runtime_stream_scan_fails_failure_markers(monkeypatch, tmp_path):
+    import tools.live_boot_proof as live_boot_proof
+
+    monkeypatch.setattr(live_boot_proof, "PROOF_DIR", tmp_path)
+    proof = live_boot_proof.LiveProof(
+        port=8999,
+        mode="desktop",
+        boot_timeout_s=1.0,
+        skip_desktop=True,
+        restart_continuity=False,
+        conversation_soak_turns=0,
+    )
+    proof.stdout_path.write_text(
+        "Cortex Warming...\nTraceback (most recent call last):\nRuntime: DEGRADED\n",
+        encoding="utf-8",
+    )
+
+    assert proof.scan_runtime_stream() is False
+    step = proof.steps[-1]
+    assert step["step"] == "runtime_stream_scan"
+    assert "Cortex Warming" in step["markers"]
+    assert "Traceback" in step["markers"]
+    assert "Runtime: DEGRADED" in step["markers"]
+
+
+def test_live_boot_proof_verdict_records_commit_and_end_metadata():
+    source = (PROJECT_ROOT / "tools" / "live_boot_proof.py").read_text()
+
+    assert '"ended_at": finished_at' in source
+    assert '"git_commit": git_commit' in source
+    assert '"git_dirty": git_dirty' in source
+    assert '"stdout_log": artifact_display_path(self.stdout_path)' in source
+    assert "current_git_commit()" in source
+    assert "current_git_dirty()" in source
+
+
 def test_compute_mlx_cache_limit_defaults_to_standard_ratio_when_not_safe(monkeypatch):
     monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
     monkeypatch.delenv("AURA_LAUNCHED_FROM_APP", raising=False)
