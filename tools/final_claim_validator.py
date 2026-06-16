@@ -183,6 +183,7 @@ def _artifact_mtime(path: Path) -> float:
 
 
 FINAL_PROOF_STEP_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "live_desktop_runtime": ("live_desktop_runtime/LATEST_VERDICT.json",),
     "dnu_agi_battery": (
         "agi_live/RUN_STATUS.json",
         "agi_live/SCORECARD.json",
@@ -366,6 +367,65 @@ def _integrated_candidate_evidence_passes(artifacts_dir: Path, reasons: list[str
     return True
 
 
+def _local_production_readiness_evidence_passes(
+    artifacts_dir: Path,
+    reasons: list[str],
+) -> bool:
+    passed = True
+    surface = _load_json(artifacts_dir / "production_surface_lint.json")
+    readiness = _load_json(artifacts_dir / "production_readiness.json")
+    live = _load_json(artifacts_dir / "live_desktop_runtime" / "LATEST_VERDICT.json")
+
+    if surface is None or surface.get("passed") is not True:
+        reasons.append("Local production gate readiness requires passing production_surface_lint.json.")
+        passed = False
+    if readiness is None or readiness.get("passed") is not True:
+        reasons.append("Local production gate readiness requires passing production_readiness.json.")
+        passed = False
+    if not _final_proof_steps_pass(artifacts_dir, ("live_desktop_runtime",), reasons):
+        passed = False
+    if live is None:
+        reasons.append("Local production gate readiness requires live desktop runtime verdict evidence.")
+        return False
+
+    if live.get("schema") != "aura.live_boot_proof.v1":
+        reasons.append("Live desktop runtime verdict schema is invalid.")
+        passed = False
+    if live.get("passed") is not True:
+        reasons.append("Live desktop runtime proof did not pass.")
+        passed = False
+    if live.get("mode") != "desktop":
+        reasons.append("Live desktop runtime proof must run in desktop mode.")
+        passed = False
+    if live.get("git_dirty") is not False:
+        reasons.append("Live desktop runtime proof must come from a clean committed tree.")
+        passed = False
+    peak_rss = _num(live.get("peak_rss_mb")) or 0.0
+    if peak_rss <= 0.0 or peak_rss > 38_000.0:
+        reasons.append(f"Live desktop runtime peak RSS is outside safe proof bounds: {peak_rss}.")
+        passed = False
+
+    steps = live.get("steps")
+    if not isinstance(steps, list):
+        reasons.append("Live desktop runtime verdict is missing step evidence.")
+        return False
+    step_ok = {str(step.get("step")): step for step in steps if isinstance(step, dict)}
+    for required in (
+        "boot_health",
+        "chat_capability_inventory",
+        "chat_continuity",
+        "chat_conversation_soak",
+        "desktop_action",
+        "chat_restart_continuity",
+        "runtime_stream_scan",
+        "shutdown",
+    ):
+        if step_ok.get(required, {}).get("ok") is not True:
+            reasons.append(f"Live desktop runtime proof missing passing step: {required}.")
+            passed = False
+    return passed
+
+
 def _synthetic_entity_evidence_passes(artifacts_dir: Path, reasons: list[str]) -> bool:
     proof_steps_ok = _final_proof_steps_pass(
         artifacts_dir,
@@ -482,22 +542,8 @@ def main(argv: list[str] | None = None) -> int:
 
     production_readiness = claims.get("local production gate readiness", "not proven")
     if production_readiness in {"implemented", "causally demonstrated", "locally demonstrated"}:
-        linter_json = artifacts_dir / "production_surface_lint.json"
-        if linter_json.exists():
-            try:
-                linter_data = json.loads(linter_json.read_text(encoding="utf-8"))
-                if not linter_data.get("passed", False):
-                    passed = False
-                    reasons.append("Local production gate readiness claimed but production surface linter failed.")
-            except _LINTER_REPORT_ERRORS as exc:
-                passed = False
-                reasons.append(
-                    "Local production gate readiness claimed but linter report is unreadable "
-                    f"or malformed: {type(exc).__name__}: {exc}"
-                )
-        else:
+        if not _local_production_readiness_evidence_passes(artifacts_dir, reasons):
             passed = False
-            reasons.append("Local production gate readiness claimed but production surface linter report is missing.")
     elif production_readiness not in {"not proven", "deprecated/retired"}:
         passed = False
         reasons.append(f"Unsupported Local Production Gate Readiness classification: {production_readiness!r}.")

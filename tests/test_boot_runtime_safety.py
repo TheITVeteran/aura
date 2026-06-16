@@ -405,6 +405,14 @@ def test_live_boot_proof_verdict_records_commit_and_end_metadata():
     assert "current_git_dirty()" in source
 
 
+def test_live_boot_proof_supports_stable_output_directory():
+    source = (PROJECT_ROOT / "tools" / "live_boot_proof.py").read_text()
+
+    assert "--out-dir" in source
+    assert "self.latest_verdict_path" in source
+    assert "LATEST_VERDICT.json" in source
+
+
 def test_compute_mlx_cache_limit_defaults_to_standard_ratio_when_not_safe(monkeypatch):
     monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
     monkeypatch.delenv("AURA_LAUNCHED_FROM_APP", raising=False)

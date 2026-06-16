@@ -110,6 +110,83 @@ def test_final_claim_validator_rejects_stale_failed_dnu_for_agi_candidate(tmp_pa
     assert any("dnu_agi_battery" in reason for reason in report["reasons"])
 
 
+def test_final_claim_validator_requires_live_desktop_evidence_for_production_readiness(tmp_path: Path):
+    claims_path = tmp_path / "CLAIMS_MATRIX.md"
+    claims_path.write_text(
+        _claims_matrix(
+            "| **15. Local Production Gate Readiness** | `locally demonstrated` | Requires live desktop proof. |\n"
+        ),
+        encoding="utf-8",
+    )
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "production_surface_lint.json").write_text('{"passed": true}', encoding="utf-8")
+    (artifacts / "production_readiness.json").write_text('{"passed": true}', encoding="utf-8")
+
+    result = final_claim_validator.main(["--claims", str(claims_path), "--artifacts", str(artifacts)])
+
+    assert result == 1
+    report = json.loads((artifacts / "final_claim_validation.json").read_text())
+    assert any("live desktop runtime" in reason.lower() for reason in report["reasons"])
+
+
+def test_final_claim_validator_accepts_clean_live_desktop_production_readiness(tmp_path: Path):
+    claims_path = tmp_path / "CLAIMS_MATRIX.md"
+    claims_path.write_text(
+        _claims_matrix(
+            "| **15. Local Production Gate Readiness** | `locally demonstrated` | Requires live desktop proof. |\n"
+        ),
+        encoding="utf-8",
+    )
+    artifacts = tmp_path / "artifacts"
+    proof_steps = artifacts / "proof_steps"
+    live_dir = artifacts / "live_desktop_runtime"
+    proof_steps.mkdir(parents=True)
+    live_dir.mkdir(parents=True)
+    started_at = time.time()
+    (artifacts / "production_surface_lint.json").write_text('{"passed": true}', encoding="utf-8")
+    (artifacts / "production_readiness.json").write_text('{"passed": true}', encoding="utf-8")
+    (proof_steps / "live_desktop_runtime.json").write_text(
+        json.dumps(
+            {
+                "name": "live_desktop_runtime",
+                "passed": True,
+                "returncode": 0,
+                "timed_out": False,
+                "started_at": started_at,
+                "finished_at": started_at + 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (live_dir / "LATEST_VERDICT.json").write_text(
+        json.dumps(
+            {
+                "schema": "aura.live_boot_proof.v1",
+                "passed": True,
+                "mode": "desktop",
+                "git_dirty": False,
+                "peak_rss_mb": 25_600.0,
+                "steps": [
+                    {"step": "boot_health", "ok": True},
+                    {"step": "chat_capability_inventory", "ok": True},
+                    {"step": "chat_continuity", "ok": True},
+                    {"step": "chat_conversation_soak", "ok": True},
+                    {"step": "desktop_action", "ok": True},
+                    {"step": "chat_restart_continuity", "ok": True},
+                    {"step": "runtime_stream_scan", "ok": True},
+                    {"step": "shutdown", "ok": True},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = final_claim_validator.main(["--claims", str(claims_path), "--artifacts", str(artifacts)])
+
+    assert result == 0
+
+
 def test_runtime_kernel_language_avoids_agi_asi_overclaim_labels():
     root = Path(__file__).resolve().parents[1]
     runtime_paths = [

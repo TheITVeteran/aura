@@ -42,6 +42,28 @@ def test_artifact_consistency_rejects_failed_newer_proof_step(tmp_path: Path) ->
     assert any("dnu_agi_battery" in reason for reason in report["reasons"])
 
 
+def test_artifact_consistency_tracks_live_desktop_runtime_step_output(tmp_path: Path) -> None:
+    started_at = time.time()
+    _write_json(
+        tmp_path / "proof_steps" / "live_desktop_runtime.json",
+        {
+            "name": "live_desktop_runtime",
+            "passed": True,
+            "returncode": 0,
+            "timed_out": False,
+            "started_at": started_at,
+            "finished_at": started_at + 1,
+        },
+    )
+
+    result = artifact_consistency_validator.main(["--artifacts", str(tmp_path)])
+
+    assert result == 1
+    report = json.loads((tmp_path / "artifact_consistency.json").read_text())
+    assert report["proof_steps_consistent"] is False
+    assert any("live_desktop_runtime" in reason for reason in report["reasons"])
+
+
 def test_artifact_consistency_rejects_incomplete_dnu_run_status(tmp_path: Path) -> None:
     _write_json(
         tmp_path / "agi_live" / "RUN_STATUS.json",

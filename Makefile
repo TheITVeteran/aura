@@ -482,6 +482,15 @@ final-proof:
 	python tools/proof_integrity_lint.py \
 	  --scope production \
 	  --out artifacts/current/proof_integrity_lint.json
+	python tools/run_proof_step.py --name live_desktop_runtime --timeout $${AURA_FINAL_PROOF_LIVE_TIMEOUT_SECONDS:-1200} \
+	  --artifact artifacts/current/proof_steps/live_desktop_runtime.json -- \
+	  python tools/live_boot_proof.py \
+	  --mode desktop \
+	  --port $${AURA_FINAL_PROOF_LIVE_PORT:-8013} \
+	  --conversation-soak-turns $${AURA_FINAL_PROOF_LIVE_SOAK_TURNS:-12} \
+	  --restart-continuity \
+	  --boot-timeout $${AURA_FINAL_PROOF_LIVE_BOOT_TIMEOUT_SECONDS:-420} \
+	  --out-dir artifacts/current/live_desktop_runtime
 	python tools/run_proof_step.py --name dnu_agi_battery --timeout 7200 \
 	  --artifact artifacts/current/proof_steps/dnu_agi_battery.json -- \
 	  python tools/agi/run_dnu_agi_proof_battery.py \

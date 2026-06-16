@@ -231,6 +231,7 @@ class LiveProof:
         skip_desktop: bool,
         restart_continuity: bool,
         conversation_soak_turns: int,
+        proof_dir: Path | None = None,
     ):
         self.port = port
         self.mode = "desktop" if str(mode or "").strip().lower() == "desktop" else "headless"
@@ -243,11 +244,13 @@ class LiveProof:
         self.steps: list[dict[str, Any]] = []
         self.peak_rss_mb = 0.0
         self.started_at = time.time()
-        PROOF_DIR.mkdir(parents=True, exist_ok=True)
+        self.proof_dir = (proof_dir or PROOF_DIR).resolve()
+        self.proof_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")
-        self.transcript_path = PROOF_DIR / f"live_proof_{stamp}.jsonl"
-        self.verdict_path = PROOF_DIR / f"live_proof_{stamp}_verdict.json"
-        self.stdout_path = PROOF_DIR / f"live_proof_{stamp}_stdout.log"
+        self.transcript_path = self.proof_dir / f"live_proof_{stamp}.jsonl"
+        self.verdict_path = self.proof_dir / f"live_proof_{stamp}_verdict.json"
+        self.latest_verdict_path = self.proof_dir / "LATEST_VERDICT.json"
+        self.stdout_path = self.proof_dir / f"live_proof_{stamp}_stdout.log"
         self.rss_abort_mb = DEFAULT_RSS_ABORT_MB
         self._stdout_handle = None
         self._boot_count = 0
@@ -931,9 +934,11 @@ class LiveProof:
             "transcript": artifact_display_path(self.transcript_path),
             "stdout_log": artifact_display_path(self.stdout_path),
         }
-        self.verdict_path.write_text(json.dumps(verdict, indent=2, default=str))
+        verdict_json = json.dumps(verdict, indent=2, default=str)
+        self.verdict_path.write_text(verdict_json)
+        self.latest_verdict_path.write_text(verdict_json)
         print(f"\n{'✅ LIVE PROOF PASSED' if passed else '❌ LIVE PROOF FAILED'}")
-        print(f"verdict: {self.verdict_path.relative_to(ROOT)}")
+        print(f"verdict: {artifact_display_path(self.verdict_path)}")
         return 0 if passed else 1
 
 
@@ -959,6 +964,12 @@ def main(argv: list[str] | None = None) -> int:
         default=0,
         help="run repeated live desktop chat turns to catch coherence/fallback regressions",
     )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=PROOF_DIR,
+        help="directory for live proof transcript, stdout, and verdict artifacts",
+    )
     args = parser.parse_args(argv)
     proof = LiveProof(
         port=args.port,
@@ -967,6 +978,7 @@ def main(argv: list[str] | None = None) -> int:
         skip_desktop=args.skip_desktop_action,
         restart_continuity=args.restart_continuity,
         conversation_soak_turns=args.conversation_soak_turns,
+        proof_dir=args.out_dir,
     )
     return proof.run()
 

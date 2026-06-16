@@ -67,6 +67,7 @@ def _mtime(path: Path) -> float:
 
 
 FINAL_PROOF_STEP_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "live_desktop_runtime": ("live_desktop_runtime/LATEST_VERDICT.json",),
     "dnu_agi_battery": (
         "agi_live/RUN_STATUS.json",
         "agi_live/SCORECARD.json",

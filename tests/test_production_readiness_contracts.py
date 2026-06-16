@@ -33,3 +33,14 @@ def test_makefile_gates_whole_surface_lint_and_source_hygiene():
     assert "RUFF_CRITICAL_TARGETS" in makefile
     assert "F821,F822,F823,F601" in makefile
     assert "core/consciousness/continuous_experience.py" in makefile
+
+
+def test_final_proof_requires_live_desktop_runtime_evidence():
+    makefile = open("Makefile", encoding="utf-8").read()
+
+    assert "final-proof:" in makefile
+    assert "--name live_desktop_runtime" in makefile
+    assert "tools/live_boot_proof.py" in makefile
+    assert "--mode desktop" in makefile
+    assert "--restart-continuity" in makefile
+    assert "--out-dir artifacts/current/live_desktop_runtime" in makefile
