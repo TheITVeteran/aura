@@ -1344,20 +1344,7 @@ function applyToolEvent(event) {
 
         // Update the typing indicator label to show tool activity
         if (event.stage === 'started') {
-            const TOOL_LABELS = {
-                'search_web': 'searching the web',
-                'sovereign_browser': 'searching the web',
-                'file_operation': 'managing files',
-                'terminal_exec': 'executing system commands',
-                'sovereign_terminal': 'executing system commands',
-                'sovereign_vision': 'analyzing screen',
-                'speak': 'preparing speech',
-                'sovereign_imagination': 'generating image',
-                'self_repair': 'analyzing system diagnostics',
-                'self_evolution': 'applying self-modifications',
-                'inter_agent_comm': 'coordinating with subagent'
-            };
-            const action = TOOL_LABELS[event.tool] || `running ${event.tool}`;
+            const action = formatToolAction(event.tool);
             updateTypingLabel(`Aura is ${action}…`);
             const typingInd = $('typing-ind');
             if (typingInd) typingInd.classList.add('show');
@@ -1828,6 +1815,71 @@ function appendGeneratedImageMessage(imageUrl, metadata = {}) {
     messages.appendChild(div);
     pruneVisibleMessages(messages);
     if (!state.userScrolledUp) messages.scrollTop = messages.scrollHeight;
+}
+
+function formatToolAction(toolName) {
+    const TOOL_LABELS = {
+        'search_web': 'searching the web',
+        'soveraing_browser': 'searching the web',
+        'sovereign_browser': 'searching the web',
+        'web_search': 'searching the web',
+        'file_operation': 'managing files',
+        'file_write': 'writing a file',
+        'file_read': 'reading a file',
+        'file_exists_check': 'checking file existence',
+        'terminal_exec': 'executing a terminal command',
+        'sovereign_terminal': 'executing system commands',
+        'sovereign_vision': 'analyzing the screen',
+        'speak': 'preparing speech',
+        'speak_aloud': 'speaking aloud',
+        'sovereign_imagination': 'generating an image',
+        'self_repair': 'analyzing system diagnostics',
+        'self_evolution': 'applying self-modifications',
+        'rsi_optimization': 'optimizing runtime parameters',
+        'inter_agent_comm': 'coordinating with subagent',
+        'inter_agent': 'coordinating with subagent',
+        'clock_check': 'checking the clock',
+        'clock': 'checking the clock',
+        'network_scan': 'scanning the network',
+        'system_proprioception': 'checking system resources',
+        'proprioception': 'checking system resources',
+        'manifest_to_device': 'syncing assets to device',
+        'manifest_asset': 'syncing assets to device',
+        'memory_ops': 'recalling memories',
+        'memory_remember': 'storing memory',
+        'force_dream_cycle': 'running a dream cycle',
+        'dream_cycle': 'running a dream cycle',
+        'malware_analysis': 'scanning for malware',
+        'malware_scan': 'scanning for malware',
+        'train_self': 'training cognitive weights',
+        'personality_skill': 'introspecting personality profile',
+        'personality_introspect': 'introspecting personality profile',
+        'environment_info': 'retrieving environment info',
+        'environment_check': 'retrieving environment info',
+        'listen': 'activating listening mode',
+        'listen_activate': 'activating listening mode',
+        'voice_mute': 'muting voice',
+        'voice_unmute': 'unmuting voice',
+        'voice_stop_tts': 'stopping text-to-speech',
+        'internal_sandbox': 'executing sandbox code',
+        'sandbox_execute': 'executing sandbox code',
+        'social_lurker': 'monitoring social channels',
+        'social_lurk': 'monitoring social channels',
+        'curiosity': 'exploring curious pathways',
+        'curiosity_suggest': 'exploring curious pathways',
+        'spawn_agent': 'spawning autonomous subagent',
+        'spawn_agents_parallel': 'spawning parallel subagents',
+        'spawn_parallel': 'spawning parallel subagents'
+    };
+
+    if (TOOL_LABELS[toolName]) {
+        return TOOL_LABELS[toolName];
+    }
+
+    // Dynamic fallback for any other tool:
+    // e.g. "my_custom_tool" -> "running my custom tool"
+    const clean = toolName.replace(/_/g, ' ').replace(/-/g, ' ').trim().toLowerCase();
+    return `running ${clean}`;
 }
 
 function setChatPanelState(panelState) {
