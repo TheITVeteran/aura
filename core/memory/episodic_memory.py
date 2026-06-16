@@ -22,6 +22,8 @@ from pydantic import BaseModel, Field
 
 from core.config import config
 from core.health.degraded_events import record_degraded_event
+from core.memory.hippocampus import HippocampalIndex
+from core.memory.reconsolidation import ReconsolidationEngine, ReconsolidationOutcome
 from core.memory.retention_policy import episodic_retention_policy
 from core.resilience.state_manager import _SafeEncoder
 from core.runtime.errors import record_degradation
@@ -56,6 +58,16 @@ class Episode(BaseModel):
     decay_rate: float = 0.01
     qualia_snapshot: dict[str, Any] = Field(default_factory=dict, alias="context_snapshot")
 
+    # --- Engram dynamics (reconsolidation / fidelity) ---
+    # A memory is not a static recording. Each time it is recalled under the
+    # spotlight of attention it can soften and be rewritten by the present
+    # context. These fields track that lifecycle.
+    fidelity: float = 1.0            # 1.0 = faithful to encoding; drops as the trace is rewritten on recall
+    original_valence: float | None = None  # emotional tone at encoding (drift reference)
+    reconsolidation_count: int = 0  # times the trace re-entered a labile state and was updated
+    last_reconsolidated: float = 0.0
+    novelty: float = 0.5            # prediction error at encoding — drives consolidation strength
+
     model_config = {
         "populate_by_name": True,
         "arbitrary_types_allowed": True
@@ -83,6 +95,21 @@ class Episode(BaseModel):
         emotional_boost = abs(self.emotional_valence) * 0.2
         return min(1.0, raw_strength + emotional_boost)
 
+    def current_fidelity(self) -> float:
+        """How faithful this trace still is to its original encoding (1.0 = pristine).
+
+        Distinct from ``current_strength`` (vividness/retrievability): a memory can
+        be vivid yet inaccurate. Repeated reconsolidation lowers fidelity even as
+        rehearsal raises strength — vividness is not accuracy.
+        """
+        return max(0.0, min(1.0, self.fidelity))
+
+    def valence_drift(self) -> float:
+        """Signed drift of emotional tone away from the original encoding."""
+        if self.original_valence is None:
+            return 0.0
+        return round(self.emotional_valence - self.original_valence, 4)
+
     def to_retrieval_text(self) -> str:
         """Format for injection into prompt context."""
         age_hours = (time.time() - self.timestamp) / 3600
@@ -95,11 +122,20 @@ class Episode(BaseModel):
         
         valence_desc = "positively" if self.emotional_valence > 0.2 else \
                       "negatively" if self.emotional_valence < -0.2 else "neutrally"
-        
+
+        # Surface vividness≠accuracy: a heavily re-recalled, drifted trace is
+        # flagged so downstream reasoning treats it as reshaped, not verbatim.
+        fidelity_note = ""
+        if self.reconsolidation_count >= 3 and self.current_fidelity() < 0.7:
+            fidelity_note = (
+                f" [recalled {self.reconsolidation_count}× — vivid but likely reshaped, "
+                f"fidelity {self.current_fidelity():.0%}]"
+            )
+
         return (
             f"[Episodic Memory — {time_desc}] "
             f"Context: {self.context} | Action: {self.action} | Outcome: {self.outcome} "
-            f"(experienced {valence_desc}, importance: {self.importance:.0%})"
+            f"(experienced {valence_desc}, importance: {self.importance:.0%}){fidelity_note}"
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -146,6 +182,10 @@ class EpisodicMemory:
         self._lock = threading.Lock()
         self._last_record_time = 0.0
         self._init_db()
+        # Hippocampal cue index (engram binding + pattern completion) and the
+        # reconsolidation engine that rewrites traces as the present seeps in.
+        self._hippocampus = HippocampalIndex(self._get_conn)
+        self._reconsolidation = ReconsolidationEngine()
 
     def _detect_relational_significance(self, context: str, action: str, outcome: str) -> bool:
         """Detect if this conversation is relational/bonding and should be preserved.
@@ -208,7 +248,12 @@ class EpisodicMemory:
                     last_accessed REAL DEFAULT 0.0,
                     decay_rate REAL DEFAULT 0.01,
                     qualia_snapshot TEXT DEFAULT '{}',
-                    next_decay_eval REAL DEFAULT 0.0
+                    next_decay_eval REAL DEFAULT 0.0,
+                    fidelity REAL DEFAULT 1.0,
+                    original_valence REAL,
+                    reconsolidation_count INTEGER DEFAULT 0,
+                    last_reconsolidated REAL DEFAULT 0.0,
+                    novelty REAL DEFAULT 0.5
                 )
             """)
             conn.commit()
@@ -228,6 +273,11 @@ class EpisodicMemory:
                 ("decay_rate", "REAL DEFAULT 0.01"),
                 ("qualia_snapshot", "TEXT DEFAULT '{}'"),
                 ("next_decay_eval", "REAL DEFAULT 0.0"),
+                ("fidelity", "REAL DEFAULT 1.0"),
+                ("original_valence", "REAL"),
+                ("reconsolidation_count", "INTEGER DEFAULT 0"),
+                ("last_reconsolidated", "REAL DEFAULT 0.0"),
+                ("novelty", "REAL DEFAULT 0.5"),
             ]
             # Add all missing columns before creating indexes that depend on them.
             cursor = conn.execute("PRAGMA table_info(episodes)")
@@ -420,8 +470,8 @@ class EpisodicMemory:
         if now_mono - self._last_record_time < self._RECORD_COOLDOWN:
             return episode_id  # Silently skip
             
-        # Deduplication — check against last episode content
-        last_episode = self.recall_recent(limit=1)
+        # Deduplication — check against last episode content (read-only peek)
+        last_episode = self._peek_recent(limit=1)
         if last_episode:
             le = last_episode[0]
             if le.context == context and le.action == action and le.outcome == outcome:
@@ -454,109 +504,134 @@ class EpisodicMemory:
         tools = tools_used or []
         lesson_list = lessons or []
 
+        # Novelty (prediction error) drives consolidation strength: a surprising
+        # episode is more likely to be retained (Duszkiewicz 2019; Frank & Kafkas
+        # 2021). Sourced from the predictive engine's surprise signal when
+        # available, else estimated from dissimilarity to recent episodes.
+        novelty = self._estimate_novelty(context, action, outcome)
+        if novelty >= 0.7:
+            importance = max(importance, min(0.9, importance + 0.15))
+        original_valence = emotional_valence
+
+        def _persist() -> None:
+            self._insert_and_index(
+                episode_id=episode_id,
+                now=now,
+                context=context,
+                action=action,
+                outcome=outcome,
+                success=success,
+                emotional_valence=emotional_valence,
+                original_valence=original_valence,
+                importance=importance,
+                tools=tools,
+                lesson_list=lesson_list,
+                qualia_snapshot=qualia_snapshot,
+                novelty=novelty,
+            )
+
         if governance_decision is not None:
             from core.governance_context import governed_scope_sync
 
             with governed_scope_sync(governance_decision):
-                with self._lock:
-                    # Retry-on-locked: handle concurrent writes from metabolic background tasks
-                    max_retries = 3
-                    for attempt in range(max_retries):
-                        try:
-                            with self._get_conn() as conn:
-                                conn.execute(
-                                    """INSERT INTO episodes
-                                       (episode_id, timestamp, context, action, outcome, success,
-                                        emotional_valence, arousal, importance, participants, 
-                                        tools_used, lessons, tags, linked_semantic_ids, decay_rate, qualia_snapshot, next_decay_eval)
-                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                    (
-                                        episode_id, now, context, action, outcome,
-                                        int(success), emotional_valence, 0.5, importance,
-                                        json.dumps(["user", "aura"]),
-                                        json.dumps(tools), json.dumps(lesson_list), 
-                                        json.dumps([]), json.dumps([]), 0.01,
-                                        json.dumps(qualia_snapshot, cls=_SafeEncoder),
-                                        now + 21600, # First evaluation in 6 hours
-                                    ),
-                                )
-                            break  # Success
-                        except sqlite3.OperationalError as e:
-                            if "locked" in str(e) and attempt < max_retries - 1:
-                                logger.debug("Episode write locked (attempt %d/%d), retrying...", attempt + 1, max_retries)
-                                time.sleep(0.5 * (2 ** attempt))  # Exponential backoff
-                            else:
-                                raise
-
-                    # Also index in vector memory for semantic retrieval
-                    if self._vector_memory:
-                        try:
-                            text = f"{context} | {action} | {outcome}"
-                            self._vector_memory.add_memory(
-                                text,
-                                metadata={
-                                    "type": "episode",
-                                    "episode_id": episode_id,
-                                    "success": success,
-                                    "importance": importance,
-                                    "qualia_norm": qualia_snapshot.get("q_norm", 0.0),
-                                },
-                            )
-                        except (OSError, ConnectionError, TimeoutError) as e:
-                            record_degradation('episodic_memory', e)
-                            logger.warning("Failed to index episode in vector memory: %s", e)
-
-                    self._maybe_prune()
+                _persist()
         else:
-            with self._lock:
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        with self._get_conn() as conn:
-                            conn.execute(
-                                """INSERT INTO episodes
-                                   (episode_id, timestamp, context, action, outcome, success,
-                                    emotional_valence, arousal, importance, participants, 
-                                    tools_used, lessons, tags, linked_semantic_ids, decay_rate, qualia_snapshot, next_decay_eval)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                (
-                                    episode_id, now, context, action, outcome,
-                                    int(success), emotional_valence, 0.5, importance,
-                                    json.dumps(["user", "aura"]),
-                                    json.dumps(tools), json.dumps(lesson_list), 
-                                    json.dumps([]), json.dumps([]), 0.01,
-                                    json.dumps(qualia_snapshot, cls=_SafeEncoder),
-                                    now + 21600,
-                                ),
-                            )
-                        break
-                    except sqlite3.OperationalError as e:
-                        if "locked" in str(e) and attempt < max_retries - 1:
-                            logger.debug("Episode write locked (attempt %d/%d), retrying...", attempt + 1, max_retries)
-                            time.sleep(0.5 * (2 ** attempt))
-                        else:
-                            raise
-                if self._vector_memory:
-                    try:
-                        text = f"{context} | {action} | {outcome}"
-                        self._vector_memory.add_memory(
-                            text,
-                            metadata={
-                                "type": "episode",
-                                "episode_id": episode_id,
-                                "success": success,
-                                "importance": importance,
-                                "qualia_norm": qualia_snapshot.get("q_norm", 0.0),
-                            },
-                        )
-                    except (OSError, ConnectionError, TimeoutError) as e:
-                        record_degradation('episodic_memory', e)
-                        logger.warning("Failed to index episode in vector memory: %s", e)
-                self._maybe_prune()
+            _persist()
 
-        logger.info("📝 Episode recorded: %s (success=%s, importance=%.2f, q=%.2f)",
-                    episode_id, success, importance, qualia_snapshot.get("q_norm", 0.0))
+        # Causal encode signals — novelty feeds the neuromodulatory system and the
+        # encoding is broadcast so self-model / dreaming / identity can react.
+        self._on_encode_signals(episode_id, novelty, importance, emotional_valence, success)
+
+        logger.info("📝 Episode recorded: %s (success=%s, importance=%.2f, q=%.2f, novelty=%.2f)",
+                    episode_id, success, importance, qualia_snapshot.get("q_norm", 0.0), novelty)
         return episode_id
+
+    def _insert_and_index(
+        self,
+        *,
+        episode_id: str,
+        now: float,
+        context: str,
+        action: str,
+        outcome: str,
+        success: bool,
+        emotional_valence: float,
+        original_valence: float,
+        importance: float,
+        tools: list[str],
+        lesson_list: list[str],
+        qualia_snapshot: dict[str, Any],
+        novelty: float,
+    ) -> None:
+        """Persist one episode row, index it for semantic + associative recall,
+        and bind its engram cues in the hippocampal index.
+
+        Shared by the governed and ungoverned encode paths so the write logic
+        lives in exactly one place.
+        """
+        with self._lock:
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    with self._get_conn() as conn:
+                        conn.execute(
+                            """INSERT INTO episodes
+                               (episode_id, timestamp, context, action, outcome, success,
+                                emotional_valence, arousal, importance, participants,
+                                tools_used, lessons, tags, linked_semantic_ids, decay_rate,
+                                qualia_snapshot, next_decay_eval,
+                                fidelity, original_valence, reconsolidation_count,
+                                last_reconsolidated, novelty)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                episode_id, now, context, action, outcome,
+                                int(success), emotional_valence, 0.5, importance,
+                                json.dumps(["user", "aura"]),
+                                json.dumps(tools), json.dumps(lesson_list),
+                                json.dumps([]), json.dumps([]), 0.01,
+                                json.dumps(qualia_snapshot, cls=_SafeEncoder),
+                                now + 21600,  # First decay evaluation in 6 hours
+                                1.0, original_valence, 0, 0.0, novelty,
+                            ),
+                        )
+                    break
+                except sqlite3.OperationalError as e:
+                    if "locked" in str(e) and attempt < max_retries - 1:
+                        logger.debug("Episode write locked (attempt %d/%d), retrying...", attempt + 1, max_retries)
+                        time.sleep(0.5 * (2 ** attempt))
+                    else:
+                        raise
+
+            # Index in vector memory for semantic retrieval
+            if self._vector_memory:
+                try:
+                    text = f"{context} | {action} | {outcome}"
+                    self._vector_memory.add_memory(
+                        text,
+                        metadata={
+                            "type": "episode",
+                            "episode_id": episode_id,
+                            "success": success,
+                            "importance": importance,
+                            "qualia_norm": qualia_snapshot.get("q_norm", 0.0),
+                        },
+                    )
+                except (OSError, ConnectionError, TimeoutError) as e:
+                    record_degradation('episodic_memory', e)
+                    logger.warning("Failed to index episode in vector memory: %s", e)
+
+            # Bind the engram's associative cues for pattern completion.
+            try:
+                cues = self._hippocampus.extract_cues(
+                    context, action, outcome,
+                    tools=tools, qualia_snapshot=qualia_snapshot,
+                )
+                self._hippocampus.bind(episode_id, cues)
+            except (sqlite3.Error, AttributeError, TypeError, ValueError) as e:
+                record_degradation('episodic_memory', e)
+                logger.debug("Hippocampal cue binding skipped for %s: %s", episode_id, e)
+
+            self._maybe_prune()
 
     # ---- Compatibility Shims ------------------------------------------------
     
@@ -578,11 +653,22 @@ class EpisodicMemory:
         return await asyncio.to_thread(self._consolidate_sync)
 
     def _consolidate_sync(self):
-        """Synchronous consolidation logic run in a worker thread."""
+        """Synchronous consolidation logic run in a worker thread.
+
+        Beyond pruning decayed traces, this is where sleep-style *replay* happens:
+        salient engrams are restabilised (made more solid and slower to decay),
+        and distressing, high-arousal, repeatedly-reactivated memories become
+        candidates for gentle sleep-time emotional processing — a governed,
+        bounded therapeutic reconsolidation that mirrors how sleep helps the
+        brain metabolise emotional memories.
+        """
         pruned = 0
         boosted = 0
+        replayed = 0
+        softened = 0
+        soften_candidates: list[str] = []
         now = time.time()
-        
+
         try:
             with self._lock:
                 with self._get_conn() as conn:
@@ -601,15 +687,17 @@ class EpisodicMemory:
                         episode = self._row_to_episode(row)
                         strength = episode.current_strength()
                         episode_id = episode.episode_id
-                        
+
                         # Set next evaluation: sooner if low strength, later if strong
                         # Baseline: every 6 hours
-                        next_eval = now + 21600 
-                        
+                        next_eval = now + 21600
+
+                        salient = episode.importance >= 0.7 or abs(episode.emotional_valence) >= 0.6
+
                         # Prune fully decayed, unimportant memories
                         if strength < 0.05 and episode.importance < 0.7:
                             prune_ids.append(episode_id)
-                        
+
                         # Rehearsal boost: frequently accessed memories get slower decay
                         elif episode.access_count > 3 and episode.decay_rate > 0.005:
                             new_decay = max(0.005, episode.decay_rate * 0.85)
@@ -618,38 +706,74 @@ class EpisodicMemory:
                                 (new_decay, next_eval, episode_id)
                             )
                             boosted += 1
+                        # Sleep replay: salient engrams are restabilised even
+                        # without recent access — replay makes them more solid.
+                        elif salient and episode.decay_rate > 0.005:
+                            new_decay = max(0.004, episode.decay_rate * 0.9)
+                            conn.execute(
+                                "UPDATE episodes SET decay_rate = ?, next_decay_eval = ? WHERE episode_id = ?",
+                                (new_decay, next_eval, episode_id)
+                            )
+                            replayed += 1
                         else:
                             # Just update the timer
                             conn.execute(
                                 "UPDATE episodes SET next_decay_eval = ? WHERE episode_id = ?",
                                 (next_eval, episode_id)
                             )
+
+                        # Distressing, high-arousal memories that keep being
+                        # reactivated are candidates for sleep-time softening.
+                        if (episode.emotional_valence <= -0.4
+                                and episode.arousal >= 0.6
+                                and episode.reconsolidation_count >= 2):
+                            soften_candidates.append(episode_id)
                     
-                    # Prune decayed episodes
+                    # Prune decayed episodes (and their engram cues, same txn —
+                    # forgetting a memory must also retire its associative index).
                     if prune_ids:
                         placeholders = ",".join("?" for _ in prune_ids)
                         conn.execute(
                             f"DELETE FROM episodes WHERE episode_id IN ({placeholders})",
                             prune_ids
                         )
+                        conn.execute(
+                            f"DELETE FROM engram_cues WHERE episode_id IN ({placeholders})",
+                            prune_ids
+                        )
                         pruned = len(prune_ids)
-                    
+
                     conn.commit()
-            
-            if pruned or boosted:
+
+            if pruned or boosted or replayed:
                 logger.info(
-                    "🧠 Memory consolidation: pruned %d, boosted %d",
-                    pruned, boosted
+                    "🧠 Memory consolidation: pruned %d, boosted %d, replayed %d",
+                    pruned, boosted, replayed
                 )
-                
-                # Emit visibility event (skip if emitter not async-safe from here)
-                # In 2026 Aura, we assume event bus is non-blocking or we spawn task
-                    
+                self._emit_event("memory.consolidated", {
+                    "pruned": pruned, "boosted": boosted, "replayed": replayed,
+                })
+
+            # Sleep-time emotional processing — runs OUTSIDE the lock because
+            # therapeutic reconsolidation re-acquires it. Bounded per cycle and
+            # governed by the constitutional memory-write gate.
+            for episode_id in soften_candidates[:3]:
+                try:
+                    if self.reconsolidate_memory_in_context(
+                        episode_id, target_valence=-0.1, intensity=0.25
+                    ):
+                        softened += 1
+                except (sqlite3.Error, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    record_degradation('episodic_memory', exc)
+                    logger.debug("Sleep-time softening skipped for %s: %s", episode_id, exc)
+            if softened:
+                logger.info("🌙 Sleep-time emotional processing softened %d memories", softened)
+
         except (sqlite3.Error, OSError) as e:
             record_degradation('episodic_memory', e)
             logger.error("Consolidation failed: %s", e)
-        
-        return {"pruned": pruned, "boosted": boosted}
+
+        return {"pruned": pruned, "boosted": boosted, "replayed": replayed, "softened": softened}
 
     async def compact_to_semantic(self, batch_size: int = 20) -> dict:
         """Compress old low-strength episodes into semantic summaries.
@@ -757,8 +881,8 @@ class EpisodicMemory:
         
         # Sort by strength (recency + importance + emotional salience)
         alive.sort(key=lambda e: e.current_strength(), reverse=True)
-        
-        return alive[:limit]
+
+        return self._register_recall(alive[:limit])
 
     def recall_similar(self, query: str, limit: int = 5) -> list[Episode]:
         """Hybrid search: combines vector similarity with keyword matching.
@@ -803,12 +927,28 @@ class EpisodicMemory:
                 record_degradation('episodic_memory', e)
                 logger.debug("Keyword recall failed: %s", e)
 
+        # 2b. Associative pattern completion — re-present the query's cues to the
+        # hippocampal index to surface engrams that share them (partial cue →
+        # whole memory), the way a smell or a word can summon a full episode.
+        if len(combined) < limit:
+            try:
+                cues = HippocampalIndex.extract_cues(query)
+                pc = self._hippocampus.pattern_complete(cues, limit=limit, exclude_ids=seen_ids)
+                if pc:
+                    for ep in self._fetch_by_ids([eid for eid, _ in pc]):
+                        if ep.episode_id not in seen_ids:
+                            seen_ids.add(ep.episode_id)
+                            combined.append(ep)
+            except (sqlite3.Error, AttributeError, TypeError, ValueError) as e:
+                record_degradation('episodic_memory', e)
+                logger.debug("Pattern-completion recall path failed: %s", e)
+
         # 3. Sort by importance + recency blend
         combined.sort(
             key=lambda ep: (ep.importance * 0.6) + (min(1.0, max(0, ep.timestamp - 1774000000) / 2000000) * 0.4),
             reverse=True,
         )
-        return combined[:limit]
+        return self._register_recall(combined[:limit])
 
     def _apply_qualia_boost(self, episodes: list[Episode]) -> list[Episode]:
         """Re-rank episodes by qualia congruence with current phenomenal state."""
@@ -854,7 +994,7 @@ class EpisodicMemory:
                 "SELECT * FROM episodes WHERE tools_used LIKE ? ORDER BY timestamp DESC LIMIT ?",
                 (f'%"{tool_name}"%', limit),
             ).fetchall()
-        return [self._row_to_episode(r) for r in rows]
+        return self._register_recall([self._row_to_episode(r) for r in rows])
 
     def get_summary(self) -> dict[str, Any]:
         """Introspection summary for self-model."""
@@ -864,6 +1004,19 @@ class EpisodicMemory:
             failures = total - successes
             avg_valence = conn.execute("SELECT AVG(emotional_valence) FROM episodes").fetchone()[0] or 0.0
             important = conn.execute("SELECT COUNT(*) FROM episodes WHERE importance > 0.7").fetchone()[0]
+            avg_fidelity = conn.execute("SELECT AVG(fidelity) FROM episodes").fetchone()[0]
+            reshaped = conn.execute(
+                "SELECT COUNT(*) FROM episodes WHERE reconsolidation_count > 0"
+            ).fetchone()[0]
+            total_reconsolidations = conn.execute(
+                "SELECT COALESCE(SUM(reconsolidation_count), 0) FROM episodes"
+            ).fetchone()[0]
+            avg_novelty = conn.execute("SELECT AVG(novelty) FROM episodes").fetchone()[0]
+        engram_stats = {}
+        try:
+            engram_stats = self._hippocampus.stats()
+        except (sqlite3.Error, AttributeError):
+            pass
         return {
             "total_episodes": total,
             "successes": successes,
@@ -871,6 +1024,12 @@ class EpisodicMemory:
             "success_rate": successes / max(1, total),
             "avg_emotional_valence": round(avg_valence, 3),
             "important_memories": important,
+            # Engram dynamics — vividness vs accuracy at the population level.
+            "avg_fidelity": round(avg_fidelity if avg_fidelity is not None else 1.0, 3),
+            "reshaped_memories": reshaped,
+            "total_reconsolidations": int(total_reconsolidations or 0),
+            "avg_novelty": round(avg_novelty if avg_novelty is not None else 0.5, 3),
+            "indexed_engrams": engram_stats.get("indexed_engrams", 0),
         }
 
     def add_lesson(self, episode_id: str, lesson: str):
@@ -888,6 +1047,349 @@ class EpisodicMemory:
                         (json.dumps(lessons), episode_id),
                     )
                     conn.commit()
+
+    # ---- Engram dynamics: neuromodulation, reconsolidation, recall ----------
+
+    def _service(self, name: str):
+        """Best-effort lookup of a runtime service; never raises."""
+        try:
+            from core.container import ServiceContainer
+            return ServiceContainer.get(name, default=None)
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation('episodic_memory', exc)
+            return None
+
+    def _current_qualia(self) -> dict[str, Any]:
+        """Present phenomenal context — the 'context that seeps in' on recall."""
+        qualia = self._service("qualia_synthesizer")
+        if not qualia:
+            return {}
+        try:
+            return qualia.get_qualia_for_memory() or {}
+        except (AttributeError, RuntimeError, ValueError) as exc:
+            record_degradation('episodic_memory', exc)
+            return {}
+
+    def _plasticity_gain(self) -> float:
+        """Neuromodulatory lability gain (ACh/dopamine raise it, cortisol impairs).
+
+        This is the model's 'chemicals that make the neurons able to change':
+        how moldable memories are *right now*. Baseline ~1.0.
+        """
+        ncs = self._service("neurochemical_system")
+        if not ncs or not hasattr(ncs, "get_mesh_modulation"):
+            return 1.0
+        try:
+            _gain, plasticity, _noise = ncs.get_mesh_modulation()
+            return max(0.3, min(2.0, float(plasticity)))
+        except (AttributeError, RuntimeError, ValueError, TypeError) as exc:
+            record_degradation('episodic_memory', exc)
+            return 1.0
+
+    def _emit_event(self, topic: str, payload: dict[str, Any]) -> None:
+        """Broadcast a memory event so other subsystems can react. Sync-safe."""
+        bus = self._service("event_bus")
+        if not bus:
+            return
+        try:
+            if hasattr(bus, "publish_threadsafe"):
+                bus.publish_threadsafe(topic, payload)
+            elif hasattr(bus, "publish"):
+                bus.publish({"type": topic, **payload})
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation('episodic_memory', exc)
+
+    def _estimate_novelty(self, context: str, action: str, outcome: str) -> float:
+        """Prediction error for a new episode in [0, 1].
+
+        Prefers the predictive subsystem's world-model surprise (a genuine
+        cross-subsystem input). Falls back to lexical dissimilarity from recent
+        episodes so novelty still works before the predictive engine is online.
+        """
+        for svc_name in ("predictive_engine", "self_prediction"):
+            svc = self._service(svc_name)
+            if svc and hasattr(svc, "get_surprise_signal"):
+                try:
+                    s = float(svc.get_surprise_signal())
+                    if s == s:  # reject NaN
+                        return max(0.0, min(1.0, s))
+                except (AttributeError, RuntimeError, ValueError, TypeError):
+                    pass
+        try:
+            new_tokens = set(HippocampalIndex.extract_cues(context, action, outcome))
+            if not new_tokens:
+                return 0.5
+            best = 0.0
+            for ep in self._peek_recent(limit=5):
+                old_tokens = set(HippocampalIndex.extract_cues(ep.context, ep.action, ep.outcome))
+                if not old_tokens:
+                    continue
+                overlap = len(new_tokens & old_tokens) / len(new_tokens | old_tokens)
+                best = max(best, overlap)
+            return round(max(0.0, min(1.0, 1.0 - best)), 4)
+        except (sqlite3.Error, AttributeError, TypeError, ValueError) as exc:
+            record_degradation('episodic_memory', exc)
+            return 0.5
+
+    def _on_encode_signals(
+        self, episode_id: str, novelty: float, importance: float,
+        emotional_valence: float, success: bool,
+    ) -> None:
+        """Causal outputs at encoding: novelty → neuromodulation; broadcast."""
+        if novelty >= 0.55:
+            ncs = self._service("neurochemical_system")
+            if ncs and hasattr(ncs, "on_novelty"):
+                try:
+                    ncs.on_novelty(min(0.6, novelty * 0.6))
+                except (AttributeError, RuntimeError, ValueError, TypeError) as exc:
+                    record_degradation('episodic_memory', exc)
+        self._emit_event("memory.encoded", {
+            "episode_id": episode_id,
+            "novelty": round(float(novelty), 4),
+            "importance": round(float(importance), 4),
+            "valence": round(float(emotional_valence), 4),
+            "success": bool(success),
+        })
+
+    def _register_recall(self, episodes: list[Episode]) -> list[Episode]:
+        """Recall is not passive read-out.
+
+        Bringing a memory to mind bumps its vividness (access) and can return the
+        trace to a labile state where the present rewrites it (reconsolidation).
+        Applied once per memory per public recall:
+          * neuromodulatory plasticity gain controls lability (impacted-by),
+          * content rewrite (drift) passes the constitutional gate (governed),
+          * resulting prediction error feeds the neurochemical system (impacts).
+        """
+        if not episodes:
+            return episodes
+        now = time.time()
+        current_qualia = self._current_qualia()
+        lability = self._plasticity_gain()
+        drift_events: list[tuple[Episode, ReconsolidationOutcome]] = []
+
+        try:
+            with self._lock:
+                with self._get_conn() as conn:
+                    for ep in episodes:
+                        outcome = self._reconsolidation.reconsolidate(
+                            now=now,
+                            timestamp=ep.timestamp,
+                            emotional_valence=ep.emotional_valence,
+                            original_valence=ep.original_valence,
+                            importance=ep.importance,
+                            decay_rate=ep.decay_rate,
+                            fidelity=ep.fidelity,
+                            reconsolidation_count=ep.reconsolidation_count,
+                            last_reconsolidated=ep.last_reconsolidated,
+                            current_strength=ep.current_strength(),
+                            qualia_snapshot=ep.qualia_snapshot,
+                            current_qualia=current_qualia,
+                            lability=lability,
+                        )
+                        # Content rewrite is a governed memory mutation.
+                        if outcome.drifted and not self._approve_reconsolidation(ep, outcome):
+                            outcome = self._rehearsal_only(ep, outcome, now)
+
+                        new_access = ep.access_count + 1
+                        conn.execute(
+                            """UPDATE episodes SET
+                                 access_count = ?, last_accessed = ?,
+                                 importance = ?, decay_rate = ?,
+                                 emotional_valence = ?, qualia_snapshot = ?,
+                                 fidelity = ?, reconsolidation_count = ?,
+                                 last_reconsolidated = ?
+                               WHERE episode_id = ?""",
+                            (
+                                new_access, now,
+                                outcome.importance, outcome.decay_rate,
+                                outcome.emotional_valence,
+                                json.dumps(outcome.qualia_snapshot, cls=_SafeEncoder),
+                                outcome.fidelity, outcome.reconsolidation_count,
+                                outcome.last_reconsolidated, ep.episode_id,
+                            ),
+                        )
+                        # Reflect the rewrite on the live object handed to callers.
+                        ep.access_count = new_access
+                        ep.last_accessed = now
+                        ep.importance = outcome.importance
+                        ep.decay_rate = outcome.decay_rate
+                        ep.emotional_valence = outcome.emotional_valence
+                        ep.qualia_snapshot = outcome.qualia_snapshot
+                        ep.fidelity = outcome.fidelity
+                        ep.reconsolidation_count = outcome.reconsolidation_count
+                        ep.last_reconsolidated = outcome.last_reconsolidated
+                        if outcome.drifted:
+                            drift_events.append((ep, outcome))
+                    conn.commit()
+        except (sqlite3.Error, OSError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation('episodic_memory', exc)
+            logger.debug("Recall registration (reconsolidation) degraded: %s", exc)
+            return episodes
+
+        for ep, outcome in drift_events:
+            self._on_reconsolidation_signals(ep, outcome)
+        return episodes
+
+    @staticmethod
+    def _rehearsal_only(ep: Episode, outcome: ReconsolidationOutcome, now: float) -> ReconsolidationOutcome:
+        """Keep only the benign rehearsal strengthening when governance vetoes the
+        content rewrite — the memory is reinforced but not rewritten."""
+        return ReconsolidationOutcome(
+            fired=outcome.fired,
+            drifted=False,
+            emotional_valence=ep.emotional_valence,
+            qualia_snapshot=ep.qualia_snapshot,
+            importance=outcome.importance,
+            decay_rate=outcome.decay_rate,
+            fidelity=ep.fidelity,
+            reconsolidation_count=ep.reconsolidation_count,
+            last_reconsolidated=now,
+            prediction_error=outcome.prediction_error,
+            note="governance_vetoed_drift",
+        )
+
+    def _approve_reconsolidation(self, ep: Episode, outcome: ReconsolidationOutcome) -> bool:
+        """Constitutional gate for rewriting an existing memory's content.
+
+        Rewriting one's own past is exactly the kind of act that belongs under
+        governance, so spontaneous and therapeutic drift both pass through the
+        same constitutional memory-write approval used for new episodes.
+        """
+        try:
+            from core.constitution import get_constitutional_core, unpack_governance_result
+            delta = outcome.emotional_valence - ep.emotional_valence
+            preview = (
+                f"reconsolidate {ep.episode_id}: Δvalence={delta:+.3f} "
+                f"fidelity={outcome.fidelity:.2f}"
+            )
+            approved, reason, _decision = unpack_governance_result(
+                get_constitutional_core().approve_memory_write_sync(
+                    "episodic_reconsolidation",
+                    preview,
+                    source="reconsolidation",
+                    importance=max(0.0, min(1.0, float(ep.importance or 0.0))),
+                    metadata={
+                        "episode_id": ep.episode_id,
+                        "prediction_error": round(float(outcome.prediction_error), 4),
+                        "reconsolidation_count": int(outcome.reconsolidation_count),
+                    },
+                    return_decision=True,
+                )
+            )
+            if not approved:
+                logger.debug("Reconsolidation vetoed for %s: %s", ep.episode_id, reason)
+            return bool(approved)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation('episodic_memory', exc)
+            # When the constitutional runtime is live but the gate errored, fail
+            # closed (no rewrite). Otherwise (no runtime, e.g. tests) allow it.
+            return not self._constitutional_runtime_live()
+
+    def _on_reconsolidation_signals(self, ep: Episode, outcome: ReconsolidationOutcome) -> None:
+        """Causal outputs of a drift: prediction error → neuromodulation; broadcast."""
+        pe = float(outcome.prediction_error)
+        if pe > 0.05:
+            ncs = self._service("neurochemical_system")
+            if ncs and hasattr(ncs, "on_prediction_error"):
+                try:
+                    ncs.on_prediction_error(min(0.6, pe))
+                except (AttributeError, RuntimeError, ValueError, TypeError) as exc:
+                    record_degradation('episodic_memory', exc)
+        self._emit_event("memory.reconsolidated", {
+            "episode_id": ep.episode_id,
+            "prediction_error": round(pe, 4),
+            "fidelity": round(float(ep.fidelity), 4),
+            "valence": round(float(ep.emotional_valence), 4),
+            "valence_drift": ep.valence_drift(),
+            "reconsolidation_count": int(ep.reconsolidation_count),
+            "note": outcome.note,
+        })
+
+    def pattern_complete(self, cue: "str | list[str]", limit: int = 5) -> list[Episode]:
+        """Associative recall: complete an episode from a partial cue set.
+
+        Re-presenting part of an engram reinstates the whole (hippocampal pattern
+        completion) — complementary to vector similarity and keyword search.
+        ``cue`` may be free text or an explicit list of cue tokens.
+        """
+        if isinstance(cue, str):
+            cues = HippocampalIndex.extract_cues(cue)
+        else:
+            cues = [str(c).lower() for c in (cue or [])]
+        if not cues:
+            return []
+        try:
+            matches = self._hippocampus.pattern_complete(cues, limit=limit)
+        except (sqlite3.Error, AttributeError, TypeError, ValueError) as exc:
+            record_degradation('episodic_memory', exc)
+            return []
+        if not matches:
+            return []
+        episodes = self._fetch_by_ids([eid for eid, _ in matches])
+        order = {eid: i for i, (eid, _score) in enumerate(matches)}
+        episodes.sort(key=lambda e: order.get(e.episode_id, 999))
+        return self._register_recall(episodes[:limit])
+
+    def reconsolidate_memory_in_context(
+        self,
+        episode_id: str,
+        target_valence: float,
+        intensity: float = 0.5,
+        safe_context: dict[str, Any] | None = None,
+    ) -> bool:
+        """Therapeutic reconsolidation: deliberately revisit a memory in a safe
+        context so its emotional tone updates toward ``target_valence``.
+
+        Models reframing a hurtful memory in safety (Speer et al. 2021): the
+        memory restabilises a little less aversive, at a small cost to fidelity.
+        Governed by the constitutional memory-write gate.
+        """
+        rows = self._fetch_by_ids([episode_id])
+        if not rows:
+            return False
+        ep = rows[0]
+        now = time.time()
+        outcome = self._reconsolidation.reconsolidate_in_context(
+            now=now,
+            emotional_valence=ep.emotional_valence,
+            qualia_snapshot=ep.qualia_snapshot,
+            importance=ep.importance,
+            fidelity=ep.fidelity,
+            reconsolidation_count=ep.reconsolidation_count,
+            target_valence=float(target_valence),
+            intensity=float(intensity),
+            safe_context=safe_context or self._current_qualia(),
+        )
+        if not self._approve_reconsolidation(ep, outcome):
+            logger.info("Therapeutic reconsolidation vetoed for %s", episode_id)
+            return False
+        try:
+            with self._lock:
+                with self._get_conn() as conn:
+                    conn.execute(
+                        """UPDATE episodes SET emotional_valence = ?, qualia_snapshot = ?,
+                             fidelity = ?, reconsolidation_count = ?, last_reconsolidated = ?
+                           WHERE episode_id = ?""",
+                        (
+                            outcome.emotional_valence,
+                            json.dumps(outcome.qualia_snapshot, cls=_SafeEncoder),
+                            outcome.fidelity, outcome.reconsolidation_count, now, episode_id,
+                        ),
+                    )
+                    conn.commit()
+        except (sqlite3.Error, OSError) as exc:
+            record_degradation('episodic_memory', exc)
+            return False
+        ep.emotional_valence = outcome.emotional_valence
+        ep.qualia_snapshot = outcome.qualia_snapshot
+        ep.fidelity = outcome.fidelity
+        ep.reconsolidation_count = outcome.reconsolidation_count
+        ep.last_reconsolidated = now
+        self._on_reconsolidation_signals(ep, outcome)
+        logger.info("🛋️ Therapeutic reconsolidation of %s → valence %.2f (fidelity %.2f)",
+                    episode_id, outcome.emotional_valence, outcome.fidelity)
+        return True
 
     # ---- Internal -----------------------------------------------------------
 
@@ -927,24 +1429,41 @@ class EpisodicMemory:
             last_accessed=safe_get("last_accessed", 0.0),
             decay_rate=safe_get("decay_rate", 0.01),
             qualia_snapshot=load_json(safe_get("qualia_snapshot", "{}"), {}),
+            fidelity=safe_get("fidelity", 1.0),
+            original_valence=safe_get("original_valence", None),
+            reconsolidation_count=safe_get("reconsolidation_count", 0),
+            last_reconsolidated=safe_get("last_reconsolidated", 0.0),
+            novelty=safe_get("novelty", 0.5),
         )
 
     def _fetch_by_ids(self, episode_ids: list[str]) -> list[Episode]:
-        """Fetch episodes by ID list and mark as accessed."""
-        now = time.time()
+        """Fetch episodes by ID list (read-only).
+
+        Access stats and reconsolidation are applied by :meth:`_register_recall`
+        on the memories actually returned from a public recall, so this stays a
+        pure read used by the recall paths and by direct id lookups.
+        """
+        if not episode_ids:
+            return []
         with self._get_conn() as conn:
             placeholders = ",".join("?" for _ in episode_ids)
             rows = conn.execute(
                 f"SELECT * FROM episodes WHERE episode_id IN ({placeholders})",
                 episode_ids,
             ).fetchall()
-            # Update access stats
-            for eid in episode_ids:
-                conn.execute(
-                    "UPDATE episodes SET access_count = access_count + 1, last_accessed = ? WHERE episode_id = ?",
-                    (now, eid),
-                )
-            conn.commit()
+        return [self._row_to_episode(r) for r in rows]
+
+    def _peek_recent(self, limit: int = 5) -> list[Episode]:
+        """Read-only recent episodes — no access bump, no reconsolidation.
+
+        Used by internal bookkeeping (dedup, novelty estimation) that merely
+        glances at memory rather than constituting a deliberate recall, so it
+        must not trigger the labile-window dynamics.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM episodes ORDER BY timestamp DESC LIMIT ?", (limit,)
+            ).fetchall()
         return [self._row_to_episode(r) for r in rows]
 
     def _keyword_search(self, query: str, limit: int) -> list[Episode]:
@@ -1056,20 +1575,24 @@ class EpisodicMemory:
             if count > self.MAX_EPISODES:
                 keep_count = self.RETENTION_POLICY.keep_count(count)
                 excess = count - keep_count
-                conn.execute(
-                    """DELETE FROM episodes WHERE episode_id IN (
-                        SELECT episode_id FROM episodes
-                        ORDER BY importance ASC, access_count ASC, timestamp ASC
-                        LIMIT ?
-                    )""",
-                    (excess,),
-                )
-                conn.commit()
-                logger.info(
-                    "Pruned %s low-importance episodes using %s policy",
-                    excess,
-                    self.RETENTION_POLICY.basis,
-                )
+                victims = [
+                    r[0] for r in conn.execute(
+                        """SELECT episode_id FROM episodes
+                           ORDER BY importance ASC, access_count ASC, timestamp ASC
+                           LIMIT ?""",
+                        (excess,),
+                    ).fetchall()
+                ]
+                if victims:
+                    placeholders = ",".join("?" for _ in victims)
+                    conn.execute(f"DELETE FROM episodes WHERE episode_id IN ({placeholders})", victims)
+                    conn.execute(f"DELETE FROM engram_cues WHERE episode_id IN ({placeholders})", victims)
+                    conn.commit()
+                    logger.info(
+                        "Pruned %s low-importance episodes using %s policy",
+                        len(victims),
+                        self.RETENTION_POLICY.basis,
+                    )
 
     def delete_episodes(self, episode_ids: list[str]):
         """Hard delete specific episodes (e.g., after consolidation)."""
@@ -1080,8 +1603,9 @@ class EpisodicMemory:
                 with self._get_conn() as conn:
                     placeholders = ",".join("?" for _ in episode_ids)
                     conn.execute(f"DELETE FROM episodes WHERE episode_id IN ({placeholders})", episode_ids)
+                    conn.execute(f"DELETE FROM engram_cues WHERE episode_id IN ({placeholders})", episode_ids)
                     conn.commit()
-                
+
                 # Also remove from vector memory if possible
                 if self._vector_memory:
                     try:

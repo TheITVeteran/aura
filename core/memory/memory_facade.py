@@ -209,6 +209,37 @@ class MemoryFacade:
 
     @property
     def episodic(self): return self._episodic
+
+    async def pattern_complete(self, cue, limit: int = 5):
+        """Associative recall via the hippocampal index: a partial cue set
+        reinstates the whole engram (complements vector/keyword search)."""
+        ep = self._episodic
+        if ep is None or not hasattr(ep, "pattern_complete"):
+            return []
+        try:
+            return await asyncio.to_thread(ep.pattern_complete, cue, limit)
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+            record_degradation('memory_facade', e)
+            logger.debug("pattern_complete via facade failed: %s", e)
+            return []
+
+    async def reconsolidate_in_context(
+        self, episode_id: str, target_valence: float, intensity: float = 0.5,
+    ) -> bool:
+        """Therapeutic reconsolidation: revisit a memory in a safe context so its
+        emotional tone updates toward ``target_valence`` (governed)."""
+        ep = self._episodic
+        if ep is None or not hasattr(ep, "reconsolidate_memory_in_context"):
+            return False
+        try:
+            return await asyncio.to_thread(
+                ep.reconsolidate_memory_in_context, episode_id, target_valence, intensity
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+            record_degradation('memory_facade', e)
+            logger.debug("reconsolidate_in_context via facade failed: %s", e)
+            return False
+
     @property
     def vector(self): return self._vector
     @property

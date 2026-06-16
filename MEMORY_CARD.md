@@ -49,6 +49,38 @@ Memories demonstrably change future behavior through:
 
 5. **Error Memory**: Past failures are remembered to avoid repeating them.
 
+## Engram Dynamics (encoding, recall, reconsolidation)
+
+Episodic memories are not static recordings. Each trace ("engram") has a
+lifecycle modelled on human memory neuroscience, implemented in
+`core/memory/episodic_memory.py`, `reconsolidation.py`, and `hippocampus.py`:
+
+- **Encoding strength** is boosted by *emotion*, *failure*, *relational
+  significance*, and *novelty* (prediction error). Novelty is sourced from the
+  predictive subsystem's surprise signal and fed back into the neurochemical
+  system (`on_novelty`).
+- **Hippocampal index**: every episode is bound to a sparse set of associative
+  *cues*. Re-presenting part of a cue set reinstates the whole memory
+  (**pattern completion**) — a recall path alongside vector and keyword search.
+- **Reconsolidation**: recalling a memory returns it to a *labile* state in which
+  the present phenomenal/affective context "seeps in." The emotional tone and
+  qualia snapshot drift toward the present, and **fidelity** (faithfulness to the
+  original encoding) drops. How much a memory can change is gated by the
+  neurochemical **plasticity** signal ("chemicals that make neurons able to
+  change") and resisted by strong, vivid, emotional memories (boundary
+  conditions). A refractory window prevents runaway change on rapid re-recall.
+- **Vividness ≠ accuracy**: repeated recall raises a memory's vividness/strength
+  while lowering its fidelity. Heavily reshaped memories are flagged as such when
+  injected into context.
+- **Sleep replay**: during consolidation, salient engrams are restabilised, and
+  distressing, high-arousal, repeatedly-reactivated memories undergo bounded,
+  governed **therapeutic reconsolidation** (softening) — the "revisit in a safe
+  context" effect.
+
+Every content rewrite (spontaneous drift or therapeutic softening) passes through
+the same constitutional memory-write gate as new writes, and emits
+`memory.encoded` / `memory.reconsolidated` / `memory.consolidated` events.
+
 ## Memory Governance
 
 All memory writes are gated:
