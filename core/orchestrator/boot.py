@@ -789,58 +789,62 @@ class OrchestratorBootMixin(
                         from core.resilience.healing_swarm import HealingSwarmService
 
                         healer = HealingSwarmService(self)
-                        healer.start()
-                        ServiceContainer.register_instance("healing_swarm", healer)
-                        self.healing_service = healer
-                        logger.info("🛡️ Healing Swarm Service initialized and started.")
+                        healing_started = healer.start()
+                        if healing_started:
+                            ServiceContainer.register_instance("healing_swarm", healer)
+                            self.healing_service = healer
+                            logger.info("🛡️ Healing Swarm Service initialized and started.")
+                        else:
+                            logger.info("Healing Swarm deferred by runtime background policy.")
 
-                        # ── Wire IncidentManager → HealingSwarm ──────────────
-                        # Close the "log and limp on" gap: when degradation
-                        # events escalate to CRITICAL/EMERGENCY, trigger
-                        # autonomous repair instead of just recording.
-                        try:
-                            from core.resilience.incident_manager import get_incident_manager
+                        if healing_started:
+                            # ── Wire IncidentManager → HealingSwarm ──────────────
+                            # Close the "log and limp on" gap: when degradation
+                            # events escalate to CRITICAL/EMERGENCY, trigger
+                            # autonomous repair instead of just recording.
+                            try:
+                                from core.resilience.incident_manager import get_incident_manager
 
-                            def _incident_to_repair(incident):
-                                """Bridge: IncidentManager alert → HealingSwarm repair."""
-                                import asyncio as _aio
+                                def _incident_to_repair(incident):
+                                    """Bridge: IncidentManager alert → HealingSwarm repair."""
+                                    import asyncio as _aio
 
-                                try:
-                                    _aio.get_running_loop()
-                                except RuntimeError:
-                                    return  # No event loop — can't schedule repair
-                                from core.utils.task_tracker import get_task_tracker
+                                    try:
+                                        _aio.get_running_loop()
+                                    except RuntimeError:
+                                        return  # No event loop — can't schedule repair
+                                    from core.utils.task_tracker import get_task_tracker
 
-                                get_task_tracker().create_task(
-                                    healer.attempt_repair(
+                                    get_task_tracker().create_task(
+                                        healer.attempt_repair(
+                                            incident.category,
+                                            {
+                                                "status": incident.severity.value,
+                                                "description": incident.description[:200],
+                                                "root_cause": incident.root_cause_hint,
+                                                "occurrences": incident.occurrence_count,
+                                            },
+                                        ),
+                                        name=f"heal.{incident.category[:40]}",
+                                    )
+                                    logger.info(
+                                        "🔗 [INCIDENT→HEAL] Dispatched repair for %s (severity=%s, occurrences=%d)",
                                         incident.category,
-                                        {
-                                            "status": incident.severity.value,
-                                            "description": incident.description[:200],
-                                            "root_cause": incident.root_cause_hint,
-                                            "occurrences": incident.occurrence_count,
-                                        },
-                                    ),
-                                    name=f"heal.{incident.category[:40]}",
-                                )
-                                logger.info(
-                                    "🔗 [INCIDENT→HEAL] Dispatched repair for %s (severity=%s, occurrences=%d)",
-                                    incident.category,
-                                    incident.severity.value,
-                                    incident.occurrence_count,
-                                )
+                                        incident.severity.value,
+                                        incident.occurrence_count,
+                                    )
 
-                            get_incident_manager().register_alert_callback(_incident_to_repair)
-                            logger.info("🔗 IncidentManager → HealingSwarm alert bridge active.")
-                        except (ImportError, AttributeError, RuntimeError) as bridge_err:
-                            _record_boot_degradation(
-                                bridge_err,
-                                action="continued healing swarm without incident alert bridge",
-                                severity="degraded",
-                            )
-                            logger.warning(
-                                "⚠️ IncidentManager→HealingSwarm bridge failed: %s", bridge_err
-                            )
+                                get_incident_manager().register_alert_callback(_incident_to_repair)
+                                logger.info("🔗 IncidentManager → HealingSwarm alert bridge active.")
+                            except (ImportError, AttributeError, RuntimeError) as bridge_err:
+                                _record_boot_degradation(
+                                    bridge_err,
+                                    action="continued healing swarm without incident alert bridge",
+                                    severity="degraded",
+                                )
+                                logger.warning(
+                                    "⚠️ IncidentManager→HealingSwarm bridge failed: %s", bridge_err
+                                )
                     except (ImportError, AttributeError, RuntimeError) as e:
                         _record_boot_degradation(
                             e,

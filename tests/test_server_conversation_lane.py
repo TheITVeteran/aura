@@ -87,7 +87,8 @@ def test_runtime_fact_status_reply_uses_canonical_lane(monkeypatch):
     reply = chat_routes._ground_runtime_fact_status_reply(
         (
             "Live desktop path validation. Reply in one sentence with the active model lane, "
-            "whether CognitiveEngine is handling this turn, and whether governed tools are available."
+            "whether CognitiveEngine is handling this turn, and whether governed tools are available "
+            "and generic assistant fallback."
         ),
         "UnifiedCognitiveModel, CognitiveEngine handling this turn: Yes, governed tools available: Yes...",
         {
@@ -102,6 +103,7 @@ def test_runtime_fact_status_reply_uses_canonical_lane(monkeypatch):
     assert "CognitiveEngine handled this turn: yes" in reply
     assert "governed tools available: yes" in reply
     assert "recurrent depth: active" in reply
+    assert "generic assistant fallback: blocked on the live desktop path" in reply
     assert "UnifiedCognitiveModel" not in reply
 
 
@@ -213,6 +215,24 @@ def test_bounded_planning_reply_uses_ram_guard_only_for_system_memory():
     assert reply is not None
     assert "RAM bounded" in reply
     assert "memory-pressure gate" in reply
+
+
+def test_nonexecuting_desktop_planning_blocks_consequential_execution():
+    from interface.routes import chat as chat_routes
+
+    message = (
+        "Don't execute tools. In two sentences, describe how you'd decide whether "
+        "to use Notes or Google Docs for a user writing task."
+    )
+
+    assert chat_routes._looks_like_desktop_objective(message) is True
+    assert chat_routes._is_bounded_nonexecuting_planning_request(message) is True
+    assert chat_routes._blocks_consequential_desktop_execution(message) is True
+    reply = chat_routes._build_bounded_planning_reply(message)
+    assert reply is not None
+    assert "Don't execute tools" not in reply
+    assert "In two sentences" not in reply
+    assert "decide whether to use Notes or Google Docs" in reply
 
 
 @pytest.mark.asyncio
@@ -1319,6 +1339,44 @@ def test_session_memory_pin_question_wording_does_not_store_as_new_memory():
 
     assert chat_routes._extract_session_memory_pin_request("Remember what I said earlier?") is None
     assert chat_routes._extract_session_memory_pin_request("Remember when we talked about tools?") is None
+
+
+@pytest.mark.asyncio
+async def test_session_memory_pin_prefixed_probe_wording_recall(monkeypatch, tmp_path):
+    from interface.routes import chat as chat_routes
+
+    ledger_path = tmp_path / "session_memory_pins.jsonl"
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: ledger_path)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda _name, default=None: default),
+    )
+    chat_routes._session_memory_pins.clear()
+
+    stored = await chat_routes._build_memory_state_fastpath_reply(
+        "For this live reliability probe, remember the phrase cobalt sunrise for this conversation."
+    )
+    recalled_just = await chat_routes._build_memory_state_fastpath_reply(
+        "What phrase did I just ask you to remember?"
+    )
+    recalled_earlier = await chat_routes._build_memory_state_fastpath_reply(
+        "What was the phrase from earlier in this probe?"
+    )
+    chat_routes._session_memory_pins.clear()
+
+    assert stored is not None
+    assert stored[1] == "session_memory_pin"
+    assert "cobalt sunrise" in stored[0]
+    assert "for this conversation" not in stored[0]
+    assert recalled_just is not None
+    assert recalled_just[1] == "session_memory_recall"
+    assert "cobalt sunrise" in recalled_just[0]
+    assert "for this conversation" not in recalled_just[0]
+    assert recalled_earlier is not None
+    assert recalled_earlier[1] == "session_memory_recall"
+    assert "cobalt sunrise" in recalled_earlier[0]
+    assert "for this conversation" not in recalled_earlier[0]
 
 
 @pytest.mark.asyncio
@@ -2849,10 +2907,15 @@ async def test_api_chat_desktop_nonexecuting_plan_uses_cognitive_engine_when_req
     from interface.routes import chat as chat_routes
 
     cognitive_calls = []
+    desktop_objective_calls = []
 
     async def _fake_cognitive_turn(*_args, **_kwargs):
         cognitive_calls.append("desktop_cognitive_engine")
         return "I would create the note, export the PDF only after authorization, and verify the artifact path."
+
+    async def _forbidden_desktop_objective(*_args, **_kwargs):
+        desktop_objective_calls.append((_args, _kwargs))
+        pytest.fail("non-executing desktop planning request must not dispatch desktop_task")
 
     async def _fake_log_exchange(*_args, **_kwargs):
         return None
@@ -2865,6 +2928,7 @@ async def test_api_chat_desktop_nonexecuting_plan_uses_cognitive_engine_when_req
     monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_execute_desktop_objective_from_chat", _forbidden_desktop_objective)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(
         chat_routes,
@@ -2901,6 +2965,80 @@ async def test_api_chat_desktop_nonexecuting_plan_uses_cognitive_engine_when_req
     assert "export the PDF only after authorization" in payload["response"]
     assert "after authorization" in payload["response"]
     assert cognitive_calls == ["desktop_cognitive_engine"]
+    assert desktop_objective_calls == []
+
+
+@pytest.mark.asyncio
+async def test_api_chat_desktop_nonexecuting_decision_question_blocks_desktop_task(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    cognitive_calls = []
+    desktop_objective_calls = []
+
+    async def _fake_cognitive_turn(*_args, **_kwargs):
+        cognitive_calls.append("desktop_cognitive_engine")
+        return (
+            "I would use Notes for a quick local note and Google Docs when the user needs "
+            "cloud editing, sharing, or a polished longer document."
+        )
+
+    async def _forbidden_desktop_objective(*_args, **_kwargs):
+        desktop_objective_calls.append((_args, _kwargs))
+        pytest.fail("do-not-execute decision questions must not dispatch desktop_task")
+
+    async def _fake_log_exchange(*_args, **_kwargs):
+        return None
+
+    async def _fake_output_receipt(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_execute_desktop_objective_from_chat", _forbidden_desktop_objective)
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message=(
+                "Don't execute tools. In two sentences, describe how you'd decide whether "
+                "to use Notes or Google Docs for a user writing task."
+            )
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+            cookies={},
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["status"] == "cognitive_engine"
+    assert "Notes" in payload["response"]
+    assert "Google Docs" in payload["response"]
+    assert cognitive_calls == ["desktop_cognitive_engine"]
+    assert desktop_objective_calls == []
 
 
 @pytest.mark.asyncio
@@ -3580,6 +3718,33 @@ def test_live_desktop_gate_leak_is_retryable_user_facing_failure():
     assert assessment.retryable
 
 
+def test_conceptual_live_chat_reliability_question_does_not_force_diagnostic_floor():
+    from core.conversation.response_reliability import (
+        is_reliability_concern,
+        reliability_floor_for_user,
+    )
+
+    message = (
+        "In two direct sentences, explain why the live desktop chat path must "
+        "never fall back into generic assistant mode."
+    )
+
+    assert is_reliability_concern(message) is False
+    assert reliability_floor_for_user(message) == ""
+
+
+def test_reported_live_chat_breakage_still_uses_reliability_floor():
+    from core.conversation.response_reliability import (
+        is_reliability_concern,
+        reliability_floor_for_user,
+    )
+
+    message = "The live chat path broke again after a few turns."
+
+    assert is_reliability_concern(message) is True
+    assert reliability_floor_for_user(message)
+
+
 @pytest.mark.asyncio
 async def test_desktop_low_risk_social_turn_repairs_model_gate_leak_without_second_pass(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
@@ -3956,6 +4121,56 @@ async def test_desktop_required_runtime_status_avoids_foreground_model_allocatio
     assert "governed tools available: yes" in reply
 
 
+@pytest.mark.asyncio
+async def test_desktop_required_cognitive_fusion_status_avoids_foreground_model_allocation(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append({"objective": objective, "context": dict(context or {})})
+            return SimpleNamespace(content="unexpected model answer")
+
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = (
+        "In two direct sentences, explain why the live desktop chat path must stay fused "
+        "to your cognitive engine instead of falling back into generic assistant mode."
+    )
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+            "recurrent_depth": {"active": True},
+        },
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert calls == []
+    assert reply
+    assert "Cortex (32B) is the active foreground lane" in reply
+    assert "CognitiveEngine handled this turn: yes" in reply
+    assert "governed tools available: yes" in reply
+    assert "recurrent depth: active" in reply
+
+
 def test_compact_desktop_contract_keeps_hypothetical_tool_plans_compact():
     from interface.routes import chat as chat_routes
 
@@ -4025,6 +4240,43 @@ def test_conversation_recall_classifier_handles_natural_memory_questions():
         chat_routes._classify_conversation_recall_request("Can you remind me what we talked about?")
         == "topic"
     )
+    assert (
+        chat_routes._classify_conversation_recall_request("Could you summarize our last two messages?")
+        == "recent_pair"
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversation_recall_summarizes_last_two_messages_from_live_log():
+    from interface.routes import chat as chat_routes
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+        chat_routes._conversation_log.extend(
+            [
+                {
+                    "user": "What phrase did I just ask you to remember?",
+                    "aura": 'The phrase you asked me to remember in this session was "cobalt sunrise".',
+                    "status": "complete",
+                },
+                {
+                    "user": "In one sentence, what are you focused on right now?",
+                    "aura": "Understanding you and staying present for this conversation.",
+                    "status": "complete",
+                },
+            ]
+        )
+
+    reply = await chat_routes._build_conversation_recall_reply(
+        "Could you summarize our last two messages?"
+    )
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+
+    assert reply is not None
+    assert "cobalt sunrise" in reply
+    assert "focused on right now" in reply
 
 
 def test_failure_mode_surface_request_is_not_misclassified_as_planning():

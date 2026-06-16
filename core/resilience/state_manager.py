@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 import zlib
 
 from core.config import config
@@ -135,7 +135,17 @@ class StateManager:
 
     def load_last_snapshot(self) -> Optional[Dict[str, Any]]:
         """Load the most recent snapshot."""
-        return self._load_from_path(self.snapshot_dir / "latest_snapshot.json")
+        latest_path = self.snapshot_dir / "latest_snapshot.json"
+        data = self._load_from_path(latest_path)
+        if data is not None:
+            return data
+
+        recovered = self._load_most_recent_history_snapshot()
+        if recovered is not None:
+            logger.warning(
+                "Recovered state from historical snapshot after latest snapshot was unavailable or invalid."
+            )
+        return recovered
 
     def load_existential_snapshot(self) -> Optional[Dict[str, Any]]:
         """Phase 18.3: Load the hardened identity snapshot."""
@@ -153,6 +163,58 @@ class StateManager:
         except (OSError, IOError) as e:
             record_degradation('state_manager', e)
             logger.error("Failed to quarantine corrupted file %s: %s", corrupted_file_path, e)
+
+    def _history_snapshot_paths(self) -> Iterable[Path]:
+        """Return historical snapshot candidates newest-first."""
+        candidates = []
+        for path in self.snapshot_dir.glob("snapshot_*.json"):
+            try:
+                candidates.append((path.stat().st_mtime, path))
+            except (OSError, RuntimeError, ValueError) as exc:
+                record_degradation(
+                    "state_manager_history_snapshot_scan",
+                    exc,
+                    severity="warning",
+                    action="skipped unreadable historical snapshot metadata",
+                    extra={"path": str(path)},
+                )
+        for _mtime, path in sorted(candidates, key=lambda item: item[0], reverse=True):
+            yield path
+
+    def _promote_recovered_snapshot(self, source_path: Path) -> None:
+        """Repair latest_snapshot.json from a verified historical snapshot."""
+        latest_path = self.snapshot_dir / "latest_snapshot.json"
+        try:
+            payload = source_path.read_bytes()
+            with local_internal_governed_scope(
+                "resilience.state_manager.recovered_latest",
+                receipt_prefix="state-manager-file-write:recovered-latest",
+            ):
+                get_file_write_gateway().write_bytes(
+                    latest_path,
+                    payload,
+                    source="resilience.state_manager.recovered_latest_snapshot",
+                )
+        except (OSError, RuntimeError, AttributeError, ValueError) as exc:
+            record_degradation(
+                "state_manager_latest_repair",
+                exc,
+                severity="warning",
+                action="loaded historical state but could not repair latest snapshot",
+                extra={"source_path": str(source_path), "latest_path": str(latest_path)},
+            )
+            logger.warning("Loaded historical state but could not repair latest snapshot: %s", exc)
+
+    def _load_most_recent_history_snapshot(self) -> Optional[Dict[str, Any]]:
+        """Recover from the newest valid historical snapshot if latest is missing or corrupt."""
+        for path in self._history_snapshot_paths():
+            data = self._load_from_path(path)
+            if data is None:
+                continue
+            self._promote_recovered_snapshot(path)
+            logger.info("Loaded recovery snapshot from %s", path.name)
+            return data
+        return None
 
     def _load_from_path(self, path: Path) -> Optional[Dict[str, Any]]:
         """Generic loader logic with Checksum verification."""

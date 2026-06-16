@@ -27,11 +27,27 @@ class HealingSwarmService:
 
     def start(self):
         if self.is_running:
-            return
+            return True
+        try:
+            from core.runtime.background_policy import background_loop_start_reason
+
+            disabled_reason = background_loop_start_reason(origin="healing_swarm")
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation(
+                "healing_swarm_background_policy",
+                exc,
+                severity="warning",
+                action="blocked healing swarm start because background policy probe failed",
+            )
+            disabled_reason = "background_policy_unavailable"
+        if disabled_reason:
+            logger.info("Healing Swarm deferred by background policy (%s).", disabled_reason)
+            return False
         self.is_running = True
         self._started_at = time.time()
         self._monitor_task = get_task_tracker().create_task(self._monitor_loop())
         logger.info("🛡️ Healing Swarm Service ONLINE.")
+        return True
 
     async def _monitor_loop(self):
         # Match SelfModificationEngine's 300s boot grace so we don't spawn
@@ -72,6 +88,29 @@ class HealingSwarmService:
 
     async def attempt_repair(self, subsystem_name: str, info: Dict[str, Any]):
         """Trigger an autonomous repair shard for a failing subsystem."""
+        try:
+            from core.runtime.background_policy import background_activity_reason
+
+            disabled_reason = background_activity_reason(
+                orchestrator=self.orchestrator,
+                allow_no_user_anchor=True,
+            )
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation(
+                "healing_swarm_background_policy",
+                exc,
+                severity="warning",
+                action="deferred autonomous repair because background policy probe failed",
+            )
+            disabled_reason = "background_policy_unavailable"
+        if disabled_reason:
+            logger.info(
+                "🛡️ [HEAL] Deferred repair for %s by background policy (%s).",
+                subsystem_name,
+                disabled_reason,
+            )
+            return
+
         now = time.time()
         # Cooldown: Don't spam repairs for the same component (5 min)
         last_repair = self._repair_history.get(subsystem_name, 0)
@@ -96,4 +135,3 @@ class HealingSwarmService:
                 logger.error("🛡️ [HEAL] Failed to spawn recovery shard for %s (Capacity reached).", subsystem_name)
         else:
             logger.error("🛡️ [HEAL] SovereignSwarm not available for repair.")
-

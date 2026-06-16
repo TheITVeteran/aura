@@ -445,7 +445,7 @@ class InferenceGate:
                 # generation decision. The 32B lane is the user-facing default,
                 # but it must not be admitted while macOS is close to swap/jetsam.
                 default_max_pressure = 72.0 if context_key == "FOREGROUND" else 58.0
-                default_min_available = 24.0 if context_key == "FOREGROUND" else 30.0
+                default_min_available = 20.0 if context_key == "FOREGROUND" else 30.0
             else:
                 default_max_pressure = 68.0 if context_key == "FOREGROUND" else 54.0
                 default_min_available = 14.0 if context_key == "FOREGROUND" else 18.0

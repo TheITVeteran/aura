@@ -117,10 +117,9 @@ def _is_python_multiprocessing_spawn_process(proc: Any) -> bool:
     """
 
     cmdline = " ".join(_process_cmdline(proc)).lower()
-    return (
-        "multiprocessing.spawn" in cmdline
-        and "--multiprocessing-fork" in cmdline
-    )
+    has_spawn_module = "multiprocessing.spawn" in cmdline
+    has_spawn_main = "spawn_main" in cmdline
+    return bool(has_spawn_module and (has_spawn_main or "--multiprocessing-fork" in cmdline))
 
 
 def _process_pid(proc: Any) -> int:

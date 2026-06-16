@@ -2286,6 +2286,26 @@ def test_cortex_cold_warmup_requires_real_available_memory(monkeypatch):
     assert "memory_pressure" in snapshot["reason"]
 
 
+def test_foreground_cortex_warmup_admits_live_desktop_headroom(monkeypatch):
+    monkeypatch.delenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", raising=False)
+    monkeypatch.delenv("AURA_CORTEX_FOREGROUND_WARMUP_MIN_AVAILABLE_GB", raising=False)
+    monkeypatch.delenv("AURA_CORTEX_COLD_WARMUP_MIN_AVAILABLE_GB", raising=False)
+    monkeypatch.setattr(
+        "core.brain.inference_gate.psutil.virtual_memory",
+        lambda: SimpleNamespace(
+            percent=63.7,
+            total=64 * 1024 ** 3,
+            available=int(23.2 * 1024 ** 3),
+        ),
+    )
+
+    snapshot = InferenceGate._cortex_warmup_admission_snapshot("foreground")
+
+    assert snapshot["can_admit"] is True
+    assert snapshot["min_available_gb"] == 20.0
+    assert snapshot["reason"] == ""
+
+
 @pytest.mark.asyncio
 async def test_cortex_recovery_does_not_spawn_under_memory_pressure(monkeypatch):
     gate = InferenceGate()

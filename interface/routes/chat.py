@@ -619,6 +619,12 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
             pinned_text,
             flags=re.IGNORECASE | re.DOTALL,
         )
+        pinned_text = re.sub(
+            r"\s+for\s+(?:this\s+)?(?:conversation|chat|session|probe)[.!?]?\s*$",
+            "",
+            pinned_text,
+            flags=re.IGNORECASE,
+        )
         return pinned_text.rstrip(" .!?")
 
     head, sep, tail = text.partition(":")
@@ -646,6 +652,20 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
         if match:
             pinned = _clean_pinned_memory(match.group(1))
             return pinned[:240] if pinned else None
+
+    prefixed_object = r"(?:(?:this|the)\s+)?(?:phrase|codeword|word|token|detail|note|fact)"
+    prefixed_patterns = (
+        rf"\b(?:please\s+)?remember\s+{prefixed_object}\s+(.+)$",
+        rf"\b(?:please\s+)?remember\s+that{pin_scope}\s+(.+)$",
+    )
+    for pattern in prefixed_patterns:
+        match = re.search(pattern, original_matching, flags=re.IGNORECASE | re.DOTALL)
+        if not match:
+            continue
+        pinned = _clean_pinned_memory(match.group(1))
+        if re.match(r"^(?:what|when|where|who|why|how)\b", pinned, flags=re.IGNORECASE):
+            continue
+        return pinned[:240] if pinned else None
 
     natural_patterns = (
         rf"^(?:please\s+)?remember\s+that{pin_scope}\s+(.+)$",
@@ -679,6 +699,7 @@ def _is_session_memory_recall_request(user_message: str) -> bool:
         "what token did i just give you",
         "what token did i give you",
         "what token did i ask you to remember",
+        "what phrase did i just ask you to remember",
         "what phrase did i ask you to remember",
         "what note did i ask you to remember",
         "what note did i tell you to remember",
@@ -686,6 +707,10 @@ def _is_session_memory_recall_request(user_message: str) -> bool:
         "what did i ask you to remember in this conversation",
         "what did i ask you to remember in this chat",
         "what phrase did i tell you to remember",
+        "what was the phrase from earlier",
+        "what was the phrase from earlier in this probe",
+        "what was the phrase from earlier in this conversation",
+        "what phrase from earlier",
         "what did i tell you to remember",
         "what did you store for me earlier in this session",
         "what did you pin for later in this session",
@@ -1495,6 +1520,12 @@ _CONVERSATION_RECALL_LAST_AURA_MARKERS = (
     "what was the last thing you said",
     "what were you saying",
 )
+_CONVERSATION_RECALL_RECENT_PAIR_MARKERS = (
+    "last two messages",
+    "summarize our last two messages",
+    "summarize the last two messages",
+    "summarize my last two messages",
+)
 _CONVERSATION_RECALL_TOPIC_MARKERS = (
     "can you remind me what we discussed",
     "can you remind me what we talked about",
@@ -1526,6 +1557,8 @@ def _classify_conversation_recall_request(user_message: str) -> str:
         return ""
     if any(marker in text for marker in _CONVERSATION_RECALL_LAST_AURA_MARKERS):
         return "last_aura"
+    if any(marker in text for marker in _CONVERSATION_RECALL_RECENT_PAIR_MARKERS):
+        return "recent_pair"
     if any(marker in text for marker in _CONVERSATION_RECALL_LAST_USER_MARKERS):
         return "last_user"
     if any(marker in text for marker in _CONVERSATION_RECALL_TOPIC_MARKERS):
@@ -1828,6 +1861,20 @@ async def _build_conversation_recall_reply(user_message: str) -> str | None:
             aura_text = _clip_conversation_text(last.get("aura"), limit=620)
             if aura_text:
                 return f"My last completed reply before this was: \"{aura_text}\""
+        if recall_kind == "recent_pair":
+            recent_pair = exchanges[-2:]
+            pair_lines: list[str] = []
+            for entry in recent_pair:
+                user_text = _clip_conversation_text(entry.get("user"), limit=220)
+                aura_text = _clip_conversation_text(entry.get("aura"), limit=260)
+                if user_text and aura_text:
+                    pair_lines.append(f"- You: {user_text} / Me: {aura_text}")
+                elif user_text:
+                    pair_lines.append(f"- You: {user_text}")
+                elif aura_text:
+                    pair_lines.append(f"- Me: {aura_text}")
+            if pair_lines:
+                return "The last two completed exchanges were:\n" + "\n".join(pair_lines)
 
         topic_lines: list[str] = []
         for entry in exchanges[-4:]:
@@ -2270,7 +2317,7 @@ _RUNTIME_FACT_STATUS_RE = re.compile(
 )
 _RUNTIME_FACT_STATUS_REQUEST_RE = re.compile(
     r"\b(?:status|validation|validate|check|report|reply|answer|confirm|"
-    r"which|what|whether|is|are|do|does|did|available|active|using|handled)\b",
+    r"explain|why|which|what|whether|is|are|do|does|did|available|active|using|handled)\b",
     re.IGNORECASE,
 )
 _RUNTIME_ACTION_OBJECTIVE_RE = re.compile(
@@ -2281,14 +2328,23 @@ _RUNTIME_ACTION_OBJECTIVE_RE = re.compile(
 )
 _BOUNDED_PLANNING_REQUEST_RE = re.compile(
     r"\b(?:plan|planning|hypothetical|scenario|how would|explain how|"
+    r"describe how|decide whether|how you'd decide|how you would decide|"
     r"what should happen|multi[- ]step|keep .*ram bounded|"
     r"what would happen|if i asked)\b",
     re.IGNORECASE,
 )
 _NON_EXECUTION_CONTEXT_RE = re.compile(
     r"\b(?:do not execute|don't execute|without executing|before executing|"
+    r"do not use tools|don't use tools|no tool use|no tools?|"
+    r"do not run|don't run|do not open|don't open|"
     r"hypothetical|hypothetically|would|should|could|if i asked|"
     r"explain how|how would|plan for|scenario)\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_NON_EXECUTION_RE = re.compile(
+    r"\b(?:do not execute|don't execute|without executing|before executing|"
+    r"do not use tools|don't use tools|no tool use|no tools?|"
+    r"do not run|don't run|do not open|don't open)\b",
     re.IGNORECASE,
 )
 _DIRECT_EXECUTION_START_RE = re.compile(
@@ -2414,6 +2470,9 @@ def _build_runtime_fact_status_fastpath_reply(
         parts.insert(0, "I am still on the same live desktop thread and able to continue")
     if "recurrent depth" in str(user_message or "").lower() or recurrent_active:
         parts.append(f"recurrent depth: {'active' if recurrent_active else 'inactive'}")
+    status_prompt = str(user_message or "").lower()
+    if "generic assistant" in status_prompt or "fallback" in status_prompt:
+        parts.append("generic assistant fallback: blocked on the live desktop path")
     return ", ".join(parts) + "."
 
 
@@ -2428,8 +2487,37 @@ def _is_bounded_nonexecuting_planning_request(user_message: str) -> bool:
     return bool(_NON_EXECUTION_CONTEXT_RE.search(text) or not _looks_like_desktop_objective(text))
 
 
+def _blocks_consequential_desktop_execution(user_message: str) -> bool:
+    """True when the user asked for planning/explanation, not live desktop effects."""
+    text = str(user_message or "").strip()
+    if not text:
+        return False
+    return bool(
+        _EXPLICIT_NON_EXECUTION_RE.search(text)
+        or _is_bounded_nonexecuting_planning_request(text)
+    )
+
+
 def _summarize_planning_objective(user_message: str) -> str:
     objective = " ".join(str(user_message or "").split())
+    objective = re.sub(
+        r"^\s*(?:do\s+not|don't)\s+(?:execute|use|run)\s+tools?\.?\s*",
+        "",
+        objective,
+        flags=re.IGNORECASE,
+    )
+    objective = re.sub(
+        r"^\s*(?:no\s+tool\s+use|without\s+executing\s+tools?)\.?\s*",
+        "",
+        objective,
+        flags=re.IGNORECASE,
+    )
+    objective = re.sub(
+        r"^\s*in\s+(?:one|two|three|\d+)\s+(?:direct\s+)?sentences?,?\s*",
+        "",
+        objective,
+        flags=re.IGNORECASE,
+    )
     objective = re.sub(
         r"^\s*(?:answer directly in .*?:\s*)?(?:give|provide|write|make)\s+"
         r"(?:a\s+)?(?:concise|brief|short|practical)?\s*plan\s+for\s+",
@@ -2439,6 +2527,12 @@ def _summarize_planning_objective(user_message: str) -> str:
     )
     objective = re.sub(
         r"^\s*(?:explain\s+)?how\s+you\s+would\s+",
+        "",
+        objective,
+        flags=re.IGNORECASE,
+    )
+    objective = re.sub(
+        r"^\s*(?:describe|explain)\s+how\s+(?:you(?:'d| would)|i(?:'d| would))\s+",
         "",
         objective,
         flags=re.IGNORECASE,
@@ -2573,6 +2667,9 @@ def _ground_runtime_fact_status_reply(
     ]
     if "recurrent depth" in str(user_message or "").lower() or recurrent_active:
         parts.append(f"recurrent depth: {'active' if recurrent_active else 'inactive'}")
+    status_prompt = str(user_message or "").lower()
+    if "generic assistant" in status_prompt or "fallback" in status_prompt:
+        parts.append("generic assistant fallback: blocked on the live desktop path")
     return ", ".join(parts) + "."
 
 
@@ -8380,6 +8477,8 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
     objective is primarily an observable desktop/file operation. Free-form
     essays, letters, and creative prose still require CognitiveEngine text.
     """
+    if _blocks_consequential_desktop_execution(user_message):
+        return False
     if not _looks_like_desktop_objective(user_message):
         return False
     text = str(user_message or "").strip()
@@ -8432,6 +8531,11 @@ async def _execute_desktop_objective_from_chat(
     first answered/planned by CognitiveEngine, then the actual consequential
     work is performed through Authority/Capability/desktop_task/computer_use.
     """
+    if _blocks_consequential_desktop_execution(user_message):
+        logger.info(
+            "Desktop objective execution blocked by explicit non-execution/planning-only request."
+        )
+        return None
     if not _looks_like_desktop_objective(user_message):
         return None
 
@@ -9358,6 +9462,7 @@ async def api_chat(
                 or str(status or "").startswith(
                     ("live_proof", "desktop_objective", "file_operation")
                 )
+                or _blocks_consequential_desktop_execution(_semantic_user_message)
                 or not _looks_like_desktop_objective(_semantic_user_message)
             ):
                 return final_text, status
@@ -9650,7 +9755,11 @@ async def api_chat(
             return stabilized
 
         async def _execute_narrow_desktop_objective_before_cognition() -> JSONResponse | None:
-            if is_benchmark or not _looks_like_desktop_objective(_semantic_user_message):
+            if (
+                is_benchmark
+                or _blocks_consequential_desktop_execution(_semantic_user_message)
+                or not _looks_like_desktop_objective(_semantic_user_message)
+            ):
                 return None
 
             # Dedicated proof/file lanes are narrower and produce stronger
@@ -10181,29 +10290,30 @@ async def api_chat(
             # when the desktop UI header is present. Observed live: a plain
             # API chat turn asked for a folder+file, no executor ran, and
             # the model narrated completion with a hallucinated timestamp.
-            live_proof = await _execute_live_runtime_proof(_semantic_user_message)
-            if live_proof:
-                return await _finalize_fastpath(
-                    _apply_aura_voice_shaping(str(live_proof.get("response") or "")),
-                    status=str(live_proof.get("status") or "live_proof"),
-                )
+            if not _blocks_consequential_desktop_execution(_semantic_user_message):
+                live_proof = await _execute_live_runtime_proof(_semantic_user_message)
+                if live_proof:
+                    return await _finalize_fastpath(
+                        _apply_aura_voice_shaping(str(live_proof.get("response") or "")),
+                        status=str(live_proof.get("status") or "live_proof"),
+                    )
 
-            explicit_file = await _execute_explicit_local_file_objective(_semantic_user_message)
-            if explicit_file:
-                return await _finalize_fastpath(
-                    _apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
-                    status=str(explicit_file.get("status") or "file_operation"),
-                )
+                explicit_file = await _execute_explicit_local_file_objective(_semantic_user_message)
+                if explicit_file:
+                    return await _finalize_fastpath(
+                        _apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
+                        status=str(explicit_file.get("status") or "file_operation"),
+                    )
 
-            desktop_objective = await _run_desktop_objective_tracked(
-                _semantic_user_message,
-                cognitive_reply=reply_text,
-            )
-            if desktop_objective:
-                return await _finalize_fastpath(
-                    _apply_aura_voice_shaping(str(desktop_objective.get("response") or "")),
-                    status=str(desktop_objective.get("status") or "desktop_objective"),
+                desktop_objective = await _run_desktop_objective_tracked(
+                    _semantic_user_message,
+                    cognitive_reply=reply_text,
                 )
+                if desktop_objective:
+                    return await _finalize_fastpath(
+                        _apply_aura_voice_shaping(str(desktop_objective.get("response") or "")),
+                        status=str(desktop_objective.get("status") or "desktop_objective"),
+                    )
 
         # Phase 2 Constitutional Closure: Try Sovereign Kernel Interface actively
         from core.kernel.kernel_interface import KernelInterface

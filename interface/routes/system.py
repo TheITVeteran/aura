@@ -919,7 +919,7 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
                     payload["direct_screen_recording"] = direct_screen
                     payload["direct_accessibility"] = direct_accessibility
                     payload["direct_automation"] = direct_automation
-                except (asyncio.TimeoutError, _SYSTEM_RECOVERABLE_ERRORS) as exc:
+                except (asyncio.TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
                     record_degradation(
                         "system",
                         exc,

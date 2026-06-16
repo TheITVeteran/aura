@@ -425,6 +425,40 @@ def test_runtime_hygiene_adopts_direct_multiprocessing_spawn_during_summary():
     assert summary["rogue_child_processes"] == 0
 
 
+def test_runtime_hygiene_adopts_python312_spawn_main_without_fork_flag():
+    class _Proc:
+        pid = 62002
+
+        def ppid(self):
+            return os.getpid()
+
+        def cmdline(self):
+            return [
+                sys.executable,
+                "-c",
+                "from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8, pipe_handle=20)",
+            ]
+
+        def name(self):
+            return "Python"
+
+        def is_running(self):
+            return True
+
+        def status(self):
+            return "sleeping"
+
+    hygiene = RuntimeHygieneManager()
+    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [_Proc()])
+
+    summary = hygiene._process_summary()
+
+    assert summary["active_registered"] == 1
+    assert summary["active_multiprocessing"] == 1
+    assert summary["rogue_child_processes"] == 0
+    assert summary["rogue_samples"] == []
+
+
 def test_runtime_hygiene_keeps_unowned_child_process_fail_closed():
     class _Proc:
         pid = 62002

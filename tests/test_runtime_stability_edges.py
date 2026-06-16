@@ -6,6 +6,7 @@ import os
 import tempfile
 import time
 import unittest
+import zlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1710,6 +1711,11 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
 
 
 class TestStateManagerSnapshotRecovery(unittest.TestCase):
+    def _write_checked_snapshot(self, path: Path, data: dict):
+        snapshot = {"meta": {"iso_time": "test", "reason": "shutdown"}, "data": data}
+        data_bytes = json.dumps(snapshot).encode("utf-8")
+        path.write_bytes((zlib.crc32(data_bytes) & 0xFFFFFFFF).to_bytes(4, "big") + data_bytes)
+
     def test_unreadable_legacy_snapshot_is_quarantined_without_boot_failure(self):
         from core.resilience.state_manager import StateManager
 
@@ -1723,3 +1729,91 @@ class TestStateManagerSnapshotRecovery(unittest.TestCase):
             self.assertIsNone(manager.load_last_snapshot())
             self.assertFalse(latest.exists())
             self.assertTrue(list((snapshot_dir / "autopsy").glob("corrupted_state_*_latest_snapshot.json")))
+
+    def test_corrupt_latest_recovers_from_newest_valid_history_snapshot(self):
+        from core.resilience.state_manager import StateManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_dir = Path(tmp)
+            manager = StateManager.__new__(StateManager)
+            manager.snapshot_dir = snapshot_dir
+            latest = snapshot_dir / "latest_snapshot.json"
+            history = snapshot_dir / "snapshot_200_shutdown.json"
+            latest.write_bytes(b"{\xff not utf8 json")
+            self._write_checked_snapshot(history, {"cycle_count": 42, "boredom": 0.2})
+
+            recovered = manager.load_last_snapshot()
+
+            self.assertEqual(recovered["cycle_count"], 42)
+            self.assertTrue(latest.exists())
+            self.assertEqual(latest.read_bytes(), history.read_bytes())
+            self.assertTrue(list((snapshot_dir / "autopsy").glob("corrupted_state_*_latest_snapshot.json")))
+
+    def test_history_recovery_skips_corrupt_newest_candidate(self):
+        from core.resilience.state_manager import StateManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_dir = Path(tmp)
+            manager = StateManager.__new__(StateManager)
+            manager.snapshot_dir = snapshot_dir
+            latest = snapshot_dir / "latest_snapshot.json"
+            corrupt_newest = snapshot_dir / "snapshot_300_shutdown.json"
+            valid_older = snapshot_dir / "snapshot_200_shutdown.json"
+
+            latest.write_bytes(b"\x00\x00\x00\x00bad latest")
+            self._write_checked_snapshot(valid_older, {"cycle_count": 7, "boredom": 0.1})
+            corrupt_newest.write_bytes(b"\x00\x00\x00\x00bad history")
+            os.utime(valid_older, (time.time() - 10, time.time() - 10))
+            os.utime(corrupt_newest, None)
+
+            recovered = manager.load_last_snapshot()
+
+            self.assertEqual(recovered["cycle_count"], 7)
+            self.assertFalse(corrupt_newest.exists())
+            self.assertEqual(latest.read_bytes(), valid_older.read_bytes())
+            self.assertTrue(list((snapshot_dir / "autopsy").glob("corrupted_state_*_snapshot_300_shutdown.json")))
+
+
+class TestHealingSwarmForegroundPolicy(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._old_env = {
+            key: os.environ.get(key)
+            for key in ("AURA_ENABLE_BACKGROUND_COGNITION", "AURA_FOREGROUND_ONLY")
+        }
+        os.environ["AURA_ENABLE_BACKGROUND_COGNITION"] = "0"
+        os.environ.pop("AURA_FOREGROUND_ONLY", None)
+
+    def tearDown(self):
+        for key, value in self._old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def test_healing_swarm_start_deferred_when_background_cognition_disabled(self):
+        from core.resilience.healing_swarm import HealingSwarmService
+
+        service = HealingSwarmService(SimpleNamespace())
+
+        self.assertFalse(service.start())
+        self.assertFalse(service.is_running)
+        self.assertIsNone(service._monitor_task)
+
+    async def test_healing_swarm_repair_deferred_when_background_cognition_disabled(self):
+        from core.resilience.healing_swarm import HealingSwarmService
+
+        class _Swarm:
+            def __init__(self):
+                self.called = False
+
+            async def spawn_shard(self, *_args, **_kwargs):
+                self.called = True
+                return True
+
+        swarm = _Swarm()
+        service = HealingSwarmService(SimpleNamespace(sovereign_swarm=swarm))
+
+        await service.attempt_repair("personality_engine", {"status": "STALE"})
+
+        self.assertFalse(swarm.called)
+        self.assertNotIn("personality_engine", service._repair_history)
