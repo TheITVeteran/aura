@@ -32,11 +32,12 @@ async def test_consciousness_coordinator_skips_locked_late_registration(monkeypa
         "register_instance",
         classmethod(lambda cls, name, instance, **kwargs: registered.append((name, instance, kwargs))),
     )
+    forbidden_factory_registrations = []
 
-    def _locked_register(cls, name, instance):
-        raise AssertionError("factory registration should not be used for unified_self")
+    def _record_factory_register_call(cls, name, instance):
+        forbidden_factory_registrations.append((name, instance))
 
-    monkeypatch.setattr(ServiceContainer, "register", classmethod(_locked_register))
+    monkeypatch.setattr(ServiceContainer, "register", classmethod(_record_factory_register_call))
 
     await coordinator._connect_subsystems()
 
@@ -44,6 +45,7 @@ async def test_consciousness_coordinator_skips_locked_late_registration(monkeypa
     assert registered[0][0] == "unified_self"
     assert registered[0][1] is coordinator._unified_self
     assert registered[0][2]["failure_policy"] == "continue_with_local_unified_self"
+    assert forbidden_factory_registrations == []
     records = tracker.recent(subsystem="consciousness_coordinator.registration", limit=1)
     assert records == []
     tracker.reset()
