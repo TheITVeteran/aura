@@ -9435,7 +9435,11 @@ async def api_chat(
                 status="cognitive_engine_capability_inventory",
             )
 
-        if allow_chat_fastpaths and _is_low_risk_social_continuity_request(_semantic_user_message):
+        if (
+            allow_chat_fastpaths
+            and _is_low_risk_social_continuity_request(_semantic_user_message)
+            and not _conversation_lane_blocks_fallback(lane)
+        ):
             return await _finalize_fastpath(
                 _build_social_continuity_repair_reply(_semantic_user_message),
                 status="social_presence_reflex",
