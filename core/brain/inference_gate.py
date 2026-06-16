@@ -6682,6 +6682,15 @@ class InferenceGate:
         if not self._initialized:
             return False
 
+        try:
+            from core.runtime.proof_policy import proof_run_active
+
+            if not proof_run_active(origin="inference_gate_health"):
+                if self._desktop_safe_boot_enabled() or self._boot_should_schedule_deferred_prewarm():
+                    return self.is_alive()
+        except Exception:
+            pass
+
         def _client_alive(client: Any) -> bool:
             try:
                 return bool(
