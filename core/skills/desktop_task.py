@@ -107,7 +107,7 @@ class DesktopTaskSkill(BaseSkill):
         # not the first internal apostrophe (which truncated the name to
         # "Aura" and broke the journal demo's folder).
         match = re.search(
-            r"\b(?:folder|directory)\s+(?:named|called|titled)\s+"
+            r"\b(?:folder|directory)\b[^.\n]{0,80}?\b(?:named|called|titled)\s+"
             r"(?:'((?:[^']|'(?=\w))+)'(?=[\s.,;)]|$)"
             r"|\"([^\"]+)\""
             r"|([^.,;\n]+?)(?=\s+(?:in|inside|under|on)\s+(?:my\s+)?\w|[.,;\n]|$))",
@@ -116,7 +116,7 @@ class DesktopTaskSkill(BaseSkill):
         )
         if match:
             name = str(match.group(1) or match.group(2) or match.group(3) or "").strip()
-            return name.strip("'\"")[:100]
+            return name.strip("'\"., ")[:100]
         # Name-first phrasing: "the 'Aura's Journal' folder" — quoted name
         # immediately before the word folder/directory.
         name_first = re.search(
@@ -203,7 +203,15 @@ class DesktopTaskSkill(BaseSkill):
             if match:
                 query = match.group(1).strip(" ,")
                 if query:
-                    return query[:240]
+                    if query.lower() in {"it", "them", "this", "that", "her", "him", "me", "us", "something", "anything"}:
+                        # Resolve the coreference pronoun to preceding topic in context
+                        m = re.search(r"\b(?:read|find|search)\s+(?:about|on|for)\s+([^.;\n,]+)", text, flags=re.IGNORECASE)
+                        if m:
+                            candidate = m.group(1).strip(" ,")
+                            if candidate.lower() not in {"it", "them", "this", "that", "her", "him", "me", "us", "something", "anything"}:
+                                    return candidate[:240]
+                    else:
+                        return query[:240]
         if "news" in text.lower():
             return text[:240]
         return ""
@@ -1977,6 +1985,12 @@ class DesktopTaskSkill(BaseSkill):
             return False
         if cls._objective_requests_observation_only(objective):
             return False
+        # Multi-surface/multi-app objectives (e.g. Chrome/browser and Notes/documents)
+        # require coordinated focus and clipboard control that primitive steps cannot
+        # safely interleave. Always escalate to governed OS automation.
+        lowered_obj = objective.lower()
+        if ("chrome" in lowered_obj or "google doc" in lowered_obj or "browser" in lowered_obj) and ("notes" in lowered_obj or "textedit" in lowered_obj or "notes app" in lowered_obj):
+            return True
         if cls._objective_needs_general_os_automation(objective) and not any(
             step.action == "run_applescript" for step in steps
         ):

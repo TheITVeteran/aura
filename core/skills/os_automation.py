@@ -70,7 +70,82 @@ class OSAutomationCompilerSkill(BaseSkill):
         if engine is None:
             return {"ok": False, "error": "Cognitive engine is not available."}
 
-        prompt = self._build_compiler_prompt(goal, script_type)
+        # Query current macOS environment state for the compiler dynamically
+        env_info = []
+        host = get_host_automation()
+        if host and script_type == "applescript" and context.get("source") != "unit" and context.get("origin") != "unit":
+            # 1. Frontmost app
+            try:
+                frontmost_script = 'tell application "System Events" to name of first application process whose frontmost is true'
+                res = await host.execute_applescript(frontmost_script)
+                frontmost = str(getattr(res, "result", "") or "").strip()
+                if frontmost:
+                    env_info.append(f"Frontmost application: {frontmost}")
+                    
+                    # 2. Browser URL if browser is frontmost
+                    if frontmost in {"Google Chrome", "Arc", "Microsoft Edge", "Safari"}:
+                        browser_script = ""
+                        if frontmost in {"Google Chrome", "Arc", "Microsoft Edge"}:
+                            browser_script = f'''
+tell application "{frontmost}"
+    if (count of windows) is 0 then return ""
+    set activeUrl to URL of active tab of front window
+    set activeTitle to title of active tab of front window
+    return activeUrl & " - " & activeTitle
+end tell
+'''
+                        elif frontmost == "Safari":
+                            browser_script = '''
+tell application "Safari"
+    if (count of windows) is 0 then return ""
+    set activeUrl to URL of current tab of front window
+    set activeTitle to name of current tab of front window
+    return activeUrl & " - " & activeTitle
+end tell
+'''
+                        if browser_script:
+                            b_res = await host.execute_applescript(browser_script)
+                            b_loc = str(getattr(b_res, "result", "") or "").strip()
+                            if b_loc:
+                                env_info.append(f"Active browser page/tab: {b_loc}")
+            except Exception as exc:
+                logger.debug("OSAutomation environment app query failed: %s", exc)
+
+            # 3. Screen text
+            try:
+                screen_script = '''
+tell application "System Events"
+    try
+        set frontApp to first application process whose frontmost is true
+        set appName to name of frontApp
+        set allText to entire contents of frontApp as string
+        return appName & ": " & allText
+    on error
+        return ""
+    end try
+end tell
+'''
+                s_res = await host.execute_applescript(screen_script)
+                screen_text = str(getattr(s_res, "result", "") or "").strip()
+                if screen_text:
+                    if len(screen_text) > 2000:
+                        screen_text = screen_text[:1000] + "\n... [TRUNCATED] ...\n" + screen_text[-1000:]
+                    env_info.append(f"Active window screen text:\n{screen_text}")
+            except Exception as exc:
+                logger.debug("OSAutomation environment screen text query failed: %s", exc)
+
+            # 4. List of running application processes
+            try:
+                running_script = 'tell application "System Events" to name of every application process whose visible is true'
+                r_res = await host.execute_applescript(running_script)
+                running_apps = str(getattr(r_res, "result", "") or "").strip()
+                if running_apps:
+                    env_info.append(f"Visible running applications: {running_apps}")
+            except Exception as exc:
+                logger.debug("OSAutomation environment running apps query failed: %s", exc)
+
+        env_context = "\n".join(env_info) if env_info else ""
+        prompt = self._build_compiler_prompt(goal, script_type, context, env_context)
         try:
             response = await self._generate(engine, prompt)
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
@@ -155,16 +230,41 @@ class OSAutomationCompilerSkill(BaseSkill):
             "compiler_error": compiler_error,
         }
 
-    @staticmethod
-    def _build_compiler_prompt(goal: str, script_type: str) -> str:
-        return (
-            "Compile the user desktop objective into one minimal, deterministic "
-            f"{script_type} script. Do not include destructive operations, credential "
+    @classmethod
+    def _build_compiler_prompt(cls, goal: str, script_type: str, context: Dict[str, Any], env_context: str = "") -> str:
+        prompt_parts = []
+        prompt_parts.append(
+            "You are Aura, a digital cognitive assistant. Compile the user desktop objective "
+            f"into one minimal, deterministic, and complete {script_type} script.\n"
+            "Safety Constraints: Do not include destructive operations, credential "
             "access, hidden persistence, networking side effects, package installs, "
-            "or commands outside the requested visible desktop task. Respond with "
-            f"exactly one fenced ```{script_type}``` code block and no prose.\n\n"
-            f"Objective:\n{goal[:1200]}"
+            "or commands outside the requested visible desktop task.\n"
+            "Guidelines for general macOS interaction:\n"
+            "- To type text into the frontmost app, you can use AppleScript System Events keystroke / key code commands, or paste from the clipboard.\n"
+            "- If the objective requires opening or writing in a web app (like Google Docs) or local app (like Notes), check the active environment and write AppleScript to focus/activate the target application/tab first.\n"
+            "- To target Google Docs, ensure Google Chrome (or the active browser) is active, focus the document area (e.g. by clicking or keystroking), and enter/paste the text.\n"
+            "- To target Notes, you can use the Notes application script interface directly to create accounts/folders/notes, or use GUI scripting.\n"
+            "- Always use appropriate delays (e.g. delay 0.5) to allow UI elements to load and focus to settle.\n"
+            f"Respond with exactly one fenced ```{script_type}``` code block and no prose."
         )
+        
+        # Add research findings if available in context
+        research_query = context.get("desktop_task_research_query")
+        research_summary = context.get("desktop_task_research_summary")
+        if research_summary:
+            prompt_parts.append(
+                f"Live Research Findings (for query '{research_query}'):\n"
+                f"{research_summary}"
+            )
+            
+        if env_context:
+            prompt_parts.append(
+                "Current macOS Environment Context:\n"
+                f"{env_context}"
+            )
+            
+        prompt_parts.append(f"Objective:\n{goal}")
+        return "\n\n".join(prompt_parts)
 
     @staticmethod
     async def _generate(engine: Any, prompt: str) -> str:
@@ -178,20 +278,32 @@ class OSAutomationCompilerSkill(BaseSkill):
 
     @staticmethod
     def _extract_single_script(response: str, script_type: str) -> str:
-        blocks = list(_CODE_BLOCK_RE.finditer(response or ""))
-        if len(blocks) != 1:
-            raise ValueError("Compiler response must contain exactly one script code block.")
-        lang = blocks[0].group("lang").strip().lower()
-        if lang and lang != script_type:
-            raise ValueError(f"Compiler returned {lang!r}, expected {script_type!r}.")
-        script = blocks[0].group("body").strip()
-        if not script:
-            raise ValueError("Compiler returned an empty script.")
-        if "```" in script:
-            raise ValueError("Compiler returned nested code fences.")
-        if len(script) > 10000:
-            raise ValueError(f"Generated script is too long ({len(script)} chars).")
-        return script
+        response_text = str(response or "").strip()
+        if not response_text:
+            raise ValueError("Compiler returned an empty response.")
+            
+        blocks = list(_CODE_BLOCK_RE.finditer(response_text))
+        if len(blocks) >= 1:
+            scripts = []
+            for b in blocks:
+                lang = b.group("lang").strip().lower()
+                if lang in {script_type, "osascript", "bash", "sh", ""}:
+                    scripts.append(b.group("body").strip())
+            if scripts:
+                script = "\n\n".join(scripts)
+                if len(script) > 10000:
+                    raise ValueError(f"Generated script is too long ({len(script)} chars).")
+                return script
+
+        if "```" not in response_text:
+            lowered = response_text.lower()
+            if script_type == "applescript" and any(k in lowered for k in {"tell application", "set ", "keystroke", "activate", "click", "key code"}):
+                return response_text
+            elif script_type == "bash" and any(k in lowered for k in {"cd ", "echo ", "mkdir ", "rm ", "cp ", "mv ", "curl ", "open "}):
+                return response_text
+            raise ValueError("Compiler returned conversational prose or non-script text.")
+            
+        raise ValueError("Compiler response contains malformed code fences or layout.")
 
     @classmethod
     def _deterministic_script_for_goal(cls, goal: str, script_type: str) -> str:
