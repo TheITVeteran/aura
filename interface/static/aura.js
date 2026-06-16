@@ -4419,6 +4419,14 @@ if (DOM.neuralReadableToggle) {
 }
 connect();
 pollHealth();
+
+// Safety net: if WS connection fails repeatedly, keep polling health
+// so the splash can still be dismissed when the server comes up.
+setInterval(() => {
+    if (!state.runtimeHealthy && !state.healthPollInFlight) {
+        pollHealth();
+    }
+}, 8000);
 voicePlayer.init();
 vadStream = new VADStream('neural-vad-canvas');
 setInterval(pollHealth, 10000); // 10s — enterprise-grade, not chatbot-grade
@@ -4718,6 +4726,12 @@ function syncSplashState(payload) {
     state._splashTimeout = setTimeout(() => {
         updateSplashProgress(96, 'Live shell is still syncing. Aura is stabilizing background channels...');
     }, 12000);
+
+    // Hard timeout: force-dismiss splash if backend never reaches ready state.
+    // The UI will still work in degraded mode with reconnection toasts.
+    state._splashHardTimeout = setTimeout(() => {
+        dismissSplash('Runtime is taking longer than expected. Loading interface...');
+    }, 45000);
 })();
 
 function dismissSplash(finalStatus = 'Neural link established.') {
@@ -4737,6 +4751,7 @@ function dismissSplash(finalStatus = 'Neural link established.') {
     // Clean up timers
     if (state._splashInterval) clearInterval(state._splashInterval);
     if (state._splashTimeout) clearTimeout(state._splashTimeout);
+    if (state._splashHardTimeout) clearTimeout(state._splashHardTimeout);
 
     // Show the START button and attach a click listener
     if (startBtn) {

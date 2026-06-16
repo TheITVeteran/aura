@@ -526,6 +526,7 @@ def configure_dnu_proof_memory_envelope(
             "AURA_MLX_MEMORY_LIMIT_GB",
             "AURA_MLX_WORKER_RSS_LIMIT_GB",
             "AURA_METAL_CACHE_CAP_GB",
+            "AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB",
         )
     }
 
@@ -565,10 +566,18 @@ def configure_dnu_proof_memory_envelope(
             minimum=8.0,
             maximum=16.0,
         )
+        load_min_available_gb = _bounded_env_float(
+            env,
+            "AURA_DNU_PRIMARY_32B_LOAD_MIN_AVAILABLE_GB",
+            default=20.0,
+            minimum=18.0,
+            maximum=24.0,
+        )
         env["AURA_PROCESS_RSS_LIMIT_GB"] = f"{process_limit_gb:g}"
         env["AURA_MLX_MEMORY_LIMIT_GB"] = f"{mlx_limit_gb:g}"
         env["AURA_MLX_WORKER_RSS_LIMIT_GB"] = f"{worker_limit_gb:g}"
         env["AURA_METAL_CACHE_CAP_GB"] = f"{cache_cap_gb:g}"
+        env["AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB"] = f"{load_min_available_gb:g}"
     else:
         process_limit_gb = _bounded_env_float(
             env,
@@ -598,6 +607,7 @@ def configure_dnu_proof_memory_envelope(
             minimum=4.0,
             maximum=12.0,
         )
+        load_min_available_gb = env.get("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB")
         env["AURA_PROCESS_RSS_LIMIT_GB"] = f"{process_limit_gb:g}"
         env["AURA_MLX_MEMORY_LIMIT_GB"] = f"{mlx_limit_gb:g}"
         env["AURA_MLX_WORKER_RSS_LIMIT_GB"] = f"{worker_limit_gb:g}"
@@ -613,6 +623,7 @@ def configure_dnu_proof_memory_envelope(
         "mlx_memory_limit_gb": env.get("AURA_MLX_MEMORY_LIMIT_GB"),
         "worker_rss_limit_gb": env.get("AURA_MLX_WORKER_RSS_LIMIT_GB"),
         "metal_cache_cap_gb": env.get("AURA_METAL_CACHE_CAP_GB"),
+        "mlx_32b_load_min_available_gb": env.get("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB"),
         "inherited": inherited,
     }
 
@@ -1246,6 +1257,7 @@ async def recycle_proof_model_lane(
         ),
         "after": None,
         "recycled_clients": [],
+        "warmup_attempts": [],
         "error": None,
     }
     lifecycle_path = run_dir / "LIFECYCLE_EVENTS.jsonl"
@@ -1343,6 +1355,37 @@ async def recycle_proof_model_lane(
         warmup = getattr(recycled_candidate, "warmup", None)
         if not callable(warmup):
             warmup = getattr(recycled_candidate, "warm_up", None)
+        live_check = getattr(recycled_candidate, "is_alive", None)
+
+        def _candidate_alive() -> bool:
+            return bool(callable(live_check) and live_check())
+
+        def _lane_state() -> dict[str, Any]:
+            for getter_name in ("get_lane_status", "get_conversation_status"):
+                getter = getattr(recycled_candidate, getter_name, None)
+                if not callable(getter):
+                    continue
+                try:
+                    status = getter() or {}
+                except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+                    return {"status_error": f"{type(exc).__name__}: {exc}"}
+                if isinstance(status, dict):
+                    return {
+                        key: status.get(key)
+                        for key in (
+                            "state",
+                            "lane_state",
+                            "conversation_ready",
+                            "worker_alive",
+                            "warmup_attempted",
+                            "warmup_in_flight",
+                            "last_failure_reason",
+                            "last_error",
+                        )
+                        if key in status
+                    }
+            return {}
+
         if callable(warmup):
             # A recycle REPLACES a dead lane — the rewarm reloads the SAME model
             # the just-aborted worker freed, so it is not net-additive memory.
@@ -1353,33 +1396,73 @@ async def recycle_proof_model_lane(
             # for the duration of THIS recycle only, then restore the env.
             _force_key = "AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE"
             _force_prev = os.environ.get(_force_key)
-            os.environ[_force_key] = "1"
-            try:
-                try:
-                    warmup_result = warmup(
-                        foreground_request=requested_tier == "primary",
-                        skip_swap_cooldown=True,
-                    )
-                except TypeError:
-                    warmup_result = warmup()
-                if asyncio.iscoroutine(warmup_result):
-                    await asyncio.wait_for(warmup_result, timeout=240.0)
-            except _DNU_RUN_RECOVERABLE_ERRORS as exc:
-                event["status"] = "failed"
-                event["error"] = f"model_lane_rewarm_failed:{type(exc).__name__}: {exc}"
-                event["after"] = collect_proof_resource_snapshot(
-                    label="after_model_lane_recycle_failed",
-                    task_index=task_index,
+            max_attempts = int(
+                max(
+                    1,
+                    min(
+                        4,
+                        _bounded_env_float(
+                            os.environ,
+                            "AURA_DNU_MODEL_RECYCLE_WARMUP_ATTEMPTS",
+                            default=3.0,
+                            minimum=1.0,
+                            maximum=4.0,
+                        ),
+                    ),
                 )
-                append_jsonl(lifecycle_path, event)
-                return event
-            finally:
-                if _force_prev is None:
-                    os.environ.pop(_force_key, None)
-                else:
-                    os.environ[_force_key] = _force_prev
-        live_check = getattr(recycled_candidate, "is_alive", None)
-        lane_live = bool(callable(live_check) and live_check())
+            )
+            for attempt in range(1, max_attempts + 1):
+                os.environ[_force_key] = "1"
+                try:
+                    try:
+                        warmup_result = warmup(
+                            foreground_request=requested_tier == "primary",
+                            skip_swap_cooldown=True,
+                        )
+                    except TypeError:
+                        warmup_result = warmup()
+                    if asyncio.iscoroutine(warmup_result):
+                        warmup_result = await asyncio.wait_for(warmup_result, timeout=240.0)
+                    lane_live = _candidate_alive()
+                    event["warmup_attempts"].append(
+                        {
+                            "attempt": attempt,
+                            "warmup_result": bool(warmup_result is not False),
+                            "lane_live": lane_live,
+                            "lane": _lane_state(),
+                        }
+                    )
+                    if lane_live:
+                        break
+                    if attempt < max_attempts:
+                        gc.collect()
+                        await asyncio.sleep(min(10.0 * attempt, 20.0))
+                except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+                    event["warmup_attempts"].append(
+                        {
+                            "attempt": attempt,
+                            "error": f"{type(exc).__name__}: {exc}",
+                            "lane_live": _candidate_alive(),
+                            "lane": _lane_state(),
+                        }
+                    )
+                    if attempt >= max_attempts:
+                        event["status"] = "failed"
+                        event["error"] = f"model_lane_rewarm_failed:{type(exc).__name__}: {exc}"
+                        event["after"] = collect_proof_resource_snapshot(
+                            label="after_model_lane_recycle_failed",
+                            task_index=task_index,
+                        )
+                        append_jsonl(lifecycle_path, event)
+                        return event
+                    gc.collect()
+                    await asyncio.sleep(min(10.0 * attempt, 20.0))
+                finally:
+                    if _force_prev is None:
+                        os.environ.pop(_force_key, None)
+                    else:
+                        os.environ[_force_key] = _force_prev
+        lane_live = _candidate_alive()
         if not lane_live:
             event["status"] = "failed"
             event["error"] = "recycled_model_lane_not_live_after_warmup"

@@ -147,6 +147,7 @@ def test_primary_dnu_proof_memory_envelope_disables_desktop_safe_boot():
     assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "36"
     assert env["AURA_MLX_WORKER_RSS_LIMIT_GB"] == "36"
     assert env["AURA_METAL_CACHE_CAP_GB"] == "12"
+    assert env["AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB"] == "20"
     assert report["desktop_safe_boot_disabled_for_proof"] is True
     assert report["app_launch_context_disabled_for_proof"] is True
     assert report["inherited"]["AURA_PROCESS_RSS_LIMIT_GB"] == "36"
@@ -158,6 +159,7 @@ def test_primary_dnu_proof_memory_envelope_clamps_unsafe_overrides():
         "AURA_DNU_PRIMARY_MLX_MEMORY_LIMIT_GB": "96",
         "AURA_DNU_PRIMARY_WORKER_RSS_LIMIT_GB": "96",
         "AURA_DNU_PRIMARY_METAL_CACHE_CAP_GB": "96",
+        "AURA_DNU_PRIMARY_32B_LOAD_MIN_AVAILABLE_GB": "96",
     }
 
     report = dnu_runner.configure_dnu_proof_memory_envelope("primary", env=env)
@@ -166,6 +168,7 @@ def test_primary_dnu_proof_memory_envelope_clamps_unsafe_overrides():
     assert report["mlx_memory_limit_gb"] == "38"
     assert report["worker_rss_limit_gb"] == "38"
     assert report["metal_cache_cap_gb"] == "16"
+    assert report["mlx_32b_load_min_available_gb"] == "24"
 
 
 def test_tertiary_dnu_proof_memory_envelope_stays_lightweight():
@@ -183,6 +186,7 @@ def test_tertiary_dnu_proof_memory_envelope_stays_lightweight():
     assert report["mlx_memory_limit_gb"] == "18"
     assert report["worker_rss_limit_gb"] == "12"
     assert report["metal_cache_cap_gb"] == "8"
+    assert report["mlx_32b_load_min_available_gb"] is None
 
 
 def test_dnu_model_recycle_rewarms_requested_lane(tmp_path):
@@ -224,6 +228,55 @@ def test_dnu_model_recycle_rewarms_requested_lane(tmp_path):
     assert event["status"] == "complete"
     assert event["error"] is None
     assert len((tmp_path / "LIFECYCLE_EVENTS.jsonl").read_text().splitlines()) == 2
+
+
+def test_dnu_model_recycle_retries_warmup_until_lane_is_live(tmp_path, monkeypatch):
+    monkeypatch.setenv("AURA_DNU_MODEL_RECYCLE_WARMUP_ATTEMPTS", "3")
+
+    class FakeClient:
+        def __init__(self):
+            self.rebooted = False
+            self.warmup_calls = 0
+
+        def get_lane_status(self):
+            return {
+                "desired_model": "Cortex 32B",
+                "state": "ready" if self.warmup_calls >= 2 else "recovering",
+                "conversation_ready": self.warmup_calls >= 2,
+            }
+
+        async def reboot_worker(self, reason, mark_failed=False):
+            self.rebooted = True
+
+        async def warmup(self, *, foreground_request=False, skip_swap_cooldown=False):
+            self.warmup_calls += 1
+            return self.warmup_calls >= 2
+
+        def is_alive(self):
+            return self.warmup_calls >= 2
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(dnu_runner.asyncio, "sleep", no_sleep)
+    client = FakeClient()
+    router = SimpleNamespace(endpoints={"Cortex": SimpleNamespace(client=client)})
+
+    event = asyncio.run(
+        dnu_runner.recycle_proof_model_lane(
+            router,
+            "primary",
+            run_dir=tmp_path,
+            reason="test_recycle_retry",
+            task_index=50,
+        )
+    )
+
+    assert client.rebooted is True
+    assert client.warmup_calls == 2
+    assert event["status"] == "complete"
+    assert event["warmup_attempts"][0]["lane_live"] is False
+    assert event["warmup_attempts"][1]["lane_live"] is True
 
 
 def test_dnu_model_recycle_fails_if_rewarmed_lane_is_not_live(tmp_path):

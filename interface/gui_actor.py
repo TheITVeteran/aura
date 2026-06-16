@@ -43,6 +43,52 @@ _inject_project_venv_site_packages()
 
 logger = logging.getLogger("Aura.GUI")
 
+_BOOT_WAITING_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aura – Starting</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#0a0010;color:#e0d0f0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       display:flex;align-items:center;justify-content:center;height:100vh;overflow:hidden}
+  .card{text-align:center;padding:48px 56px;border-radius:24px;
+        background:rgba(140,80,220,0.08);border:1px solid rgba(140,80,220,0.18);
+        backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px)}
+  .orb-wrap{position:relative;width:96px;height:96px;margin:0 auto 32px}
+  .orb{width:96px;height:96px;border-radius:50%;
+       background:radial-gradient(circle at 40% 35%,#c084fc,#7c3aed 50%,#4c1d95);
+       box-shadow:0 0 60px rgba(139,92,246,0.5),0 0 120px rgba(124,58,237,0.25);
+       animation:pulse 2.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.08);opacity:.82}}
+  .orb-ring{position:absolute;inset:-8px;border-radius:50%;border:2px solid rgba(196,132,252,0.25);
+            animation:ring-spin 6s linear infinite}
+  @keyframes ring-spin{to{transform:rotate(360deg)}}
+  h1{font-size:28px;font-weight:700;letter-spacing:6px;margin-bottom:8px;
+     background:linear-gradient(135deg,#c084fc,#e0d0f0);-webkit-background-clip:text;
+     -webkit-text-fill-color:transparent}
+  .subtitle{font-size:14px;color:rgba(196,168,228,0.8);margin-bottom:28px}
+  .bar-track{width:220px;height:4px;border-radius:2px;background:rgba(140,80,220,0.15);margin:0 auto 20px;overflow:hidden}
+  .bar-fill{width:30%;height:100%;border-radius:2px;
+            background:linear-gradient(90deg,#7c3aed,#c084fc);animation:slide 1.8s ease-in-out infinite}
+  @keyframes slide{0%{transform:translateX(-100%)}50%{transform:translateX(250%)}100%{transform:translateX(-100%)}}
+  #status{font-size:12px;color:rgba(196,168,228,0.55);min-height:18px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="orb-wrap"><div class="orb"></div><div class="orb-ring"></div></div>
+  <h1>AURA</h1>
+  <p class="subtitle">Connecting to runtime\u2026</p>
+  <div class="bar-track"><div class="bar-fill"></div></div>
+  <p id="status">Initializing</p>
+</div>
+</body>
+</html>
+""".strip()
+
 _GUI_RECOVERABLE_ERRORS = (
     ImportError,
     RuntimeError,
@@ -156,19 +202,68 @@ def gui_actor_entry(port: int, token: str = None):
         window.events.closed += _on_closed
 
         def _on_shown():
-            logger.info("🎨 WebView Window Shown. Initiating load...")
-            time.sleep(1.0) # Grace period for WebKit
+            import urllib.request
+            logger.info("🎨 WebView Window Shown. Loading boot screen...")
+            try:
+                window.load_html(_BOOT_WAITING_HTML)
+            except _GUI_RECOVERABLE_ERRORS as e:
+                logger.warning("Failed to load boot waiting page: %s", e)
+
+            max_wait = 180
+            backoff = 1.0
+            max_backoff = 5.0
+            elapsed = 0.0
+            attempt = 0
+
+            while elapsed < max_wait:
+                attempt += 1
+                try:
+                    req = urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/", timeout=5
+                    )
+                    if req.status < 500:
+                        logger.info(
+                            "🔄 API ready (attempt %d, %.1fs). Loading GUI: %s",
+                            attempt, elapsed, app_url,
+                        )
+                        try:
+                            window.load_url(app_url)
+                        except _GUI_RECOVERABLE_ERRORS as e:
+                            record_degradation('gui_actor', e)
+                            logger.error("Failed to load URL in WebView: %s", e)
+                        return
+                except Exception:
+                    pass
+
+                try:
+                    window.evaluate_js(
+                        f'document.getElementById("status").textContent = "Attempt {attempt} \u2013 waiting for runtime\u2026";'
+                    )
+                except _GUI_RECOVERABLE_ERRORS:
+                    pass
+
+                time.sleep(backoff)
+                elapsed += backoff
+                backoff = min(backoff * 1.5, max_backoff)
+
+            logger.warning(
+                "⚠️ API not confirmed after %.0fs / %d attempts. Loading URL as last resort.",
+                elapsed, attempt,
+            )
             try:
                 window.load_url(app_url)
-                logger.info(f"🔄 GUI Loaded: {app_url}")
             except _GUI_RECOVERABLE_ERRORS as e:
                 record_degradation('gui_actor', e)
-                logger.error(f"Failed to load URL in WebView: {e}")
+                logger.error("Failed to load URL in WebView: %s", e)
 
         # Watchdog: Periodically check if the UI is responsive
+        _boot_completed = False
+
         def _watchdog():
+            nonlocal _boot_completed
             logger.info("🐕 GUI Watchdog active.")
             consecutive_failures = 0
+            start_time = time.monotonic()
             while not shutdown_event.wait(20):
                 try:
                     resp = get_network_gateway().request(
@@ -180,13 +275,25 @@ def gui_actor_entry(port: int, token: str = None):
                         suppress_degradation=True,
                     )
                     if _gateway_heartbeat_healthy(resp):
+                        if not _boot_completed:
+                            _boot_completed = True
+                            logger.info("✅ [GUI WATCHDOG] First healthy heartbeat received.")
                         consecutive_failures = 0
                     else:
                         consecutive_failures += 1
                 except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
                     consecutive_failures += 1
-                
-                if consecutive_failures >= 3:
+
+                if not _boot_completed and (time.monotonic() - start_time) > 90:
+                    logger.warning("🚨 [GUI WATCHDOG] Boot not completed after 90s. Forcing reload.")
+                    try:
+                        window.load_url(app_url)
+                    except _GUI_RECOVERABLE_ERRORS as _exc:
+                        record_degradation('gui_actor', _exc)
+                        logger.warning("GUI watchdog boot reload failed: %s", _exc)
+                    _boot_completed = True
+
+                if consecutive_failures >= 2:
                     logger.warning("🚨 [GUI WATCHDOG] Kernel API unreachable. Attempting reload.")
                     try:
                         window.load_url(app_url)
