@@ -1,19 +1,13 @@
 import socket
 import time
 import logging
-import urllib.error
-import urllib.request
+
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Aura.Utils.PortCheck")
 
 _PORT_CHECK_ERRORS = (OSError, TimeoutError, socket.timeout, ConnectionRefusedError)
-_HTTP_READY_ERRORS = (
-    OSError,
-    TimeoutError,
-    ValueError,
-    urllib.error.URLError,
-    urllib.error.HTTPError,
-)
+_HTTP_READY_ERRORS = (OSError, RuntimeError, TimeoutError, TypeError, ValueError)
 
 def is_port_open(port: int, host: str = "127.0.0.1") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -35,9 +29,16 @@ def wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 30.0) -> 
 def is_http_ready(port: int, host: str = "127.0.0.1", path: str = "/api/health") -> bool:
     url = f"http://{host}:{port}{path}"
     try:
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            return resp.status < 500
+        resp = get_network_gateway().request(
+            "GET",
+            url,
+            timeout=3,
+            source="port_check.is_http_ready",
+            read_only=True,
+            suppress_degradation=True,
+        )
+        status_code = int(resp.get("status_code", 0) or 0)
+        return 0 < status_code < 500
     except _HTTP_READY_ERRORS as exc:
         logger.debug("HTTP readiness probe failed for %s: %s", url, exc)
         return False

@@ -202,8 +202,6 @@ def gui_actor_entry(port: int, token: str = None):
         window.events.closed += _on_closed
 
         def _on_shown():
-            import urllib.error
-            import urllib.request
             logger.info("🎨 WebView Window Shown. Loading boot screen...")
             try:
                 window.load_html(_BOOT_WAITING_HTML)
@@ -219,10 +217,16 @@ def gui_actor_entry(port: int, token: str = None):
             while elapsed < max_wait:
                 attempt += 1
                 try:
-                    req = urllib.request.urlopen(
-                        f"http://127.0.0.1:{port}/", timeout=5
+                    resp = get_network_gateway().request(
+                        "GET",
+                        f"http://127.0.0.1:{port}/",
+                        timeout=5,
+                        source="gui_actor.boot_wait",
+                        read_only=True,
+                        suppress_degradation=True,
                     )
-                    if req.status < 500:
+                    status_code = int(resp.get("status_code", 0) or 0)
+                    if 0 < status_code < 500:
                         logger.info(
                             "🔄 API ready (attempt %d, %.1fs). Loading GUI: %s",
                             attempt, elapsed, app_url,
@@ -233,7 +237,7 @@ def gui_actor_entry(port: int, token: str = None):
                             record_degradation('gui_actor', e)
                             logger.error("Failed to load URL in WebView: %s", e)
                         return
-                except (OSError, TimeoutError, urllib.error.URLError, urllib.error.HTTPError) as e:
+                except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as e:
                     logger.debug("GUI boot wait probe failed on attempt %d: %s", attempt, e)
 
                 try:
