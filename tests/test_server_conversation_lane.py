@@ -5911,3 +5911,30 @@ def test_collect_conversation_lane_status_exposes_actual_user_generation(monkeyp
     assert lane["desired_endpoint"] == "Cortex"
     assert lane["last_user_generation_endpoint"] == "Brainstem"
     assert lane["last_user_generation_used_fallback"] is True
+
+
+def test_live_desktop_final_repairs_preserve_cognitive_engine_contract():
+    source = (Path(__file__).resolve().parent.parent / "interface" / "routes" / "chat.py").read_text(
+        encoding="utf-8"
+    )
+    protected_slice = source.split("async def _attempt_protected_foreground_reply", 1)[1].split(
+        "async def _execute_narrow_desktop_objective_before_cognition",
+        1,
+    )[0]
+    fastpath_slice = source.split("async def _finalize_fastpath", 1)[1].split(
+        "async def _attempt_protected_foreground_reply",
+        1,
+    )[0]
+    final_gate_slice = source.rsplit('if response_confidence == "degraded":', 1)[1].split(
+        'final_text = reply_text',
+        1,
+    )[0]
+
+    assert '"cognitive_engine_required": bool(desktop_requires_cognitive_engine)' in protected_slice
+    assert '"desktop_cognitive_engine_required": bool(desktop_requires_cognitive_engine)' in protected_slice
+    assert '"allow_cloud_fallback": not bool(desktop_requires_cognitive_engine)' in protected_slice
+    assert "desktop_cognitive_engine_required=desktop_requires_cognitive_engine" in protected_slice
+    assert "desktop_cognitive_engine_required=desktop_requires_cognitive_engine" in fastpath_slice
+    assert "protected_foreground_lane=desktop_requires_cognitive_engine" in fastpath_slice
+    assert "desktop_cognitive_engine_required=desktop_requires_cognitive_engine" in final_gate_slice
+    assert "protected_foreground_lane=desktop_requires_cognitive_engine" in final_gate_slice

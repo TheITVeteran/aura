@@ -218,6 +218,33 @@ def test_aura_main_uses_shared_runtime_boot_helper_across_cli_server_and_desktop
     assert main_py.count("ServiceContainer.lock_registration()") == 1
     assert main_py.count("boot_aura_runtime(") >= 4
     assert 'orchestrator = await boot_aura_runtime(profile=profile, ready_label="CLI")' in main_py
+
+
+def test_desktop_shell_is_render_fault_tolerant_and_bootstrap_normalized():
+    main_py = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
+    shell_app = (PROJECT_ROOT / "interface" / "static" / "shell" / "src" / "App.jsx").read_text(
+        encoding="utf-8"
+    )
+    shell_main = (PROJECT_ROOT / "interface" / "static" / "shell" / "src" / "main.jsx").read_text(
+        encoding="utf-8"
+    )
+    shell_css = (PROJECT_ROOT / "interface" / "static" / "shell" / "src" / "shell.css").read_text(
+        encoding="utf-8"
+    )
+    system_routes = (PROJECT_ROOT / "interface" / "routes" / "system.py").read_text(encoding="utf-8")
+
+    assert "function normalizeBootstrap(payload)" in shell_app
+    assert "safeArray(raw.tools)" in shell_app
+    assert "setBootstrap(normalized)" in shell_app
+    assert "setTelemetry(normalized.telemetry)" in shell_app
+    assert "makeId(" in shell_app
+    assert "class ShellErrorBoundary extends React.Component" in shell_main
+    assert "Aura shell render failure" in shell_main
+    assert "window.location.reload()" in shell_main
+    assert 'window.open("/api/health/boot", "_blank")' in shell_main
+    assert ".shell-crash" in shell_css
+    assert '@router.post("/ui/shell-error")' in system_routes
+    assert "Desktop shell render fault recovered" in system_routes
     assert 'ready_label="Desktop"' in main_py
     assert 'ready_label="Server"' in main_py
 

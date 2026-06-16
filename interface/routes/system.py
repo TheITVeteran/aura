@@ -21,7 +21,7 @@ from typing import Any, cast
 
 import fastapi.responses as fastapi_responses
 import psutil
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from core.config import config
@@ -2183,6 +2183,30 @@ async def api_ui_bootstrap(request: Request = None):
         "timestamp": datetime.now(tz=UTC).isoformat(),
     }
     return JSONResponse(_json_safe(payload))
+
+
+@router.post("/ui/shell-error")
+async def api_ui_shell_error(payload: dict[str, Any] | None = Body(default=None)):
+    """Record desktop shell render faults without blocking UI recovery."""
+    safe_payload = _json_safe(payload if isinstance(payload, dict) else {})
+    message = str(safe_payload.get("error") or "unknown shell render fault")[:500]
+    logger.error("Aura desktop shell render fault: %s", message)
+    try:
+        await broadcast_bus.publish(
+            {
+                "kind": "log",
+                "level": "error",
+                "source": "Aura.Desktop.Shell",
+                "message": f"Desktop shell render fault recovered: {message}",
+                "payload": safe_payload,
+                "event_ts": datetime.now(tz=UTC).isoformat(),
+            },
+            priority=0,
+        )
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation("system", exc)
+        logger.debug("Shell error broadcast failed: %s", exc)
+    return JSONResponse({"ok": True})
 
 
 @router.get("/health/boot")

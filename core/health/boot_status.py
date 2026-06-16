@@ -286,7 +286,11 @@ def build_boot_health_snapshot(
         elif system_ready and not conversation_ready:
             blockers.append("conversation_ready")
             user_ready = False
-            launcher_ready = False
+            # The launcher and diagnostics shell may open once the governed
+            # runtime contract is alive. User chat remains not-ready until the
+            # conversation lane passes, so heartbeat/readiness cannot report a
+            # false healthy state while the desktop is still inspectable.
+            launcher_ready = True
             http_status = 503
             if conversation_state == "failed":
                 blockers.append("conversation_failed")

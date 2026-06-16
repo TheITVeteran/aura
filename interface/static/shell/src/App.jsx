@@ -31,6 +31,73 @@ const DEFAULT_BOOTSTRAP = {
   timestamp: "",
 };
 
+function safeObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function mergeObject(defaults, value) {
+  return { ...defaults, ...safeObject(value) };
+}
+
+function normalizeBootstrap(payload) {
+  const raw = safeObject(payload);
+  const state = mergeObject(DEFAULT_BOOTSTRAP.state, raw.state);
+  const constitutional = mergeObject(DEFAULT_BOOTSTRAP.constitutional, raw.constitutional);
+  const commitments = mergeObject(DEFAULT_BOOTSTRAP.commitments, raw.commitments);
+  const telemetry = mergeObject(DEFAULT_BOOTSTRAP.telemetry, raw.telemetry);
+  const ui = mergeObject(DEFAULT_BOOTSTRAP.ui, raw.ui);
+
+  return {
+    ...DEFAULT_BOOTSTRAP,
+    ...raw,
+    identity: mergeObject(DEFAULT_BOOTSTRAP.identity, raw.identity),
+    session: mergeObject(DEFAULT_BOOTSTRAP.session, raw.session),
+    constitutional: {
+      ...constitutional,
+      recent_decisions: safeArray(constitutional.recent_decisions),
+      belief_summary: safeObject(constitutional.belief_summary),
+    },
+    executive: safeObject(raw.executive),
+    state: {
+      ...state,
+      health: safeObject(state.health),
+      health_flags: safeArray(state.health_flags),
+      epistemics: safeObject(state.epistemics),
+    },
+    commitments: {
+      ...commitments,
+      active: safeArray(commitments.active),
+    },
+    tools: safeArray(raw.tools),
+    conversation: {
+      ...mergeObject(DEFAULT_BOOTSTRAP.conversation, raw.conversation),
+      recent: safeArray(raw.conversation?.recent),
+    },
+    voice: mergeObject(DEFAULT_BOOTSTRAP.voice, raw.voice),
+    telemetry: {
+      ...telemetry,
+      runtime: safeObject(telemetry.runtime),
+      boot: safeObject(telemetry.boot),
+    },
+    ui: {
+      ...ui,
+      status_flags: safeArray(ui.status_flags),
+    },
+  };
+}
+
+function makeId(prefix = "shell") {
+  const webCrypto = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+  if (webCrypto && typeof webCrypto.randomUUID === "function") {
+    return webCrypto.randomUUID();
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function desktopChatHeaders() {
   return {
     "Content-Type": "application/json",
@@ -75,12 +142,12 @@ function formatClock(timestamp) {
 }
 
 function normalizeConversation(conversation) {
-  const recent = Array.isArray(conversation?.recent) ? conversation.recent : [];
+  const recent = safeArray(conversation?.recent);
   const messages = [];
   for (const exchange of recent) {
     if (exchange?.user) {
       messages.push({
-        id: `${exchange.timestamp || exchange.created_at || Math.random()}-user`,
+        id: `${exchange.timestamp || exchange.created_at || makeId("conversation")}-user`,
         role: "user",
         content: exchange.user,
         createdAt: exchange.timestamp || exchange.created_at || Date.now(),
@@ -88,7 +155,7 @@ function normalizeConversation(conversation) {
     }
     if (exchange?.aura) {
       messages.push({
-        id: `${exchange.timestamp || exchange.created_at || Math.random()}-assistant`,
+        id: `${exchange.timestamp || exchange.created_at || makeId("conversation")}-assistant`,
         role: "assistant",
         content: exchange.aura,
         createdAt: exchange.timestamp || exchange.created_at || Date.now(),
@@ -158,7 +225,7 @@ function buildStatusSignals(bootstrap, connectionState) {
 }
 
 export default function App() {
-  const [bootstrap, setBootstrap] = useState(DEFAULT_BOOTSTRAP);
+  const [bootstrap, setBootstrap] = useState(() => normalizeBootstrap(DEFAULT_BOOTSTRAP));
   const [connectionState, setConnectionState] = useState("booting");
   const [activeTab, setActiveTab] = useState("neural");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(true);
@@ -186,12 +253,13 @@ export default function App() {
         if (!response.ok) throw new Error(`Bootstrap failed (${response.status})`);
         const payload = await response.json();
         if (!mounted) return;
+        const normalized = normalizeBootstrap(payload);
         startTransition(() => {
-          setBootstrap(payload);
-          setTelemetry(payload.telemetry || {});
-          setMessages(normalizeConversation(payload.conversation));
+          setBootstrap(normalized);
+          setTelemetry(normalized.telemetry);
+          setMessages(normalizeConversation(normalized.conversation));
         });
-        setConnectionState(payload.session?.connected ? "connected" : "degraded");
+        setConnectionState(normalized.session.connected ? "connected" : normalized.session.initialized ? "degraded" : "booting");
       } catch (error) {
         if (!mounted) return;
         setConnectionState("degraded");
@@ -274,21 +342,24 @@ export default function App() {
   }
 
   function handleEvent(payload) {
+    payload = safeObject(payload);
     const kind = payload.kind || payload.type;
     if (kind === "heartbeat" || kind === "ping") return;
 
     if (kind === "telemetry") {
+      const eventPayload = safeObject(payload.payload);
       startTransition(() => {
-        setTelemetry((current) => ({ ...current, ...payload.payload, ...payload }));
+        setTelemetry((current) => ({ ...current, ...eventPayload, ...payload }));
       });
       return;
     }
 
     if (kind === "thought") {
+      const eventPayload = safeObject(payload.payload);
       const item = {
-        id: payload.event_id || crypto.randomUUID(),
-        content: payload.content || payload.payload?.content || "...",
-        phase: payload.cognitive_phase || payload.payload?.cognitive_phase || "cognition",
+        id: payload.event_id || makeId("thought"),
+        content: payload.content || eventPayload.content || "...",
+        phase: payload.cognitive_phase || eventPayload.cognitive_phase || "cognition",
         at: payload.event_ts || payload.timestamp || Date.now(),
       };
       startTransition(() => {
@@ -298,15 +369,17 @@ export default function App() {
     }
 
     if (kind === "chat_stream_chunk") {
-      setStreamingMessage((current) => `${current}${payload.chunk || payload.payload?.chunk || ""}`);
+      const eventPayload = safeObject(payload.payload);
+      setStreamingMessage((current) => `${current}${payload.chunk || eventPayload.chunk || ""}`);
       return;
     }
 
     if (kind === "aura_message" || kind === "chat_response") {
-      const content = payload.message || payload.payload?.message || payload.content || payload.payload?.content;
+      const eventPayload = safeObject(payload.payload);
+      const content = payload.message || eventPayload.message || payload.content || eventPayload.content;
       if (content) {
         appendMessage({
-          id: payload.event_id || crypto.randomUUID(),
+          id: payload.event_id || makeId("message"),
           role: "assistant",
           content,
           createdAt: payload.event_ts || payload.timestamp || Date.now(),
@@ -317,12 +390,14 @@ export default function App() {
     }
 
     if (kind === "tool_event") {
+      const eventPayload = safeObject(payload.payload);
+      const decision = safeObject(payload.decision || eventPayload.decision);
       const item = {
-        id: payload.event_id || crypto.randomUUID(),
-        stage: payload.stage,
-        tool: payload.tool,
-        success: payload.success,
-        reason: payload.decision?.reason || payload.error || "",
+        id: payload.event_id || makeId("tool"),
+        stage: payload.stage || eventPayload.stage,
+        tool: payload.tool || eventPayload.tool || "tool",
+        success: payload.success ?? eventPayload.success,
+        reason: decision.reason || payload.error || eventPayload.error || "",
         at: payload.event_ts || payload.timestamp || Date.now(),
       };
       startTransition(() => {
@@ -338,10 +413,11 @@ export default function App() {
     }
 
     if (kind === "log") {
+      const eventPayload = safeObject(payload.payload);
       pushDiagnostics({
-        id: payload.event_id || crypto.randomUUID(),
+        id: payload.event_id || makeId("log"),
         level: payload.level || "info",
-        message: payload.message || payload.payload?.message || "",
+        message: payload.message || eventPayload.message || "",
         at: payload.event_ts || payload.timestamp || Date.now(),
       });
       return;
@@ -351,7 +427,7 @@ export default function App() {
       startTransition(() => {
         setBootstrap((current) => ({
           ...current,
-          tools: current.tools.map((tool) =>
+          tools: safeArray(current.tools).map((tool) =>
             tool.name === payload.skill
               ? { ...tool, state: payload.state, availability: payload.state === "ERROR" ? "unavailable" : tool.availability }
               : tool,
@@ -367,7 +443,7 @@ export default function App() {
     if (!content || sending) return;
 
     appendMessage({
-      id: crypto.randomUUID(),
+      id: makeId("user-message"),
       role: "user",
       content,
       createdAt: Date.now(),
@@ -386,7 +462,7 @@ export default function App() {
       if (!response.ok) {
         const message = apiFailureMessage(payload, `Chat failed (${response.status})`);
         appendMessage({
-          id: crypto.randomUUID(),
+          id: makeId("chat-failure"),
           role: payload.response ? "assistant" : "system",
           content: message,
           createdAt: Date.now(),
@@ -396,7 +472,7 @@ export default function App() {
       }
       if (payload.response) {
         appendMessage({
-          id: crypto.randomUUID(),
+          id: makeId("assistant-message"),
           role: "assistant",
           content: payload.response,
           createdAt: Date.now(),
@@ -404,7 +480,7 @@ export default function App() {
       }
     } catch (error) {
       appendMessage({
-        id: crypto.randomUUID(),
+        id: makeId("request-error"),
         role: "system",
         content: error instanceof Error ? error.message : "Request failed.",
         createdAt: Date.now(),
@@ -428,7 +504,7 @@ export default function App() {
       }
       if (payload.response) {
         appendMessage({
-          id: crypto.randomUUID(),
+          id: makeId("regenerated-message"),
           role: "assistant",
           content: payload.response,
           createdAt: Date.now(),
@@ -471,8 +547,8 @@ export default function App() {
     { label: "Voice", value: bootstrap.voice.state || "offline" },
   ];
 
-  const availableTools = bootstrap.tools.filter((tool) => tool.available);
-  const unavailableTools = bootstrap.tools.filter((tool) => !tool.available);
+  const availableTools = safeArray(bootstrap.tools).filter((tool) => tool.available);
+  const unavailableTools = safeArray(bootstrap.tools).filter((tool) => !tool.available);
 
   return (
     <div className={`shell ${connectionState}`}>
@@ -652,8 +728,8 @@ export default function App() {
                   </div>
                 ) : null}
                 <div className="feed-list compact">
-                  {bootstrap.commitments.active.length === 0 ? <EmptyState label="No active commitments." /> : null}
-                  {bootstrap.commitments.active.map((commitment) => (
+                  {safeArray(bootstrap.commitments.active).length === 0 ? <EmptyState label="No active commitments." /> : null}
+                  {safeArray(bootstrap.commitments.active).map((commitment) => (
                     <div className="feed-card" key={commitment.id}>
                       <div className="feed-meta">
                         <span>{commitment.status}</span>
@@ -674,7 +750,7 @@ export default function App() {
                   <MiniStat label="Unavailable" value={String(unavailableTools.length)} />
                 </div>
                 <div className="feed-list compact">
-                  {bootstrap.tools.map((tool) => (
+                  {safeArray(bootstrap.tools).map((tool) => (
                     <div className={`tool-card ${tool.available ? "available" : "unavailable"}`} key={tool.name}>
                       <div className="tool-card-top">
                         <strong>{tool.name}</strong>
@@ -723,7 +799,7 @@ export default function App() {
                   <div className="feed-card">
                     <div className="feed-meta">
                       <span>Constitution</span>
-                      <span>{bootstrap.constitutional.recent_decisions?.length || 0} decisions</span>
+                      <span>{safeArray(bootstrap.constitutional.recent_decisions).length} decisions</span>
                     </div>
                     <div className="feed-content">Executive reason: {bootstrap.executive.last_reason || "steady"}</div>
                   </div>

@@ -731,6 +731,72 @@ button, textarea {
   box-shadow: var(--shadow);
 }
 
+.shell-crash {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  color: #f4efff;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(142,75,255,0.26), transparent 32%),
+    linear-gradient(180deg, #05020d 0%, #10081d 100%);
+}
+
+.shell-crash-card {
+  width: min(760px, 100%);
+  padding: 28px;
+  border: 1px solid rgba(162,89,255,0.34);
+  border-radius: 20px;
+  background: rgba(13,9,24,0.88);
+  box-shadow: 0 24px 80px rgba(0,0,0,0.46);
+}
+
+.shell-crash-kicker {
+  margin: 0 0 10px;
+  color: #78eaff;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+}
+
+.shell-crash h1 {
+  margin: 0 0 12px;
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+}
+
+.shell-crash p {
+  margin: 0 0 18px;
+  color: rgba(244,239,255,0.78);
+  line-height: 1.6;
+}
+
+.shell-crash pre {
+  max-height: 180px;
+  overflow: auto;
+  padding: 14px;
+  border-radius: 12px;
+  color: #ffd7e4;
+  background: rgba(255,77,122,0.1);
+  border: 1px solid rgba(255,77,122,0.2);
+  white-space: pre-wrap;
+}
+
+.shell-crash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.shell-crash-actions button {
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 12px;
+  padding: 11px 16px;
+  color: #f8f4ff;
+  background: rgba(143,72,255,0.24);
+  cursor: pointer;
+}
+
 @media (max-width: 1180px) {
   .workspace,
   .diagnostic-grid,

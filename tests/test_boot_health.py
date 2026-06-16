@@ -140,7 +140,7 @@ def test_boot_health_separates_system_ready_from_conversation_ready():
     assert status_code == 503
     assert payload["status"] == "warming"
     assert payload["ready"] is False
-    assert payload["launcher_ready"] is False
+    assert payload["launcher_ready"] is True
     assert payload["system_ready"] is True
     assert payload["conversation_ready"] is False
     assert payload["boot_phase"] == "conversation_warming"
@@ -177,7 +177,7 @@ def test_boot_health_treats_cold_standby_lane_as_not_conversation_ready():
     assert status_code == 503
     assert payload["status"] == "warming"
     assert payload["ready"] is False
-    assert payload["launcher_ready"] is False
+    assert payload["launcher_ready"] is True
     assert payload["system_ready"] is True
     assert payload["boot_phase"] == "conversation_warming"
     assert payload["conversation_ready"] is False
@@ -212,7 +212,7 @@ def test_boot_health_reports_hard_conversation_failure():
     assert status_code == 503
     assert payload["status"] == "degraded"
     assert payload["ready"] is False
-    assert payload["launcher_ready"] is False
+    assert payload["launcher_ready"] is True
     assert payload["system_ready"] is True
     assert payload["conversation_ready"] is False
     assert payload["boot_phase"] == "conversation_failed"

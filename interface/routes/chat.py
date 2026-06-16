@@ -9085,6 +9085,8 @@ async def api_chat(
                             same_diff=is_same_diff,
                             off_topic=is_off_topic,
                             off_topic_reason=off_topic_reason or semantic_glitch_reason,
+                            desktop_cognitive_engine_required=desktop_requires_cognitive_engine,
+                            protected_foreground_lane=desktop_requires_cognitive_engine,
                         )
                         if repaired and repaired_text != final_text:
                             final_text = repaired_text
@@ -9217,13 +9219,15 @@ async def api_chat(
                         context={
                             "origin": chat_origin,
                             "foreground_request": not is_benchmark,
+                            "cognitive_engine_required": bool(desktop_requires_cognitive_engine),
+                            "desktop_cognitive_engine_required": bool(desktop_requires_cognitive_engine),
                             "protected_foreground_lane": not is_benchmark,
                             "protected_foreground_reason": reason,
                             "prefer_tier": route.get("prefer_tier", "primary"),
                             "deep_handoff": deep_handoff,
                             # [STABILITY v53] Allow cloud fallback in protected lane.
                             # When local models are dead, cloud is better than silence.
-                            "allow_cloud_fallback": True,
+                            "allow_cloud_fallback": not bool(desktop_requires_cognitive_engine),
                             "messages": messages,
                             "brief": (
                                 "Protected foreground lane engaged. The kernel is congested or recovering. "
@@ -9245,6 +9249,7 @@ async def api_chat(
             stabilized = await _stabilize_user_facing_reply(
                 _semantic_user_message,
                 str(direct_reply).strip(),
+                desktop_cognitive_engine_required=desktop_requires_cognitive_engine,
                 protected_foreground_lane=True,
             )
             recent_user_messages = await _gather_recent_user_messages_for_relevance(_semantic_user_message)
@@ -10131,6 +10136,8 @@ async def api_chat(
                 same_diff=is_same_diff,
                 off_topic=is_off_topic,
                 off_topic_reason=off_topic_reason,
+                desktop_cognitive_engine_required=desktop_requires_cognitive_engine,
+                protected_foreground_lane=desktop_requires_cognitive_engine,
             )
             if repaired and repaired_reply != reply_text:
                 reply_text = repaired_reply
