@@ -15,6 +15,162 @@
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌌</text></svg>">
     <link rel="apple-touch-icon" href="/static/icon-192.png">
     <title>Aura Luna</title>
+    <style id="aura-critical-boot-style">
+        html, body {
+            margin: 0;
+            min-height: 100%;
+            background: #030005;
+            color: #f6f1ff;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        .aura-hard-recovery {
+            position: fixed;
+            inset: 0;
+            z-index: 2147483647;
+            display: grid;
+            place-items: center;
+            padding: 28px;
+            background:
+                radial-gradient(circle at 50% 28%, rgba(138, 43, 226, 0.26), transparent 34%),
+                linear-gradient(180deg, #05000d 0%, #010003 100%);
+        }
+        .aura-hard-recovery-card {
+            width: min(720px, calc(100vw - 32px));
+            border: 1px solid rgba(180, 77, 255, 0.38);
+            border-radius: 18px;
+            background: rgba(12, 7, 24, 0.92);
+            box-shadow: 0 24px 90px rgba(0, 0, 0, 0.42), 0 0 38px rgba(138, 43, 226, 0.18);
+            padding: 28px;
+        }
+        .aura-hard-recovery-kicker {
+            color: #63e8ff;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+        }
+        .aura-hard-recovery h1 {
+            margin: 10px 0 8px;
+            font-size: clamp(28px, 5vw, 44px);
+            line-height: 1.02;
+        }
+        .aura-hard-recovery p {
+            color: #d8d1ea;
+            line-height: 1.5;
+        }
+        .aura-hard-recovery pre {
+            max-height: 180px;
+            overflow: auto;
+            margin: 16px 0;
+            padding: 14px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.06);
+            color: #f4edff;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .aura-hard-recovery-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .aura-hard-recovery-actions button,
+        .aura-hard-recovery-actions a {
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 999px;
+            background: rgba(138, 43, 226, 0.22);
+            color: #fff;
+            cursor: pointer;
+            font: inherit;
+            font-weight: 800;
+            padding: 10px 16px;
+            text-decoration: none;
+        }
+    </style>
+    <script>
+        (function () {
+            if (window.__auraLegacyShellGuardInstalled) return;
+            window.__auraLegacyShellGuardInstalled = true;
+            window.__auraLegacyShellReady = false;
+
+            function report(reason, detail) {
+                try {
+                    fetch("/api/ui/shell-error", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            shell: "legacy_shell",
+                            reason: String(reason || "unknown"),
+                            error: String(detail || ""),
+                            user_agent: navigator.userAgent,
+                            href: location.href,
+                        }),
+                    }).catch(function () {});
+                } catch (_err) {}
+            }
+
+            function showRecovery(reason, detail) {
+                function render() {
+                    if (window.__auraLegacyShellReady) return;
+                    if (!document.body) return;
+                    var existing = document.getElementById("aura-hard-recovery");
+                    if (existing) return;
+                    var splashStatus = document.getElementById("splash-status");
+                    if (splashStatus) {
+                        splashStatus.textContent = "Desktop shell fault detected. Recovery controls are available.";
+                    }
+                    var root = document.createElement("main");
+                    root.id = "aura-hard-recovery";
+                    root.className = "aura-hard-recovery";
+                    root.setAttribute("role", "alert");
+                    root.setAttribute("aria-live", "assertive");
+                    var safeReason = String(reason || "legacy_shell_fault");
+                    var safeDetail = String(detail || "The desktop shell did not finish installing its runtime controls.");
+                    root.innerHTML =
+                        '<section class="aura-hard-recovery-card">' +
+                        '<div class="aura-hard-recovery-kicker">Aura desktop recovery</div>' +
+                        '<h1>The shell stayed alive instead of going blank.</h1>' +
+                        '<p>The backend may still be running. Use these controls to reload the UI, inspect boot health, or open logs while the runtime reports the exact blocker.</p>' +
+                        '<pre></pre>' +
+                        '<div class="aura-hard-recovery-actions">' +
+                        '<button type="button" data-action="reload">Reload shell</button>' +
+                        '<a href="/api/health/boot" target="_blank" rel="noopener">Boot health</a>' +
+                        '<a href="/api/health" target="_blank" rel="noopener">Runtime health</a>' +
+                        '<a href="/api/dashboard/snapshot" target="_blank" rel="noopener">Diagnostics snapshot</a>' +
+                        '</div>' +
+                        '</section>';
+                    root.querySelector("pre").textContent = safeReason + "\n" + safeDetail;
+                    root.addEventListener("click", function (event) {
+                        var button = event.target && event.target.closest && event.target.closest("button[data-action='reload']");
+                        if (button) window.location.reload();
+                    });
+                    document.body.appendChild(root);
+                    report(safeReason, safeDetail);
+                }
+                if (document.readyState === "loading") {
+                    document.addEventListener("DOMContentLoaded", render, { once: true });
+                } else {
+                    render();
+                }
+            }
+
+            window.__auraShowHardRecovery = showRecovery;
+            window.addEventListener("error", function (event) {
+                showRecovery("legacy_shell_runtime_error", event && (event.message || event.error && event.error.stack));
+            });
+            window.addEventListener("unhandledrejection", function (event) {
+                var reason = event && event.reason;
+                showRecovery("legacy_shell_unhandled_rejection", reason && (reason.stack || reason.message || reason));
+            });
+            window.setTimeout(function () {
+                if (!window.__auraLegacyShellReady) {
+                    showRecovery("legacy_shell_load_timeout", "aura.js did not finish installing the live desktop controls within 18 seconds.");
+                }
+            }, 18000);
+        })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link

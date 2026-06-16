@@ -42,6 +42,9 @@ const state = {
     desktopAccess: null,
     bootstrapLoaded: false,
     bootstrapTimer: null,
+    lastNeuralPulseAt: 0,
+    lastSemanticThoughtAt: 0,
+    lastHealthSnapshotFingerprint: null,
     conversationReady: true,
     conversationLane: null,
     runtimeHealthy: false,
@@ -68,6 +71,7 @@ const THOUGHT_COALESCE_WINDOW_MS = 12000;
 const THOUGHT_COALESCE_LOOKBACK = 18;
 const PROCESSED_EVENT_ID_MAX = 2000;
 const PROCESSED_MESSAGE_FINGERPRINT_MAX = 500;
+const NEURAL_LIVENESS_PULSE_MS = 30000;
 const TYPING_SIGNAL_DEBOUNCE_MS = 850;
 const VOICE_SIGNAL_FLUSH_MS = 900;
 const CAMERA_SIGNAL_INTERVAL_MS = 2200;
@@ -1911,6 +1915,9 @@ const triggerVoiceOrb = (type) => {
 function queueThought(data) {
     const item = normalizeThoughtEvent(data);
     if (!item) return;
+    if (item.name !== 'Aura.Live.Neural') {
+        state.lastSemanticThoughtAt = Date.now();
+    }
     item.repeatCount = Math.max(1, Number(item.repeatCount || 1));
     item.fingerprint = buildThoughtFingerprint(item);
     if (coalesceThoughtQueueItem(item)) return;
@@ -1921,6 +1928,61 @@ function queueThought(data) {
     state.thoughtQueue.push(item);
     syncNeuralFeedMode();
     if (!state.pacingActive && !state.neuralFeedPaused) processThoughtQueue();
+}
+
+function queueNeuralLivenessCard(message, { level = 'info', source = 'Aura.Live.Neural', force = false } = {}) {
+    const now = Date.now();
+    if (!force && now - Number(state.lastNeuralPulseAt || 0) < NEURAL_LIVENESS_PULSE_MS) return;
+    state.lastNeuralPulseAt = now;
+    queueThought({
+        type: 'thought',
+        kind: 'thought',
+        name: source,
+        level,
+        message,
+        timestamp: now / 1000,
+        event_id: `neural_liveness_${now}_${Math.random().toString(36).slice(2, 8)}`
+    });
+}
+
+function healthPulseFingerprint(payload) {
+    const lane = payload && payload.conversation_lane ? payload.conversation_lane : {};
+    const boot = payload && payload.boot ? payload.boot : {};
+    const blockers = runtimeHealthBlockers(payload || {}).slice(0, 8).join(',');
+    return [
+        payload && payload.status,
+        payload && payload.healthy === true ? 'healthy' : 'unhealthy',
+        boot.boot_phase || boot.status || '',
+        lane.state || '',
+        lane.conversation_ready === true ? 'conversation_ready' : 'conversation_not_ready',
+        blockers
+    ].join('|');
+}
+
+function publishHealthNeuralPulse(payload, source = 'health_poll') {
+    if (!payload || typeof payload !== 'object') return;
+    const fingerprint = healthPulseFingerprint(payload);
+    const changed = fingerprint !== state.lastHealthSnapshotFingerprint;
+    const staleFeed = Date.now() - Math.max(Number(state.lastSemanticThoughtAt || 0), Number(state.lastNeuralPulseAt || 0)) > NEURAL_LIVENESS_PULSE_MS;
+    if (!changed && !staleFeed) return;
+    state.lastHealthSnapshotFingerprint = fingerprint;
+
+    const lane = payload.conversation_lane || {};
+    const boot = payload.boot || {};
+    const blockers = runtimeHealthBlockers(payload);
+    const probeText = payload.runtime_probe_healthy === true ? 'probes pass' : 'probes blocked';
+    const conversationText = lane.conversation_ready === true || payload.conversation_ready === true
+        ? 'conversation ready'
+        : `conversation ${String(lane.state || boot.boot_phase || 'not ready').replace(/_/g, ' ')}`;
+    const blockerText = blockers.length ? ` | blockers: ${blockers.slice(0, 3).join(', ')}` : '';
+    const statusText = String(payload.status || boot.status || 'unknown').replace(/_/g, ' ');
+    queueNeuralLivenessCard(
+        `[${source}] health=${statusText}; ${probeText}; ${conversationText}${blockerText}`,
+        {
+            level: payload.healthy === true ? 'info' : 'warning',
+            force: changed
+        }
+    );
 }
 
 function syncNeuralFeedMode() {
@@ -3117,6 +3179,7 @@ function applyRuntimeHeartbeat(payload) {
     } else {
         setConnectionVisual('degraded', runtimeHealthStatusText(payload));
     }
+    publishHealthNeuralPulse(payload, 'websocket_heartbeat');
 }
 
 function conversationLaneStatusText(lane) {
@@ -3247,6 +3310,7 @@ async function pollHealth() {
                 session: { connected: state.runtimeHealthy }
             });
         }
+        publishHealthNeuralPulse(d, 'health_poll');
 
         state.cycleCount = d.cycle_count || state.cycleCount || 0;
         const cyclesEl = $('hud-cycles');
@@ -3623,6 +3687,10 @@ async function pollHealth() {
     } catch (e) {
         if (!e || e.name !== 'AbortError') {
             console.warn('⚠️ Health poll failed:', e);
+            queueNeuralLivenessCard(
+                `[health_poll] health probe failed: ${e && e.message ? e.message : 'unknown failure'}`,
+                { level: 'warning' }
+            );
         }
     } finally {
         clearTimeout(timeoutId);
@@ -4901,3 +4969,12 @@ function regenerateResponse() {
 }
 
 $('regen-btn')?.addEventListener('click', regenerateResponse);
+
+function markLegacyShellReady() {
+    window.__auraLegacyShellReady = true;
+    document.body.dataset.auraShell = 'ready';
+    const hardRecovery = document.getElementById('aura-hard-recovery');
+    if (hardRecovery) hardRecovery.remove();
+}
+
+markLegacyShellReady();

@@ -100,6 +100,42 @@ def test_legacy_shell_has_neural_feed_backpressure_controls():
     assert "state.thoughtQueue.splice(0, state.thoughtQueue.length - THOUGHT_QUEUE_MAX + 1);" in js
 
 
+def test_legacy_shell_has_dark_boot_recovery_guard_before_external_assets():
+    html = (PROJECT_ROOT / "interface" / "static" / "index.html").read_text(encoding="utf-8")
+
+    critical_style = html.index('id="aura-critical-boot-style"')
+    first_external_script = html.index('<script src="/static/error_banner.js">')
+    assert critical_style < first_external_script
+    assert "window.__auraLegacyShellGuardInstalled" in html
+    assert "window.__auraShowHardRecovery" in html
+    assert "legacy_shell_load_timeout" in html
+    assert "/api/ui/shell-error" in html
+    assert "/api/dashboard/snapshot" in html
+    assert 'href="/logs"' not in html
+
+
+def test_legacy_shell_marks_ready_only_after_full_script_install():
+    js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+
+    assert "function markLegacyShellReady()" in js
+    assert "window.__auraLegacyShellReady = true;" in js
+    assert "document.body.dataset.auraShell = 'ready';" in js
+    assert js.rfind("markLegacyShellReady();") > js.rfind("$('regen-btn')?.addEventListener('click', regenerateResponse);")
+
+
+def test_legacy_shell_neural_feed_receives_health_liveness_pulses():
+    js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+
+    assert "lastNeuralPulseAt" in js
+    assert "lastSemanticThoughtAt" in js
+    assert "NEURAL_LIVENESS_PULSE_MS = 30000" in js
+    assert "function queueNeuralLivenessCard" in js
+    assert "function publishHealthNeuralPulse" in js
+    assert "publishHealthNeuralPulse(payload, 'websocket_heartbeat');" in js
+    assert "publishHealthNeuralPulse(d, 'health_poll');" in js
+    assert "[health_poll] health probe failed" in js
+
+
 def test_server_keeps_legacy_shell_as_default_route():
     server = (PROJECT_ROOT / "interface" / "server.py").read_text(encoding="utf-8")
 
