@@ -266,6 +266,14 @@ _GENERIC_ASSISTANT_RE = re.compile(
     r"are (?:just )?(?:programmed )?simulations)\b",
     re.IGNORECASE,
 )
+_LIVE_DESKTOP_GATE_LEAK_RE = re.compile(
+    r"\b(?:reply[- ]quality gate|quality gate refused|second foreground generation|"
+    r"desktop chat path required cognitiveengine|desktop chat path required cognitive engine|"
+    r"desktop cognitive engine required no reply|desktop_cognitive_engine_required_no_reply|"
+    r"desktop_cognitive_engine_timeout|desktop_cognitive_engine_unavailable|"
+    r"refused the legacy fallback|refused the direct inference fallback)\b",
+    re.IGNORECASE,
+)
 _TRAILING_ESCAPE_RE = re.compile(r"(?:\\n|\\t|\\r)")
 _CAPITALIZED_NAME_RE = re.compile(r"\b[A-Z][a-z]{3,}\b")
 _ALLOWED_SHORT_PROPER_NAMES = {
@@ -2289,6 +2297,8 @@ def _model_text_integrity_reasons(
         reasons.append("raw_tool_result_fragment")
     if user_facing and _RAW_LANE_TELEMETRY_RE.search(raw):
         reasons.append("raw_lane_telemetry")
+    if user_facing and _LIVE_DESKTOP_GATE_LEAK_RE.search(raw):
+        reasons.append("internal_live_gate_leak")
     if user_facing and _BACKEND_SYMBOLIC_SURFACE_RE.search(raw):
         reasons.append("backend_symbolic_surface_leak")
     if user_facing and _has_persona_card_deflection(raw):
@@ -2367,6 +2377,7 @@ def assess_model_text_integrity(
         "runtime_boilerplate",
         "raw_tool_result_fragment",
         "raw_lane_telemetry",
+        "internal_live_gate_leak",
         "backend_symbolic_surface_leak",
         "persona_card_deflection",
         "detail_request_deflection",
@@ -2528,6 +2539,7 @@ def assess_user_facing_reply(
         "runtime_boilerplate",
         "raw_tool_result_fragment",
         "raw_lane_telemetry",
+        "internal_live_gate_leak",
         "backend_symbolic_surface_leak",
         "persona_card_deflection",
         "detail_request_deflection",

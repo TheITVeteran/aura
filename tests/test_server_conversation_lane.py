@@ -2265,6 +2265,98 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_low_risk_social_no_reply_returns_bounded_repair(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    kernel_calls = []
+    completed_exchanges = []
+    output_receipts = []
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            kernel_calls.append("process")
+            raise AssertionError("low-risk social desktop repair must not use KernelInterface fallback")
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-social"
+
+    async def _fake_complete_exchange(*args, **kwargs):
+        completed_exchanges.append((args, kwargs))
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    async def _no_cognitive_reply(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": {
+            "conversation_ready": False,
+            "state": state,
+            "reason": reason,
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="Ok. Just checking. I'll be back, ok?"),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["status"] == "desktop_social_presence_contract"
+    assert payload["response_confidence"] == "bounded"
+    assert "keep the thread warm" in payload["response"]
+    assert "reply-quality gate" not in payload["response"]
+    assert "second foreground generation" not in payload["response"]
+    assert kernel_calls == []
+    assert len(completed_exchanges) == 1
+    assert completed_exchanges[0][1]["record_experience"] is True
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_social_presence_contract"
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_no_reply_executes_self_sufficient_objective(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
@@ -3470,6 +3562,84 @@ def test_live_self_reflection_rejects_stale_tool_topic_bleed():
 
     assert "stale_context_topic_bleed" in assessment.reasons
     assert assessment.retryable
+
+
+def test_live_desktop_gate_leak_is_retryable_user_facing_failure():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Ok. Just checking. I'll be back, ok?",
+        (
+            "This live desktop turn failed the reply-quality gate, and I am not "
+            "starting a second foreground generation over it."
+        ),
+    )
+
+    assert "internal_live_gate_leak" in assessment.reasons
+    assert assessment.hard_failure
+    assert assessment.retryable
+
+
+@pytest.mark.asyncio
+async def test_desktop_low_risk_social_turn_repairs_model_gate_leak_without_second_pass(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content=(
+                    "This live desktop turn failed the reply-quality gate, and I am not "
+                    "starting a second foreground generation over it."
+                )
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = "Ok. Just checking. I'll be back, ok?"
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert len(calls) == 1
+    assert reply
+    assert "reply-quality gate" not in reply
+    assert "second foreground generation" not in reply
+    assert "legacy fallback" not in reply
+    assert "keep the thread warm" in reply
 
 
 def test_live_self_reflection_rejects_social_presence_template():

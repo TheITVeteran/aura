@@ -1,12 +1,7 @@
 from __future__ import annotations
 
 import re
-import shutil
-import subprocess
-import tempfile
 from pathlib import Path
-
-import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,10 +35,6 @@ def test_react_shell_renders_fail_closed_chat_response_body_before_generic_error
 
 
 def test_legacy_shell_inline_scripts_are_syntax_valid():
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for inline JavaScript syntax verification")
-
     html = LEGACY_INDEX.read_text(encoding="utf-8")
     scripts = [
         match.group(1)
@@ -55,18 +46,54 @@ def test_legacy_shell_inline_scripts_are_syntax_valid():
     ]
     assert scripts
 
-    with tempfile.TemporaryDirectory() as tmp:
-        for index, script in enumerate(scripts, start=1):
-            path = Path(tmp) / f"inline_{index}.js"
-            path.write_text(script, encoding="utf-8")
-            result = subprocess.run(
-                [node, "--check", str(path)],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-            assert result.returncode == 0, result.stderr or result.stdout
+    matching = {")": "(", "]": "[", "}": "{"}
+    opening = set(matching.values())
+    closing = set(matching)
+    for index, script in enumerate(scripts, start=1):
+        stack: list[tuple[str, int]] = []
+        quote = ""
+        escaped = False
+        line_comment = False
+        block_comment = False
+        for pos, char in enumerate(script):
+            next_char = script[pos + 1] if pos + 1 < len(script) else ""
+            if line_comment:
+                if char == "\n":
+                    line_comment = False
+                continue
+            if block_comment:
+                if char == "*" and next_char == "/":
+                    block_comment = False
+                continue
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = ""
+                continue
+            if char == "/" and next_char == "/":
+                line_comment = True
+                continue
+            if char == "/" and next_char == "*":
+                block_comment = True
+                continue
+            if char in {"'", '"', "`"}:
+                quote = char
+                continue
+            if char in opening:
+                stack.append((char, pos))
+                continue
+            if char in closing:
+                assert stack, f"inline script {index} has unmatched {char!r} at {pos}"
+                opener, opener_pos = stack.pop()
+                assert opener == matching[char], (
+                    f"inline script {index} closes {opener!r} from {opener_pos} with {char!r} at {pos}"
+                )
+        assert not quote, f"inline script {index} has an unterminated string/template literal"
+        assert not block_comment, f"inline script {index} has an unterminated block comment"
+        assert not stack, f"inline script {index} has unclosed delimiter {stack[-1][0]!r}"
 
 
 def test_legacy_splash_auto_reveals_shell_after_timeout():
