@@ -216,10 +216,33 @@ class SettingsStore:
 _STORE: SettingsStore | None = None
 
 
+def _apply_safe_mode_to_runtime(key: str, _previous: Any, new: Any) -> None:
+    """Apply the ``safety.safe_mode`` toggle to the live runtime on change.
+
+    Without this the setting was dead — persisted but never enforced. Now
+    flipping it in the settings panel immediately halts destructive/self-directed
+    behavior via core.safe_mode.set_safe_mode (best-effort; never breaks a patch).
+    """
+    if key != "safety.safe_mode":
+        return
+    try:
+        from core.container import ServiceContainer
+        from core.safe_mode import set_safe_mode
+
+        orch = ServiceContainer.get("orchestrator", default=None)
+        if orch is not None:
+            set_safe_mode(orch, bool(new))
+            logger.info("🛡️ Safe mode %s applied to live runtime.", "ENABLED" if new else "disabled")
+    except _SETTINGS_RECOVERABLE_ERRORS as exc:
+        record_degradation("settings", exc)
+        logger.debug("Safe-mode runtime apply failed for %s: %s", key, exc)
+
+
 def get_settings() -> SettingsStore:
     global _STORE
     if _STORE is None:
         _STORE = SettingsStore()
+        _STORE.subscribe(_apply_safe_mode_to_runtime)
     return _STORE
 
 

@@ -122,6 +122,32 @@ def apply_orchestrator_patches(orchestrator: Any, safe_mode: bool = False) -> No
     )
 
 
+def is_safe_mode(orchestrator: Any) -> bool:
+    """True when the orchestrator is currently running in safe mode."""
+    return bool(getattr(orchestrator, "_safe_mode_enabled", False))
+
+
+def set_safe_mode(orchestrator: Any, enabled: bool) -> dict[str, Any]:
+    """Apply safe/full runtime mode to a LIVE orchestrator — no reboot needed.
+
+    Re-installs the runtime mode config that native subsystems consume on their
+    next tick (metabolic_coordinator, dream_cycle, persona_evolver, autonomy and
+    learning_evolution mixins), so flipping safe mode immediately halts
+    self-modification, persona evolution, dream cycles, and consolidation. This
+    is the mechanism the user-facing "Safe mode" toggle invokes; before this it
+    was a dead setting (boot always applied full mode).
+    """
+    apply_orchestrator_patches(orchestrator, safe_mode=bool(enabled))
+    cfg = get_runtime_mode_config(orchestrator)
+    return {
+        "safe_mode": is_safe_mode(orchestrator),
+        "self_modification": bool(cfg.get("self_modification")),
+        "persona_evolution": bool(cfg.get("persona_evolution")),
+        "dream_cycle": bool(cfg.get("dream_cycle")),
+        "memory_consolidation": bool(cfg.get("memory_consolidation")),
+    }
+
+
 def _apply_runtime_caps(orchestrator: Any, runtime_config: dict[str, Any]) -> None:
     cap = float(runtime_config.get("singularity_acceleration_cap", 1.0))
 

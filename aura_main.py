@@ -734,9 +734,19 @@ async def bootstrap_aura(orchestrator: Any):
 
         apply_consciousness_patches(orchestrator)
         apply_response_patches()
-        # Activate the dynamic autonomy bridge
-        apply_orchestrator_patches(orchestrator)
-        logger.info("🛡️ [GENESIS] Autonomy bridge and stability patches active.")
+        # Activate the dynamic autonomy bridge, honoring the persisted safe-mode
+        # toggle (previously boot always forced full mode, making the setting dead).
+        boot_safe_mode = False
+        try:
+            from interface.routes.settings import get_settings
+            boot_safe_mode = bool(get_settings().get("safety.safe_mode"))
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+            record_degradation('aura_main', exc, severity="debug")
+        apply_orchestrator_patches(orchestrator, safe_mode=boot_safe_mode)
+        logger.info(
+            "🛡️ [GENESIS] Autonomy bridge and stability patches active (safe_mode=%s).",
+            boot_safe_mode,
+        )
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
         record_degradation('aura_main', exc)
         logger.error("❌ Failed to apply gap-closing patches: %s", exc)
