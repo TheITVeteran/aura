@@ -4140,6 +4140,30 @@ def test_desktop_static_chat_requests_require_cognitive_engine():
     assert "if (state.isSubmitting) {\n        enqueueChatMessage(msg);" in source
 
 
+def test_launcher_local_requests_require_cognitive_engine_without_headers(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+
+    requires, surface = chat_routes._request_requires_cognitive_engine(request)
+
+    assert requires is True
+    assert surface == "desktop-runtime"
+
+
+def test_launcher_local_cognitive_requirement_does_not_apply_to_benchmarks(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+
+    requires, surface = chat_routes._request_requires_cognitive_engine(request, is_benchmark=True)
+
+    assert requires is False
+    assert surface == "desktop-runtime"
+
+
 def test_desktop_objective_detector_handles_general_document_surfaces():
     from interface.routes.chat import _looks_like_desktop_objective
 

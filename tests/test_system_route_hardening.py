@@ -129,6 +129,34 @@ async def test_telemetry_stream_emits_idle_heartbeat_and_unsubscribes(monkeypatc
     assert unsubscribed == [queue]
 
 
+@pytest.mark.asyncio
+async def test_ui_shell_error_route_logs_and_broadcasts_recovered_render_fault(monkeypatch):
+    from interface.routes import system as system_routes
+
+    published = []
+
+    class _Bus:
+        async def publish(self, message, priority=10):
+            published.append((message, priority))
+
+    monkeypatch.setattr(system_routes, "broadcast_bus", _Bus())
+
+    response = await system_routes.api_ui_shell_error(
+        {"error": "Cannot read properties of undefined", "component_stack": "App > NeuralFeed"}
+    )
+
+    body = json.loads(response.body.decode("utf-8"))
+    assert body == {"ok": True}
+    assert published
+    message, priority = published[0]
+    assert priority == 0
+    assert message["kind"] == "log"
+    assert message["level"] == "error"
+    assert message["source"] == "Aura.Desktop.Shell"
+    assert "Desktop shell render fault recovered" in message["message"]
+    assert message["payload"]["component_stack"] == "App > NeuralFeed"
+
+
 def test_websocket_runtime_heartbeat_requires_conversation_lane(monkeypatch):
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
     from interface import websocket_manager

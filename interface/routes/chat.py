@@ -3688,19 +3688,42 @@ def _conversation_lane_is_standby(lane: dict[str, Any] | None) -> bool:
     )
 
 
+def _launcher_desktop_runtime_active() -> bool:
+    return any(
+        str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+        for name in ("AURA_LAUNCHED_FROM_APP", "AURA_EXTERNAL_GUI_OWNER", "AURA_GUI_PROXY")
+    )
+
+
+def _request_from_local_desktop_client(request: Request) -> bool:
+    client = getattr(request, "client", None)
+    host = str(getattr(client, "host", "") or "").strip().lower()
+    if not host:
+        return True
+    return host in {"127.0.0.1", "::1", "localhost", "test", "local"}
+
+
 def _request_requires_cognitive_engine(request: Request, *, is_benchmark: bool = False) -> tuple[bool, str]:
     """Return whether this user-facing surface must stay on CognitiveEngine."""
     request_surface = str(request.headers.get("X-Aura-Surface") or "").strip().lower()
     require_cognitive_header = str(
         request.headers.get("X-Aura-Require-CognitiveEngine") or ""
     ).strip().lower()
+    desktop_runtime_request = (
+        _launcher_desktop_runtime_active()
+        and _request_from_local_desktop_client(request)
+        and request_surface not in {"benchmark", "proof", "external-eval"}
+    )
     requires = (
         not is_benchmark
         and (
             request_surface in {"desktop", "desktop-ui", "native-shell", "tauri", "voice"}
             or require_cognitive_header in {"1", "true", "yes", "required"}
+            or desktop_runtime_request
         )
     )
+    if desktop_runtime_request and not request_surface:
+        request_surface = "desktop-runtime"
     return requires, request_surface
 
 
