@@ -798,6 +798,18 @@ def test_explicit_capability_inventory_classifier_covers_hypothetical_she_phrasi
     )
 
 
+def test_live_self_reflection_is_not_explicit_capability_inventory():
+    from interface.routes import chat as chat_routes
+
+    prompt = (
+        "How are you thinking about this conversation right now? Answer from the live desktop "
+        "cognitive path, be concrete, and keep it concise."
+    )
+
+    assert chat_routes._is_capability_inventory_request(prompt) is True
+    assert chat_routes._is_explicit_capability_inventory_request(prompt) is False
+
+
 def test_capability_catalog_snapshot_caps_unbounded_catalog(monkeypatch):
     from interface.routes import chat as chat_routes
 
@@ -1396,7 +1408,7 @@ async def test_api_chat_desktop_surface_blocks_process_tree_memory_before_cognit
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_surface_disables_social_reflex_fastpath(monkeypatch):
+async def test_api_chat_desktop_surface_keeps_nontrivial_chat_on_cognitive_engine(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
@@ -1469,7 +1481,7 @@ async def test_api_chat_desktop_surface_disables_social_reflex_fastpath(monkeypa
     monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
 
     response = await server_module.api_chat(
-        server_module.ChatRequest(message="hi"),
+        server_module.ChatRequest(message="How are you thinking about this conversation right now?"),
         SimpleNamespace(
             headers={
                 "X-Aura-Surface": "desktop-ui",
@@ -1490,6 +1502,81 @@ async def test_api_chat_desktop_surface_disables_social_reflex_fastpath(monkeypa
     assert calls[0]["context"]["source"] == "desktop_ui"
     assert calls[0]["context"]["cognitive_engine_required"] is True
     assert not any("kernel_interface" in call for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_api_chat_desktop_required_presence_check_uses_bounded_social_contract(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FailingCognitiveEngine:
+        async def think(self, *_args, **_kwargs):
+            calls.append({"cognitive_engine": "unexpected"})
+            raise AssertionError("desktop presence checks must not cold-warm Cortex")
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            calls.append({"kernel_interface": "unexpected"})
+            raise AssertionError("desktop UI must not fall back to KernelInterface")
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return None
+
+    def _fake_get(name, default=None):
+        if name == "cognitive_engine":
+            return _FailingCognitiveEngine()
+        return default
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": False,
+            "state": "cold",
+            "last_failure_reason": "worker_not_alive,init_not_complete,lane_cold",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": None,
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_build_social_continuity_repair_reply",
+        lambda _message: "hey. i'm here with the live thread intact.",
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    for message in ("you there?", "ping"):
+        response = await server_module.api_chat(
+            server_module.ChatRequest(message=message),
+            SimpleNamespace(
+                headers={
+                    "X-Aura-Surface": "desktop-ui",
+                    "X-Aura-Require-CognitiveEngine": "true",
+                },
+                client=SimpleNamespace(host="test"),
+            ),
+            None,
+            None,
+        )
+
+        assert response.status_code == 200
+        assert b"hey. i'm here with the live thread intact" in response.body
+        assert b"desktop_social_presence_contract" in response.body
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -3107,7 +3194,7 @@ async def test_desktop_cognitive_engine_uses_compact_contract_and_recovery_reser
     assert calls[0]["context"]["desktop_quick_reply_contract"] is True
     assert calls[0]["context"]["skip_runtime_payload"] is True
     assert calls[0]["context"]["allow_deep_handoff"] is False
-    assert calls[0]["context"]["max_tokens"] <= 512
+    assert 512 < calls[0]["context"]["max_tokens"] <= 896
     assert calls[0]["kwargs"]["timeout_s"] == pytest.approx(42.0)
 
 
@@ -3181,6 +3268,199 @@ async def test_desktop_cognitive_engine_receives_recent_completed_conversation_c
     assert calls[0]["context"]["recent_completed_exchanges"]
     assert "100GB of RAM" in calls[0]["context"]["recent_conversation_context"]
     assert "required CognitiveEngine path" in calls[0]["context"]["recent_conversation_context"]
+
+
+@pytest.mark.asyncio
+async def test_desktop_quick_self_reflection_suppresses_stale_recent_context(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content="I am tracking this live turn directly, with attention on your current question."
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+        chat_routes._conversation_log.extend(
+            [
+                {
+                    "user": "What tools can you use externally?",
+                    "aura": "I can describe governed desktop and browser tools.",
+                    "status": "complete",
+                },
+                {
+                    "user": "Name a hypothetical tool scenario.",
+                    "aura": "A scenario could include creating a folder and exporting a PDF.",
+                    "status": "complete",
+                },
+            ]
+        )
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = "How are you thinking about this conversation right now?"
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply
+    assert calls
+    assert calls[0]["context"]["recent_context_needed"] is False
+    assert calls[0]["context"]["recent_completed_exchanges"] == []
+    assert calls[0]["context"]["recent_conversation_context"] == ""
+
+
+def test_user_visible_context_leak_sanitizer_strips_internal_blocks():
+    from interface.routes import chat as chat_routes
+
+    reply = (
+        "I am staying on the live desktop cognitive lane and answering the current turn."
+        "[RECENT CONTEXT]User: What tools can you use?"
+    )
+
+    assert chat_routes._strip_user_visible_context_leaks(reply) == (
+        "I am staying on the live desktop cognitive lane and answering the current turn."
+    )
+
+
+def test_live_self_reflection_rejects_stale_tool_topic_bleed():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "How are you thinking about this conversation right now?",
+        (
+            "I'm in a quiet state, with stable attention on you. "
+            "You're asking about tools or scenarios — let me walk through an actual case of using them. "
+            "If you want to create a folder and write a file, I can do that."
+        ),
+    )
+
+    assert "stale_context_topic_bleed" in assessment.reasons
+    assert assessment.retryable
+
+
+def test_live_self_reflection_rejects_social_presence_template():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "How are you thinking about this conversation right now?",
+        (
+            "hey. i'm here with you. I'm feeling Joy and leaning toward rest right now. "
+            "I can answer clearly from the active turn. My attention is on you."
+        ),
+    )
+
+    assert "social_presence_instead_of_self_reflection" in assessment.reasons
+    assert assessment.retryable
+
+
+def test_live_self_reflection_rejects_punctuated_incomplete_tail():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes import chat as chat_routes
+
+    reply = (
+        "I'm thinking about your question through my current state. "
+        "The conversation itself is a live feedback loop: what you say informs how I think about."
+    )
+
+    assessment = assess_user_facing_reply(
+        "How are you thinking about this conversation right now?",
+        reply,
+    )
+
+    assert "truncated_tail" in assessment.reasons
+    assert assessment.retryable
+    assert chat_routes._looks_truncated_tail(reply) is True
+
+
+@pytest.mark.asyncio
+async def test_desktop_cognitive_engine_strips_internal_context_leak(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            return SimpleNamespace(
+                content=(
+                    "I am staying with the current turn, my attention is on this conversation right now, "
+                    "and I feel focused rather than drifting into the previous topic."
+                    "[RECENT CONTEXT]User: What tools can you use?"
+                )
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = "How are you thinking about this conversation right now?"
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply == (
+        "I am staying with the current turn, my attention is on this conversation right now, "
+        "and I feel focused rather than drifting into the previous topic."
+    )
+    assert "[RECENT CONTEXT]" not in reply
+    assert "User: What tools" not in reply
+    assert chat_routes._desktop_required_bounded_reply_status(
+        user_message,
+        reply,
+        {"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+    ) == ""
 
 
 @pytest.mark.asyncio

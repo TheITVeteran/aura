@@ -1312,12 +1312,18 @@ _INCOMPLETE_TAIL_WORDS = {
     "and",
     "because",
     "but",
+    "called",
+    "create",
     "for",
     "from",
     "if",
     "into",
+    "make",
+    "named",
+    "open",
     "of",
     "or",
+    "save",
     "so",
     "than",
     "that",
@@ -1329,6 +1335,7 @@ _INCOMPLETE_TAIL_WORDS = {
     "when",
     "where",
     "while",
+    "write",
     "with",
 }
 
@@ -1498,6 +1505,27 @@ def _classify_conversation_recall_request(user_message: str) -> str:
     if any(marker in text for marker in _CONVERSATION_RECALL_TOPIC_MARKERS):
         return "topic"
     return ""
+
+
+_RECENT_CONTEXT_NEEDED_RE = re.compile(
+    r"\b(?:continue|resume|pick\s+back\s+up|from\s+(?:earlier|before|that|there)|"
+    r"what\s+we\s+were|what\s+you\s+were|what\s+i\s+was|same\s+thread|"
+    r"this\s+thread|previous\s+(?:turn|message|answer)|last\s+(?:thing|message|answer|question)|"
+    r"as\s+we\s+said|like\s+you\s+said|you\s+mentioned|i\s+mentioned|we\s+discussed|"
+    r"that\s+(?:issue|bug|problem|topic|plan|task|demo|path|thing))\b",
+    re.IGNORECASE,
+)
+
+
+def _desktop_turn_needs_recent_context(user_message: str) -> bool:
+    text = str(user_message or "").strip()
+    if not text:
+        return False
+    if _classify_conversation_recall_request(text):
+        return True
+    if _is_contextual_relevance_challenge(text):
+        return True
+    return bool(_RECENT_CONTEXT_NEEDED_RE.search(text))
 
 
 def _clip_conversation_text(text: Any, *, limit: int = 420) -> str:
@@ -2596,6 +2624,21 @@ async def _run_cognitive_engine_chat_turn(
             "Serving bounded desktop failure-mode contract without foreground model allocation."
         )
         return failure_mode_reply
+    if _is_low_risk_social_continuity_request(visible) and require_engine:
+        social_lane = dict(lane or {})
+        if not social_lane:
+            try:
+                fresh_lane = _collect_conversation_lane_status()
+                if fresh_lane:
+                    social_lane = dict(fresh_lane)
+            except _CHAT_RECOVERABLE_ERRORS as exc:
+                record_degradation("chat", exc)
+                logger.debug("Fresh lane check for desktop social contract failed: %s", exc)
+        if _conversation_lane_needs_instant_social_contract(social_lane):
+            logger.info(
+                "Serving bounded cold-lane desktop social-continuity contract without foreground model allocation."
+            )
+            return _build_social_continuity_repair_reply(visible)
     if (
         desktop_execution_contract
         and require_engine
@@ -2649,11 +2692,22 @@ async def _run_cognitive_engine_chat_turn(
         desktop_execution_contract=desktop_execution_contract,
         capability_inventory_contract=capability_inventory_contract,
     )
-    recent_exchanges = await _recent_completed_conversation_exchanges(
-        current_user_message=visible,
-        limit=_RECENT_CONVERSATION_CONTEXT_EXCHANGES,
+    recent_context_needed = _desktop_turn_needs_recent_context(visible)
+    recent_context_limit = _RECENT_CONVERSATION_CONTEXT_EXCHANGES
+    if compact_desktop_chat_contract and not recent_context_needed:
+        recent_context_limit = 0
+    if recent_context_limit > 0:
+        recent_exchanges = await _recent_completed_conversation_exchanges(
+            current_user_message=visible,
+            limit=recent_context_limit,
+        )
+    else:
+        recent_exchanges = []
+    recent_conversation_context = (
+        _format_recent_conversation_context(recent_exchanges)
+        if recent_exchanges
+        else ""
     )
-    recent_conversation_context = _format_recent_conversation_context(recent_exchanges)
     context = {
         "route": "desktop_chat",
         "source": source,
@@ -2663,6 +2717,7 @@ async def _run_cognitive_engine_chat_turn(
         "preflight_context_message": preflight_context[:8000],
         "recent_completed_exchanges": recent_exchanges,
         "recent_conversation_context": recent_conversation_context,
+        "recent_context_needed": recent_context_needed,
         "cognitive_engine_required": bool(require_engine),
         "conversation_lane": dict(lane or {}),
         "prompt_shape": {
@@ -2709,8 +2764,8 @@ async def _run_cognitive_engine_chat_turn(
                 "desktop_descriptive_turn": True,
                 "deep_handoff": False,
                 "allow_deep_handoff": False,
-                "max_tokens": 512,
-                "num_predict": 512,
+                "max_tokens": 896,
+                "num_predict": 896,
                 "skip_runtime_payload": True,
                 "disable_prompt_cache": True,
                 "clear_prompt_cache": True,
@@ -2919,7 +2974,9 @@ async def _run_cognitive_engine_chat_turn(
         retry_content = getattr(repair_thought, "content", None)
         if retry_content is None and isinstance(repair_thought, dict):
             retry_content = repair_thought.get("content") or repair_thought.get("response")
-        retry_text = str(retry_content if retry_content is not None else repair_thought or "").strip()
+        retry_text = _strip_user_visible_context_leaks(
+            retry_content if retry_content is not None else repair_thought or ""
+        )
         if not retry_text or retry_text == "…" or retry_text.startswith("background_thought_suppressed"):
             logger.warning("CognitiveEngine desktop chat repair retry produced no user-facing text.")
             return None
@@ -3032,7 +3089,7 @@ async def _run_cognitive_engine_chat_turn(
     content = getattr(thought, "content", None)
     if content is None and isinstance(thought, dict):
         content = thought.get("content") or thought.get("response")
-    text = str(content if content is not None else thought or "").strip()
+    text = _strip_user_visible_context_leaks(content if content is not None else thought or "")
     if not text or text == "…" or text.startswith("background_thought_suppressed"):
         if require_engine:
             retry_reply = await _attempt_repair_retry(
@@ -3371,6 +3428,13 @@ def _looks_truncated_tail(text: str) -> bool:
     body = str(text or "").strip()
     if len(body) < 24:
         return False
+    try:
+        from core.conversation.response_reliability import _PUNCTUATED_INCOMPLETE_TAIL_RE
+
+        if _PUNCTUATED_INCOMPLETE_TAIL_RE.search(body):
+            return True
+    except _CHAT_RECOVERABLE_ERRORS:
+        pass
     if body.endswith(("...", "…", ".", "!", "?", "\"", "'", "”", "’", ")", "]")):
         return False
     if re.search(r"(?:^|\n)\s*\d+\.\s+\S+", body) or re.search(r"\*\*[^*\n]{2,80}:\*\*", body):
@@ -4273,6 +4337,65 @@ def _conversation_lane_blocks_fallback(lane: dict[str, Any]) -> bool:
     return failure_reason.startswith(("mlx_runtime_unavailable:", "local_runtime_unavailable:"))
 
 
+def _conversation_lane_needs_instant_social_contract(lane: dict[str, Any]) -> bool:
+    """Return whether a low-risk presence turn should avoid cold-warming Cortex."""
+
+    state = str(lane.get("state", "") or "").strip().lower()
+    if state in {"cold", "warming", "recovering", "failed", "unavailable"}:
+        return True
+    if lane.get("conversation_ready") is False:
+        return True
+    blockers = lane.get("readiness_blockers") or ()
+    if isinstance(blockers, (list, tuple, set)) and blockers:
+        return True
+    if not str(lane.get("foreground_endpoint", "") or "").strip() and state not in {"ready", "healthy"}:
+        return True
+    return False
+
+
+def _desktop_required_bounded_reply_status(
+    user_message: str,
+    reply_text: Any,
+    lane: dict[str, Any] | None,
+) -> str:
+    """Classify governed bounded desktop replies before labeling full cognition.
+
+    `_run_cognitive_engine_chat_turn()` may return deterministic contracts for
+    low-risk desktop turns when the foreground model lane is cold, busy, or
+    unsafe to allocate. Those replies are valid live-runtime behavior, but they
+    are not evidence that the heavy CognitiveEngine completed a foreground
+    generation. Keep the wire status precise so the UI and health gates cannot
+    accidentally treat a bounded contract as a fully warm Cortex turn.
+    """
+
+    reply = str(reply_text or "").strip()
+    if not reply:
+        return ""
+
+    def _matches_bounded_contract(expected: str | None) -> bool:
+        if not expected:
+            return False
+        return _normalize_user_message(reply) == _normalize_user_message(expected)
+
+    lane_status = dict(lane or {})
+    if _is_low_risk_social_continuity_request(user_message) and _conversation_lane_needs_instant_social_contract(
+        lane_status
+    ):
+        if _matches_bounded_contract(_build_social_continuity_repair_reply(user_message)):
+            return "desktop_social_presence_contract"
+    if _is_explicit_capability_inventory_request(user_message):
+        return "cognitive_engine_capability_inventory"
+    if _matches_bounded_contract(_build_bounded_planning_reply(user_message)):
+        return "cognitive_engine_bounded_planning"
+    if _matches_bounded_contract(_build_failure_mode_surface_reply(user_message)):
+        return "cognitive_engine_failure_mode_surface"
+    if _is_runtime_fact_status_request(user_message):
+        expected = _build_runtime_fact_status_fastpath_reply(user_message, lane_status)
+        if _matches_bounded_contract(expected):
+            return "runtime_fact_status"
+    return ""
+
+
 def _looks_generic_assistantish(user_message: str, reply_text: Any) -> tuple[bool, str]:
     text = _normalize_user_message(str(reply_text or ""))
     if not text or text == "…":
@@ -4624,7 +4747,43 @@ _PROMPT_ARTIFACT_PATTERNS = re.compile(
     r"|(?:\[ACTIVE GROUNDING EVIDENCE\])"
     r"|(?:\[FETCHED PAGE CONTENT\])"
     r"|(?:\[INTERNAL MEMORY RECALL\])"
+    r"|(?:\[(?:RECENT CONTEXT|RECENT COMPLETED CONVERSATION|END RECENT COMPLETED CONVERSATION|CURRENT USER MESSAGE|OPERATIONAL SELF CONTEXT)\])"
 )
+
+_USER_VISIBLE_CONTEXT_LEAK_RE = re.compile(
+    r"(?is)"
+    r"(?:^|\s+)"
+    r"(?:"
+    r"\[(?:RECENT CONTEXT|RECENT COMPLETED CONVERSATION|END RECENT COMPLETED CONVERSATION|CURRENT USER MESSAGE|OPERATIONAL SELF CONTEXT)\]"
+    r"|(?:^|\n)\s*(?:recent context|recent completed conversation|current user message)\s*:"
+    r")"
+    r".*$"
+)
+_USER_VISIBLE_CONTEXT_LEAK_MARKERS = (
+    "[RECENT CONTEXT]",
+    "[RECENT COMPLETED CONVERSATION]",
+    "[END RECENT COMPLETED CONVERSATION]",
+    "[CURRENT USER MESSAGE]",
+    "[OPERATIONAL SELF CONTEXT]",
+)
+
+
+def _strip_user_visible_context_leaks(reply_text: Any) -> str:
+    """Remove internal conversation/context protocol blocks from user-visible text."""
+
+    text = str(reply_text or "").strip()
+    if not text:
+        return ""
+    lower = text.lower()
+    cut_at = len(text)
+    for marker in _USER_VISIBLE_CONTEXT_LEAK_MARKERS:
+        index = lower.find(marker.lower())
+        if index >= 0:
+            cut_at = min(cut_at, index)
+    if cut_at < len(text):
+        return text[:cut_at].strip()
+    cleaned = _USER_VISIBLE_CONTEXT_LEAK_RE.sub("", text).strip()
+    return cleaned
 
 # Reject raw search-result snippets that occasionally leak through when a
 # search skill returns retrieval text instead of a summarized answer.
@@ -5803,9 +5962,35 @@ def _is_live_presence_check_request(user_message: str) -> bool:
     if not text:
         return False
     stripped = text.strip(" ?!.,")
-    if "live check" in text or "quick check" in text:
-        return bool(any(marker in text for marker in ("hey", "hi", "hello", "aura", "you there", "can you talk")))
-    return stripped in {"you there", "aura you there", "aura, you there", "can you talk"}
+    if "live check" in text or "quick check" in text or "quick ping" in text:
+        return bool(
+            any(
+                marker in text
+                for marker in (
+                    "hey",
+                    "hi",
+                    "hello",
+                    "aura",
+                    "ping",
+                    "you there",
+                    "still there",
+                    "can you talk",
+                    "can you hear me",
+                )
+            )
+        )
+    return stripped in {
+        "ping",
+        "aura ping",
+        "you there",
+        "still there",
+        "are you still there",
+        "aura you there",
+        "aura, you there",
+        "can you talk",
+        "can you hear me",
+        "testing",
+    }
 
 
 def _is_low_risk_social_continuity_request(user_message: str) -> bool:
@@ -6239,6 +6424,7 @@ async def _stabilize_user_facing_reply(
         _strip_unexpected_cjk_artifacts(user_message, str(reply_text or "").strip() or "…"),
         user_message,
     )
+    text = _strip_user_visible_context_leaks(text) or "…"
     repair_override = _maybe_build_conversation_repair_override(user_message, text)
     if repair_override:
         text = _apply_aura_voice_shaping_compat(
@@ -6373,6 +6559,7 @@ async def _stabilize_user_facing_reply(
         cleaned = gate.sanitize(text).replace("[IDENTITY_REDACTED]", "").strip(" .,:;-")
         if cleaned:
             cleaned = _apply_aura_voice_shaping_compat(cleaned, user_message)
+            cleaned = _strip_user_visible_context_leaks(cleaned)
             valid_cleaned, _reason, _score = gate.validate_output(cleaned, enforce_supervision=False)
             cleaned_generic, _cleaned_reason = _looks_generic_assistantish(user_message, cleaned)
             cleaned_objective_parrot = _is_objective_parrot_reply(user_message, cleaned)
@@ -6796,6 +6983,10 @@ async def _repair_final_degraded_reply(
     conversation_recall_reply = await _build_conversation_recall_reply(user_message)
     if conversation_recall_reply:
         return conversation_recall_reply, False, False, False, "", True
+
+    if _is_low_risk_social_continuity_request(user_message):
+        social_repair = _build_social_continuity_repair_reply(user_message)
+        return social_repair, False, False, False, "", True
 
     logger.warning(
         "🛡️ Final reply quality gate repairing degraded output "
@@ -8971,7 +9162,7 @@ async def api_chat(
                 if idem_key in _idempotency_cache:
                     return JSONResponse(_idempotency_cache[idem_key])
 
-        if early_allow_chat_fastpaths and _is_capability_inventory_request(_semantic_user_message):
+        if early_allow_chat_fastpaths and _is_explicit_capability_inventory_request(_semantic_user_message):
             reply_text = _build_grounded_capability_inventory_reply(_semantic_user_message)
             return JSONResponse(
                 {
@@ -9465,7 +9656,7 @@ async def api_chat(
                     status="cognitive_engine_failure_mode_surface",
                 )
 
-        if allow_chat_fastpaths and _is_capability_inventory_request(_semantic_user_message):
+        if allow_chat_fastpaths and _is_explicit_capability_inventory_request(_semantic_user_message):
             return await _finalize_fastpath(
                 _build_grounded_capability_inventory_reply(_semantic_user_message),
                 status="cognitive_engine_capability_inventory",
@@ -9822,7 +10013,14 @@ async def api_chat(
                     require_engine=True,
                 )
                 if reply_text:
-                    reply_source = "cognitive_engine"
+                    reply_source = (
+                        _desktop_required_bounded_reply_status(
+                            _semantic_user_message,
+                            reply_text,
+                            lane,
+                        )
+                        or "cognitive_engine"
+                    )
                     logger.debug(
                         "REST: CognitiveEngine served desktop chat turn (len=%d).",
                         len(reply_text),
@@ -10193,9 +10391,13 @@ async def api_chat(
             desktop_cognitive_engine_required=desktop_requires_cognitive_engine,
             protected_foreground_lane=desktop_requires_cognitive_engine,
         )
-        if allow_chat_fastpaths and _capability_inventory_reply_is_inadequate(
+        if (
+            allow_chat_fastpaths
+            and _is_explicit_capability_inventory_request(_semantic_user_message)
+            and _capability_inventory_reply_is_inadequate(
             _semantic_user_message,
             reply_text,
+            )
         ):
             logger.warning(
                 "🧭 Replacing inadequate capability inventory reply with grounded live catalog summary."
@@ -10367,7 +10569,7 @@ async def api_chat(
         # sees what came back. The cortex was also given the continuity
         # context in body.message above, so the reply already acknowledges
         # the thread.
-        _final_reply = reply_text or "…"
+        _final_reply = _strip_user_visible_context_leaks(reply_text) or "…"
         _final_status = reply_source or "ok"
         _final_reply, _final_status = await _apply_desktop_objective_chokepoint(
             _final_reply, _final_status

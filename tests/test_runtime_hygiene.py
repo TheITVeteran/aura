@@ -1,4 +1,5 @@
 import asyncio
+import os
 import subprocess
 import sys
 import tempfile
@@ -388,6 +389,40 @@ def test_runtime_hygiene_classifies_registered_worker_descendants_as_owned():
     assert summary["owned_descendant_processes"] == 1
     assert summary["rogue_child_processes"] == 0
     assert summary["rogue_samples"] == []
+
+
+def test_runtime_hygiene_adopts_direct_multiprocessing_spawn_during_summary():
+    class _Proc:
+        pid = 62001
+
+        def ppid(self):
+            return os.getpid()
+
+        def cmdline(self):
+            return [
+                sys.executable,
+                "-c",
+                "from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8, pipe_handle=20)",
+                "--multiprocessing-fork",
+            ]
+
+        def name(self):
+            return "Python"
+
+        def is_running(self):
+            return True
+
+        def status(self):
+            return "sleeping"
+
+    hygiene = RuntimeHygieneManager()
+    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [_Proc()])
+
+    summary = hygiene._process_summary()
+
+    assert summary["active_registered"] == 1
+    assert summary["active_multiprocessing"] == 1
+    assert summary["rogue_child_processes"] == 0
 
 
 def test_runtime_hygiene_keeps_unowned_child_process_fail_closed():

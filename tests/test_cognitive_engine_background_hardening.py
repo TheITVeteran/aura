@@ -431,10 +431,13 @@ async def test_cognitive_engine_desktop_quick_reply_includes_recent_context(monk
 
     user_message = captured["messages"][1]["content"]
     assert thought.content.startswith("I am carrying")
-    assert "[RECENT COMPLETED CONVERSATION]" in user_message
-    assert "live desktop lane lost context" in user_message
     assert "[CURRENT USER MESSAGE]" in user_message
+    assert "[RECENT COMPLETED CONVERSATION FOR CONTINUITY ONLY]" in user_message
+    assert "live desktop lane lost context" in user_message
     assert "Continue from there." in user_message
+    assert user_message.index("[CURRENT USER MESSAGE]") < user_message.index(
+        "[RECENT COMPLETED CONVERSATION FOR CONTINUITY ONLY]"
+    )
 
 
 @pytest.mark.asyncio

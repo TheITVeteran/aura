@@ -82,7 +82,14 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def _foreground_only_runtime() -> bool:
-    return _env_flag("AURA_FOREGROUND_ONLY", False)
+    if _env_flag("AURA_FOREGROUND_ONLY", False):
+        return True
+    try:
+        from core.runtime.background_policy import background_cognition_disabled_reason
+
+        return bool(background_cognition_disabled_reason())
+    except _ORCHESTRATOR_RECOVERABLE_ERRORS:
+        return False
 
 
 def _proof_runtime_active(origin: str = "orchestrator") -> bool:

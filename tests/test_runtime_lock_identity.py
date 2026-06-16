@@ -53,3 +53,41 @@ def test_stop_aura_accepts_current_lock_identity():
 
     assert ok is True
     assert reason == "metadata_identity_verified"
+
+
+def test_reaped_orchestrator_lock_is_purged(tmp_path, monkeypatch):
+    import aura_main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    lock_dir = tmp_path / ".aura" / "locks"
+    lock_dir.mkdir(parents=True)
+    lock_file = lock_dir / "orchestrator.lock"
+    metadata_file = lock_dir / "orchestrator.lock.meta.json"
+    lock_file.write_text("4242\n", encoding="utf-8")
+    metadata_file.write_text('{"pid": 4242}', encoding="utf-8")
+    monkeypatch.setattr(aura_main, "_pid_still_runnable", lambda pid: False)
+
+    purged = aura_main._purge_reaped_orchestrator_lock([4242], set())
+
+    assert purged is True
+    assert not lock_file.exists()
+    assert not metadata_file.exists()
+
+
+def test_reaped_orchestrator_lock_is_kept_while_pid_runnable(tmp_path, monkeypatch):
+    import aura_main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    lock_dir = tmp_path / ".aura" / "locks"
+    lock_dir.mkdir(parents=True)
+    lock_file = lock_dir / "orchestrator.lock"
+    metadata_file = lock_dir / "orchestrator.lock.meta.json"
+    lock_file.write_text("4242\n", encoding="utf-8")
+    metadata_file.write_text('{"pid": 4242}', encoding="utf-8")
+    monkeypatch.setattr(aura_main, "_pid_still_runnable", lambda pid: True)
+
+    purged = aura_main._purge_reaped_orchestrator_lock([4242], {4242})
+
+    assert purged is False
+    assert lock_file.exists()
+    assert metadata_file.exists()

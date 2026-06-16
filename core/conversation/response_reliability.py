@@ -72,12 +72,18 @@ _INCOMPLETE_TAIL_WORDS = {
     "and",
     "because",
     "but",
+    "called",
+    "create",
     "for",
     "from",
     "if",
     "into",
+    "make",
+    "named",
+    "open",
     "of",
     "or",
+    "save",
     "so",
     "than",
     "that",
@@ -89,8 +95,19 @@ _INCOMPLETE_TAIL_WORDS = {
     "when",
     "where",
     "while",
+    "write",
     "with",
 }
+_PUNCTUATED_INCOMPLETE_TAIL_RE = re.compile(
+    r"\bhow\s+(?:i|we|you|it|this|that|they)\s+"
+    r"(?:think|thinking|feel|feeling|respond|responding|act|acting|reason|reasoning|"
+    r"process|processing|decide|deciding|talk|talking|write|writing)\s+"
+    r"(?:about|with|for|to|from|into|on|through|toward|towards)"
+    r"[.!?\"'”’)\]]*$"
+    r"|\b(?:trying|going|planning|starting|supposed|ready|able)\s+to"
+    r"[.!?\"'”’)\]]*$",
+    re.IGNORECASE,
+)
 _ALLOWED_SHORT_TAIL_WORDS = {
     "am",
     "as",
@@ -510,9 +527,12 @@ _CASUAL_CONVERSATIONAL_RE = re.compile(
     re.IGNORECASE,
 )
 _LIVE_SELF_REFLECTION_MARKERS = (
+    "how are you thinking",
     "on your mind",
+    "what are you thinking",
     "what is actually on your mind",
     "what's actually on your mind",
+    "how are you processing",
     "what do you feel",
     "what are you feeling",
     "inside you",
@@ -529,6 +549,22 @@ _LIVE_SELF_REFLECTION_MARKERS = (
     "present experience",
     "live state",
     "internal state",
+)
+_STALE_CONTEXT_TOOL_BLEED_RE = re.compile(
+    r"\b(?:"
+    r"you(?:'re| are)\s+asking\s+about\s+tools?"
+    r"|let\s+me\s+walk\s+through\s+(?:an?\s+)?(?:actual\s+)?(?:case|scenario)"
+    r"|if\s+you\s+want\s+to\s+(?:create|open|write|export|search|change)"
+    r"|let'?s\s+say\s+(?:we|i)'?ll\s+(?:make|create|open|write|export|search|change)"
+    r"|create\s+a\s+(?:folder|directory|file|document)"
+    r"|open\s+(?:chrome|google\s+docs|notes?)"
+    r"|export\s+(?:that\s+)?(?:as\s+)?(?:a\s+)?pdf"
+    r")\b",
+    re.IGNORECASE,
+)
+_SOCIAL_PRESENCE_TEMPLATE_RE = re.compile(
+    r"\bhey[.!]?\s+i'?m here with you\b|\bi can answer clearly from the active turn\b",
+    re.IGNORECASE,
 )
 _SUBJECTIVE_SELF_REFLECTION_MARKERS = (
     "subjective belief",
@@ -1703,6 +1739,39 @@ def _has_status_page_self_reflection(prompt: Any, reply_text: Any) -> bool:
     )
 
 
+def _has_stale_context_topic_bleed(prompt: Any, reply_text: Any) -> bool:
+    """Detect old task/tool topics leaking into current status or self-reflection turns."""
+
+    if not (is_live_self_reflection_turn(prompt) or is_status_check_turn(prompt)):
+        return False
+    prompt_norm = _normalize(prompt)
+    if any(
+        marker in prompt_norm
+        for marker in (
+            "tool",
+            "tools",
+            "desktop",
+            "open",
+            "folder",
+            "file",
+            "document",
+            "notes",
+            "chrome",
+            "google docs",
+            "pdf",
+            "scenario",
+        )
+    ):
+        return False
+    return bool(_STALE_CONTEXT_TOOL_BLEED_RE.search(str(reply_text or "")))
+
+
+def _has_social_presence_instead_of_self_reflection(prompt: Any, reply_text: Any) -> bool:
+    if not is_live_self_reflection_turn(prompt):
+        return False
+    return bool(_SOCIAL_PRESENCE_TEMPLATE_RE.search(str(reply_text or "")))
+
+
 def _has_self_reflection_substance(reply_text: Any) -> bool:
     reply = _normalize(reply_text)
     if _word_count(reply) < 12:
@@ -1848,6 +1917,8 @@ def _has_truncated_tail(reply_text: Any) -> bool:
     body = str(reply_text or "").strip()
     if len(body) < 24:
         return False
+    if _PUNCTUATED_INCOMPLETE_TAIL_RE.search(body):
+        return True
     terminal_word_match = re.search(r"([A-Za-z]+)[.!?\"'”’)\]]*$", body)
     if terminal_word_match and len(body) >= 40:
         terminal_word = terminal_word_match.group(1).lower()
@@ -2091,6 +2162,10 @@ def _model_text_integrity_reasons(
         reasons.append("pseudo_internal_jargon")
     if user_facing and _has_status_page_self_reflection(prompt, raw):
         reasons.append("status_page_self_reflection")
+    if user_facing and _has_stale_context_topic_bleed(prompt, raw):
+        reasons.append("stale_context_topic_bleed")
+    if user_facing and _has_social_presence_instead_of_self_reflection(prompt, raw):
+        reasons.append("social_presence_instead_of_self_reflection")
     if user_facing and _has_unfounded_alarm_derailment(prompt, raw):
         reasons.append("unfounded_alarm_derailment")
     if user_facing and _has_camelcase_internal_jargon(prompt, raw):
@@ -2150,6 +2225,8 @@ def assess_model_text_integrity(
         "vague_status_derailment",
         "pseudo_internal_jargon",
         "status_page_self_reflection",
+        "stale_context_topic_bleed",
+        "social_presence_instead_of_self_reflection",
         "unfounded_alarm_derailment",
         "unrequested_pop_culture_intrusion",
         "unexpected_cjk_intrusion",
@@ -2243,6 +2320,8 @@ def assess_user_facing_reply(
         elif not _has_reliability_substance(raw):
             reasons.append("too_thin_for_reliability_turn")
     elif is_live_self_reflection_turn(user_message):
+        if _has_social_presence_instead_of_self_reflection(user_message, raw):
+            reasons.append("social_presence_instead_of_self_reflection")
         if not _has_self_reflection_substance(raw):
             reasons.append("off_topic_self_reflection_reply")
     elif is_expansion_request_turn(user_message):
@@ -2302,6 +2381,8 @@ def assess_user_facing_reply(
         "pseudo_internal_jargon",
         "reliability_diagnostic_deflection",
         "status_page_self_reflection",
+        "stale_context_topic_bleed",
+        "social_presence_instead_of_self_reflection",
         "unfounded_alarm_derailment",
         "unrequested_pop_culture_intrusion",
         "unexpected_cjk_intrusion",

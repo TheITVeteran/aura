@@ -896,12 +896,13 @@ async def websocket_endpoint(ws: WebSocket):
                         async def _handle_ws_message(ws_ref, user_content: str):
                             """Process user message and send response back via WebSocket."""
                             try:
+                                lane_snapshot = chat_routes._collect_conversation_lane_status()
                                 reply = await chat_routes._run_cognitive_engine_chat_turn(
                                     user_content,
                                     visible_user_message=user_content,
                                     origin="desktop-ui",
                                     timeout_s=300.0,
-                                    lane=chat_routes._collect_conversation_lane_status(),
+                                    lane=lane_snapshot,
                                     source="desktop_websocket",
                                     require_engine=True,
                                 )
@@ -925,6 +926,15 @@ async def websocket_endpoint(ws: WebSocket):
                                     user_content,
                                     reply,
                                 )
+                                reply = chat_routes._strip_user_visible_context_leaks(reply) or "…"
+                                reply_status = (
+                                    chat_routes._desktop_required_bounded_reply_status(
+                                        user_content,
+                                        reply,
+                                        lane_snapshot,
+                                    )
+                                    or "cognitive_engine"
+                                )
                                 desktop_result = await chat_routes._execute_desktop_objective_from_chat(
                                     user_content,
                                     cognitive_reply=reply,
@@ -932,7 +942,9 @@ async def websocket_endpoint(ws: WebSocket):
                                 if isinstance(desktop_result, dict):
                                     await ws_ref.send_text(json.dumps({
                                         "type": "aura_message",
-                                        "content": desktop_result.get("response") or reply,
+                                        "content": chat_routes._strip_user_visible_context_leaks(
+                                            desktop_result.get("response") or reply
+                                        ) or "…",
                                         "status": desktop_result.get("status"),
                                         "data": {
                                             "desktop_result": desktop_result.get("result"),
@@ -947,7 +959,7 @@ async def websocket_endpoint(ws: WebSocket):
                                 await ws_ref.send_text(json.dumps({
                                     "type": "aura_message",
                                     "content": reply,
-                                    "status": "ok",
+                                    "status": reply_status,
                                     "conversation_lane": {
                                         "source": "desktop_websocket",
                                         "governed_action_result": False,

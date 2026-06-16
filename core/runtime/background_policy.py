@@ -42,6 +42,36 @@ def foreground_only_runtime() -> bool:
     return _env_flag("AURA_FOREGROUND_ONLY", False)
 
 
+def background_cognition_disabled_reason() -> str:
+    """Return why optional background cognition must stay offline.
+
+    Desktop safe boot is foreground-first by default. The live desktop lane has
+    repeatedly failed by letting idle autonomy, dreaming, and background model
+    work compete with the user's foreground turn. Operators can explicitly
+    re-enable these loops after boot with AURA_ENABLE_BACKGROUND_COGNITION=1.
+    """
+
+    configured = str(os.getenv("AURA_ENABLE_BACKGROUND_COGNITION", "") or "").strip().lower()
+    if configured in {"0", "false", "no", "off"}:
+        return "background_cognition_disabled"
+    if configured in {"1", "true", "yes", "on"}:
+        return ""
+    try:
+        from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
+
+        if desktop_safe_boot_enabled():
+            return "desktop_background_disabled"
+    except (ImportError, AttributeError, RuntimeError) as _exc:
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="blocked background cognition because desktop safe-boot probe failed",
+        )
+        logger.warning("Background cognition desktop safe-boot probe failed: %s", _exc)
+        return "desktop_safe_boot_probe_unavailable"
+    return ""
+
+
 def background_loop_start_reason(origin: Any = None) -> str:
     """Explain why a persistent background loop must not start.
 
@@ -80,6 +110,10 @@ def background_loop_start_reason(origin: Any = None) -> str:
 
     if foreground_only_runtime():
         return "foreground_only_runtime"
+
+    disabled_reason = background_cognition_disabled_reason()
+    if disabled_reason:
+        return disabled_reason
 
     return ""
 
@@ -310,6 +344,11 @@ def constitutive_compute_budget(
         effective = min(effective, floor)
         reason = "foreground_only_runtime"
 
+    disabled_reason = background_cognition_disabled_reason()
+    if disabled_reason:
+        effective = min(effective, floor)
+        reason = disabled_reason
+
     foreground_reason = _foreground_activity_reason()
     if foreground_reason:
         foreground_active = True
@@ -526,6 +565,10 @@ def background_activity_reason(
 
     if foreground_only_runtime():
         return "foreground_only_runtime"
+
+    disabled_reason = background_cognition_disabled_reason()
+    if disabled_reason:
+        return disabled_reason
 
     orch = orchestrator
     if orch is not None:

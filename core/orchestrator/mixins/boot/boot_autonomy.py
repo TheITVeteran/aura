@@ -33,7 +33,14 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def _foreground_only_runtime() -> bool:
-    return _env_flag("AURA_FOREGROUND_ONLY", False)
+    if _env_flag("AURA_FOREGROUND_ONLY", False):
+        return True
+    try:
+        from core.runtime.background_policy import background_cognition_disabled_reason
+
+        return bool(background_cognition_disabled_reason())
+    except _BOOT_AUTONOMY_BOUNDARY_ERRORS:
+        return False
 
 
 def _proof_runtime_active() -> bool:
@@ -845,15 +852,34 @@ class BootAutonomyMixin:
     async def _init_proactive_systems(self):
         """Initialize curiosity, proactive communication, and belief sync with granular error boundaries."""
         logger.info("🛠️ _init_proactive_systems starting")
+        background_start_blocker = ""
+        try:
+            from core.runtime.background_policy import background_loop_start_reason
+
+            background_start_blocker = background_loop_start_reason(origin="boot_proactive_systems")
+        except _BOOT_AUTONOMY_BOUNDARY_ERRORS as e:
+            _record_boot_autonomy_degradation(
+                e,
+                "Boot autonomy background policy unavailable; continuing foreground-only.",
+                action="disabled proactive systems because background loop admission policy failed closed",
+                severity="warning",
+            )
+            background_start_blocker = "background_policy_unavailable"
         if (
             _foreground_only_runtime()
             or _proof_runtime_active()
+            or background_start_blocker
             or not _env_flag("AURA_ENABLE_PROACTIVE_SYSTEMS", True)
         ):
-            logger.info("Proactive systems disabled for foreground/proof boot.")
+            logger.info(
+                "Proactive systems disabled for foreground/proof/safe boot%s.",
+                f" ({background_start_blocker})" if background_start_blocker else "",
+            )
             ServiceContainer.register_instance("proactive_comm", None, required=False)
             ServiceContainer.register_instance("sensory_motor_cortex", None, required=False)
             ServiceContainer.register_instance("autonomous_initiative_loop", None, required=False)
+            ServiceContainer.register_instance("subconscious_loop", None, required=False)
+            ServiceContainer.register_instance("abstract_thought_layer", None, required=False)
             ServiceContainer.register_instance(
                 "conversational_momentum_engine", None, required=False
             )

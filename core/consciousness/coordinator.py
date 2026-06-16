@@ -20,6 +20,7 @@ from typing import Optional, Any
 from core.consciousness.unified_self import UnifiedSelf, get_unified_self
 from core.consciousness.self_awareness import SelfAwareness, get_self_awareness
 from core.consciousness.identity_driver import IdentityDriver, get_identity_driver
+from core.exceptions import ContainerError
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.Coordinator")
@@ -28,6 +29,7 @@ _CONSCIOUSNESS_COORDINATOR_RECOVERABLE_ERRORS = (
     ImportError,
     AttributeError,
     RuntimeError,
+    ContainerError,
     TypeError,
     ValueError,
     OSError,
@@ -132,9 +134,29 @@ class ConsciousnessCoordinator:
             self._goal_manager = ServiceContainer.get("goal_manager", default=None)
             self._inference_gate = ServiceContainer.get("inference_gate", default=None)
             
-            # Register unified self with service container
-            if self._unified_self:
-                ServiceContainer.register("unified_self", self._unified_self)
+            # Registration is a boot-time concern. Chat-turn consciousness
+            # updates can initialize the coordinator after the ServiceContainer
+            # has been intentionally locked; they should reuse the unified self
+            # without mutating the service graph or failing the memory log task.
+            if self._unified_self and not ServiceContainer.has("unified_self"):
+                try:
+                    ServiceContainer.register_instance(
+                        "unified_self",
+                        self._unified_self,
+                        required=False,
+                        owner="core/consciousness/coordinator.py",
+                        registered_by="ConsciousnessCoordinator._connect_subsystems",
+                        required_for="chat_turn_consciousness_continuity",
+                        failure_policy="continue_with_local_unified_self",
+                    )
+                except _CONSCIOUSNESS_COORDINATOR_RECOVERABLE_ERRORS as exc:
+                    record_degradation(
+                        "consciousness_coordinator.registration",
+                        exc,
+                        severity="warning",
+                        action="continued with local unified_self because container registration is locked",
+                    )
+                    logger.debug("Unified self service registration skipped: %s", exc)
             
             logger.debug("✓ Connected to core subsystems")
         

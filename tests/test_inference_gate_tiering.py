@@ -2426,6 +2426,37 @@ def test_desktop_safe_boot_respects_deferred_cortex_prewarm_opt_out(monkeypatch)
     assert InferenceGate._boot_should_schedule_deferred_prewarm() is False
 
 
+@pytest.mark.asyncio
+async def test_cold_start_recovery_respects_deferred_cortex_prewarm_opt_out(monkeypatch):
+    monkeypatch.setenv("AURA_DEFERRED_CORTEX_PREWARM", "0")
+    monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: True))
+
+    gate = InferenceGate()
+    client = _LaneWarmupClient()
+    gate._mlx_client = client
+
+    await gate._ensure_cortex_recovery()
+
+    client.warmup.assert_not_awaited()
+    assert gate._cortex_recovery_attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_cold_start_recovery_does_not_race_scheduled_deferred_prewarm(monkeypatch):
+    monkeypatch.setenv("AURA_DEFERRED_CORTEX_PREWARM", "auto")
+    monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: True))
+
+    gate = InferenceGate()
+    client = _LaneWarmupClient()
+    gate._mlx_client = client
+    gate._prewarm_task = TaskProbe(done=False)
+
+    await gate._ensure_cortex_recovery()
+
+    client.warmup.assert_not_awaited()
+    assert gate._cortex_recovery_attempts == 0
+
+
 def test_desktop_safe_boot_allows_explicit_auto_deferred_prewarm_when_admitted(monkeypatch):
     monkeypatch.setenv("AURA_DEFERRED_CORTEX_PREWARM", "auto")
     monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: True))

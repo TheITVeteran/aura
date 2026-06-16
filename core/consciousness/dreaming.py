@@ -120,8 +120,9 @@ class DreamingProcess:
         """Start the background dreaming loop."""
         if self._running:
             return
-        if self._background_block_reason() == "proof_run_active":
-            logger.info("Dreaming Process deferred during proof run.")
+        background_block_reason = self._background_block_reason()
+        if background_block_reason:
+            logger.info("Dreaming Process deferred: %s.", background_block_reason)
             return
         self._running = True
         self._task = get_task_tracker().create_task(self._run_loop(), name="dreaming.process")

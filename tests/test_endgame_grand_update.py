@@ -270,6 +270,27 @@ def test_keep_awake_controller_does_not_start_for_help_or_stop(monkeypatch):
     assert aura_main._should_start_keep_awake_controller() is True
 
 
+def test_orphan_reaper_targets_only_aura_keep_awake_command():
+    import aura_main
+
+    assert aura_main._is_reapable_aura_process_command("caffeinate -i -m -s") is True
+    assert aura_main._is_reapable_aura_process_command("caffeinate -d") is False
+    assert aura_main._is_reapable_aura_process_command("python aura_main.py --headless") is True
+
+
+def test_orphan_reaper_recognizes_python_spawn_workers_by_exact_shape():
+    import aura_main
+
+    assert (
+        aura_main._is_python_multiprocessing_spawn_command(
+            "python -c from multiprocessing.spawn import spawn_main; "
+            "spawn_main(tracker_fd=8, pipe_handle=73) --multiprocessing-fork"
+        )
+        is True
+    )
+    assert aura_main._is_python_multiprocessing_spawn_command("python -m unrelated_worker") is False
+
+
 def test_root_runtime_hard_exit_predicate_excludes_cli_and_spawn(monkeypatch):
     import aura_main
 

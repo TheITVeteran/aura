@@ -108,6 +108,21 @@ def _is_python_resource_tracker_process(proc: Any) -> bool:
     )
 
 
+def _is_python_multiprocessing_spawn_process(proc: Any) -> bool:
+    """Return true for Python multiprocessing worker children owned by this runtime.
+
+    Workers can appear between the adoption pass and the child-process summary
+    scan. They are still Aura-owned if they are direct Python multiprocessing
+    spawn children; adopt them instead of reporting a transient rogue child.
+    """
+
+    cmdline = " ".join(_process_cmdline(proc)).lower()
+    return (
+        "multiprocessing.spawn" in cmdline
+        and "--multiprocessing-fork" in cmdline
+    )
+
+
 def _process_pid(proc: Any) -> int:
     try:
         return int(getattr(proc, "pid", 0) or 0)
@@ -724,6 +739,22 @@ class RuntimeHygieneManager:
             for child in active_children:
                 child_pid = _process_pid(child)
                 if child_pid in active_registered_pids or _is_python_resource_tracker_process(child):
+                    continue
+                if (
+                    _process_ppid(child) == int(os.getpid())
+                    and _is_python_multiprocessing_spawn_process(child)
+                ):
+                    self.register_process_handle(
+                        child,
+                        kind="multiprocessing",
+                        name=_process_name(child) or "multiprocessing.spawn",
+                        source="psutil.adopt_during_summary",
+                        command=" ".join(_process_cmdline(child))[:240],
+                    )
+                    active_registered += 1
+                    active_multiprocessing += 1
+                    if child_pid > 0:
+                        active_registered_pids.add(child_pid)
                     continue
                 if self._is_owned_descendant_process(
                     child,

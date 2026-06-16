@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def test_fictional_ai_synthesis_degradation_audit_is_clean():
@@ -65,3 +66,33 @@ def test_distributed_resilience_records_operational_failure_state():
     assert status.failure_count == 1
     assert status.last_error == "health probe failed"
     assert status.last_checked_at > 0
+
+
+def test_fictional_engines_register_without_background_loops_when_policy_blocks(monkeypatch):
+    import core.fictional_ai_synthesis as synthesis
+
+    tracked: list[object] = []
+
+    class _Tracker:
+        def track(self, task, *, name=None):
+            tracked.append((task, name))
+
+        def create_task(self, coro, *, name=None):
+            tracked.append((coro, name))
+            return SimpleNamespace(cancel=lambda: None)
+
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    monkeypatch.setenv("AURA_ENABLE_BACKGROUND_COGNITION", "0")
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.setattr("core.runtime.proof_policy.proof_run_active", lambda *args, **kwargs: False)
+    monkeypatch.setattr("core.utils.task_tracker.get_task_tracker", lambda: _Tracker())
+    monkeypatch.setattr("core.container.ServiceContainer.get", lambda _name, default=None: default)
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.register_instance",
+        lambda *_args, **_kwargs: None,
+    )
+
+    engines = synthesis.register_all_fictional_engines(orchestrator=SimpleNamespace())
+
+    assert "jarvis" in engines
+    assert tracked == []

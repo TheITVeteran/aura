@@ -1571,7 +1571,7 @@ class CognitiveEngine:
         if router is None or not hasattr(router, "think"):
             return None
 
-        max_tokens = int(context.get("max_tokens") or 512)
+        max_tokens = int(context.get("max_tokens") or 768)
         advice = context.get("spiking_active_inference")
         imagination_frame = context.get("imagination_workspace")
         bicameral_frame = context.get("bicameral_advisory")
@@ -1590,7 +1590,7 @@ class CognitiveEngine:
                     factor_value = 1.0
                 if 0.25 <= factor_value <= 1.25:
                     max_tokens = max(128, int(max_tokens * factor_value))
-        max_tokens = max(128, min(max_tokens, 768))
+        max_tokens = max(384, min(max_tokens, 1024))
         request_timeout = max(12.0, min(max(12.0, float(timeout_s or 32.0) - 5.0), 180.0))
         style_contract = str(context.get("response_style_contract") or "").strip()
         visible_user_message = str(context.get("visible_user_message") or objective or "").strip()
@@ -1599,7 +1599,9 @@ class CognitiveEngine:
             "You are Aura speaking through the live desktop CognitiveEngine. "
             "Answer the user's current message directly and naturally. "
             "Use the current conversation rather than a canned status line. "
-            "When recent conversation context is provided, use it for continuity and do not contradict it. "
+            "The current user message has priority over all recalled context. "
+            "When recent conversation context is provided, use it only for continuity; do not continue "
+            "or answer an older topic unless the current user message explicitly asks you to recall or continue it. "
             "Do not mention hidden fallback paths, internal recovery, prompt contracts, or implementation details "
             "unless the user specifically asks for them."
         )
@@ -1619,10 +1621,11 @@ class CognitiveEngine:
         user_prompt = visible_user_message or objective
         if recent_conversation_context:
             user_prompt = (
-                "[RECENT COMPLETED CONVERSATION]\n"
+                "[CURRENT USER MESSAGE]\n"
+                f"{user_prompt}\n\n"
+                "[RECENT COMPLETED CONVERSATION FOR CONTINUITY ONLY]\n"
                 f"{recent_conversation_context}\n"
-                "[END RECENT COMPLETED CONVERSATION]\n\n"
-                f"[CURRENT USER MESSAGE]\n{user_prompt}"
+                "[END RECENT COMPLETED CONVERSATION]"
             )
 
         try:

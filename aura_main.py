@@ -139,7 +139,14 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def _foreground_only_runtime() -> bool:
-    return _env_flag("AURA_FOREGROUND_ONLY", False)
+    if _env_flag("AURA_FOREGROUND_ONLY", False):
+        return True
+    try:
+        from core.runtime.background_policy import background_cognition_disabled_reason
+
+        return bool(background_cognition_disabled_reason())
+    except (ImportError, AttributeError, RuntimeError, ValueError):
+        return False
 
 
 def _bounded_memory_ceiling_mb(
@@ -2442,6 +2449,96 @@ async def run_watchdog(args: argparse.Namespace | None = None):
     finally:
         release_instance_lock()
 
+def _pid_still_runnable(pid: int) -> bool:
+    """Return True only for a live, non-zombie process.
+
+    macOS can keep a just-killed process table entry visible briefly. Treating
+    that state as "Aura is already running" strands the desktop launcher behind
+    a stale orchestrator lock after a crash or force-quit.
+    """
+    if pid <= 0:
+        return False
+    try:
+        import psutil
+
+        proc = psutil.Process(pid)
+        if not proc.is_running():
+            return False
+        try:
+            return proc.status() != psutil.STATUS_ZOMBIE
+        except psutil.Error:
+            return False
+    except ImportError:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _wait_for_reaped_pids(stale_pids: list[int], timeout_s: float = 6.0) -> set[int]:
+    """Wait briefly for reaped Aura processes to leave the process table."""
+    remaining = {pid for pid in stale_pids if pid > 0}
+    deadline = time.monotonic() + timeout_s
+    while remaining and time.monotonic() < deadline:
+        remaining = {pid for pid in remaining if _pid_still_runnable(pid)}
+        if remaining:
+            time.sleep(0.15)
+    return remaining
+
+
+def _purge_reaped_orchestrator_lock(stale_pids: list[int], remaining_pids: set[int]) -> bool:
+    """Remove stale orchestrator lock artifacts after the owning process was reaped."""
+    lock_file = Path.home() / ".aura" / "locks" / "orchestrator.lock"
+    if not lock_file.exists():
+        return False
+    try:
+        lock_pid = parse_instance_lock_pid(lock_file.read_text(encoding="utf-8"))
+    except OSError as exc:
+        record_degradation("aura_main", exc)
+        logger.warning("Unable to read orchestrator lock during stale cleanup: %s", exc)
+        return False
+    if lock_pid is None or lock_pid not in set(stale_pids):
+        return False
+    if lock_pid in remaining_pids or _pid_still_runnable(lock_pid):
+        logger.warning(
+            "Orchestrator lock PID %s was reaped but is still visible; keeping lock for safety.",
+            lock_pid,
+        )
+        return False
+    _unlink_orchestrator_lock(lock_file)
+    logger.warning("🔓 Removed stale orchestrator lock for reaped PID %s.", lock_pid)
+    return True
+
+
+def _is_reapable_aura_process_command(command: str) -> bool:
+    cmd = str(command or "")
+    normalized = " ".join(cmd.split())
+    return (
+        "aura_main.py" in cmd
+        or "gui_actor.py" in cmd
+        or "mlx_worker" in cmd
+        or "MLXWorker" in cmd
+        or normalized == "caffeinate -i -m -s"
+    )
+
+
+def _is_python_multiprocessing_spawn_command(command: str) -> bool:
+    cmd = str(command or "").lower()
+    return "multiprocessing.spawn" in cmd and "--multiprocessing-fork" in cmd
+
+
+def _pid_cwd_matches_project(pid: int) -> bool:
+    try:
+        import psutil
+
+        return _same_path(psutil.Process(pid).cwd(), PROJECT_ROOT)
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return False
+
+
 def _reap_orphaned_aura_processes() -> int:
     """Kill any stale Aura main processes owned by this user before taking the
     singleton lock.
@@ -2494,14 +2591,13 @@ def _reap_orphaned_aura_processes() -> int:
             continue
         if current_user and user != current_user:
             continue
-        # Target main orchestrator, GUI actors, and MLX workers owned by this user
-        is_stale_aura = (
-            "aura_main.py" in cmd
-            or "gui_actor.py" in cmd
-            or "mlx_worker" in cmd
-            or "MLXWorker" in cmd
-        )
-        if not is_stale_aura:
+        # Target main orchestrator, GUI actors, MLX workers, Aura's exact
+        # macOS keep-awake assertion, and cwd-verified orphaned multiprocessing
+        # workers owned by this checkout.
+        if _is_python_multiprocessing_spawn_command(cmd):
+            if not _pid_cwd_matches_project(pid):
+                continue
+        elif not _is_reapable_aura_process_command(cmd):
             continue
         # Skip this launcher/reaper context
         if "reaper" in cmd.lower():
@@ -2562,6 +2658,13 @@ def _reap_orphaned_aura_processes() -> int:
                     os.kill(pid, signal.SIGKILL)
                 except OSError as exc:
                     logger.debug("Stale Aura process %s exited before SIGKILL: %s", pid, exc)
+        remaining_pids = _wait_for_reaped_pids(stale_pids)
+        _purge_reaped_orchestrator_lock(stale_pids, remaining_pids)
+        if remaining_pids:
+            logger.warning(
+                "Aura process reaper timed out waiting for PID(s) to exit: %s",
+                sorted(remaining_pids),
+            )
         logger.warning(
             "🧹 Reaped %d orphaned Aura process(es) before boot: %s",
             killed, stale_pids,

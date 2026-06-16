@@ -1662,6 +1662,16 @@ class InferenceGate:
             return
         if self._foreground_user_turn_active() or self._foreground_owner_active():
             return
+        if cold_start_recovery:
+            if self._prewarm_task is not None and not self._prewarm_task.done():
+                logger.debug("Cold-start Cortex recovery skipped; deferred prewarm task is already scheduled.")
+                return
+            if not self._boot_should_schedule_deferred_prewarm():
+                logger.info(
+                    "🛡️ Cold-start Cortex recovery deferred by desktop prewarm policy; "
+                    "foreground demand will warm the lane when needed."
+                )
+                return
         warmup_deferral = self._cortex_warmup_deferral_reason("recovery")
         if warmup_deferral:
             self._log_cortex_warmup_deferral(warmup_deferral, context="recovery")
@@ -5781,10 +5791,13 @@ class InferenceGate:
                     if _is_user_facing and local_label == PRIMARY_ENDPOINT and lane_managed_client:
                         lane_status = self.get_conversation_status()
                         if not lane_status.get("conversation_ready"):
+                            blockers = lane_status.get("readiness_blockers") or []
+                            blocker_text = ", ".join(str(item) for item in blockers[:3]) or "conversation probe"
                             logger.info(
-                                "🧠 %s lane is not ready yet (state=%s). Completing foreground warmup before first generation attempt.",
+                                "🧠 %s lane process state=%s; conversation readiness is blocked by %s. Completing foreground warmup before first generation attempt.",
                                 local_label,
                                 lane_status.get("state", "unknown"),
+                                blocker_text,
                             )
                             try:
                                 # [STABILITY v56] The 32B model can take 150s to cold load.

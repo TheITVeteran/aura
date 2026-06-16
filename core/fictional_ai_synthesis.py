@@ -1075,6 +1075,18 @@ def register_all_fictional_engines(orchestrator=None) -> dict[str, Any]:
     engines: dict[str, Any] = {}
     tracker = get_task_tracker()
     foreground_only = os.getenv("AURA_FOREGROUND_ONLY", "0").strip().lower() in {"1", "true", "yes", "on"}
+    background_loop_blocker = ""
+    try:
+        from core.runtime.background_policy import background_loop_start_reason
+
+        background_loop_blocker = background_loop_start_reason(origin="fictional_ai_synthesis")
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        _record_fictional_degradation(
+            exc,
+            severity="warning",
+            action="registered fictional engines without autonomous loops because background policy was unavailable",
+        )
+        background_loop_blocker = "background_policy_unavailable"
 
     engines["jarvis"] = (
         ServiceContainer.get(ServiceNames.JARVIS, default=None)
@@ -1118,8 +1130,11 @@ def register_all_fictional_engines(orchestrator=None) -> dict[str, Any]:
     ServiceContainer.register_instance(ServiceNames.MIST, engines["mist"])
     ServiceContainer.register_instance("mist", engines["mist"])
 
-    if foreground_only:
-        logger.info("✅ Fictional AI engines registered without background loops (foreground-only boot).")
+    if foreground_only or background_loop_blocker:
+        logger.info(
+            "✅ Fictional AI engines registered without background loops (%s).",
+            background_loop_blocker or "foreground-only boot",
+        )
         return engines
 
     # FIXED: Supervised task creation — tasks tracked and named
