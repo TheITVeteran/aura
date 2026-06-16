@@ -1,0 +1,20 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "aura-m1-ext"
+version = "0.1.0"
+description = "Apple-Silicon accelerated substrate kernels for Aura (PyO3 extension)."
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+# Build/activate the Rust acceleration path with:
+#   maturin develop -m rust_extensions/aura_m1_ext/pyproject.toml --release
+# core/consciousness/substrate_accel.py then uses the Rust field_integrate; the
+# parity test (tests/test_substrate_accel.py) proves it matches NumPy first.
+[tool.maturin]
+module-name = "aura_m1_ext"
