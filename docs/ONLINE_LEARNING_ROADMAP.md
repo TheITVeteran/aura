@@ -1,0 +1,125 @@
+# Online Continuous Learning — Honest Roadmap
+
+**Status:** engineering roadmap + claim boundaries. This document exists so we
+never *casually* claim "Aura learns continuously / online" in the strong sense.
+It states precisely what learning Aura does today, what is a bounded next step,
+and what is genuine research frontier.
+
+Scope owner task: **#49**. Related: **#37** (LoRA sleep-consolidation, the real
+bounded step), **#33** (RSI single-patch proof), **#46** (the honest ablation
+that any "learning helps" claim must pass).
+
+---
+
+## 1. The honest baseline: what changes, and when
+
+Aura runs a **frozen** local model. The ~32B MLX core weights do **not** change
+during a conversation, a day, or a week of use. Between explicit, scheduled
+training jobs the pretrained/fine-tuned weights are immutable. Anything that
+*looks* like "learning within a session" is one of the mechanisms below — none
+of which is online gradient update of the core weights.
+
+| Mechanism | Code | What it changes | When | Core weights touched? |
+| :-- | :-- | :-- | :-- | :-- |
+| Retrieval (RAG / vault) | `core/memory/*`, recall telemetry | the **prompt context** for the next turn | every turn | No |
+| Conversation/state carry | chat preflight, world state | injected context | every turn | No |
+| Auxiliary online plasticity | `core/consciousness/synaptic_plasticity.py` | a small **auxiliary** Hebbian weight matrix (modulation signal), **not** the LLM | per inference | No (its own docstring states the LLM is frozen) |
+| LoRA adapter training | `core/learning/lora_trainer.py`, `continual_lora_merge.py`, `tree_lora_manager.py`, `adapter_registry.py` | **adapter** weights merged onto the backbone | batch / scheduled | Adapters only |
+| Full-weight training | `core/learning/full_weight_training.py` | every parameter (real backprop), CPU-bounded, eval-gated, hot-swap promoted | scheduled job | Yes, but **offline/batch**, behind promotion gates |
+| RL / self-update tasks | `core/rl_train.py`, `scripts/self_update.py` (dispatched via `core/tasks`) | policy / fine-tune artifacts | scheduled background | Indirect, batch |
+
+**Claim boundary (do not cross):** the honest phrasing is *"Aura retrieves and
+re-contextualizes continuously, and consolidates into adapter/weight artifacts in
+scheduled batch jobs behind evaluation gates."* It is **not** *"Aura's neural
+weights learn online from each interaction."* The second is false today.
+
+---
+
+## 2. The bounded, real next step: LoRA sleep-consolidation (#37)
+
+The achievable, provable increment is **batch** LoRA consolidation, not online
+learning:
+
+1. **Collect** verified experience shards (`experience_collector.py`,
+   `trace_labeler.py`) — only governed, receipted, hidden-eval-safe traces.
+2. **Plan** the merge (`continual_lora_merge.py` already builds the mlx-lm
+   command + provenance and *refuses promotion without validation evidence*).
+3. **Train** a LoRA adapter in a scheduled "sleep" window (`lora_trainer.py`).
+4. **Evaluate** on a *sealed held-out pack* before promotion
+   (`eval_before_promotion.py`, `hidden_eval_repro.py`) and record the result in
+   the tamper-evident behavioral ledger (`core/evaluation/behavioral_ledger.py`).
+5. **Promote or reject** via the promotion gate; **TreeLoRA**
+   (`tree_lora_manager.py`) branches a new adapter node when a merge would cause
+   catastrophic interference, rather than overwriting.
+
+**Definition of done for #37:** one consolidation cycle, end to end, where a
+held-out score measurably improves *and the ablation (#46) shows the gain is from
+the adapter, not the base model* — recorded in the behavioral ledger, with a
+rollback path. Until that runs on real hardware, #37 stays **pending**, not
+claimed.
+
+**Why this is honest, not online:** the model is unavailable for inference during
+the heavy train step (or runs a copy), the update is a discrete artifact, and it
+is eval-gated. That is *batch consolidation with a sleep metaphor*, which is a
+real and defensible capability — distinct from continuous online plasticity.
+
+---
+
+## 3. The genuine frontier (open research — do not claim)
+
+True **online continuous learning of the core weights without catastrophic
+forgetting** is an unsolved research problem, not an engineering task. Honest
+status of the candidate directions:
+
+- **Online LoRA / streaming adapters.** Update an adapter from a rolling buffer
+  more frequently. Tractable-ish, but frequent updates amplify forgetting and
+  reward-hacking; needs strong eval gating and is still batch-ish, not per-token.
+- **TreeLoRA / parameter isolation** (`tree_lora_manager.py`). Mitigates
+  forgetting by *isolating* new knowledge in branched adapters. Promising and
+  partially implemented; it sidesteps online core-weight learning rather than
+  solving it.
+- **Reward-modulated Hebbian / STDP** (`synaptic_plasticity.py`,
+  `meta_plasticity.py`). Real and running, but on a **small auxiliary** matrix —
+  it is a modulation/affect signal, **not** learning in the LLM's billions of
+  parameters. Claiming otherwise would be the exact overclaim this doc prevents.
+- **Full online backprop of the core weights.** Not viable on a 64GB unified-
+  memory desktop, and unsolved for catastrophic forgetting / stability-plasticity
+  even with unlimited compute. **Out of scope. Not on the roadmap as a claim.**
+
+Hard constraints that bound all of the above on this hardware:
+- 64GB unified memory: a full-weight online optimizer state for 32B does not fit
+  alongside live inference (see `existential_stakes` memory ceiling work).
+- Stability/plasticity dilemma: every weight that adapts to *new* data risks
+  degrading *held-out* behavior. This is why every path here is eval-gated.
+
+---
+
+## 4. What "learning works" must mean (no fabrication)
+
+Any claim that learning *helps* must clear the honest bar set this cycle:
+
+- a **sealed held-out** improvement (not the training set),
+- recorded in the **tamper-evident** behavioral ledger
+  (`core/evaluation/behavioral_ledger.py`),
+- with an **ablation** showing the gain comes from the learned component, not the
+  base model (`core/evaluation/ablation_harness.py`,
+  `tools/agi/run_prompt_baseline_ablation.py`),
+- and it must survive `tools/proof_fabrication_guard.py` (no hardcoded scores,
+  no assert-victory over invented baselines).
+
+Until a result clears that bar, the honest classification is **"capability
+present, lift unproven."**
+
+---
+
+## 5. Roadmap summary
+
+| Step | Status | Honest claim allowed |
+| :-- | :-- | :-- |
+| RAG/context re-use per turn | shipped | "continuous retrieval & re-contextualization" |
+| Auxiliary online plasticity (aux matrix) | shipped | "auxiliary modulation; not core-weight learning" |
+| LoRA batch consolidation pipeline | built, **unproven end-to-end** | "pipeline exists; one proven cycle pending (#37)" |
+| LoRA sleep-consolidation proof (#37) | pending (needs hardware) | none until proven |
+| TreeLoRA forgetting isolation | partial | "interference-aware branching" |
+| Full-weight batch self-training | built, gated | "offline, eval-gated, hot-swap" |
+| Online core-weight learning | **research frontier** | **none** |
