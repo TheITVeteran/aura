@@ -76,11 +76,7 @@ def test_numpy_reference_is_used_when_no_extension():
         )
 
 
-def test_rust_matches_reference_when_built():
-    if not RUST_ACCEL_AVAILABLE:
-        import pytest
-
-        pytest.skip("aura_m1_ext not built; build with maturin develop to exercise the Rust path")
+def test_active_kernel_matches_reference_for_current_backend():
     rng = np.random.default_rng(7)
     f = rng.standard_normal(256).astype(np.float32)
     activity = rng.standard_normal(256).astype(np.float32)
@@ -88,3 +84,4 @@ def test_rust_matches_reference_when_built():
     got = field_integrate(f, activity, noise, 0.05, 0.01)
     want = _field_integrate_numpy(f, activity, noise, 0.05, 0.01)
     np.testing.assert_allclose(got, want, rtol=1e-5, atol=1e-6)
+    assert isinstance(RUST_ACCEL_AVAILABLE, bool)

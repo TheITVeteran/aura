@@ -202,6 +202,7 @@ def gui_actor_entry(port: int, token: str = None):
         window.events.closed += _on_closed
 
         def _on_shown():
+            import urllib.error
             import urllib.request
             logger.info("🎨 WebView Window Shown. Loading boot screen...")
             try:
@@ -232,8 +233,8 @@ def gui_actor_entry(port: int, token: str = None):
                             record_degradation('gui_actor', e)
                             logger.error("Failed to load URL in WebView: %s", e)
                         return
-                except Exception:
-                    pass
+                except (OSError, TimeoutError, urllib.error.URLError, urllib.error.HTTPError) as e:
+                    logger.debug("GUI boot wait probe failed on attempt %d: %s", attempt, e)
 
                 try:
                     window.evaluate_js(
