@@ -1222,6 +1222,106 @@ async def test_session_memory_pin_conversation_wording_stays_on_fastpath(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_session_memory_pin_natural_that_wording_stays_on_fastpath(monkeypatch, tmp_path):
+    from interface.routes import chat as chat_routes
+
+    ledger_path = tmp_path / "session_memory_pins.jsonl"
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: ledger_path)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda _name, default=None: default),
+    )
+    chat_routes._session_memory_pins.clear()
+
+    stored = await chat_routes._build_memory_state_fastpath_reply(
+        "Remember that my demo codeword is silver-orbit-228. Just confirm."
+    )
+    chat_routes._session_memory_pins.clear()
+    recalled = await chat_routes._build_memory_state_fastpath_reply(
+        "What codeword did I ask you to remember?"
+    )
+    chat_routes._session_memory_pins.clear()
+
+    assert stored is not None
+    assert stored[1] == "session_memory_pin"
+    assert recalled is not None
+    assert recalled[1] == "session_memory_recall"
+    assert "my demo codeword is silver-orbit-228" in recalled[0]
+
+
+@pytest.mark.asyncio
+async def test_session_memory_pin_natural_pronoun_wording_preserves_subject(
+    monkeypatch,
+    tmp_path,
+):
+    from interface.routes import chat as chat_routes
+
+    ledger_path = tmp_path / "session_memory_pins.jsonl"
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: ledger_path)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda _name, default=None: default),
+    )
+    chat_routes._session_memory_pins.clear()
+
+    stored = await chat_routes._build_memory_state_fastpath_reply(
+        "Remember my favorite launch phrase is steady violet orbit."
+    )
+    chat_routes._session_memory_pins.clear()
+    recalled = await chat_routes._build_memory_state_fastpath_reply(
+        "What phrase did I ask you to remember?"
+    )
+    chat_routes._session_memory_pins.clear()
+
+    assert stored is not None
+    assert stored[1] == "session_memory_pin"
+    assert recalled is not None
+    assert recalled[1] == "session_memory_recall"
+    assert "my favorite launch phrase is steady violet orbit" in recalled[0]
+
+
+@pytest.mark.asyncio
+async def test_session_memory_pin_dont_forget_natural_wording_stays_on_fastpath(
+    monkeypatch,
+    tmp_path,
+):
+    from interface.routes import chat as chat_routes
+
+    ledger_path = tmp_path / "session_memory_pins.jsonl"
+    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: ledger_path)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda _name, default=None: default),
+    )
+    chat_routes._session_memory_pins.clear()
+
+    stored = await chat_routes._build_memory_state_fastpath_reply(
+        "Don't forget that the journal folder should be named Aura's Journals."
+    )
+    chat_routes._session_memory_pins.clear()
+    recalled = await chat_routes._build_memory_state_fastpath_reply(
+        "What did I tell you to remember?"
+    )
+    chat_routes._session_memory_pins.clear()
+
+    assert stored is not None
+    assert stored[1] == "session_memory_pin"
+    assert recalled is not None
+    assert recalled[1] == "session_memory_recall"
+    assert "journal folder should be named Aura's Journals" in recalled[0]
+
+
+def test_session_memory_pin_question_wording_does_not_store_as_new_memory():
+    from interface.routes import chat as chat_routes
+
+    assert chat_routes._extract_session_memory_pin_request("Remember what I said earlier?") is None
+    assert chat_routes._extract_session_memory_pin_request("Remember when we talked about tools?") is None
+
+
+@pytest.mark.asyncio
 async def test_session_memory_context_change_uses_pinned_note(monkeypatch, tmp_path):
     from interface.routes import chat as chat_routes
 

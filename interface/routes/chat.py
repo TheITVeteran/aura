@@ -601,6 +601,25 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
     text = str(user_message or "").strip()
     if not text:
         return None
+    original = " ".join(text.split())
+    original_matching = original.replace("’", "'").replace("‘", "'")
+    original_matching = re.sub(
+        r"\bdont'?\b",
+        "don't",
+        original_matching,
+        flags=re.IGNORECASE,
+    )
+
+    def _clean_pinned_memory(raw: str) -> str:
+        pinned_text = str(raw or "").strip().strip("\"'“”")
+        pinned_text = re.sub(
+            r"(?:\s*[.!?]\s*|\s+)(?:just\s+)?"
+            r"(?:confirm|acknowledge|say\s+ok|reply\s+ok)\b.*$",
+            "",
+            pinned_text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        return pinned_text.rstrip(" .!?")
 
     head, sep, tail = text.partition(":")
     normalized = (
@@ -625,16 +644,23 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
     for pattern in patterns:
         match = re.match(pattern, normalized, flags=re.IGNORECASE | re.DOTALL)
         if match:
-            pinned = match.group(1).strip().strip("\"'“”")
-            pinned = re.sub(
-                r"(?:\s*[.!?]\s*|\s+)(?:just\s+)?"
-                r"(?:confirm|acknowledge|say\s+ok|reply\s+ok)\b.*$",
-                "",
-                pinned,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
-            pinned = pinned.rstrip(" .!?")
+            pinned = _clean_pinned_memory(match.group(1))
             return pinned[:240] if pinned else None
+
+    natural_patterns = (
+        rf"^(?:please\s+)?remember\s+that{pin_scope}\s+(.+)$",
+        rf"^(?:please\s+)?remember\s+((?:my|the|our)\s+.+)$",
+        rf"^don't forget\s+that{pin_scope}\s+(.+)$",
+        rf"^make\s+(?:a\s+)?note\s+that{pin_scope}\s+(.+)$",
+    )
+    for pattern in natural_patterns:
+        match = re.match(pattern, original_matching, flags=re.IGNORECASE | re.DOTALL)
+        if not match:
+            continue
+        pinned = _clean_pinned_memory(match.group(1))
+        if re.match(r"^(?:what|when|where|who|why|how)\b", pinned, flags=re.IGNORECASE):
+            continue
+        return pinned[:240] if pinned else None
     return None
 
 
