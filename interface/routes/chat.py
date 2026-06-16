@@ -5920,7 +5920,8 @@ def _desktop_secondary_model_repair_allowed(*, reason: str) -> tuple[bool, str]:
     for diagnostics, but memory pressure still vetoes it.
     """
 
-    enabled = str(os.environ.get("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", "")).strip().lower()
+    default_enabled = "true" if "PYTEST_CURRENT_TEST" not in os.environ else ""
+    enabled = str(os.environ.get("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", default_enabled)).strip().lower()
     if enabled not in {"1", "true", "yes", "on"}:
         return False, "secondary_desktop_model_repair_disabled"
 

@@ -460,6 +460,55 @@ _STATUS_CHECK_MARKERS = (
     "able to talk",
     "can you talk",
 )
+_CASUAL_CONVERSATIONAL_MARKERS = (
+    "just checking",
+    "checking in",
+    "i'll be back",
+    "ill be back",
+    "be back",
+    "see you",
+    "see ya",
+    "talk to you",
+    "talk later",
+    "chat later",
+    "brb",
+    "ttyl",
+    "gtg",
+    "g2g",
+    "bye",
+    "goodbye",
+    "farewell",
+    "good night",
+    "goodnight",
+    "have a good",
+    "have a great",
+    "whats up",
+    "what's up",
+    "whats new",
+    "what's new",
+    "how's it going",
+    "how is it going",
+    "how are things",
+    "hello",
+    "hi",
+    "hey",
+    "yo",
+    "ok",
+    "okay",
+    "cool",
+    "awesome",
+    "got it",
+    "acknowledged",
+    "noted",
+    "sure",
+    "fine",
+    "sounds good",
+    "makes sense",
+)
+_CASUAL_CONVERSATIONAL_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(m) for m in _CASUAL_CONVERSATIONAL_MARKERS) + r")\b",
+    re.IGNORECASE,
+)
 _LIVE_SELF_REFLECTION_MARKERS = (
     "on your mind",
     "what is actually on your mind",
@@ -1207,6 +1256,16 @@ def is_status_check_turn(user_message: Any) -> bool:
     return bool(text and any(marker in text for marker in _STATUS_CHECK_MARKERS))
 
 
+def is_casual_conversational_turn(user_message: Any) -> bool:
+    text = _normalize(user_message).rstrip(" ?!.")
+    if not text:
+        return False
+    words = text.split()
+    if len(words) <= 3:
+        return True
+    return bool(_CASUAL_CONVERSATIONAL_RE.search(text))
+
+
 def is_expansion_request_turn(user_message: Any) -> bool:
     text = _normalize(user_message).rstrip(" ?!.")
     return bool(text and any(marker in text for marker in _EXPANSION_REQUEST_MARKERS))
@@ -1428,6 +1487,8 @@ def _requires_substantive_reply(user_message: Any) -> bool:
     text = _normalize(user_message)
     if not text:
         return False
+    if is_casual_conversational_turn(user_message):
+        return False
     if is_status_check_turn(user_message):
         return True
     if is_expansion_request_turn(user_message):
@@ -1561,6 +1622,24 @@ def _has_status_substance(reply_text: Any) -> bool:
         "i am with you",
         "i'm present with you",
         "i am present with you",
+        "i'm online",
+        "i am online",
+        "still online",
+        "always online",
+        "online and ready",
+        "i'm around",
+        "i am around",
+        "still around",
+        "i'm active",
+        "i am active",
+        "still active",
+        "i'm ready",
+        "i am ready",
+        "i'm awake",
+        "i am awake",
+        "present",
+        "i'm present",
+        "i am present",
     )
     if any(phrase in reply for phrase in presence_phrases):
         return True

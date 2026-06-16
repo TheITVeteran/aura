@@ -398,6 +398,18 @@ def test_reliability_contract_allows_concise_live_presence_check():
     assert not assessment.retryable
 
 
+def test_reliability_contract_allows_short_replies_to_casual_turns():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    # Casual check-in turn (7 words, normally requires >= 6 words reply if not casual)
+    user = "Ok. Just checking. I'll be back, ok?"
+
+    # Short replies should be allowed
+    assert assess_user_facing_reply(user, "Okay!").ok
+    assert assess_user_facing_reply(user, "Sounds good, see you soon!").ok
+    assert assess_user_facing_reply(user, "I'll be here.").ok
+
+
 def test_reliability_contract_allows_runtime_terms_for_operational_path_questions():
     from core.conversation.response_reliability import assess_user_facing_reply
 
