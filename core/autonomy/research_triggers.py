@@ -33,6 +33,16 @@ logger = logging.getLogger("research_triggers")
 DEFAULT_TRIGGER_PATH = Path.home() / ".aura/live-source/aura/knowledge/research-triggers.jsonl"
 RING_LIMIT = 500
 _TRIGGER_PERSISTENCE_ERRORS = (OSError, TypeError, ValueError)
+_BLOCKED_PAYLOAD_SURFACES = (
+    "i lost the reply lane",
+    "failed the reply-quality gate",
+    "not starting a second foreground generation",
+    "as an ai language model",
+    "i don't have personal feelings",
+    "i do not have personal feelings",
+    "i don't have personal beliefs",
+    "i do not have personal beliefs",
+)
 
 
 @dataclass(frozen=True)
@@ -59,11 +69,19 @@ def emit_research_trigger(
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        safe_payload = _json_safe_payload(payload_hint or {})
+        if _contains_blocked_payload_surface(topic) or _contains_blocked_payload_surface(safe_payload):
+            logger.warning(
+                "Blocked contaminated research trigger from persistent queue (topic=%s, source_intent_id=%s).",
+                topic,
+                source_intent_id,
+            )
+            return
         record = {
             "topic": topic,
             "source_intent_id": source_intent_id,
             "contested_count": int(contested_count),
-            "payload_hint": _json_safe_payload(payload_hint or {}),
+            "payload_hint": safe_payload,
             "emitted_at": time.time(),
             "consumed_at": None,
         }
@@ -97,6 +115,10 @@ def drain_pending_triggers(
             except json.JSONDecodeError:
                 continue
             if rec.get("consumed_at") is not None:
+                continue
+            if _contains_blocked_payload_surface(rec.get("topic", "")) or _contains_blocked_payload_surface(
+                rec.get("payload_hint", {})
+            ):
                 continue
             if (now - float(rec.get("emitted_at", 0.0))) > max_age_seconds:
                 continue
@@ -175,6 +197,22 @@ def _json_safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
     for key, value in dict(payload).items():
         safe[str(key)] = _json_safe_value(value)
     return safe
+
+
+def _contains_blocked_payload_surface(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        lowered = value.lower()
+        return any(surface in lowered for surface in _BLOCKED_PAYLOAD_SURFACES)
+    if isinstance(value, dict):
+        return any(
+            _contains_blocked_payload_surface(key) or _contains_blocked_payload_surface(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list | tuple | set):
+        return any(_contains_blocked_payload_surface(item) for item in value)
+    return _contains_blocked_payload_surface(repr(value))
 
 
 def _json_safe_value(value: Any) -> Any:

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import queue
 import sys
 import time
@@ -240,6 +241,57 @@ def test_research_trigger_payload_is_json_safe(tmp_path) -> None:
     [trigger] = research_triggers.drain_pending_triggers(path=trigger_path)
     assert trigger.payload_hint["object"] == "<non-serializable-marker>"
     assert trigger.payload_hint["nested"]["set"] == "{1, 2}"
+
+
+def test_research_triggers_reject_live_reply_failure_contamination(tmp_path) -> None:
+    from core.autonomy import research_triggers
+
+    trigger_path = tmp_path / "research-triggers.jsonl"
+    research_triggers.emit_research_trigger(
+        topic="write_memory:interaction_commit",
+        source_intent_id="bad-live-reply",
+        payload_hint={
+            "content": (
+                "Ok. Just checking. I'll be back, ok? -> conversation_reply -> "
+                "I lost the reply lane for a moment. Ask that again and I'll answer cleanly."
+            )
+        },
+        path=trigger_path,
+    )
+
+    assert not trigger_path.exists() or trigger_path.read_text(encoding="utf-8") == ""
+    assert research_triggers.drain_pending_triggers(path=trigger_path) == []
+
+
+def test_research_trigger_drain_skips_preexisting_contaminated_lines(tmp_path) -> None:
+    from core.autonomy import research_triggers
+
+    trigger_path = tmp_path / "research-triggers.jsonl"
+    research_triggers.emit_research_trigger(
+        topic="valid curiosity",
+        source_intent_id="valid",
+        payload_hint={"content": "look up bounded runtime recovery patterns"},
+        path=trigger_path,
+    )
+    with trigger_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "topic": "write_memory:interaction_commit",
+                    "source_intent_id": "old-bad-line",
+                    "contested_count": 1,
+                    "payload_hint": {
+                        "content": "As an AI language model, I do not have personal feelings."
+                    },
+                    "emitted_at": time.time(),
+                    "consumed_at": None,
+                }
+            )
+            + "\n"
+        )
+
+    triggers = research_triggers.drain_pending_triggers(path=trigger_path)
+    assert [trigger.source_intent_id for trigger in triggers] == ["valid"]
 
 
 def test_curiosity_scheduler_degrades_known_reader_errors_but_surfaces_invariants() -> None:
