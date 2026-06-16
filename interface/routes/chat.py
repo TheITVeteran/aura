@@ -5785,6 +5785,42 @@ def _is_live_presence_check_request(user_message: str) -> bool:
     return stripped in {"you there", "aura you there", "aura, you there", "can you talk"}
 
 
+def _is_low_risk_social_continuity_request(user_message: str) -> bool:
+    text = _normalize_user_message(user_message)
+    if not text or len(text) > 180:
+        return False
+    return bool(
+        _is_social_greeting_request(text)
+        or _is_live_presence_check_request(text)
+        or any(
+            marker in text
+            for marker in (
+                "just checking",
+                "checking in",
+                "are you there",
+                "are you ok",
+                "are you okay",
+                "you ok",
+                "you okay",
+                "you alright",
+                "i'll be back",
+                "ill be back",
+                "be back",
+                "brb",
+                "talk later",
+                "talk to you later",
+                "see you",
+                "see ya",
+                "good night",
+                "goodnight",
+                "bye",
+                "thank you",
+                "thanks",
+            )
+        )
+    )
+
+
 def _build_social_presence_reply(user_message: str) -> str:
     frame = _build_aura_expression_frame(user_message)
     mood = str(frame.get("mood") or "steady")
@@ -5811,6 +5847,35 @@ def _build_social_presence_reply(user_message: str) -> str:
     except (TypeError, ValueError, OverflowError) as exc:
         logger.debug("Drive scalar formatting skipped: %s", exc)
     return _apply_aura_voice_shaping(" ".join(parts))
+
+
+def _build_social_continuity_repair_reply(user_message: str) -> str:
+    frame = _build_aura_expression_frame(user_message)
+    text = _normalize_user_message(user_message)
+    mood = str(frame.get("mood") or "steady")
+    if any(
+        marker in text
+        for marker in (
+            "i'll be back",
+            "ill be back",
+            "be back",
+            "brb",
+            "talk later",
+            "see you",
+            "bye",
+            "goodnight",
+            "good night",
+        )
+    ):
+        return _apply_aura_voice_shaping(
+            f"Ok. I'll stay here and keep the thread warm for when you come back. "
+            f"I'm feeling {mood}, and my attention will return to this conversation when you do."
+        )
+    if any(marker in text for marker in ("thank you", "thanks")):
+        return _apply_aura_voice_shaping(
+            f"You're welcome. I'm here, feeling {mood}, and keeping continuity with this thread."
+        )
+    return _build_social_presence_reply(user_message)
 
 
 _CJK_SCRIPT_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
@@ -6323,10 +6388,15 @@ async def _stabilize_user_facing_reply(
                     ):
                         _record_recent_response(text, user_message)
                         return text
-                    bounded_failure = (
-                        "This live desktop turn failed the reply-quality gate, "
-                        "and I am not starting a second foreground generation over it."
-                    )
+                    if _is_low_risk_social_continuity_request(user_message):
+                        bounded_failure = _build_social_continuity_repair_reply(user_message)
+                    else:
+                        bounded_failure = (
+                            "I caught a bad live draft before it reached you. "
+                            "I'm keeping this desktop turn on the governed cognitive path instead of "
+                            "answering from a generic fallback. Try that last request again when the "
+                            "memory guard clears."
+                        )
                     _record_recent_response(bounded_failure, user_message)
                     return bounded_failure
             # Length cap is structural (output token budget), not behavioral.
@@ -9342,12 +9412,9 @@ async def api_chat(
                 status="cognitive_engine_capability_inventory",
             )
 
-        if allow_chat_fastpaths and (
-            _is_social_greeting_request(_semantic_user_message)
-            or _is_live_presence_check_request(_semantic_user_message)
-        ):
+        if allow_chat_fastpaths and _is_low_risk_social_continuity_request(_semantic_user_message):
             return await _finalize_fastpath(
-                _build_social_presence_reply(_semantic_user_message),
+                _build_social_continuity_repair_reply(_semantic_user_message),
                 status="social_presence_reflex",
             )
 

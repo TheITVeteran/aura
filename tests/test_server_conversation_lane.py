@@ -4909,7 +4909,10 @@ async def test_desktop_required_stabilizer_skips_second_model_pass_by_default(mo
     )
 
     assert inference_gate.calls == []
-    assert "not starting a second foreground generation" in result
+    assert "not starting a second foreground generation" not in result
+    assert "failed the reply-quality gate" not in result
+    assert "AI language model" not in result
+    assert "I'm here" in result or "i'm here" in result
 
 
 @pytest.mark.asyncio
@@ -5938,3 +5941,18 @@ def test_live_desktop_final_repairs_preserve_cognitive_engine_contract():
     assert "protected_foreground_lane=desktop_requires_cognitive_engine" in fastpath_slice
     assert "desktop_cognitive_engine_required=desktop_requires_cognitive_engine" in final_gate_slice
     assert "protected_foreground_lane=desktop_requires_cognitive_engine" in final_gate_slice
+
+
+def test_live_desktop_quality_recovery_does_not_surface_gate_jargon():
+    source = (Path(__file__).resolve().parent.parent / "interface" / "routes" / "chat.py").read_text(
+        encoding="utf-8"
+    )
+    stabilizer_slice = source.split("async def _stabilize_user_facing_reply", 1)[1].split(
+        "# Length cap is structural",
+        1,
+    )[0]
+
+    assert "failed the reply-quality gate" not in source
+    assert "not starting a second foreground generation" not in source
+    assert "_is_low_risk_social_continuity_request(user_message)" in stabilizer_slice
+    assert "_build_social_continuity_repair_reply(user_message)" in stabilizer_slice
