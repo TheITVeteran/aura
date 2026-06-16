@@ -1341,6 +1341,30 @@ function applyToolEvent(event) {
             ['failed', 'rejected', 'degraded'].includes(String(event.stage)) ? 'error' :
             '';
         if (stageForCard) updateSkillUI(event.tool, stageForCard);
+
+        // Update the typing indicator label to show tool activity
+        if (event.stage === 'started') {
+            const TOOL_LABELS = {
+                'search_web': 'searching the web',
+                'sovereign_browser': 'searching the web',
+                'file_operation': 'managing files',
+                'terminal_exec': 'executing system commands',
+                'sovereign_terminal': 'executing system commands',
+                'sovereign_vision': 'analyzing screen',
+                'speak': 'preparing speech',
+                'sovereign_imagination': 'generating image',
+                'self_repair': 'analyzing system diagnostics',
+                'self_evolution': 'applying self-modifications',
+                'inter_agent_comm': 'coordinating with subagent'
+            };
+            const action = TOOL_LABELS[event.tool] || `running ${event.tool}`;
+            updateTypingLabel(`Aura is ${action}…`);
+            const typingInd = $('typing-ind');
+            if (typingInd) typingInd.classList.add('show');
+            setChatPanelState('thinking');
+        } else if (['completed', 'failed', 'rejected', 'degraded'].includes(String(event.stage))) {
+            updateTypingLabel('Aura is thinking…');
+        }
     }
 
     if (event && ['failed', 'rejected', 'degraded'].includes(String(event.stage))) {
