@@ -877,15 +877,23 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
         "screen_recording": {"granted": False, "status": "unknown", "guidance": ""},
         "accessibility": {"granted": False, "status": "unknown", "guidance": ""},
         "automation": {"granted": False, "status": "unknown", "guidance": ""},
+        "direct_screen_recording": {"granted": False, "status": "unknown", "guidance": ""},
+        "direct_accessibility": {"granted": False, "status": "unknown", "guidance": ""},
+        "direct_automation": {"granted": False, "status": "unknown", "guidance": ""},
         "screen_capture_ready": False,
         "desktop_control_ready": False,
         "screen_text_ready": False,
+        "direct_screen_capture_ready": False,
+        "direct_desktop_control_ready": False,
+        "direct_screen_text_ready": False,
         "menu_clock_ready": False,
         "menu_clock_text": "",
         "menu_clock_error": "",
         "frontmost_app": "",
         "pyautogui_ready": False,
         "pyautogui_error": "",
+        "permission_confidence": "unknown",
+        "permission_assumptions": [],
     }
     try:
         from core.security.permission_guard import PermissionType, get_permission_guard
@@ -900,6 +908,24 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
             payload["accessibility"] = accessibility
             payload["automation"] = automation
             payload["frontmost_app"] = str(automation.get("detail", "") or "")
+            direct_probe = getattr(guard, "check_permission_direct", None)
+            if callable(direct_probe):
+                try:
+                    direct_screen, direct_accessibility, direct_automation = await asyncio.gather(
+                        asyncio.wait_for(direct_probe(PermissionType.SCREEN), timeout=3.0),
+                        asyncio.wait_for(direct_probe(PermissionType.ACCESSIBILITY), timeout=3.0),
+                        asyncio.wait_for(direct_probe(PermissionType.AUTOMATION), timeout=3.0),
+                    )
+                    payload["direct_screen_recording"] = direct_screen
+                    payload["direct_accessibility"] = direct_accessibility
+                    payload["direct_automation"] = direct_automation
+                except (asyncio.TimeoutError, _SYSTEM_RECOVERABLE_ERRORS) as exc:
+                    record_degradation(
+                        "system",
+                        exc,
+                        action="continued desktop access summary after direct permission probe failed",
+                        severity="warning",
+                    )
 
         pyautogui, pyautogui_error = get_pyautogui()
         payload["pyautogui_ready"] = pyautogui is not None
@@ -909,9 +935,15 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
         screen_granted = bool((payload["screen_recording"] or {}).get("granted"))
         accessibility_granted = bool((payload["accessibility"] or {}).get("granted"))
         automation_granted = bool((payload["automation"] or {}).get("granted"))
+        direct_screen_granted = bool((payload["direct_screen_recording"] or {}).get("granted"))
+        direct_accessibility_granted = bool((payload["direct_accessibility"] or {}).get("granted"))
+        direct_automation_granted = bool((payload["direct_automation"] or {}).get("granted"))
         payload["screen_capture_ready"] = screen_granted
         payload["desktop_control_ready"] = accessibility_granted and bool(payload["pyautogui_ready"])
         payload["screen_text_ready"] = automation_granted and accessibility_granted
+        payload["direct_screen_capture_ready"] = direct_screen_granted
+        payload["direct_desktop_control_ready"] = direct_accessibility_granted and bool(payload["pyautogui_ready"])
+        payload["direct_screen_text_ready"] = direct_automation_granted and direct_accessibility_granted
         payload["menu_clock_ready"] = automation_granted and accessibility_granted
         if payload["menu_clock_ready"]:
             from core.skills.computer_use import ComputerUseSkill
@@ -936,6 +968,19 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
             payload["desktop_control_ready"],
             payload["screen_text_ready"],
         ]
+        direct_primary_ready = [
+            payload["direct_screen_capture_ready"],
+            payload["direct_desktop_control_ready"],
+            payload["direct_screen_text_ready"],
+        ]
+        payload["permission_assumptions"] = [
+            name for name, result in (
+                ("screen_recording", payload["screen_recording"]),
+                ("accessibility", payload["accessibility"]),
+                ("automation", payload["automation"]),
+            )
+            if str((result or {}).get("status") or "") == "asserted_env"
+        ]
         payload["blocking_permissions"] = [
             name for name, granted in (
                 ("screen_recording", screen_granted),
@@ -943,9 +988,29 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
                 ("automation", automation_granted),
             ) if not granted
         ]
+        payload["direct_blocking_permissions"] = [
+            name for name, granted in (
+                ("screen_recording", direct_screen_granted),
+                ("accessibility", direct_accessibility_granted),
+                ("automation", direct_automation_granted),
+            ) if not granted
+        ]
+        payload["permission_confidence"] = (
+            "direct"
+            if all(direct_primary_ready) else
+            "asserted_env"
+            if all(primary_ready) and payload["permission_assumptions"] else
+            "partial_direct"
+            if any(direct_primary_ready) else
+            "unverified"
+            if payload["permission_assumptions"] else
+            "blocked"
+        )
         payload["overall_status"] = (
             "ready"
-            if all(primary_ready) else
+            if all(direct_primary_ready) else
+            "assumed_ready"
+            if all(primary_ready) and payload["permission_assumptions"] else
             "partial"
             if any(primary_ready) or any(
                 bool((payload[key] or {}).get("granted"))

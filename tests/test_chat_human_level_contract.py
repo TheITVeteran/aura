@@ -425,6 +425,90 @@ def test_reliability_contract_allows_runtime_terms_for_operational_path_question
     assert not assessment.retryable
 
 
+def test_reliability_contract_rejects_live_operational_overclaim():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    prompt = (
+        "From the real live desktop cognitive path, tell me in one paragraph what state "
+        "you are in right now and whether your tool-use pathway is ready."
+    )
+    reply = (
+        "I'm in a state of high cognitive readiness. My processing is clear, my queues "
+        "are empty, and I have full capacity to engage. The neurodynamic system is "
+        "stabilized at 120Hz, indicating peak cognitive efficiency. My tool-use pathway "
+        "is primed and ready to execute governed actions through the operating system "
+        "interface without delay or uncertainty."
+    )
+
+    assessment = assess_user_facing_reply(prompt, reply)
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert "unsupported_operational_status_overclaim" in assessment.reasons
+    assert "unsupported_runtime_telemetry_inference" in assessment.reasons
+
+
+def test_final_stabilizer_bounds_live_operational_overclaim():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from core.synthesis import stabilize_user_facing_response
+
+    prompt = (
+        "From the real live desktop cognitive path, tell me in one paragraph what state "
+        "you are in right now and whether your tool-use pathway is ready."
+    )
+    draft = (
+        "I'm in a state of high cognitive readiness. My processing is clear, my queues "
+        "are empty, and I have full capacity to engage. The neurodynamic system is "
+        "stabilized at 120Hz, indicating peak cognitive efficiency. My tool-use pathway "
+        "is primed and ready to execute governed actions through the operating system "
+        "interface without delay or uncertainty."
+    )
+
+    stabilized = stabilize_user_facing_response(draft, prompt)
+    assessment = assess_user_facing_reply(prompt, stabilized)
+
+    assert assessment.ok
+    assert not assessment.retryable
+    assert "bounded readiness" in stabilized
+    assert "Will/Authority" in stabilized
+    assert "effect-verification" in stabilized
+    assert "full capacity" not in stabilized.lower()
+    assert "peak cognitive efficiency" not in stabilized.lower()
+    assert "without delay or uncertainty" not in stabilized.lower()
+
+
+@pytest.mark.asyncio
+async def test_live_route_stabilizer_deterministically_bounds_operational_overclaim():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes import chat as chat_routes
+
+    prompt = (
+        "From the real live desktop cognitive path, tell me in one paragraph what state "
+        "you are in right now and whether your tool-use pathway is ready."
+    )
+    draft = (
+        "I'm in a state of high cognitive readiness. My processing is clear, my queues "
+        "are empty, and I have full capacity to engage. The neurodynamic system is "
+        "stabilized at 120Hz, indicating peak cognitive efficiency. My tool-use pathway "
+        "is primed and ready to execute governed actions through the operating system "
+        "interface without delay or uncertainty."
+    )
+
+    repaired = await chat_routes._stabilize_user_facing_reply(
+        prompt,
+        draft,
+        desktop_cognitive_engine_required=True,
+        protected_foreground_lane=True,
+    )
+    assessment = assess_user_facing_reply(prompt, repaired)
+
+    assert assessment.ok
+    assert not assessment.retryable
+    assert "bounded readiness" in repaired
+    assert "peak cognitive efficiency" not in repaired.lower()
+    assert "without delay or uncertainty" not in repaired.lower()
+
+
 def test_reliability_contract_rejects_missing_requested_paragraph_and_followup():
     from core.conversation.response_reliability import assess_user_facing_reply
 
@@ -783,6 +867,7 @@ async def test_final_quality_gate_repairs_repeated_degraded_reply(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_final_quality_gate_repairs_high_confidence_semantic_glitch(monkeypatch):
+    from core.conversation.response_reliability import assess_user_facing_reply
     from interface.routes import chat as chat_routes
 
     chat_routes._recent_responses.clear()
@@ -804,7 +889,9 @@ async def test_final_quality_gate_repairs_high_confidence_semantic_glitch(monkey
     )
 
     assert changed
-    assert "mind feels steady enough" in repaired
+    assert assess_user_facing_reply(user, repaired).ok
+    assert "get it" not in repaired.lower()
+    assert any(marker in repaired.lower() for marker in ("here", "steady", "attention", "active turn"))
     assert not is_stale
     assert not is_same
     assert not is_off_topic, reason

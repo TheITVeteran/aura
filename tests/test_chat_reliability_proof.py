@@ -410,11 +410,29 @@ def test_requested_operational_runtime_terms_are_allowed_in_desktop_diagnostic()
             "Live desktop path validation. Reply in one sentence with the active model lane, "
             "whether CognitiveEngine is handling this turn, and whether governed tools are available."
         ),
-        "Cortex 32B is active, CognitiveEngine is handling this turn, and governed tools are available.",
+        (
+            "Cortex 32B is active, CognitiveEngine is handling this turn, and governed tools are available "
+            "when permission probes, Will/Authority approval, and receipts pass."
+        ),
     )
 
     assert assessment.ok
     assert "pseudo_internal_jargon" not in assessment.reasons
+
+
+def test_requested_operational_runtime_terms_reject_unbounded_tool_readiness():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Live desktop path validation. Reply in one sentence with the active model lane, "
+            "whether CognitiveEngine is handling this turn, and whether governed tools are available."
+        ),
+        "Cortex 32B is active, CognitiveEngine is handling this turn, and governed tools are available.",
+    )
+
+    assert assessment.retryable
+    assert "unsupported_tool_readiness_claim" in assessment.reasons
 
 
 def test_how_i_talk_to_you_prompt_routes_as_live_self_reflection():

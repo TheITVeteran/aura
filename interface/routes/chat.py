@@ -2379,7 +2379,10 @@ def _build_runtime_fact_status_fastpath_reply(
         f"{model_label} is the active foreground lane",
         f"CognitiveEngine available for normal desktop turns: {'yes' if cognitive_available else 'no'}",
         "this operational status probe used runtime metadata instead of occupying foreground inference",
-        f"governed tools available: {'yes' if tools_available else 'no'}",
+        (
+            f"governed tools available: {'yes' if tools_available else 'no'}, "
+            "subject to explicit request, Will/Authority approval, and receipts"
+        ),
     ]
     if continuity_probe:
         parts.insert(0, "I am still on the same live desktop thread and able to continue")
@@ -2537,7 +2540,10 @@ def _ground_runtime_fact_status_reply(
     parts = [
         f"{model_label} is the active foreground lane",
         f"CognitiveEngine handled this turn: {'yes' if cognitive_engine_handled else 'no'}",
-        f"governed tools available: {'yes' if tools_available else 'no'}",
+        (
+            f"governed tools available: {'yes' if tools_available else 'no'}, "
+            "subject to explicit request, Will/Authority approval, and receipts"
+        ),
     ]
     if "recurrent depth" in str(user_message or "").lower() or recurrent_active:
         parts.append(f"recurrent depth: {'active' if recurrent_active else 'inactive'}")
@@ -6480,6 +6486,29 @@ async def _stabilize_user_facing_reply(
                 len(completed_tail),
             )
             return _apply_aura_voice_shaping_compat(completed_tail, user_message)
+    if semantic_glitch_reason in {
+        "unsupported_operational_status_overclaim",
+        "unsupported_runtime_telemetry_inference",
+        "unsupported_tool_readiness_claim",
+    }:
+        try:
+            from core.conversation.response_reliability import grounded_operational_status_reply
+
+            operational_grounded = grounded_operational_status_reply(user_message, text)
+            if operational_grounded:
+                still_glitched, _still_reason = _looks_semantically_glitched(
+                    user_message,
+                    operational_grounded,
+                )
+                if not still_glitched:
+                    logger.info(
+                        "🛡️ Stabilizer replaced unsupported operational overclaim (%s) with bounded status.",
+                        semantic_glitch_reason,
+                    )
+                    return operational_grounded
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation('chat', exc)
+            logger.debug("Operational status grounding repair skipped: %s", exc)
     if semantic_glitch_reason in {"pseudo_internal_jargon", "status_page_self_reflection", "off_topic_self_reflection_reply"}:
         try:
             from core.conversation.response_reliability import is_live_self_reflection_turn

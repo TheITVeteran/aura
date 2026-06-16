@@ -158,6 +158,9 @@ _DOWNSTREAM_REPAIRABLE_USER_FACING_REASONS = frozenset(
         "detail_request_deflection",
         "truncated_tail",
         "vague_status_derailment",
+        "unsupported_operational_status_overclaim",
+        "unsupported_runtime_telemetry_inference",
+        "unsupported_tool_readiness_claim",
         "missing_requested_paragraph_count",
         "missing_requested_list_count",
         "missing_requested_followup_question",
@@ -265,6 +268,7 @@ class InferenceGate:
         self._last_background_memory_shed_at: float = 0.0
         self._last_spare_maintenance_at: float = 0.0
         self._last_cortex_warmup_deferral_log_at: float = 0.0
+        self._last_cortex_policy_deferred_log_at: float = 0.0
         self._last_user_generation_endpoint: str | None = None
         self._last_user_generation_at: float = 0.0
         self._last_user_generation_used_fallback: bool = False
@@ -515,6 +519,17 @@ class InferenceGate:
             return
         self._last_cortex_warmup_deferral_log_at = now
         logger.warning("⏸️ Cortex %s warmup deferred to protect RAM: %s", context, reason)
+
+    def _log_cold_cortex_policy_deferred(self) -> None:
+        now = time.monotonic()
+        last_log = getattr(self, "_last_cortex_policy_deferred_log_at", 0.0)
+        if (now - last_log) < 60.0:
+            return
+        self._last_cortex_policy_deferred_log_at = now
+        logger.info(
+            "🛡️ Cold-start Cortex recovery deferred by desktop prewarm policy; "
+            "foreground demand will warm the lane when needed."
+        )
 
     @staticmethod
     def _boot_should_eager_warmup() -> bool:
@@ -1667,10 +1682,7 @@ class InferenceGate:
                 logger.debug("Cold-start Cortex recovery skipped; deferred prewarm task is already scheduled.")
                 return
             if not self._boot_should_schedule_deferred_prewarm():
-                logger.info(
-                    "🛡️ Cold-start Cortex recovery deferred by desktop prewarm policy; "
-                    "foreground demand will warm the lane when needed."
-                )
+                self._log_cold_cortex_policy_deferred()
                 return
         warmup_deferral = self._cortex_warmup_deferral_reason("recovery")
         if warmup_deferral:

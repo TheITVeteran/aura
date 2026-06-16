@@ -46,6 +46,8 @@ logger = logging.getLogger("Aura.Main")
 
 _RUNTIME_LOCK_CLAIMED = False
 _AURA_MAIN_DEGRADATION_KEY = "aura_main"
+_MANIFEST_UNREADY_LOG_STATE: dict[str, tuple[float, tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]]] = {}
+_MANIFEST_UNREADY_LOG_INTERVAL_S = 60.0
 _AURA_MAIN_BOUNDARY_ERRORS = (
     AttributeError,
     ImportError,
@@ -1470,14 +1472,25 @@ def _refresh_orchestrator_health_before_manifest(orchestrator: Any, ready_label:
             if isinstance(item, dict)
         ]
         probes = required_probe_blockers(required_probe_status(contract))
-        logger.warning(
-            "⚠️ Runtime health still not clean before manifest (%s): "
-            "critical=%s important=%s probes=%s",
+        signature = (tuple(sorted(critical)), tuple(sorted(important)), tuple(sorted(probes)))
+        now = time.monotonic()
+        last_logged_at, last_signature = _MANIFEST_UNREADY_LOG_STATE.get(
             ready_label,
-            critical,
-            important,
-            probes,
+            (0.0, ((), (), ())),
         )
+        if (
+            signature != last_signature
+            or (now - last_logged_at) >= _MANIFEST_UNREADY_LOG_INTERVAL_S
+        ):
+            logger.warning(
+                "⚠️ Runtime health still not clean before manifest (%s): "
+                "critical=%s important=%s probes=%s",
+                ready_label,
+                critical,
+                important,
+                probes,
+            )
+            _MANIFEST_UNREADY_LOG_STATE[ready_label] = (now, signature)
         return {
             "ready": False,
             "status": str(contract.get("status", "unhealthy")) if isinstance(contract, dict) else "unhealthy",

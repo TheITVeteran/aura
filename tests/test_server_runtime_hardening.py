@@ -499,6 +499,7 @@ async def test_desktop_access_summary_reuses_cached_probe_result(monkeypatch):
             return {"granted": False, "status": "denied", "guidance": ""}
 
     monkeypatch.setattr(permission_guard_module, "get_permission_guard", lambda: _Guard())
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
     monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (None, None))
     monkeypatch.setattr(system_routes, "_DESKTOP_ACCESS_CACHE_TTL_S", 60.0)
 
@@ -517,6 +518,53 @@ async def test_desktop_access_summary_reuses_cached_probe_result(monkeypatch):
         ("SCREEN", False),
         ("ACCESSIBILITY", False),
         ("AUTOMATION", False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_desktop_access_summary_labels_env_assumptions_separately(monkeypatch):
+    import core.security.permission_guard as permission_guard_module
+    from interface.routes import system as system_routes
+
+    class _Guard:
+        async def check_permission(self, ptype, force=False):
+            return {"granted": True, "status": "asserted_env", "guidance": ""}
+
+        async def check_permission_direct(self, ptype):
+            return {
+                "granted": False,
+                "status": "denied",
+                "guidance": f"grant {ptype.name}",
+                "direct_probe": True,
+            }
+
+    monkeypatch.setattr(permission_guard_module, "get_permission_guard", lambda: _Guard())
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
+    monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (object(), None))
+
+    original_cache = dict(system_routes._desktop_access_cache)
+    system_routes._desktop_access_cache["captured_at"] = 0.0
+    system_routes._desktop_access_cache["payload"] = None
+    try:
+        payload = await system_routes._collect_desktop_access_summary()
+    finally:
+        system_routes._desktop_access_cache.update(original_cache)
+
+    assert payload["desktop_control_ready"] is True
+    assert payload["screen_text_ready"] is True
+    assert payload["direct_desktop_control_ready"] is False
+    assert payload["direct_screen_text_ready"] is False
+    assert payload["permission_confidence"] == "asserted_env"
+    assert payload["overall_status"] == "assumed_ready"
+    assert payload["permission_assumptions"] == [
+        "screen_recording",
+        "accessibility",
+        "automation",
+    ]
+    assert payload["direct_blocking_permissions"] == [
+        "screen_recording",
+        "accessibility",
+        "automation",
     ]
 
 

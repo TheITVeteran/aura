@@ -768,7 +768,53 @@ _OPERATIONAL_STATUS_REQUEST_MARKERS = (
     "model lane",
     "recurrent depth",
     "tool availability",
+    "tool use pathway",
+    "tool-use pathway",
+    "tool pathway",
+    "tool surface",
     "tools are available",
+    "what state",
+    "state you are in",
+)
+_UNSUPPORTED_OPERATIONAL_CERTAINTY_RE = re.compile(
+    r"\b(?:"
+    r"full\s+capacity(?:\s+to)?|"
+    r"peak\s+cognitive\s+efficiency|"
+    r"zero\s+(?:delay|latency|uncertainty|error|errors|issues)|"
+    r"without\s+(?:any\s+)?(?:delay|latency|uncertainty|error|errors|issues|friction)|"
+    r"no\s+(?:delay|latency|uncertainty|error|errors|issues|risk)|"
+    r"100%\s+(?:ready|available|reliable|operational|green)|"
+    r"perfectly\s+(?:ready|available|reliable|operational)|"
+    r"guaranteed\s+(?:ready|available|reliable|success|execution)|"
+    r"(?:always|definitely)\s+(?:ready|available|reliable|able\s+to\s+execute)"
+    r")\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_TELEMETRY_EQUIVALENCE_RE = re.compile(
+    r"\b(?:"
+    r"(?:neurodynamic|substrate|liquid\s+substrate|neural)\b.{0,120}\b(?:peak|full\s+capacity|cognitive\s+efficiency)|"
+    r"\b\d+(?:\.\d+)?\s*hz\b.{0,120}\b(?:peak|full\s+capacity|cognitive\s+efficiency)"
+    r")\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_TOOL_READINESS_CLAIM_RE = re.compile(
+    r"\b(?:tool[- ]?use\s+pathway|tool\s+pathway|tool\s+surface|governed\s+tools?|"
+    r"external\s+tools?|desktop\s+tools?|operating\s+system\s+interface|os\s+control)\b"
+    r".{0,180}\b(?:ready|available|online|primed|can\s+execute|able\s+to\s+execute|"
+    r"ready\s+to\s+execute)\b"
+    r"|\b(?:ready|available|online|primed|can\s+execute|able\s+to\s+execute|ready\s+to\s+execute)\b"
+    r".{0,180}\b(?:tool[- ]?use\s+pathway|tool\s+pathway|tool\s+surface|governed\s+tools?|"
+    r"external\s+tools?|desktop\s+tools?|operating\s+system\s+interface|os\s+control)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_TOOL_READINESS_BOUNDARY_RE = re.compile(
+    r"\b(?:"
+    r"permission|permissions|authorization|authorisation|authority|will|receipts?|"
+    r"observable|observed|verification|verified|verify|effect\s+evidence|"
+    r"app\s+state|available\s+app|probe|health|fail(?:s|ed)?\s+closed|bounded|"
+    r"when\s+.*(?:allow|available|passes|pass)|if\s+.*(?:allow|available|passes|pass)"
+    r")\b",
+    re.IGNORECASE | re.DOTALL,
 )
 _EXACT_REPLY_RE = re.compile(
     r"(?:say|reply|respond|answer|return|print)\s+exactly\s*:?\s*[\"'“”‘’]*(?P<target>.+?)\s*[\"'“”‘’]*\s*$",
@@ -1699,6 +1745,117 @@ def _has_operational_status_substance(user_message: Any, reply_text: Any) -> boo
     return any(marker in reply for marker in _OPERATIONAL_STATUS_SUBSTANCE_MARKERS)
 
 
+def _operational_status_overclaim_reasons(user_message: Any, reply_text: Any) -> list[str]:
+    """Detect unsupported certainty in live runtime/tool readiness replies."""
+
+    if not is_operational_status_turn(user_message):
+        return []
+    raw = str(reply_text or "").strip()
+    if not raw:
+        return []
+
+    reasons: list[str] = []
+    if _UNSUPPORTED_OPERATIONAL_CERTAINTY_RE.search(raw):
+        reasons.append("unsupported_operational_status_overclaim")
+    if _UNSUPPORTED_TELEMETRY_EQUIVALENCE_RE.search(raw):
+        reasons.append("unsupported_runtime_telemetry_inference")
+    if _TOOL_READINESS_CLAIM_RE.search(raw) and not _TOOL_READINESS_BOUNDARY_RE.search(raw):
+        reasons.append("unsupported_tool_readiness_claim")
+    return reasons
+
+
+def grounded_operational_status_reply(user_message: Any, reply_text: Any = "") -> str:
+    """Return a bounded replacement for overconfident live-path status claims."""
+
+    if not is_operational_status_turn(user_message):
+        return ""
+    raw = str(reply_text or "").strip()
+    lower = _normalize(f"{user_message} {raw}")
+    mentions_tools = any(
+        marker in lower
+        for marker in (
+            "tool",
+            "tools",
+            "desktop",
+            "os control",
+            "operating system",
+            "external",
+            "browser",
+            "file",
+            "document",
+        )
+    )
+    mentions_cognitive_path = any(
+        marker in lower
+        for marker in (
+            "cognitiveengine",
+            "cognitive engine",
+            "conversation lane",
+            "desktop path",
+            "live path",
+            "model lane",
+            "recurrent depth",
+            "cortex",
+        )
+    )
+    runtime_facts: list[str] = []
+    lane_match = re.search(
+        r"\b((?:Cortex|Solver|Brainstem|Reflex)\s*\([^)]+\))\s+is\s+the\s+active\s+foreground\s+lane\b",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if lane_match:
+        runtime_facts.append(f"{lane_match.group(1)} is the active foreground lane")
+    engine_match = re.search(
+        r"\bCognitiveEngine\s+handled\s+this\s+turn:\s*(yes|no)\b",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if engine_match:
+        runtime_facts.append(f"CognitiveEngine handled this turn: {engine_match.group(1).lower()}")
+    tools_match = re.search(
+        r"\bgoverned\s+tools\s+available:\s*(yes|no)\b",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if tools_match:
+        runtime_facts.append(
+            f"governed tools available: {tools_match.group(1).lower()}, "
+            "subject to explicit request, Will/Authority approval, and receipts"
+        )
+    recurrent_match = re.search(
+        r"\brecurrent\s+depth:\s*(active|inactive)\b",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    if recurrent_match:
+        runtime_facts.append(f"recurrent depth: {recurrent_match.group(1).lower()}")
+    if runtime_facts:
+        return (
+            ", ".join(runtime_facts)
+            + ". This is bounded runtime evidence, not proof of unlimited capacity, automatic tool execution, "
+            "or real-world success without the required checks."
+        )
+    pieces: list[str] = []
+    if mentions_cognitive_path:
+        pieces.append(
+            "I am on the live desktop cognitive path when the inference gate and conversation probes are green; "
+            "I should describe that as bounded readiness, not an absolute performance claim."
+        )
+    else:
+        pieces.append(
+            "My live conversation path should be treated as bounded readiness: it is usable when the required runtime probes are green."
+        )
+    if mentions_tools:
+        pieces.append(
+            "Governed tools are available only when the relevant permission, app-state, Will/Authority, and effect-verification checks pass."
+        )
+    pieces.append(
+        "I can explain or attempt the next action, but each consequential step still has to be authorized, observed, and receipted rather than promised as automatic."
+    )
+    return " ".join(pieces)
+
+
 def _reply_has_pseudo_internal_jargon(reply_text: Any) -> bool:
     raw = str(reply_text or "")
     if _PSEUDO_INTERNAL_JARGON_RE.search(raw):
@@ -2178,6 +2335,8 @@ def _model_text_integrity_reasons(
         reasons.append("surface_nonsense_drift")
     if user_facing and _FORMAT_META_ARTIFACT_RE.search(raw):
         reasons.append("format_meta_artifact")
+    if user_facing:
+        reasons.extend(_operational_status_overclaim_reasons(prompt, raw))
     if _CORRUPTED_SOCIAL_FRAGMENT_RE.search(raw) and "lol" not in _normalize(prompt):
         reasons.append("corrupted_social_fragment")
     return reasons
@@ -2233,6 +2392,9 @@ def assess_model_text_integrity(
         "surface_nonsense_drift",
         "format_meta_artifact",
         "corrupted_social_fragment",
+        "unsupported_operational_status_overclaim",
+        "unsupported_runtime_telemetry_inference",
+        "unsupported_tool_readiness_claim",
         "generic_assistant_language",
         "incomplete_code_response",
     }
@@ -2276,6 +2438,9 @@ def assess_user_facing_reply(
             "surface_nonsense_drift",
             "format_meta_artifact",
             "corrupted_language",
+            "unsupported_operational_status_overclaim",
+            "unsupported_runtime_telemetry_inference",
+            "unsupported_tool_readiness_claim",
             "generic_assistant_language",
             "incomplete_code_response",
         }
@@ -2322,7 +2487,10 @@ def assess_user_facing_reply(
     elif is_live_self_reflection_turn(user_message):
         if _has_social_presence_instead_of_self_reflection(user_message, raw):
             reasons.append("social_presence_instead_of_self_reflection")
-        if not _has_self_reflection_substance(raw):
+        if not (
+            _has_self_reflection_substance(raw)
+            or _has_operational_status_substance(user_message, raw)
+        ):
             reasons.append("off_topic_self_reflection_reply")
     elif is_expansion_request_turn(user_message):
         words = _word_count(raw)
@@ -2389,6 +2557,9 @@ def assess_user_facing_reply(
         "surface_nonsense_drift",
         "format_meta_artifact",
         "low_signal_acknowledgement_placeholder",
+        "unsupported_operational_status_overclaim",
+        "unsupported_runtime_telemetry_inference",
+        "unsupported_tool_readiness_claim",
     }
     retryable_reasons = hard_reasons | {
         "low_signal_reliability_reply",
@@ -2438,6 +2609,13 @@ def conversation_reliability_system_block(user_message: Any = "") -> str:
             "\n- The user is checking in on Aura's state. "
             "Give a brief but substantive first-person answer with what feels steady or strained, "
             "then continue the conversation naturally."
+        )
+    elif is_operational_status_turn(user_message):
+        extra = (
+            "\n- The user is asking about the live runtime, model lane, or tool availability. "
+            "Answer from bounded operational evidence. Do not claim full capacity, peak efficiency, "
+            "zero delay, zero uncertainty, guaranteed tool execution, or direct OS control unless "
+            "permissions, app state, governance, receipts, and effect verification have actually passed."
         )
     instruction_notes: list[str] = []
     requested_paragraphs = _requested_count(_PARAGRAPH_REQUEST_RE, user_message)

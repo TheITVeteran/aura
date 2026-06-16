@@ -73,6 +73,54 @@ def _schedule_mind_task(awaitable: Any, *, name: str, tracker: Any = None) -> as
         logger.debug("MindTick background task %s scheduling failed: %s", name, exc)
         return None
 
+
+def _dead_tiers_are_policy_deferred_cortex(gate: Any, dead_tiers: list[str]) -> bool:
+    """Return true for the deliberate desktop cold-Cortex standby state.
+
+    Desktop safe boot may defer the 32B lane until the first foreground user
+    turn to avoid launch-time memory spikes. That state must keep boot health
+    unready, but it is not an incident and must not start a repair storm.
+    """
+    normalized = {str(tier or "").strip().lower() for tier in dead_tiers if tier}
+    if normalized != {"cortex"}:
+        return False
+    try:
+        desktop_safe = bool(getattr(gate, "_desktop_safe_boot_enabled", lambda: False)())
+        if not desktop_safe:
+            return False
+        lane = (
+            gate.get_conversation_status()
+            if hasattr(gate, "get_conversation_status")
+            else {}
+        )
+        if bool((lane or {}).get("conversation_ready", False)):
+            return False
+        lane_state = str((lane or {}).get("state", "") or "").strip().lower()
+        warmup_attempted = bool((lane or {}).get("warmup_attempted", False))
+        cold_or_starting = lane_state in {
+            "",
+            "cold",
+            "spawning",
+            "handshaking",
+            "warming",
+            "recovering",
+        } or not warmup_attempted
+        if not cold_or_starting:
+            return False
+        should_schedule = getattr(gate, "_boot_should_schedule_deferred_prewarm", None)
+        if callable(should_schedule) and bool(should_schedule()):
+            return False
+        return True
+    except _MIND_BOUNDARY_ERRORS as exc:
+        _record_mind_degradation(
+            exc,
+            action="continued LLM health accounting after deferred-cortex policy probe failed",
+            severity="warning",
+        )
+        logger.debug("MindTick: deferred Cortex policy probe failed: %s", exc)
+        return False
+
+
 class CognitiveMode(Enum):
     CONVERSATIONAL = "conversational"
     REFLECTIVE = "reflective"
@@ -396,6 +444,12 @@ class MindTick:
                             tier_statuses = await gate.ensure_all_tiers_healthy()
                             dead_tiers = [t for t, s in tier_statuses.items() if s == "dead"]
                             if dead_tiers and self._tick_count % 30 == 0:
+                                if _dead_tiers_are_policy_deferred_cortex(gate, dead_tiers):
+                                    logger.info(
+                                        "LLM health: Cortex is cold by desktop prewarm policy; "
+                                        "foreground demand will warm the lane."
+                                    )
+                                    continue
                                 logger.warning("LLM health: dead tiers=%s", dead_tiers)
                                 # Report persistent dead tiers to incident manager
                                 try:

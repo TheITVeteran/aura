@@ -2441,6 +2441,23 @@ async def test_cold_start_recovery_respects_deferred_cortex_prewarm_opt_out(monk
     assert gate._cortex_recovery_attempts == 0
 
 
+def test_cold_cortex_policy_deferred_log_is_rate_limited(monkeypatch):
+    from core.brain import inference_gate as inference_gate_module
+
+    gate = InferenceGate()
+    ticks = iter([100.0, 120.0, 161.0])
+    monkeypatch.setattr(inference_gate_module.time, "monotonic", lambda: next(ticks))
+
+    gate._log_cold_cortex_policy_deferred()
+    assert gate._last_cortex_policy_deferred_log_at == 100.0
+
+    gate._log_cold_cortex_policy_deferred()
+    assert gate._last_cortex_policy_deferred_log_at == 100.0
+
+    gate._log_cold_cortex_policy_deferred()
+    assert gate._last_cortex_policy_deferred_log_at == 161.0
+
+
 @pytest.mark.asyncio
 async def test_cold_start_recovery_does_not_race_scheduled_deferred_prewarm(monkeypatch):
     monkeypatch.setenv("AURA_DEFERRED_CORTEX_PREWARM", "auto")

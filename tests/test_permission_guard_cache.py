@@ -66,6 +66,24 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(refreshed["granted"])
         self.assertEqual(screen_probe.calls, 1)
 
+    async def test_direct_probe_bypasses_env_permission_assertion(self):
+        guard = PermissionGuard()
+        guard._screen_preflight_probe = lambda: {
+            "granted": False,
+            "status": "denied",
+            "guidance": "direct denied",
+        }
+
+        with temporary_env({"AURA_ASSUME_SCREEN_PERMISSION": "1"}):
+            asserted = await guard.check_permission(PermissionType.SCREEN)
+            direct = await guard.check_permission_direct(PermissionType.SCREEN)
+
+        self.assertTrue(asserted["granted"])
+        self.assertEqual(asserted["status"], "asserted_env")
+        self.assertFalse(direct["granted"])
+        self.assertEqual(direct["status"], "denied")
+        self.assertTrue(direct["direct_probe"])
+
     def test_shared_permission_guard_accessor_reuses_singleton(self):
         original = permission_guard_module._SHARED_PERMISSION_GUARD
         permission_guard_module._SHARED_PERMISSION_GUARD = None

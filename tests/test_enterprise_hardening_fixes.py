@@ -1445,6 +1445,53 @@ def test_incident_manager_accepts_live_compatibility_report_shape():
     assert incident.metadata["title"] == "LLM tiers dead: cortex"
 
 
+def test_mind_tick_treats_desktop_cold_cortex_as_policy_deferred():
+    from core.mind_tick import _dead_tiers_are_policy_deferred_cortex
+
+    class Gate:
+        @staticmethod
+        def _desktop_safe_boot_enabled():
+            return True
+
+        @staticmethod
+        def _boot_should_schedule_deferred_prewarm():
+            return False
+
+        @staticmethod
+        def get_conversation_status():
+            return {
+                "conversation_ready": False,
+                "state": "cold",
+                "warmup_attempted": False,
+            }
+
+    assert _dead_tiers_are_policy_deferred_cortex(Gate(), ["cortex"]) is True
+
+
+def test_mind_tick_does_not_hide_non_policy_dead_tiers():
+    from core.mind_tick import _dead_tiers_are_policy_deferred_cortex
+
+    class Gate:
+        @staticmethod
+        def _desktop_safe_boot_enabled():
+            return True
+
+        @staticmethod
+        def _boot_should_schedule_deferred_prewarm():
+            return False
+
+        @staticmethod
+        def get_conversation_status():
+            return {
+                "conversation_ready": False,
+                "state": "failed",
+                "warmup_attempted": True,
+            }
+
+    assert _dead_tiers_are_policy_deferred_cortex(Gate(), ["cortex"]) is False
+    assert _dead_tiers_are_policy_deferred_cortex(Gate(), ["cortex", "fast"]) is False
+
+
 def test_proof_integrity_lint_blocks_runtime_answer_contamination(tmp_path: Path):
     from tools.proof_integrity_lint import run_lint
 

@@ -9,6 +9,7 @@ from typing import Any
 
 from core.conversation.response_reliability import (
     assess_user_facing_reply,
+    grounded_operational_status_reply,
     is_status_check_turn,
     live_chat_diagnostic_floor,
     normalize_user_facing_format,
@@ -385,6 +386,19 @@ def stabilize_user_facing_response(text: str, user_message: str = "") -> str:
     else:
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
     assessment = assess_user_facing_reply(user_message, cleaned)
+    if any(
+        assessment.has(reason)
+        for reason in (
+            "unsupported_operational_status_overclaim",
+            "unsupported_runtime_telemetry_inference",
+            "unsupported_tool_readiness_claim",
+        )
+    ):
+        grounded_operational = grounded_operational_status_reply(user_message, cleaned)
+        if grounded_operational:
+            grounded_assessment = assess_user_facing_reply(user_message, grounded_operational)
+            if not grounded_assessment.retryable:
+                return grounded_operational
     if assessment.retryable:
         preserve_substantive_soft_failure = bool(
             not assessment.hard_failure

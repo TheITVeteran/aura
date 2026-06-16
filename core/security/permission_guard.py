@@ -103,6 +103,49 @@ class PermissionGuard(AuraBaseModule):
         self._cache_ts[ptype] = now
         return result
 
+    async def check_permission_direct(self, ptype: PermissionType) -> dict[str, Any]:
+        """Probe the OS directly, bypassing env assertions and cached results.
+
+        ``check_permission`` intentionally honors ``AURA_ASSUME_*`` for local
+        launch modes where the controlling parent process owns the TCC grant.
+        Health and demo-readiness surfaces also need to know whether macOS
+        itself can prove the grant for the current process identity. This method
+        provides that stricter evidence without mutating the normal cache.
+        """
+        if ptype == PermissionType.SCREEN:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, self._screen_preflight_probe)
+            if result is None:
+                result = {
+                    "granted": False,
+                    "status": "deferred",
+                    "guidance": (
+                        "Direct Screen Recording preflight is unavailable. "
+                        + self.get_guidance(PermissionType.SCREEN)
+                    ),
+                }
+        elif ptype == PermissionType.MIC:
+            result = await self._check_mic_permission()
+        elif ptype == PermissionType.CAMERA:
+            result = await self._check_camera_permission()
+        elif ptype == PermissionType.ACCESSIBILITY:
+            result = await self._check_accessibility_permission()
+        elif ptype == PermissionType.AUTOMATION:
+            result = await self._check_automation_permission()
+        else:
+            result = {
+                "granted": False,
+                "status": "unknown",
+                "guidance": "No direct probe implemented for this permission type.",
+            }
+        direct = dict(result or {})
+        direct["direct_probe"] = True
+        if direct.get("status") == "asserted_env":
+            direct["granted"] = False
+            direct["status"] = "unverified_assertion"
+            direct["guidance"] = self.get_guidance(ptype)
+        return direct
+
     _ENV_OVERRIDE_KEYS: dict[PermissionType, str] = {
         PermissionType.SCREEN: "AURA_ASSUME_SCREEN_PERMISSION",
         PermissionType.ACCESSIBILITY: "AURA_ASSUME_ACCESSIBILITY_PERMISSION",

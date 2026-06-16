@@ -165,6 +165,14 @@ def _generation_gate_busy_result(owner: str) -> dict[str, Any]:
     return result
 
 
+def _active_foreground_generation_owner() -> str:
+    oldest_lease = _oldest_generation_gate_lease()
+    if oldest_lease is None:
+        return ""
+    _lease_id, _acquired_at, owner = oldest_lease
+    return owner if _generation_owner_is_user_foreground(owner) else ""
+
+
 def _mark_generation_gate_acquired(owner: str) -> int:
     global _GENERATION_GATE_NEXT_LEASE_ID, _GENERATION_GATE_LAST_ACQUIRED_AT, _GENERATION_GATE_LAST_OWNER
     with _GENERATION_GATE_STATE_LOCK:
@@ -994,6 +1002,16 @@ class HealthAwareLLMRouter:
             or kwargs.get("protected_foreground_lane", False)
             or kwargs.get("proof_primary_lane_required", False)
         )
+        if self._is_background_request(
+            origin=origin,
+            purpose=purpose,
+            explicit_background=explicit_background,
+            explicit_foreground=explicit_foreground,
+        ):
+            foreground_owner = _active_foreground_generation_owner()
+            if foreground_owner:
+                return _generation_gate_busy_result(foreground_owner)
+
         early_deferral = self._background_suppression_result(
             origin=origin,
             purpose=purpose,
@@ -1007,11 +1025,9 @@ class HealthAwareLLMRouter:
             _GENERATION_GATE.acquire, True, _GENERATION_GATE_WAIT_S
         )
         if not acquired:
-            oldest_lease = _oldest_generation_gate_lease()
-            if oldest_lease is not None:
-                _lease_id, _acquired_at, owner = oldest_lease
-                if _generation_owner_is_user_foreground(owner):
-                    return _generation_gate_busy_result(owner)
+            foreground_owner = _active_foreground_generation_owner()
+            if foreground_owner:
+                return _generation_gate_busy_result(foreground_owner)
             aborted = self.force_abort_active_generation(
                 reason=f"generation_gate_wait_timeout:{_GENERATION_GATE_WAIT_S:.1f}s"
             )
