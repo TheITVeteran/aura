@@ -4798,15 +4798,16 @@ function syncSplashState(payload) {
     // Hard timeout: force-dismiss splash if backend never reaches ready state.
     // The UI will still work in degraded mode with reconnection toasts.
     state._splashHardTimeout = setTimeout(() => {
-        dismissSplash('Runtime is taking longer than expected. Loading interface...');
+        dismissSplash('Runtime is taking longer than expected. Loading interface...', { autoRevealMs: 900 });
     }, 45000);
 })();
 
-function dismissSplash(finalStatus = 'Neural link established.') {
+function dismissSplash(finalStatus = 'Neural link established.', options = {}) {
     const splash = $('splash-screen');
     const splashBar = $('splash-bar');
     const startBtn = $('splash-start-btn');
     if (!splash || splash.classList.contains('hidden')) return;
+    const autoRevealMs = Math.max(0, Number(options.autoRevealMs ?? 1200));
 
     // Complete the progress bar
     if (splashBar) {
@@ -4821,23 +4822,28 @@ function dismissSplash(finalStatus = 'Neural link established.') {
     if (state._splashTimeout) clearTimeout(state._splashTimeout);
     if (state._splashHardTimeout) clearTimeout(state._splashHardTimeout);
 
-    // Show the START button and attach a click listener
+    const revealShell = () => {
+        if (!splash || splash.classList.contains('hidden')) return;
+        splash.classList.add('hidden');
+        setTimeout(() => {
+            if (splash && splash.parentNode) splash.remove();
+        }, 1000);
+    };
+
+    // Show the START button for immediate manual reveal, but auto-reveal as
+    // the fail-safe. The desktop shell must not remain hidden behind a splash
+    // when boot health stalls or the boot monitor never reaches "ready".
     if (startBtn) {
         startBtn.style.display = 'inline-block';
         startBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            splash.classList.add('hidden');
-            setTimeout(() => {
-                splash.remove();
-            }, 1000);
+            revealShell();
         });
+        setTimeout(revealShell, autoRevealMs);
     } else {
         // Fallback if button does not exist in DOM
-        setTimeout(() => {
-            splash.classList.add('hidden');
-            setTimeout(() => splash.remove(), 1000);
-        }, 400);
+        setTimeout(revealShell, Math.min(autoRevealMs, 400));
     }
 }
 
