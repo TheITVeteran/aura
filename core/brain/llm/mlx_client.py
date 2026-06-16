@@ -147,7 +147,7 @@ def _projected_model_footprint_gb(model_path: str) -> float:
     if any(token in lowered for token in ("72b", "solver")):
         return _env_float("AURA_MLX_72B_PROJECTED_FOOTPRINT_GB", 41.0)
     if any(token in lowered for token in ("32b", "cortex", "zenith")):
-        if "4bit" in lowered or "q4" in lowered:
+        if any(token in lowered for token in ("4bit", "q4", "fused-model", "20260510")):
             default = 20.0
         else:
             default = 35.0
