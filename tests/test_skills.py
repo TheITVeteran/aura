@@ -6,6 +6,7 @@ tests/test_skills.py
 Verify skill loading and registry.
 """
 
+import asyncio
 import builtins
 import importlib
 import sys
@@ -221,17 +222,41 @@ async def test_ui_control_skills_fail_cleanly_when_accessibility_is_denied(monke
 
 
 @pytest.mark.asyncio
-async def test_computer_use_open_url_uses_default_browser_without_accessibility(monkeypatch):
+async def test_computer_use_open_url_uses_default_browser_with_verified_permissions(monkeypatch):
     import core.skills.computer_use as computer_use
 
     calls = []
 
-    def fake_run(args, **kwargs):
-        calls.append((args, kwargs))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    async def allow_permissions(self, capability, *permission_names):
+        return None
+
+    class FakeSubprocessGateway:
+        def run(self, args, **kwargs):
+            calls.append((args, kwargs))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(computer_use.shutil, "which", lambda name: "/usr/bin/open" if name == "open" else None)
-    monkeypatch.setattr(computer_use.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        computer_use,
+        "get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+    monkeypatch.setattr(computer_use.ComputerUseSkill, "_require_permissions", allow_permissions)
+    monkeypatch.setattr(
+        computer_use.ComputerUseSkill,
+        "_frontmost_app_name",
+        lambda self: "Safari",
+    )
+    monkeypatch.setattr(
+        computer_use.ComputerUseSkill,
+        "_wait_for_frontmost_app",
+        lambda self, expected: asyncio.sleep(0, result=(True, "Safari")),
+    )
+    monkeypatch.setattr(
+        computer_use.ComputerUseSkill,
+        "_active_browser_location",
+        lambda self, browser: ("https://duckduckgo.com/?q=aliens", "aliens at DuckDuckGo"),
+    )
 
     result = await computer_use.ComputerUseSkill().execute(
         {"action": "open_url", "target": "aliens"},
@@ -242,6 +267,7 @@ async def test_computer_use_open_url_uses_default_browser_without_accessibility(
     assert result["action"] == "open_url"
     assert result["url"] == "https://duckduckgo.com/?q=aliens"
     assert calls[0][0] == ["open", "https://duckduckgo.com/?q=aliens"]
+    assert result["effect_verified"] is True
 
 
 @pytest.mark.asyncio

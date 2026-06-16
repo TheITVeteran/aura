@@ -314,6 +314,116 @@ async def test_computer_use_missing_permission_guard_fails_closed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_computer_use_direct_permission_denial_overrides_cached_assumption(monkeypatch):
+    """Visible desktop actions must trust the direct macOS probe, not an
+    environment/cached permission assertion."""
+    from core.container import ServiceContainer
+
+    direct_calls = []
+    cached_calls = []
+    subprocess_calls = []
+
+    class EnvAssumingGuard:
+        async def check_permission(self, ptype, force=False):
+            cached_calls.append((ptype.name, force))
+            return {"granted": True, "status": "active", "guidance": "env asserted"}
+
+        async def check_permission_direct(self, ptype):
+            direct_calls.append(ptype.name)
+            return {
+                "granted": False,
+                "status": "denied",
+                "guidance": "Enable Accessibility in System Settings.",
+                "detail": "direct macOS probe denied",
+            }
+
+        def get_guidance(self, *_args, **_kwargs):
+            return "Enable Accessibility in System Settings."
+
+    class SubprocessShouldNotRun:
+        def run(self, *args, **kwargs):
+            subprocess_calls.append((args, kwargs))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: EnvAssumingGuard()
+            if name == "permission_guard"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: SubprocessShouldNotRun(),
+    )
+
+    result = await ComputerUseSkill().execute({"action": "open_app", "target": "Notes"}, {})
+
+    assert result["ok"] is False
+    assert result["permission"] == "accessibility"
+    assert result["permission_source"] == "direct"
+    assert "Accessibility permission is required" in result["error"]
+    assert direct_calls == ["ACCESSIBILITY"]
+    assert cached_calls == []
+    assert subprocess_calls == []
+
+
+@pytest.mark.asyncio
+async def test_computer_use_direct_permission_timeout_blocks_visible_dispatch(monkeypatch):
+    from core.container import ServiceContainer
+
+    dispatched = []
+
+    class SlowDirectGuard:
+        async def check_permission(self, *_args, **_kwargs):
+            return {"granted": True, "status": "active", "guidance": "env asserted"}
+
+        async def check_permission_direct(self, *_args, **_kwargs):
+            await asyncio.sleep(0.1)
+            return {"granted": True, "status": "active", "guidance": ""}
+
+        def get_guidance(self, *_args, **_kwargs):
+            return "permission guidance"
+
+    class SubprocessShouldNotRun:
+        def run(self, *args, **kwargs):
+            dispatched.append((args, kwargs))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: SlowDirectGuard()
+            if name == "permission_guard"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: SubprocessShouldNotRun(),
+    )
+
+    skill = ComputerUseSkill()
+    skill.PERMISSION_CHECK_TIMEOUT_S = 0.01
+    result = await skill.execute(
+        {
+            "action": "open_url",
+            "target": json.dumps({"url": "https://example.com", "browser": "Google Chrome"}),
+        },
+        {},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "timeout"
+    assert result["permission_source"] == "direct"
+    assert result["permission"] == "accessibility"
+    assert dispatched == []
+
+
+@pytest.mark.asyncio
 async def test_computer_use_create_folder_uses_allowed_artifact_roots(monkeypatch, tmp_path):
     skill = ComputerUseSkill()
     monkeypatch.setattr(skill, "_allowed_desktop_roots", lambda: [tmp_path])
@@ -908,6 +1018,11 @@ async def test_open_url_rejects_frontmost_browser_with_wrong_active_tab(monkeypa
 @pytest.mark.asyncio
 async def test_open_app_rejects_zero_exit_without_frontmost_confirmation(monkeypatch):
     skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
 
     class FakeSubprocessGateway:
         def run(self, argv, **kwargs):

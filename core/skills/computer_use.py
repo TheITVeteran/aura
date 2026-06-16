@@ -220,9 +220,16 @@ class ComputerUseSkill(BaseSkill):
             permission_type = getattr(PermissionType, permission_name, None)
             if permission_type is None:
                 continue
+            permission_source = "cached"
             try:
+                direct_checker = getattr(guard, "check_permission_direct", None)
+                if callable(direct_checker):
+                    permission_source = "direct"
+                    permission_call = direct_checker(permission_type)
+                else:
+                    permission_call = guard.check_permission(permission_type, force=True)
                 check = await asyncio.wait_for(
-                    guard.check_permission(permission_type, force=True),
+                    permission_call,
                     timeout=self.PERMISSION_CHECK_TIMEOUT_S,
                 )
             except TimeoutError as exc:
@@ -243,6 +250,7 @@ class ComputerUseSkill(BaseSkill):
                     "status": "timeout",
                     "error": f"{permission_name.replace('_', ' ').title()} permission check timed out for {capability}.",
                     "permission": permission_name.lower(),
+                    "permission_source": permission_source,
                     "guidance": guidance,
                     "detail": f"Exceeded {self.PERMISSION_CHECK_TIMEOUT_S:.1f}s permission preflight budget.",
                 }
@@ -259,6 +267,7 @@ class ComputerUseSkill(BaseSkill):
                     "status": "unavailable",
                     "error": f"{permission_name.replace('_', ' ').title()} permission check failed for {capability}.",
                     "permission": permission_name.lower(),
+                    "permission_source": permission_source,
                     "guidance": "Retry after the runtime security services are healthy.",
                     "detail": str(exc),
                 }
@@ -270,6 +279,7 @@ class ComputerUseSkill(BaseSkill):
                 "status": check.get("status", "denied"),
                 "error": f"{human_name} permission is required for {capability}.",
                 "permission": permission_name.lower(),
+                "permission_source": permission_source,
                 "guidance": check.get("guidance", ""),
                 "detail": check.get("detail", ""),
             }
@@ -1850,6 +1860,13 @@ end tell
                 return payload
 
             elif action == "open_app":
+                blocked = await self._require_permissions(
+                    "opening an app and verifying it is frontmost",
+                    "ACCESSIBILITY",
+                    "AUTOMATION",
+                )
+                if blocked:
+                    return blocked
                 result = await asyncio.to_thread(
                     get_subprocess_gateway().run,
                     ["open", "-a", params.target],
@@ -1880,6 +1897,13 @@ end tell
                 }
 
             elif action == "open_url":
+                blocked = await self._require_permissions(
+                    "opening a browser URL and verifying the active tab",
+                    "ACCESSIBILITY",
+                    "AUTOMATION",
+                )
+                if blocked:
+                    return blocked
                 raw_target = str(params.target or "").strip()
                 browser = ""
                 url_text = raw_target
