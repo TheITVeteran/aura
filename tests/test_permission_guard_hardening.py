@@ -51,6 +51,23 @@ def test_automation_probe_reads_frontmost_process(monkeypatch) -> None:
     monkeypatch.setattr(permission_guard_module.sys, "platform", "darwin")
     monkeypatch.setattr(permission_guard_module, "_load_scripting_bridge_application", lambda: DemoApplication)
 
+    # Mock AppKit.NSWorkspace
+    class MockNSWorkspace:
+        @classmethod
+        def sharedWorkspace(cls):
+            return cls()
+        def frontmostApplication(self):
+            class MockApp:
+                def localizedName(self):
+                    return "Codex"
+            return MockApp()
+
+    import sys
+    from types import ModuleType
+    mock_appkit = ModuleType("AppKit")
+    mock_appkit.NSWorkspace = MockNSWorkspace
+    sys.modules["AppKit"] = mock_appkit
+
     result = PermissionGuard()._automation_preflight_probe()
 
     assert result["granted"] is True

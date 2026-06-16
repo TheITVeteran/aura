@@ -160,6 +160,13 @@ def _projected_model_footprint_gb(model_path: str) -> float:
 
 
 def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
+    if str(os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return None
     try:
         snapshot = get_memory_pressure_snapshot()
     except (OSError, AttributeError, RuntimeError, TypeError, ValueError) as exc:

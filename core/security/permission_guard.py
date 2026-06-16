@@ -214,12 +214,19 @@ class PermissionGuard(AuraBaseModule):
         try:
             application_bridge = _load_scripting_bridge_application()
             system_events = application_bridge.applicationWithBundleIdentifier_("com.apple.systemevents")
-            processes = system_events.processes()
+            # Verify permission by querying the process count (safe, single-call)
+            _ = len(system_events.processes())
+            
+            # Retrieve the frontmost application name safely via AppKit
             frontmost_name = ""
-            for process in processes:
-                if bool(process.frontmost()):
-                    frontmost_name = str(process.name())
-                    break
+            try:
+                from AppKit import NSWorkspace
+                frontmost = NSWorkspace.sharedWorkspace().frontmostApplication()
+                if frontmost:
+                    frontmost_name = str(frontmost.localizedName() or "")
+            except Exception:
+                pass
+
             payload: dict[str, Any] = {
                 "granted": True,
                 "status": "active",

@@ -534,6 +534,13 @@ class InferenceGate:
     @staticmethod
     def _boot_should_eager_warmup() -> bool:
         """Keep the 32B lane warm on high-memory desktops unless explicitly disabled."""
+        if str(os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return True
         if InferenceGate._desktop_safe_boot_enabled():
             logger.info("🛡️ Desktop safe boot active — skipping eager 32B warmup during launch.")
             return False

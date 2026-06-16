@@ -640,6 +640,71 @@ main {
     overflow: hidden;
 }
 
+.chat-panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 0;
+    background: linear-gradient(
+        125deg,
+        rgba(151, 71, 255, 0.06),
+        rgba(0, 229, 255, 0.04),
+        rgba(255, 0, 128, 0.04),
+        rgba(255, 170, 0, 0.03),
+        rgba(0, 255, 128, 0.03),
+        rgba(151, 71, 255, 0.06)
+    );
+    background-size: 300% 300%;
+    animation: neuralGradientShift 20s ease infinite;
+    pointer-events: none;
+    transition: all 1.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+    opacity: 0.8;
+}
+
+.chat-panel.thinking::before {
+    background: linear-gradient(
+        125deg,
+        rgba(151, 71, 255, 0.14),
+        rgba(0, 229, 255, 0.1),
+        rgba(255, 0, 128, 0.1),
+        rgba(255, 170, 0, 0.08),
+        rgba(0, 255, 128, 0.08),
+        rgba(151, 71, 255, 0.14)
+    );
+    background-size: 300% 300%;
+    animation: neuralGradientShift 7s ease infinite;
+    opacity: 1.0;
+    filter: saturate(140%) contrast(105%);
+}
+
+.chat-panel.generating::before {
+    background: linear-gradient(
+        125deg,
+        rgba(151, 71, 255, 0.2),
+        rgba(0, 229, 255, 0.14),
+        rgba(255, 0, 128, 0.14),
+        rgba(255, 170, 0, 0.1),
+        rgba(0, 255, 128, 0.1),
+        rgba(151, 71, 255, 0.2)
+    );
+    background-size: 300% 300%;
+    animation: neuralGradientShift 4s ease infinite;
+    opacity: 1.0;
+    filter: saturate(170%) contrast(110%);
+}
+
+@keyframes neuralGradientShift {
+    0% {
+        background-position: 0% 50%;
+    }
+    50% {
+        background-position: 100% 50%;
+    }
+    100% {
+        background-position: 0% 50%;
+    }
+}
+
 /* Mic Button Inner Orb (small indicator) */
 #mic-orb {
     width: 24px;
@@ -741,6 +806,8 @@ main {
     display: flex;
     flex-direction: column;
     gap: calc(16px * var(--chat-meta-scale));
+    position: relative;
+    z-index: 1;
 }
 
 .sys-box {

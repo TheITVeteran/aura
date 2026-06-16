@@ -1806,6 +1806,20 @@ function appendGeneratedImageMessage(imageUrl, metadata = {}) {
     if (!state.userScrolledUp) messages.scrollTop = messages.scrollHeight;
 }
 
+function setChatPanelState(panelState) {
+    const chatPanel = document.querySelector('.chat-panel');
+    if (!chatPanel) return;
+    if (panelState === 'thinking') {
+        chatPanel.classList.add('thinking');
+        chatPanel.classList.remove('generating');
+    } else if (panelState === 'generating') {
+        chatPanel.classList.add('generating');
+        chatPanel.classList.remove('thinking');
+    } else {
+        chatPanel.classList.remove('thinking', 'generating');
+    }
+}
+
 function handleWsEvent(data) {
     const type = data.kind || data.type;
     if (!['chat_stream_chunk', 'heartbeat', 'ping', 'pong'].includes(type)) {
@@ -1822,20 +1836,24 @@ function handleWsEvent(data) {
     } else if (type === 'chat_stream_start') {
         startStreamMsg('aura');
         $('typing-ind').classList.remove('show');
+        setChatPanelState('generating');
         triggerVoiceOrb('speaking');
     } else if (type === 'chat_stream_chunk') {
         appendStreamChunk(data.chunk);
     } else if (type === 'chat_stream_end') {
         finishStreamMsg();
         $('typing-ind').classList.remove('show');
+        setChatPanelState('idle');
     } else if (type === 'status') {
         if (data.narrative) $('narrative').textContent = data.narrative;
     } else if (type === 'activity') {
         updateTypingLabel(data.label || 'Aura is thinking…');
         if (data.show === false) {
             $('typing-ind').classList.remove('show');
+            setChatPanelState('idle');
         } else {
             $('typing-ind').classList.add('show');
+            setChatPanelState('thinking');
         }
     } else if (type === 'action_result') {
         const { tool, result, metadata } = data;
@@ -1848,11 +1866,13 @@ function handleWsEvent(data) {
         if (displayType === 'image' && imageUrl) {
             appendGeneratedImageMessage(imageUrl, { autonomic: isAutonomic });
             $('typing-ind').classList.remove('show');
+            setChatPanelState('idle');
         } else if (result) {
             // Non-image action results — show the message if available
             const msg = result.message || `Completed ${tool || 'action'}.`;
             appendMsg('aura', msg, false, { autonomic: isAutonomic });
             $('typing-ind').classList.remove('show');
+            setChatPanelState('idle');
         }
     } else if (type === 'aura_message' || type === 'chat_response') {
         const msg = data.message || data.content;
@@ -1869,6 +1889,7 @@ function handleWsEvent(data) {
 
             appendMsg('aura', msg, false, meta);
             $('typing-ind').classList.remove('show');
+            setChatPanelState('idle');
             triggerVoiceOrb('speaking');
         }
     } else if (type === 'skill_status') {
@@ -2648,6 +2669,7 @@ $('chat-form').onsubmit = async e => {
     msgInput.value = '';
     msgInput.style.height = 'auto';
     msgInput.focus();
+    setChatPanelState('thinking');
 
     if (state.isSubmitting) {
         enqueueChatMessage(msg);
