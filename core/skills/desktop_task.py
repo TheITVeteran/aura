@@ -24,6 +24,7 @@ from core.skills.os_affordances import detect_os_settings, get_affordance
 # fetch_topic_image receipt — derivation cannot know the source page
 # before the fetch runs ("show me where you found it").
 FETCHED_IMAGE_SOURCE_SENTINEL = "aura://fetched-image-source"
+MAX_DESKTOP_TASK_STEPS = 32
 
 
 class DesktopTaskStep(BaseModel):
@@ -61,8 +62,8 @@ class DesktopTaskParams(BaseModel):
     @field_validator("steps")
     @classmethod
     def _bounded_steps(cls, value: list[DesktopTaskStep]) -> list[DesktopTaskStep]:
-        if len(value) > 20:
-            raise ValueError("Desktop task cannot exceed 20 steps.")
+        if len(value) > MAX_DESKTOP_TASK_STEPS:
+            raise ValueError(f"Desktop task cannot exceed {MAX_DESKTOP_TASK_STEPS} steps.")
         return value
 
 
@@ -174,24 +175,68 @@ class DesktopTaskSkill(BaseSkill):
     @staticmethod
     def _web_document_url(objective: str) -> str:
         text = str(objective or "").lower()
+        google_surface = any(
+            marker in text
+            for marker in (
+                "google docs",
+                "google doc",
+                "docs.google",
+                "google document",
+                "google sheets",
+                "google spreadsheet",
+                "sheets.google",
+                "google slides",
+                "google presentation",
+                "slides.google",
+                "google drive",
+                "drive.google",
+            )
+        )
         surfaces = (
-            (("google docs", "google doc", "docs.google", "google document"), "https://docs.google.com/document/u/0/create"),
-            (("google sheets", "google spreadsheet", "sheets.google"), "https://docs.google.com/spreadsheets/u/0/create"),
-            (("google slides", "google presentation", "slides.google"), "https://docs.google.com/presentation/u/0/create"),
-            (("google drive", "drive.google"), "https://drive.google.com/drive/my-drive"),
+            (
+                (
+                    "google docs",
+                    "google doc",
+                    "docs.google",
+                    "google document",
+                    "docs",
+                    "doc",
+                    "document",
+                ),
+                "https://docs.google.com/document/u/0/create",
+                google_surface,
+            ),
+            (
+                ("google sheets", "google spreadsheet", "sheets.google", "sheets", "spreadsheet", "sheet"),
+                "https://docs.google.com/spreadsheets/u/0/create",
+                google_surface,
+            ),
+            (
+                ("google slides", "google presentation", "slides.google", "slides", "presentation", "slide"),
+                "https://docs.google.com/presentation/u/0/create",
+                google_surface,
+            ),
+            (
+                ("google drive", "drive.google", "drive", "cloud storage"),
+                "https://drive.google.com/drive/my-drive",
+                google_surface,
+            ),
             (("notion",), "https://www.notion.so/"),
         )
-        for markers, url in surfaces:
-            if any(marker in text for marker in markers):
+        for markers, url, *required in surfaces:
+            if required and not required[0]:
+                continue
+            if any(re.search(rf"\b{re.escape(marker)}s?\b", text) for marker in markers):
                 return url
         return ""
 
     @staticmethod
     def _extract_search_query(objective: str) -> str:
         text = str(objective or "").strip()
+        count_word = r"(?:\d+|one|two|three|four|five)"
         patterns = (
-            r"\bfind\s+(?:\d+\s+)?(?:different\s+)?(?:articles?|sources?|stories?|news)\s+(?:on|about|for)\s+([^.;\n,]+)",
-            r"\b(?:summari[sz]e|write\s+(?:a\s+)?summary\s+of)\s+(?:\d+\s+)?(?:different\s+)?(?:articles?|sources?|stories?|news)\s+(?:on|about|for)\s+([^.;\n,]+)",
+            rf"\bfind\s+(?:me\s+)?(?:{count_word}\s+)?(?:different\s+)?(?:articles?|sources?|stories?|news)\s+(?:on|about|for)\s+([^.;\n,]+)",
+            rf"\b(?:summari[sz]e|write\s+(?:a\s+)?summary\s+of)\s+(?:{count_word}\s+)?(?:different\s+)?(?:articles?|sources?|stories?|news)\s+(?:on|about|for)\s+([^.;\n,]+)",
             r"\b(?:articles?|sources?|stories?|news)\s+(?:on|about|for)\s+([^.;\n,]+)",
             r"\bsearch\s+(?:for\s+)?([^.;\n]+)",
             r"\blook\s+up\s+([^.;\n]+)",
@@ -203,6 +248,12 @@ class DesktopTaskSkill(BaseSkill):
             if match:
                 query = match.group(1).strip(" ,")
                 if query:
+                    if re.match(
+                        r"^(?:doc|docs|document|drive|sheet|sheets|slide|slides|chrome|safari|browser)\b",
+                        query,
+                        flags=re.IGNORECASE,
+                    ):
+                        continue
                     if query.lower() in {"it", "them", "this", "that", "her", "him", "me", "us", "something", "anything"}:
                         # Resolve the coreference pronoun to preceding topic in context
                         m = re.search(r"\b(?:read|find|search)\s+(?:about|on|for)\s+([^.;\n,]+)", text, flags=re.IGNORECASE)
@@ -321,17 +372,14 @@ class DesktopTaskSkill(BaseSkill):
 
     @staticmethod
     def _preferred_browser(objective: str) -> str:
-        """Which browser the user's phrasing points at, if any.
-
-        Google-account surfaces (Docs/Drive/Gmail) route to Chrome because
-        that is where the user's signed-in session lives; an explicitly
-        named browser always wins; otherwise the OS default is honored.
-        """
+        """Which browser the user's phrasing points at, if any."""
         lowered = str(objective or "").lower()
         if "safari" in lowered:
             return "Safari"
         if "chrome" in lowered or re.search(
-            r"\bgoogle\s+(?:docs?|drive|sheets?|slides|gmail|account)\b", lowered
+            r"\bgoogle\s+(?:docs?|drive|sheets?|slides|gmail|account|document|spreadsheet|presentation)\b|"
+            r"\b(?:docs|drive|sheets|slides)\.google\b",
+            lowered,
         ):
             return "Google Chrome"
         return ""
@@ -353,6 +401,12 @@ class DesktopTaskSkill(BaseSkill):
             match = re.search(pattern, text, flags=re.IGNORECASE)
             if match:
                 query = re.sub(r"\b(?:and|then|also)\b.*$", "", match.group(1), flags=re.IGNORECASE)
+                query = re.sub(
+                    r"\bfrom\s+(?:online|the\s+(?:internet|web))\b.*$",
+                    "",
+                    query,
+                    flags=re.IGNORECASE,
+                )
                 query = re.sub(
                     r"\b(?:online|on\s+the\s+(?:internet|web)|from\s+the\s+(?:internet|web))\b.*$",
                     "",
@@ -699,7 +753,13 @@ class DesktopTaskSkill(BaseSkill):
     @staticmethod
     def _allow_research_model_synthesis(context: dict[str, Any] | None) -> bool:
         context = context or {}
-        if not bool(context.get("allow_desktop_task_model_synthesis")):
+        # Substantive model synthesis is what makes a research document robust
+        # rather than a thin heuristic gloss, so it is ON by default. It can be
+        # explicitly disabled (allow_desktop_task_model_synthesis=False), and is
+        # always suppressed under memory pressure so it never destabilises the
+        # desktop runtime. (Previously this required an opt-in flag that was never
+        # set anywhere, which silently left every research document thin.)
+        if context.get("allow_desktop_task_model_synthesis") is False:
             return False
         try:
             from core.utils.memory_monitor import get_memory_pressure_snapshot
@@ -713,10 +773,10 @@ class DesktopTaskSkill(BaseSkill):
             record_degradation(
                 "desktop_task",
                 exc,
-                action="disabled optional desktop research model synthesis because memory safety probe failed",
+                action="allowed desktop research model synthesis despite memory safety probe failure",
                 severity="warning",
             )
-            return False
+            return True
 
     async def _collect_research_context(
         self,
@@ -748,8 +808,11 @@ class DesktopTaskSkill(BaseSkill):
                 "web_search",
                 {
                     "query": query,
-                    "num_results": 3,
-                    "deep": False,
+                    "num_results": 5,
+                    # Deep research fetches the actual article bodies (not just
+                    # snippets) so the composed document is substantive and
+                    # accurate rather than a thin few-sentence gloss.
+                    "deep": True,
                     "retain": False,
                     "force_refresh": True,
                 },
@@ -833,37 +896,50 @@ class DesktopTaskSkill(BaseSkill):
         if not callable(generate):
             return ""
         source_lines = "\n".join(
-            f"- {str(item.get('title') or item.get('url') or 'source')}: {str(item.get('snippet') or '')[:300]}"
-            for item in (sources or [])[:3]
+            f"- {str(item.get('title') or item.get('url') or 'source')} "
+            f"({str(item.get('url') or '')}):\n  {str(item.get('snippet') or '')[:900]}"
+            for item in (sources or [])[:5]
             if isinstance(item, dict)
         )
         wants_opinion = self._objective_requests_opinion(objective)
         opinion_clause = (
-            " Then, in a separate paragraph that begins \"In my view,\", give your own "
-            "first-person opinion about what these articles say and what you make of them."
+            " Close with a separate short paragraph beginning \"In my view,\" giving your "
+            "own first-person take on what these sources say and what you make of them."
             if wants_opinion
             else ""
         )
         prompt = (
-            f'You researched "{query}" and found these sources:\n'
-            f"{summary[:1500]}\n{source_lines}\n\n"
-            "Write a finished document of about 160-220 words that summarizes the "
-            f"sources for a reader.{opinion_clause}\n"
-            "Write in the first person as Aura. Do not mention tools, steps, dispatch, "
-            "commitments, or that you are executing a task — this is the document the "
-            "reader will see, not a status update."
+            f'You researched "{query}" and gathered these sources (titles, URLs, and '
+            f"article text):\n{summary[:3500]}\n{source_lines}\n\n"
+            "Write a thorough, well-organized composite document for a reader who wants "
+            "to actually understand the topic — not a thin gloss. Synthesize ACROSS the "
+            "sources rather than listing them one by one: open with the core facts, then "
+            "develop the important context, specifics (names, numbers, dates, quotes "
+            "where useful), and any points where the sources differ or add nuance. Use "
+            "several paragraphs and scale the depth to the material — be as complete and "
+            "substantive as the sources support. If the sources are genuinely thin or "
+            "conflicting, say so honestly and note what would need further research "
+            "rather than padding."
+            f"{opinion_clause}\n"
+            "Write in the first person as Aura, in clean prose. Do not mention tools, "
+            "steps, dispatch, commitments, or that you are executing a task — this is the "
+            "finished document the reader will see, not a status update."
         )
         try:
             text = await asyncio.wait_for(
                 generate(
                     prompt=prompt,
-                    timeout=80.0,
+                    timeout=110.0,
                     temperature=0.6,
-                    max_tokens=480,
+                    max_tokens=1100,
+                    # Pin synthesis to the on-device Cortex: it has no external
+                    # quota, so the document never degrades to a thin heuristic
+                    # fallback because a cloud tier returned 429 RESOURCE_EXHAUSTED.
+                    prefer_tier="local",
                     origin="desktop_task",
                     purpose="research_document_synthesis",
                 ),
-                timeout=90.0,
+                timeout=120.0,
             )
         except (AttributeError, RuntimeError, TypeError, ValueError, OSError, TimeoutError) as exc:
             record_degradation(
@@ -942,8 +1018,8 @@ class DesktopTaskSkill(BaseSkill):
             return ""
         if not isinstance(raw_steps, list):
             return "Structured desktop plan 'steps' must be a list."
-        if len(raw_steps) > 20:
-            return "Structured desktop plan exceeds the 20-step execution limit."
+        if len(raw_steps) > MAX_DESKTOP_TASK_STEPS:
+            return f"Structured desktop plan exceeds the {MAX_DESKTOP_TASK_STEPS}-step execution limit."
         if len(cls._steps_from_payload(raw_steps)) != len(raw_steps):
             return "Structured desktop plan contains an invalid or unsupported step."
         return ""
@@ -1430,7 +1506,8 @@ class DesktopTaskSkill(BaseSkill):
         if not text:
             return []
         parts = re.split(
-            r"(?:[.!?;]\s+|,\s+)(?:and\s+)?(?:then|after that|next)\s*,?\s*",
+            r"(?:[.!?;]\s+|,\s+)(?:and\s+)?(?:then|after that|next|finally|lastly|"
+            r"also|i\s+also\s+(?:want|need|would\s+like)\s+to|can\s+you|could\s+you|would\s+you)\s*,?\s*",
             text,
             flags=re.IGNORECASE,
         )
@@ -1445,6 +1522,16 @@ class DesktopTaskSkill(BaseSkill):
             web_surface = cls._web_document_url(value)
             if web_surface:
                 surfaces.add(web_surface)
+            lowered_value = value.lower()
+            if any(
+                token in lowered_value
+                for token in ("search", "look up", "article", "articles", "news", "source", "sources")
+            ) or re.search(r"\bread\s+(?:about|on)\b", lowered_value):
+                surfaces.add("web_research")
+            if cls._extract_image_query(value):
+                surfaces.add("image_search")
+            for domain, _ in detect_os_settings(value):
+                surfaces.add(f"os_setting:{domain}")
             return surfaces
 
         def _completes_product(value: str) -> bool:
@@ -1555,8 +1642,20 @@ class DesktopTaskSkill(BaseSkill):
         steps: list[DesktopTaskStep] = []
         created_folders: set[str] = set()
         used_artifact_paths: set[str] = set()
+        global_preferred_browser = self._preferred_browser(objective)
         for segment in segments:
             resolved_segment = self._inherit_shared_destination(segment, objective)
+            if (
+                global_preferred_browser
+                and not self._preferred_browser(resolved_segment)
+                and (
+                    self._extract_search_query(resolved_segment)
+                    or self._extract_image_query(resolved_segment)
+                    or self._web_document_url(resolved_segment)
+                    or any(token in resolved_segment.lower() for token in ("browser", "web", "article", "source", "news"))
+                )
+            ):
+                resolved_segment = f"{resolved_segment.rstrip(' .')}, using {global_preferred_browser}."
             segment_steps = self._derive_single_objective_steps(resolved_segment, context)
             segment_steps = self._deduplicate_segment_artifact_paths(
                 segment_steps,
@@ -1720,7 +1819,7 @@ class DesktopTaskSkill(BaseSkill):
                         expect="Wait completes within the bounded desktop-task budget.",
                     )
                 )
-            if "notes" in lowered:
+            if any(marker in lowered for marker in ("note", "textedit", "pages", "word", "document", "journal")):
                 if any(step.action == "open_app" for step in steps):
                     steps.append(
                         DesktopTaskStep(
@@ -1985,11 +2084,23 @@ class DesktopTaskSkill(BaseSkill):
             return False
         if cls._objective_requests_observation_only(objective):
             return False
-        # Multi-surface/multi-app objectives (e.g. Chrome/browser and Notes/documents)
-        # require coordinated focus and clipboard control that primitive steps cannot
-        # safely interleave. Always escalate to governed OS automation.
+        # Multi-surface/multi-app objectives require coordinated focus and
+        # clipboard control. Prefer verified primitives when they already cover
+        # the durable artifact and UI intent; escalate only when coverage is
+        # incomplete. This keeps demo-class tasks in the receipt-producing lane
+        # instead of hiding them behind a single generated AppleScript blob.
+        if cls._steps_cover_durable_artifact_intent(objective, steps) and cls._steps_cover_general_os_intent(objective, steps):
+            return False
         lowered_obj = objective.lower()
-        if ("chrome" in lowered_obj or "google doc" in lowered_obj or "browser" in lowered_obj) and ("notes" in lowered_obj or "textedit" in lowered_obj or "notes app" in lowered_obj):
+        has_browser_or_web = any(
+            re.search(rf"\b{re.escape(marker)}s?\b", lowered_obj)
+            for marker in ("chrome", "browser", "safari", "web", "url", "doc", "sheet", "slide", "drive", "notion")
+        )
+        has_local_editor_or_file = any(
+            re.search(rf"\b{re.escape(marker)}s?\b", lowered_obj)
+            for marker in ("note", "textedit", "pages", "word", "document", "folder", "desktop", "journal", "file")
+        )
+        if has_browser_or_web and has_local_editor_or_file:
             return True
         if cls._objective_needs_general_os_automation(objective) and not any(
             step.action == "run_applescript" for step in steps
@@ -2205,13 +2316,13 @@ class DesktopTaskSkill(BaseSkill):
             steps,
             self._document_body(objective, task_context),
         )
-        if len(steps) > 20:
+        if len(steps) > MAX_DESKTOP_TASK_STEPS:
             return {
                 "ok": False,
                 "status": "desktop_task_plan_too_large",
                 "error": (
                     f"Desktop task requires {len(steps)} steps, exceeding the "
-                    "20-step bounded execution limit."
+                    f"{MAX_DESKTOP_TASK_STEPS}-step bounded execution limit."
                 ),
                 "objective": objective,
                 "steps_requested": len(steps),
