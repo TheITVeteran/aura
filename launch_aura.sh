@@ -127,7 +127,7 @@ export AURA_FORCE_CAMERA
 export AURA_AUTO_LISTEN
 export AURA_ENABLE_UVLOOP
 export AURA_ATTACH_LAUNCHER
-: "${AURA_LOCAL_BACKEND:=llama_cpp}"   # Managed on-device runtime is the production local backend
+: "${AURA_LOCAL_BACKEND:=mlx}"   # Aura's own in-process fine-tuned mind (MLX) so the substrate can steer generation; AURA_LOCAL_BACKEND=llama_cpp falls back to the base-model server
 if [ "${AURA_LAUNCHED_FROM_APP:-0}" = "1" ]; then
     : "${AURA_SAFE_BOOT_DESKTOP:=1}"
     : "${AURA_EXTERNAL_GUI_OWNER:=1}"

@@ -640,7 +640,11 @@ def _maybe_relaunch_with_preferred_python():
     env = os.environ.copy()
     env["AURA_SKIP_PREFERRED_PYTHON_RELAUNCH"] = "1"
     env["AURA_PREFERRED_PYTHON"] = str(preferred)
-    env["AURA_LOCAL_BACKEND"] = "llama_cpp"
+    # Preserve a deliberate backend choice (e.g. AURA_LOCAL_BACKEND=mlx to run
+    # Aura's own in-process fine-tuned mind, which the substrate can steer) across
+    # the interpreter relaunch. Previously this unconditionally forced llama_cpp,
+    # which silently overrode any attempt to use the MLX/native model lane.
+    env.setdefault("AURA_LOCAL_BACKEND", "llama_cpp")
     os.execve(str(preferred), [str(preferred), *sys.argv], env)
 
 # ---------------------------------------------------------------------------
@@ -3010,6 +3014,17 @@ def main():
     # by live RAM headroom instead of being scheduled optimistically during boot.
     if (args.desktop or args.headless) and "AURA_SAFE_BOOT_DESKTOP" not in os.environ:
         os.environ["AURA_SAFE_BOOT_DESKTOP"] = "1"
+        # Run Aura's OWN in-process fine-tuned mind (MLX) as the desktop Cortex,
+        # not the base Qwen GGUF behind an external llama-server. This matters for
+        # identity, not just weights: an external server is a black box (text in,
+        # text out), so the substrate — affect, neurochemistry, the latent_bridge
+        # activation steering, unified_inference logit modulation — physically
+        # cannot reach inside it. The in-process MLX lane loads the active fused
+        # model (training/fused-model/active.json) and lets the substrate steer
+        # generation. MLX Metal is available for the LLM (the safe-boot Metal
+        # disable only affects the NeuralMesh). Set AURA_LOCAL_BACKEND=llama_cpp
+        # to fall back to the base-model server if the native lane misbehaves.
+        os.environ.setdefault("AURA_LOCAL_BACKEND", "mlx")
         # Under safe boot, both eager and deferred 32B prewarm are otherwise
         # disabled, leaving the Cortex lane cold and the first conversational
         # message waiting minutes for a cold 32B load (the chat appears hung).
