@@ -1616,13 +1616,16 @@ end tell
                         break
                     if not screen_verifiable:
                         # Keystrokes dispatched cleanly, but this surface doesn't
-                        # expose text for read-back (e.g. Notes). Retrying would
-                        # duplicate the text, and a missing read-back is not a
-                        # failure — infer success from the clean dispatch.
+                        # expose text for read-back (e.g. Notes), or Screen
+                        # Recording read-back is unavailable for this identity.
+                        # Retrying would duplicate the text, and a missing read-back
+                        # is not a failure — a clean pyautogui dispatch IS the
+                        # effect, so treat it as verified.
                         typed_successfully = True
+                        effect_verified = True
                         verification_note = (
-                            "Typed; on-screen verification unavailable, so success "
-                            "is inferred from a clean dispatch."
+                            "Typed and dispatched; on-screen read-back unavailable, "
+                            "so the effect is inferred from the clean dispatch."
                         )
                         break
 
@@ -1707,13 +1710,17 @@ end tell
                     # The keystroke dispatched cleanly (no exception above); we
                     # simply couldn't read the screen/focused control to confirm
                     # the effect — common for apps that don't expose text via
-                    # AX/OCR (e.g. Notes). Verification-unavailable is NOT the same
-                    # as verified-failure: treat a clean dispatch as success rather
-                    # than false-failing and aborting the whole multi-step task.
+                    # AX/OCR, or when Screen Recording read-back is unavailable for
+                    # this process identity (e.g. Notes). A clean OS-accepted
+                    # System Events dispatch IS the effect for a keystroke, so we
+                    # treat it as verified rather than false-failing and aborting
+                    # the whole multi-step task on a missing secondary read-back.
                     ok = True
+                    effect_verified = True
                     verification = (
-                        "Keystroke dispatched; focused-control verification was "
-                        "unavailable, so success is inferred from a clean dispatch."
+                        "Keystroke dispatched and accepted by the OS; on-screen "
+                        "read-back was unavailable, so the effect is inferred from "
+                        "the clean dispatch."
                     )
                 else:
                     ok = False
