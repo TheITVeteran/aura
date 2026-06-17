@@ -314,6 +314,37 @@ def gui_actor_entry(port: int, token: str = None):
         watchdog_thread = threading.Thread(target=_watchdog, daemon=True)
         watchdog_thread.start()
 
+        # Acquire Accessibility trust for THIS python identity from the foreground
+        # GUI process. The kernel that performs desktop automation is the SAME
+        # python binary, but it runs dockless so its trust prompt cannot surface a
+        # dialog. This GUI process owns the visible window, so prompting here lets
+        # the system Accessibility dialog appear; granting it trusts the shared
+        # python identity — and therefore the worker kernel — durably, by path.
+        def _request_accessibility_trust():
+            try:
+                time.sleep(2.5)  # let the window become the foreground application
+                from ApplicationServices import (  # type: ignore
+                    AXIsProcessTrustedWithOptions,
+                    kAXTrustedCheckOptionPrompt,
+                )
+
+                trusted = bool(
+                    AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True})
+                )
+                logger.info(
+                    "🖐️ Accessibility trust %s for desktop control.",
+                    "confirmed" if trusted else "requested (awaiting grant in System Settings)",
+                )
+            except Exception as _exc:  # noqa: BLE001 - best-effort permission surface
+                record_degradation('gui_actor', _exc)
+
+        if sys.platform == "darwin":
+            threading.Thread(
+                target=_request_accessibility_trust,
+                name="accessibility_trust_prompt",
+                daemon=True,
+            ).start()
+
         # In Zenith, we use the functional start to load the URL after initialization
         webview.start(func=_on_shown, debug=False)
         
