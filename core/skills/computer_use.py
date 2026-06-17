@@ -1572,6 +1572,8 @@ end tell
 
                 max_attempts = 2
                 typed_successfully = False
+                effect_verified = False
+                verification_note = "Typed but could not verify visibility."
                 for attempt in range(1, max_attempts + 1):
                     if attempt > 1:
                         await asyncio.sleep(0.3 * attempt)
@@ -1601,20 +1603,35 @@ end tell
                             "Post-state screen read failed on attempt %d: %s", attempt, exc
                         )
 
+                    screen_verifiable = not (
+                        self._screen_text_unavailable(pre_state)
+                        and self._screen_text_unavailable(post_state)
+                    )
                     if (params.target and params.target[:10] in post_state) or (
-                        post_state != pre_state
+                        screen_verifiable and post_state != pre_state
                     ):
                         typed_successfully = True
+                        effect_verified = True
+                        verification_note = "Text confirmed on screen or state shifted."
+                        break
+                    if not screen_verifiable:
+                        # Keystrokes dispatched cleanly, but this surface doesn't
+                        # expose text for read-back (e.g. Notes). Retrying would
+                        # duplicate the text, and a missing read-back is not a
+                        # failure — infer success from the clean dispatch.
+                        typed_successfully = True
+                        verification_note = (
+                            "Typed; on-screen verification unavailable, so success "
+                            "is inferred from a clean dispatch."
+                        )
                         break
 
                 return {
                     "ok": typed_successfully,
                     "typed": params.target[:50],
                     "attempts": attempt,
-                    "effect_verified": typed_successfully,
-                    "verification": "Text confirmed on screen or state shifted."
-                    if typed_successfully
-                    else "Typed but could not verify visibility.",
+                    "effect_verified": effect_verified,
+                    "verification": verification_note,
                 }
 
             elif action == "hotkey":
@@ -1687,10 +1704,16 @@ end tell
                         else "State shifted."
                     )
                 elif not screen_verifiable:
-                    ok = False
+                    # The keystroke dispatched cleanly (no exception above); we
+                    # simply couldn't read the screen/focused control to confirm
+                    # the effect — common for apps that don't expose text via
+                    # AX/OCR (e.g. Notes). Verification-unavailable is NOT the same
+                    # as verified-failure: treat a clean dispatch as success rather
+                    # than false-failing and aborting the whole multi-step task.
+                    ok = True
                     verification = (
-                        "Keystroke dispatched, but focused-control verification "
-                        "was unavailable."
+                        "Keystroke dispatched; focused-control verification was "
+                        "unavailable, so success is inferred from a clean dispatch."
                     )
                 else:
                     ok = False
