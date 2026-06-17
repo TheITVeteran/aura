@@ -137,7 +137,14 @@ if [ "${AURA_LAUNCHED_FROM_APP:-0}" = "1" ]; then
 fi
 if [ "${AURA_SAFE_BOOT_DESKTOP:-0}" = "1" ]; then
     : "${AURA_EAGER_CORTEX_WARMUP:=auto}"
-    : "${AURA_DEFERRED_CORTEX_PREWARM:=auto}"
+    # Prewarm the 32B Cortex in the BACKGROUND shortly after boot so the first
+    # conversational message is responsive instead of waiting minutes for a cold
+    # 32B load. This stays RAM-gated by the admission snapshot (it will not warm
+    # under genuine memory pressure), so it improves latency without risking the
+    # memory-pressure failures safe-boot guards against. Previously this was
+    # "auto", which under safe boot disabled prewarm entirely and left the chat
+    # lane cold until a foreground demand that did not reliably trigger a load.
+    : "${AURA_DEFERRED_CORTEX_PREWARM:=1}"
     : "${AURA_ENABLE_PERMANENT_SWARM:=0}"
     : "${AURA_SAFE_BOOT_METAL_CACHE_RATIO:=0.16}"
     : "${AURA_SAFE_BOOT_METAL_CACHE_CAP_GB:=10}"
@@ -184,6 +191,17 @@ else
 fi
 AURA_PID=$!
 
+cleanup_attached_launcher() {
+    local status=${1:-0}
+    trap - INT TERM EXIT
+    if [ -n "${AURA_PID:-}" ] && kill -0 "$AURA_PID" 2>/dev/null; then
+        kill -TERM "$AURA_PID" 2>/dev/null || true
+        wait "$AURA_PID" 2>/dev/null || true
+    fi
+    "$PYTHON_CMD" aura_cleanup.py >/dev/null 2>&1 || true
+    exit "$status"
+}
+
 echo ""
 echo "✨ Aura Luna launching (PID: $AURA_PID)"
 echo ""
@@ -192,7 +210,12 @@ echo "   alias aura=\"$AURA_ROOT/launch_aura.sh\""
 echo ""
 if [ "$AURA_ATTACH_LAUNCHER" = "1" ]; then
     echo "📜 Attached launcher mode active. Press Ctrl+C to stop following the process."
-    wait $AURA_PID
+    trap 'cleanup_attached_launcher 130' INT
+    trap 'cleanup_attached_launcher 143' TERM
+    trap 'cleanup_attached_launcher $?' EXIT
+    wait "$AURA_PID"
+    LAUNCH_STATUS=$?
+    cleanup_attached_launcher "$LAUNCH_STATUS"
 else
     disown "$AURA_PID" 2>/dev/null || true
     echo "📜 Logs: $ACTIVE_LAUNCH_LOG"

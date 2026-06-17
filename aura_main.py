@@ -37,6 +37,7 @@ from core.utils.singleton import (
     instance_lock_metadata_path,
     parse_instance_lock_pid,
     read_instance_lock_metadata,
+    read_instance_lock_pid,
     release_instance_lock,
 )
 from core.utils.task_tracker import get_task_tracker
@@ -1991,7 +1992,13 @@ async def _stop_orchestrator_once(
 
 
 async def _wait_for_server_http(url: str, timeout_s: float = 60.0) -> bool:
-    """Wait for internal API server to return 200 OK and report ready status."""
+    """Wait for the internal API server to accept GUI traffic.
+
+    Boot health is allowed to return HTTP 503 while the 32B conversation lane is
+    still cold or warming. That is not a transport failure; it is an honest
+    readiness payload. The launcher may open once the runtime is launchable,
+    while strict heartbeat/chat readiness remains fail-closed.
+    """
     from core.runtime.network_gateway import get_network_gateway
 
     start = time.time()
@@ -2010,17 +2017,34 @@ async def _wait_for_server_http(url: str, timeout_s: float = 60.0) -> bool:
                 read_only=True,
                 suppress_degradation=True,
             )
-            if response.get("status_code") == 200:
-                data = json.loads((response.get("content") or b"{}").decode("utf-8"))
-                status = str(data.get("status", "")).lower()
-                ready = bool(data.get("ready"))
-                logger.info("📡 API Health status received: '%s'", status)
-                if ready or status in ("online", "operational", "healthy", "ok", "ready"):
-                    logger.info("✅ API Server is ONLINE and HEALTHY after %ds.", int(time.time() - start))
-                    return True
-                logger.warning("📡 API Server status is '%s', not yet 'online'. Full data: %s", status, data)
-            elif count % 10 == 0:
-                logger.info("📡 API Server not yet listening (Attempt %d)...", count)
+            content = response.get("content") or b"{}"
+            try:
+                data = json.loads(content.decode("utf-8"))
+            except (AttributeError, json.JSONDecodeError, UnicodeDecodeError):
+                data = {}
+            status_code = int(response.get("status_code") or 0)
+            status = str(data.get("status", "")).lower()
+            ready = bool(data.get("ready"))
+            launcher_ready = bool(data.get("launcher_ready"))
+            boot_phase = str(data.get("boot_phase", "") or "").lower()
+            if status_code == 200 and (ready or status in ("online", "operational", "healthy", "ok", "ready")):
+                logger.info("✅ API Server is ONLINE and HEALTHY after %ds.", int(time.time() - start))
+                return True
+            if launcher_ready or boot_phase in {"conversation_warming", "conversation_recovering", "conversation_failed"}:
+                logger.info(
+                    "✅ API Server is reachable after %ds; GUI launchable while boot_phase=%s ready=%s.",
+                    int(time.time() - start),
+                    boot_phase or status or "unknown",
+                    ready,
+                )
+                return True
+            if count % 10 == 0:
+                logger.info(
+                    "📡 API Server not launchable yet (Attempt %d, status_code=%s, boot_phase=%s).",
+                    count,
+                    status_code or "unknown",
+                    boot_phase or status or "unknown",
+                )
         except _AURA_MAIN_BOUNDARY_ERRORS as e:
             record_degradation('aura_main', e)
             logger.error("📡 API Health check probe FAILURE: %s", e)
@@ -2261,7 +2285,7 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
             except ValueError:
                 desktop_health_wait_s = 90.0
             if await _wait_for_server_http(health_url, desktop_health_wait_s):
-                logger.info("✅ API Server is HEALTHY. Proceeding to GUI launch.")
+                logger.info("✅ API Server launch gate passed. Proceeding to GUI launch.")
             else:
                 logger.warning(
                     "⚠️ API Server did not report full readiness after %.0fs; launching GUI with readiness heartbeat gating.",
@@ -2548,6 +2572,23 @@ def _purge_reaped_orchestrator_lock(stale_pids: list[int], remaining_pids: set[i
     return True
 
 
+def _verified_live_orchestrator_lock_pid() -> int | None:
+    """Return the live orchestrator PID when the singleton lock is trustworthy."""
+    lock_pid = read_instance_lock_pid("orchestrator")
+    if lock_pid is None or not _pid_still_runnable(lock_pid):
+        return None
+    metadata = read_instance_lock_metadata("orchestrator")
+    verified, reason = _lock_pid_matches_aura_runtime(lock_pid, metadata)
+    if verified:
+        return lock_pid
+    logger.debug(
+        "Existing orchestrator lock PID %s is not trusted during pre-boot reap check: %s",
+        lock_pid,
+        reason,
+    )
+    return None
+
+
 def _is_reapable_aura_process_command(command: str) -> bool:
     cmd = str(command or "")
     normalized = " ".join(cmd.split())
@@ -2713,7 +2754,15 @@ def bootstrap_lock(skip_lock: bool = False):
     if _RUNTIME_LOCK_CLAIMED and not skip_lock:
         return
     # Clean up orphaned stacks from prior hard-crashes before grabbing the lock.
-    _reap_orphaned_aura_processes()
+    live_pid = None if skip_lock else _verified_live_orchestrator_lock_pid()
+    if live_pid is not None:
+        logger.info(
+            "Verified live Aura runtime already owns the orchestrator lock (PID: %s); "
+            "skipping orphan reaper before singleton handoff.",
+            live_pid,
+        )
+    else:
+        _reap_orphaned_aura_processes()
     acquire_instance_lock(lock_name="orchestrator", skip_lock=skip_lock)
     if not skip_lock:
         _RUNTIME_LOCK_CLAIMED = True
@@ -2961,7 +3010,17 @@ def main():
     # by live RAM headroom instead of being scheduled optimistically during boot.
     if (args.desktop or args.headless) and "AURA_SAFE_BOOT_DESKTOP" not in os.environ:
         os.environ["AURA_SAFE_BOOT_DESKTOP"] = "1"
-    
+        # Under safe boot, both eager and deferred 32B prewarm are otherwise
+        # disabled, leaving the Cortex lane cold and the first conversational
+        # message waiting minutes for a cold 32B load (the chat appears hung).
+        # Default deferred prewarm ON so the 32B warms in the BACKGROUND shortly
+        # after boot — still RAM-gated by the admission snapshot, so it never
+        # warms under genuine memory pressure. This makes the first real chat
+        # responsive without the boot-time RAM burst of eager warmup. Applies to
+        # both the .app (which runs aura_main.py directly) and script launches.
+        if "AURA_DEFERRED_CORTEX_PREWARM" not in os.environ:
+            os.environ["AURA_DEFERRED_CORTEX_PREWARM"] = "1"
+
     # Standardize: Reboot behavior
     if args.stop:
         stop_aura()
