@@ -373,8 +373,14 @@ class ComputerUseSkill(BaseSkill):
 
     @staticmethod
     def _frontmost_app_matches(actual: str, expected: str) -> bool:
-        actual_name = re.sub(r"[^a-z0-9]+", "", str(actual or "").lower())
-        expected_name = re.sub(r"[^a-z0-9]+", "", str(expected or "").lower())
+        def _canonical(value: str) -> str:
+            raw = str(value or "").strip().lower()
+            raw = re.sub(r"\.app$", "", raw)
+            raw = re.sub(r"\s+app$", "", raw)
+            return re.sub(r"[^a-z0-9]+", "", raw)
+
+        actual_name = _canonical(actual)
+        expected_name = _canonical(expected)
         aliases = {
             "chrome": "googlechrome",
             "googlechrome": "googlechrome",
@@ -393,6 +399,15 @@ class ComputerUseSkill(BaseSkill):
                 return True, last_seen
             await asyncio.sleep(0.35)
         return False, last_seen
+
+    @staticmethod
+    def _applescript_string(value: str) -> str:
+        return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    async def _activate_app(self, app_name: str) -> str:
+        """Bring an already launched macOS application to the foreground."""
+        script = f"tell application {self._applescript_string(app_name)} to activate"
+        return await asyncio.to_thread(self._run_applescript, script, timeout=5)
 
     def _focused_element_snapshot(self) -> str:
         """Read only the focused control, avoiding a full accessibility walk."""
@@ -1860,9 +1875,13 @@ end tell
                 return payload
 
             elif action == "open_app":
+                # Opening an app uses LaunchServices (`open -a`) plus an
+                # AppleScript `activate` and a System Events frontmost query —
+                # all Automation, none of which requires Accessibility. Gating it
+                # behind Accessibility needlessly failed the whole task when only
+                # GUI scripting (typing/clicking) actually needs that grant.
                 blocked = await self._require_permissions(
                     "opening an app and verifying it is frontmost",
-                    "ACCESSIBILITY",
                     "AUTOMATION",
                 )
                 if blocked:
@@ -1877,13 +1896,20 @@ end tell
                 if result.returncode != 0:
                     error = (result.stderr or result.stdout or "open command failed").strip()
                     return {"ok": False, "error": error, "opened": params.target}
+                activation_error = ""
+                try:
+                    await self._activate_app(params.target)
+                except (TimeoutError, RuntimeError) as exc:
+                    activation_error = str(exc)
                 effect_verified, frontmost_app = await self._wait_for_frontmost_app(params.target)
                 verification = (
                     f"Frontmost app confirmed as {frontmost_app}."
                     if effect_verified
                     else (
                         "Application launch command succeeded, but the requested app "
-                        f"did not become frontmost (observed={frontmost_app or 'unavailable'})."
+                        f"did not become frontmost (observed={frontmost_app or 'unavailable'}"
+                        + (f", activation_error={activation_error}" if activation_error else "")
+                        + ")."
                     )
                 )
                 return {

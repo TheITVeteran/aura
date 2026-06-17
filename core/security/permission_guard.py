@@ -203,6 +203,44 @@ class PermissionGuard(AuraBaseModule):
             self.logger.debug("Accessibility preflight unavailable: %s", exc)
         return None
 
+    def request_accessibility_trust(self) -> bool:
+        """Actively prompt macOS to grant THIS process Accessibility trust.
+
+        Unlike :meth:`_accessibility_preflight_probe` (a passive, no-prompt
+        check), this surfaces the system grant dialog so Aura can acquire
+        desktop-control trust for *her own process identity* — independently of
+        how she was launched. This matters because the desktop launcher detaches
+        the kernel from its parent (reparenting to ``launchd``), which strands
+        the TCC trust that would otherwise be inherited from a granted parent
+        app. The grant persists for this executable once the user approves.
+
+        Returns the resulting trust state. Safe (no-op True) off macOS.
+        """
+        if sys.platform != "darwin":
+            return True
+        try:
+            from ApplicationServices import (  # type: ignore
+                AXIsProcessTrustedWithOptions,
+                kAXTrustedCheckOptionPrompt,
+            )
+
+            trusted = bool(
+                AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True})
+            )
+            # Refresh the cache so callers see the new state without waiting for
+            # the denied-entry TTL to expire.
+            self._cache[PermissionType.ACCESSIBILITY] = {
+                "granted": trusted,
+                "status": "active" if trusted else "prompted",
+                "guidance": "" if trusted else self.get_guidance(PermissionType.ACCESSIBILITY),
+            }
+            self._cache_ts[PermissionType.ACCESSIBILITY] = time.monotonic()
+            return trusted
+        except _PERMISSION_RECOVERABLE_ERRORS as exc:
+            record_degradation("permission_guard", exc)
+            self.logger.debug("Accessibility trust prompt unavailable: %s", exc)
+            return False
+
     def _automation_preflight_probe(self) -> dict[str, Any]:
         """Probe Apple Events access to System Events without shelling out."""
         if sys.platform != "darwin":

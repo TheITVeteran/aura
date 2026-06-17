@@ -2061,6 +2061,28 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
         except _AURA_MAIN_BOUNDARY_ERRORS as exc:
             record_degradation("aura_main", exc)
 
+        # Acquire Accessibility trust for THIS process identity up front. The
+        # desktop launcher detaches the kernel from its parent (reparenting to
+        # launchd), which strands the TCC trust Aura would otherwise inherit —
+        # so without this, typing/clicking desktop control silently fails no
+        # matter how she was launched. Surfaces the system grant dialog once;
+        # the grant then persists for this executable.
+        try:
+            from ApplicationServices import (  # type: ignore
+                AXIsProcessTrustedWithOptions,
+                kAXTrustedCheckOptionPrompt,
+            )
+
+            if AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True}):
+                logger.info("🖐️ Accessibility trust confirmed — full desktop control available.")
+            else:
+                logger.warning(
+                    "🖐️ Accessibility not yet granted. Approve Aura in System Settings → "
+                    "Privacy & Security → Accessibility to enable typing/clicking desktop control."
+                )
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+            record_degradation("aura_main", exc)
+
     # 1. Start API Server (v21: Server now runs in Kernel)
     # [STABILITY] Start API immediately so port 8000 binds while brain thaws.
 
