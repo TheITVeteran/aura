@@ -2027,8 +2027,35 @@ end tell
                             active_url,
                         )
                 surface = f" in {browser}" if browser else ""
+
+                # Google Docs/Sheets/Slides load asynchronously and leave keyboard
+                # focus on the omnibox immediately after navigation, so a following
+                # `type` lands in the address bar instead of the document body —
+                # the "she types in the URL bar instead of the doc" failure. Once
+                # navigation is confirmed, wait for the editor to render and click
+                # into the canvas so subsequent keystrokes enter the document.
+                doc_focused = False
+                if (
+                    effect_verified
+                    and pyautogui is not None
+                    and self._is_web_editor_url(active_url or target_url)
+                ):
+                    try:
+                        await asyncio.sleep(3.5)  # let the web editor finish loading
+                        screen_w, screen_h = await asyncio.to_thread(pyautogui.size)
+                        # Upper-middle of the page is the document canvas for a
+                        # maximized browser window.
+                        await asyncio.to_thread(
+                            pyautogui.click, int(screen_w * 0.5), int(screen_h * 0.45)
+                        )
+                        await asyncio.sleep(0.4)
+                        doc_focused = True
+                    except (RuntimeError, OSError, ValueError, AttributeError) as exc:
+                        logger.debug("Doc canvas focus click skipped: %s", exc)
+
                 verification = (
                     f"Frontmost browser confirmed as {frontmost_app}; active URL verified as {active_url}."
+                    + (" Document canvas focused for editing." if doc_focused else "")
                     if effect_verified
                     else (
                         "URL dispatch succeeded, but the target browser/tab could not be "
@@ -2045,6 +2072,7 @@ end tell
                     "active_url": active_url,
                     "active_title": active_title,
                     "effect_verified": effect_verified,
+                    "doc_focused": doc_focused,
                     "verification": verification,
                     "summary": f"I opened a browser tab for {target_url}{surface}.",
                     **({} if effect_verified else {"error": verification}),
@@ -2066,6 +2094,15 @@ end tell
                 return runtime_permission_error
             logger.error("ComputerUse action '%s' failed: %s", action, e)
             return {"ok": False, "error": str(e)}
+
+    @staticmethod
+    def _is_web_editor_url(url: str) -> bool:
+        """True for editable Google web-doc surfaces where keystrokes must land in
+        the document canvas, not the browser address bar."""
+        u = str(url or "").lower()
+        return "docs.google.com/" in u and any(
+            seg in u for seg in ("/document/", "/spreadsheets/", "/presentation/")
+        )
 
     @staticmethod
     def _url_semantically_matches(expected: str, observed: str) -> bool:
