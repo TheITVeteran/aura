@@ -627,7 +627,7 @@ class DesktopTaskSkill(BaseSkill):
         sources: list[dict[str, str]] = []
         if not isinstance(raw_sources, list):
             return sources
-        for item in raw_sources[:5]:
+        for item in raw_sources[:8]:
             if not isinstance(item, dict):
                 continue
             title = str(item.get("title") or item.get("name") or item.get("url") or item.get("link") or "").strip()
@@ -635,8 +635,63 @@ class DesktopTaskSkill(BaseSkill):
             snippet = str(item.get("snippet") or item.get("text") or item.get("content") or item.get("summary") or "").strip()
             if not title and not url and not snippet:
                 continue
-            sources.append({"title": title[:240], "url": url[:500], "snippet": snippet[:700]})
-        return sources
+            accessible = not DesktopTaskSkill._looks_inaccessible(snippet)
+            sources.append({
+                "title": title[:240],
+                "url": url[:500],
+                "snippet": snippet[:900],
+                "reputability": DesktopTaskSkill._source_reputability(url, title),
+                "accessible": accessible,
+            })
+        # Rank reputable, accessible sources first so synthesis leans on them;
+        # clearly inaccessible (paywall/ad-wall/empty) sources sink to the bottom
+        # rather than being relied on, but are retained for transparency.
+        sources.sort(
+            key=lambda s: (bool(s.get("accessible")), int(s.get("reputability", 0))),
+            reverse=True,
+        )
+        return sources[:5]
+
+    # Reputable-domain signals (peer review, gov/edu, established institutions).
+    _REPUTABLE_TLDS = (".gov", ".edu", ".mil", ".int", ".ac.uk", ".edu.au")
+    _REPUTABLE_DOMAINS = (
+        "nature.com", "science.org", "nih.gov", "ncbi.nlm.nih.gov", "who.int",
+        "nasa.gov", "arxiv.org", "pnas.org", "cell.com", "thelancet.com",
+        "bmj.com", "ieee.org", "acm.org", "reuters.com", "apnews.com",
+        "bbc.com", "bbc.co.uk", "npr.org", "nytimes.com", "washingtonpost.com",
+        "economist.com", "wsj.com", "ft.com", "bloomberg.com", "espn.com",
+        "britannica.com", "pewresearch.org", "ourworldindata.org",
+    )
+    _LOW_QUALITY_HINTS = ("pinterest.", "quora.com", "reddit.com", "answers.com")
+    _PAYWALL_HINTS = (
+        "subscribe to read", "subscribe to continue", "create a free account",
+        "this content is for subscribers", "sign in to read", "metered paywall",
+        "you have reached your", "register to continue", "subscription required",
+    )
+
+    @staticmethod
+    def _source_reputability(url: str, title: str = "") -> int:
+        """Coarse 0–3 reputability score from the source domain."""
+        u = str(url or "").lower()
+        if not u:
+            return 0
+        if any(u.endswith(tld) or f"{tld}/" in u for tld in DesktopTaskSkill._REPUTABLE_TLDS):
+            return 3
+        if any(dom in u for dom in DesktopTaskSkill._REPUTABLE_DOMAINS):
+            return 2
+        if any(bad in u for bad in DesktopTaskSkill._LOW_QUALITY_HINTS):
+            return 0
+        return 1
+
+    @staticmethod
+    def _looks_inaccessible(snippet: str) -> bool:
+        """True when the fetched content looks paywalled, ad-walled, or empty —
+        a signal to prefer a different source rather than rely on this one."""
+        text = str(snippet or "").strip()
+        if len(text) < 60:
+            return True
+        lowered = text.lower()
+        return any(hint in lowered for hint in DesktopTaskSkill._PAYWALL_HINTS)
 
     @classmethod
     def _research_section_from_context(cls, context: dict[str, Any] | None) -> str:
@@ -876,7 +931,48 @@ class DesktopTaskSkill(BaseSkill):
                 synthesis = model_synthesis
         if synthesis:
             research_ctx["desktop_task_research_synthesis"] = synthesis
+        # Learn from what she just read and wrote: persist the finding as an
+        # episode so it consolidates into memory (and the engram/reconsolidation
+        # dynamics) rather than being forgotten the moment the document is saved.
+        await self._remember_research(query, synthesis or summary, sources)
         return research_ctx
+
+    async def _remember_research(
+        self, query: str, finding: str, sources: list[dict[str, str]]
+    ) -> None:
+        """Best-effort: encode a research finding into episodic memory so Aura
+        retains what she learned from reading and writing."""
+        finding = str(finding or "").strip()
+        if not query or not finding:
+            return
+        try:
+            from core.container import ServiceContainer
+
+            episodic = ServiceContainer.get("episodic_memory", default=None)
+            recorder = getattr(episodic, "record_episode_async", None) if episodic else None
+            if not callable(recorder):
+                return
+            top = [
+                str(s.get("url") or s.get("title") or "")
+                for s in (sources or [])[:3]
+                if isinstance(s, dict)
+            ]
+            await recorder(
+                context=f"Researched and wrote about: {query}",
+                action=f"Read {len(sources or [])} sources and composed a summary",
+                outcome=finding[:800],
+                success=True,
+                importance=0.62,
+                lessons=[f"Source: {u}" for u in top if u],
+                source="desktop_task_research",
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "desktop_task",
+                exc,
+                action="continued after research-learning episode record failed",
+                severity="warning",
+            )
 
     async def _synthesize_research_document(
         self,
@@ -895,8 +991,15 @@ class DesktopTaskSkill(BaseSkill):
         generate = getattr(router, "generate", None) if router is not None else None
         if not callable(generate):
             return ""
+        def _src_tag(item: dict[str, Any]) -> str:
+            rep = int(item.get("reputability", 1) or 0)
+            label = {3: "high-authority", 2: "reputable", 1: "general", 0: "low-quality"}.get(rep, "general")
+            if not item.get("accessible", True):
+                label += ", limited/blocked access"
+            return label
+
         source_lines = "\n".join(
-            f"- {str(item.get('title') or item.get('url') or 'source')} "
+            f"- [{_src_tag(item)}] {str(item.get('title') or item.get('url') or 'source')} "
             f"({str(item.get('url') or '')}):\n  {str(item.get('snippet') or '')[:900]}"
             for item in (sources or [])[:5]
             if isinstance(item, dict)
@@ -919,7 +1022,15 @@ class DesktopTaskSkill(BaseSkill):
             "several paragraphs and scale the depth to the material — be as complete and "
             "substantive as the sources support. If the sources are genuinely thin or "
             "conflicting, say so honestly and note what would need further research "
-            "rather than padding."
+            "rather than padding.\n"
+            "Weigh your sources critically. Give more trust to reputable, authoritative "
+            "sources — peer-reviewed research, .edu/.gov, established institutions and "
+            "labs, and named expert authors with relevant credentials — and to claims "
+            "that several independent reputable sources corroborate. Treat single-source, "
+            "anonymous, overtly promotional, or paywalled/ad-wall pages with appropriate "
+            "skepticism and flag that uncertainty. If a source was inaccessible, blocked, "
+            "or clearly content-thin, do not rely on it, and note where a better source "
+            "would be needed."
             f"{opinion_clause}\n"
             "Write in the first person as Aura, in clean prose. Do not mention tools, "
             "steps, dispatch, commitments, or that you are executing a task — this is the "
