@@ -1109,3 +1109,23 @@ async def test_unitary_response_preserves_real_first_draft_over_tiny_dialogue_re
 
     assert dummy_llm.calls >= 2
     assert result.cognition.last_response == raw
+
+
+def test_short_cortex_replies_are_accepted_by_reliability_gate():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    # 1. Status turn check
+    assessment = assess_user_facing_reply("You ok?", "Yeah. Just thinking.")
+    assert not assessment.retryable
+    assert assessment.ok
+
+    # 2. Short user turn check with cognitive keyword
+    assessment = assess_user_facing_reply("What are you doing?", "I'm thinking about it.")
+    assert not assessment.retryable
+    assert assessment.ok
+
+    # 3. Confusion repair check with cognitive keyword
+    assessment = assess_user_facing_reply("what?", "I'm still thinking.")
+    assert not assessment.retryable
+    assert assessment.ok
+

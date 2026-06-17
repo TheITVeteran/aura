@@ -1747,6 +1747,21 @@ def _has_reliability_substance(reply_text: Any) -> bool:
         "i am with you",
         "hey",
         "what's up",
+        "just thinking",
+        "still thinking",
+        "yeah just thinking",
+        "yes just thinking",
+        "doing some thinking",
+        "thinking about it",
+        "just working",
+        "still working",
+        "working on it",
+        "just processing",
+        "still processing",
+        "i'm thinking",
+        "i am thinking",
+        "i'm just thinking",
+        "i am just thinking",
     )
     if any(phrase in reply for phrase in presence_phrases):
         return True
@@ -1838,6 +1853,21 @@ def _has_status_substance(reply_text: Any) -> bool:
         "present",
         "i'm present",
         "i am present",
+        "just thinking",
+        "still thinking",
+        "yeah just thinking",
+        "yes just thinking",
+        "doing some thinking",
+        "thinking about it",
+        "just working",
+        "still working",
+        "working on it",
+        "just processing",
+        "still processing",
+        "i'm thinking",
+        "i am thinking",
+        "i'm just thinking",
+        "i am just thinking",
     )
     if any(phrase in reply for phrase in presence_phrases):
         return True
@@ -2658,14 +2688,16 @@ def assess_user_facing_reply(
         if _LOW_SIGNAL_REASSURANCE_RE.match(raw) or words < 2:
             reasons.append("too_short_for_user_turn")
         elif words < 6 and not _is_tiny_direct_turn(user_message):
-            reasons.append("too_thin_for_user_turn")
+            if not (words >= 3 and any(w in raw.lower() for w in ("thinking", "working", "processing", "online"))):
+                reasons.append("too_thin_for_user_turn")
         elif not _is_task_turn(user_message):
             open_ended = any(marker in user_norm for marker in _OPEN_ENDED_MARKERS)
             if open_ended and words < 12:
                 reasons.append("too_thin_for_open_ended_turn")
 
     if is_confusion_repair_turn(user_message) and _word_count(raw) < 8:
-        reasons.append("too_thin_for_confusion_repair")
+        if not (_word_count(raw) >= 3 and any(w in raw.lower() for w in ("thinking", "working", "processing", "online"))):
+            reasons.append("too_thin_for_confusion_repair")
 
     reasons.extend(_instruction_coverage_reasons(user_message, raw))
     reasons.extend(_semantic_coverage_reasons(user_message, raw))
