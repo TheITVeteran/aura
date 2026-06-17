@@ -1050,6 +1050,51 @@ async def test_open_app_rejects_zero_exit_without_frontmost_confirmation(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_open_app_activates_before_frontmost_verification(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    class FakeSubprocessGateway:
+        def run(self, argv, **kwargs):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+
+    calls = []
+
+    async def controlled_activate(app_name):
+        calls.append(("activate", app_name))
+
+    async def controlled_frontmost(expected):
+        calls.append(("wait", expected))
+        return True, expected
+
+    monkeypatch.setattr(skill, "_activate_app", controlled_activate)
+    monkeypatch.setattr(skill, "_wait_for_frontmost_app", controlled_frontmost)
+
+    result = await skill.execute({"action": "open_app", "target": "Notes"}, {})
+
+    assert result["ok"] is True
+    assert result["effect_verified"] is True
+    assert calls == [("activate", "Notes"), ("wait", "Notes")]
+
+
+def test_frontmost_app_match_accepts_bundle_suffix_not_wrong_app():
+    skill = ComputerUseSkill()
+
+    assert skill._frontmost_app_matches("Calculator", "Calculator.app") is True
+    assert skill._frontmost_app_matches("Notes", "Notes app") is True
+    assert skill._frontmost_app_matches("Finder", "Notes.app") is False
+
+
+@pytest.mark.asyncio
 async def test_open_url_refuses_unknown_browser(monkeypatch):
     skill = ComputerUseSkill()
 

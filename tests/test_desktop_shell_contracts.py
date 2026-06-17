@@ -105,3 +105,23 @@ def test_legacy_splash_auto_reveals_shell_after_timeout():
     assert "const revealShell = () =>" in dismiss_block
     assert "setTimeout(revealShell, autoRevealMs)" in dismiss_block
     assert "Loading interface...', { autoRevealMs: 900 })" in source
+
+
+def test_legacy_splash_reveals_launchable_shell_without_faking_runtime_health():
+    source = LEGACY_JS.read_text(encoding="utf-8")
+    helper_start = source.index("function payloadShellLaunchable")
+    helper_block = source[helper_start: source.index("function payloadRuntimeHealthy", helper_start)]
+    sync_start = source.index("function syncSplashState")
+    sync_block = source[sync_start: source.index("(function initSplash", sync_start)]
+
+    assert "function bootSnapshotFromPayload(payload)" in source
+    assert "function payloadShellLaunchable(payload)" in source
+    assert "requiredRuntimeProbesPass(requiredProbes)" in helper_block
+    assert "boot.launcher_ready === true" in helper_block
+    assert "phase.startsWith('conversation_')" in helper_block
+
+    assert "const runtimeHealthy = payloadRuntimeHealthy(payload);" in sync_block
+    assert "const shellLaunchable = payloadShellLaunchable(payload);" in sync_block
+    assert "if (runtimeHealthy && bootReady)" in sync_block
+    assert "} else if (shellLaunchable)" in sync_block
+    assert "Cortex will warm on the first foreground turn." in sync_block

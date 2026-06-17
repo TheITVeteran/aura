@@ -127,19 +127,19 @@ class StallWatchdog(threading.Thread):
         except OSError:
             return None
 
-    def _write_liveness_heartbeat(self) -> None:
+    def _write_liveness_heartbeat(self, *, loop_state: str = "alive", force: bool = False) -> None:
         """Append-free atomic write of the loop-liveness beacon (best-effort)."""
         if self._heartbeat_file is None:
             return
         now = time.time()
         # Throttle to ~1s; the run loop already ticks at 1s but guard anyway.
-        if now - self._last_heartbeat_file_write < 1.0:
+        if not force and now - self._last_heartbeat_file_write < 1.0:
             return
         self._last_heartbeat_file_write = now
         try:
             payload = (
-                '{"pid": %d, "last_loop_run": %.3f, "written_at": %.3f}'
-                % (os.getpid(), self._last_loop_run, now)
+                '{"pid": %d, "last_loop_run": %.3f, "written_at": %.3f, "loop_state": "%s"}'
+                % (os.getpid(), self._last_loop_run, now, loop_state)
             )
             atomic_write_text(self._heartbeat_file, payload, encoding="utf-8")
         except (OSError, RuntimeError) as exc:
@@ -174,6 +174,14 @@ class StallWatchdog(threading.Thread):
             try:
                 if self.loop.is_closed():
                     logger.debug("StallWatchdog: event loop closed, exiting.")
+                    break
+                is_running = getattr(self.loop, "is_running", None)
+                if callable(is_running) and not is_running():
+                    logger.info(
+                        "StallWatchdog: watched loop is no longer running; retiring monitor "
+                        "instead of treating loop handoff as a wedge."
+                    )
+                    self._write_liveness_heartbeat(loop_state="retired", force=True)
                     break
                 self.loop.call_soon_threadsafe(self._heartbeat)
             except RuntimeError:

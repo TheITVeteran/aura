@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -214,6 +215,8 @@ def test_integrity_guardian_rebuild_clears_current_alert_state(monkeypatch):
     assert status["integrity_ok"] is True
     assert status["alert_count"] == 0
     assert status["current_issue_count"] == 0
+    assert status["verification_pending"] is False
+    assert status["manifest_revision_stale"] is False
     assert status["last_tampered"] == []
     assert status["last_missing"] == []
 
@@ -247,6 +250,46 @@ def test_integrity_guardian_verify_all_suppresses_git_active_paths(monkeypatch, 
 
     assert alerts == []
     assert guardian.get_status()["current_issue_count"] == 0
+
+
+def test_integrity_guardian_bounded_boot_verify_reports_pending(monkeypatch, tmp_path):
+    import builtins
+
+    from core.security import integrity_guardian as ig_mod
+
+    monkeypatch.setattr(ig_mod, "_BASE_DIR", tmp_path)
+    core_dir = tmp_path / "core"
+    builtins.get_task_tracker().create_task(
+        builtins.get_storage_gateway().create_dir(
+            core_dir,
+            cause="test_integrity_guardian_bounded_boot_verify_reports_pending",
+        )
+    )
+    files = {}
+    for idx in range(4):
+        path = core_dir / f"runtime_{idx}.py"
+        path.write_text(f"x = {idx}\n", encoding="utf-8")
+        files[f"core/runtime_{idx}.py"] = "hash"
+
+    guardian = ig_mod.IntegrityGuardian()
+    guardian._manifest = files
+    calls = {"count": 0}
+
+    def slow_hash(_path):
+        calls["count"] += 1
+        time.sleep(0.01)
+        return "hash"
+
+    monkeypatch.setattr(guardian, "_hash_file", slow_hash)
+
+    alerts = guardian._verify_all(time_budget_s=0.001)
+    status = guardian.get_status()
+
+    assert alerts == []
+    assert calls["count"] == 1
+    assert status["verification_pending"] is True
+    assert status["pending_count"] == 3
+    assert status["integrity_ok"] is False
 
 
 def test_integrity_guardian_rejects_generated_artifact_paths_from_manifest(monkeypatch, tmp_path):
@@ -316,7 +359,7 @@ def test_integrity_guardian_parse_git_status_paths_handles_untracked_files():
     assert paths == {"tests/test_live_runtime_surface_regressions.py"}
 
 
-def test_integrity_guardian_rebuilds_legacy_manifest_when_source_revision_changes(monkeypatch, tmp_path):
+def test_integrity_guardian_defers_legacy_manifest_refresh_when_source_revision_changes(monkeypatch, tmp_path):
     from core.security import integrity_guardian as ig_mod
 
     manifest_path = tmp_path / "integrity_manifest.json"
@@ -335,7 +378,10 @@ def test_integrity_guardian_rebuilds_legacy_manifest_when_source_revision_change
     )
     monkeypatch.setattr(guardian, "_current_source_revision", lambda: "new-revision")
 
-    assert guardian._load_manifest() is False
+    assert guardian._load_manifest() is True
+    status = guardian.get_status()
+    assert status["manifest_revision_stale"] is True
+    assert status["integrity_ok"] is False
 
 
 def test_system_health_json_safe_coerces_numpy_scalars_and_arrays():
@@ -2901,6 +2947,20 @@ def test_truncated_tail_detector_flags_clipped_reply():
 
     assert _looks_truncated_tail(
         "It's not avoidance. It's choosing something real. If that's what they keep choosing over rest, then th"
+    ) is True
+    assert _looks_truncated_tail(
+        "When it comes to tool verification, confusion"
+    ) is True
+    assert _looks_truncated_tail(
+        "For tool verification, confusion means I would be extra thorough"
+    ) is True
+    assert _looks_truncated_tail(
+        "Memory use becomes more deliberate; I have to sift through what I know "
+        "to find relevant pieces of information that can help me understand the situation better. "
+        "As for tool verification, confusion means"
+    ) is True
+    assert _looks_truncated_tail(
+        "I would also be more diligent in verifying tools and actions, perhaps by double-checking"
     ) is True
     assert _looks_truncated_tail(
         "It's not avoidance. It's choosing something real. If that's what they keep choosing over rest, then that is the truth."

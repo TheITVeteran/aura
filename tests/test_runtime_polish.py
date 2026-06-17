@@ -201,6 +201,51 @@ def test_gui_actor_rejects_heartbeat_with_missing_or_nonempty_blockers():
     assert _heartbeat_response_healthy(_Response([])) is True
 
 
+def test_gui_actor_classifies_cold_conversation_lane_as_warming_not_healthy():
+    from interface.gui_actor import _heartbeat_response_healthy, _heartbeat_response_state
+
+    class _Response:
+        status_code = 503
+
+        def json(self):
+            return {
+                "healthy": False,
+                "status": "unhealthy",
+                "runtime_probe_healthy": True,
+                "boot_phase": "conversation_warming",
+                "conversation_ready": False,
+                "blockers": ["conversation_ready"],
+                "required_probes": _complete_required_probe_payload(),
+            }
+
+    assert _heartbeat_response_healthy(_Response()) is False
+    assert _heartbeat_response_state(_Response()) == "warming"
+
+
+def test_gui_actor_does_not_treat_failed_probe_heartbeat_as_warming():
+    from interface.gui_actor import _heartbeat_response_state
+
+    probes = _complete_required_probe_payload()
+    probes["all_passed"] = False
+    probes["inference"]["ok"] = False
+
+    class _Response:
+        status_code = 503
+
+        def json(self):
+            return {
+                "healthy": False,
+                "status": "unhealthy",
+                "runtime_probe_healthy": False,
+                "boot_phase": "conversation_warming",
+                "conversation_ready": False,
+                "blockers": ["conversation_ready", "probe:inference"],
+                "required_probes": probes,
+            }
+
+    assert _heartbeat_response_state(_Response()) == "unhealthy"
+
+
 def test_gui_actor_rejects_heartbeat_without_required_probe_components():
     from interface.gui_actor import _heartbeat_response_healthy
 
@@ -581,6 +626,21 @@ def test_desktop_shell_bounds_long_session_dedupe_state():
     assert "rememberMessageFingerprint(httpFp)" in aura_js
     assert "state.processedMessageFingerprints.add(" not in aura_js
     assert "state.processedEventIds.add(" not in aura_js
+
+
+def test_desktop_chat_composer_focus_is_not_stolen_by_page_selection():
+    aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+    aura_css = (PROJECT_ROOT / "interface" / "static" / "aura.css").read_text(encoding="utf-8")
+
+    assert "function focusComposer(event)" in aura_js
+    assert "form?.addEventListener('pointerdown', focusComposer)" in aura_js
+    assert "form?.addEventListener('click', focusComposer)" in aura_js
+    assert "textarea.focus({ preventScroll: true })" in aura_js
+    assert "body {\n    background: var(--bg);" in aura_css
+    assert "-webkit-user-select: none;" in aura_css
+    assert "user-select: none;" in aura_css
+    assert ".msg,\n.thought-card," in aura_css
+    assert "#chat-input" in aura_css and "caret-color: var(--accent);" in aura_css
 
 
 def test_native_shell_waits_for_readiness_heartbeat():

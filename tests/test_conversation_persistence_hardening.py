@@ -73,6 +73,61 @@ def test_conversation_persistence_records_exchange_atomically(monkeypatch, tmp_p
     assert len(published) == 2
 
 
+def test_conversation_persistence_deduplicates_turn_by_cid(monkeypatch, tmp_path):
+    published: list[tuple[str, dict[str, object]]] = []
+
+    class Bus:
+        def publish_threadsafe(self, topic, payload):
+            published.append((topic, payload))
+
+    _install_event_bus(monkeypatch, Bus())
+
+    store = ConversationPersistence(tmp_path / "conversations.db")
+    session_id = store.start_session()
+    first_id = store.record_turn("user", "same live prompt", origin="desktop_ui", cid="live-1:user")
+    second_id = store.record_turn("user", "same live prompt", origin="desktop_ui", cid="live-1:user")
+
+    history = store.get_session_history(session_id)
+
+    assert second_id == first_id
+    assert len(history) == 1
+    assert history[0]["cid"] == "live-1:user"
+    assert len(published) == 1
+
+
+def test_conversation_persistence_exchange_reuses_prelogged_user_by_cid(monkeypatch, tmp_path):
+    published: list[tuple[str, dict[str, object]]] = []
+
+    class Bus:
+        def publish_threadsafe(self, topic, payload):
+            published.append((topic, payload))
+
+    _install_event_bus(monkeypatch, Bus())
+
+    store = ConversationPersistence(tmp_path / "conversations.db")
+    session_id = store.start_session()
+    prelogged_user_id = store.record_turn(
+        "user",
+        "foreground prompt",
+        origin="desktop_ui",
+        cid="race-42:user",
+    )
+    user_id, aura_id = store.record_exchange(
+        "foreground prompt",
+        "foreground answer",
+        origin="desktop_ui",
+        cid="race-42",
+    )
+
+    history = store.get_session_history(session_id)
+
+    assert user_id == prelogged_user_id
+    assert aura_id
+    assert [row["role"] for row in history] == ["user", "aura"]
+    assert [row["cid"] for row in history] == ["race-42:user", "race-42:aura"]
+    assert [event[1]["role"] for event in published] == ["user", "aura"]
+
+
 def test_conversation_persistence_bounded_history_returns_newest_turns(tmp_path):
     store = ConversationPersistence(tmp_path / "conversations.db")
     session_id = store.start_session()

@@ -115,6 +115,9 @@ def test_frontend_treats_screensaver_resume_as_surface_pause():
 
     assert "surfaceSuspended" in js
     assert "reconnectLiveSurface" in js
+    assert "markLiveSurfaceResponsive" in js
+    assert "markLiveSurfaceResponsive('websocket_message')" in js
+    assert "markLiveSurfaceResponsive('chat_success')" in js
     assert "Live surface paused. Aura keeps running." in js
     assert "Resuming live surface..." in js
     assert "visibilitychange" in js

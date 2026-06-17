@@ -2282,7 +2282,7 @@ def test_cortex_cold_warmup_requires_real_available_memory(monkeypatch):
     snapshot = InferenceGate._cortex_warmup_admission_snapshot("background")
 
     assert snapshot["can_admit"] is False
-    assert snapshot["min_available_gb"] == 30.0
+    assert snapshot["min_available_gb"] == 26.0
     assert "memory_pressure" in snapshot["reason"]
 
 
@@ -2465,17 +2465,17 @@ def test_cold_cortex_policy_deferred_log_is_rate_limited(monkeypatch):
     from core.brain import inference_gate as inference_gate_module
 
     gate = InferenceGate()
-    ticks = iter([100.0, 120.0, 161.0])
+    ticks = iter([400.0, 420.0, 701.0])
     monkeypatch.setattr(inference_gate_module.time, "monotonic", lambda: next(ticks))
 
     gate._log_cold_cortex_policy_deferred()
-    assert gate._last_cortex_policy_deferred_log_at == 100.0
+    assert gate._last_cortex_policy_deferred_log_at == 400.0
 
     gate._log_cold_cortex_policy_deferred()
-    assert gate._last_cortex_policy_deferred_log_at == 100.0
+    assert gate._last_cortex_policy_deferred_log_at == 400.0
 
     gate._log_cold_cortex_policy_deferred()
-    assert gate._last_cortex_policy_deferred_log_at == 161.0
+    assert gate._last_cortex_policy_deferred_log_at == 701.0
 
 
 @pytest.mark.asyncio

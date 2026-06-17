@@ -34,6 +34,16 @@ DEFAULT_MEMORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB default limit
 # working hard. Genuine death risk (memory exhaustion → OOM, degradation
 # cascades) is uncapped and can still reach 1.0. Kept just below the veto line.
 OPERATIONAL_THREAT_CAP = 0.70
+CRITICAL_THREAT_THRESHOLD = 0.75
+DEGRADATION_THREAT_WINDOW_S = 60.0
+DEGRADATION_THREAT_DENOMINATOR = 5.0
+CRITICAL_LOG_COOLDOWN_S = 30.0
+DEGRADATION_SEVERITY_WEIGHTS = {
+    "critical": 2.0,
+    "degraded": 1.0,
+    "warning": 0.20,
+    "debug": 0.0,
+}
 _EXISTENTIAL_STAKES_RECOVERABLE_ERRORS = (
     AttributeError,
     LookupError,
@@ -63,11 +73,46 @@ class ExistentialStakes:
         self._lag_threat = 0.0
         self._cpu_threat = 0.0
         self._degradation_threat = 0.0
+        self._recent_degradation_weight = 0.0
+        self._last_critical_log_time = 0.0
+        self._last_critical_log_bucket = -1
+        self._was_critical = False
 
         logger.info(
             "ExistentialStakes initialized. Memory limit: %.2f MB",
             self._memory_limit / (1024 * 1024),
         )
+
+    @staticmethod
+    def _degradation_record_weight(record: Any, *, now: float) -> float:
+        severity = str(getattr(record, "severity", "") or "").lower()
+        base = DEGRADATION_SEVERITY_WEIGHTS.get(severity, 0.0)
+        if base <= 0.0:
+            return 0.0
+        age_s = max(0.0, now - float(getattr(record, "timestamp", now) or now))
+        if age_s >= DEGRADATION_THREAT_WINDOW_S:
+            return 0.0
+        # A resolved transient should fade quickly instead of holding the live
+        # Will in an existential veto for a full minute. Cascades still rise
+        # because fresh records keep adding full weight.
+        decay = 1.0 - (age_s / DEGRADATION_THREAT_WINDOW_S)
+        return base * decay
+
+    def _should_log_critical(self, now: float) -> bool:
+        bucket = int(self._threat * 10.0)
+        if not self._was_critical:
+            self._last_critical_log_time = now
+            self._last_critical_log_bucket = bucket
+            self._was_critical = True
+            return True
+        if bucket != self._last_critical_log_bucket:
+            self._last_critical_log_time = now
+            self._last_critical_log_bucket = bucket
+            return True
+        if now - self._last_critical_log_time >= CRITICAL_LOG_COOLDOWN_S:
+            self._last_critical_log_time = now
+            return True
+        return False
 
     def update(self) -> float:
         """Tick measurements, compute sub-threats, and return the combined threat."""
@@ -117,21 +162,28 @@ class ExistentialStakes:
             self._cpu_threat = min(1.0, self._rolling_cpu_load)
 
             # 4. Degradation / Exception Threat
-            # Count degradations registered in the last 60 seconds
-            recent_degradations = 0
+            # Use severity-weighted, decaying degradation pressure. Counting
+            # every recent warning as full existential danger made one repaired
+            # foreground failure keep flooding the neural stream and blocking
+            # actions. Critical/degraded cascades remain existential pressure;
+            # warnings are weak signal; debug/lifecycle noise is ignored.
+            recent_degradation_weight = 0.0
             try:
                 tracker = get_degradation_tracker()
                 if tracker and hasattr(tracker, "_records"):
-                    recent_records = [
-                        r for r in tracker._records
-                        if now - r.timestamp < 60.0
-                    ]
-                    recent_degradations = len(recent_records)
+                    recent_degradation_weight = sum(
+                        self._degradation_record_weight(r, now=now)
+                        for r in tracker._records
+                    )
             except _EXISTENTIAL_STAKES_RECOVERABLE_ERRORS as e:
                 logger.debug("Failed to query degradation tracker: %s", e)
 
-            # 5 recent degradations/exceptions in a minute is high threat
-            self._degradation_threat = min(1.0, recent_degradations / 5.0)
+            self._recent_degradation_weight = recent_degradation_weight
+            # 5 fresh degraded-equivalent events in a minute is high threat.
+            self._degradation_threat = min(
+                1.0,
+                recent_degradation_weight / DEGRADATION_THREAT_DENOMINATOR,
+            )
 
             # Combined Threat. Distinguish SURVIVAL pressure (genuine death
             # risk) from OPERATIONAL pressure (busy/laggy but not dying):
@@ -153,10 +205,24 @@ class ExistentialStakes:
             )
             self._threat = max(survival_pressure, operational_pressure)
 
-            # Log critical warning if threat is high
-            if self._threat > 0.75:
+            # Log critical warning if threat is high, but coalesce repeated
+            # ticks. The neural stream should show a state transition, not a
+            # log storm.
+            if self._threat > CRITICAL_THREAT_THRESHOLD and self._should_log_critical(now):
                 logger.warning(
                     "CRITICAL EXISTENTIAL STAKES: threat=%.2f (mem_threat=%.2f, lag_threat=%.2f, cpu_threat=%.2f, deg_threat=%.2f)",
+                    self._threat,
+                    self._memory_threat,
+                    self._lag_threat,
+                    self._cpu_threat,
+                    self._degradation_threat,
+                )
+            elif self._was_critical and self._threat <= CRITICAL_THREAT_THRESHOLD:
+                self._was_critical = False
+                self._last_critical_log_bucket = -1
+                logger.info(
+                    "Existential stakes recovered below critical threshold: threat=%.2f "
+                    "(mem_threat=%.2f, lag_threat=%.2f, cpu_threat=%.2f, deg_threat=%.2f)",
                     self._threat,
                     self._memory_threat,
                     self._lag_threat,
@@ -178,6 +244,7 @@ class ExistentialStakes:
                 "lag_threat": round(self._lag_threat, 4),
                 "cpu_threat": round(self._cpu_threat, 4),
                 "degradation_threat": round(self._degradation_threat, 4),
+                "recent_degradation_weight": round(self._recent_degradation_weight, 4),
                 "total_ticks": self._total_ticks,
                 "rolling_loop_lag_s": round(self._rolling_loop_lag, 3),
             }

@@ -382,7 +382,17 @@ class WebSocketManager:
                     try:
                         await websocket.send_text(payload)
                     except _WEBSOCKET_DELIVERY_ERRORS as e:
-                        logger.warning("WS send failed (message lost, type=%s): %s", type(e).__name__, e)
+                        if isinstance(e, (WebSocketDisconnect, ConnectionClosed)):
+                            logger.debug(
+                                "WS send skipped; client disconnected before delivery (type=%s).",
+                                type(e).__name__,
+                            )
+                        else:
+                            logger.warning(
+                                "WS send failed (message lost, type=%s): %s",
+                                type(e).__name__,
+                                e,
+                            )
                         break
                     finally:
                         try:

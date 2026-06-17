@@ -1525,13 +1525,38 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         lockDirectory.appendingPathComponent("orchestrator.lock")
     }
 
+    private func parseRuntimeLockPID(_ text: String) -> Int32? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        if let firstLine = trimmed.split(whereSeparator: \.isNewline).first,
+           let pid = Int32(String(firstLine).trimmingCharacters(in: .whitespacesAndNewlines)),
+           pid > 0 {
+            return pid
+        }
+        guard let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let payload = object as? [String: Any] else {
+            return nil
+        }
+        if let pid = payload["pid"] as? Int, pid > 0 {
+            return Int32(pid)
+        }
+        if let pid = payload["pid"] as? String,
+           let parsed = Int32(pid),
+           parsed > 0 {
+            return parsed
+        }
+        return nil
+    }
+
     private func runtimeLockIndicatesLiveProcess() -> Bool {
         let lockFile = runtimeLockFileURL()
         guard let text = try? String(contentsOf: lockFile, encoding: .utf8) else {
             return false
         }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let pid = Int32(trimmed), pid > 0 else {
+        guard let pid = parseRuntimeLockPID(text) else {
             return false
         }
         return kill(pid, 0) == 0 || errno == EPERM

@@ -362,6 +362,7 @@ class ContextAssembler:
         
         # 1. Identity Core — always inject full AURA_IDENTITY so voice doesn't regress in casual chat
         identity_block = f"{IDENTITY_LOCK}\n\n[GROUNDED CORE PROTOCOL]\n{AURA_IDENTITY}\n"
+        survival_context_block = ""
 
         # Existential Stakes warning injection
         try:
@@ -370,6 +371,7 @@ class ContextAssembler:
             if stakes:
                 stakes_block = stakes.get_context_block()
                 if stakes_block:
+                    survival_context_block = stakes_block
                     identity_block += f"\n{stakes_block}\n"
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
             record_degradation("context_assembler.existential_stakes", _e)
@@ -1073,6 +1075,7 @@ class ContextAssembler:
             tail = base[-tail_budget:] if tail_budget else ""
 
             for candidate in (
+                str(survival_context_block or "").strip(),
                 str(identity_rag_context or "").strip(),
                 str(cognitive_metrics or "").strip(),
                 str(continuity_block or "").strip(),

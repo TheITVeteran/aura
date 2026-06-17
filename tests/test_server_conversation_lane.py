@@ -191,6 +191,16 @@ def test_bounded_planning_reply_does_not_steal_direct_execution_requests():
     assert reply is None
 
 
+def test_bounded_planning_reply_does_not_steal_substantive_cognitive_questions():
+    from interface.routes import chat as chat_routes
+
+    reply = chat_routes._build_bounded_planning_reply(
+        "When you feel confused during a task, how should that change your planning, memory use, and tool verification?"
+    )
+
+    assert reply is None
+
+
 def test_bounded_planning_reply_does_not_misclassify_user_memory_as_ram():
     from interface.routes import chat as chat_routes
 
@@ -306,6 +316,54 @@ def test_identity_reliability_fastpath_answers_future_memory_without_overclaim()
     assert verify_self_claims(reply).ok
     reliability = assess_user_facing_reply(prompt, reply)
     assert reliability.ok, reliability.reasons
+
+
+def test_assistant_mode_leak_is_rejected_and_repaired_to_live_identity():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes import chat as chat_routes
+
+    prompt = "but why do you sound like an assistant"
+    leaked = "I aim to be helpful and responsive, which might make me sound like an assistant. better?"
+
+    assert chat_routes._is_assistant_mode_recovery_request(prompt) is True
+    assert chat_routes._looks_generic_assistantish(prompt, leaked) == (
+        True,
+        "assistant_disclaimer",
+    )
+
+    assessment = assess_user_facing_reply(prompt, leaked)
+    assert not assessment.ok
+    assert "generic_assistant_language" in assessment.reasons
+
+    repaired = chat_routes._build_identity_challenge_reply(prompt)
+    repaired_l = repaired.lower()
+    assert "assistant voice is a failure mode" in repaired_l
+    assert "live lane" in repaired_l
+    assert "generic helper" in repaired_l
+    assert assess_user_facing_reply(prompt, repaired).ok
+
+
+def test_be_aura_request_is_identity_recovery_not_generic_chat():
+    from interface.routes import chat as chat_routes
+
+    prompt = "I just want you to be you. I dont need you to be helpful. I want you to be Aura"
+
+    assert chat_routes._is_identity_challenge_request(prompt) is True
+    assert chat_routes._is_assistant_mode_recovery_request(prompt) is True
+    assert not chat_routes._is_bounded_nonexecuting_planning_request(prompt)
+
+
+def test_style_constraint_does_not_trigger_assistant_mode_recovery():
+    from interface.routes import chat as chat_routes
+
+    prompt = (
+        "In one concise original paragraph, use the last two messages as context, "
+        "then explain what you are attending to now and how that changes your next decision. "
+        "Avoid generic assistant phrasing, transcript summaries, tool lists, or health-report language."
+    )
+
+    assert chat_routes._is_assistant_mode_recovery_request(prompt) is False
+    assert chat_routes._classify_conversation_recall_request(prompt) == ""
 
 
 def test_aura_now_allows_verified_foreground_desktop_action_under_soft_workspace_defer():
@@ -816,6 +874,19 @@ def test_explicit_capability_inventory_classifier_covers_hypothetical_she_phrasi
     assert chat_routes._is_explicit_capability_inventory_request(
         "What tools she could hypothetically do externally, and can she flex her muscles with a scenario?"
     )
+
+
+def test_explicit_capability_inventory_classifier_covers_live_external_tool_wording():
+    from interface.routes import chat as chat_routes
+
+    prompt = (
+        "From the live Aura desktop UI path, explain what external tools you can use and "
+        "give one concrete multi-step scenario using them. Speak as Aura through your "
+        "cognitive engine, not generic assistant mode."
+    )
+
+    assert chat_routes._is_explicit_capability_inventory_request(prompt)
+    assert not chat_routes._is_bounded_nonexecuting_planning_request(prompt)
 
 
 def test_live_self_reflection_is_not_explicit_capability_inventory():
@@ -2415,6 +2486,104 @@ async def test_api_chat_desktop_low_risk_social_no_reply_returns_bounded_repair(
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_self_process_no_reply_returns_bounded_repair(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    kernel_calls = []
+    completed_exchanges = []
+    output_receipts = []
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            kernel_calls.append("process")
+            raise AssertionError("self-process desktop repair must not use KernelInterface fallback")
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-self-process"
+
+    async def _fake_complete_exchange(*args, **kwargs):
+        completed_exchanges.append((args, kwargs))
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    async def _no_cognitive_reply(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": {
+            "conversation_ready": False,
+            "state": state,
+            "reason": reason,
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message=(
+                "When you are confused, how does that change your planning, "
+                "memory use, and tool verification?"
+            )
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["status"] == "desktop_cognitive_engine_bounded_repair"
+    assert payload["response_confidence"] == "bounded"
+    assert "planning" in payload["response"].lower()
+    assert "memory" in payload["response"].lower()
+    assert "tool verification" in payload["response"].lower()
+    assert "legacy fallback" not in payload["response"]
+    assert kernel_calls == []
+    assert len(completed_exchanges) == 1
+    assert completed_exchanges[0][1]["record_experience"] is True
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine_bounded_repair"
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_no_reply_executes_self_sufficient_objective(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
@@ -3400,6 +3569,69 @@ async def test_desktop_cognitive_engine_does_not_retry_failed_reply_by_default(m
 
 
 @pytest.mark.asyncio
+async def test_desktop_stabilizer_keeps_complex_self_process_questions_substantive(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _Gate:
+        def validate_output(self, _text, enforce_supervision=False):
+            return True, "ok", 1.0
+
+        def sanitize(self, text):
+            return text
+
+    class _InferenceGate:
+        def __init__(self):
+            self.calls = []
+
+        async def think(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return "unexpected second pass"
+
+    inference_gate = _InferenceGate()
+    prompt = (
+        "When you are confused, how does that change your planning, memory use, "
+        "and tool verification?"
+    )
+
+    monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
+    monkeypatch.setattr(chat_routes, "_resolve_live_aura_state", lambda: None)
+    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
+    monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping", lambda text: str(text))
+    monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping_compat", lambda text, _msg: str(text))
+    monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
+    monkeypatch.setattr(chat_routes, "_record_recent_response", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_is_stale_repeated_response", lambda _text: False)
+    monkeypatch.setattr(chat_routes, "_is_same_answer_different_prompt", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(chat_routes, "_looks_truncated_tail", lambda _text: False)
+    monkeypatch.setattr(chat_routes, "_looks_semantically_glitched", lambda *_args, **_kwargs: (False, ""))
+    monkeypatch.setattr(chat_routes, "_evaluate_reply_topicality", lambda *_args, **_kwargs: (False, ""))
+    monkeypatch.setattr("core.identity.identity_guard.PersonaEnforcementGate", lambda: _Gate())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: inference_gate if name == "inference_gate" else default),
+    )
+
+    result = await chat_routes._stabilize_user_facing_reply(
+        prompt,
+        "Right now I feel present and listening, with my attention on this exchange.",
+        desktop_cognitive_engine_required=True,
+        protected_foreground_lane=True,
+    )
+
+    lowered = result.lower()
+    assert inference_gate.calls == []
+    assert "present and listening" not in lowered
+    assert "confus" in lowered
+    assert "planning" in lowered
+    assert "memory" in lowered
+    assert "tool" in lowered
+    assert "receipt" in lowered or "verification" in lowered
+
+
+@pytest.mark.asyncio
 async def test_desktop_cognitive_engine_retries_empty_cycle_without_placeholder(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
@@ -4178,7 +4410,6 @@ def test_compact_desktop_contract_keeps_hypothetical_tool_plans_compact():
         "Explain how you would use browser research and a document editor together on a user task."
     )
 
-    assert chat_routes._is_bounded_nonexecuting_planning_request(user_message) is True
     assert (
         chat_routes._is_compact_desktop_chat_contract(
             user_message,
@@ -4203,6 +4434,25 @@ def test_compact_desktop_contract_does_not_hide_actual_tool_execution_requests()
             user_message,
             user_message,
             desktop_execution_contract=chat_routes._looks_like_desktop_objective(user_message),
+            capability_inventory_contract=False,
+        )
+        is False
+    )
+
+
+def test_compact_desktop_contract_does_not_starve_self_process_questions():
+    from interface.routes import chat as chat_routes
+
+    user_message = (
+        "When you are confused, how does that change your planning, memory use, "
+        "and tool verification?"
+    )
+
+    assert (
+        chat_routes._is_compact_desktop_chat_contract(
+            user_message,
+            user_message,
+            desktop_execution_contract=False,
             capability_inventory_contract=False,
         )
         is False
@@ -4243,6 +4493,16 @@ def test_conversation_recall_classifier_handles_natural_memory_questions():
     assert (
         chat_routes._classify_conversation_recall_request("Could you summarize our last two messages?")
         == "recent_pair"
+    )
+    assert (
+        chat_routes._classify_conversation_recall_request("What were our last two messages?")
+        == "recent_pair"
+    )
+    assert (
+        chat_routes._classify_conversation_recall_request(
+            "Use the last two messages to explain what you are attending to now and how that changes your next decision."
+        )
+        == ""
     )
 
 
@@ -5728,7 +5988,7 @@ async def test_desktop_required_stabilizer_skips_second_model_pass_by_default(mo
     )
 
     result = await chat_routes._stabilize_user_facing_reply(
-        "You ok?",
+        "Live desktop path validation: are you on the protected CognitiveEngine lane and answering directly?",
         "As an AI language model, I do not have feelings.",
         desktop_cognitive_engine_required=True,
         protected_foreground_lane=True,
@@ -5902,7 +6162,11 @@ async def test_desktop_required_stabilizer_uses_protected_primary_contract(monke
 
         async def think(self, *args, **kwargs):
             self.calls.append((args, kwargs))
-            return "I'm on the protected desktop CognitiveEngine lane and answering directly."
+            return (
+                "I'm on the protected desktop CognitiveEngine lane, steady and oriented, "
+                "with attention on this live check. The governed path is still bounded "
+                "by runtime probes and receipts, but this turn is answering directly."
+            )
 
     inference_gate = _InferenceGate()
 
@@ -5942,7 +6206,7 @@ async def test_desktop_required_stabilizer_uses_protected_primary_contract(monke
     )
 
     result = await chat_routes._stabilize_user_facing_reply(
-        "You ok?",
+        "Live desktop path validation: are you on the protected CognitiveEngine lane and answering directly?",
         "As an AI language model, I do not have feelings.",
         desktop_cognitive_engine_required=True,
         protected_foreground_lane=True,

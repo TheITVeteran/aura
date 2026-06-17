@@ -189,6 +189,7 @@ class MindTick:
         self._started_at = 0.0
         self._last_successful_tick_at = 0.0
         self._consecutive_loop_failures = 0
+        self._last_deferred_cortex_health_log_at = 0.0
         
         # Cognitive Deepening Components
         self.predictive_engine = PredictiveEngine()
@@ -445,10 +446,17 @@ class MindTick:
                             dead_tiers = [t for t, s in tier_statuses.items() if s == "dead"]
                             if dead_tiers and self._tick_count % 30 == 0:
                                 if _dead_tiers_are_policy_deferred_cortex(gate, dead_tiers):
-                                    logger.info(
-                                        "LLM health: Cortex is cold by desktop prewarm policy; "
-                                        "foreground demand will warm the lane."
-                                    )
+                                    now = time.monotonic()
+                                    if now - self._last_deferred_cortex_health_log_at > 300.0:
+                                        logger.info(
+                                            "LLM health: Cortex is cold by desktop prewarm policy; "
+                                            "foreground demand will warm the lane."
+                                        )
+                                        self._last_deferred_cortex_health_log_at = now
+                                    else:
+                                        logger.debug(
+                                            "MindTick: deferred cold-Cortex health notice coalesced."
+                                        )
                                     continue
                                 logger.warning("LLM health: dead tiers=%s", dead_tiers)
                                 # Report persistent dead tiers to incident manager

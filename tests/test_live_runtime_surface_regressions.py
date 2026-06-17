@@ -2369,7 +2369,39 @@ def test_desktop_objective_execution_routes_through_tracked_gate():
         "execution must go through _run_desktop_objective_tracked"
     )
     tracked_calls = src.count("await _run_desktop_objective_tracked(")
-    assert tracked_calls >= 2, (
-        f"expected the chokepoint + post-cognitive desktop lane on the tracked gate, "
+    assert tracked_calls >= 3, (
+        f"expected the pre-cognitive self-sufficient lane, chokepoint, "
+        f"and post-cognitive desktop lane on the tracked gate, "
         f"found {tracked_calls}"
+    )
+
+
+def test_self_sufficient_desktop_objectives_execute_before_freeform_generation():
+    """Direct desktop work should not burn a foreground model call first.
+
+    A visible OS action like opening an app, creating a folder, typing text,
+    or setting wallpaper is already self-sufficient when desktop_task can
+    derive a verified primitive plan. The live user path should execute that
+    plan through governance immediately, then report receipts.
+    """
+    import pathlib
+
+    src = pathlib.Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    narrow = src.split(
+        "async def _execute_narrow_desktop_objective_before_cognition", 1
+    )[1].split("desktop_objective_response = await", 1)[0]
+    assert "_desktop_objective_self_sufficient_without_cognitive_text" in narrow
+    assert "await _run_desktop_objective_tracked(" in narrow
+
+
+def test_desktop_self_sufficient_classifier_distinguishes_status_report_from_prose_report():
+    from interface.routes.chat import _desktop_objective_self_sufficient_without_cognitive_text
+
+    assert _desktop_objective_self_sufficient_without_cognitive_text(
+        "Use my computer to click a Calculator equation, copy the equation body, "
+        "put it into Notes, produce a PDF, move that PDF into a Desktop proof folder, "
+        "and report the paths."
+    )
+    assert not _desktop_objective_self_sufficient_without_cognitive_text(
+        "Open Notes and write a report about quantum mechanics."
     )

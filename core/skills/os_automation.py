@@ -279,6 +279,11 @@ end tell
     @staticmethod
     def _extract_single_script(response: str, script_type: str) -> str:
         response_text = str(response or "").strip()
+        logger.debug(
+            "OSAutomation compiler response received: chars=%d sha256=%s",
+            len(response_text),
+            hashlib.sha256(response_text.encode("utf-8", errors="replace")).hexdigest()[:16],
+        )
         if not response_text:
             raise ValueError("Compiler returned an empty response.")
             
@@ -321,18 +326,33 @@ end tell
         if search_url:
             script_parts.append(f"open location {cls._as_applescript_string(search_url)}")
             script_parts.append("delay 0.5")
+
+        # Focus the local writing/notepad app if one is targeted, so focus is not left on Chrome/Safari
+        writing_apps = [app for app in apps if app.lower() not in {"google chrome", "safari", "arc", "firefox", "browser"}]
+
         text_payload = cls._text_payload_from_goal(goal)
-        if cls._should_stage_text(goal):
+        should_stage_text = cls._should_stage_text(goal)
+        needs_editable_surface = any(
+            marker in lowered
+            for marker in ("note", "textedit", "pages", "word", "document", "google docs", "google doc")
+        )
+        if should_stage_text:
             script_parts.append(f"set the clipboard to {cls._as_applescript_string(text_payload)}")
-            if any(app.lower() in {"notes", "textedit", "pages", "google chrome", "safari"} for app in apps):
-                script_parts.append(
-                    'tell application "System Events" to keystroke "v" using {command down}'
-                )
+
+        if needs_editable_surface:
+            if writing_apps:
+                script_parts.append(f'tell application {cls._as_applescript_string(writing_apps[0])} to activate')
+                script_parts.append("delay 0.5")
+            script_parts.append('tell application "System Events" to keystroke "n" using {command down}')
+            script_parts.append("delay 0.3")
+            if should_stage_text:
+                script_parts.append('tell application "System Events" to keystroke "v" using {command down}')
+                script_parts.append("delay 0.2")
+        elif should_stage_text:
+            script_parts.append(
+                'tell application "System Events" to keystroke "v" using {command down}'
+            )
             script_parts.append("delay 0.2")
-        if "notes" in lowered or "note" in lowered:
-            script_parts.append(cls._notes_note_script(goal, text_payload))
-        if "calculator" in lowered:
-            script_parts.append(cls._calculator_probe_script(goal))
         if not script_parts:
             return ""
         script_parts.append(
@@ -473,58 +493,8 @@ end tell
             "and host automation receipt capture before success was claimed."
         )
 
-    @classmethod
-    def _notes_note_script(cls, goal: str, body: str) -> str:
-        lowered = str(goal or "").lower()
-        title = "Aura Desktop Automation"
-        title_match = re.search(
-            r"\b(?:title|titled|called|named)\s+['\"]?([^'\".;\n]{2,80})",
-            str(goal or ""),
-            flags=re.IGNORECASE,
-        )
-        if title_match:
-            title = title_match.group(1).strip()
-        elif "journal" in lowered:
-            title = "Aura Journal Entry"
-        return f"""
-tell application "Notes"
-    activate
-    set targetFolder to missing value
-    repeat with acct in accounts
-        repeat with candidateFolder in folders of acct
-            if name of candidateFolder is "Notes" then
-                set targetFolder to candidateFolder
-                exit repeat
-            end if
-        end repeat
-        if targetFolder is not missing value then exit repeat
-    end repeat
-    if targetFolder is missing value then set targetFolder to folder 1 of account 1
-    set newNote to make new note at targetFolder with properties {{name:{cls._as_applescript_string(title)}, body:{cls._as_applescript_string(body)}}}
-end tell
-""".strip()
-
-    @classmethod
-    def _calculator_probe_script(cls, goal: str) -> str:
-        text = str(goal or "")
-        match = re.search(r"\b(\d{1,4})\s*(?:\+|plus)\s*(\d{1,4})\b", text, flags=re.IGNORECASE)
-        left = match.group(1) if match else "2"
-        right = match.group(2) if match else "3"
-        return f"""
-tell application "Calculator" to activate
-delay 0.3
-tell application "System Events"
-    keystroke "c"
-    delay 0.1
-    keystroke {cls._as_applescript_string(left)}
-    delay 0.1
-    keystroke "+"
-    delay 0.1
-    keystroke {cls._as_applescript_string(right)}
-    delay 0.1
-    keystroke "="
-end tell
-""".strip()
+    # Predefined app automation helpers (like _notes_note_script and _calculator_probe_script)
+    # have been removed to preserve a fully generalized dynamic compilation architecture.
 
     @staticmethod
     def _validate_script(script_type: str, script: str) -> tuple[bool, str]:

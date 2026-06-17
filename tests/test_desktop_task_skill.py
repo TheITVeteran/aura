@@ -114,6 +114,16 @@ def _fake_computer_use_result(params):
         }
     if action == "wait":
         return {"ok": True, "action": action, "seconds": float(target or 1.0)}
+    if action == "system_control":
+        return {
+            "ok": True,
+            "action": action,
+            "domain": payload.get("domain", "wallpaper"),
+            "value": payload.get("value", ""),
+            "applied": payload.get("value", ""),
+            "expected": payload.get("value", ""),
+            "effect_verified": True,
+        }
     if action == "read_screen_text":
         return {"ok": True, "action": action, "text": "visible desktop text"}
     if action == "type":
@@ -1081,6 +1091,7 @@ def test_desktop_task_does_not_split_conditional_then_language():
 @pytest.mark.asyncio
 async def test_desktop_task_rejects_oversized_derived_plan_before_execution(monkeypatch):
     from core.container import ServiceContainer
+    from core.skills.desktop_task import MAX_DESKTOP_TASK_STEPS
 
     calls = []
 
@@ -1100,7 +1111,7 @@ async def test_desktop_task_rejects_oversized_derived_plan_before_execution(monk
         "_derive_steps_from_objective",
         lambda objective, context: [
             DesktopTaskStep(action="wait", target="0", reason=f"step {index}")
-            for index in range(21)
+            for index in range(MAX_DESKTOP_TASK_STEPS + 1)
         ],
     )
 
@@ -1111,7 +1122,7 @@ async def test_desktop_task_rejects_oversized_derived_plan_before_execution(monk
 
     assert result["ok"] is False
     assert result["status"] == "desktop_task_plan_too_large"
-    assert result["steps_requested"] > 20
+    assert result["steps_requested"] > MAX_DESKTOP_TASK_STEPS
     assert result["steps_completed"] == 0
     assert calls == []
 
@@ -1545,6 +1556,88 @@ def test_wallpaper_derivation_fetches_controls_and_shows_source():
         and FETCHED_IMAGE_SOURCE_SENTINEL in str(s.target)
     ]
     assert source_steps, actions
+
+
+def test_background_wording_maps_to_wallpaper_affordance():
+    from core.skills.os_affordances import detect_os_settings
+
+    objective = (
+        "Find a cool picture of an eagle from online and make it my "
+        "background, then show me where you found it."
+    )
+
+    assert detect_os_settings(objective) == [("wallpaper", "eagle")]
+
+
+def test_plain_document_wording_does_not_force_google_docs():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    skill = DesktopTaskSkill()
+
+    assert skill._web_document_url("write a document in my Documents folder") == ""
+    assert skill._web_document_url("open a Google doc in Chrome") == "https://docs.google.com/document/u/0/create"
+
+
+def test_demo_class_objective_stays_on_verified_primitive_lane():
+    """The visible multi-app demo should derive from general primitives:
+    Notes, Chrome/article tabs, Google Docs paste, wallpaper control, and source
+    page proof. It must not collapse into one generated OS-automation script."""
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    objective = (
+        "I would like you to open my Notes app, write a note about a paragraph "
+        "long describing what you are, create a folder on my desktop titled "
+        "\"Aura's Journals.\" Then, export the note you made into that journal "
+        "as a PDF. I also want to read about the Knicks winning a championship. "
+        "Can you find me three different articles about it, open up a Google "
+        "doc in Chrome, and then write out a composite summary of all 3 "
+        "articles in that google doc? Keep the articles open in Chrome. "
+        "Lastly, I was wondering if you could find a cool picture of an eagle "
+        "from online and make it my background? And show me the page you found "
+        "the eagle?"
+    )
+    context = {
+        "desktop_task_research_query": "Knicks winning a championship",
+        "desktop_task_research_synthesis": "I reviewed the three sources.",
+        "desktop_task_research_sources": [
+            {"title": "A", "url": "https://example.test/a", "snippet": "one"},
+            {"title": "B", "url": "https://example.test/b", "snippet": "two"},
+            {"title": "C", "url": "https://example.test/c", "snippet": "three"},
+        ],
+    }
+
+    skill = DesktopTaskSkill()
+    steps = skill._derive_steps_from_objective(objective, context)
+    actions = [step.action for step in steps]
+
+    assert len(steps) <= 32
+    assert skill._should_escalate_to_os_automation(objective, steps, context) is False
+    assert "run_applescript" not in actions
+    assert "create_folder" in actions
+    assert "open_app" in actions
+    assert "set_clipboard" in actions
+    assert "render_text_pdf" in actions
+    assert "system_control" in actions
+    assert actions.index("fetch_topic_image") < actions.index("system_control")
+
+    open_urls = [step.target for step in steps if step.action == "open_url"]
+    url_values = [
+        target["url"] if isinstance(target, dict) else str(target)
+        for target in open_urls
+    ]
+    assert "https://example.test/a" in url_values
+    assert "https://example.test/b" in url_values
+    assert "https://example.test/c" in url_values
+    assert any("Knicks+winning+a+championship" in url for url in url_values)
+    assert any("docs.google.com/document" in url for url in url_values)
+    assert any("q=eagle" in url and "tbm=isch" in url for url in url_values)
+    assert all(
+        (not isinstance(target, dict)) or target.get("browser") == "Google Chrome"
+        for target in open_urls
+    )
+    wallpaper = [step for step in steps if step.action == "system_control"][0]
+    assert wallpaper.target["domain"] == "wallpaper"
+    assert "eagle" in wallpaper.target["value"]
 
 
 def test_non_image_setting_derives_single_control_step():

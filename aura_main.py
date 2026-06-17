@@ -3020,6 +3020,13 @@ def main():
         # both the .app (which runs aura_main.py directly) and script launches.
         if "AURA_DEFERRED_CORTEX_PREWARM" not in os.environ:
             os.environ["AURA_DEFERRED_CORTEX_PREWARM"] = "1"
+        # The default background-warmup headroom gate (>=30GB free on a 64GB
+        # host) is just barely too strict: a 64GB desktop actively running a
+        # browser sits at ~29-30GB free, so the ~23GB Cortex prewarm is refused
+        # by a fraction of a GB and the chat lane stays cold. Loading 23GB at
+        # 27GB+ free still leaves a safe post-load buffer, so admit there. It
+        # remains gated, so genuine pressure (<27GB free) still defers.
+        os.environ.setdefault("AURA_CORTEX_BACKGROUND_WARMUP_MIN_AVAILABLE_GB", "27")
 
     # Standardize: Reboot behavior
     if args.stop:

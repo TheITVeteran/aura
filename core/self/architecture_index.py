@@ -168,10 +168,23 @@ class ArchitectureIndex:
             )
         )
 
+    @classmethod
+    def _foreground_background_build_allowed(cls) -> bool:
+        """Return true when live foreground sessions may self-index in-process.
+
+        The architecture index is useful, but a full repository AST walk is not
+        a foreground-critical subsystem. In the desktop lane it can collide with
+        active chat turns, shutdown, and model warmup. Keeping it opt-in makes
+        launch and conversation reliability the default while preserving an
+        explicit escape hatch for diagnostic sessions.
+        """
+
+        return cls._env_flag("AURA_ALLOW_FOREGROUND_ARCHITECTURE_INDEX")
+
     def _foreground_build_deferred(self, *, emit_log: bool = True) -> bool:
         if not self._interactive_runtime():
             return False
-        if self._env_flag("AURA_ALLOW_FOREGROUND_ARCHITECTURE_INDEX"):
+        if self._foreground_background_build_allowed():
             return False
         try:
             quiet_s = float(os.getenv("AURA_FOREGROUND_ARCHITECTURE_INDEX_QUIET_S", "180") or 180.0)
@@ -202,6 +215,9 @@ class ArchitectureIndex:
         """Build once the interactive runtime has been quiet long enough."""
 
         if self._index or self._building:
+            return
+        if self._interactive_runtime() and not self._foreground_background_build_allowed():
+            self._foreground_build_deferred()
             return
         with self._schedule_lock:
             if self._build_thread is not None and self._build_thread.is_alive():

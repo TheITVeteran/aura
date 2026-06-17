@@ -246,6 +246,7 @@ class UnifiedField:
         self._RECOVERY_THRESHOLD_TICKS: int = 30  # 1.5s at 20Hz
         self._CRISIS_COHERENCE: float = 0.25
         self._recovery_count: int = 0
+        self._last_recovery_log_at: float = 0.0
 
         # Attractor-saturation defense (eigenvalue-entropy-scaled chaos).
         # A recurrent tanh field can settle into a degenerate attractor (all
@@ -261,6 +262,8 @@ class UnifiedField:
         self._ANTI_DEGENERACY_GAIN: float = 8.0     # max noise multiplier at full collapse
         self._SATURATION_ABS: float = 0.90          # mean |F| above this = saturated rail
         self._saturation_recoveries: int = 0
+        self._last_saturation_log_at: float = 0.0
+        self._RECOVERY_LOG_INTERVAL_S: float = 60.0
 
         # Phase coupling
         self._field_phase: float = 0.0  # current field oscillation phase
@@ -782,8 +785,23 @@ class UnifiedField:
                 self.F = np.clip(self.F, -1.0, 1.0).astype(np.float32)
                 self._low_coherence_ticks = 0
                 self._recovery_count += 1
-                logger.info("🔄 UnifiedField RECOVERY PULSE #%d (coherence was %.3f for %d ticks, scale=%.1f)",
-                            self._recovery_count, self._coherence, self._RECOVERY_THRESHOLD_TICKS, scale)
+                now = time.monotonic()
+                if (now - self._last_recovery_log_at) >= self._RECOVERY_LOG_INTERVAL_S:
+                    self._last_recovery_log_at = now
+                    logger.info(
+                        "UnifiedField recovery pulse #%d (coherence was %.3f for %d ticks, scale=%.1f)",
+                        self._recovery_count,
+                        self._coherence,
+                        self._RECOVERY_THRESHOLD_TICKS,
+                        scale,
+                    )
+                else:
+                    logger.debug(
+                        "UnifiedField recovery pulse #%d coalesced (coherence=%.3f, scale=%.1f)",
+                        self._recovery_count,
+                        self._coherence,
+                        scale,
+                    )
         else:
             self._low_coherence_ticks = 0
 
@@ -799,11 +817,21 @@ class UnifiedField:
             self.F += kick
             self.F = np.clip(self.F, -1.0, 1.0).astype(np.float32)
             self._saturation_recoveries += 1
-            if self._saturation_recoveries % 20 == 1:
+            now = time.monotonic()
+            if (now - self._last_saturation_log_at) >= self._RECOVERY_LOG_INTERVAL_S:
+                self._last_saturation_log_at = now
                 logger.info(
-                    "🌀 UnifiedField SATURATION RESCUE #%d (mean|F|=%.3f, "
+                    "UnifiedField saturation rescue #%d (mean|F|=%.3f, "
                     "spectral_entropy=%.3f, scale=%.1f)",
                     self._saturation_recoveries, mean_abs, self._spectral_entropy, scale,
+                )
+            else:
+                logger.debug(
+                    "UnifiedField saturation rescue #%d coalesced (mean|F|=%.3f, spectral_entropy=%.3f, scale=%.1f)",
+                    self._saturation_recoveries,
+                    mean_abs,
+                    self._spectral_entropy,
+                    scale,
                 )
 
     def _compute_spectral_entropy(self) -> float:

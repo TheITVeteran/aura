@@ -445,7 +445,7 @@ class InferenceGate:
                 # generation decision. The 32B lane is the user-facing default,
                 # but it must not be admitted while macOS is close to swap/jetsam.
                 default_max_pressure = 72.0 if context_key == "FOREGROUND" else 58.0
-                default_min_available = 20.0 if context_key == "FOREGROUND" else 30.0
+                default_min_available = 20.0 if context_key == "FOREGROUND" else 26.0
             else:
                 default_max_pressure = 68.0 if context_key == "FOREGROUND" else 54.0
                 default_min_available = 14.0 if context_key == "FOREGROUND" else 18.0
@@ -523,11 +523,11 @@ class InferenceGate:
     def _log_cold_cortex_policy_deferred(self) -> None:
         now = time.monotonic()
         last_log = getattr(self, "_last_cortex_policy_deferred_log_at", 0.0)
-        if (now - last_log) < 60.0:
+        if (now - last_log) < 300.0:
             return
         self._last_cortex_policy_deferred_log_at = now
         logger.info(
-            "🛡️ Cold-start Cortex recovery deferred by desktop prewarm policy; "
+            "Cold-start Cortex recovery deferred by desktop prewarm policy; "
             "foreground demand will warm the lane when needed."
         )
 
@@ -5413,6 +5413,33 @@ class InferenceGate:
                     applied_bias["max_tokens_factor"],
                     max_tokens,
                 )
+
+        if (
+            not is_background
+            and self._origin_is_user_facing(origin)
+            and requested_tier in {"primary", "secondary"}
+            and "max_tokens" not in context
+            and not bool(context.get("resource_stakes_blocked", False))
+            and not deep_probe_request
+            and not isolated_generation_contract
+            and not health_probe
+        ):
+            foreground_floor, foreground_cap, _foreground_loops = (
+                self._foreground_compute_profile(initial_visible_user_prompt)
+            )
+            bounded = min(max_tokens, foreground_cap)
+            if bounded < foreground_floor:
+                logger.info(
+                    "🧠 Foreground chat post-bias budget floor raised %d→%d "
+                    "(cap=%d, origin=%s).",
+                    bounded,
+                    foreground_floor,
+                    foreground_cap,
+                    origin or "unknown",
+                )
+                max_tokens = foreground_floor
+            else:
+                max_tokens = bounded
 
         if explicit_max_tokens_cap is not None:
             max_tokens = min(max_tokens, explicit_max_tokens_cap)

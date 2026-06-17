@@ -255,6 +255,8 @@ class PhiCore:
         self._last_surrogate_time: float = 0.0
         self._surrogate_interval_s: float = 5.0
         self._norm_history: deque = deque(maxlen=20)
+        self._last_exclusion_log_at: float = 0.0
+        self._exclusion_log_interval_s: float = 300.0
         
         # Stability tracking (TimescaleStabilityAnalyzer)
         self._stability_analyzer = None
@@ -528,7 +530,7 @@ class PhiCore:
         )
         self._mesh_last_result = result
 
-        logger.info(
+        logger.debug(
             "PhiCore (mesh): φs=%.5f, complex=%s, MIP=%s (n=%d transitions)",
             phi_s, result.is_complex, result.mip_description, transitions,
         )
@@ -834,7 +836,7 @@ class PhiCore:
                 self._last_result = result
                 self._last_compute_time = now
 
-                logger.info(
+                logger.debug(
                     "PhiCore (16-node spectral): φs=%.5f, complex=%s, MIP=%s "
                     "(n=%d transitions, affective_baseline=%.5f)",
                     result.phi_s, result.is_complex, result.mip_description,
@@ -878,7 +880,7 @@ class PhiCore:
             
         elapsed = time.perf_counter() - start_t
         if winner:
-            logger.info("compute_full_kernel: winner=%s, phi_s=%.5f, time=%.3fs", complex_name, winner.phi_s, elapsed)
+            logger.debug("compute_full_kernel: winner=%s, phi_s=%.5f, time=%.3fs", complex_name, winner.phi_s, elapsed)
             
         return winner
 
@@ -1159,12 +1161,13 @@ class PhiCore:
 
         full_complex = tuple(range(N_NODES))
         if best_subset != full_complex:
-            logger.info(
-                "PhiCore EXCLUSION POSTULATE: max-phi complex is NOT the full system. "
-                "Max-phi subset: [%s] (phi=%.5f, %d/%d nodes). "
-                "Full-system phi=%.5f. Treating the %d-node subset as the "
-                "current maximal integration complex under the configured "
-                "IIT-style model; this is not evidence of consciousness by itself.",
+            message = (
+                "PhiCore exclusion postulate: max-phi complex is not the full system. "
+                "Max-phi subset: [%s] (phi=%.5f, %d/%d nodes). Full-system phi=%.5f. "
+                "Treating the %d-node subset as the current maximal integration complex "
+                "under the configured IIT-style model; this is not evidence of consciousness by itself."
+            )
+            args = (
                 ", ".join(self._max_phi_complex_names),
                 best_phi,
                 len(best_subset),
@@ -1172,12 +1175,22 @@ class PhiCore:
                 self.current_phi,
                 len(best_subset),
             )
+            if (now - self._last_exclusion_log_at) >= self._exclusion_log_interval_s:
+                self._last_exclusion_log_at = now
+                logger.info(message, *args)
+            else:
+                logger.debug(message, *args)
         else:
-            logger.info(
-                "PhiCore EXCLUSION POSTULATE: max-phi complex = full %d-node system (phi=%.5f). "
-                "No proper subset has higher integration.",
-                N_NODES, best_phi,
+            message = (
+                "PhiCore exclusion postulate: max-phi complex = full %d-node system (phi=%.5f). "
+                "No proper subset has higher integration."
             )
+            args = (N_NODES, best_phi)
+            if (now - self._last_exclusion_log_at) >= self._exclusion_log_interval_s:
+                self._last_exclusion_log_at = now
+                logger.info(message, *args)
+            else:
+                logger.debug(message, *args)
 
         return (best_subset, self._max_phi_value)
 
@@ -1746,7 +1759,7 @@ class PhiCore:
             tpm_n_samples=self._tpm_n_samples,
         )
 
-        logger.info(
+        logger.debug(
             "PhiCore (interventional): φs=%.5f, MIP=%s (n=%d)",
             phi_s, result.mip_description, self._tpm_n_samples
         )

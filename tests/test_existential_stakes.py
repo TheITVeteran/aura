@@ -202,6 +202,122 @@ def test_operational_load_cannot_trigger_survival_veto():
     assert threat < 0.75  # the will-system survival-inhibition veto threshold
 
 
+def test_warning_degradations_are_weak_existential_signal():
+    """Warnings are real evidence, but not enough to shout near-death alone."""
+    from core.runtime.errors import DegradationRecord, get_degradation_tracker
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    try:
+        now = time.time()
+        for idx in range(5):
+            tracker.record(
+                DegradationRecord(
+                    subsystem=f"warning_{idx}",
+                    severity="warning",
+                    error_type="Warning",
+                    error_message="transient warning",
+                    action="observed",
+                    timestamp=now,
+                )
+            )
+
+        stakes = ExistentialStakes(memory_limit_bytes=10**12)
+        threat = stakes.update()
+        status = stakes.get_status()
+
+        assert status["degradation_threat"] < 0.75
+        assert threat < 0.75
+    finally:
+        tracker.reset()
+
+
+def test_degraded_cascade_still_reaches_critical():
+    from core.runtime.errors import DegradationRecord, get_degradation_tracker
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    try:
+        now = time.time()
+        for idx in range(5):
+            tracker.record(
+                DegradationRecord(
+                    subsystem=f"degraded_{idx}",
+                    severity="degraded",
+                    error_type="RuntimeError",
+                    error_message="fresh degraded event",
+                    action="repair",
+                    timestamp=now,
+                )
+            )
+
+        stakes = ExistentialStakes(memory_limit_bytes=10**12)
+        threat = stakes.update()
+
+        assert threat == pytest.approx(1.0)
+        assert stakes.get_status()["degradation_threat"] == pytest.approx(1.0)
+    finally:
+        tracker.reset()
+
+
+def test_old_degradations_decay_instead_of_holding_veto():
+    from core.runtime.errors import DegradationRecord, get_degradation_tracker
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    try:
+        old = time.time() - 45.0
+        for idx in range(5):
+            tracker.record(
+                DegradationRecord(
+                    subsystem=f"old_degraded_{idx}",
+                    severity="degraded",
+                    error_type="RuntimeError",
+                    error_message="old degraded event",
+                    action="already repaired",
+                    timestamp=old,
+                )
+            )
+
+        stakes = ExistentialStakes(memory_limit_bytes=10**12)
+        threat = stakes.update()
+
+        assert 0.0 < stakes.get_status()["degradation_threat"] < 0.75
+        assert threat < 0.75
+    finally:
+        tracker.reset()
+
+
+def test_critical_existential_log_is_coalesced(caplog):
+    from core.runtime.errors import DegradationRecord, get_degradation_tracker
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    try:
+        now = time.time()
+        for idx in range(5):
+            tracker.record(
+                DegradationRecord(
+                    subsystem=f"critical_log_{idx}",
+                    severity="degraded",
+                    error_type="RuntimeError",
+                    error_message="fresh degraded event",
+                    action="repair",
+                    timestamp=now,
+                )
+            )
+
+        stakes = ExistentialStakes(memory_limit_bytes=10**12)
+        with caplog.at_level("WARNING", logger="Consciousness.ExistentialStakes"):
+            stakes.update()
+            stakes.update()
+
+        messages = [record.message for record in caplog.records]
+        assert sum("CRITICAL EXISTENTIAL STAKES" in msg for msg in messages) == 1
+    finally:
+        tracker.reset()
+
+
 def test_memory_death_risk_still_reaches_critical():
     """Genuine death risk (memory) is uncapped and still triggers the veto."""
     from core.consciousness.existential_stakes import ExistentialStakes

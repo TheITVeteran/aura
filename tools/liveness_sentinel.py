@@ -65,6 +65,21 @@ def read_heartbeat(path: Path) -> tuple[float | None, float | None, float | None
     return last_loop_run, written_at, mtime
 
 
+def read_heartbeat_state(path: Path) -> str:
+    """Return the optional loop_state field from a heartbeat file.
+
+    ``retired`` means the in-process watchdog intentionally stopped monitoring
+    because the loop it owned stopped running (for example, a boot-loop to
+    server-loop handoff). That is not a wedge, so the external sentinel should
+    exit instead of killing the runtime later from a stale retired heartbeat.
+    """
+    try:
+        data = json.loads(path.read_text(errors="replace") or "{}")
+    except (OSError, ValueError):
+        return ""
+    return str(data.get("loop_state") or data.get("status") or "").strip().lower()
+
+
 def child_pids(root_pid: int, *, max_children: int = 256) -> list[int]:
     if psutil is None:
         return []
@@ -203,6 +218,9 @@ def main(argv: list[str] | None = None) -> int:
     while target.is_running():
         now = time.time()
         last_loop_run, written_at, file_mtime = read_heartbeat(args.heartbeat)
+        heartbeat_state = read_heartbeat_state(args.heartbeat)
+        if heartbeat_state in {"retired", "stopped", "disabled"}:
+            return 0
         live_ts = _liveness_timestamp(last_loop_run, written_at, file_mtime)
         stale_age = (now - live_ts) if live_ts > 0.0 else (now - started_wall)
         is_stale = stale_age >= ceiling

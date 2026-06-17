@@ -87,9 +87,25 @@ body {
     background-image:
         radial-gradient(ellipse at 50% 0%, #1a0a3520, transparent 60%),
         radial-gradient(ellipse at 0% 100%, #00e5ff06, transparent 40%);
-    -webkit-user-select: text !important;
-    /* Safari support */
-    user-select: text !important;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+input,
+textarea,
+select,
+pre,
+code,
+.msg,
+.thought-card,
+.sys-box,
+.metric-guide-live,
+.metric-guide-block,
+.memory-list,
+.skill-desc,
+.tool-last-detail {
+    -webkit-user-select: text;
+    user-select: text;
 }
 
 body.chat-text-compact {
@@ -1085,6 +1101,11 @@ main {
     font-size: calc(0.95rem * var(--chat-input-scale));
     outline: none;
     letter-spacing: 0.02em;
+    caret-color: var(--accent);
+    cursor: text;
+    pointer-events: auto;
+    -webkit-user-select: text;
+    user-select: text;
 }
 
 #chat-input::placeholder {

@@ -191,6 +191,8 @@ def looks_like_capability_inventory_dialogue_request(text: str) -> bool:
     normalized = normalize_memory_intent_text(text)
     if not normalized:
         return False
+    if len(normalized.split()) > 25:
+        return False
     sanitized = strip_negated_action_spans(normalized).lower()
     direct_execution = bool(_DIRECT_EXECUTION_PREFIX_RE.search(sanitized))
     return bool(_CAPABILITY_INVENTORY_RE.search(normalized)) and not direct_execution
@@ -225,6 +227,8 @@ def looks_like_explanatory_dialogue_request(text: str) -> bool:
     """
     normalized = normalize_memory_intent_text(text)
     if not normalized:
+        return False
+    if len(normalized.split()) > 25:
         return False
     if looks_like_capability_inventory_dialogue_request(normalized):
         return True

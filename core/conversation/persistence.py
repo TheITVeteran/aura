@@ -181,7 +181,21 @@ class ConversationPersistence:
         content = _safe_text(content, max_chars=MAX_CONTENT_CHARS)
         origin = _safe_text(origin, max_chars=MAX_ORIGIN_CHARS)
         cid = _safe_text(cid, max_chars=MAX_CID_CHARS)
+        inserted = False
         with self._connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            if cid:
+                existing = con.execute(
+                    "SELECT id FROM turns WHERE cid = ? ORDER BY created_at ASC, rowid ASC LIMIT 1",
+                    (cid,),
+                ).fetchone()
+                if existing is not None:
+                    con.execute(
+                        "UPDATE sessions SET last_active = ? WHERE id = ?",
+                        (now, sid),
+                    )
+                    con.commit()
+                    return str(existing["id"])
             con.execute(
                 "INSERT INTO turns VALUES (?,?,?,?,?,?,?)",
                 (turn_id, sid, role, content, origin, now, cid),
@@ -190,15 +204,17 @@ class ConversationPersistence:
                 "UPDATE sessions SET last_active = ? WHERE id = ?", (now, sid)
             )
             con.commit()
+            inserted = True
 
-        self._publish_turn_recorded(
-            role=role,
-            content=content,
-            origin=origin,
-            cid=cid,
-            session_id=sid,
-            turn_id=turn_id,
-        )
+        if inserted:
+            self._publish_turn_recorded(
+                role=role,
+                content=content,
+                origin=origin,
+                cid=cid,
+                session_id=sid,
+                turn_id=turn_id,
+            )
         return turn_id
 
     def record_exchange(
@@ -225,54 +241,84 @@ class ConversationPersistence:
         safe_cid = _safe_text(cid, max_chars=MAX_CID_CHARS)
         user_cid = _safe_text(f"{safe_cid}:user", max_chars=MAX_CID_CHARS)
         aura_cid = _safe_text(f"{safe_cid}:aura", max_chars=MAX_CID_CHARS)
+        publish_user = False
+        publish_aura = False
 
         with self._connect() as con:
-            con.execute(
-                "INSERT INTO turns VALUES (?,?,?,?,?,?,?)",
-                (
-                    user_turn_id,
-                    sid,
-                    "user",
-                    safe_user_content,
-                    safe_origin,
-                    now,
-                    user_cid,
-                ),
+            con.execute("BEGIN IMMEDIATE")
+            existing_user = (
+                con.execute(
+                    "SELECT id FROM turns WHERE cid = ? ORDER BY created_at ASC, rowid ASC LIMIT 1",
+                    (user_cid,),
+                ).fetchone()
+                if user_cid
+                else None
             )
-            con.execute(
-                "INSERT INTO turns VALUES (?,?,?,?,?,?,?)",
-                (
-                    aura_turn_id,
-                    sid,
-                    "aura",
-                    safe_aura_content,
-                    safe_origin,
-                    now + 1e-6,
-                    aura_cid,
-                ),
+            if existing_user is not None:
+                user_turn_id = str(existing_user["id"])
+            else:
+                con.execute(
+                    "INSERT INTO turns VALUES (?,?,?,?,?,?,?)",
+                    (
+                        user_turn_id,
+                        sid,
+                        "user",
+                        safe_user_content,
+                        safe_origin,
+                        now,
+                        user_cid,
+                    ),
+                )
+                publish_user = True
+
+            existing_aura = (
+                con.execute(
+                    "SELECT id FROM turns WHERE cid = ? ORDER BY created_at ASC, rowid ASC LIMIT 1",
+                    (aura_cid,),
+                ).fetchone()
+                if aura_cid
+                else None
             )
+            if existing_aura is not None:
+                aura_turn_id = str(existing_aura["id"])
+            else:
+                con.execute(
+                    "INSERT INTO turns VALUES (?,?,?,?,?,?,?)",
+                    (
+                        aura_turn_id,
+                        sid,
+                        "aura",
+                        safe_aura_content,
+                        safe_origin,
+                        now + 1e-6,
+                        aura_cid,
+                    ),
+                )
+                publish_aura = True
             con.execute(
                 "UPDATE sessions SET last_active = ? WHERE id = ?",
                 (now + 1e-6, sid),
             )
             con.commit()
 
-        self._publish_turn_recorded(
-            role="user",
-            content=safe_user_content,
-            origin=safe_origin,
-            cid=user_cid,
-            session_id=sid,
-            turn_id=user_turn_id,
-        )
-        self._publish_turn_recorded(
-            role="aura",
-            content=safe_aura_content,
-            origin=safe_origin,
-            cid=aura_cid,
-            session_id=sid,
-            turn_id=aura_turn_id,
-        )
+        if publish_user:
+            self._publish_turn_recorded(
+                role="user",
+                content=safe_user_content,
+                origin=safe_origin,
+                cid=user_cid,
+                session_id=sid,
+                turn_id=user_turn_id,
+            )
+        if publish_aura:
+            self._publish_turn_recorded(
+                role="aura",
+                content=safe_aura_content,
+                origin=safe_origin,
+                cid=aura_cid,
+                session_id=sid,
+                turn_id=aura_turn_id,
+            )
         return user_turn_id, aura_turn_id
 
     def _publish_turn_recorded(

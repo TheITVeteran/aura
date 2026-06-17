@@ -87,14 +87,55 @@ def test_launch_script_supports_gui_window_mode():
     assert "resolve_launch_log()" in shell
     assert "ACTIVE_LAUNCH_LOG" in shell
     assert "aura-desktop-launch.log" in shell
+    assert "cleanup_attached_launcher()" in shell
+    assert "trap 'cleanup_attached_launcher 130' INT" in shell
+    assert '"$PYTHON_CMD" aura_cleanup.py >/dev/null 2>&1 || true' in shell
 
 
 def test_launcher_cleanup_shim_exists_at_repo_root():
     shim = PROJECT_ROOT / "aura_cleanup.py"
+    target = PROJECT_ROOT / "scripts" / "one_off" / "aura_cleanup.py"
     contents = shim.read_text(encoding="utf-8")
 
     assert shim.exists()
+    assert target.exists()
     assert 'scripts" / "one_off" / "aura_cleanup.py"' in contents
+
+
+def test_cleanup_preserves_verified_live_runtime_unless_forced():
+    cleanup = (PROJECT_ROOT / "scripts" / "one_off" / "aura_cleanup.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "def _verified_live_runtime_pid()" in cleanup
+    assert 'AURA_CLEANUP_FORCE' in cleanup
+    assert "skipping aggressive pre-launch process cleanup" in cleanup
+    assert "preserving lock directory" in cleanup
+
+
+def test_cleanup_treats_missing_lock_pid_as_stale(monkeypatch):
+    from scripts.one_off import aura_cleanup
+
+    class FakePsutil:
+        STATUS_ZOMBIE = "zombie"
+
+        class NoSuchProcess(Exception):
+            pass
+
+        class AccessDenied(Exception):
+            pass
+
+        class ZombieProcess(Exception):
+            pass
+
+        @staticmethod
+        def Process(_pid):
+            raise FakePsutil.NoSuchProcess("missing")
+
+    monkeypatch.setitem(__import__("sys").modules, "psutil", FakePsutil)
+    monkeypatch.setattr(aura_cleanup, "read_instance_lock_pid", lambda _name: 999999)
+
+    assert aura_cleanup._verified_live_runtime_pid() is None
 
 
 def test_aura_main_supports_gui_window_mode():
@@ -105,6 +146,15 @@ def test_aura_main_supports_gui_window_mode():
     assert 'AURA_EXTERNAL_GUI_OWNER' in main_py
     assert 'AURA_LAUNCHED_FROM_APP' in main_py
     assert "launch_gui=None" in main_py
+
+
+def test_packaged_launcher_parses_structured_runtime_lock():
+    swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
+
+    assert "private func parseRuntimeLockPID" in swift
+    assert "JSONSerialization.jsonObject" in swift
+    assert 'payload["pid"]' in swift
+    assert "guard let pid = parseRuntimeLockPID(text)" in swift
 
 
 def test_aura_main_acquires_singleton_lock_before_port_cleanup_and_reaper_boot():
@@ -204,6 +254,20 @@ def test_aura_main_long_running_streams_are_shutdown_bounded():
     assert 'logger.error("[GUI] %s", decoded)' in desktop_slice
     assert 'logger.debug("[GUI] %s", decoded)' in desktop_slice
     assert "while True" not in desktop_slice
+
+
+def test_aura_main_boot_wait_accepts_launchable_warming_payload():
+    main_py = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
+    wait_slice = main_py.split("async def _wait_for_server_http", 1)[1].split(
+        "def _native_launcher_owns_gui",
+        1,
+    )[0]
+
+    assert "launcher_ready = bool(data.get(\"launcher_ready\"))" in wait_slice
+    assert "conversation_warming" in wait_slice
+    assert "conversation_recovering" in wait_slice
+    assert "conversation_failed" in wait_slice
+    assert "GUI launchable while boot_phase" in wait_slice
 
 
 def test_aura_main_uses_shared_runtime_boot_helper_across_cli_server_and_desktop():

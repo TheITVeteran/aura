@@ -48,19 +48,45 @@ class OSAffordance:
 # ── value extractors ───────────────────────────────────────────────────
 
 def _extract_wallpaper(text: str) -> str | None:
-    """Topic for a wallpaper change ('change my wallpaper to a squid')."""
-    match = re.search(
-        r"\b(?:change|set|update|make)\b[^.;\n]{0,40}?\bwallpaper\b"
-        r"(?:\s+(?:to|into|with)\b)?(?:\s+(?:a|an|the)\b)?\s*([^.;,\n]+)",
+    """Topic for a wallpaper/background change.
+
+    Covers both technical phrasing ("set wallpaper") and ordinary user
+    phrasing ("make this eagle my background") while returning only the visual
+    topic. The executor still goes through the generic ``system_control`` path.
+    """
+    image_topic_match = re.search(
+        r"\b(?:find|search|look\s+up)\b[^.;\n]{0,80}?\b(?:image|picture|photo)\s+of\s+([^.;,\n]+)"
+        r"[^.;\n]{0,100}?\b(?:make|set|use)\b[^.;\n]{0,50}?\b(?:my\s+)?(?:wallpaper|desktop\s+background|background)\b",
         text,
         flags=re.IGNORECASE,
     )
-    if not match:
+    direct_match = re.search(
+        r"\b(?:change|set|update|make)\b[^.;\n]{0,50}?\b(?:wallpaper|desktop\s+background|background)\b"
+        r"(?:\s+(?:to|into|with|as)\b)?(?:\s+(?:a|an|the)\b)?\s*([^.;,\n]*)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    def _clean(candidate: str) -> str | None:
+        query = re.sub(r"\bfrom\s+(?:online|the\s+(?:internet|web))\b.*$", "", candidate, flags=re.IGNORECASE)
+        query = re.sub(r"\b(?:and|then|also|please|online)\b.*$", "", query, flags=re.IGNORECASE)
+        query = re.sub(r"\b(?:image|picture|photo)\b.*$", "", query, flags=re.IGNORECASE)
+        query = re.sub(r"^(?:a|an|the|cool)\s+", "", query.strip(" ,?.!"), flags=re.IGNORECASE)
+        query = query.strip(" ,?.!")[:120]
+        if not query or query.lower() in {"it", "this", "that", "one"}:
+            return None
+        return query
+
+    if image_topic_match:
+        topic = _clean(image_topic_match.group(1))
+        if topic:
+            return topic
+    if not direct_match:
         return None
-    query = re.sub(r"\b(?:and|then|also|please)\b.*$", "", match.group(1), flags=re.IGNORECASE)
-    query = re.sub(r"\b(?:image|picture|photo)\b.*$", "", query, flags=re.IGNORECASE)
-    query = query.strip(" ,")[:120]
-    return query or None
+    topic = _clean(direct_match.group(1))
+    if topic:
+        return topic
+    return None
 
 
 def _extract_dark_mode(text: str) -> str | None:

@@ -1584,6 +1584,7 @@ function connect() {
         try {
             const data = JSON.parse(e.data);
             if (!state.connected) state.connected = true;
+            markLiveSurfaceResponsive('websocket_message');
             const toast = $('conn-toast');
             if (toast && toast.classList.contains('show') && /connection lost|reconnecting/i.test(toast.textContent || '')) {
                 showConnToast(false);
@@ -1657,6 +1658,16 @@ function reconnectLiveSurface(reason = 'resume') {
         state.resumeInProgress = false;
         if (state.connected) showConnToast(false);
     }, 10000);
+}
+
+function markLiveSurfaceResponsive(reason = 'activity') {
+    const wasResuming = !!state.resumeInProgress;
+    state.surfaceSuspended = false;
+    state.resumeInProgress = false;
+    if (state.connected && wasResuming) {
+        showConnToast(false);
+        setConnectionVisual(state.runtimeHealthy ? 'online' : 'degraded', state.runtimeHealthy ? '' : runtimeHealthStatusText());
+    }
 }
 
 function pauseLiveSurface(reason = 'hidden') {
@@ -2783,6 +2794,8 @@ async function runChatRequest(msg, { messageAlreadyRendered = false } = {}) {
             return;
         }
 
+        markLiveSurfaceResponsive('chat_success');
+
         // If it's just a dispatch confirmation, don't clutter the chat
         if (data.response && data.response !== "Message dispatched to cognitive core.") {
             // Deduplicate: check both stream content AND the global fingerprint set
@@ -3315,6 +3328,35 @@ function requiredProbesFromPayload(payload) {
     return null;
 }
 
+function bootSnapshotFromPayload(payload) {
+    if (!payload || typeof payload !== 'object') return {};
+    return payload.boot || (payload.telemetry && payload.telemetry.boot) || {};
+}
+
+function payloadShellLaunchable(payload) {
+    if (!payload || typeof payload !== 'object') return false;
+    if (payload.transport_only === true) return false;
+    if (payload.runtime_probe_healthy === false) return false;
+
+    const requiredProbes = requiredProbesFromPayload(payload);
+    if (!requiredRuntimeProbesPass(requiredProbes)) return false;
+
+    const boot = bootSnapshotFromPayload(payload);
+    const shellReady = (
+        boot.launcher_ready === true
+        || boot.system_ready === true
+        || payload.launcher_ready === true
+        || payload.system_ready === true
+    );
+    if (!shellReady) return false;
+    if (boot.ready === true || payload.ready === true) return true;
+
+    const phase = String(boot.boot_phase || boot.status || payload.boot_phase || payload.status || '').toLowerCase();
+    if (!phase) return boot.system_ready === true || payload.system_ready === true;
+    if (['ready', 'healthy', 'kernel_ready'].includes(phase)) return true;
+    return phase.startsWith('conversation_');
+}
+
 function payloadRuntimeHealthy(payload) {
     if (!payload || typeof payload !== 'object') return false;
     if (payload.transport_only === true) return false;
@@ -3323,7 +3365,7 @@ function payloadRuntimeHealthy(payload) {
     if (!requiredRuntimeProbesPass(requiredProbes)) return false;
     if (runtimeHealthBlockers(payload).length > 0) return false;
     if (payload.healthy === false) return false;
-    const boot = payload.boot || (payload.telemetry && payload.telemetry.boot) || {};
+    const boot = bootSnapshotFromPayload(payload);
     if (boot.ready === false || boot.system_ready === false) return false;
     const status = String(payload.status || boot.status || '').toLowerCase();
     return !status || ['ok', 'ready', 'healthy'].includes(status);
@@ -3334,7 +3376,7 @@ function runtimeHealthBlockers(payload) {
     const blockers = Array.isArray(payload.blockers) ? payload.blockers.slice() : [];
     if (payload.transport_only === true) blockers.push('runtime_transport_only');
     if (payload.runtime_probe_healthy === false) blockers.push('runtime_required_probes');
-    const boot = payload.boot || (payload.telemetry && payload.telemetry.boot) || {};
+    const boot = bootSnapshotFromPayload(payload);
     if (Array.isArray(boot.blockers)) blockers.push(...boot.blockers);
     const required = requiredProbesFromPayload(payload);
     if (!requiredRuntimeProbesPass(required)) {
@@ -4945,8 +4987,9 @@ function syncSplashState(payload) {
     const splash = $('splash-screen');
     if (!splash || splash.classList.contains('hidden')) return;
 
-    const boot = payload && payload.telemetry && payload.telemetry.boot ? payload.telemetry.boot : {};
+    const boot = bootSnapshotFromPayload(payload);
     const runtimeHealthy = payloadRuntimeHealthy(payload);
+    const shellLaunchable = payloadShellLaunchable(payload);
     const bootReady = runtimeHealthy && (boot.ready === true || String(boot.status || '').toLowerCase() === 'ready');
     const message = String(boot.status_message || '').trim();
 
@@ -4956,12 +4999,14 @@ function syncSplashState(payload) {
     }
 
     updateSplashProgress(
-        boot.progress != null ? boot.progress : (runtimeHealthy ? 90 : 15),
+        boot.progress != null ? boot.progress : (runtimeHealthy || shellLaunchable ? 90 : 15),
         message || runtimeHealthStatusText(payload)
     );
 
     if (runtimeHealthy && bootReady) {
         dismissSplash(message || 'Neural link established.');
+    } else if (shellLaunchable) {
+        dismissSplash(message || 'Aura shell ready. Cortex will warm on the first foreground turn.', { autoRevealMs: 350 });
     }
 }
 
@@ -5071,6 +5116,20 @@ window.addEventListener('offline', () => {
 (function initTextareaAndShortcuts() {
     const textarea = $('chat-input');
     if (!textarea) return;
+    const form = $('chat-form');
+
+    function focusComposer(event) {
+        const target = event?.target;
+        if (target && (target === textarea || target.closest?.('.input-actions'))) return;
+        event?.preventDefault?.();
+        textarea.focus({ preventScroll: true });
+    }
+
+    form?.addEventListener('pointerdown', focusComposer);
+    form?.addEventListener('click', focusComposer);
+    textarea.addEventListener('pointerdown', () => {
+        textarea.focus({ preventScroll: true });
+    });
 
     // Auto-resize textarea as user types
     textarea.addEventListener('input', () => {

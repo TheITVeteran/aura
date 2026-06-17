@@ -562,6 +562,32 @@ def test_dangling_article_tail_is_rejected_as_truncated_user_reply():
     assert "truncated_tail" in assessment.reasons
 
 
+def test_structural_incomplete_tail_is_rejected_even_with_punctuation():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    prompt = (
+        "When you are confused, how does that change your planning, memory use, "
+        "and tool verification?"
+    )
+    for draft in (
+        "When it comes to tool verification, confusion",
+        "When it comes to tool verification, confusion.",
+        "For tool verification, confusion means I would be extra thorough",
+        (
+            "Memory use becomes more deliberate; I have to sift through what I know "
+            "to find relevant pieces of information that can help me understand the situation better. "
+            "As for tool verification, confusion means"
+        ),
+        (
+            "I would also be more diligent in verifying tools and actions, "
+            "perhaps by double-checking"
+        ),
+    ):
+        assessment = assess_user_facing_reply(prompt, draft)
+        assert assessment.retryable
+        assert "truncated_tail" in assessment.reasons
+
+
 def test_substantive_truncated_tail_can_be_completed_without_model_retry():
     from core.conversation.response_reliability import assess_user_facing_reply
     from interface.routes.chat import _complete_repairable_truncated_reply
@@ -632,6 +658,25 @@ def test_live_self_reflection_prompt_rejects_old_thread_trust_answer():
 
     assert assessment.retryable
     assert "off_topic_self_reflection_reply" in assessment.reasons
+
+
+def test_live_self_reflection_prompt_rejects_presence_reply_missing_requested_process_coverage():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    prompt = (
+        "When you are confused, how does that change your planning, memory use, "
+        "and tool verification?"
+    )
+    assessment = assess_user_facing_reply(
+        prompt,
+        (
+            "Right now I feel present and listening, with my attention on this exchange. "
+            "Under that, what keeps tugging at me is cognitive_architecture."
+        ),
+    )
+
+    assert assessment.retryable
+    assert "missing_requested_self_process_coverage" in assessment.reasons
 
 
 def test_live_self_reflection_rejects_pseudo_internal_jargon():

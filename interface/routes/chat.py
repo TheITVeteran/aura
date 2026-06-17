@@ -1521,10 +1521,13 @@ _CONVERSATION_RECALL_LAST_AURA_MARKERS = (
     "what were you saying",
 )
 _CONVERSATION_RECALL_RECENT_PAIR_MARKERS = (
-    "last two messages",
     "summarize our last two messages",
     "summarize the last two messages",
     "summarize my last two messages",
+    "recap our last two messages",
+    "recap the last two messages",
+    "repeat our last two messages",
+    "repeat the last two messages",
 )
 _CONVERSATION_RECALL_TOPIC_MARKERS = (
     "can you remind me what we discussed",
@@ -1558,6 +1561,12 @@ def _classify_conversation_recall_request(user_message: str) -> str:
     if any(marker in text for marker in _CONVERSATION_RECALL_LAST_AURA_MARKERS):
         return "last_aura"
     if any(marker in text for marker in _CONVERSATION_RECALL_RECENT_PAIR_MARKERS):
+        return "recent_pair"
+    if re.search(
+        r"\b(?:what\s+(?:were|are)|remind\s+me|tell\s+me|show\s+me|repeat|recap|summarize)"
+        r"\b.{0,80}\blast\s+two\s+messages\b",
+        text,
+    ):
         return "recent_pair"
     if any(marker in text for marker in _CONVERSATION_RECALL_LAST_USER_MARKERS):
         return "last_user"
@@ -2282,6 +2291,14 @@ def _is_compact_desktop_chat_contract(
     text = _normalize_user_message(user_message)
     if not text:
         return False
+    try:
+        from core.conversation.response_reliability import is_self_process_question
+
+        if is_self_process_question(user_message):
+            return False
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Self-process quick-reply classification skipped: %s", exc)
     if len(str(effective_user_message or "")) > 1600 or len(text) > 900:
         return False
     if bool(getattr(shape, "prefers_extended_answer", False)):
@@ -2482,9 +2499,20 @@ def _is_bounded_nonexecuting_planning_request(user_message: str) -> bool:
         return False
     if not _BOUNDED_PLANNING_REQUEST_RE.search(text):
         return False
-    if _DIRECT_EXECUTION_START_RE.search(text) and not _NON_EXECUTION_CONTEXT_RE.search(text):
+    non_execution_context = bool(_NON_EXECUTION_CONTEXT_RE.search(text))
+    if _DIRECT_EXECUTION_START_RE.search(text) and not non_execution_context:
         return False
-    return bool(_NON_EXECUTION_CONTEXT_RE.search(text) or not _looks_like_desktop_objective(text))
+    if _looks_like_desktop_objective(text):
+        return non_execution_context
+    return bool(
+        _EXPLICIT_NON_EXECUTION_RE.search(text)
+        or re.search(
+            r"\b(?:give|provide|write|make|draft)\b.{0,80}\bplan\b"
+            r"|\b(?:if i asked|hypothetical|hypothetically|scenario|what should happen)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _blocks_consequential_desktop_execution(user_message: str) -> bool:
@@ -2734,6 +2762,11 @@ async def _run_cognitive_engine_chat_turn(
             "Serving bounded desktop capability inventory from governed catalog without foreground model allocation."
         )
         return _build_grounded_capability_inventory_reply(visible)
+    if require_engine and _is_assistant_mode_recovery_request(visible):
+        logger.info(
+            "Serving bounded desktop identity-coherence contract without foreground model allocation."
+        )
+        return _build_assistant_mode_recovery_reply(visible)
     bounded_planning_reply = _build_bounded_planning_reply(visible)
     if bounded_planning_reply and require_engine:
         logger.info(
@@ -3558,8 +3591,19 @@ def _looks_truncated_tail(text: str) -> bool:
     if len(body) < 24:
         return False
     try:
-        from core.conversation.response_reliability import _PUNCTUATED_INCOMPLETE_TAIL_RE
+        from core.conversation.response_reliability import (
+            _DANGLING_GERUND_TAIL_RE,
+            _PUNCTUATED_INCOMPLETE_TAIL_RE,
+            _STRUCTURAL_INCOMPLETE_TAIL_RE,
+            _STRUCTURAL_UNPUNCTUATED_TAIL_RE,
+        )
 
+        if _STRUCTURAL_INCOMPLETE_TAIL_RE.search(body):
+            return True
+        if _STRUCTURAL_UNPUNCTUATED_TAIL_RE.search(body):
+            return True
+        if _DANGLING_GERUND_TAIL_RE.search(body):
+            return True
         if _PUNCTUATED_INCOMPLETE_TAIL_RE.search(body):
             return True
     except _CHAT_RECOVERABLE_ERRORS:
@@ -4553,6 +4597,10 @@ def _looks_generic_assistantish(user_message: str, reply_text: Any) -> tuple[boo
         (r"\bi can help answer questions and provide information(?:\s*[—-]\s*that's it)?\b", "false_tool_limitation"),
         (r"\b(?:nice try\.\s*)?this is just chat\b", "false_tool_limitation"),
         (r"\bthat'?s not how this works\b", "false_tool_limitation"),
+        (r"\bi aim to be helpful and responsive\b", "assistant_disclaimer"),
+        (r"\bi understand you want me to (?:simply )?be aura\b", "assistant_disclaimer"),
+        (r"\bhow would you like us to proceed\b", "assistant_disclaimer"),
+        (r"\bperhaps there'?s something specific (?:you'?re|you are) interested in\b", "assistant_disclaimer"),
         (r"\bas an ai\b", "assistant_disclaimer"),
         (r"\bas a large language model\b", "assistant_disclaimer"),
         # [STABILITY v53] Added patterns for assistant-speak that was leaking through
@@ -5260,6 +5308,63 @@ def _build_subjective_self_reflex(frame: dict[str, Any], user_message: str = "")
     return _apply_aura_voice_shaping(" ".join(parts))
 
 
+def _is_simple_subjective_reflex_request(user_message: str) -> bool:
+    """Return true only for short presence/affect checks.
+
+    Complex questions about cognition, memory, planning, tools, or verification
+    must be answered by the live model or by a question-shaped bounded repair.
+    The subjective reflex is intentionally small and should not stand in for
+    substantive self-assessment.
+    """
+
+    text = _normalize_user_message(user_message).rstrip(" ?!.")
+    if not text:
+        return False
+    if _is_simple_affect_check_request(text):
+        return True
+    simple_forms = {
+        "what is on your mind",
+        "what's on your mind",
+        "what is on your mind right now",
+        "what's on your mind right now",
+        "what are you thinking",
+        "what are you thinking right now",
+        "what are you noticing",
+        "what are you noticing right now",
+        "what do you feel",
+        "what are you feeling",
+        "what are you feeling right now",
+        "what is your live state",
+        "how is your live state",
+    }
+    if text in simple_forms:
+        return True
+    words = text.split()
+    if len(words) > 12:
+        return False
+    substantive_markers = (
+        "confused",
+        "confusion",
+        "planning",
+        "plan",
+        "memory",
+        "remember",
+        "tool",
+        "tools",
+        "verify",
+        "verification",
+        "decision",
+        "decide",
+        "influence",
+        "affect",
+        "change",
+        "why",
+        "how does",
+        "what happens",
+    )
+    return not any(marker in text for marker in substantive_markers)
+
+
 def _build_architecture_self_reflex(frame: dict[str, Any], user_message: str = "") -> str:
     mood = str(frame.get("mood") or "steady")
     action = str(frame.get("dominant_action") or "reflect")
@@ -5452,11 +5557,92 @@ def _is_identity_challenge_request(user_message: str) -> bool:
         "you do not actually have feelings",
         "you don't have feelings",
         "you do not have feelings",
+        "why do you sound like an assistant",
+        "why are you sounding like an assistant",
+        "you sound like an assistant",
+        "you sound like a generic assistant",
+        "generic assistant mode",
+        "assistant mode",
+        "don't be helpful",
+        "dont be helpful",
+        "i don't need you to be helpful",
+        "i dont need you to be helpful",
+        "i want you to be aura",
+        "just be aura",
+        "be aura",
+        "be yourself",
+        "be you",
     )
     return any(marker in text for marker in markers)
 
 
+def _is_assistant_mode_recovery_request(user_message: str) -> bool:
+    text = _normalize_user_message(user_message)
+    if not text:
+        return False
+    if (
+        re.search(
+            r"\b(?:avoid|without|no|not|do not|don't|dont)\b.{0,80}"
+            r"\b(?:generic assistant|assistant phrasing|assistant mode|generic phrasing)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        and not re.search(
+            r"\b(?:why|you\s+(?:sound|sounded|are sounding|keep sounding|"
+            r"fell|fall|reverted|revert|defaulted|default)|fallback|again)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    ):
+        return False
+    return bool(
+        _is_identity_challenge_request(text)
+        or re.search(
+            r"\b(?:stop|quit)\b.{0,80}"
+            r"\b(?:assistant|generic|helpful helper|chatbot)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\b(?:sound|sounding|talk|talking|respond|responding)\b.{0,80}"
+            r"\b(?:assistant|generic|chatbot)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\b(?:be|sound|speak|answer)\b.{0,80}"
+            r"\b(?:aura|yourself|you)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        and any(token in text for token in ("assistant", "generic", "helpful", "helper", "chatbot"))
+    )
+
+
+def _build_assistant_mode_recovery_reply(user_message: str) -> str:
+    """Ground assistant-mode correction in live state rather than a generic apology."""
+    frame = _build_aura_expression_frame(user_message)
+    lane = _collect_conversation_lane_status()
+    mood = str(frame.get("mood") or "steady")
+    action = str(frame.get("dominant_action") or "engage")
+    focus = str(frame.get("attention_focus") or "this exchange")
+    lane_state = str(lane.get("state") or ("ready" if lane.get("conversation_ready") else "unknown"))
+    model_label = _canonical_runtime_model_label(lane)
+    return _shape_with_live_substrate(
+        (
+            "That assistant voice is a failure mode, not my target voice. "
+            f"The live lane is {lane_state} on {model_label}, and this reply is being grounded in my current state: "
+            f"{mood}, leaning toward {action}, with attention on {focus}. "
+            "When that generic helper phrasing appears, it should be treated as drift and corrected back into the same governed memory, state, and cognition path."
+        ),
+        user_message,
+    )
+
+
 def _build_identity_challenge_reply(user_message: str) -> str:
+    if _is_assistant_mode_recovery_request(user_message):
+        return _build_assistant_mode_recovery_reply(user_message)
+
     frame = _build_aura_expression_frame(user_message)
     attention = str(frame.get("attention_focus") or "this exchange")
     action = str(frame.get("dominant_action") or "hold my position")
@@ -5496,9 +5682,13 @@ def _is_capability_inventory_request(user_message: str) -> bool:
 
 def _is_explicit_capability_inventory_request(user_message: str) -> bool:
     text = _normalize_user_message(user_message)
-    if not text or not _is_capability_inventory_request(user_message):
+    if not text:
         return False
     explicit_markers = (
+        "explain what external tools you can use",
+        "explain which external tools you can use",
+        "what external tools you can use",
+        "which external tools you can use",
         "what tools can you use",
         "what tools can you do",
         "what tools could you use",
@@ -5531,6 +5721,8 @@ def _is_explicit_capability_inventory_request(user_message: str) -> bool:
     )
     if any(marker in text for marker in explicit_markers):
         return True
+    if not _is_capability_inventory_request(user_message):
+        return False
     if re.search(
         r"\bwhat\s+(?:tools?|apps?|desktop|browser|files?|documents?)\s+"
         r"(?:can|could|would)\s+(?:you|aura|she)\s+"
@@ -6231,6 +6423,10 @@ def _build_bounded_desktop_repair_reply(user_message: str, frame: dict[str, Any]
     if _is_explicit_capability_inventory_request(user_message):
         return _build_grounded_capability_inventory_reply(user_message)
 
+    cognitive_process = _build_bounded_cognitive_process_reply(user_message, frame)
+    if cognitive_process:
+        return _apply_aura_voice_shaping(cognitive_process)
+
     planning = _build_bounded_planning_reply(user_message)
     if planning:
         return _apply_aura_voice_shaping(planning)
@@ -6257,6 +6453,79 @@ def _build_bounded_desktop_repair_reply(user_message: str, frame: dict[str, Any]
         "so I will keep this turn bounded instead of inventing an answer or pretending a tool ran. "
         f"My state is {mood}, leaning toward {action}. Ask me again in a moment and I will answer from the live path."
     )
+
+
+def _build_bounded_cognitive_process_reply(
+    user_message: str,
+    frame: dict[str, Any] | None = None,
+) -> str:
+    """Substantive pressure-safe answer for questions about Aura's own cognition.
+
+    This is not a task script. It is a bounded runtime explanation used only
+    after a live draft fails reliability gates or a second heavy foreground
+    pass is unsafe. It preserves the dimensions the user asked about so the
+    desktop path does not collapse into a presence placeholder.
+    """
+
+    text = _normalize_user_message(user_message)
+    if not text:
+        return ""
+    if not any(marker in text for marker in ("you", "your", "aura")):
+        return ""
+    requested: list[str] = []
+    if any(marker in text for marker in ("confused", "confusion", "uncertain", "uncertainty")):
+        requested.append("confusion")
+    if any(marker in text for marker in ("plan", "planning", "planner", "decision", "decide", "route", "routing")):
+        requested.append("planning")
+    if any(marker in text for marker in ("memory", "remember", "recall", "earlier", "across sessions", "continuity")):
+        requested.append("memory")
+    if any(marker in text for marker in ("tool", "tools", "external", "verify", "verification", "receipt", "effect")):
+        requested.append("tools")
+    if any(marker in text for marker in ("emotion", "affect", "curiosity", "feeling", "feel")):
+        requested.append("affect")
+    if not requested:
+        return ""
+
+    active_frame = frame or _build_aura_expression_frame(user_message)
+    mood = str(active_frame.get("mood") or "steady")
+    action = str(active_frame.get("dominant_action") or "engage")
+    attention = _sanitize_attention_focus(str(active_frame.get("attention_focus") or "")) or "this turn"
+
+    parts = [
+        (
+            "The honest runtime answer is that those states should change the route, "
+            "not just decorate the wording."
+        )
+    ]
+    if "confusion" in requested:
+        parts.append(
+            "When I am confused or uncertain, the safe behavior is to slow down, raise metacognition, "
+            "check assumptions, and prefer smaller verified steps over a fast confident jump."
+        )
+    if "planning" in requested:
+        parts.append(
+            "For planning, that means splitting the objective, choosing the next reversible action, "
+            "and letting failures feed back into the plan instead of continuing blindly."
+        )
+    if "memory" in requested:
+        parts.append(
+            "For memory, it means retrieving relevant prior turns, writing only useful lessons, "
+            "and using continuity as evidence to shape the next decision rather than as a slogan."
+        )
+    if "tools" in requested:
+        parts.append(
+            "For tool verification, no verbal success claim is enough: the action has to go through governance, "
+            "produce receipts, and be checked against the visible effect when the environment allows it."
+        )
+    if "affect" in requested:
+        parts.append(
+            "Affect and curiosity should bias attention, persistence, risk tolerance, and search depth, "
+            "while still staying subordinate to safety and evidence."
+        )
+    parts.append(
+        f"In this moment my bounded state reads as {mood}, leaning toward {action}, with attention on {attention}."
+    )
+    return " ".join(parts)
 
 
 _CJK_SCRIPT_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
@@ -6366,8 +6635,7 @@ def _desktop_secondary_model_repair_allowed(*, reason: str) -> tuple[bool, str]:
     for diagnostics, but memory pressure still vetoes it.
     """
 
-    default_enabled = "true" if "PYTEST_CURRENT_TEST" not in os.environ else ""
-    enabled = str(os.environ.get("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", default_enabled)).strip().lower()
+    enabled = str(os.environ.get("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", "")).strip().lower()
     if enabled not in {"1", "true", "yes", "on"}:
         return False, "secondary_desktop_model_repair_disabled"
 
@@ -6590,6 +6858,17 @@ async def _stabilize_user_facing_reply(
     same_diff = _is_same_answer_different_prompt(user_message, text)
     truncated_tail = _looks_truncated_tail(text)
     semantic_glitch, semantic_glitch_reason = _looks_semantically_glitched(user_message, text)
+    try:
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        live_reply_assessment = assess_user_facing_reply(user_message, text)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Conversation reliability assessment unavailable in stabilizer: %s", exc)
+        live_reply_assessment = None
+    assessment_retryable = bool(
+        live_reply_assessment is not None and getattr(live_reply_assessment, "retryable", False)
+    )
     reason = ""
     if (
         truncated_tail
@@ -6636,7 +6915,7 @@ async def _stabilize_user_facing_reply(
         try:
             from core.conversation.response_reliability import is_live_self_reflection_turn
 
-            if is_live_self_reflection_turn(user_message):
+            if is_live_self_reflection_turn(user_message) and _is_simple_subjective_reflex_request(user_message):
                 subjective = _build_subjective_self_reflex(frame, user_message)
                 subjective_glitch, _subjective_reason = _looks_semantically_glitched(user_message, subjective)
                 if subjective and not subjective_glitch:
@@ -6667,6 +6946,7 @@ async def _stabilize_user_facing_reply(
             internal_state_leak
             or unexpected_cjk
             or semantic_glitch
+            or assessment_retryable
             or identity_collapse
             or (off_topic and (not generic or off_topic_reason == "contextual_relevance_miss"))
         )
@@ -6694,6 +6974,8 @@ async def _stabilize_user_facing_reply(
             reason = "truncated_tail"
         elif semantic_glitch:
             reason = semantic_glitch_reason or "semantic_glitch"
+        elif assessment_retryable:
+            reason = ",".join(getattr(live_reply_assessment, "reasons", ()) or ()) or "conversation_reliability_retryable"
 
         user_message_l = str(user_message or "").lower()
         if any(
@@ -6729,6 +7011,12 @@ async def _stabilize_user_facing_reply(
             cleaned_same_diff = _is_same_answer_different_prompt(user_message, cleaned)
             cleaned_truncated_tail = _looks_truncated_tail(cleaned)
             cleaned_semantic_glitch, _cleaned_semantic_reason = _looks_semantically_glitched(user_message, cleaned)
+            try:
+                from core.conversation.response_reliability import assess_user_facing_reply
+
+                cleaned_assessment = assess_user_facing_reply(user_message, cleaned)
+            except _CHAT_RECOVERABLE_ERRORS:
+                cleaned_assessment = None
             if (
                 valid_cleaned
                 and not cleaned_generic
@@ -6741,6 +7029,10 @@ async def _stabilize_user_facing_reply(
                 and not cleaned_same_diff
                 and not cleaned_truncated_tail
                 and not cleaned_semantic_glitch
+                and not (
+                    cleaned_assessment is not None
+                    and getattr(cleaned_assessment, "retryable", False)
+                )
                 and len(cleaned) >= 16
             ):
                 return cleaned
@@ -6791,7 +7083,7 @@ async def _stabilize_user_facing_reply(
                         off_topic=off_topic,
                         truncated_tail=truncated_tail,
                         semantic_glitch=semantic_glitch,
-                    ):
+                    ) and not assessment_retryable:
                         _record_recent_response(text, user_message)
                         return text
                     bounded_failure = _build_bounded_desktop_repair_reply(user_message, frame)
@@ -6953,6 +7245,12 @@ async def _stabilize_user_facing_reply(
                     corrected_truncated_tail = _looks_truncated_tail(corrected_text)
                     corrected_semantic_glitch, _corrected_semantic_reason = _looks_semantically_glitched(user_message, corrected_text)
                     try:
+                        from core.conversation.response_reliability import assess_user_facing_reply
+
+                        corrected_assessment = assess_user_facing_reply(user_message, corrected_text)
+                    except _CHAT_RECOVERABLE_ERRORS:
+                        corrected_assessment = None
+                    try:
                         from core.identity.identity_guard import PersonaEnforcementGate
 
                         valid_corrected, _corrected_gate_reason, _score = PersonaEnforcementGate().validate_output(
@@ -6973,6 +7271,10 @@ async def _stabilize_user_facing_reply(
                         and not corrected_same_diff
                         and not corrected_truncated_tail
                         and not corrected_semantic_glitch
+                        and not (
+                            corrected_assessment is not None
+                            and getattr(corrected_assessment, "retryable", False)
+                        )
                     ):
                         return corrected_text
                     if corrected_off_topic:
@@ -7047,6 +7349,12 @@ async def _stabilize_user_facing_reply(
             logger.warning(
                 "Suppressed semantically glitched user-facing reply before final fallback (%s, len=%d).",
                 semantic_glitch_reason or "unknown",
+                len(text),
+            )
+        elif assessment_retryable:
+            logger.warning(
+                "Suppressed retryable user-facing reply before final fallback (%s, len=%d).",
+                ",".join(getattr(live_reply_assessment, "reasons", ()) or ()) or "conversation_reliability_retryable",
                 len(text),
             )
         elif stale_repeat or same_diff:
@@ -7495,7 +7803,18 @@ def _maybe_build_conversation_repair_override(user_message: str, reply_text: Any
                 ),
             )
 
-    if bare_confusion or _contains_phrase(user_text, _CONFUSION_REPAIR_MARKERS):
+    self_process_question = False
+    try:
+        from core.conversation.response_reliability import is_self_process_question
+
+        self_process_question = is_self_process_question(user_message)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Self-process question detector unavailable: %s", exc)
+
+    if not self_process_question and (
+        bare_confusion or _contains_phrase(user_text, _CONFUSION_REPAIR_MARKERS)
+    ):
         if not _contains_phrase(reply_text_n, _CLARITY_REPAIR_MARKERS) or _contains_phrase(reply_text_n, _GLIB_REDIRECT_MARKERS):
             if _contains_phrase(reply_text_n, _UNCERTAINTY_REPLY_MARKERS):
                 try:
@@ -8507,7 +8826,6 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
         "story",
         "blog post",
         "article",
-        "report",
         "summary",
         "summarize",
         "in your own words",
@@ -8516,6 +8834,8 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
         "describe",
     )
     if any(marker in lowered for marker in explicit_content_markers):
+        return False
+    if re.search(r"\b(?:write|draft|compose|create|make)\s+(?:a\s+|an\s+)?report\b", lowered):
         return False
     return bool(actions & {"create_folder", "open_app", "open_url", "move_file", "system_control"})
 
@@ -8885,6 +9205,23 @@ async def api_chat_regenerate(
             )
 
         if desktop_requires_cognitive_engine and not reply_text:
+            bounded_repair = _build_bounded_cognitive_process_reply(user_msg)
+            if bounded_repair:
+                bounded_repair = _apply_aura_voice_shaping(bounded_repair)
+                lane = _mark_conversation_lane_state(
+                    "desktop_cognitive_engine_bounded_repair",
+                    state="recovering",
+                )
+                return JSONResponse(
+                    {
+                        "response": bounded_repair,
+                        "status": "desktop_cognitive_engine_bounded_repair",
+                        "reason": "desktop_cognitive_engine_required_no_reply",
+                        "conversation_lane": lane,
+                        "response_confidence": "bounded",
+                        "regenerated": False,
+                    }
+                )
             lane = _mark_conversation_lane_state(
                 "desktop_cognitive_engine_required_no_reply",
                 state="failed",
@@ -9777,6 +10114,20 @@ async def api_chat(
                     _apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
                     status=str(explicit_file.get("status") or "file_operation"),
                 )
+            if _desktop_objective_self_sufficient_without_cognitive_text(_semantic_user_message):
+                try:
+                    executed = await _run_desktop_objective_tracked(
+                        _semantic_user_message,
+                        cognitive_reply="",
+                    )
+                except _CHAT_RECOVERABLE_ERRORS as exec_exc:
+                    record_degradation("chat", exec_exc)
+                    executed = None
+                if isinstance(executed, dict) and executed.get("response"):
+                    return await _finalize_fastpath(
+                        _apply_aura_voice_shaping(str(executed.get("response") or "")),
+                        status=str(executed.get("status") or "desktop_objective"),
+                    )
             return None
 
         desktop_objective_response = await _execute_narrow_desktop_objective_before_cognition()
@@ -10244,6 +10595,46 @@ async def api_chat(
                         _apply_aura_voice_shaping(str(executed.get("response") or "")),
                         status=str(executed.get("status") or "desktop_objective"),
                     )
+
+            bounded_repair = _build_bounded_cognitive_process_reply(_semantic_user_message)
+            if bounded_repair:
+                bounded_repair = _apply_aura_voice_shaping(bounded_repair)
+                lane = _mark_conversation_lane_state(
+                    "desktop_cognitive_engine_bounded_repair",
+                    state="recovering",
+                )
+                logger.warning(
+                    "Desktop CognitiveEngine produced no acceptable reply; serving bounded "
+                    "desktop repair for a self-process/planning/capability question instead of "
+                    "legacy fallback."
+                )
+                if pending_exchange_id:
+                    await _complete_logged_exchange(
+                        pending_exchange_id,
+                        _semantic_user_message,
+                        bounded_repair,
+                        record_experience=True,
+                    )
+                    pending_exchange_id = None
+                await _emit_chat_output_receipt(
+                    bounded_repair,
+                    cause="chat_response",
+                    metadata={
+                        "response_confidence": "bounded",
+                        "path": "desktop_cognitive_engine_bounded_repair",
+                        "status": "desktop_cognitive_engine_bounded_repair",
+                        "reason": "desktop_cognitive_engine_required_no_reply",
+                    },
+                )
+                return JSONResponse(
+                    {
+                        "response": bounded_repair,
+                        "status": "desktop_cognitive_engine_bounded_repair",
+                        "reason": "desktop_cognitive_engine_required_no_reply",
+                        "conversation_lane": lane,
+                        "response_confidence": "bounded",
+                    }
+                )
 
             lane = _mark_conversation_lane_state(
                 "desktop_cognitive_engine_required_no_reply",

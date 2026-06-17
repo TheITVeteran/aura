@@ -12,7 +12,7 @@ import json
 import time
 from pathlib import Path
 
-from tools.liveness_sentinel import read_heartbeat, should_kill
+from tools.liveness_sentinel import read_heartbeat, read_heartbeat_state, should_kill
 
 
 def test_read_heartbeat_parses_and_degrades(tmp_path):
@@ -36,6 +36,13 @@ def test_fresh_heartbeat_never_kills():
         now=now, last_loop_run=now - 2, written_at=now - 1, file_mtime=now - 1,
         started_at=0, grace_s=0, stale_ceiling_s=180, consecutive_stale=10,
     ) is False
+
+
+def test_retired_heartbeat_state_is_readable(tmp_path):
+    hb = tmp_path / "hb.json"
+    hb.write_text(json.dumps({"loop_state": "retired", "last_loop_run": time.time() - 999}))
+
+    assert read_heartbeat_state(hb) == "retired"
 
 
 def test_stale_kills_only_after_two_consecutive():

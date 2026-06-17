@@ -11,6 +11,7 @@ import time
 
 from core.observability.metrics import get_metrics
 from core.runtime.errors import record_degradation
+from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker, mark_task_protected
 
 logger = logging.getLogger("Aura.Hypervisor")
@@ -182,7 +183,15 @@ class Hypervisor:
             lag_threshold, lag_context = self._lag_threshold_for_context()
             if lag > lag_threshold:
                 uptime = time.time() - getattr(self, "_start_time", time.time())
-                if self._is_startup_idle_lag(lag_context, uptime):
+                if is_shutdown_requested():
+                    logger.debug(
+                        "Shutdown event-loop lag observed during bounded teardown: %.3fs "
+                        "(context=%s threshold=%.3fs).",
+                        lag,
+                        lag_context,
+                        lag_threshold,
+                    )
+                elif self._is_startup_idle_lag(lag_context, uptime):
                     logger.info(
                         "Startup event-loop lag observed during boot grace: %.3fs "
                         "(context=%s threshold=%.3fs uptime=%.1fs).",

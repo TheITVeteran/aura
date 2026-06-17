@@ -185,6 +185,41 @@ def test_boot_health_treats_cold_standby_lane_as_not_conversation_ready():
     assert "conversation_ready" in payload["blockers"]
 
 
+def test_boot_health_safe_desktop_boot_does_not_fake_cold_conversation_ready(monkeypatch):
+    _register_runtime_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    status = SimpleNamespace(
+        initialized=True,
+        running=True,
+        healthy=True,
+        last_error="",
+        cycle_count=12,
+        start_time=time.time() - 5,
+    )
+    orchestrator = SimpleNamespace(status=status, health_check=lambda: True)
+    runtime = {"state": {"process_id": 1234}, "sha256": "abc123", "signature": "sig"}
+
+    payload, status_code = build_boot_health_snapshot(
+        orchestrator,
+        runtime,
+        is_gui_proxy=False,
+        conversation_lane={
+            "conversation_ready": False,
+            "state": "cold",
+            "warmup_attempted": False,
+            "warmup_in_flight": False,
+        },
+    )
+
+    assert status_code == 503
+    assert payload["system_ready"] is True
+    assert payload["launcher_ready"] is True
+    assert payload["ready"] is False
+    assert payload["conversation_ready"] is False
+    assert payload["boot_phase"] == "conversation_warming"
+    assert "conversation_ready" in payload["blockers"]
+
+
 def test_boot_health_reports_hard_conversation_failure():
     _register_runtime_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
     status = SimpleNamespace(

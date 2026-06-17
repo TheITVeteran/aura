@@ -261,10 +261,6 @@ def build_boot_health_snapshot(
         if isinstance(conversation_lane, dict) and conversation_lane:
             conversation_ready = bool(conversation_lane.get("conversation_ready", False))
             conversation_state = str(conversation_lane.get("state", "warming") or "warming")
-            if conversation_state == "cold":
-                from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
-                if desktop_safe_boot_enabled():
-                    conversation_ready = True
 
         system_ready = (
             orchestrator is not None

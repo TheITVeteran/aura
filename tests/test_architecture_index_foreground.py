@@ -86,3 +86,43 @@ def test_architecture_index_getter_does_not_start_foreground_build(monkeypatch):
         assert str(index._deferred_reason).startswith("foreground_quiet_window:")
     finally:
         module._index = None
+
+
+def test_architecture_index_does_not_spawn_background_thread_in_live_foreground(monkeypatch, tmp_path):
+    from core.self.architecture_index import ArchitectureIndex
+
+    (tmp_path / "core").mkdir()
+    (tmp_path / "interface").mkdir()
+    (tmp_path / "core" / "sample.py").write_text(
+        '"""sample module"""\nclass Sample:\n    """sample class"""\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    monkeypatch.delenv("AURA_ALLOW_FOREGROUND_ARCHITECTURE_INDEX", raising=False)
+
+    index = ArchitectureIndex(project_root=tmp_path)
+
+    assert index.query("sample module") == ""
+    assert index._build_thread is None
+    assert index._index == {}
+    assert str(index._deferred_reason).startswith("foreground_quiet_window:")
+
+
+def test_architecture_index_foreground_thread_requires_explicit_opt_in(monkeypatch, tmp_path):
+    from core.self.architecture_index import ArchitectureIndex
+
+    (tmp_path / "core").mkdir()
+    (tmp_path / "interface").mkdir()
+    (tmp_path / "core" / "sample.py").write_text(
+        '"""sample module"""\nclass Sample:\n    """sample class"""\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    monkeypatch.setenv("AURA_ALLOW_FOREGROUND_ARCHITECTURE_INDEX", "1")
+
+    index = ArchitectureIndex(project_root=tmp_path)
+    index.schedule_background_build()
+
+    assert index._build_thread is not None
+    index._build_thread.join(timeout=2.0)
+    assert index._index

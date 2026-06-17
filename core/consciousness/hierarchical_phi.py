@@ -767,7 +767,7 @@ class HierarchicalPhi:
             self._last_result = out
             self._last_compute_time = now
 
-            logger.info(
+            logger.debug(
                 "HierarchicalPhi: max-complex=%s φ=%.5f size=%d | primary_32 φ=%.5f | "
                 "K=%d subsystems | %.1fms | n=%d | null=%.5f",
                 out.max_complex_name, out.max_complex_phi, out.max_complex_size,
@@ -816,7 +816,7 @@ class HierarchicalPhi:
 
         self._null_baseline_phi = null_phi
         self._null_baseline_time = time.time()
-        logger.info(
+        logger.debug(
             "HierarchicalPhi null-hypothesis baseline: φ=%.6f (should be near zero)",
             null_phi,
         )

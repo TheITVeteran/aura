@@ -131,13 +131,52 @@ def _heartbeat_response_healthy(resp: Any) -> bool:
     return True
 
 
+def _heartbeat_response_state(resp: Any) -> str:
+    """Classify the canonical heartbeat without weakening healthy semantics.
+
+    ``warming`` is explicitly not healthy. It means the runtime probes are
+    alive, the shell can stay loaded, and the only blocker is the foreground
+    conversation lane waiting for demand-driven Cortex warmup.
+    """
+    if _heartbeat_response_healthy(resp):
+        return "healthy"
+    try:
+        payload = resp.json()
+    except (AttributeError, TypeError, ValueError):
+        return "unhealthy"
+
+    status_code = int(getattr(resp, "status_code", 0) or 0)
+    if status_code not in {200, 503}:
+        return "unhealthy"
+
+    blockers = payload.get("blockers")
+    probes = payload.get("required_probes")
+    if not isinstance(blockers, list) or not isinstance(probes, dict):
+        return "unhealthy"
+    blocker_set = {str(blocker) for blocker in blockers}
+    conversation_warming_only = blocker_set and blocker_set <= {"conversation_ready"}
+    if (
+        bool(payload.get("runtime_probe_healthy", False))
+        and bool(probes.get("all_passed", False))
+        and payload.get("conversation_ready") is False
+        and str(payload.get("boot_phase") or "").startswith("conversation_")
+        and conversation_warming_only
+    ):
+        return "warming"
+    return "unhealthy"
+
+
 def _gateway_heartbeat_healthy(response: dict[str, Any]) -> bool:
+    return _gateway_heartbeat_state(response) == "healthy"
+
+
+def _gateway_heartbeat_state(response: dict[str, Any]) -> str:
     content = response.get("content") or b""
     text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
     try:
         payload = json.loads(text or "{}")
     except json.JSONDecodeError:
-        return False
+        return "unhealthy"
 
     class _Response:
         status_code = int(response.get("status_code") or 0)
@@ -146,7 +185,7 @@ def _gateway_heartbeat_healthy(response: dict[str, Any]) -> bool:
         def json() -> dict[str, Any]:
             return payload
 
-    return _heartbeat_response_healthy(_Response())
+    return _heartbeat_response_state(_Response())
 
 
 def gui_actor_entry(port: int, token: str = None):
@@ -269,6 +308,7 @@ def gui_actor_entry(port: int, token: str = None):
             logger.info("🐕 GUI Watchdog active.")
             consecutive_failures = 0
             start_time = time.monotonic()
+            last_warming_log = 0.0
             while not shutdown_event.wait(20):
                 try:
                     resp = get_network_gateway().request(
@@ -279,17 +319,31 @@ def gui_actor_entry(port: int, token: str = None):
                         read_only=True,
                         suppress_degradation=True,
                     )
-                    if _gateway_heartbeat_healthy(resp):
+                    heartbeat_state = _gateway_heartbeat_state(resp)
+                    if heartbeat_state == "healthy":
                         if not _boot_completed:
                             _boot_completed = True
                             logger.info("✅ [GUI WATCHDOG] First healthy heartbeat received.")
                         consecutive_failures = 0
+                    elif heartbeat_state == "warming":
+                        consecutive_failures = 0
+                        now = time.monotonic()
+                        if now - last_warming_log > 120.0:
+                            logger.info(
+                                "[GUI WATCHDOG] Runtime probes pass; conversation lane is warming "
+                                "and will be demand-warmed by the next foreground turn."
+                            )
+                            last_warming_log = now
                     else:
                         consecutive_failures += 1
                 except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
                     consecutive_failures += 1
 
-                if not _boot_completed and (time.monotonic() - start_time) > 90:
+                if (
+                    not _boot_completed
+                    and consecutive_failures > 0
+                    and (time.monotonic() - start_time) > 90
+                ):
                     logger.warning("🚨 [GUI WATCHDOG] Boot not completed after 90s. Forcing reload.")
                     try:
                         window.load_url(app_url)

@@ -73,6 +73,29 @@ def test_heartbeat_advances_loop_run_timestamp(monkeypatch):
     assert dog._last_loop_run > 0.0
 
 
+def test_non_running_watched_loop_retires_instead_of_force_exiting(monkeypatch, tmp_path):
+    heartbeat = tmp_path / "hb.json"
+    monkeypatch.setenv("AURA_LIVENESS_HEARTBEAT_FILE", str(heartbeat))
+
+    class StoppedLoop:
+        def is_closed(self):
+            return False
+
+        def is_running(self):
+            return False
+
+        def call_soon_threadsafe(self, _callback):
+            raise AssertionError("retired loop must not schedule heartbeat callbacks")
+
+    dog = StallWatchdog(StoppedLoop(), threshold=0.1)
+    dog.start()
+    dog.join(timeout=3.0)
+
+    assert not dog.is_alive()
+    assert heartbeat.exists()
+    assert '"loop_state": "retired"' in heartbeat.read_text(encoding="utf-8")
+
+
 def test_suppression_reset_does_not_mask_wedge():
     """The actual bug: foreground suppression reset _last_heartbeat each second
     while a wedged generation was 'in flight', so the stall clock never grew.

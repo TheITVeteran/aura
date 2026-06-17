@@ -91,3 +91,26 @@ def test_reaped_orchestrator_lock_is_kept_while_pid_runnable(tmp_path, monkeypat
     assert purged is False
     assert lock_file.exists()
     assert metadata_file.exists()
+
+
+def test_bootstrap_lock_does_not_reap_verified_live_runtime(monkeypatch):
+    import aura_main
+
+    calls: list[str] = []
+
+    monkeypatch.setattr(aura_main, "_RUNTIME_LOCK_CLAIMED", False)
+    monkeypatch.setattr(aura_main, "_verified_live_orchestrator_lock_pid", lambda: 4242)
+    monkeypatch.setattr(
+        aura_main,
+        "_reap_orphaned_aura_processes",
+        lambda: calls.append("reap"),
+    )
+
+    def fake_acquire_instance_lock(*, lock_name: str, skip_lock: bool = False) -> None:
+        calls.append(f"acquire:{lock_name}:{skip_lock}")
+
+    monkeypatch.setattr(aura_main, "acquire_instance_lock", fake_acquire_instance_lock)
+
+    aura_main.bootstrap_lock()
+
+    assert calls == ["acquire:orchestrator:False"]

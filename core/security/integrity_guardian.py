@@ -134,6 +134,9 @@ class IntegrityGuardian:
         self._last_tampered: List[str] = []
         self._last_missing: List[str] = []
         self._last_ok: bool = True
+        self._verification_pending: bool = False
+        self._pending_count: int = 0
+        self._manifest_revision_stale: bool = False
         self._hmac_secret = _get_hmac_secret()
         self._bg_task: Optional[asyncio.Task] = None
         MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -152,9 +155,23 @@ class IntegrityGuardian:
             if loaded:
                 n = len(self._manifest)
                 logger.info("IntegrityGuardian: loaded manifest (%d files).", n)
-                # Immediately verify
-                alerts = self._verify_all()
-                if alerts:
+                if self._manifest_revision_stale:
+                    self._verification_pending = True
+                    self._pending_count = n
+                    self._last_ok = False
+                    logger.info(
+                        "IntegrityGuardian: manifest revision is stale; full baseline refresh "
+                        "will run after boot."
+                    )
+                    return n
+
+                alerts = self._verify_all(time_budget_s=self._boot_verify_budget_s())
+                if self._verification_pending:
+                    logger.info(
+                        "IntegrityGuardian: boot verification deferred with %d files remaining.",
+                        self._pending_count,
+                    )
+                elif alerts:
                     logger.warning("IntegrityGuardian: %d integrity issues on boot!", len(alerts))
                 return n
 
@@ -182,10 +199,21 @@ class IntegrityGuardian:
 
     async def _periodic_check_loop(self):
         """Background loop that re-hashes all core files every CHECK_INTERVAL."""
-        await asyncio.sleep(CHECK_INTERVAL)  # skip the just-booted window
+        initial_delay = self._deferred_verify_delay_s() if (
+            self._verification_pending or self._manifest_revision_stale
+        ) else CHECK_INTERVAL
+        await asyncio.sleep(initial_delay)
         while getattr(self, '_running', True):
             try:
-                tampered = await asyncio.to_thread(self._verify_all)
+                if self._manifest_revision_stale:
+                    count = await asyncio.to_thread(self.rebuild_manifest)
+                    tampered = []
+                    logger.info(
+                        "IntegrityGuardian [bg]: refreshed stale manifest baseline (%d files).",
+                        count,
+                    )
+                else:
+                    tampered = await asyncio.to_thread(self._verify_all)
                 if tampered:
                     logger.warning(
                         "IntegrityGuardian [bg]: %d issues detected: %s",
@@ -224,6 +252,9 @@ class IntegrityGuardian:
         self._last_issue_count = 0
         self._last_tampered = []
         self._last_missing = []
+        self._verification_pending = False
+        self._pending_count = 0
+        self._manifest_revision_stale = False
         self._last_ok = True
         logger.info("IntegrityGuardian: manifest rebuilt (%d files).", n)
         return n
@@ -234,10 +265,18 @@ class IntegrityGuardian:
             "alert_count": self._alert_count,
             "last_check_ago": round(time.time() - self._last_check, 0) if self._last_check else None,
             "manifest_valid": self._manifest_hmac is not None,
+            "verification_pending": self._verification_pending,
+            "pending_count": self._pending_count,
+            "manifest_revision_stale": self._manifest_revision_stale,
             "current_issue_count": self._last_issue_count,
             "last_tampered": list(self._last_tampered),
             "last_missing": list(self._last_missing),
-            "integrity_ok": bool(self._manifest_hmac is not None and self._last_ok),
+            "integrity_ok": bool(
+                self._manifest_hmac is not None
+                and self._last_ok
+                and not self._verification_pending
+                and not self._manifest_revision_stale
+            ),
         }
 
     # ── Core Logic ─────────────────────────────────────────────────────────
@@ -283,14 +322,47 @@ class IntegrityGuardian:
     def _manifest_scope_mismatch(self, files: Dict[str, str]) -> List[str]:
         return [path for path in files if not self._is_monitored_path(path)]
 
-    def _verify_all(self) -> List[str]:
+    @staticmethod
+    def _boot_verify_budget_s() -> float:
+        default = "2.5" if os.environ.get("AURA_SAFE_BOOT_DESKTOP") else "8.0"
+        try:
+            return max(
+                0.0,
+                float(os.environ.get("AURA_INTEGRITY_BOOT_VERIFY_BUDGET_S", default) or default),
+            )
+        except (TypeError, ValueError):
+            return float(default)
+
+    @staticmethod
+    def _deferred_verify_delay_s() -> float:
+        try:
+            return max(
+                0.0,
+                float(os.environ.get("AURA_INTEGRITY_DEFERRED_VERIFY_DELAY_S", "10.0") or 10.0),
+            )
+        except (TypeError, ValueError):
+            return 10.0
+
+    def _verify_all(self, *, time_budget_s: float | None = None) -> List[str]:
         """Verify all files in manifest. Returns list of tampered paths."""
         self._last_check = time.time()
         tampered = []
         missing = []
         legitimately_gone = []  # .pyc / cache / IDE temp files that vanish harmlessly
+        deadline = (
+            time.monotonic() + float(time_budget_s)
+            if time_budget_s is not None and time_budget_s > 0
+            else None
+        )
+        pending = False
+        checked = 0
+        total = len(self._manifest)
 
         for path, expected_hash in self._manifest.items():
+            if deadline is not None and checked > 0 and time.monotonic() >= deadline:
+                pending = True
+                break
+            checked += 1
             full = _BASE_DIR / path
             if not full.exists():
                 # If the file is a pycache artifact or .pyc, quietly drop it from manifest
@@ -322,7 +394,9 @@ class IntegrityGuardian:
         self._last_tampered = list(tampered)
         self._last_missing = list(missing)
         self._last_issue_count = len(tampered) + len(missing)
-        self._last_ok = self._last_issue_count == 0
+        self._verification_pending = pending
+        self._pending_count = max(0, total - checked) if pending else 0
+        self._last_ok = self._last_issue_count == 0 and not pending
 
         if tampered or missing:
             self._alert_count += len(tampered) + len(missing)
@@ -404,11 +478,11 @@ class IntegrityGuardian:
 
             if current_revision and stored_revision != current_revision:
                 logger.info(
-                    "IntegrityGuardian: source revision changed (%s → %s); rebuilding baseline.",
+                    "IntegrityGuardian: source revision changed (%s → %s); deferring baseline refresh.",
                     stored_revision[:12] or "legacy",
                     current_revision[:12],
                 )
-                return False
+                self._manifest_revision_stale = True
 
             out_of_scope = self._manifest_scope_mismatch(files)
             if out_of_scope:

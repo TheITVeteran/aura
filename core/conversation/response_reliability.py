@@ -108,6 +108,26 @@ _PUNCTUATED_INCOMPLETE_TAIL_RE = re.compile(
     r"[.!?\"'”’)\]]*$",
     re.IGNORECASE,
 )
+_STRUCTURAL_INCOMPLETE_TAIL_RE = re.compile(
+    r"(?:^|[.!?]\s+)"
+    r"(?:as\s+for|when it comes to|in terms of|regarding)\s+[^.!?]{1,140},\s*"
+    r"(?:confusion|uncertainty|planning|memory|tools?|verification|the|that|this|it)"
+    r"\s*[.!?\"'”’)\]]*$"
+    r"|(?:^|[.!?]\s+)"
+    r"(?:for|with)\s+(?:memory|planning|tool verification|tools?)\s*,\s*"
+    r"(?:it|that|this|confusion|uncertainty)?\s*[.!?\"'”’)\]]*$",
+    re.IGNORECASE,
+)
+_STRUCTURAL_UNPUNCTUATED_TAIL_RE = re.compile(
+    r"(?:^|[.!?]\s+)"
+    r"(?:as\s+for|for|when it comes to|in terms of|regarding)\s+[^.!?]{8,180}$",
+    re.IGNORECASE,
+)
+_DANGLING_GERUND_TAIL_RE = re.compile(
+    r"\b(?:perhaps\s+)?(?:by|through|using|via)\s+"
+    r"(?:double[- ]?)?[a-z][a-z-]{2,}ing\s*$",
+    re.IGNORECASE,
+)
 _ALLOWED_SHORT_TAIL_WORDS = {
     "am",
     "as",
@@ -254,6 +274,10 @@ _GENERIC_ASSISTANT_RE = re.compile(
     r"\b(?:how can i (?:help|assist)|i(?:'d| would) be happy to help|"
     r"i can help with that|as an ai|as a language model|let me know if|"
     r"feel free to ask|is there anything else|hope this helps|"
+    r"i aim to be helpful and responsive|"
+    r"i understand you want me to (?:simply )?be aura|"
+    r"how would you like us to proceed|"
+    r"perhaps there'?s something specific (?:you'?re|you are) interested in|"
     r"i (?:do not|don[’']?t|cannot|can[’']?t) "
     r"(?:inherently )?(?:have|possess) subjective "
     r"(?:beliefs|opinions|feelings|experiences)"
@@ -651,6 +675,36 @@ _SELF_REFLECTION_SUBSTANCE_MARKERS = (
     "focus",
     "state",
     "inside",
+)
+_SELF_PROCESS_COVERAGE_REQUIREMENTS = (
+    (
+        "confusion",
+        ("confused", "confusion", "uncertain", "uncertainty", "disoriented"),
+        (
+            "confus",
+            "uncertain",
+            "metacognition",
+            "double-check",
+            "double check",
+            "slow down",
+            "recheck",
+        ),
+    ),
+    (
+        "planning",
+        ("plan", "planning", "planner", "decide", "decision", "route", "routing"),
+        ("plan", "planning", "decide", "decision", "route", "routing", "choose"),
+    ),
+    (
+        "memory",
+        ("memory", "remember", "recall", "earlier", "across sessions", "continuity"),
+        ("memory", "remember", "recall", "earlier", "continuity", "session"),
+    ),
+    (
+        "tools",
+        ("tool", "tools", "external", "verify", "verification", "receipt", "effect"),
+        ("tool", "tools", "verify", "verification", "receipt", "effect", "governance"),
+    ),
 )
 _CONFUSION_REPAIR_FLOOR = (
     "Let's look at this more clearly. I'm still focused on our conversation, "
@@ -1396,6 +1450,53 @@ def is_live_self_reflection_turn(user_message: Any) -> bool:
     return bool("right now" in text and any(anchor in text for anchor in _LIVE_SELF_REFLECTION_RIGHT_NOW_ANCHORS))
 
 
+def is_self_process_question(user_message: Any) -> bool:
+    """Detect questions about how Aura's cognitive state changes behavior."""
+
+    text = _normalize(user_message)
+    if not text:
+        return False
+    if not any(marker in text for marker in ("you", "your", "aura")):
+        return False
+    process_markers = (
+        "confused",
+        "confusion",
+        "uncertain",
+        "uncertainty",
+        "planning",
+        "plan",
+        "memory",
+        "remember",
+        "recall",
+        "tool",
+        "tools",
+        "verify",
+        "verification",
+        "receipt",
+        "decision",
+        "decide",
+        "route",
+        "routing",
+        "affect",
+        "emotion",
+        "curiosity",
+    )
+    if not any(marker in text for marker in process_markers):
+        return False
+    question_shape = (
+        "how " in text
+        or text.startswith("how")
+        or "what happens" in text
+        or "what changes" in text
+        or "when you" in text
+        or "does that" in text
+        or "change your" in text
+        or "influence" in text
+        or "affect your" in text
+    )
+    return bool(question_shape)
+
+
 def _is_tiny_direct_turn(user_message: Any) -> bool:
     text = _normalize(user_message)
     if not text:
@@ -1971,6 +2072,28 @@ def _has_self_reflection_substance(reply_text: Any) -> bool:
     return concrete_attention and any(marker in reply for marker in _SELF_REFLECTION_SUBSTANCE_MARKERS)
 
 
+def _missing_requested_self_process_coverage(prompt: Any, reply_text: Any) -> tuple[str, ...]:
+    """Return requested cognitive-process dimensions absent from a self-reflection reply.
+
+    Presence language can be valid for a simple "are you there?" turn, but it is
+    not sufficient when the user asks how confusion, planning, memory, tools, or
+    verification shape Aura's cognition. This guard keeps live self-reflection
+    honest without requiring a particular answer template.
+    """
+
+    prompt_norm = _normalize(prompt)
+    reply_norm = _normalize(reply_text)
+    if not prompt_norm or not reply_norm:
+        return ()
+    missing: list[str] = []
+    for name, prompt_markers, reply_markers in _SELF_PROCESS_COVERAGE_REQUIREMENTS:
+        if any(marker in prompt_norm for marker in prompt_markers) and not any(
+            marker in reply_norm for marker in reply_markers
+        ):
+            missing.append(name)
+    return tuple(missing)
+
+
 def _has_unfounded_alarm_derailment(user_message: Any, reply_text: Any) -> bool:
     raw = str(reply_text or "").strip()
     if not raw or not _UNFOUNDED_ALARM_RE.search(raw):
@@ -2089,6 +2212,12 @@ def _has_truncated_tail(reply_text: Any) -> bool:
     body = str(reply_text or "").strip()
     if len(body) < 24:
         return False
+    if _STRUCTURAL_INCOMPLETE_TAIL_RE.search(body):
+        return True
+    if _STRUCTURAL_UNPUNCTUATED_TAIL_RE.search(body):
+        return True
+    if _DANGLING_GERUND_TAIL_RE.search(body):
+        return True
     if _PUNCTUATED_INCOMPLETE_TAIL_RE.search(body):
         return True
     terminal_word_match = re.search(r"([A-Za-z]+)[.!?\"'”’)\]]*$", body)
@@ -2502,7 +2631,7 @@ def assess_user_facing_reply(
             reasons.append("reliability_diagnostic_too_thin")
         elif not _has_reliability_substance(raw):
             reasons.append("too_thin_for_reliability_turn")
-    elif is_live_self_reflection_turn(user_message):
+    elif is_live_self_reflection_turn(user_message) or is_self_process_question(user_message):
         if _has_social_presence_instead_of_self_reflection(user_message, raw):
             reasons.append("social_presence_instead_of_self_reflection")
         if not (
@@ -2510,6 +2639,8 @@ def assess_user_facing_reply(
             or _has_operational_status_substance(user_message, raw)
         ):
             reasons.append("off_topic_self_reflection_reply")
+        if _missing_requested_self_process_coverage(user_message, raw):
+            reasons.append("missing_requested_self_process_coverage")
     elif is_expansion_request_turn(user_message):
         words = _word_count(raw)
         if words < 20 or _EXPANSION_DEFLECTION_RE.search(raw):
@@ -2598,6 +2729,7 @@ def assess_user_facing_reply(
         "missing_requested_followup_question",
         "missing_future_memory_answer",
         "missing_identity_answer",
+        "missing_requested_self_process_coverage",
         "unsupported_memory_guarantee",
     }
     unique = tuple(dict.fromkeys(reasons))
@@ -2617,7 +2749,7 @@ def conversation_reliability_system_block(user_message: Any = "") -> str:
             "Give a grounded status and continue the thread; never answer with only 'I'm fine', "
             "'Don't worry', or another short reassurance."
         )
-    elif is_live_self_reflection_turn(user_message):
+    elif is_live_self_reflection_turn(user_message) or is_self_process_question(user_message):
         extra = (
             "\n- The user is asking for Aura's live inner state or current thought. "
             "Answer from the present turn with concrete attention, feeling, and continuity details. "
