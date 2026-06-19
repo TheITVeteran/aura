@@ -667,6 +667,129 @@ async def test_api_chat_uses_single_canonical_kernel_cognitive_path(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_api_chat_refuses_implicit_legacy_orchestrator_fallback(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    kernel_calls = []
+    orchestrator_calls = []
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            kernel_calls.append("called")
+            raise RuntimeError("canonical kernel failed")
+
+    class _FakeOrchestrator:
+        async def process_user_input_priority(self, *_args, **_kwargs):
+            orchestrator_calls.append("called")
+            return "legacy raw answer"
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_log_exchange", AsyncCallFixture())
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncCallFixture())
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: _FakeOrchestrator() if name == "orchestrator" else default),
+    )
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="Tell me one sentence about stars."),
+        SimpleNamespace(headers={}, client=SimpleNamespace(host="test")),
+        None,
+        None,
+    )
+
+    assert response.status_code == 503
+    assert b"canonical_chat_no_reply" in response.body
+    assert kernel_calls == ["called"]
+    assert orchestrator_calls == []
+
+
+@pytest.mark.asyncio
+async def test_api_chat_allows_explicit_legacy_orchestrator_fallback(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    kernel_calls = []
+    orchestrator_calls = []
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            kernel_calls.append("called")
+            raise RuntimeError("canonical kernel failed")
+
+    class _FakeOrchestrator:
+        async def process_user_input_priority(self, *_args, **_kwargs):
+            orchestrator_calls.append("called")
+            return "Stars are luminous plasma spheres whose gravity and fusion turn matter into steady light."
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_log_exchange", AsyncCallFixture())
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncCallFixture())
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: _FakeOrchestrator() if name == "orchestrator" else default),
+    )
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="Tell me one sentence about stars."),
+        SimpleNamespace(
+            headers={"X-Aura-Allow-Legacy-Orchestrator": "true"},
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 200
+    assert b"Stars are luminous plasma spheres" in response.body
+    assert kernel_calls == ["called"]
+    assert orchestrator_calls == ["called"]
+
+
+@pytest.mark.asyncio
 async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes

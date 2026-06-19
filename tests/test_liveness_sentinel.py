@@ -85,13 +85,29 @@ def test_loop_wedge_detected_even_when_daemon_still_writes():
     ) is False
 
 
-def test_recent_runtime_service_progress_suppresses_stale_loop_false_kill():
+def test_recent_runtime_service_progress_does_not_mask_stale_loop():
     now = time.time()
     assert should_kill(
         now=now,
         last_loop_run=now - 400,
         written_at=now - 1,
         file_mtime=now - 1,
+        started_at=0,
+        grace_s=0,
+        stale_ceiling_s=180,
+        consecutive_stale=2,
+        last_runtime_service_progress=now - 2,
+        service_progress_grace_s=240,
+    ) is True
+
+
+def test_recent_runtime_service_progress_suppresses_startup_before_loop_heartbeat():
+    now = time.time()
+    assert should_kill(
+        now=now,
+        last_loop_run=0,
+        written_at=0,
+        file_mtime=0,
         started_at=0,
         grace_s=0,
         stale_ceiling_s=180,

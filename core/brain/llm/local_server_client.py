@@ -471,12 +471,30 @@ class LocalServerClient:
             logger.debug("Failed to record degraded event for %s: %s", self._lane_name, exc)
 
     def get_lane_status(self) -> dict[str, Any]:
+        alive = self.is_alive()
+        readiness_blockers: list[str] = []
+        lane_state = str(self._lane_state or "").lower()
+        if lane_state != "ready":
+            readiness_blockers.append(f"lane_{lane_state or 'unknown'}")
+        if not alive:
+            readiness_blockers.append("runtime_not_alive")
+        if not self._runtime_identity_ok:
+            if self._detected_runtime_models:
+                readiness_blockers.append("runtime_identity_mismatch")
+            else:
+                readiness_blockers.append("runtime_identity_unverified")
+        if self._is_primary_or_deep_lane() and self._last_generation_completed_at <= 0.0:
+            readiness_blockers.append("visible_conversation_probe_missing")
+        if self._warmup_in_flight:
+            readiness_blockers.append("warmup_in_flight")
+        readiness_blockers = list(dict.fromkeys(readiness_blockers))
         return {
             "model_path": self.model_path,
             "expected_model": self._runtime_model,
             "state": self._lane_state,
             "last_error": self._lane_error,
-            "conversation_ready": self._lane_state == "ready" and self.is_alive(),
+            "conversation_ready": not readiness_blockers,
+            "readiness_blockers": readiness_blockers,
             "last_ready_at": self._last_ready_at,
             "last_progress_at": self._last_progress_at,
             "last_generation_completed_at": self._last_generation_completed_at,

@@ -367,6 +367,23 @@ class TestMLXCompatibility(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status["state"], "recovering")
         self.assertIn("recurrent_depth_loop_mismatch", status["readiness_blockers"])
 
+    async def test_32b_generation_admission_rejects_inactive_recurrent_depth(self):
+        client = self._ready_client(QWEN32_TEST_MODEL)
+        client._process = SimpleNamespace(is_alive=lambda: True)
+        client._init_done = True
+        client._recurrent_depth_status = {
+            "active": False,
+            "config": None,
+            "expected_loops": 2,
+            "required": True,
+        }
+
+        alive = await client._ensure_worker_alive(foreground_request=True)
+
+        self.assertFalse(alive)
+        self.assertEqual(client._lane_state, "recovering")
+        self.assertEqual(client._lane_error, "recurrent_depth_inactive")
+
     async def test_operator_disabled_recurrent_depth_does_not_block_32b_readiness(self):
         client = self._ready_client(QWEN32_TEST_MODEL)
         client._recurrent_depth_status = {

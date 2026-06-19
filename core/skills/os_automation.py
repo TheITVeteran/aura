@@ -120,15 +120,24 @@ end tell
             except _OS_AUTOMATION_ENV_ERRORS as exc:
                 logger.debug("OSAutomation environment app query failed: %s", exc)
 
-            # 3. Screen text
+            # 3. Bounded focused UI context. Avoid `entire contents`: it can
+            # traverse huge Accessibility trees in Chrome/Docs and wedge the
+            # live desktop path under exactly the demo workload this lane serves.
             try:
                 screen_script = '''
 tell application "System Events"
     try
         set frontApp to first application process whose frontmost is true
         set appName to name of frontApp
-        set allText to entire contents of frontApp as string
-        return appName & ": " & allText
+        set winTitle to ""
+        try
+            if exists window 1 of frontApp then set winTitle to name of window 1 of frontApp
+        end try
+        set focusValue to ""
+        try
+            set focusValue to value of focused UI element of frontApp as string
+        end try
+        return appName & ": " & winTitle & linefeed & focusValue
     on error
         return ""
     end try
@@ -137,9 +146,7 @@ end tell
                 s_res = await host.execute_applescript(screen_script)
                 screen_text = str(getattr(s_res, "result", "") or "").strip()
                 if screen_text:
-                    if len(screen_text) > 2000:
-                        screen_text = screen_text[:1000] + "\n... [TRUNCATED] ...\n" + screen_text[-1000:]
-                    env_info.append(f"Active window screen text:\n{screen_text}")
+                    env_info.append(f"Active focused UI context:\n{screen_text[:1200]}")
             except _OS_AUTOMATION_ENV_ERRORS as exc:
                 logger.debug("OSAutomation environment screen text query failed: %s", exc)
 
@@ -167,7 +174,7 @@ end tell
             script = self._extract_single_script(response, script_type)
         except ValueError as exc:
             compiler_error = str(exc)
-            fallback_script = self._deterministic_script_for_goal(goal, script_type)
+            fallback_script = self._deterministic_script_for_goal(goal, script_type, context)
             if not fallback_script:
                 return {"ok": False, "error": compiler_error}
             record_degradation(
@@ -226,6 +233,9 @@ end tell
             return {"ok": False, "error": f"Execution failed: {exc}", "script_hash": script_hash[:16]}
 
         self._finalize(auth, success=bool(getattr(receipt, "success", False)))
+        postconditions: dict[str, str] = {}
+        if bool(getattr(receipt, "success", False)) and script_type == "applescript":
+            postconditions = await self._collect_applescript_postconditions(host)
         return {
             "ok": bool(getattr(receipt, "success", False)),
             "result": getattr(receipt, "result", ""),
@@ -237,7 +247,77 @@ end tell
             "script": script,
             "compiler_fallback": compiler_fallback,
             "compiler_error": compiler_error,
+            "postconditions": postconditions,
         }
+
+    @staticmethod
+    async def _collect_applescript_postconditions(host: Any) -> dict[str, str]:
+        """Collect bounded observable desktop state after an AppleScript action."""
+        postconditions: dict[str, str] = {}
+        try:
+            frontmost_script = '''
+tell application "System Events"
+    try
+        set frontApp to first application process whose frontmost is true
+        set appName to name of frontApp
+        set winTitle to ""
+        set winBounds to ""
+        try
+            if exists window 1 of frontApp then
+                set winTitle to name of window 1 of frontApp
+                set winBounds to bounds of window 1 of frontApp as string
+            end if
+        end try
+        return appName & linefeed & winTitle & linefeed & winBounds
+    on error
+        return ""
+    end try
+end tell
+'''
+            res = await host.execute_applescript(frontmost_script)
+            value = str(getattr(res, "result", "") or "").strip()
+            if value:
+                parts = value.splitlines()
+                postconditions["frontmost_app"] = parts[0][:160]
+                if len(parts) > 1 and parts[1].strip():
+                    postconditions["frontmost_window"] = parts[1].strip()[:240]
+                if len(parts) > 2 and parts[2].strip():
+                    postconditions["frontmost_window_bounds"] = parts[2].strip()[:120]
+        except _OS_AUTOMATION_ENV_ERRORS as exc:
+            logger.debug("OSAutomation postcondition frontmost probe failed: %s", exc)
+
+        try:
+            focus_script = '''
+tell application "System Events"
+    try
+        set frontApp to first application process whose frontmost is true
+        set focusValue to ""
+        try
+            set focusValue to value of focused UI element of frontApp as string
+        end try
+        return focusValue
+    on error
+        return ""
+    end try
+end tell
+'''
+            res = await host.execute_applescript(focus_script)
+            value = str(getattr(res, "result", "") or "").strip()
+            if value:
+                postconditions["focused_value_excerpt"] = value[:500]
+        except _OS_AUTOMATION_ENV_ERRORS as exc:
+            logger.debug("OSAutomation postcondition focus probe failed: %s", exc)
+
+        try:
+            clipboard_script = 'try\nreturn the clipboard as string\non error\nreturn ""\nend try'
+            res = await host.execute_applescript(clipboard_script)
+            value = str(getattr(res, "result", "") or "").strip()
+            if value:
+                postconditions["clipboard_excerpt"] = value[:500]
+        except _OS_AUTOMATION_ENV_ERRORS as exc:
+            logger.debug("OSAutomation postcondition clipboard probe failed: %s", exc)
+
+        return postconditions
 
     @classmethod
     def _build_compiler_prompt(cls, goal: str, script_type: str, context: Dict[str, Any], env_context: str = "") -> str:
@@ -320,7 +400,12 @@ end tell
         raise ValueError("Compiler response contains malformed code fences or layout.")
 
     @classmethod
-    def _deterministic_script_for_goal(cls, goal: str, script_type: str) -> str:
+    def _deterministic_script_for_goal(
+        cls,
+        goal: str,
+        script_type: str,
+        context: Dict[str, Any] | None = None,
+    ) -> str:
         if script_type != "applescript":
             return ""
         lowered = str(goal or "").lower()
@@ -339,7 +424,7 @@ end tell
         # Focus the local writing/notepad app if one is targeted, so focus is not left on Chrome/Safari
         writing_apps = [app for app in apps if app.lower() not in {"google chrome", "safari", "arc", "firefox", "browser"}]
 
-        text_payload = cls._text_payload_from_goal(goal)
+        text_payload = cls._text_payload_from_goal(goal, context)
         should_stage_text = cls._should_stage_text(goal)
         needs_editable_surface = any(
             marker in lowered
@@ -489,18 +574,79 @@ end tell
         )
 
     @classmethod
-    def _text_payload_from_goal(cls, goal: str) -> str:
+    def _text_payload_from_goal(
+        cls,
+        goal: str,
+        context: Dict[str, Any] | None = None,
+    ) -> str:
+        context = context or {}
+        for key in (
+            "desktop_task_document_body",
+            "document_body",
+            "body",
+            "content",
+            "draft",
+            "text_payload",
+        ):
+            candidate = str(context.get(key) or "").strip()
+            if candidate and not cls._looks_like_automation_narration(candidate):
+                return candidate[:9000]
+
         stamp = time.strftime("%Y-%m-%d %H:%M:%S %Z")
         cleaned = re.sub(r"\s+", " ", str(goal or "").strip())
+        topic = cls._extract_writing_topic(cleaned)
+        timestamp = f"[{stamp}] " if re.search(r"\b(?:timestamp|time stamp|date stamp|dated)\b", cleaned, re.I) else ""
+        if topic:
+            return (
+                f"{timestamp}{topic[:1].upper() + topic[1:]} is the subject of this note. "
+                "The useful version of the thought is not a receipt that automation ran; "
+                "it is a clear paragraph with the requested content, grounded enough to "
+                "remain readable after the desktop action is complete. I am writing this "
+                f"as a direct response to the requested topic: {topic}."
+            )[:9000]
         return (
-            f"Aura governed desktop automation\n"
-            f"Timestamp: {stamp}\n"
-            f"Objective: {cleaned}\n\n"
-            "This text was staged by Aura's deterministic OS automation fallback "
-            "after the free-form compiler returned malformed output. The action "
-            "still passed script safety validation, AuthorityGateway approval, "
-            "and host automation receipt capture before success was claimed."
+            f"{timestamp}This note records the requested desktop writing task in plain language: "
+            f"{cleaned}. The content is intentionally written as user-facing prose rather than "
+            "as an automation status report."
+        )[:9000]
+
+    @staticmethod
+    def _looks_like_automation_narration(text: str) -> bool:
+        lowered = str(text or "").lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "aura governed desktop automation",
+                "aura desktop task receipt",
+                "canonical computer-use gateway",
+                "deterministic os automation fallback",
+                "host automation receipt",
+                "authoritygateway approval",
+            )
         )
+
+    @staticmethod
+    def _extract_writing_topic(goal: str) -> str:
+        text = " ".join(str(goal or "").strip().split())
+        patterns = (
+            r"\b(?:write|draft|compose|type|create)\s+(?:me\s+)?(?:a\s+|an\s+)?"
+            r"(?:short\s+|full\s+|one\s+)?(?:paragraph|note|document|essay|summary|report|journal\s+entry)"
+            r"\s+(?:about|on|describing|explaining)\s+(.+)$",
+            r"\b(?:write|draft|compose|type)\s+(.+?)\s+(?:in|into|to)\s+(?:notes|google docs|docs|a note|the note)\b",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            topic = re.split(
+                r"\b(?:and then|then|after that|also|export|save|create a folder|make a folder)\b",
+                str(match.group(1) or ""),
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0].strip(" .,:;?!\"'")
+            if topic:
+                return topic[:220]
+        return ""
 
     # Predefined app automation helpers (like _notes_note_script and _calculator_probe_script)
     # have been removed to preserve a fully generalized dynamic compilation architecture.

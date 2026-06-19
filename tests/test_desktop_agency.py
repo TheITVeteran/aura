@@ -692,7 +692,8 @@ class TestOwnerAutonomyGating(unittest.TestCase):
             self.assertEqual(result["result"], "ok")
             self.assertIn("script_hash", result)
             self.assertEqual(result["receipt_id"], host.last_receipt.receipt_id)
-            self.assertEqual(len(host.executed_scripts), 1)
+            self.assertTrue(host.executed_scripts)
+            self.assertIn('tell application "Notes" to activate', host.executed_scripts[0])
 
             # A malformed compiler reply must not break safe, common desktop
             # intents. The skill should recover through its deterministic
@@ -709,6 +710,8 @@ class TestOwnerAutonomyGating(unittest.TestCase):
             self.assertTrue(result_fallback["ok"])
             self.assertEqual(result_fallback["compiler_fallback"], "deterministic_intent_compiler")
             self.assertIn("tell application \"Notes\"", result_fallback["script"])
+            self.assertNotIn("Aura governed desktop automation", result_fallback["script"])
+            self.assertNotIn("host automation receipt", result_fallback["script"].lower())
             self.assertGreaterEqual(len(host.executed_scripts), 2)
 
             # Test validation guard failure on unsafe script

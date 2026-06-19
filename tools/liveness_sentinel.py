@@ -164,6 +164,7 @@ def should_kill(
         return False
     if (
         service_progress_grace_s > 0
+        and (last_loop_run or 0.0) <= 0.0
         and (last_runtime_service_progress or 0.0) > 0.0
         and (now - float(last_runtime_service_progress)) < service_progress_grace_s
     ):
@@ -264,6 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         live_ts = _liveness_timestamp(last_loop_run, written_at, file_mtime)
         if (
             service_grace > 0
+            and (last_loop_run or 0.0) <= 0.0
             and (last_service_progress or 0.0) > 0.0
             and (now - float(last_service_progress)) < service_grace
         ):

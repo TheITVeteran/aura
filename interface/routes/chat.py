@@ -738,7 +738,13 @@ def _session_memory_pin_ledger_path() -> Path:
     return config.paths.data_dir / "memory" / "session_memory_pins.jsonl"
 
 
-def _append_session_memory_pin_ledger(content: str, source: str, timestamp: str) -> bool:
+def _append_session_memory_pin_ledger(
+    content: str,
+    source: str,
+    timestamp: str,
+    *,
+    session_id: str = "",
+) -> bool:
     try:
         from core.runtime.atomic_writer import atomic_append_text
 
@@ -748,6 +754,7 @@ def _append_session_memory_pin_ledger(content: str, source: str, timestamp: str)
             "content": str(content or "").strip()[:240],
             "source": str(source or "").strip()[:512],
             "timestamp": str(timestamp or ""),
+            "session_id": str(session_id or "")[:64],
             "session_memory_pin": True,
             "kind": "explicit_user_memory_pin",
         }
@@ -761,11 +768,12 @@ def _append_session_memory_pin_ledger(content: str, source: str, timestamp: str)
         return False
 
 
-def _recall_session_memory_pin_from_ledger() -> dict[str, str] | None:
+def _recall_session_memory_pin_from_ledger(*, session_id: str = "") -> dict[str, str] | None:
     try:
         path = _session_memory_pin_ledger_path()
         if not path.exists():
             return None
+        expected_session_id = str(session_id or "")[:64]
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         for line in reversed(lines[-_SESSION_MEMORY_PIN_LEDGER_LIMIT:]):
             if not line.strip():
@@ -774,7 +782,10 @@ def _recall_session_memory_pin_from_ledger() -> dict[str, str] | None:
                 raw = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            recalled = _session_memory_pin_from_record(raw)
+            recalled = _session_memory_pin_from_record(
+                raw,
+                session_id=expected_session_id,
+            )
             if recalled:
                 recalled["storage"] = "durable"
                 return recalled
@@ -784,11 +795,12 @@ def _recall_session_memory_pin_from_ledger() -> dict[str, str] | None:
     return None
 
 
-async def _store_session_memory_pin(content: str, source: str) -> bool:
+async def _store_session_memory_pin(content: str, source: str, *, session_id: str = "") -> bool:
     pinned = str(content or "").strip()
     if not pinned:
         return False
     timestamp = datetime.now(tz=UTC).isoformat()
+    safe_session_id = str(session_id or "")[:64]
     ledger_ok = False
     async with _get_convo_lock():
         _session_memory_pins.append(
@@ -796,6 +808,7 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
                 "content": pinned[:240],
                 "source": str(source or "").strip()[:512],
                 "timestamp": timestamp,
+                "session_id": safe_session_id,
             }
         )
         if len(_session_memory_pins) > 100:
@@ -808,6 +821,7 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
                 pinned,
                 source,
                 timestamp,
+                session_id=safe_session_id,
             )
             return bool(ledger_ok)
         result = memory_facade.add_memory(
@@ -820,6 +834,8 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
                 "session_memory_pin_content": pinned[:240],
                 "source_utterance": str(source or "").strip()[:512],
                 "timestamp": timestamp,
+                "session_id": safe_session_id,
+                "chat_session_id": safe_session_id,
                 "importance": 0.9,
                 "identity_relevant": True,
                 "explicit_memory_request": True,
@@ -835,6 +851,7 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
                 pinned,
                 source,
                 timestamp,
+                session_id=safe_session_id,
             )
             return bool(ledger_ok)
         ledger_ok = await asyncio.to_thread(
@@ -842,6 +859,7 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
             pinned,
             source,
             timestamp,
+            session_id=safe_session_id,
         )
         if not ledger_ok:
             logger.warning(
@@ -858,16 +876,31 @@ async def _store_session_memory_pin(content: str, source: str) -> bool:
                 pinned,
                 source,
                 timestamp,
+                session_id=safe_session_id,
             )
         return bool(ledger_ok)
 
 
-def _session_memory_pin_from_record(item: Any) -> dict[str, str] | None:
+def _session_memory_pin_from_record(
+    item: Any,
+    *,
+    session_id: str = "",
+) -> dict[str, str] | None:
     if not isinstance(item, dict):
         return None
     metadata = item.get("metadata")
     if not isinstance(metadata, dict):
         metadata = {}
+    expected_session_id = str(session_id or "")[:64]
+    record_session_id = str(
+        metadata.get("chat_session_id")
+        or metadata.get("session_id")
+        or item.get("chat_session_id")
+        or item.get("session_id")
+        or ""
+    )[:64]
+    if expected_session_id and record_session_id != expected_session_id:
+        return None
     content = str(
         metadata.get("session_memory_pin_content")
         or item.get("session_memory_pin_content")
@@ -886,12 +919,17 @@ def _session_memory_pin_from_record(item: Any) -> dict[str, str] | None:
         "content": content[:240],
         "source": str(metadata.get("source_utterance") or metadata.get("source") or "durable_memory")[:512],
         "timestamp": str(metadata.get("timestamp") or ""),
+        "session_id": record_session_id,
         "storage": "durable",
     }
 
 
-async def _recall_durable_session_memory_pin() -> dict[str, str] | None:
-    ledger_recall = await asyncio.to_thread(_recall_session_memory_pin_from_ledger)
+async def _recall_durable_session_memory_pin(*, session_id: str = "") -> dict[str, str] | None:
+    safe_session_id = str(session_id or "")[:64]
+    ledger_recall = await asyncio.to_thread(
+        _recall_session_memory_pin_from_ledger,
+        session_id=safe_session_id,
+    )
     if ledger_recall:
         return ledger_recall
     try:
@@ -901,10 +939,13 @@ async def _recall_durable_session_memory_pin() -> dict[str, str] | None:
         search = getattr(memory_facade, "search", None) or getattr(memory_facade, "query_memory", None)
         if not callable(search):
             return None
-        result = search("session memory pin explicit user remember", limit=5)
+        result = search("session memory pin explicit user remember", limit=8)
         records = await result if hasattr(result, "__await__") else result
         for item in list(records or []):
-            recalled = _session_memory_pin_from_record(item)
+            recalled = _session_memory_pin_from_record(
+                item,
+                session_id=safe_session_id,
+            )
             if recalled:
                 return recalled
     except _CHAT_RECOVERABLE_ERRORS as exc:
@@ -913,28 +954,36 @@ async def _recall_durable_session_memory_pin() -> dict[str, str] | None:
     return None
 
 
-async def _recall_session_memory_pin() -> dict[str, str] | None:
+async def _recall_session_memory_pin(*, session_id: str = "") -> dict[str, str] | None:
+    safe_session_id = str(session_id or "")[:64]
     async with _get_convo_lock():
-        if _session_memory_pins:
-            latest = _session_memory_pins[-1]
+        for latest in reversed(_session_memory_pins):
+            if safe_session_id and str(latest.get("session_id") or "")[:64] != safe_session_id:
+                continue
             return {
                 "content": str(latest.get("content") or ""),
                 "source": str(latest.get("source") or ""),
                 "timestamp": str(latest.get("timestamp") or ""),
+                "session_id": str(latest.get("session_id") or "")[:64],
                 "storage": "session",
             }
-    return await _recall_durable_session_memory_pin()
+    return await _recall_durable_session_memory_pin(session_id=safe_session_id)
 
 
 async def _build_memory_state_fastpath_reply(
     user_message: str,
     *,
+    session_id: str = "",
     owner_session_restored: bool = False,
 ) -> tuple[str, str] | None:
     """Return deterministic memory/continuity replies from canonical runtime state."""
     session_pin = _extract_session_memory_pin_request(user_message)
     if session_pin:
-        durable_ok = await _store_session_memory_pin(session_pin, user_message)
+        durable_ok = await _store_session_memory_pin(
+            session_pin,
+            user_message,
+            session_id=session_id,
+        )
         if not durable_ok:
             return (
                 f"I can hold \"{session_pin}\" in this running session, but durable memory storage did not accept the write yet.",
@@ -946,7 +995,7 @@ async def _build_memory_state_fastpath_reply(
         )
 
     if _is_session_memory_context_change_request(user_message):
-        remembered = await _recall_session_memory_pin()
+        remembered = await _recall_session_memory_pin(session_id=session_id)
         if remembered and remembered.get("content"):
             return (
                 "The concrete change is that I stored your explicit session note "
@@ -956,7 +1005,7 @@ async def _build_memory_state_fastpath_reply(
         return "I don't have a pinned session note to compare against yet.", "session_memory_miss"
 
     if _is_session_memory_recall_request(user_message):
-        remembered = await _recall_session_memory_pin()
+        remembered = await _recall_session_memory_pin(session_id=session_id)
         if remembered and remembered.get("content"):
             storage = str(remembered.get("storage") or "session")
             source_label = "from durable memory" if storage == "durable" else "in this session"
@@ -973,7 +1022,10 @@ async def _build_memory_state_fastpath_reply(
     if owner_name_reply:
         return owner_name_reply, "owner_identity_recall"
 
-    conversation_recall = await _build_conversation_recall_reply(user_message)
+    conversation_recall = await _build_conversation_recall_reply(
+        user_message,
+        session_id=session_id,
+    )
     if conversation_recall:
         return conversation_recall, "conversation_recall"
 
@@ -1608,14 +1660,20 @@ def _clip_conversation_text(text: Any, *, limit: int = 420) -> str:
 async def _recent_completed_conversation_exchanges(
     *,
     current_user_message: str,
+    session_id: str = "",
     limit: int = 6,
 ) -> list[dict[str, str]]:
     current = str(current_user_message or "").strip()
+    safe_session_id = str(session_id or "")[:64]
     async with _get_convo_lock():
         completed = [
             entry
             for entry in _conversation_log
             if str(entry.get("status") or "complete").strip().lower() == "complete"
+            and (
+                not safe_session_id
+                or str(entry.get("session_id") or "")[:64] == safe_session_id
+            )
         ]
 
     exchanges: list[dict[str, str]] = []
@@ -1637,6 +1695,7 @@ async def _recent_completed_conversation_exchanges(
                     limit=_RECENT_CONVERSATION_AURA_CHARS,
                 ),
                 "timestamp": str(entry.get("completed_at") or entry.get("timestamp") or ""),
+                "session_id": str(entry.get("session_id") or "")[:64],
             }
         )
         if len(exchanges) >= max(1, int(limit)):
@@ -1646,7 +1705,10 @@ async def _recent_completed_conversation_exchanges(
     if len(exchanges) >= max(1, int(limit)):
         return exchanges
 
-    durable = await _load_durable_conversation_exchanges(limit=max(1, int(limit)))
+    durable = await _load_durable_conversation_exchanges(
+        limit=max(1, int(limit)),
+        session_id=safe_session_id,
+    )
     in_memory_keys = {
         (
             str(entry.get("user") or "").strip(),
@@ -1737,25 +1799,36 @@ async def _persist_completed_conversation_exchange(
         return False
 
 
-def _load_durable_conversation_exchanges_sync(*, limit: int) -> list[dict[str, str]]:
+def _load_durable_conversation_exchanges_sync(
+    *,
+    limit: int,
+    session_id: str = "",
+) -> list[dict[str, str]]:
     persistence = ServiceContainer.get("persistence", default=None)
     get_recent_sessions = getattr(persistence, "get_recent_sessions", None)
     get_session_history = getattr(persistence, "get_session_history", None)
-    if not callable(get_recent_sessions) or not callable(get_session_history):
+    if not callable(get_session_history):
         return []
 
-    sessions = list(
-        get_recent_sessions(limit=_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT) or []
-    )
+    safe_session_id = str(session_id or "")[:64]
     rows: list[dict[str, Any]] = []
-    for session in reversed(sessions):
-        if not isinstance(session, dict):
-            continue
-        session_id = str(session.get("id") or "").strip()
-        if not session_id:
-            continue
-        history = get_session_history(session_id, limit=max(4, limit * 3))
+    if safe_session_id:
+        history = get_session_history(safe_session_id, limit=max(4, limit * 3))
         rows.extend(item for item in list(history or []) if isinstance(item, dict))
+    else:
+        if not callable(get_recent_sessions):
+            return []
+        sessions = list(
+            get_recent_sessions(limit=_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT) or []
+        )
+        for session in reversed(sessions):
+            if not isinstance(session, dict):
+                continue
+            durable_session_id = str(session.get("id") or "").strip()
+            if not durable_session_id:
+                continue
+            history = get_session_history(durable_session_id, limit=max(4, limit * 3))
+            rows.extend(item for item in list(history or []) if isinstance(item, dict))
 
     exchanges: list[dict[str, str]] = []
     pending_user: dict[str, Any] | None = None
@@ -1780,18 +1853,24 @@ def _load_durable_conversation_exchanges_sync(*, limit: int) -> list[dict[str, s
                     limit=_RECENT_CONVERSATION_AURA_CHARS,
                 ),
                 "timestamp": str(row.get("created_at") or pending_user.get("created_at") or ""),
+                "session_id": safe_session_id,
             }
         )
         pending_user = None
     return exchanges[-limit:]
 
 
-async def _load_durable_conversation_exchanges(*, limit: int) -> list[dict[str, str]]:
+async def _load_durable_conversation_exchanges(
+    *,
+    limit: int,
+    session_id: str = "",
+) -> list[dict[str, str]]:
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(
                 _load_durable_conversation_exchanges_sync,
                 limit=max(1, int(limit)),
+                session_id=str(session_id or "")[:64],
             ),
             timeout=_DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S,
         )
@@ -1851,13 +1930,18 @@ async def _recall_durable_conversation_snippets(user_message: str, *, limit: int
         return []
 
 
-async def _build_conversation_recall_reply(user_message: str) -> str | None:
+async def _build_conversation_recall_reply(
+    user_message: str,
+    *,
+    session_id: str = "",
+) -> str | None:
     recall_kind = _classify_conversation_recall_request(user_message)
     if not recall_kind:
         return None
 
     exchanges = await _recent_completed_conversation_exchanges(
         current_user_message=user_message,
+        session_id=session_id,
         limit=6,
     )
     if exchanges:
@@ -1938,8 +2022,16 @@ def _conversation_recall_reply_is_inadequate(
     return len(overlap) < required
 
 
-async def _repair_conversation_recall_if_needed(user_message: str, reply_text: str) -> tuple[str, bool]:
-    expected = await _build_conversation_recall_reply(user_message)
+async def _repair_conversation_recall_if_needed(
+    user_message: str,
+    reply_text: str,
+    *,
+    session_id: str = "",
+) -> tuple[str, bool]:
+    expected = await _build_conversation_recall_reply(
+        user_message,
+        session_id=session_id,
+    )
     if expected and _conversation_recall_reply_is_inadequate(user_message, reply_text, expected):
         return expected, True
     return reply_text, False
@@ -2746,6 +2838,7 @@ async def _run_cognitive_engine_chat_turn(
     *,
     visible_user_message: str | None = None,
     preflight_context_message: str | None = None,
+    session_id: str = "",
     origin: str = "user",
     timeout_s: float | None = None,
     lane: dict[str, Any] | None = None,
@@ -2877,6 +2970,7 @@ async def _run_cognitive_engine_chat_turn(
     if recent_context_limit > 0:
         recent_exchanges = await _recent_completed_conversation_exchanges(
             current_user_message=visible,
+            session_id=session_id,
             limit=recent_context_limit,
         )
     else:
@@ -3177,6 +3271,7 @@ async def _run_cognitive_engine_chat_turn(
                 off_topic=False,
                 desktop_cognitive_engine_required=bool(require_engine),
                 protected_foreground_lane=bool(require_engine),
+                session_id=session_id,
             )
         )
         retry_assessment = assess_user_facing_reply(visible, retry_repaired)
@@ -3205,7 +3300,10 @@ async def _run_cognitive_engine_chat_turn(
             retry_off_topic_reason,
             ",".join(retry_assessment.reasons),
         )
-        conversation_recall_reply = await _build_conversation_recall_reply(visible)
+        conversation_recall_reply = await _build_conversation_recall_reply(
+            visible,
+            session_id=session_id,
+        )
         if conversation_recall_reply:
             logger.warning(
                 "CognitiveEngine desktop chat repair retry failed conversation recall; "
@@ -3285,7 +3383,10 @@ async def _run_cognitive_engine_chat_turn(
             )
             if retry_reply:
                 return retry_reply
-            conversation_recall_reply = await _build_conversation_recall_reply(visible)
+            conversation_recall_reply = await _build_conversation_recall_reply(
+                visible,
+                session_id=session_id,
+            )
             if conversation_recall_reply:
                 logger.warning(
                     "CognitiveEngine desktop chat produced no usable text for conversation recall; "
@@ -3372,6 +3473,7 @@ async def _run_cognitive_engine_chat_turn(
                     off_topic=False,
                     desktop_cognitive_engine_required=bool(require_engine),
                     protected_foreground_lane=bool(require_engine),
+                    session_id=session_id,
                 )
             )
             repaired_assessment = assess_user_facing_reply(visible, repaired)
@@ -3399,7 +3501,10 @@ async def _run_cognitive_engine_chat_turn(
                 off_topic_reason,
                 ",".join(repaired_assessment.reasons),
             )
-            conversation_recall_reply = await _build_conversation_recall_reply(visible)
+            conversation_recall_reply = await _build_conversation_recall_reply(
+                visible,
+                session_id=session_id,
+            )
             if conversation_recall_reply:
                 logger.warning(
                     "CognitiveEngine desktop chat failed repair for conversation recall; "
@@ -3987,6 +4092,18 @@ def _request_requires_cognitive_engine(request: Request, *, is_benchmark: bool =
     if desktop_runtime_request and not request_surface:
         request_surface = "desktop-runtime"
     return requires, request_surface
+
+
+def _request_allows_legacy_orchestrator_fallback(request: Request) -> bool:
+    """Legacy chat fallback is opt-in only.
+
+    The local live UI must never silently degrade into the older orchestrator
+    path after KernelInterface/CognitiveEngine failure. That was the route by
+    which raw assistant-shaped replies could satisfy a user turn even though
+    the canonical live lane had failed.
+    """
+    header = str(request.headers.get("X-Aura-Allow-Legacy-Orchestrator") or "").strip().lower()
+    return header in {"1", "true", "yes", "allow"}
 
 
 def _mark_conversation_lane_timeout(reason: str = "foreground_timeout") -> dict[str, Any]:
@@ -6637,6 +6754,7 @@ async def _build_grounded_self_process_repair_reply(
     user_message: str,
     rejected_reply: str = "",
     lane: dict[str, Any] | None = None,
+    session_id: str = "",
 ) -> str:
     """Ground failed live self-process turns without reciting a static fallback.
 
@@ -6667,6 +6785,7 @@ async def _build_grounded_self_process_repair_reply(
     requested = _self_process_requested_dimensions(user_message)
     recent = await _recent_completed_conversation_exchanges(
         current_user_message=user_message,
+        session_id=session_id,
         limit=4,
     )
     remembered_user = ""
@@ -7591,6 +7710,7 @@ async def _repair_final_degraded_reply(
     off_topic_reason: str = "",
     desktop_cognitive_engine_required: bool = False,
     protected_foreground_lane: bool = False,
+    session_id: str = "",
 ) -> tuple[str, bool, bool, bool, str, bool]:
     """Final user-facing gate: degraded text must be repaired or replaced."""
     try:
@@ -7625,7 +7745,10 @@ async def _repair_final_degraded_reply(
     if not needs_repair:
         return reply_text, stale, same_diff, off_topic, off_topic_reason, False
 
-    conversation_recall_reply = await _build_conversation_recall_reply(user_message)
+    conversation_recall_reply = await _build_conversation_recall_reply(
+        user_message,
+        session_id=session_id,
+    )
     if conversation_recall_reply:
         return conversation_recall_reply, False, False, False, "", True
 
@@ -7640,6 +7763,7 @@ async def _repair_final_degraded_reply(
             user_message,
             reply_text,
             lane=_collect_conversation_lane_status(),
+            session_id=session_id,
         )
         if self_process_repair:
             self_process_repair = _apply_aura_voice_shaping_compat(
@@ -9396,6 +9520,7 @@ async def api_chat_regenerate(
                 _conversation_log[-1],
             )
             user_msg = last_exchange["user"]
+            regen_session_id = str(last_exchange.get("session_id") or "")[:64]
 
         from core.kernel.kernel_interface import KernelInterface
         ki = KernelInterface.get_instance()
@@ -9412,6 +9537,7 @@ async def api_chat_regenerate(
             reply_text = await _run_cognitive_engine_chat_turn(
                 user_msg,
                 visible_user_message=user_msg,
+                session_id=regen_session_id,
                 origin="user",
                 timeout_s=cognitive_budget,
                 lane=dict(lane or {}),
@@ -10119,6 +10245,7 @@ async def api_chat(
                             off_topic_reason=off_topic_reason or semantic_glitch_reason,
                             desktop_cognitive_engine_required=desktop_requires_cognitive_engine,
                             protected_foreground_lane=desktop_requires_cognitive_engine,
+                            session_id=_chat_session_id,
                         )
                         if repaired and repaired_text != final_text:
                             final_text = repaired_text
@@ -10352,6 +10479,7 @@ async def api_chat(
         if allow_memory_state_fastpath:
             memory_state_reply = await _build_memory_state_fastpath_reply(
                 _semantic_user_message,
+                session_id=_chat_session_id,
                 owner_session_restored=owner_session_restored,
             )
             if memory_state_reply:
@@ -10704,7 +10832,10 @@ async def api_chat(
                 "The user is referring to this earlier user question/request:\n"
                 f"{referential_anchor}"
             )
-        conversation_recall_evidence = await _build_conversation_recall_reply(_semantic_user_message)
+        conversation_recall_evidence = await _build_conversation_recall_reply(
+            _semantic_user_message,
+            session_id=_chat_session_id,
+        )
         if conversation_recall_evidence:
             effective_user_message = (
                 f"{effective_user_message}\n\n"
@@ -10736,6 +10867,7 @@ async def api_chat(
                     effective_user_message,
                     visible_user_message=_semantic_user_message,
                     preflight_context_message=preflight_context_message,
+                    session_id=_chat_session_id,
                     origin=chat_origin,
                     timeout_s=cognitive_budget,
                     lane=dict(lane or {}),
@@ -10815,6 +10947,7 @@ async def api_chat(
                 _semantic_user_message,
                 "",
                 lane=lane,
+                session_id=_chat_session_id,
             )
             if bounded_repair:
                 bounded_repair = _apply_aura_voice_shaping(bounded_repair)
@@ -11042,7 +11175,12 @@ async def api_chat(
                 )
             except _CHAT_RECOVERABLE_ERRORS as e:
                 record_degradation('chat', e)
-                logger.error("KernelInterface chat failed natively, falling back to legacy: %s (%s)", type(e).__name__, e, exc_info=True)
+                logger.error(
+                    "KernelInterface chat failed natively; legacy fallback policy will decide: %s (%s)",
+                    type(e).__name__,
+                    e,
+                    exc_info=True,
+                )
         if reply_text and not reply_source:
             reply_source = "kernel_interface"
 
@@ -11099,11 +11237,18 @@ async def api_chat(
                 status_code=status_code,
             )
 
-        # Legacy Orchestrator Fallback
-        if not reply_text and not is_benchmark:
+        # Legacy Orchestrator Fallback. This is no longer automatic for live
+        # chat: callers must opt in with X-Aura-Allow-Legacy-Orchestrator.
+        # Otherwise a canonical lane failure could be masked by thinner/raw
+        # assistant-shaped behavior.
+        if (
+            not reply_text
+            and not is_benchmark
+            and _request_allows_legacy_orchestrator_fallback(request)
+        ):
             orch = ServiceContainer.get("orchestrator", default=None)
             if orch:
-                logger.debug("REST: Awaiting priority processing from legacy orchestrator...")
+                logger.warning("REST: Awaiting explicit opt-in legacy orchestrator fallback.")
                 legacy_timeout = _remaining_foreground_budget()
                 reply_text = await asyncio.wait_for(
                     orch.process_user_input_priority(
@@ -11115,6 +11260,12 @@ async def api_chat(
                 )
                 if reply_text:
                     reply_source = reply_source or "legacy_orchestrator"
+        elif not reply_text and not is_benchmark:
+            logger.warning(
+                "No canonical chat reply available; refusing implicit legacy orchestrator fallback "
+                "for surface=%s.",
+                request_surface or "unknown",
+            )
 
         if is_benchmark:
             final_benchmark_text = str(reply_text or "").strip()
@@ -11223,6 +11374,51 @@ async def api_chat(
             )
             return JSONResponse(response_data)
 
+        if not str(reply_text or "").strip():
+            lane = _mark_conversation_lane_state(
+                "canonical_chat_no_reply",
+                state="failed",
+            )
+            failure_reply = (
+                "The live cognitive chat lane did not produce a safe canonical reply, "
+                "and Aura refused the implicit legacy fallback. "
+                "status=canonical_chat_no_reply"
+            )
+            if pending_exchange_id:
+                await _complete_logged_exchange(
+                    pending_exchange_id,
+                    _semantic_user_message,
+                    failure_reply,
+                    record_experience=False,
+                )
+                pending_exchange_id = None
+            else:
+                await _log_exchange(
+                    _semantic_user_message,
+                    failure_reply,
+                    record_experience=False,
+                    session_id=_chat_session_id,
+                )
+            await _emit_chat_output_receipt(
+                failure_reply,
+                cause="chat_response",
+                metadata={
+                    "response_confidence": "failed",
+                    "path": "canonical_chat",
+                    "status": "canonical_chat_no_reply",
+                    "reason": "implicit_legacy_orchestrator_fallback_refused",
+                },
+            )
+            return JSONResponse(
+                {
+                    "response": failure_reply,
+                    "status": "canonical_chat_no_reply",
+                    "conversation_lane": lane,
+                    "response_confidence": "failed",
+                },
+                status_code=503,
+            )
+
         reply_text = await _stabilize_user_facing_reply(
             _semantic_user_message,
             reply_text,
@@ -11244,6 +11440,7 @@ async def api_chat(
         repaired_recall_reply, repaired_recall = await _repair_conversation_recall_if_needed(
             _semantic_user_message,
             reply_text,
+            session_id=_chat_session_id,
         )
         if repaired_recall:
             logger.warning(
@@ -11308,6 +11505,7 @@ async def api_chat(
                 off_topic_reason=off_topic_reason,
                 desktop_cognitive_engine_required=desktop_requires_cognitive_engine,
                 protected_foreground_lane=desktop_requires_cognitive_engine,
+                session_id=_chat_session_id,
             )
             if repaired and repaired_reply != reply_text:
                 reply_text = repaired_reply

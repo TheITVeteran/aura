@@ -2433,6 +2433,38 @@ def test_session_memory_pin_round_trip():
     assert remembered["content"] == "ember-vault-93"
 
 
+def test_session_memory_pin_isolation_by_session_id(monkeypatch, tmp_path):
+    from interface.routes import chat as chat_route
+
+    monkeypatch.setattr(
+        chat_route,
+        "_session_memory_pin_ledger_path",
+        lambda: tmp_path / "session_memory_pins.jsonl",
+    )
+    monkeypatch.setattr(
+        chat_route.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: default),
+    )
+
+    async def run():
+        chat_route._session_memory_pins.clear()
+        await chat_route._store_session_memory_pin("alpha-pin", "remember alpha", session_id="session-a")
+        await chat_route._store_session_memory_pin("bravo-pin", "remember bravo", session_id="session-b")
+        recalled_a = await chat_route._recall_session_memory_pin(session_id="session-a")
+        recalled_b = await chat_route._recall_session_memory_pin(session_id="session-b")
+        recalled_c = await chat_route._recall_session_memory_pin(session_id="session-c")
+        return recalled_a, recalled_b, recalled_c
+
+    recalled_a, recalled_b, recalled_c = asyncio.run(run())
+
+    assert recalled_a is not None
+    assert recalled_a["content"] == "alpha-pin"
+    assert recalled_b is not None
+    assert recalled_b["content"] == "bravo-pin"
+    assert recalled_c is None
+
+
 def test_session_memory_pin_writes_durable_memory(monkeypatch):
     from interface.routes import chat as chat_route
 
@@ -2460,6 +2492,7 @@ def test_session_memory_pin_writes_durable_memory(monkeypatch):
     assert writes[0][1]["source"] == "session_memory_pin"
     assert writes[0][1]["explicit_memory_request"] is True
     assert writes[0][1]["session_memory_pin_content"] == "ember-vault-93"
+    assert "session_id" in writes[0][1]
 
 
 def test_session_memory_pin_recalls_from_durable_memory_when_cache_empty(monkeypatch):
@@ -2500,6 +2533,61 @@ def test_session_memory_recall_request_matches_common_typo():
     from interface.routes.chat import _is_session_memory_recall_request
 
     assert _is_session_memory_recall_request("What did I ask you to remeber?")
+
+
+def test_conversation_recall_isolation_by_session_id(monkeypatch):
+    from interface.routes import chat as chat_route
+
+    monkeypatch.setattr(
+        chat_route.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: default),
+    )
+
+    async def run():
+        async with chat_route._get_convo_lock():
+            chat_route._conversation_log.clear()
+            chat_route._conversation_log.extend(
+                [
+                    {
+                        "id": "a1",
+                        "status": "complete",
+                        "user": "alpha session question",
+                        "aura": "alpha answer",
+                        "session_id": "session-a",
+                    },
+                    {
+                        "id": "b1",
+                        "status": "complete",
+                        "user": "bravo session question",
+                        "aura": "bravo answer",
+                        "session_id": "session-b",
+                    },
+                ]
+            )
+        try:
+            recalled = await chat_route._build_conversation_recall_reply(
+                "what did I just ask?",
+                session_id="session-a",
+            )
+            missed = await chat_route._build_conversation_recall_reply(
+                "what did I just ask?",
+                session_id="session-c",
+            )
+            return recalled, missed
+        finally:
+            async with chat_route._get_convo_lock():
+                chat_route._conversation_log.clear()
+
+    recalled, missed = asyncio.run(run())
+
+    assert recalled is not None
+    assert "alpha session question" in recalled
+    assert "bravo session question" not in recalled
+    assert missed is not None
+    assert "completed prior turn" in missed.lower()
+    assert "alpha session question" not in missed
+    assert "bravo session question" not in missed
 
 
 def test_repo_probe_request_detects_dependency_reads():

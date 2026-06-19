@@ -1674,6 +1674,34 @@ def test_conversation_status_respects_ready_lane_even_without_recent_generation(
     assert lane["conversation_ready"] is True
 
 
+def test_conversation_status_rejects_raw_ready_with_runtime_identity_mismatch():
+    gate = InferenceGate()
+    gate._last_successful_generation_at = time.time()
+
+    class _MismatchedReadyLane:
+        def get_lane_status(self):
+            return {
+                "state": "ready",
+                "last_error": "",
+                "conversation_ready": True,
+                "readiness_blockers": [],
+                "runtime_identity_ok": False,
+                "detected_models": ["unrelated/raw-assistant-runtime"],
+                "last_ready_at": time.time(),
+                "last_progress_at": time.time(),
+                "warmup_attempted": True,
+                "warmup_in_flight": False,
+            }
+
+    gate._mlx_client = _MismatchedReadyLane()
+
+    lane = gate.get_conversation_status()
+
+    assert lane["state"] == "ready"
+    assert lane["conversation_ready"] is False
+    assert "runtime_identity_mismatch" in lane["readiness_blockers"]
+
+
 def test_conversation_status_does_not_promote_ready_lane_with_readiness_blockers():
     gate = InferenceGate()
     gate._last_successful_generation_at = time.time()

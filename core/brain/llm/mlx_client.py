@@ -2142,6 +2142,20 @@ class MLXLocalClient:
         # Fast path: if worker is already alive, don't acquire the gate
         if self._process and self._process.is_alive() and self._init_done:
             self._check_lane_state_staleness()  # [STABILITY v51]
+            recurrent_depth_status = _normalize_recurrent_depth_status(
+                self._recurrent_depth_status,
+                model_path=self.model_path,
+            )
+            recurrent_depth_blocker = _recurrent_depth_readiness_blocker(recurrent_depth_status)
+            if recurrent_depth_blocker and not request_is_background:
+                self._set_lane_state("recovering", recurrent_depth_blocker)
+                self._record_degraded_event(
+                    recurrent_depth_blocker,
+                    detail=f"{os.path.basename(self.model_path)}:{recurrent_depth_status}",
+                    severity="warning",
+                    foreground_request=foreground_request,
+                )
+                return False
             self._set_lane_state("ready")
             return True
 

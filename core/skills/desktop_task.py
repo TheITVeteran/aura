@@ -1017,6 +1017,30 @@ class DesktopTaskSkill(BaseSkill):
         query = self._extract_search_query(objective)
         if not query:
             return {}
+        deep_search = True
+        num_results = 5
+        pressure_limited = False
+        try:
+            from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+            snapshot = get_memory_pressure_snapshot()
+            pressure_limited = bool(
+                getattr(snapshot, "warning", False)
+                or getattr(snapshot, "refuse_heavy_local_generation", False)
+            )
+            if pressure_limited:
+                deep_search = False
+                num_results = 3
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError) as exc:
+            record_degradation(
+                "desktop_task",
+                exc,
+                action="using shallow desktop research because memory safety probe failed",
+                severity="warning",
+            )
+            deep_search = False
+            num_results = 3
+            pressure_limited = True
         step_context = dict(context or {})
         step_context.update(
             {
@@ -1035,11 +1059,12 @@ class DesktopTaskSkill(BaseSkill):
                 "web_search",
                 {
                     "query": query,
-                    "num_results": 5,
-                    # Deep research fetches the actual article bodies (not just
-                    # snippets) so the composed document is substantive and
-                    # accurate rather than a thin few-sentence gloss.
-                    "deep": True,
+                    "num_results": num_results,
+                    # Deep article fetches are useful, but they are no longer
+                    # allowed to run before memory admission. Under pressure we
+                    # use snippets and fewer sources instead of risking a live
+                    # desktop RAM spike.
+                    "deep": deep_search,
                     "retain": False,
                     "force_refresh": True,
                 },
@@ -1062,7 +1087,8 @@ class DesktopTaskSkill(BaseSkill):
             return {
                 "desktop_task_research_query": query,
                 "desktop_task_research_error": str(result.get("error") or result.get("status") or result),
-                "desktop_task_research_result": result,
+                "desktop_task_research_deep": deep_search,
+                "desktop_task_research_pressure_limited": pressure_limited,
             }
         sources = self._research_sources_from_result(result)
         summary = str(
@@ -1082,7 +1108,8 @@ class DesktopTaskSkill(BaseSkill):
             "desktop_task_research_query": query,
             "desktop_task_research_summary": summary[:3000],
             "desktop_task_research_sources": sources,
-            "desktop_task_research_result": result,
+            "desktop_task_research_deep": deep_search,
+            "desktop_task_research_pressure_limited": pressure_limited,
         }
         synthesis = self._compose_research_synthesis_from_sources(
             objective=objective,
@@ -2407,16 +2434,34 @@ class DesktopTaskSkill(BaseSkill):
     def _os_automation_effect_evidence(result: dict[str, Any]) -> tuple[bool, str]:
         if not bool(result.get("ok")):
             return False, str(result.get("error") or result.get("status") or "os automation reported failure")
+        postconditions = result.get("postconditions")
+        if isinstance(postconditions, dict) and any(
+            str(value or "").strip() for value in postconditions.values()
+        ):
+            summary_bits = [
+                f"{key}={str(value).strip()[:120]}"
+                for key, value in postconditions.items()
+                if str(value or "").strip()
+            ]
+            return True, "; ".join(summary_bits[:4])
+        if isinstance(postconditions, list) and any(str(value or "").strip() for value in postconditions):
+            return True, "; ".join(str(value).strip()[:120] for value in postconditions[:4])
+        verified_effects = result.get("verified_effects")
+        if isinstance(verified_effects, (list, tuple)) and any(
+            str(value or "").strip() for value in verified_effects
+        ):
+            return True, "; ".join(str(value).strip()[:120] for value in list(verified_effects)[:4])
+        if bool(result.get("effect_verified")):
+            effect_evidence = str(result.get("effect_evidence") or "").strip()
+            if effect_evidence and not effect_evidence.startswith("receipt_id="):
+                return True, effect_evidence[:240]
         receipt_id = str(result.get("receipt_id") or "").strip()
-        action_result = str(result.get("result") or "").strip()
-        adapter = str(result.get("adapter") or "").strip()
         if receipt_id:
-            return True, f"receipt_id={receipt_id}"
-        if action_result:
-            return True, f"result={action_result[:240]}"
-        if adapter:
-            return True, f"adapter={adapter}"
-        return False, "missing os automation effect evidence"
+            return False, (
+                f"receipt_id={receipt_id} is audit evidence only; missing observable "
+                "postcondition proving the requested desktop effect."
+            )
+        return False, "missing observable os automation postcondition"
 
     async def _execute_os_automation_escalation(
         self,
@@ -2426,6 +2471,11 @@ class DesktopTaskSkill(BaseSkill):
         context: dict[str, Any],
     ) -> dict[str, Any]:
         step_context = dict(context or {})
+        document_body = (
+            self._document_body(objective, step_context)
+            if self._objective_requests_written_artifact(objective)
+            else ""
+        )
         step_context.update(
             {
                 "origin": step_context.get("origin") or "desktop_task",
@@ -2438,7 +2488,9 @@ class DesktopTaskSkill(BaseSkill):
                     "Primitive desktop actions were not sufficient for this objective; "
                     "escalating to governed OS automation."
                 ),
-                "desktop_task_expect": "OS automation receipt proves the visible desktop action ran.",
+                "desktop_task_expect": "OS automation returns observable postconditions proving the visible desktop action.",
+                "desktop_task_document_body": document_body,
+                "document_body": document_body,
             }
         )
         try:
@@ -2569,7 +2621,11 @@ class DesktopTaskSkill(BaseSkill):
                     "critical": True,
                     "effect_verified": False,
                     "effect_evidence": str(task_context.get("desktop_task_research_error") or ""),
-                    "result": task_context.get("desktop_task_research_result") or {},
+                    "result": {
+                        "query": task_context.get("desktop_task_research_query"),
+                        "deep": task_context.get("desktop_task_research_deep"),
+                        "pressure_limited": task_context.get("desktop_task_research_pressure_limited"),
+                    },
                 }
                 await self._emit_durable_step_receipt(
                     failure_receipt,

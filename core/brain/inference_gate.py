@@ -1122,6 +1122,17 @@ class InferenceGate:
                 for blocker in (raw.get("readiness_blockers") or [])
                 if str(blocker or "").strip()
             ]
+            if raw.get("runtime_identity_ok") is False:
+                detected_models = raw.get("detected_models") or []
+                identity_blocker = (
+                    "runtime_identity_mismatch"
+                    if detected_models
+                    else "runtime_identity_unverified"
+                )
+                if identity_blocker not in raw_readiness_blockers:
+                    raw_readiness_blockers.append(identity_blocker)
+            if raw_readiness_blockers:
+                raw_ready = False
             lane["conversation_ready"] = raw_ready
             lane["readiness_blockers"] = raw_readiness_blockers
             if raw_readiness_blockers and not lane["last_failure_reason"]:
@@ -1200,7 +1211,7 @@ class InferenceGate:
                 float(lane.get("last_progress_at", 0.0) or 0.0),
             )
         )
-        if raw_ready:
+        if raw_ready and not raw_readiness_blockers:
             lane["conversation_ready"] = True
             lane["foreground_endpoint"] = PRIMARY_ENDPOINT
         elif raw_readiness_blockers:
