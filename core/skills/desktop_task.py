@@ -964,13 +964,11 @@ class DesktopTaskSkill(BaseSkill):
     @staticmethod
     def _allow_research_model_synthesis(context: dict[str, Any] | None) -> bool:
         context = context or {}
-        # Substantive model synthesis is what makes a research document robust
-        # rather than a thin heuristic gloss, so it is ON by default. It can be
-        # explicitly disabled (allow_desktop_task_model_synthesis=False), and is
-        # always suppressed under memory pressure so it never destabilises the
-        # desktop runtime. (Previously this required an opt-in flag that was never
-        # set anywhere, which silently left every research document thin.)
-        if context.get("allow_desktop_task_model_synthesis") is False:
+        # Visible desktop work must not allocate a hidden second foreground
+        # model by default. The default path composes from search evidence
+        # deterministically; model synthesis is an explicit enhancement and is
+        # still suppressed under memory pressure.
+        if context.get("allow_desktop_task_model_synthesis") is not True:
             return False
         try:
             from core.utils.memory_monitor import get_memory_pressure_snapshot
@@ -1162,8 +1160,9 @@ class DesktopTaskSkill(BaseSkill):
         )
         wants_opinion = self._objective_requests_opinion(objective)
         opinion_clause = (
-            " Close with a separate short paragraph beginning \"In my view,\" giving your "
-            "own first-person take on what these sources say and what you make of them."
+            " Close with a separate short first-person opinion paragraph beginning "
+            "\"In my view,\" giving your own first-person take on what these sources "
+            "say and what you make of them."
             if wants_opinion
             else ""
         )
