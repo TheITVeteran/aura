@@ -4745,6 +4745,7 @@ async def test_desktop_execution_contract_uses_bounded_planning_context(monkeypa
     assert calls[0]["context"]["skip_runtime_payload"] is True
     assert calls[0]["context"]["disable_prompt_cache"] is True
     assert calls[0]["context"]["clear_prompt_cache"] is True
+    assert "never say you cannot interact with apps" in calls[0]["context"]["response_style_contract"]
     assert calls[0]["context"]["desktop_task_planning_schema"]["steps"]
 
 

@@ -2976,6 +2976,10 @@ async def _run_cognitive_engine_chat_turn(
                 "response_style_contract": (
                     "Produce a bounded desktop-task execution draft. Prefer valid JSON "
                     "with optional document_body and steps from the provided schema. "
+                    "Do not answer like a hosted chatbot. Aura has governed local desktop "
+                    "control for this request, so never say you cannot interact with apps, "
+                    "open Notes/Docs/Chrome, write text, or control the user's desktop when "
+                    "the requested action is inside the desktop_task contract. "
                     "If prose is more appropriate, keep it concise and do not claim "
                     "desktop completion before desktop_task receipts verify it."
                 ),

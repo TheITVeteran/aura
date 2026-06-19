@@ -327,7 +327,10 @@ class ResponseGenerationPhase(BasePhase):
                         "the objective can still succeed after that step fails. Do not claim completion "
                         "inside this draft; completion is only true after downstream desktop_task "
                         "receipts verify effects. Keep the plan general to the named apps/surfaces and "
-                        "requested artifacts; do not use a hardcoded demo shortcut."
+                        "requested artifacts; do not use a hardcoded demo shortcut. Do not answer like "
+                        "a hosted chatbot: this runtime has governed local desktop control, so never say "
+                        "you cannot interact with apps, open Notes/Docs/Chrome, write text, or control "
+                        "the desktop when the requested action is inside the desktop_task contract."
                     )
                     if messages and messages[0].get("role") == "system":
                         messages[0]["content"] = f"{messages[0]['content']}\n\n{desktop_block}"
