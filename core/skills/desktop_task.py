@@ -510,7 +510,8 @@ class DesktopTaskSkill(BaseSkill):
         # Internal execution brief / directive — instruction to herself, not
         # document content (it leaked into a research PDF as the body).
         r"execute the user'?s (?:explicit )?desktop objective|"
-        r"governed desktop_task lane|do not claim success until)",
+        r"governed desktop_task lane|do not claim success until|"
+        r"aura desktop task receipt|canonical computer-use gateway)",
         re.IGNORECASE,
     )
 
@@ -640,6 +641,19 @@ class DesktopTaskSkill(BaseSkill):
         )
 
     @classmethod
+    def _objective_requests_written_artifact(cls, objective: str) -> bool:
+        lowered = str(objective or "").lower()
+        return bool(
+            cls._objective_requests_freeform_written_content(objective)
+            or cls._objective_requests_self_summary(objective)
+            or cls._objective_requests_research_document(objective)
+            or (
+                re.search(r"\b(?:write|draft|compose|type|create|make|save|export)\b", lowered)
+                and re.search(r"\b(?:note|notes|document|doc|file|pdf|paragraph|summary|report|journal)\b", lowered)
+            )
+        )
+
+    @classmethod
     def _compose_requested_writing_body(cls, objective: str) -> str:
         """Fallback prose for writing tasks when the model only produced dispatch text.
 
@@ -744,7 +758,9 @@ class DesktopTaskSkill(BaseSkill):
                 for key in ("document_body", "body", "content", "draft"):
                     value = str(payload.get(key) or "").strip()
                     if value:
-                        return value[:9000]
+                        usable = cls._usable_freeform_document_body(objective, value)
+                        if usable:
+                            return usable[:9000]
         for key in ("desktop_task_document_body", "draft_response", "cognitive_reply", "response"):
             value = str(context.get(key) or "").strip()
             declared_content = cls._extract_declared_document_content(value)
@@ -760,6 +776,8 @@ class DesktopTaskSkill(BaseSkill):
                 elif not cls._looks_like_dispatch_narration(value):
                     return value[:9000]
         if cls._objective_requests_freeform_written_content(objective):
+            return cls._compose_requested_writing_body(objective)[:9000]
+        if cls._objective_requests_written_artifact(objective):
             return cls._compose_requested_writing_body(objective)[:9000]
         stamp = time.strftime("%Y-%m-%d %H:%M:%S %Z")
         return (

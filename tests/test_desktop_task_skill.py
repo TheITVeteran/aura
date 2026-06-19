@@ -1462,6 +1462,45 @@ def test_freeform_paragraph_request_does_not_fall_back_to_receipt():
     assert "governed desktop pathway" not in body
 
 
+def test_freeform_paragraph_with_user_typo_does_not_fall_back_to_receipt():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    body = DesktopTaskSkill._document_body(
+        "Can you open up my notes app and write a paragraph about dinosaura",
+        {},
+    )
+
+    assert "Aura desktop task receipt" not in body
+    assert "canonical computer-use gateway" not in body
+    assert "dinosaura" in body.lower()
+    assert "worth understanding" in body
+
+
+def test_structured_document_body_rejects_desktop_receipt_text():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    body = DesktopTaskSkill._document_body(
+        "Can you open up my notes app and write a paragraph about dinosaura",
+        {
+            "cognitive_reply": {
+                "document_body": (
+                    "Aura desktop task receipt\n\n"
+                    "Timestamp: 2026-06-19 00:57:50 PDT\n"
+                    "Objective: Can you open up my notes app and write a paragraph about dinosaura\n\n"
+                    "This document was created through Aura's governed desktop_task lane. "
+                    "It records the requested objective and the actions Aura attempted through her "
+                    "canonical computer-use gateway."
+                )
+            }
+        },
+    )
+
+    assert "Aura desktop task receipt" not in body
+    assert "canonical computer-use gateway" not in body
+    assert "dinosaura" in body.lower()
+    assert "worth understanding" in body
+
+
 def test_freeform_paragraph_strips_desktop_action_preamble_from_model_body():
     from core.skills.desktop_task import DesktopTaskSkill
 
