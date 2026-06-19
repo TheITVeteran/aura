@@ -161,3 +161,6 @@ test_vdb/
 # Generated release artifacts (manifest lives in the release bundle, not the repo)
 artifacts/release/
 sensory_audio.json
+
+# Rust build artifacts (aura_m1_ext extension)
+rust_extensions/*/target/
