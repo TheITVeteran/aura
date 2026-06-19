@@ -1,3 +1,4 @@
+use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
 #[cfg(target_os = "macos")]
@@ -33,6 +34,7 @@ fn pin_to_e_cores() {
     }
 }
 
+#[allow(dead_code)] // used only in the non-aarch64 fallback of neon_dot_product
 fn scalar_dot_product(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
@@ -79,31 +81,36 @@ fn neon_dot_product_aarch64(a: &[f32], b: &[f32]) -> f32 {
 // Fused Euler integration step for the continuous-time unified field.
 // Mirrors core/consciousness/unified_field._tick exactly:
 //   next[i] = clamp(f[i] + (-decay*f[i] + activity[i] + noise[i]) * dt, -1, 1)
-// One tight loop replaces ~4 numpy temporaries (recurrent+input already folded
-// into `activity`), cutting per-tick allocations and CPU/heat in the hot loop.
+// Zero-copy: reads the numpy buffers directly (PyReadonlyArray1) and returns a
+// numpy array, avoiding per-call list marshalling. One tight loop replaces ~4
+// numpy temporaries (recurrent+input already folded into `activity`).
 #[pyfunction]
-fn field_integrate(
-    f: Vec<f32>,
-    activity: Vec<f32>,
-    noise: Vec<f32>,
+fn field_integrate<'py>(
+    py: Python<'py>,
+    f: PyReadonlyArray1<'py, f32>,
+    activity: PyReadonlyArray1<'py, f32>,
+    noise: PyReadonlyArray1<'py, f32>,
     decay: f32,
     dt: f32,
-) -> Vec<f32> {
+) -> Bound<'py, PyArray1<f32>> {
+    let f = f.as_slice().unwrap_or(&[]);
+    let a = activity.as_slice().unwrap_or(&[]);
+    let nz = noise.as_slice().unwrap_or(&[]);
     let n = f.len();
-    let mut out = Vec::with_capacity(n);
+    let mut out = vec![0f32; n];
     for i in 0..n {
-        let a = if i < activity.len() { activity[i] } else { 0.0 };
-        let nz = if i < noise.len() { noise[i] } else { 0.0 };
-        let df = (-decay * f[i] + a + nz) * dt;
+        let av = if i < a.len() { a[i] } else { 0.0 };
+        let nv = if i < nz.len() { nz[i] } else { 0.0 };
+        let df = (-decay * f[i] + av + nv) * dt;
         let mut v = f[i] + df;
         if v > 1.0 {
             v = 1.0;
         } else if v < -1.0 {
             v = -1.0;
         }
-        out.push(v);
+        out[i] = v;
     }
-    out
+    PyArray1::from_vec_bound(py, out)
 }
 
 #[pymodule]

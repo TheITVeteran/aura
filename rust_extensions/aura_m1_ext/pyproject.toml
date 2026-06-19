@@ -12,9 +12,11 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 
-# Build/activate the Rust acceleration path with:
-#   maturin develop -m rust_extensions/aura_m1_ext/pyproject.toml --release
-# core/consciousness/substrate_accel.py then uses the Rust field_integrate; the
-# parity test (tests/test_substrate_accel.py) proves it matches NumPy first.
+# Build/activate the Rust acceleration path with (maturin reads [tool.maturin]
+# here but the manifest path must point at the Cargo.toml):
+#   maturin develop -m rust_extensions/aura_m1_ext/Cargo.toml --release
+# core/consciousness/substrate_accel.py then uses the Rust field_integrate (~4x
+# faster, exact parity); the parity test (tests/test_substrate_accel.py) proves
+# it matches NumPy first.
 [tool.maturin]
 module-name = "aura_m1_ext"

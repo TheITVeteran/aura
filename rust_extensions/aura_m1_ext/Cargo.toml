@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22"
 ndarray = "0.15"
 # bumpalo is used for the slab allocator to eliminate GC pressure
 bumpalo = "3.16"
