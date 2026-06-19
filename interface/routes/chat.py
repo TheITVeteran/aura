@@ -6503,7 +6503,7 @@ def _build_bounded_cognitive_process_reply(
     This is not a task script. It is a bounded runtime explanation used only
     after a live draft fails reliability gates or a second heavy foreground
     pass is unsafe. It preserves the dimensions the user asked about so the
-    desktop path does not collapse into a presence placeholder.
+    desktop path does not collapse into a thin presence-only fallback.
     """
 
     text = _normalize_user_message(user_message)

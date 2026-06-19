@@ -23,6 +23,15 @@ from core.skills.base_skill import BaseSkill
 
 logger = logging.getLogger("Skills.OSAutomation")
 
+_OS_AUTOMATION_ENV_ERRORS = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 _CODE_BLOCK_RE = re.compile(
     r"```(?P<lang>[a-zA-Z0-9_+-]*)\s*\n(?P<body>.*?)```",
     re.DOTALL,
@@ -108,7 +117,7 @@ end tell
                             b_loc = str(getattr(b_res, "result", "") or "").strip()
                             if b_loc:
                                 env_info.append(f"Active browser page/tab: {b_loc}")
-            except Exception as exc:
+            except _OS_AUTOMATION_ENV_ERRORS as exc:
                 logger.debug("OSAutomation environment app query failed: %s", exc)
 
             # 3. Screen text
@@ -131,7 +140,7 @@ end tell
                     if len(screen_text) > 2000:
                         screen_text = screen_text[:1000] + "\n... [TRUNCATED] ...\n" + screen_text[-1000:]
                     env_info.append(f"Active window screen text:\n{screen_text}")
-            except Exception as exc:
+            except _OS_AUTOMATION_ENV_ERRORS as exc:
                 logger.debug("OSAutomation environment screen text query failed: %s", exc)
 
             # 4. List of running application processes
@@ -141,7 +150,7 @@ end tell
                 running_apps = str(getattr(r_res, "result", "") or "").strip()
                 if running_apps:
                     env_info.append(f"Visible running applications: {running_apps}")
-            except Exception as exc:
+            except _OS_AUTOMATION_ENV_ERRORS as exc:
                 logger.debug("OSAutomation environment running apps query failed: %s", exc)
 
         env_context = "\n".join(env_info) if env_info else ""

@@ -1100,7 +1100,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             env["PATH"] = fallbackPath
         }
         env["AURA_ATTACH_LAUNCHER"] = "0"
-        env["AURA_LOCAL_BACKEND"] = "llama_cpp"
+        env["AURA_LOCAL_BACKEND"] = "mlx"
         env["AURA_LAUNCHED_FROM_APP"] = "1"
         env["AURA_SAFE_BOOT_DESKTOP"] = "1"
         env["AURA_EAGER_CORTEX_WARMUP"] = "0"
@@ -1163,7 +1163,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         #!/bin/bash
         cd \(shellQuoted(auraRoot.path))
         export AURA_ATTACH_LAUNCHER=0
-        export AURA_LOCAL_BACKEND=llama_cpp
+        export AURA_LOCAL_BACKEND=mlx
         export AURA_LAUNCHED_FROM_APP=1
         export AURA_SAFE_BOOT_DESKTOP=1
         export AURA_EXTERNAL_GUI_OWNER=1

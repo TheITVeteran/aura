@@ -2548,7 +2548,7 @@ def _pid_still_runnable(pid: int) -> bool:
             return False
         try:
             return proc.status() != psutil.STATUS_ZOMBIE
-        except Exception:
+        except (psutil.Error, RuntimeError, ValueError):
             return False
     except ImportError:
         try:
@@ -2556,7 +2556,7 @@ def _pid_still_runnable(pid: int) -> bool:
             return True
         except OSError:
             return False
-    except Exception:
+    except (psutil.Error, RuntimeError, ValueError):
         return False
 
 

@@ -6788,8 +6788,8 @@ class InferenceGate:
             if not proof_run_active(origin="inference_gate_health"):
                 if self._desktop_safe_boot_enabled() or self._boot_should_schedule_deferred_prewarm():
                     return self.is_alive()
-        except Exception:
-            pass
+        except (ImportError, RuntimeError, AttributeError) as exc:
+            logger.debug("Inference readiness proof-policy check unavailable: %s", exc)
 
         def _client_alive(client: Any) -> bool:
             try:

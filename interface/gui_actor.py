@@ -389,7 +389,7 @@ def gui_actor_entry(port: int, token: str = None):
                     "🖐️ Accessibility trust %s for desktop control.",
                     "confirmed" if trusted else "requested (awaiting grant in System Settings)",
                 )
-            except Exception as _exc:  # noqa: BLE001 - best-effort permission surface
+            except _GUI_RECOVERABLE_ERRORS as _exc:
                 record_degradation('gui_actor', _exc)
 
         if sys.platform == "darwin":

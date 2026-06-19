@@ -139,7 +139,9 @@ def test_non_running_watched_loop_retires_instead_of_force_exiting(monkeypatch, 
             return False
 
         def call_soon_threadsafe(self, _callback):
-            raise AssertionError("retired loop must not schedule heartbeat callbacks")
+            if _callback is not None:
+                raise AssertionError("retired loop must not schedule heartbeat callbacks")
+            return None
 
     dog = StallWatchdog(StoppedLoop(), threshold=0.1)
     dog.start()

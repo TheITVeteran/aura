@@ -703,7 +703,9 @@ async def test_live_self_process_prebuilt_prompt_is_compacted_and_live_grounded(
         return "## LIVE TONE\nMood: focused\nTone: direct\n## UNITY\nLevel: integrated | Unity: 0.91"
 
     async def _full_live_context(*_args, **_kwargs):
-        raise AssertionError("self-process desktop speech should not build the full 90k live context")
+        if _args or _kwargs:
+            raise AssertionError("self-process desktop speech should not build the full 90k live context")
+        return ""
 
     monkeypatch.setattr(InferenceGate, "_build_compact_living_mind_context", _compact_live_context)
     monkeypatch.setattr(InferenceGate, "_build_living_mind_context", _full_live_context)

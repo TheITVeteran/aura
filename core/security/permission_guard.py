@@ -262,8 +262,9 @@ class PermissionGuard(AuraBaseModule):
                 frontmost = NSWorkspace.sharedWorkspace().frontmostApplication()
                 if frontmost:
                     frontmost_name = str(frontmost.localizedName() or "")
-            except Exception:
-                pass
+            except _PERMISSION_RECOVERABLE_ERRORS as exc:
+                record_degradation("permission_guard.frontmost_application", exc)
+                self.logger.debug("Unable to read frontmost application during automation probe: %s", exc)
 
             payload: dict[str, Any] = {
                 "granted": True,

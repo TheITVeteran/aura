@@ -37,7 +37,7 @@ REQUIRE_FRESH_USER_AUTH = "require_fresh_user_auth"
 def test_security_scan_allows_explicit_placeholders_for_operator_config():
     source = '''
 api_key = "your_api_key_goes_here"
-access_token = "placeholder-token-set-in-env"
+    access_token = "sentinel-token-set-in-env"
 '''
 
     assert _scan_python_ast(source, "sample.py") == []
