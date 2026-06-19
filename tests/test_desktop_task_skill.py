@@ -1142,6 +1142,10 @@ async def test_desktop_task_escalates_unrepresented_desktop_workflow_to_os_autom
                     "result": "arranged visible browser window",
                     "receipt_id": "receipt-os-1",
                     "adapter": "applescript",
+                    "postconditions": {
+                        "frontmost_app": "Google Chrome",
+                        "frontmost_window_bounds": "0, 25, 960, 1080",
+                    },
                 }
             return _fake_computer_use_result(params)
 
@@ -1192,14 +1196,56 @@ async def test_desktop_task_escalates_unrepresented_desktop_workflow_to_os_autom
                     "Primitive desktop actions were not sufficient for this objective; "
                     "escalating to governed OS automation."
                 ),
-                "desktop_task_expect": "OS automation receipt proves the visible desktop action ran.",
+                "desktop_task_expect": "OS automation returns observable postconditions proving the visible desktop action.",
+                "desktop_task_document_body": "",
+                "document_body": "",
             },
         )
     ]
     receipt = result["receipts"][0]
     assert receipt["action"] == "os_automation"
     assert receipt["effect_verified"] is True
-    assert receipt["effect_evidence"] == "receipt_id=receipt-os-1"
+    assert "frontmost_app=Google Chrome" in receipt["effect_evidence"]
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_rejects_os_automation_receipt_without_postcondition(monkeypatch):
+    from core.container import ServiceContainer
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            if skill_name == "os_automation":
+                return {
+                    "ok": True,
+                    "result": "script ran",
+                    "receipt_id": "receipt-os-1",
+                    "adapter": "applescript",
+                }
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    skill = DesktopTaskSkill()
+    result = await skill.execute(
+        {
+            "objective": (
+                "Use my computer to resize the current browser window and arrange it "
+                "on the left side of the screen."
+            ),
+            "steps": [],
+        },
+        {"origin": "desktop_ui"},
+    )
+
+    assert result["ok"] is False
+    receipt = result["receipts"][0]
+    assert receipt["action"] == "os_automation"
+    assert receipt["effect_verified"] is False
+    assert "audit evidence only" in receipt["effect_evidence"]
 
 
 @pytest.mark.asyncio
@@ -1255,6 +1301,14 @@ async def test_desktop_task_escalates_app_plus_unrepresented_action(monkeypatch)
                     "result": "pressed calculator keys and verified result",
                     "receipt_id": "receipt-os-calculator",
                     "adapter": "applescript",
+                    # The real os_automation skill returns observable
+                    # postconditions (_collect_applescript_postconditions); a
+                    # receipt_id alone is audit evidence, not effect proof, so the
+                    # desktop_task contract requires these to mark effect_verified.
+                    "postconditions": {
+                        "frontmost_app": "Calculator",
+                        "focused_value_excerpt": "5",
+                    },
                 }
             return _fake_computer_use_result(params)
 
@@ -1276,7 +1330,10 @@ async def test_desktop_task_escalates_app_plus_unrepresented_action(monkeypatch)
     assert result["ok"] is True
     assert result["planner"] == "os_automation_escalation"
     assert [call[0] for call in calls] == ["os_automation"]
-    assert result["receipts"][0]["effect_evidence"] == "receipt_id=receipt-os-calculator"
+    # Effect is verified by the observable postconditions, not the receipt id.
+    evidence = result["receipts"][0]["effect_evidence"]
+    assert "frontmost_app=Calculator" in evidence
+    assert "receipt_id=" not in evidence
 
 
 @pytest.mark.asyncio
@@ -1967,3 +2024,48 @@ async def test_collect_research_model_synthesis_is_explicit_and_memory_guarded(m
 
     assert "In my view" in ctx["desktop_task_research_synthesis"]
     assert "first-person opinion" in routed["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_collect_research_context_uses_shallow_search_under_memory_pressure(monkeypatch):
+    from types import SimpleNamespace
+
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return {
+                "ok": True,
+                "summary": "Climate findings.",
+                "citations": [
+                    {"title": "A", "url": "https://a", "snippet": "warming"},
+                    {"title": "B", "url": "https://b", "snippet": "adaptation"},
+                    {"title": "C", "url": "https://c", "snippet": "extremes"},
+                ],
+                "large_raw_body": "x" * 10000,
+            }
+
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(warning=True, refuse_heavy_local_generation=False),
+    )
+
+    skill = DesktopTaskSkill()
+    ctx = await skill._collect_research_context(
+        capability_engine=FakeCapabilityEngine(),
+        objective=(
+            "find 3 different recent articles on climate change and summarize "
+            "them in a Google Doc"
+        ),
+        context={},
+    )
+
+    assert calls[0][0] == "web_search"
+    assert calls[0][1]["deep"] is False
+    assert calls[0][1]["num_results"] == 3
+    assert ctx["desktop_task_research_pressure_limited"] is True
+    assert "desktop_task_research_result" not in ctx
+    assert "large_raw_body" not in json.dumps(ctx)
