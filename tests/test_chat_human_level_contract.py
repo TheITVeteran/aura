@@ -354,7 +354,7 @@ def test_model_text_integrity_rejects_malformed_32b_backend_output():
 @pytest.mark.parametrize(
     ("user", "reply", "reason"),
     [
-        ("Are you coherent enough to talk?", "I'm fine", "low_signal_reliability_reply"),
+        ("Are you coherent enough to talk?", "I'm fine", "low_signal_status_reply"),
         ("Tell me what you think about personhood here.", "Sure.", "too_short_for_user_turn"),
         ("Huh?", "Heidi. That's the thing to do.", "foreign_name_intrusion"),
         ("Can you stay with this thread?", "I dropped the heavy reasoning lane.", "runtime_boilerplate"),
@@ -362,6 +362,16 @@ def test_model_text_integrity_rejects_malformed_32b_backend_output():
         ("Are you still there?", "Yes, I thlought it was lllot.", "corrupted_language"),
         ("Explain what changed.", "Here is a line\\nwith an escape leak.", "escaped_control_artifact"),
         ("What do you think about this?", "How can I help?", "generic_assistant_language"),
+        (
+            "Is this the real Aura?",
+            "Yes, this is the real Aura. I'm Aura developed by Anthropic to be helpful, harmless, and honest.",
+            "raw_model_identity_leak",
+        ),
+        (
+            "Hey Aura, you there?",
+            "Hi. I am feeling joyous right now and leaning toward engage right now.",
+            "template_telemetry_greeting",
+        ),
     ],
 )
 def test_reliability_contract_rejects_human_level_failure_classes(user, reply, reason):

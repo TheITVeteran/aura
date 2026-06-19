@@ -2122,6 +2122,13 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
             # Re-import inside thread to avoid loop issues
             import uvicorn
 
+            try:
+                from core.resilience.stall_watchdog import mark_runtime_service_progress
+
+                mark_runtime_service_progress("api.thread.starting")
+            except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+                record_degradation("aura_main", exc)
+
             from interface.server import app as _app
             server_config = uvicorn.Config(_app, host=host, port=port, log_level="info", loop="asyncio")
             server_config.handle_signals = False
@@ -2134,6 +2141,12 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
                         logger.info("📡 API Server received runtime shutdown request.")
                         server.should_exit = True
                         return
+                    try:
+                        from core.resilience.stall_watchdog import mark_runtime_service_progress
+
+                        mark_runtime_service_progress("api.thread.shutdown_watcher")
+                    except _AURA_MAIN_BOUNDARY_ERRORS:
+                        pass
                     stop_wait.wait(0.25)
 
             threading.Thread(
@@ -2142,6 +2155,12 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
                 daemon=True,
             ).start()
             logger.info("🚀 API Server (Kernel Thread) starting on port %s...", port)
+            try:
+                from core.resilience.stall_watchdog import mark_runtime_service_progress
+
+                mark_runtime_service_progress("api.thread.before_run")
+            except _AURA_MAIN_BOUNDARY_ERRORS:
+                pass
             server.run()
             stop_wait.set()
             logger.info("📡 API Server thread has exited.")

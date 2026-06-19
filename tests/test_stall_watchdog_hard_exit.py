@@ -38,8 +38,31 @@ def _make_watchdog() -> StallWatchdog:
 
 def test_force_exit_fires_past_ceiling(monkeypatch):
     monkeypatch.delenv("AURA_WATCHDOG_HARD_EXIT_S", raising=False)
+    monkeypatch.setenv("AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S", "0")
     dog = _make_watchdog()
+    dog._last_runtime_service_progress = 0.0
     assert dog._should_force_exit(_LOOP_WEDGE_HARD_EXIT_S + 1.0) is True
+
+
+def test_force_exit_suppressed_during_boot_grace(monkeypatch):
+    monkeypatch.delenv("AURA_WATCHDOG_HARD_EXIT_S", raising=False)
+    monkeypatch.setenv("AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S", "600")
+    dog = _make_watchdog()
+    assert dog._should_force_exit(_LOOP_WEDGE_HARD_EXIT_S + 500.0) is False
+
+
+def test_desktop_safe_boot_preserves_hard_exit_boot_grace_from_inherited_zero(monkeypatch):
+    monkeypatch.delenv("AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S", raising=False)
+    monkeypatch.setenv("AURA_WATCHDOG_BOOT_GRACE_S", "0")
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    assert StallWatchdog._hard_exit_boot_grace_s() >= 1200.0
+
+
+def test_explicit_hard_exit_boot_grace_still_wins(monkeypatch):
+    monkeypatch.setenv("AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S", "0")
+    monkeypatch.setenv("AURA_WATCHDOG_BOOT_GRACE_S", "1200")
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    assert StallWatchdog._hard_exit_boot_grace_s() == 0.0
 
 
 def test_no_force_exit_within_ceiling(monkeypatch):
@@ -56,12 +79,43 @@ def test_ceiling_can_be_disabled(monkeypatch):
 
 def test_no_force_exit_during_shutdown(monkeypatch):
     monkeypatch.delenv("AURA_WATCHDOG_HARD_EXIT_S", raising=False)
+    monkeypatch.setenv("AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S", "0")
     dog = _make_watchdog()
+    dog._last_runtime_service_progress = 0.0
 
     import core.runtime.shutdown_coordinator as sc
 
     monkeypatch.setattr(sc, "is_shutdown_requested", lambda: True)
     assert dog._should_force_exit(_LOOP_WEDGE_HARD_EXIT_S + 100.0) is False
+
+
+def test_force_exit_suppressed_by_recent_runtime_service_progress(monkeypatch):
+    monkeypatch.delenv("AURA_WATCHDOG_HARD_EXIT_S", raising=False)
+    monkeypatch.setenv("AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S", "0")
+    monkeypatch.setenv("AURA_WATCHDOG_SERVICE_PROOF_GRACE_S", "240")
+    dog = _make_watchdog()
+    dog.mark_runtime_service_progress("api.health.heartbeat")
+
+    assert dog._should_force_exit(_LOOP_WEDGE_HARD_EXIT_S + 100.0) is False
+
+
+def test_force_exit_after_runtime_service_progress_stale(monkeypatch):
+    monkeypatch.delenv("AURA_WATCHDOG_HARD_EXIT_S", raising=False)
+    monkeypatch.setenv("AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S", "0")
+    monkeypatch.setenv("AURA_WATCHDOG_SERVICE_PROOF_GRACE_S", "1")
+    dog = _make_watchdog()
+    dog._last_runtime_service_progress = 0.0
+
+    assert dog._should_force_exit(_LOOP_WEDGE_HARD_EXIT_S + 100.0) is True
+
+
+def test_runtime_service_progress_updates_timestamp():
+    dog = _make_watchdog()
+    dog._last_runtime_service_progress = 0.0
+    dog.mark_runtime_service_progress("api.ui.bootstrap")
+
+    assert dog._last_runtime_service_progress > 0.0
+    assert dog._last_runtime_service_source == "api.ui.bootstrap"
 
 
 def test_heartbeat_advances_loop_run_timestamp(monkeypatch):
@@ -103,6 +157,7 @@ def test_suppression_reset_does_not_mask_wedge():
     touches — so a wedged loop is still caught.
     """
     dog = _make_watchdog()
+    os.environ["AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S"] = "0"
     # Simulate many seconds of the run-loop suppressing stalls: it resets
     # _last_heartbeat but must NOT touch _last_loop_run.
     import time as _time
@@ -110,9 +165,13 @@ def test_suppression_reset_does_not_mask_wedge():
     now = _time.time()
     dog._last_heartbeat = now  # suppression keeps this fresh
     dog._last_loop_run = now - (_LOOP_WEDGE_HARD_EXIT_S + 5.0)  # loop truly dead
+    dog._last_runtime_service_progress = 0.0
     loop_silence = _time.time() - dog._last_loop_run
     assert loop_silence >= _LOOP_WEDGE_HARD_EXIT_S
-    assert dog._should_force_exit(loop_silence) is True
+    try:
+        assert dog._should_force_exit(loop_silence) is True
+    finally:
+        os.environ.pop("AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S", None)
 
 
 def test_force_exit_calls_os_exit_with_nonzero_code(monkeypatch):
@@ -153,6 +212,8 @@ _WEDGE_SCRIPT = """
 import asyncio, os, sys, time
 os.environ["AURA_WATCHDOG_HARD_EXIT_S"] = "3"
 os.environ["AURA_WATCHDOG_BOOT_GRACE_S"] = "0"
+os.environ["AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S"] = "0"
+os.environ["AURA_WATCHDOG_SERVICE_PROOF_GRACE_S"] = "0"
 from core.resilience.stall_watchdog import StallWatchdog
 
 async def main():

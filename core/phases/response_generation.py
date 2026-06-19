@@ -32,9 +32,13 @@ from . import BasePhase
 logger = logging.getLogger(__name__)
 
 _DOWNSTREAM_REPAIRABLE_RESPONSE_REASONS = {
+    "missing_requested_self_process_coverage",
     "missing_requested_paragraph_count",
     "missing_requested_list_count",
     "missing_requested_followup_question",
+    "off_topic_self_reflection_reply",
+    "pseudo_internal_jargon",
+    "status_page_self_reflection",
 }
 _LOCAL_REPAIRABLE_RESPONSE_REASONS = _DOWNSTREAM_REPAIRABLE_RESPONSE_REASONS | {
     "generic_assistant_language",
@@ -378,6 +382,10 @@ class ResponseGenerationPhase(BasePhase):
             runtime_context = kwargs.get("context")
             if not isinstance(runtime_context, dict):
                 runtime_context = {}
+            desktop_cognitive_engine_required = bool(
+                runtime_context.get("desktop_cognitive_engine_required", False)
+                or runtime_context.get("cognitive_engine_required", False)
+            )
             tier = state.response_modifiers.get(
                 "model_tier", "tertiary" if is_background else "primary"
             )
@@ -469,6 +477,30 @@ class ResponseGenerationPhase(BasePhase):
                             runtime_context.get("desktop_cognitive_engine_required", False)
                             or runtime_context.get("cognitive_engine_required", False)
                         ),
+                        live_runtime_payload_required=bool(
+                            runtime_context.get("live_runtime_payload_required", False)
+                        ),
+                        visible_user_message=str(
+                            runtime_context.get("visible_user_message") or objective or ""
+                        ),
+                        recent_conversation_context=str(
+                            runtime_context.get("recent_conversation_context") or ""
+                        ),
+                        recent_context_needed=bool(
+                            runtime_context.get("recent_context_needed", False)
+                        ),
+                        allow_mesh_cognition=bool(
+                            runtime_context.get("allow_mesh_cognition", True)
+                        ),
+                        skip_runtime_payload=bool(
+                            runtime_context.get("skip_runtime_payload", False)
+                        ),
+                        disable_prompt_cache=bool(
+                            runtime_context.get("disable_prompt_cache", False)
+                        ),
+                        clear_prompt_cache=bool(
+                            runtime_context.get("clear_prompt_cache", False)
+                        ),
                         soma=soma_data,
                         state=state,
                         temperature=generation_temperature,
@@ -494,7 +526,11 @@ class ResponseGenerationPhase(BasePhase):
                     async def _raw_generate(p, **kw):
                         return await router.think(p, **kw)
                     strategies = ReasoningStrategies(_raw_generate)
-                    if not shape_repaired and strategies._is_logical_check(objective):
+                    if (
+                        not desktop_cognitive_engine_required
+                        and not shape_repaired
+                        and strategies._is_logical_check(objective)
+                    ):
                         logger.info("⚡ [Critique] Running System 2 self-critique on response...")
                         critique_response = await strategies._self_critique(objective, response_text, origin=origin)
                         if critique_response and critique_response != response_text:

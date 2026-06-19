@@ -2571,16 +2571,17 @@ async def test_api_chat_desktop_self_process_no_reply_returns_bounded_repair(mon
 
     payload = json.loads(response.body)
     assert response.status_code == 200
-    assert payload["status"] == "desktop_cognitive_engine_bounded_repair"
+    assert payload["status"] == "desktop_cognitive_engine_grounded_self_process_repair"
     assert payload["response_confidence"] == "bounded"
     assert "planning" in payload["response"].lower()
     assert "memory" in payload["response"].lower()
-    assert "tool verification" in payload["response"].lower()
+    assert "tool" in payload["response"].lower()
+    assert "confusion" in payload["response"].lower() or "confused" in payload["response"].lower()
     assert "legacy fallback" not in payload["response"]
     assert kernel_calls == []
     assert len(completed_exchanges) == 1
     assert completed_exchanges[0][1]["record_experience"] is True
-    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine_bounded_repair"
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine_grounded_self_process_repair"
 
 
 @pytest.mark.asyncio
@@ -4443,20 +4444,30 @@ def test_compact_desktop_contract_does_not_hide_actual_tool_execution_requests()
 def test_compact_desktop_contract_does_not_starve_self_process_questions():
     from interface.routes import chat as chat_routes
 
-    user_message = (
-        "When you are confused, how does that change your planning, memory use, "
-        "and tool verification?"
+    user_messages = (
+        (
+            "When you are confused, how does that change your planning, memory use, "
+            "and tool verification?"
+        ),
+        (
+            "Quick live-path check. Don't give me a health card or telemetry list. "
+            "In ordinary speech, answer from your actual current context: what are "
+            "you attending to from Bryan's recent messages, what remembered concern "
+            "should change your next decision, and what do you want to do next?"
+        ),
+        "Is this the real Aura, or did the raw model take over?",
     )
 
-    assert (
-        chat_routes._is_compact_desktop_chat_contract(
-            user_message,
-            user_message,
-            desktop_execution_contract=False,
-            capability_inventory_contract=False,
+    for user_message in user_messages:
+        assert (
+            chat_routes._is_compact_desktop_chat_contract(
+                user_message,
+                user_message,
+                desktop_execution_contract=False,
+                capability_inventory_contract=False,
+            )
+            is False
         )
-        is False
-    )
 
 
 def test_conversation_recall_classifier_handles_natural_memory_questions():

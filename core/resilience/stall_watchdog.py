@@ -82,6 +82,19 @@ _LOOP_WEDGE_HARD_EXIT_S = 150.0
 # Distinct from memory_watchdog's categorized exit (70). Non-zero ⇒ the
 # supervisor's KeepAlive/SuccessfulExit=false restarts the runtime.
 _LOOP_WEDGE_EXIT_CODE = 71
+_ACTIVE_WATCHDOG: "StallWatchdog | None" = None
+
+
+def mark_runtime_service_progress(source: str = "runtime") -> None:
+    """Record proof that the live runtime service is actively responding.
+
+    The event-loop heartbeat remains the primary wedge detector. This service
+    proof exists for real desktop launches where the watched loop can be stale
+    during boot/runtime handoff while the HTTP/UI lane is demonstrably alive.
+    """
+    dog = _ACTIVE_WATCHDOG
+    if dog is not None:
+        dog.mark_runtime_service_progress(source)
 
 
 class StallWatchdog(threading.Thread):
@@ -106,6 +119,9 @@ class StallWatchdog(threading.Thread):
         self._diagnostic_only_notice_logged: bool = False
         self._last_boot_suppression_log_at: float = 0.0
         self._last_foreground_suppression_log_at: float = 0.0
+        self._last_service_suppression_log_at: float = 0.0
+        self._last_runtime_service_progress: float = time.time()
+        self._last_runtime_service_source: str = "init"
         # Out-of-process liveness beacon. This daemon thread writes _last_loop_run
         # to a heartbeat file each tick; the external liveness_sentinel watches
         # it and kills+restarts the tree when it goes stale. This covers the case
@@ -138,8 +154,16 @@ class StallWatchdog(threading.Thread):
         self._last_heartbeat_file_write = now
         try:
             payload = (
-                '{"pid": %d, "last_loop_run": %.3f, "written_at": %.3f, "loop_state": "%s"}'
-                % (os.getpid(), self._last_loop_run, now, loop_state)
+                '{"pid": %d, "last_loop_run": %.3f, "last_runtime_service_progress": %.3f, '
+                '"runtime_service_source": "%s", "written_at": %.3f, "loop_state": "%s"}'
+                % (
+                    os.getpid(),
+                    self._last_loop_run,
+                    self._last_runtime_service_progress,
+                    self._json_escape(self._last_runtime_service_source),
+                    now,
+                    loop_state,
+                )
             )
             atomic_write_text(self._heartbeat_file, payload, encoding="utf-8")
         except (OSError, RuntimeError) as exc:
@@ -165,9 +189,22 @@ class StallWatchdog(threading.Thread):
         else:
             logger.debug(message, *args)
 
+    @staticmethod
+    def _json_escape(value: str) -> str:
+        return str(value).replace("\\", "\\\\").replace('"', '\\"')[:120]
+
+    def mark_runtime_service_progress(self, source: str = "runtime") -> None:
+        self._last_runtime_service_progress = time.time()
+        self._last_runtime_service_source = str(source or "runtime")[:120]
+
     def run(self):
         logger.info("🛡️ StallWatchdog: Monitoring loop (Threshold: %.1fs)", self.threshold)
         self._running = True
+        now = time.time()
+        self._started_at = now
+        self._last_heartbeat = now
+        self._last_loop_run = now
+        self._write_liveness_heartbeat(loop_state="starting", force=True)
 
         while not self._stop_event.is_set():
             # Schedule a heartbeat on the loop
@@ -285,6 +322,41 @@ class StallWatchdog(threading.Thread):
         except (TypeError, ValueError):
             return _LOOP_WEDGE_EXIT_CODE
 
+    @staticmethod
+    def _hard_exit_boot_grace_s() -> float:
+        """Boot grace for the out-of-band hard-exit ceiling.
+
+        The hard-exit ceiling protects against true loop wedges, but a fresh
+        desktop boot can spend several minutes in synchronous import/model/UI
+        startup before the watched loop has a stable heartbeat. A stale first
+        sample must not kill the process and create the white-screen boot loop.
+        """
+        explicit = os.getenv("AURA_WATCHDOG_HARD_EXIT_BOOT_GRACE_S")
+        if explicit is not None:
+            try:
+                return max(0.0, float(explicit or 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+        if "AURA_WATCHDOG_BOOT_GRACE_S" in os.environ:
+            try:
+                inherited = max(0.0, float(os.getenv("AURA_WATCHDOG_BOOT_GRACE_S") or 0.0))
+            except (TypeError, ValueError):
+                inherited = 0.0
+            if os.getenv("AURA_SAFE_BOOT_DESKTOP") == "1" or os.getenv("AURA_EXTERNAL_GUI_OWNER") == "1":
+                return max(inherited, 1200.0)
+            return inherited
+        return 1200.0
+
+    @staticmethod
+    def _runtime_service_progress_grace_s() -> float:
+        try:
+            return max(
+                0.0,
+                float(os.getenv("AURA_WATCHDOG_SERVICE_PROOF_GRACE_S", "240") or 240),
+            )
+        except (TypeError, ValueError):
+            return 240.0
+
     def _should_force_exit(self, loop_silence: float) -> bool:
         """True when the loop is wedged beyond any in-process recovery.
 
@@ -294,6 +366,29 @@ class StallWatchdog(threading.Thread):
         """
         ceiling = self._hard_exit_ceiling_s()
         if ceiling <= 0 or loop_silence < ceiling:
+            return False
+        boot_grace = self._hard_exit_boot_grace_s()
+        if boot_grace > 0 and (time.time() - self._started_at) < boot_grace:
+            self._log_suppression(
+                "_last_hard_exit_boot_suppression_log_at",
+                "StallWatchdog: suppressing %.1fs hard-exit loop silence during boot grace "
+                "(grace=%.1fs).",
+                loop_silence,
+                boot_grace,
+            )
+            return False
+        service_grace = self._runtime_service_progress_grace_s()
+        service_age = time.time() - self._last_runtime_service_progress
+        if service_grace > 0 and service_age < service_grace:
+            self._log_suppression(
+                "_last_service_suppression_log_at",
+                "StallWatchdog: suppressing %.1fs hard-exit loop silence because "
+                "runtime service progress is fresh (age=%.1fs source=%s grace=%.1fs).",
+                loop_silence,
+                service_age,
+                self._last_runtime_service_source,
+                service_grace,
+            )
             return False
         try:
             from core.runtime.shutdown_coordinator import is_shutdown_requested
@@ -590,10 +685,18 @@ class StallWatchdog(threading.Thread):
 
 def start_watchdog(loop: asyncio.AbstractEventLoop | None = None, threshold: float = 5.0):
     """Convenience helper to start the watchdog."""
+    global _ACTIVE_WATCHDOG
     try:
         target_loop = loop or asyncio.get_running_loop()
     except RuntimeError:
         target_loop = asyncio.new_event_loop()
     dog = StallWatchdog(target_loop, threshold=threshold)
+    _ACTIVE_WATCHDOG = dog
+    try:
+        from core.container import ServiceContainer
+
+        ServiceContainer.register_instance("stall_watchdog", dog, required=False)
+    except (ImportError, RuntimeError, TypeError, ValueError, AttributeError):
+        pass
     dog.start()
     return dog

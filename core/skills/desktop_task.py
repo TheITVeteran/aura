@@ -502,6 +502,11 @@ class DesktopTaskSkill(BaseSkill):
         r"(?:i'?ve started (?:working on )?th(?:is|e) task|"
         r"i'?ll follow up when|tracking commitment\s+[0-9a-f]{6,}|"
         r"task \(id=[0-9a-f-]{6,}\)|in the background\b.{0,40}follow up|"
+        r"(?:opening|open)\s+(?:notes|google docs|chrome|safari)\b.{0,120}(?:creating|writing|typing|following content)|"
+        r"(?:i\s+can\s+guide\s+you\s+through|here'?s\s+how|steps\s+to\s+do\s+that|do\s+that\s+yourself)|"
+        r"(?:i(?:'m| am)\s+not\s+(?:actually\s+)?able\s+to\s+(?:interact|access|control|open|write)|"
+        r"i\s+(?:cannot|can'?t)\s+(?:interact|access|control|open|write)\b|"
+        r"you\s+can\s+copy\s+it\s+into\s+notes)|"
         # Internal execution brief / directive — instruction to herself, not
         # document content (it leaked into a research PDF as the body).
         r"execute the user'?s (?:explicit )?desktop objective|"
@@ -532,6 +537,145 @@ class DesktopTaskSkill(BaseSkill):
         product of the task.
         """
         return bool(cls._DISPATCH_NARRATION_RE.search(str(text or "")))
+
+    @staticmethod
+    def _extract_declared_document_content(text: str) -> str:
+        """Pull authored content out of model preambles like "write this content:"."""
+        value = str(text or "").strip()
+        if not value:
+            return ""
+        patterns = (
+            r"(?:following\s+)?content\s*[:：]\s*[-–—]*\s*(.+)$",
+            r"\bhere\s+(?:it\s+is|is\s+the\s+(?:paragraph|note|document|content))\s*[:：]\s*[-–—]*\s*(.+)$",
+            r"(?:note|paragraph|document)\s+(?:text|body)\s*[:：]\s*[-–—]*\s*(.+)$",
+            r"(?:write|type|insert)\s+(?:this\s+)?(?:text|paragraph|content)\s*[:：]\s*[-–—]*\s*(.+)$",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, value, flags=re.IGNORECASE | re.DOTALL)
+            if not match:
+                continue
+            body = str(match.group(1) or "").strip(" \n\r\t-–—")
+            if body:
+                return DesktopTaskSkill._strip_artifact_action_tail(body)[:9000]
+        return ""
+
+    @staticmethod
+    def _strip_artifact_action_tail(text: str) -> str:
+        """Remove assistant/tool action narration from authored artifact text."""
+        body = str(text or "").strip()
+        if not body:
+            return ""
+        tail_patterns = (
+            r"\s*(?:now\s+)?let'?s\s+(?:create|open|save|export|type|write|put|move)\b.*$",
+            r"\s*i\s+(?:will|can|am going to|need to)\s+(?:create|open|save|export|type|write|put|move)\b.*$",
+            r"\s*(?:next|after that),?\s+(?:i\s+)?(?:will|can|am going to)?\s*(?:create|open|save|export|type|write|put|move)\b.*$",
+        )
+        for pattern in tail_patterns:
+            body = re.sub(pattern, "", body, flags=re.IGNORECASE | re.DOTALL).strip()
+        return body[:9000]
+
+    @classmethod
+    def _usable_freeform_document_body(cls, objective: str, value: str) -> str:
+        """Return value only if it is actual requested prose, not instructions."""
+        body = str(value or "").strip()
+        if not body:
+            return ""
+        declared = cls._extract_declared_document_content(body)
+        if declared:
+            body = declared
+        body = cls._strip_artifact_action_tail(body)
+        if not body:
+            return ""
+        if cls._looks_like_dispatch_narration(body):
+            return ""
+        topic = cls._extract_requested_writing_topic(objective)
+        if topic:
+            topic_terms = [
+                term.lower()
+                for term in re.findall(r"[A-Za-z][A-Za-z0-9'-]{2,}", topic)
+                if term.lower() not in {"about", "describe", "explaining", "paragraph"}
+            ]
+            if topic_terms and not any(term in body.lower() for term in topic_terms[:4]):
+                return ""
+        return body[:9000]
+
+    @staticmethod
+    def _extract_requested_writing_topic(objective: str) -> str:
+        """Extract the subject of a requested note/document when possible."""
+        text = " ".join(str(objective or "").strip().split())
+        if not text:
+            return ""
+        patterns = (
+            r"\b(?:write|draft|compose|type|create)\s+(?:me\s+)?(?:a\s+|an\s+)?"
+            r"(?:short\s+|full\s+|one\s+)?(?:paragraph|note|document|essay|summary|report|journal\s+entry)"
+            r"\s+(?:about|on|describing|explaining)\s+(.+)$",
+            r"\b(?:write|draft|compose|type)\s+(.+?)\s+(?:in|into|to)\s+(?:notes|google docs|docs|a note|the note)\b",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            topic = match.group(1).strip(" .,:;?!\"'")
+            topic = re.split(
+                r"\b(?:and then|then|after that|also|export|save|create a folder|make a folder)\b",
+                topic,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0].strip(" .,:;?!\"'")
+            if topic:
+                return topic[:180]
+        return ""
+
+    @classmethod
+    def _objective_requests_freeform_written_content(cls, objective: str) -> bool:
+        lowered = str(objective or "").lower()
+        if cls._objective_requests_self_summary(objective) or cls._objective_requests_research_document(objective):
+            return False
+        return bool(
+            re.search(
+                r"\b(?:write|draft|compose|type|create)\b.{0,80}\b"
+                r"(?:paragraph|note|document|essay|summary|report|journal entry|about|describing|explaining)\b",
+                lowered,
+            )
+        )
+
+    @classmethod
+    def _compose_requested_writing_body(cls, objective: str) -> str:
+        """Fallback prose for writing tasks when the model only produced dispatch text.
+
+        This is intentionally modest: it satisfies the requested visible writing
+        artifact without converting receipts or task-status narration into the
+        document body. Richer content should still come from CognitiveEngine when
+        available.
+        """
+        topic = cls._extract_requested_writing_topic(objective)
+        if not topic:
+            topic = "the requested subject"
+        topic_display = topic[:1].upper() + topic[1:]
+        plural = bool(re.search(r"s\b", topic.strip(), flags=re.IGNORECASE)) and not re.search(
+            r"\b(?:news|physics|mathematics|economics|politics)\b",
+            topic,
+            flags=re.IGNORECASE,
+        )
+        verb = "are" if plural else "is"
+        possessive = "their" if plural else "its"
+        timestamp = ""
+        if re.search(r"\b(?:timestamp|time stamp|date stamp|dated)\b", str(objective or ""), flags=re.IGNORECASE):
+            timestamp = f"[{time.strftime('%Y-%m-%d %H:%M:%S %Z')}] "
+        if re.search(r"\bparagraph\b", str(objective or ""), flags=re.IGNORECASE):
+            return (
+                f"{timestamp}{topic_display} {verb} worth understanding because {possessive} story connects "
+                "concrete details with a larger pattern of change, evidence, and consequence. A good paragraph "
+                f"about {topic} should give the subject shape: what it is, how it appears in the world, and why "
+                "it still matters beyond a label. Looked at closely, the subject becomes less like a flat fact "
+                "and more like a living context, with origins, visible traces, surprising variations, and a "
+                "reason for someone to keep asking better questions about it."
+            )
+        return (
+            f"{timestamp}Notes on {topic}: {topic_display} {verb} the focus of this note. The important part is "
+            "to describe the subject clearly, ground it in concrete details, and preserve enough context that "
+            "the note is useful after the moment of writing has passed."
+        )
 
     @classmethod
     def _compose_self_summary_body(cls, objective: str) -> str:
@@ -603,8 +747,20 @@ class DesktopTaskSkill(BaseSkill):
                         return value[:9000]
         for key in ("desktop_task_document_body", "draft_response", "cognitive_reply", "response"):
             value = str(context.get(key) or "").strip()
-            if value and not cls._looks_like_dispatch_narration(value):
-                return value[:9000]
+            declared_content = cls._extract_declared_document_content(value)
+            if declared_content:
+                usable = cls._usable_freeform_document_body(objective, declared_content)
+                if usable:
+                    return usable[:9000]
+            if value:
+                if cls._objective_requests_freeform_written_content(objective):
+                    usable = cls._usable_freeform_document_body(objective, value)
+                    if usable:
+                        return usable
+                elif not cls._looks_like_dispatch_narration(value):
+                    return value[:9000]
+        if cls._objective_requests_freeform_written_content(objective):
+            return cls._compose_requested_writing_body(objective)[:9000]
         stamp = time.strftime("%Y-%m-%d %H:%M:%S %Z")
         return (
             "Aura desktop task receipt\n\n"

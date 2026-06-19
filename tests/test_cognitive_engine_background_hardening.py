@@ -441,6 +441,54 @@ async def test_cognitive_engine_desktop_quick_reply_includes_recent_context(monk
 
 
 @pytest.mark.asyncio
+async def test_cognitive_engine_desktop_quick_keeps_runtime_payload_when_required(monkeypatch):
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = StateRepositoryFixture(state)
+    captured = {}
+
+    class _Router:
+        async def think(self, **kwargs):
+            captured.update(kwargs)
+            return "I am answering from the live path with the current thread in view."
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router() if name == "llm_router" else default
+        ),
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "Hey Aura, are you there?",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "live_runtime_payload_required": True,
+            "visible_user_message": "Hey Aura, are you there?",
+            "live_speech_grounding_frame": {
+                "attention_focus": "Bryan's live desktop check",
+                "dominant_action": "answer",
+                "mood": "steady",
+            },
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "max_tokens": 512,
+        },
+        is_background=False,
+        timeout_s=42.0,
+    )
+
+    assert thought.content.startswith("I am answering")
+    assert captured["skip_runtime_payload"] is False
+    assert captured["allow_cloud_fallback"] is False
+    assert "LIVE SPEECH GROUNDING" in captured["messages"][0]["content"]
+    assert "not prose to repeat" in captured["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
 async def test_cognitive_engine_desktop_quick_failure_does_not_enter_second_model_path(
     monkeypatch,
 ):

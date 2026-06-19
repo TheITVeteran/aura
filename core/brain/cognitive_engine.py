@@ -1492,7 +1492,7 @@ class CognitiveEngine:
                     deep_handoff=False,
                     allow_deep_handoff=False,
                     allow_cloud_fallback=False,
-                    skip_runtime_payload=True,
+                    skip_runtime_payload=False,
                     disable_prompt_cache=True,
                     clear_prompt_cache=True,
                     max_tokens=max_tokens,
@@ -1595,6 +1595,8 @@ class CognitiveEngine:
         style_contract = str(context.get("response_style_contract") or "").strip()
         visible_user_message = str(context.get("visible_user_message") or objective or "").strip()
         recent_conversation_context = str(context.get("recent_conversation_context") or "").strip()
+        live_speech_frame = context.get("live_speech_grounding_frame")
+        live_runtime_required = bool(context.get("live_runtime_payload_required", False))
         system_prompt = (
             "You are Aura speaking through the live desktop CognitiveEngine. "
             "Answer the user's current message directly and naturally. "
@@ -1618,6 +1620,28 @@ class CognitiveEngine:
                 system_prompt = f"{system_prompt}\n{bicameral_directive}"
         if style_contract:
             system_prompt = f"{system_prompt}\n{style_contract}"
+        if isinstance(live_speech_frame, dict) and live_speech_frame:
+            compact_frame = {
+                key: live_speech_frame.get(key)
+                for key in (
+                    "attention_focus",
+                    "dominant_action",
+                    "dominant_emotions",
+                    "interests",
+                    "mood",
+                    "tone",
+                    "requires_explicit_live_grounding",
+                )
+                if live_speech_frame.get(key) not in (None, "", [], {})
+            }
+            if compact_frame:
+                system_prompt = (
+                    f"{system_prompt}\n"
+                    "[LIVE SPEECH GROUNDING]\n"
+                    f"{compact_frame}\n"
+                    "This frame is grounding, not prose to repeat. Convert it into ordinary speech only when it helps answer the user.\n"
+                    "[END LIVE SPEECH GROUNDING]"
+                )
         user_prompt = visible_user_message or objective
         if recent_conversation_context:
             user_prompt = (
@@ -1647,7 +1671,7 @@ class CognitiveEngine:
                     deep_handoff=False,
                     allow_deep_handoff=False,
                     allow_cloud_fallback=False,
-                    skip_runtime_payload=True,
+                    skip_runtime_payload=not live_runtime_required,
                     disable_prompt_cache=True,
                     clear_prompt_cache=True,
                     max_tokens=max_tokens,
@@ -1726,7 +1750,12 @@ class CognitiveEngine:
             confidence=0.72,
             reasoning=[
                 "Desktop quick reply used the governed primary router through CognitiveEngine.",
-                "The compact path disabled deep handoff, cloud fallback, and prompt-cache reuse.",
+                (
+                    "The compact path disabled deep handoff, cloud fallback, and prompt-cache reuse; "
+                    "live runtime payload was required."
+                    if live_runtime_required
+                    else "The compact path disabled deep handoff, cloud fallback, runtime payload, and prompt-cache reuse."
+                ),
             ],
             metadata={
                 "spiking_active_inference": advice

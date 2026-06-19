@@ -687,6 +687,70 @@ async def test_user_facing_primary_uses_conversational_budget_and_chatml():
 
 
 @pytest.mark.asyncio
+async def test_live_self_process_prebuilt_prompt_is_compacted_and_live_grounded(monkeypatch):
+    gate = InferenceGate()
+    cortex_reply = (
+        "I am attending to Bryan's concern that the live desktop lane can drift into raw assistant mode "
+        "or stall under oversized prompts. The remembered concern that should change my next decision is "
+        "the repeated timeout-and-repair loop, so I should keep the live mind payload bounded while preserving "
+        "recent context. What I want to do next is answer from that bounded live context, then verify the UI reply "
+        "and terminal logs before treating the fix as real."
+    )
+    cortex = _RecordingClient(cortex_reply)
+    gate._mlx_client = cortex
+
+    async def _compact_live_context(_self, _prompt, _origin):
+        return "## LIVE TONE\nMood: focused\nTone: direct\n## UNITY\nLevel: integrated | Unity: 0.91"
+
+    async def _full_live_context(*_args, **_kwargs):
+        raise AssertionError("self-process desktop speech should not build the full 90k live context")
+
+    monkeypatch.setattr(InferenceGate, "_build_compact_living_mind_context", _compact_live_context)
+    monkeypatch.setattr(InferenceGate, "_build_living_mind_context", _full_live_context)
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+
+    oversized_system = "SYSTEM CONTRACT\n" + ("keep Aura stateful and non-generic. " * 900)
+    oversized_turn = "prior live desktop conversation context. " * 500
+    user_prompt = (
+        "Quick live-path check. Don't give me a health card or telemetry list. "
+        "In ordinary speech, answer from your actual current context: what are "
+        "you attending to from Bryan's recent messages, what remembered concern "
+        "should change your next decision, and what do you want to do next?"
+    )
+    messages = [{"role": "system", "content": oversized_system}]
+    for idx in range(12):
+        messages.append({"role": "user", "content": f"user {idx}: {oversized_turn}"})
+        messages.append({"role": "assistant", "content": f"aura {idx}: {oversized_turn}"})
+    messages.append({"role": "user", "content": user_prompt})
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                result = await gate.generate(
+                    user_prompt,
+                    context={
+                        "origin": "user",
+                        "prefer_tier": "primary",
+                        "foreground_request": True,
+                        "protected_foreground_lane": True,
+                        "desktop_cognitive_engine_required": True,
+                        "live_runtime_payload_required": True,
+                        "allow_mesh_cognition": False,
+                        "messages": messages,
+                    },
+                )
+
+    assert result == cortex_reply
+    assert len(cortex.prompts) == 1
+    rendered = cortex.prompts[0]
+    assert len(rendered) < 12000
+    assert "## LIVE TONE" in rendered
+    assert "Mood: focused" in rendered
+    assert user_prompt in rendered
+    assert rendered.count("prior live desktop conversation context") < 80
+
+
+@pytest.mark.asyncio
 async def test_user_facing_primary_restores_foreground_token_floor(monkeypatch):
     gate = InferenceGate()
     cortex = _RecordingClient("Live chat kept enough room to answer coherently.")

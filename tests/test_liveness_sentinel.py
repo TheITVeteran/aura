@@ -12,7 +12,12 @@ import json
 import time
 from pathlib import Path
 
-from tools.liveness_sentinel import read_heartbeat, read_heartbeat_state, should_kill
+from tools.liveness_sentinel import (
+    read_heartbeat,
+    read_heartbeat_state,
+    read_runtime_service_progress,
+    should_kill,
+)
 
 
 def test_read_heartbeat_parses_and_degrades(tmp_path):
@@ -28,6 +33,14 @@ def test_read_heartbeat_parses_and_degrades(tmp_path):
     hb.write_text("{not json")
     llr, wa, mt = read_heartbeat(hb)
     assert llr is None and wa is None and mt is not None
+
+
+def test_read_runtime_service_progress_parses_optional_field(tmp_path):
+    hb = tmp_path / "hb.json"
+    hb.write_text(json.dumps({"last_runtime_service_progress": 333.0}))
+
+    assert read_runtime_service_progress(hb) == 333.0
+    assert read_runtime_service_progress(tmp_path / "missing.json") is None
 
 
 def test_fresh_heartbeat_never_kills():
@@ -72,6 +85,38 @@ def test_loop_wedge_detected_even_when_daemon_still_writes():
     ) is False
 
 
+def test_recent_runtime_service_progress_suppresses_stale_loop_false_kill():
+    now = time.time()
+    assert should_kill(
+        now=now,
+        last_loop_run=now - 400,
+        written_at=now - 1,
+        file_mtime=now - 1,
+        started_at=0,
+        grace_s=0,
+        stale_ceiling_s=180,
+        consecutive_stale=2,
+        last_runtime_service_progress=now - 2,
+        service_progress_grace_s=240,
+    ) is False
+
+
+def test_stale_runtime_service_progress_does_not_mask_wedge():
+    now = time.time()
+    assert should_kill(
+        now=now,
+        last_loop_run=now - 400,
+        written_at=now - 1,
+        file_mtime=now - 1,
+        started_at=0,
+        grace_s=0,
+        stale_ceiling_s=180,
+        consecutive_stale=2,
+        last_runtime_service_progress=now - 400,
+        service_progress_grace_s=240,
+    ) is True
+
+
 def test_stallwatchdog_writes_liveness_beacon(tmp_path, monkeypatch):
     """The StallWatchdog must refresh the heartbeat file the sentinel reads —
     with a fresh last_loop_run while the loop is alive."""
@@ -93,6 +138,7 @@ def test_stallwatchdog_writes_liveness_beacon(tmp_path, monkeypatch):
             # last_loop_run is fresh because the loop is alive and running callbacks.
             assert time.time() - llr < 5.0
             assert written_at and written_at > 0.0
+            assert read_runtime_service_progress(hb)
         finally:
             dog.stop()
 

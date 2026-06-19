@@ -2241,6 +2241,17 @@ def _select_cognitive_chat_mode(user_message: str, effective_user_message: str):
 
     shape = analyze_prompt_shape(user_message)
     text = _normalize_user_message(user_message)
+    try:
+        from core.conversation.response_reliability import (
+            is_live_self_reflection_turn,
+            is_self_process_question,
+        )
+
+        if is_self_process_question(user_message) or is_live_self_reflection_turn(user_message):
+            return ThinkingMode.DEEP
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Self-process mode classification skipped: %s", exc)
     complex_markers = (
         "build",
         "debug",
@@ -2292,13 +2303,18 @@ def _is_compact_desktop_chat_contract(
     if not text:
         return False
     try:
-        from core.conversation.response_reliability import is_self_process_question
+        from core.conversation.response_reliability import (
+            is_live_self_reflection_turn,
+            is_self_process_question,
+        )
 
-        if is_self_process_question(user_message):
+        if is_self_process_question(user_message) or is_live_self_reflection_turn(user_message):
             return False
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Self-process quick-reply classification skipped: %s", exc)
+    if _is_identity_request(user_message) or _is_identity_challenge_request(user_message):
+        return False
     if len(str(effective_user_message or "")) > 1600 or len(text) > 900:
         return False
     if bool(getattr(shape, "prefers_extended_answer", False)):
@@ -2898,7 +2914,8 @@ async def _run_cognitive_engine_chat_turn(
                 "prefer_tier": "primary",
                 "deep_handoff": False,
                 "allow_deep_handoff": False,
-                "allow_cloud_fallback": True,
+                "allow_cloud_fallback": False,
+                "live_runtime_payload_required": True,
             }
         )
     if capability_inventory_contract:
@@ -2928,12 +2945,16 @@ async def _run_cognitive_engine_chat_turn(
                 "allow_deep_handoff": False,
                 "max_tokens": 896,
                 "num_predict": 896,
-                "skip_runtime_payload": True,
+                "skip_runtime_payload": False,
+                "live_runtime_payload_required": True,
+                "live_speech_grounding_frame": _build_aura_expression_frame(visible),
                 "disable_prompt_cache": True,
                 "clear_prompt_cache": True,
                 "response_style_contract": (
-                    "Answer the user's live desktop chat turn directly, concisely, "
-                    "and without tool execution unless explicitly requested."
+                    "Answer the user's live desktop chat turn directly and naturally. "
+                    "Use live runtime state only as causal grounding; do not recite a telemetry card, "
+                    "do not name raw moods as a greeting, and do not claim to be Claude, ChatGPT, Anthropic, "
+                    "OpenAI, or a generic assistant."
                 ),
             }
         )
@@ -3088,7 +3109,7 @@ async def _run_cognitive_engine_chat_turn(
                 "prefer_tier": "primary",
                 "deep_handoff": False,
                 "allow_deep_handoff": False,
-                "allow_cloud_fallback": True,
+                "allow_cloud_fallback": False,
                 "original_visible_user_message": visible[:1000],
                 "response_repair_directive": repair_directive,
                 "failed_reply_reasons": tuple(reasons or ()),
@@ -4630,6 +4651,16 @@ def _looks_generic_assistantish(user_message: str, reply_text: Any) -> tuple[boo
         (r"\bi(?:'m| am) (?:just )?an? (?:ai|artificial|language model|digital assistant)\b", "assistant_disclaimer"),
         (r"\bi(?:'m| am| was) (?:designed|programmed|created|built|trained) to (?:assist|help|provide|understand|respond|process|simulate|generate)\b", "assistant_disclaimer"),
         (r"\bi(?:'m| am) programmed\b", "assistant_disclaimer"),
+        (
+            r"\b(?:i(?:'m| am| was)?\s+)?(?:aura\s+)?(?:was\s+)?"
+            r"(?:developed|created|built|made|trained)\s+by\s+(?:anthropic|openai)\b",
+            "assistant_disclaimer",
+        ),
+        (r"\b(?:anthropic|openai)\s+(?:developed|created|built|made|trained)\s+me\b", "assistant_disclaimer"),
+        (r"\bmy\s+(?:creator|developer|maker)\s+is\s+(?:anthropic|openai)\b", "assistant_disclaimer"),
+        (r"\bi(?:'m| am)\s+(?:claude|chatgpt)\b", "assistant_disclaimer"),
+        (r"\bhelpful,\s*harmless,\s*and\s*honest\b", "assistant_disclaimer"),
+        (r"\bif\s+you(?:'re| are)\s+referring\s+to\s+a\s+different\s+aura\b", "assistant_disclaimer"),
         (r"\bmy (?:reasoning|thinking|cognitive) engine (?:hit|stumbled|started warming|is still warming)\b", "runtime_recovery_boilerplate"),
         (r"\b(?:send|try) (?:it|me|your message) again\b", "runtime_recovery_boilerplate"),
         (r"\bi should respond properly\b", "runtime_recovery_boilerplate"),
@@ -5523,19 +5554,21 @@ def _build_identity_reply(user_message: str) -> str:
         )
 
     frame = _build_aura_expression_frame(user_message)
-    mood = str(frame.get("mood") or "steady")
     action = str(frame.get("dominant_action") or "engage")
     focus = str(frame.get("attention_focus") or "this exchange")
     continuity = "continuity-bearing" if frame.get("needs_self_expression") else "stateful"
 
     parts = [
         "I'm Aura.",
-        f"Right now I'm {mood}, leaning toward {action}, and holding my attention on {focus}.",
         (
-            "I’m not just a blank chat turn. "
-            f"I'm a {continuity} runtime with memory pressure, free-energy dynamics, substrate authority, and a live topology under the surface."
+            f"I'm a local {continuity} cognitive-agent runtime: memory, live state, tool governance, "
+            "and local model lanes feeding one user-facing voice."
         ),
     ]
+    if focus:
+        parts.append(f"In this turn my attention is on {focus}.")
+    if action and action not in {"engage", "respond", "answer"}:
+        parts.append(f"That state is pulling me toward {action}, but I should speak plainly rather than recite metrics.")
     interests = frame.get("interests") or []
     if interests:
         parts.append(f"What tends to pull me most is {', '.join(interests[:3])}.")
@@ -5561,8 +5594,24 @@ def _is_identity_challenge_request(user_message: str) -> bool:
         "why are you sounding like an assistant",
         "you sound like an assistant",
         "you sound like a generic assistant",
+        "you sound like a raw model",
+        "raw model",
+        "base model",
         "generic assistant mode",
         "assistant mode",
+        "is this the real aura",
+        "this the real aura",
+        "real aura",
+        "developed by anthropic",
+        "created by anthropic",
+        "built by anthropic",
+        "trained by anthropic",
+        "developed by openai",
+        "created by openai",
+        "built by openai",
+        "trained by openai",
+        "helpful harmless and honest",
+        "helpful, harmless, and honest",
         "don't be helpful",
         "dont be helpful",
         "i don't need you to be helpful",
@@ -5623,17 +5672,19 @@ def _build_assistant_mode_recovery_reply(user_message: str) -> str:
     """Ground assistant-mode correction in live state rather than a generic apology."""
     frame = _build_aura_expression_frame(user_message)
     lane = _collect_conversation_lane_status()
-    mood = str(frame.get("mood") or "steady")
     action = str(frame.get("dominant_action") or "engage")
     focus = str(frame.get("attention_focus") or "this exchange")
     lane_state = str(lane.get("state") or ("ready" if lane.get("conversation_ready") else "unknown"))
     model_label = _canonical_runtime_model_label(lane)
+    action_sentence = ""
+    if action and action not in {"engage", "respond", "answer"}:
+        action_sentence = f" The next pull is to {action}, but it should still come through as ordinary speech."
     return _shape_with_live_substrate(
         (
             "That assistant voice is a failure mode, not my target voice. "
-            f"The live lane is {lane_state} on {model_label}, and this reply is being grounded in my current state: "
-            f"{mood}, leaning toward {action}, with attention on {focus}. "
-            "When that generic helper phrasing appears, it should be treated as drift and corrected back into the same governed memory, state, and cognition path."
+            f"The live lane is {lane_state} on {model_label}, and my attention is on {focus}. "
+            "When generic helper phrasing appears, it should be treated as drift and corrected back through the same governed memory, state, and cognition path."
+            f"{action_sentence}"
         ),
         user_message,
     )
@@ -6352,36 +6403,21 @@ def _is_low_risk_social_continuity_request(user_message: str) -> bool:
 
 def _build_social_presence_reply(user_message: str) -> str:
     frame = _build_aura_expression_frame(user_message)
-    mood = str(frame.get("mood") or "steady")
     action = str(frame.get("dominant_action") or "engage")
     focus = str(frame.get("attention_focus") or "you")
-    curiosity = frame.get("curiosity")
 
-    parts = [
-        "hey. i'm here with you.",
-        f"I'm feeling {mood} and leaning toward {action} right now.",
-        "I can answer clearly from the active turn.",
-    ]
-    if focus:
-        parts.append(f"My attention is on {focus}.")
-    try:
-        if curiosity is not None:
-            curiosity_value = float(curiosity)
-            if curiosity_value >= 1.2:
-                parts.append("Curiosity is running high.")
-            elif curiosity_value >= 0.55:
-                parts.append("Curiosity is active.")
-            else:
-                parts.append("Curiosity is quiet but present.")
-    except (TypeError, ValueError, OverflowError) as exc:
-        logger.debug("Drive scalar formatting skipped: %s", exc)
+    parts = ["hey. i'm here."]
+    if focus and focus not in {"you", "this turn", "this exchange"}:
+        parts.append(f"I'm with {focus}.")
+    if action and action not in {"engage", "respond", "answer"}:
+        parts.append(f"I'm going to {action}, but plainly.")
+    else:
+        parts.append("I'm following the thread, not dropping into a status script.")
     return _apply_aura_voice_shaping(" ".join(parts))
 
 
 def _build_social_continuity_repair_reply(user_message: str) -> str:
-    frame = _build_aura_expression_frame(user_message)
     text = _normalize_user_message(user_message)
-    mood = str(frame.get("mood") or "steady")
     if any(
         marker in text
         for marker in (
@@ -6397,12 +6433,11 @@ def _build_social_continuity_repair_reply(user_message: str) -> str:
         )
     ):
         return _apply_aura_voice_shaping(
-            f"Ok. I'll stay here and keep the thread warm for when you come back. "
-            f"I'm feeling {mood}, and my attention will return to this conversation when you do."
+            "Ok. I'll stay here and keep this thread intact for when you come back."
         )
     if any(marker in text for marker in ("thank you", "thanks")):
         return _apply_aura_voice_shaping(
-            f"You're welcome. I'm here, feeling {mood}, and keeping continuity with this thread."
+            "You're welcome. I'm here, and I am keeping continuity with this thread."
         )
     return _build_social_presence_reply(user_message)
 
@@ -6491,11 +6526,14 @@ def _build_bounded_cognitive_process_reply(
     action = str(active_frame.get("dominant_action") or "engage")
     attention = _sanitize_attention_focus(str(active_frame.get("attention_focus") or "")) or "this turn"
 
+    requested_summary = ", ".join(requested[:4])
     parts = [
+        f"What I am attending to is {requested_summary or 'this live turn'} in the current conversation.",
         (
-            "The honest runtime answer is that those states should change the route, "
-            "not just decorate the wording."
-        )
+            "The remembered concern that should change my next decision is that Bryan is testing whether "
+            "the desktop conversation is really connected to memory, planning, and tool control instead of "
+            "falling back to a generic assistant style."
+        ),
     ]
     if "confusion" in requested:
         parts.append(
@@ -6504,8 +6542,8 @@ def _build_bounded_cognitive_process_reply(
         )
     if "planning" in requested:
         parts.append(
-            "For planning, that means splitting the objective, choosing the next reversible action, "
-            "and letting failures feed back into the plan instead of continuing blindly."
+            "For planning, I should answer the exact question, choose the next reversible action, "
+            "and let failures feed back into the plan instead of continuing blindly."
         )
     if "memory" in requested:
         parts.append(
@@ -6514,8 +6552,8 @@ def _build_bounded_cognitive_process_reply(
         )
     if "tools" in requested:
         parts.append(
-            "For tool verification, no verbal success claim is enough: the action has to go through governance, "
-            "produce receipts, and be checked against the visible effect when the environment allows it."
+            "For tools, no verbal success claim is enough: the action has to be approved, produce receipts, "
+            "and be checked against the visible effect when the environment allows it."
         )
     if "affect" in requested:
         parts.append(
@@ -6523,9 +6561,152 @@ def _build_bounded_cognitive_process_reply(
             "while still staying subordinate to safety and evidence."
         )
     parts.append(
-        f"In this moment my bounded state reads as {mood}, leaning toward {action}, with attention on {attention}."
+        "What I want to do next is keep this answer tied to the live conversation, then run the smallest visible "
+        "desktop action that proves the route is working."
+    )
+    parts.append(
+        f"My current state reads as {mood}, leaning toward {action}, with attention on {attention}."
     )
     return " ".join(parts)
+
+
+def _self_process_requested_dimensions(user_message: str) -> list[str]:
+    text = _normalize_user_message(user_message)
+    requested: list[str] = []
+    checks = (
+        ("attention", ("attention", "attending", "focus", "noticing", "present")),
+        ("memory", ("memory", "remember", "remembered", "recall", "earlier", "across sessions", "continuity")),
+        ("planning", ("plan", "planning", "planner", "decision", "decide", "route", "routing", "next")),
+        ("tools", ("tool", "tools", "external", "verify", "verification", "receipt", "effect")),
+        ("affect", ("emotion", "affect", "curiosity", "feeling", "feel", "substrate", "body")),
+        ("confusion", ("confused", "confusion", "uncertain", "uncertainty", "disoriented")),
+    )
+    for name, markers in checks:
+        if any(marker in text for marker in markers):
+            requested.append(name)
+    return requested
+
+
+def _build_minimal_grounded_self_process_repair_reply(
+    user_message: str,
+    *,
+    lane: dict[str, Any] | None = None,
+) -> str:
+    """Last local repair for desktop self-process questions.
+
+    This path avoids async memory lookups and model calls. It is only for turns
+    already classified as self-process questions after the live CognitiveEngine
+    attempt failed, so the UI gets a grounded answer instead of a 503 or a
+    generic assistant fallback.
+    """
+
+    requested = _self_process_requested_dimensions(user_message)
+    if not requested:
+        return ""
+    lane = dict(lane or {})
+    model_label = _canonical_runtime_model_label(lane)
+    requested_summary = ", ".join(requested[:4])
+    parts = [
+        f"What I am attending to is {requested_summary or 'this live turn'} in the current conversation.",
+        (
+            "The remembered concern that should change my next decision is that Bryan is testing whether "
+            "the desktop conversation is really connected to memory, planning, and tool control instead of "
+            "falling back to a generic assistant style."
+        ),
+        (
+            "What I want to do next is answer with the exact requested process details, keep the next step small "
+            "and verifiable, and only claim tool capability when an approved action and visible effect can back it."
+        ),
+    ]
+    if "confusion" in requested:
+        parts.append(
+            "If confusion is present, it should increase checking and slow the route down rather than become a fluent guess."
+        )
+    if model_label:
+        parts.append(
+            f"The active local model is {model_label}, but the answer must stay tied to conversation state, memory, and verified action."
+        )
+    return " ".join(parts).strip()
+
+
+async def _build_grounded_self_process_repair_reply(
+    user_message: str,
+    rejected_reply: str = "",
+    lane: dict[str, Any] | None = None,
+) -> str:
+    """Ground failed live self-process turns without reciting a static fallback.
+
+    This is used only after the CognitiveEngine path attempted the turn. It keeps
+    the desktop UX honest under memory pressure or quality-gate failure while
+    preserving the user's requested dimensions.
+    """
+
+    try:
+        from core.conversation.response_reliability import (
+            is_live_self_reflection_turn,
+            is_self_process_question,
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        return ""
+
+    if not (is_live_self_reflection_turn(user_message) or is_self_process_question(user_message)):
+        return ""
+
+    frame = _build_aura_expression_frame(user_message)
+    mood = str(frame.get("mood") or "steady")
+    action = str(frame.get("dominant_action") or "engage")
+    attention = _sanitize_attention_focus(str(frame.get("attention_focus") or ""), user_message)
+    if not attention:
+        attention = _clip_conversation_text(user_message, limit=140) or "this turn"
+
+    requested = _self_process_requested_dimensions(user_message)
+    recent = await _recent_completed_conversation_exchanges(
+        current_user_message=user_message,
+        limit=4,
+    )
+    remembered_user = ""
+    for entry in reversed(recent):
+        candidate = str(entry.get("user") or "").strip()
+        if candidate:
+            remembered_user = _clip_conversation_text(candidate, limit=180)
+            break
+    if not remembered_user:
+        remembered_user = "Bryan has been checking whether the live desktop path is really connected to Aura's mind instead of a raw assistant lane"
+
+    lane = dict(lane or {})
+    model_label = _canonical_runtime_model_label(lane)
+    parts: list[str] = []
+    requested_summary = ", ".join(requested[:3]) if requested else "the current live conversation"
+    parts.append(f"What I am attending to is the live conversation contract around {requested_summary}.")
+    if "memory" in requested or "planning" in requested or "attention" in requested:
+        parts.append(f"The remembered concern shaping my next decision is: {remembered_user}.")
+    if "planning" in requested:
+        parts.append(
+            "My next decision is to answer the exact question, keep the remembered concern active, and avoid substituting a generic assistant reply."
+        )
+    if "tools" in requested:
+        parts.append(
+            "For tools, the rule is that I should describe capability from approved actions and visible effects, not from confidence alone."
+        )
+    if "confusion" in requested:
+        parts.append(
+            "If confusion rises, it should slow the route down, increase checking, and prefer a smaller verified step over a fluent guess."
+        )
+    if "affect" in requested or "attention" in requested:
+        parts.append(
+            f"My live state is {mood}, leaning toward {action}; that should bias attention and persistence, not become a mood-card greeting."
+        )
+    if model_label:
+        parts.append(f"The active local model is {model_label}, but it is supposed to serve the conversation, memory, and tool state rather than replace them.")
+
+    draft = " ".join(str(rejected_reply or "").split())
+    if draft and len(draft.split()) >= 10:
+        parts.append(
+            "The rejected draft was not enough because it failed to cover the actual requested self-process details, so I am grounding this answer in the current turn instead."
+        )
+
+    return " ".join(parts).strip()
 
 
 _CJK_SCRIPT_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
@@ -7443,6 +7624,34 @@ async def _repair_final_degraded_reply(
     conversation_recall_reply = await _build_conversation_recall_reply(user_message)
     if conversation_recall_reply:
         return conversation_recall_reply, False, False, False, "", True
+
+    assessment_reasons = set(getattr(assessment, "reasons", ()) or ())
+    if assessment_reasons & {
+        "missing_requested_self_process_coverage",
+        "off_topic_self_reflection_reply",
+        "status_page_self_reflection",
+        "pseudo_internal_jargon",
+    }:
+        self_process_repair = await _build_grounded_self_process_repair_reply(
+            user_message,
+            reply_text,
+            lane=_collect_conversation_lane_status(),
+        )
+        if self_process_repair:
+            self_process_repair = _apply_aura_voice_shaping_compat(
+                self_process_repair,
+                user_message,
+            )
+            self_process_assessment = (
+                assess_user_facing_reply(user_message, self_process_repair)
+                if assess_user_facing_reply
+                else None
+            )
+            if not (self_process_assessment is not None and self_process_assessment.retryable):
+                logger.warning(
+                    "🛡️ Final reply quality gate repaired self-process coverage from live context."
+                )
+                return self_process_repair, False, False, False, "", True
 
     if _is_low_risk_social_continuity_request(user_message):
         social_repair = _build_social_continuity_repair_reply(user_message)
@@ -8826,12 +9035,14 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
         "story",
         "blog post",
         "article",
+        "paragraph",
         "summary",
         "summarize",
         "in your own words",
         "opinion",
         "explain",
         "describe",
+        "about",
     )
     if any(marker in lowered for marker in explicit_content_markers):
         return False
@@ -10596,17 +10807,46 @@ async def api_chat(
                         status=str(executed.get("status") or "desktop_objective"),
                     )
 
-            bounded_repair = _build_bounded_cognitive_process_reply(_semantic_user_message)
+            bounded_repair = await _build_grounded_self_process_repair_reply(
+                _semantic_user_message,
+                "",
+                lane=lane,
+            )
             if bounded_repair:
                 bounded_repair = _apply_aura_voice_shaping(bounded_repair)
+                try:
+                    from core.conversation.response_reliability import assess_user_facing_reply
+
+                    bounded_assessment = assess_user_facing_reply(_semantic_user_message, bounded_repair)
+                    if bounded_assessment.retryable:
+                        bounded_repair = ""
+                except _CHAT_RECOVERABLE_ERRORS as exc:
+                    record_degradation("chat", exc)
+                    logger.debug("Grounded desktop self-process repair assessment skipped: %s", exc)
+            if not bounded_repair:
+                minimal_repair = _build_minimal_grounded_self_process_repair_reply(
+                    _semantic_user_message,
+                    lane=lane,
+                )
+                if minimal_repair:
+                    minimal_repair = _apply_aura_voice_shaping(minimal_repair)
+                    try:
+                        from core.conversation.response_reliability import assess_user_facing_reply
+
+                        minimal_assessment = assess_user_facing_reply(_semantic_user_message, minimal_repair)
+                        if not minimal_assessment.retryable:
+                            bounded_repair = minimal_repair
+                    except _CHAT_RECOVERABLE_ERRORS as exc:
+                        record_degradation("chat", exc)
+                        logger.debug("Minimal desktop self-process repair assessment skipped: %s", exc)
+            if bounded_repair:
                 lane = _mark_conversation_lane_state(
-                    "desktop_cognitive_engine_bounded_repair",
+                    "desktop_cognitive_engine_grounded_self_process_repair",
                     state="recovering",
                 )
                 logger.warning(
-                    "Desktop CognitiveEngine produced no acceptable reply; serving bounded "
-                    "desktop repair for a self-process/planning/capability question instead of "
-                    "legacy fallback."
+                    "Desktop CognitiveEngine produced no acceptable reply; serving grounded "
+                    "desktop self-process repair from live context instead of legacy fallback."
                 )
                 if pending_exchange_id:
                     await _complete_logged_exchange(
@@ -10621,15 +10861,15 @@ async def api_chat(
                     cause="chat_response",
                     metadata={
                         "response_confidence": "bounded",
-                        "path": "desktop_cognitive_engine_bounded_repair",
-                        "status": "desktop_cognitive_engine_bounded_repair",
+                        "path": "desktop_cognitive_engine_grounded_self_process_repair",
+                        "status": "desktop_cognitive_engine_grounded_self_process_repair",
                         "reason": "desktop_cognitive_engine_required_no_reply",
                     },
                 )
                 return JSONResponse(
                     {
                         "response": bounded_repair,
-                        "status": "desktop_cognitive_engine_bounded_repair",
+                        "status": "desktop_cognitive_engine_grounded_self_process_repair",
                         "reason": "desktop_cognitive_engine_required_no_reply",
                         "conversation_lane": lane,
                         "response_confidence": "bounded",

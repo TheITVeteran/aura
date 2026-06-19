@@ -117,6 +117,15 @@ _desktop_access_cache: dict[str, Any] = {
 
 # ── Collector Helpers ─────────────────────────────────────────
 
+def _mark_runtime_service_progress(source: str) -> None:
+    """Best-effort proof that the live desktop/API lane is actively serving."""
+    try:
+        from core.resilience.stall_watchdog import mark_runtime_service_progress
+
+        mark_runtime_service_progress(source)
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        logger.debug("Runtime service progress marker skipped for %s: %s", source, exc)
+
 def _fallback_conversation_lane_status(reason: str) -> dict[str, Any]:
     desired_endpoint: str | None = None
     background_endpoint: str | None = None
@@ -1468,6 +1477,7 @@ async def gemini_usage(request: Request):
 
 @router.get("/health")
 async def api_health(request: Request):
+    _mark_runtime_service_progress("api.health")
     try:
         from interface.routes.privacy import get_voice_engine_fn
 
@@ -2094,6 +2104,7 @@ async def api_tools_catalog():
 
 @router.get("/ui/bootstrap")
 async def api_ui_bootstrap(request: Request = None):
+    _mark_runtime_service_progress("api.ui.bootstrap")
     _restore_owner_session_from_request(request)
     orch = ServiceContainer.get("orchestrator", default=None)
     rt = _get_runtime_state_safe()
@@ -2276,6 +2287,7 @@ async def api_ui_shell_error(payload: dict[str, Any] | None = Body(default=None)
 
 @router.get("/health/boot")
 async def api_boot_health():
+    _mark_runtime_service_progress("api.health.boot")
     payload, status_code = await _build_boot_health_payload_bounded(
         is_gui_proxy=os.environ.get("AURA_GUI_PROXY") == "1",
     )
@@ -2299,6 +2311,7 @@ async def api_heartbeat():
     when the kernel, inference, memory, scheduler, and tool-governance probes
     pass through the canonical boot health contract.
     """
+    _mark_runtime_service_progress("api.health.heartbeat")
     payload, status_code = await _build_boot_health_payload_bounded(
         is_gui_proxy=False,
     )

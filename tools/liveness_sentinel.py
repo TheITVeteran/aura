@@ -44,15 +44,24 @@ except ImportError:  # pragma: no cover - sentinel must degrade, not crash
 RING_MAX_LINES = 500
 
 
-def read_heartbeat(path: Path) -> tuple[float | None, float | None, float | None]:
-    """Return (last_loop_run, written_at, file_mtime) or Nones if unreadable."""
+def _read_heartbeat_payload(path: Path) -> tuple[dict, float | None]:
     try:
         mtime = path.stat().st_mtime
     except OSError:
-        return None, None, None
+        return {}, None
     try:
         data = json.loads(path.read_text(errors="replace") or "{}")
     except (OSError, ValueError):
+        return {}, mtime
+    return data if isinstance(data, dict) else {}, mtime
+
+
+def read_heartbeat(path: Path) -> tuple[float | None, float | None, float | None]:
+    """Return (last_loop_run, written_at, file_mtime) or Nones if unreadable."""
+    data, mtime = _read_heartbeat_payload(path)
+    if mtime is None:
+        return None, None, None
+    if not data:
         return None, None, mtime
     try:
         last_loop_run = float(data.get("last_loop_run") or 0.0)
@@ -63,6 +72,17 @@ def read_heartbeat(path: Path) -> tuple[float | None, float | None, float | None
     except (TypeError, ValueError):
         written_at = 0.0
     return last_loop_run, written_at, mtime
+
+
+def read_runtime_service_progress(path: Path) -> float | None:
+    data, mtime = _read_heartbeat_payload(path)
+    if mtime is None or not data:
+        return None
+    try:
+        value = float(data.get("last_runtime_service_progress") or 0.0)
+    except (TypeError, ValueError):
+        value = 0.0
+    return value if value > 0.0 else None
 
 
 def read_heartbeat_state(path: Path) -> str:
@@ -131,6 +151,8 @@ def should_kill(
     grace_s: float,
     stale_ceiling_s: float,
     consecutive_stale: int,
+    last_runtime_service_progress: float | None = None,
+    service_progress_grace_s: float = 240.0,
 ) -> bool:
     """Kill only after the boot grace AND two consecutive stale samples.
 
@@ -139,6 +161,12 @@ def should_kill(
     never came up.
     """
     if now - started_at < grace_s:
+        return False
+    if (
+        service_progress_grace_s > 0
+        and (last_runtime_service_progress or 0.0) > 0.0
+        and (now - float(last_runtime_service_progress)) < service_progress_grace_s
+    ):
         return False
     live_ts = _liveness_timestamp(last_loop_run, written_at, file_mtime)
     if live_ts <= 0.0:
@@ -181,6 +209,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Seconds after sentinel start before kills are allowed (cold boot/model load).",
     )
     parser.add_argument(
+        "--service-progress-grace",
+        type=float,
+        default=240.0,
+        help=(
+            "Seconds a fresh API/UI service-progress proof suppresses stale-loop kills. "
+            "This prevents false kills during runtime loop handoff while the desktop API "
+            "is actively responding."
+        ),
+    )
+    parser.add_argument(
         "--shutdown-flag",
         type=Path,
         default=None,
@@ -212,16 +250,26 @@ def main(argv: list[str] | None = None) -> int:
     # override an intentionally low ceiling.
     ceiling = max(1.0, float(args.stale_ceiling))
     grace = max(0.0, float(args.grace))
+    service_grace = max(0.0, float(args.service_progress_grace))
 
     # started_at uses monotonic for the grace window; staleness uses wall clock
     # because the heartbeat timestamps are wall clock.
     while target.is_running():
         now = time.time()
         last_loop_run, written_at, file_mtime = read_heartbeat(args.heartbeat)
+        last_service_progress = read_runtime_service_progress(args.heartbeat)
         heartbeat_state = read_heartbeat_state(args.heartbeat)
         if heartbeat_state in {"retired", "stopped", "disabled"}:
             return 0
         live_ts = _liveness_timestamp(last_loop_run, written_at, file_mtime)
+        if (
+            service_grace > 0
+            and (last_service_progress or 0.0) > 0.0
+            and (now - float(last_service_progress)) < service_grace
+        ):
+            consecutive_stale = 0
+            time.sleep(interval)
+            continue
         stale_age = (now - live_ts) if live_ts > 0.0 else (now - started_wall)
         is_stale = stale_age >= ceiling
         consecutive_stale = consecutive_stale + 1 if is_stale else 0
@@ -240,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
             grace_s=0.0,  # grace handled explicitly via monotonic window
             stale_ceiling_s=ceiling,
             consecutive_stale=consecutive_stale,
+            last_runtime_service_progress=last_service_progress,
+            service_progress_grace_s=service_grace,
         ) and (time.monotonic() - started_at) >= grace:
             killed = kill_tree(args.pid)
             tombstone = {
@@ -250,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
                 "last_loop_run": last_loop_run,
                 "written_at": written_at,
                 "file_mtime": file_mtime,
+                "last_runtime_service_progress": last_service_progress,
                 "killed_pids": killed,
                 "written_at_kill": now,
             }

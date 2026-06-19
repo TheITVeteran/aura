@@ -40,6 +40,7 @@ from core.conversation.response_reliability import (
     assess_user_facing_reply,
     conversation_reliability_system_block,
     is_live_self_reflection_turn,
+    is_self_process_question,
 )
 from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
 from core.runtime.errors import record_degradation
@@ -140,6 +141,7 @@ def _record_inference_degradation(
 
 _DOWNSTREAM_REPAIRABLE_SELF_REFLECTION_REASONS = frozenset(
     {
+        "missing_requested_self_process_coverage",
         "off_topic_self_reflection_reply",
         "pseudo_internal_jargon",
         "status_page_self_reflection",
@@ -161,6 +163,7 @@ _DOWNSTREAM_REPAIRABLE_USER_FACING_REASONS = frozenset(
         "unsupported_operational_status_overclaim",
         "unsupported_runtime_telemetry_inference",
         "unsupported_tool_readiness_claim",
+        "missing_requested_self_process_coverage",
         "missing_requested_paragraph_count",
         "missing_requested_list_count",
         "missing_requested_followup_question",
@@ -186,7 +189,7 @@ def _should_pass_user_facing_draft_downstream(
     if len(words) < 8:
         return False
     if reasons & _DOWNSTREAM_REPAIRABLE_SELF_REFLECTION_REASONS:
-        return is_live_self_reflection_turn(user_prompt)
+        return is_live_self_reflection_turn(user_prompt) or is_self_process_question(user_prompt)
     return True
 
 
@@ -2250,9 +2253,22 @@ class InferenceGate:
         *,
         deep_handoff: bool,
         is_background: bool,
+        prompt: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> bool:
         if is_background:
             return False
+        context = context or {}
+        visible_prompt = str(
+            context.get("visible_user_message")
+            or context.get("current_user_message")
+            or prompt
+            or ""
+        )
+        if bool(context.get("deep_mind_probe", False)):
+            return False
+        if bool(context.get("desktop_quick_reply_contract", False)):
+            return True
         # User-facing live turns need the identity-rich foreground prompt, but
         # not an unbounded replay of the entire assembled context stack. The
         # compact foreground builders preserve Aura's voice and continuity
@@ -2528,6 +2544,11 @@ class InferenceGate:
             return "deep_probe"
         if bool(context.get("desktop_quick_reply_contract", False)):
             return "simple"
+        if bool(context.get("live_runtime_payload_required", False)) and (
+            is_live_self_reflection_turn(prompt)
+            or is_self_process_question(prompt)
+        ):
+            return "standard"
         if bool(context.get("capability_inventory_contract", False)):
             return "standard"
         if bool(
@@ -2570,6 +2591,11 @@ class InferenceGate:
         if deep_probe:
             return 2
         profile = cls._foreground_prompt_profile(prompt, context)
+        if bool((context or {}).get("live_runtime_payload_required", False)) and (
+            is_live_self_reflection_turn(prompt)
+            or is_self_process_question(prompt)
+        ):
+            return 2
         if profile == "simple":
             return 4
         if profile == "standard":
@@ -5516,6 +5542,8 @@ class InferenceGate:
             requested_tier,
             deep_handoff=deep_handoff,
             is_background=is_background,
+            prompt=initial_visible_user_prompt,
+            context=context,
         )
         provided_messages = context.get("messages")
         if not isinstance(provided_messages, list):
@@ -5572,10 +5600,37 @@ class InferenceGate:
                 and not is_background
                 and self._origin_is_user_facing(origin)
             ):
-                living_mind_context = await self._build_compact_living_mind_context(
-                    visible_user_prompt,
-                    origin,
+                needs_full_live_context = bool(
+                    context.get("live_runtime_payload_required", False)
+                    and not use_compact_foreground_context
+                    and (
+                        is_live_self_reflection_turn(initial_visible_user_prompt)
+                        or is_self_process_question(initial_visible_user_prompt)
+                    )
                 )
+                if needs_full_live_context:
+                    try:
+                        living_mind_context = await asyncio.wait_for(
+                            self._build_living_mind_context(
+                                initial_visible_user_prompt,
+                                origin,
+                            ),
+                            timeout=5.0,
+                        )
+                    except TimeoutError:
+                        logger.warning(
+                            "⚠️ [STABILITY] Full live self-context assembly exceeded 5s; "
+                            "using compact living context without downgrading the turn."
+                        )
+                        living_mind_context = await self._build_compact_living_mind_context(
+                            visible_user_prompt,
+                            origin,
+                        )
+                else:
+                    living_mind_context = await self._build_compact_living_mind_context(
+                        visible_user_prompt,
+                        origin,
+                    )
         elif use_compact_foreground_context:
             system_prompt = self._build_compact_system_prompt(brief)
             living_mind_context = await self._build_compact_living_mind_context(
@@ -6669,6 +6724,17 @@ class InferenceGate:
             "operator_evidence_contract",
             "cognitive_engine_required",
             "desktop_cognitive_engine_required",
+            "live_runtime_payload_required",
+            "visible_user_message",
+            "current_user_message",
+            "recent_conversation_context",
+            "recent_context_needed",
+            "desktop_quick_reply_contract",
+            "capability_inventory_contract",
+            "desktop_execution_contract",
+            "response_style_contract",
+            "live_speech_grounding_frame",
+            "allow_mesh_cognition",
             "clean_user_surface_contract",
             "clean_user_surface_steering_alpha",
             "clean_user_surface_recurrent_loops",

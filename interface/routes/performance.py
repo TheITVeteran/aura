@@ -29,11 +29,21 @@ _PERFORMANCE_ROUTE_ERRORS = (
 )
 
 
+def _mark_runtime_service_progress(source: str) -> None:
+    try:
+        from core.resilience.stall_watchdog import mark_runtime_service_progress
+
+        mark_runtime_service_progress(source)
+    except _PERFORMANCE_ROUTE_ERRORS:
+        pass
+
+
 @router.post("/frame")
 async def frame(
     payload: Dict[str, Any] = Body(...),
     _: None = Depends(_require_internal),
 ) -> JSONResponse:
+    _mark_runtime_service_progress("api.performance.frame")
     try:
         from core.runtime.performance_guard import get_guard
         guard = get_guard()
@@ -52,6 +62,7 @@ async def ack(
     payload: Dict[str, Any] = Body(...),
     _: None = Depends(_require_internal),
 ) -> JSONResponse:
+    _mark_runtime_service_progress("api.performance.ack")
     try:
         from core.runtime.performance_guard import get_guard
         guard = get_guard()
@@ -64,6 +75,7 @@ async def ack(
 
 @router.get("/report")
 async def report(_: None = Depends(_require_internal)) -> JSONResponse:
+    _mark_runtime_service_progress("api.performance.report")
     try:
         from core.runtime.performance_guard import get_guard
         return JSONResponse(get_guard().report())

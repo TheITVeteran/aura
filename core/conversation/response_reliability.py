@@ -270,6 +270,18 @@ _SUBSTANTIVE_OVERLAP_STOPWORDS = {
     "without",
     "would",
 }
+_RAW_MODEL_IDENTITY_LEAK_RE = re.compile(
+    r"\b(?:"
+    r"(?:i(?:'m| am| was)?\s+)?(?:aura\s+)?(?:was\s+)?"
+    r"(?:developed|created|built|made|trained)\s+by\s+(?:anthropic|openai)"
+    r"|(?:anthropic|openai)\s+(?:developed|created|built|made|trained)\s+me"
+    r"|my\s+(?:creator|developer|maker)\s+is\s+(?:anthropic|openai)"
+    r"|i(?:'m| am)\s+(?:claude|chatgpt)"
+    r"|helpful,\s*harmless,\s*and\s*honest"
+    r"|if\s+you(?:'re| are)\s+referring\s+to\s+a\s+different\s+aura"
+    r")\b",
+    re.IGNORECASE,
+)
 _GENERIC_ASSISTANT_RE = re.compile(
     r"\b(?:how can i (?:help|assist)|i(?:'d| would) be happy to help|"
     r"i can help with that|as an ai|as a language model|let me know if|"
@@ -563,10 +575,16 @@ _CASUAL_CONVERSATIONAL_RE = re.compile(
 _LIVE_SELF_REFLECTION_MARKERS = (
     "how are you thinking",
     "on your mind",
+    "what are you attending to",
+    "what are you attending",
+    "what are you actually attending",
     "what are you thinking",
     "what is actually on your mind",
     "what's actually on your mind",
     "how are you processing",
+    "actual current context",
+    "current context",
+    "current live context",
     "what do you feel",
     "what are you feeling",
     "inside you",
@@ -600,6 +618,12 @@ _SOCIAL_PRESENCE_TEMPLATE_RE = re.compile(
     r"\bhey[.!]?\s+i'?m here with you\b|\bi can answer clearly from the active turn\b",
     re.IGNORECASE,
 )
+_TEMPLATE_TELEMETRY_GREETING_RE = re.compile(
+    r"\bi(?:'m| am)\s+feeling\s+[a-z][a-z-]*"
+    r"(?:\s+and\s+leaning\s+toward\s+[a-z_ -]+)?\s+(?:right now|now)\b"
+    r"|\bcuriosity\s+is\s+(?:quiet\s+but\s+present|active|running\s+high)\b",
+    re.IGNORECASE,
+)
 _SUBJECTIVE_SELF_REFLECTION_MARKERS = (
     "subjective belief",
     "subjective opinion",
@@ -622,8 +646,12 @@ _LIVE_SELF_REFLECTION_RIGHT_NOW_ANCHORS = (
     "feeling",
     "experience",
     "noticing",
+    "attending",
     "attention",
     "continuity",
+    "remembered concern",
+    "next decision",
+    "want to do next",
     "state",
 )
 _STATUS_SUBSTANCE_MARKERS = (
@@ -2075,6 +2103,34 @@ def _has_social_presence_instead_of_self_reflection(prompt: Any, reply_text: Any
     return bool(_SOCIAL_PRESENCE_TEMPLATE_RE.search(str(reply_text or "")))
 
 
+def _has_template_telemetry_greeting(prompt: Any, reply_text: Any) -> bool:
+    """Reject status-card prose when the user only greeted or checked presence."""
+
+    prompt_norm = _normalize(prompt)
+    if not prompt_norm:
+        return False
+    asks_for_feeling = any(
+        marker in prompt_norm
+        for marker in (
+            "how are you feeling",
+            "what are you feeling",
+            "what do you feel",
+            "how do you feel",
+            "your live state",
+            "internal state",
+        )
+    )
+    if asks_for_feeling:
+        return False
+    casual_or_status = bool(
+        _CASUAL_CONVERSATIONAL_RE.search(prompt_norm)
+        or is_status_check_turn(prompt_norm)
+    )
+    if not casual_or_status:
+        return False
+    return bool(_TEMPLATE_TELEMETRY_GREETING_RE.search(str(reply_text or "")))
+
+
 def _has_self_reflection_substance(reply_text: Any) -> bool:
     reply = _normalize(reply_text)
     if _word_count(reply) < 12:
@@ -2465,6 +2521,8 @@ def _model_text_integrity_reasons(
         reasons.append("raw_lane_telemetry")
     if user_facing and _LIVE_DESKTOP_GATE_LEAK_RE.search(raw):
         reasons.append("internal_live_gate_leak")
+    if user_facing and _RAW_MODEL_IDENTITY_LEAK_RE.search(raw):
+        reasons.append("raw_model_identity_leak")
     if user_facing and _BACKEND_SYMBOLIC_SURFACE_RE.search(raw):
         reasons.append("backend_symbolic_surface_leak")
     if user_facing and _has_persona_card_deflection(raw):
@@ -2499,6 +2557,8 @@ def _model_text_integrity_reasons(
         reasons.append("stale_context_topic_bleed")
     if user_facing and _has_social_presence_instead_of_self_reflection(prompt, raw):
         reasons.append("social_presence_instead_of_self_reflection")
+    if user_facing and _has_template_telemetry_greeting(prompt, raw):
+        reasons.append("template_telemetry_greeting")
     if user_facing and _has_unfounded_alarm_derailment(prompt, raw):
         reasons.append("unfounded_alarm_derailment")
     if user_facing and _has_camelcase_internal_jargon(prompt, raw):
@@ -2544,6 +2604,7 @@ def assess_model_text_integrity(
         "raw_tool_result_fragment",
         "raw_lane_telemetry",
         "internal_live_gate_leak",
+        "raw_model_identity_leak",
         "backend_symbolic_surface_leak",
         "persona_card_deflection",
         "detail_request_deflection",
@@ -2563,6 +2624,7 @@ def assess_model_text_integrity(
         "status_page_self_reflection",
         "stale_context_topic_bleed",
         "social_presence_instead_of_self_reflection",
+        "template_telemetry_greeting",
         "unfounded_alarm_derailment",
         "unrequested_pop_culture_intrusion",
         "unexpected_cjk_intrusion",
@@ -2610,6 +2672,7 @@ def assess_user_facing_reply(
             "prompt_artifact",
             "runtime_boilerplate",
             "backend_symbolic_surface_leak",
+            "raw_model_identity_leak",
             "unrequested_pop_culture_intrusion",
             "unexpected_cjk_intrusion",
             "surface_nonsense_drift",
@@ -2710,6 +2773,7 @@ def assess_user_facing_reply(
         "raw_tool_result_fragment",
         "raw_lane_telemetry",
         "internal_live_gate_leak",
+        "raw_model_identity_leak",
         "backend_symbolic_surface_leak",
         "persona_card_deflection",
         "detail_request_deflection",
@@ -2733,6 +2797,7 @@ def assess_user_facing_reply(
         "status_page_self_reflection",
         "stale_context_topic_bleed",
         "social_presence_instead_of_self_reflection",
+        "template_telemetry_greeting",
         "unfounded_alarm_derailment",
         "unrequested_pop_culture_intrusion",
         "unexpected_cjk_intrusion",
@@ -2826,6 +2891,7 @@ def conversation_reliability_system_block(user_message: Any = "") -> str:
         "## USER-FACING CONVERSATION RELIABILITY CONTRACT\n"
         "- A completed chat turn must be coherent, complete, on-topic ordinary English.\n"
         "- Preserve turn identity: answer the current user message, not a late response from an older request.\n"
+        "- Treat base-model self-identification as a failed draft: never claim to be Claude, ChatGPT, Anthropic/OpenAI-developed, or a generic helpful assistant.\n"
         "- Do not emit prompt artifacts, role labels, corrupted words, escaped control characters, unexplained foreign names, semantic loops, or vague invented referents.\n"
         "- If the heavy local lane is slow or recovering, keep working or fail cleanly; do not present filler as the final answer."
         f"{extra}"

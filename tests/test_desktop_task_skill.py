@@ -1448,6 +1448,98 @@ def test_dispatch_narration_never_becomes_document_content():
     assert "started working on this task" not in body
 
 
+def test_freeform_paragraph_request_does_not_fall_back_to_receipt():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    body = DesktopTaskSkill._document_body(
+        "Can you open up my Notes app and write a paragraph about dinosaurs?",
+        {"cognitive_reply": "I will execute this through the governed desktop_task lane."},
+    )
+
+    assert "Aura desktop task receipt" not in body
+    assert "dinosaurs" in body.lower()
+    assert "worth understanding" in body
+    assert "governed desktop pathway" not in body
+
+
+def test_freeform_paragraph_strips_desktop_action_preamble_from_model_body():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    body = DesktopTaskSkill._document_body(
+        "Can you open up my Notes app and write a paragraph about dinosaurs?",
+        {
+            "cognitive_reply": (
+                "Right. Opening Notes and creating a new note with the following content:---"
+                "Dinosaurs were incredible creatures that dominated Earth for millions of years, "
+                "ranging from small feathered hunters to enormous plant-eaters."
+            )
+        },
+    )
+
+    assert "Opening Notes" not in body
+    assert "following content" not in body
+    assert body.startswith("Dinosaurs were incredible creatures")
+
+
+def test_freeform_paragraph_rejects_how_to_instructions_as_document_body():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    body = DesktopTaskSkill._document_body(
+        "Can you open up my Notes app and write a paragraph about dinosaurs?",
+        {
+            "cognitive_reply": (
+                "I can guide you through the steps to do that yourself. Here's how: "
+                "open your Notes app and tap New Note."
+            )
+        },
+    )
+
+    assert "guide you through" not in body
+    assert "Here's how" not in body
+    assert "dinosaurs" in body.lower()
+    assert "worth understanding" in body
+
+
+def test_freeform_paragraph_extracts_here_it_is_body_without_action_tail():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    body = DesktopTaskSkill._document_body(
+        "Can you open up my Notes app and write a paragraph about dinosaurs?",
+        {
+            "cognitive_reply": (
+                "I can help you write the paragraph about dinosaurs. Here it is: "
+                "Dinosaurs were incredible creatures that roamed our planet millions of years ago, "
+                "during the Mesozoic Era. Some were small and feathered, while others were enormous "
+                "plant-eaters that reshaped whole ecosystems. Now let's create that note."
+            )
+        },
+    )
+
+    assert "I can help you" not in body
+    assert "Here it is" not in body
+    assert "Now let's create" not in body
+    assert body.startswith("Dinosaurs were incredible creatures")
+
+
+def test_freeform_paragraph_rejects_capability_denial_wrapper_as_document_body():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    body = DesktopTaskSkill._document_body(
+        "Can you open up my Notes app and write a paragraph about dinosaurs?",
+        {
+            "cognitive_reply": (
+                "I'm not actually able to interact with your device's apps or write notes for you directly. "
+                "I can help you draft the paragraph about dinosaurs here, and then you can copy it into Notes."
+            )
+        },
+    )
+
+    assert "not actually able" not in body
+    assert "copy it into Notes" not in body
+    assert "dinosaurs" in body.lower()
+    assert "worth understanding" in body
+
+
 def test_self_summary_objective_composes_substrate_truth():
     from core.skills.desktop_task import DesktopTaskSkill
 
