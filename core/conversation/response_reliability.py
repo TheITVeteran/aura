@@ -1522,7 +1522,44 @@ def is_self_process_question(user_message: Any) -> bool:
         or "influence" in text
         or "affect your" in text
     )
-    return bool(question_shape)
+    if not question_shape:
+        return False
+
+    internal_state_markers = (
+        "confused",
+        "confusion",
+        "uncertain",
+        "uncertainty",
+        "memory",
+        "remember",
+        "recall",
+        "verify",
+        "verification",
+        "receipt",
+        "affect",
+        "emotion",
+        "curiosity",
+        "internal",
+        "state",
+        "thinking",
+        "cognition",
+        "metacognition",
+    )
+    if any(marker in text for marker in internal_state_markers):
+        return True
+
+    causal_process_markers = (
+        "what happens",
+        "what changes",
+        "does that",
+        "change your",
+        "influence",
+        "affect your",
+    )
+    if any(marker in text for marker in causal_process_markers):
+        return True
+
+    return False
 
 
 def _is_tiny_direct_turn(user_message: Any) -> bool:

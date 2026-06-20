@@ -50,6 +50,8 @@ def test_capability_inventory_prompt_is_not_desktop_execution() -> None:
         "Describe whether you can open apps, use the browser, and work with PDFs on my desktop.",
         "What tools could Aura use externally in a hypothetical desktop scenario?",
         "What tools can she do externally from the live desktop path?",
+        "What tools she could hypothetically do externally, and can she flex her muscles with a scenario?",
+        "Explain what tools she can use on the desktop and name a hypothetical scenario using them.",
     ],
 )
 def test_capability_inventory_variants_stay_descriptive(prompt: str) -> None:
@@ -69,6 +71,54 @@ def test_capability_inventory_variants_stay_descriptive(prompt: str) -> None:
         prompt,
         ["desktop_task", "computer_use", "web_search"],
     ) is False
+
+
+def test_bounded_capability_inventory_repair_handles_failed_desktop_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from interface.routes import chat as chat_routes
+
+    class FakeCapabilityEngine:
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            yield from [
+                {
+                    "name": "computer_use",
+                    "available": True,
+                    "description": "Control desktop apps with governed screen, mouse, and keyboard actions.",
+                    "route_class": "desktop",
+                    "risk_class": "critical",
+                    "effect_scope": "external_io",
+                },
+                {
+                    "name": "web_search",
+                    "available": True,
+                    "description": "Search and inspect live web sources.",
+                    "route_class": "external_io",
+                    "risk_class": "medium",
+                    "effect_scope": "external_io",
+                },
+            ]
+
+    def fake_get(name: str, default=None):
+        if name == "capability_engine":
+            return FakeCapabilityEngine()
+        return default
+
+    prompt = (
+        "What tools she could hypothetically do externally, and can she flex her muscles "
+        "with one concrete scenario?"
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", fake_get)
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+
+    reply = chat_routes._build_bounded_capability_inventory_repair_reply(prompt)
+
+    lowered = reply.lower()
+    assert "computer_use" in reply
+    assert "web_search" in reply
+    assert "will/authority" in lowered
+    assert "hypothetical inventory" in lowered
+    assert "assistant" not in lowered
 
 
 def test_desktop_command_with_negative_constraint_still_executes() -> None:

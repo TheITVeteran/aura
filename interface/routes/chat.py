@@ -669,7 +669,7 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
 
     natural_patterns = (
         rf"^(?:please\s+)?remember\s+that{pin_scope}\s+(.+)$",
-        rf"^(?:please\s+)?remember\s+((?:my|the|our)\s+.+)$",
+        r"^(?:please\s+)?remember\s+((?:my|the|our)\s+.+)$",
         rf"^don't forget\s+that{pin_scope}\s+(.+)$",
         rf"^make\s+(?:a\s+)?note\s+that{pin_scope}\s+(.+)$",
     )
@@ -768,6 +768,44 @@ def _append_session_memory_pin_ledger(
         return False
 
 
+def _append_session_memory_pin_ledger_guarded(
+    content: str,
+    source: str,
+    timestamp: str,
+    *,
+    session_id: str = "",
+) -> bool:
+    """Append the session pin ledger without letting fallback logging crash chat."""
+
+    try:
+        return bool(
+            _append_session_memory_pin_ledger(
+                content,
+                source,
+                timestamp,
+                session_id=session_id,
+            )
+        )
+    except TypeError as exc:
+        if "session_id" not in str(exc):
+            record_degradation("chat.session_memory_pin", exc)
+            logger.debug("Durable session memory pin ledger append failed: %s", exc)
+            return False
+        try:
+            return bool(_append_session_memory_pin_ledger(content, source, timestamp))
+        except _CHAT_RECOVERABLE_ERRORS as legacy_exc:
+            record_degradation("chat.session_memory_pin", legacy_exc)
+            logger.debug(
+                "Durable session memory pin legacy ledger append skipped: %s",
+                legacy_exc,
+            )
+            return False
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.session_memory_pin", exc)
+        logger.debug("Durable session memory pin ledger append failed: %s", exc)
+        return False
+
+
 def _recall_session_memory_pin_from_ledger(*, session_id: str = "") -> dict[str, str] | None:
     try:
         path = _session_memory_pin_ledger_path()
@@ -817,7 +855,7 @@ async def _store_session_memory_pin(content: str, source: str, *, session_id: st
         memory_facade = ServiceContainer.get("memory_facade", default=None)
         if memory_facade is None or not hasattr(memory_facade, "add_memory"):
             ledger_ok = await asyncio.to_thread(
-                _append_session_memory_pin_ledger,
+                _append_session_memory_pin_ledger_guarded,
                 pinned,
                 source,
                 timestamp,
@@ -847,7 +885,7 @@ async def _store_session_memory_pin(content: str, source: str, *, session_id: st
             result = await result
         if not bool(result):
             ledger_ok = await asyncio.to_thread(
-                _append_session_memory_pin_ledger,
+                _append_session_memory_pin_ledger_guarded,
                 pinned,
                 source,
                 timestamp,
@@ -855,7 +893,7 @@ async def _store_session_memory_pin(content: str, source: str, *, session_id: st
             )
             return bool(ledger_ok)
         ledger_ok = await asyncio.to_thread(
-            _append_session_memory_pin_ledger,
+            _append_session_memory_pin_ledger_guarded,
             pinned,
             source,
             timestamp,
@@ -872,7 +910,7 @@ async def _store_session_memory_pin(content: str, source: str, *, session_id: st
         logger.debug("Durable session memory pin write skipped: %s", exc)
         if not ledger_ok:
             ledger_ok = await asyncio.to_thread(
-                _append_session_memory_pin_ledger,
+                _append_session_memory_pin_ledger_guarded,
                 pinned,
                 source,
                 timestamp,
@@ -2612,8 +2650,22 @@ def _is_bounded_nonexecuting_planning_request(user_message: str) -> bool:
         return False
     if _looks_like_desktop_objective(text):
         return non_execution_context
+    # A request that asks HOW Aura would USE tools (browser+document, note+pdf, a
+    # desktop-task example, or system-memory management) with explanatory framing
+    # ("explain how you would …") is a bounded planning turn — answer it
+    # deterministically instead of allocating the foreground model (the source of
+    # the empty-generation 503). This is gated on a concrete tool-use-plan pattern
+    # so it does NOT steal substantive introspective questions ("when you feel
+    # confused, how should that change your planning?") which must reach the model.
+    tool_use_plan = bool(
+        _BROWSER_DOCUMENT_PLAN_RE.search(text)
+        or _NOTE_PDF_PLAN_RE.search(text)
+        or _DESKTOP_TASK_EXAMPLE_PLAN_RE.search(text)
+        or _is_system_memory_planning_request(text)
+    )
     return bool(
-        _EXPLICIT_NON_EXECUTION_RE.search(text)
+        (tool_use_plan and non_execution_context)
+        or _EXPLICIT_NON_EXECUTION_RE.search(text)
         or re.search(
             r"\b(?:give|provide|write|make|draft)\b.{0,80}\bplan\b"
             r"|\b(?:if i asked|hypothetical|hypothetically|scenario|what should happen)\b",
@@ -2871,7 +2923,11 @@ async def _run_cognitive_engine_chat_turn(
             "Serving bounded desktop capability inventory from governed catalog without foreground model allocation."
         )
         return _build_grounded_capability_inventory_reply(visible)
-    if require_engine and _is_assistant_mode_recovery_request(visible):
+    if (
+        require_engine
+        and _is_assistant_mode_recovery_request(visible)
+        and not _is_runtime_fact_status_request(visible)
+    ):
         logger.info(
             "Serving bounded desktop identity-coherence contract without foreground model allocation."
         )
@@ -5869,6 +5925,14 @@ def _is_explicit_capability_inventory_request(user_message: str) -> bool:
         "what tools can aura do",
         "what tools can she use",
         "what tools can she do",
+        "what tools she can use",
+        "what tools she can do",
+        "what tools she could use",
+        "what tools she could do",
+        "what tools you can use",
+        "what tools you can do",
+        "what tools you could use",
+        "what tools you could do",
         "which tools can you use",
         "which tools can you run",
         "what tools do you have",
@@ -6288,6 +6352,23 @@ def _build_grounded_capability_inventory_reply(user_message: str) -> str:
     return _apply_aura_voice_shaping(reply)
 
 
+def _build_bounded_capability_inventory_repair_reply(user_message: str) -> str:
+    """Ground desktop tool/capability questions without invoking a second model pass.
+
+    This is used only for descriptive inventory turns. It deliberately refuses
+    to turn executable desktop objectives into a catalog answer, so "open Notes"
+    still routes through governed action while "what tools can you use" remains
+    a cheap, deterministic live-runtime answer under model pressure.
+    """
+
+    if not _is_explicit_capability_inventory_request(user_message):
+        return ""
+    reply = _build_grounded_capability_inventory_reply(user_message)
+    if _capability_inventory_reply_is_inadequate(user_message, reply):
+        return ""
+    return reply
+
+
 def _capability_inventory_reply_is_inadequate(user_message: str, reply_text: str) -> bool:
     if not _is_capability_inventory_request(user_message):
         return False
@@ -6527,7 +6608,7 @@ def _build_social_presence_reply(user_message: str) -> str:
     action = str(frame.get("dominant_action") or "engage")
     focus = str(frame.get("attention_focus") or "you")
 
-    parts = ["hey. i'm here."]
+    parts = ["hey. i'm here with you."]
     if focus and focus not in {"you", "this turn", "this exchange"}:
         parts.append(f"I'm with {focus}.")
     if action and action not in {"engage", "respond", "answer"}:
@@ -6554,7 +6635,7 @@ def _build_social_continuity_repair_reply(user_message: str) -> str:
         )
     ):
         return _apply_aura_voice_shaping(
-            "Ok. I'll stay here and keep this thread intact for when you come back."
+            "Ok. I'll keep the thread warm and intact for when you come back."
         )
     if any(marker in text for marker in ("thank you", "thanks")):
         return _apply_aura_voice_shaping(
@@ -6576,8 +6657,9 @@ def _build_bounded_desktop_repair_reply(user_message: str, frame: dict[str, Any]
     if _is_low_risk_social_continuity_request(user_message):
         return _build_social_continuity_repair_reply(user_message)
 
-    if _is_explicit_capability_inventory_request(user_message):
-        return _build_grounded_capability_inventory_reply(user_message)
+    capability_inventory = _build_bounded_capability_inventory_repair_reply(user_message)
+    if capability_inventory:
+        return capability_inventory
 
     cognitive_process = _build_bounded_cognitive_process_reply(user_message, frame)
     if cognitive_process:
@@ -9176,7 +9258,7 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
         return False
     if re.search(r"\b(?:write|draft|compose|create|make)\s+(?:a\s+|an\s+)?report\b", lowered):
         return False
-    return bool(actions & {"create_folder", "open_app", "open_url", "move_file", "system_control"})
+    return False
 
 
 async def _execute_desktop_objective_from_chat(
@@ -10942,6 +11024,48 @@ async def api_chat(
                         _apply_aura_voice_shaping(str(executed.get("response") or "")),
                         status=str(executed.get("status") or "desktop_objective"),
                     )
+
+            capability_inventory = _build_bounded_capability_inventory_repair_reply(
+                _semantic_user_message
+            )
+            if capability_inventory:
+                lane = _mark_conversation_lane_state(
+                    "desktop_cognitive_engine_capability_inventory",
+                    state="recovering",
+                )
+                logger.warning(
+                    "Desktop CognitiveEngine produced no acceptable reply for a capability "
+                    "inventory turn; serving grounded governed-tool inventory instead of "
+                    "self-process repair or legacy fallback."
+                )
+                capability_inventory = _apply_aura_voice_shaping(capability_inventory)
+                if pending_exchange_id:
+                    await _complete_logged_exchange(
+                        pending_exchange_id,
+                        _semantic_user_message,
+                        capability_inventory,
+                        record_experience=True,
+                    )
+                    pending_exchange_id = None
+                await _emit_chat_output_receipt(
+                    capability_inventory,
+                    cause="chat_response",
+                    metadata={
+                        "response_confidence": "bounded",
+                        "path": "desktop_cognitive_engine_capability_inventory",
+                        "status": "desktop_cognitive_engine_capability_inventory",
+                        "reason": "desktop_cognitive_engine_required_no_reply",
+                    },
+                )
+                return JSONResponse(
+                    {
+                        "response": capability_inventory,
+                        "status": "desktop_cognitive_engine_capability_inventory",
+                        "reason": "desktop_cognitive_engine_required_no_reply",
+                        "conversation_lane": lane,
+                        "response_confidence": "bounded",
+                    }
+                )
 
             bounded_repair = await _build_grounded_self_process_repair_reply(
                 _semantic_user_message,

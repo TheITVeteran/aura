@@ -2708,6 +2708,134 @@ async def test_api_chat_desktop_self_process_no_reply_returns_bounded_repair(mon
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_capability_no_reply_returns_inventory_repair(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    kernel_calls = []
+    completed_exchanges = []
+    output_receipts = []
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            kernel_calls.append("process")
+            raise AssertionError("capability inventory desktop repair must not use KernelInterface fallback")
+
+    class _FakeCapabilityEngine:
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            yield from [
+                {
+                    "name": "computer_use",
+                    "available": True,
+                    "description": "Control desktop apps with governed screen, mouse, and keyboard actions.",
+                    "route_class": "desktop",
+                    "risk_class": "critical",
+                    "effect_scope": "external_io",
+                },
+                {
+                    "name": "web_search",
+                    "available": True,
+                    "description": "Search and inspect live web sources.",
+                    "route_class": "external_io",
+                    "risk_class": "medium",
+                    "effect_scope": "external_io",
+                },
+            ]
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-capability"
+
+    async def _fake_complete_exchange(*args, **kwargs):
+        completed_exchanges.append((args, kwargs))
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    async def _no_cognitive_reply(*_args, **_kwargs):
+        return None
+
+    def _fake_get(name, default=None):
+        if name == "capability_engine":
+            return _FakeCapabilityEngine()
+        return default
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": {
+            "conversation_ready": False,
+            "state": state,
+            "reason": reason,
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+        },
+    )
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message=(
+                "What tools she could hypothetically do externally, and can she flex "
+                "her muscles with one concrete scenario?"
+            )
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    lowered = payload["response"].lower()
+    assert response.status_code == 200
+    assert payload["status"] == "desktop_cognitive_engine_capability_inventory"
+    assert payload["response_confidence"] == "bounded"
+    assert "computer_use" in payload["response"]
+    assert "web_search" in payload["response"]
+    assert "will/authority" in lowered
+    assert "hypothetical inventory" in lowered
+    assert "legacy fallback" not in lowered
+    assert "self-process" not in lowered
+    assert kernel_calls == []
+    assert len(completed_exchanges) == 1
+    assert completed_exchanges[0][1]["record_experience"] is True
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine_capability_inventory"
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_no_reply_executes_self_sufficient_objective(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
@@ -7268,5 +7396,5 @@ def test_live_desktop_quality_recovery_does_not_surface_gate_jargon():
     )[0]
     assert "_is_low_risk_social_continuity_request(user_message)" in bounded_repair_slice
     assert "_build_social_continuity_repair_reply(user_message)" in bounded_repair_slice
-    assert "_build_grounded_capability_inventory_reply(user_message)" in bounded_repair_slice
+    assert "_build_bounded_capability_inventory_repair_reply(user_message)" in bounded_repair_slice
     assert "_build_bounded_planning_reply(user_message)" in bounded_repair_slice
