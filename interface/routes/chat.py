@@ -718,6 +718,50 @@ def _is_session_memory_recall_request(user_message: str) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _is_cross_session_memory_recall_request(user_message: str) -> bool:
+    """True when the user explicitly asks for a pin from *before a restart* or a
+    *previous session*.
+
+    This is the only signal that unlocks cross-session durable recall. A bare
+    recall ("what codeword did I give you") stays scoped to the current session,
+    so distinct concurrent sessions remain isolated
+    (test_session_memory_pin_isolation_by_session_id). But a durable pin must
+    survive a reboot — and a reboot starts a *new* session id — so when the user
+    references the restart, we let the durable ledger answer across sessions
+    (live_boot_proof.exercise_restart_continuity_turn / tasks #22, #28).
+    """
+    text = normalize_memory_intent_text(_normalize_user_message(user_message))
+    if not text:
+        return False
+    markers = (
+        "before restart",
+        "before the restart",
+        "before a restart",
+        "across restart",
+        "across the restart",
+        "across a restart",
+        "after restart",
+        "after the restart",
+        "before you restarted",
+        "before we restarted",
+        "after you restarted",
+        "before reboot",
+        "before the reboot",
+        "before you rebooted",
+        "after reboot",
+        "after the reboot",
+        "before you were restarted",
+        "from before the restart",
+        "previous session",
+        "prior session",
+        "earlier session",
+        "last session",
+        "a previous session",
+        "from a previous session",
+    )
+    return any(marker in text for marker in markers)
+
+
 def _is_session_memory_context_change_request(user_message: str) -> bool:
     text = normalize_memory_intent_text(_normalize_user_message(user_message))
     if not text:
@@ -806,7 +850,9 @@ def _append_session_memory_pin_ledger_guarded(
         return False
 
 
-def _recall_session_memory_pin_from_ledger(*, session_id: str = "") -> dict[str, str] | None:
+def _recall_session_memory_pin_from_ledger(
+    *, session_id: str = "", cross_session: bool = False
+) -> dict[str, str] | None:
     try:
         path = _session_memory_pin_ledger_path()
         if not path.exists():
@@ -823,6 +869,7 @@ def _recall_session_memory_pin_from_ledger(*, session_id: str = "") -> dict[str,
             recalled = _session_memory_pin_from_record(
                 raw,
                 session_id=expected_session_id,
+                cross_session=cross_session,
             )
             if recalled:
                 recalled["storage"] = "durable"
@@ -923,6 +970,7 @@ def _session_memory_pin_from_record(
     item: Any,
     *,
     session_id: str = "",
+    cross_session: bool = False,
 ) -> dict[str, str] | None:
     if not isinstance(item, dict):
         return None
@@ -937,7 +985,11 @@ def _session_memory_pin_from_record(
         or item.get("session_id")
         or ""
     )[:64]
-    if expected_session_id and record_session_id != expected_session_id:
+    # Default: a pin only belongs to the session that set it, so distinct
+    # concurrent sessions stay isolated. ``cross_session`` is the explicit
+    # opt-in (the user asked about a pin from *before a restart*), which is the
+    # only path that may return another session's durable pin.
+    if not cross_session and expected_session_id and record_session_id != expected_session_id:
         return None
     content = str(
         metadata.get("session_memory_pin_content")
@@ -962,11 +1014,14 @@ def _session_memory_pin_from_record(
     }
 
 
-async def _recall_durable_session_memory_pin(*, session_id: str = "") -> dict[str, str] | None:
+async def _recall_durable_session_memory_pin(
+    *, session_id: str = "", cross_session: bool = False
+) -> dict[str, str] | None:
     safe_session_id = str(session_id or "")[:64]
     ledger_recall = await asyncio.to_thread(
         _recall_session_memory_pin_from_ledger,
         session_id=safe_session_id,
+        cross_session=cross_session,
     )
     if ledger_recall:
         return ledger_recall
@@ -983,6 +1038,7 @@ async def _recall_durable_session_memory_pin(*, session_id: str = "") -> dict[st
             recalled = _session_memory_pin_from_record(
                 item,
                 session_id=safe_session_id,
+                cross_session=cross_session,
             )
             if recalled:
                 return recalled
@@ -992,11 +1048,17 @@ async def _recall_durable_session_memory_pin(*, session_id: str = "") -> dict[st
     return None
 
 
-async def _recall_session_memory_pin(*, session_id: str = "") -> dict[str, str] | None:
+async def _recall_session_memory_pin(
+    *, session_id: str = "", cross_session: bool = False
+) -> dict[str, str] | None:
     safe_session_id = str(session_id or "")[:64]
     async with _get_convo_lock():
         for latest in reversed(_session_memory_pins):
-            if safe_session_id and str(latest.get("session_id") or "")[:64] != safe_session_id:
+            if (
+                not cross_session
+                and safe_session_id
+                and str(latest.get("session_id") or "")[:64] != safe_session_id
+            ):
                 continue
             return {
                 "content": str(latest.get("content") or ""),
@@ -1005,7 +1067,9 @@ async def _recall_session_memory_pin(*, session_id: str = "") -> dict[str, str] 
                 "session_id": str(latest.get("session_id") or "")[:64],
                 "storage": "session",
             }
-    return await _recall_durable_session_memory_pin(session_id=safe_session_id)
+    return await _recall_durable_session_memory_pin(
+        session_id=safe_session_id, cross_session=cross_session
+    )
 
 
 async def _build_memory_state_fastpath_reply(
@@ -1043,10 +1107,19 @@ async def _build_memory_state_fastpath_reply(
         return "I don't have a pinned session note to compare against yet.", "session_memory_miss"
 
     if _is_session_memory_recall_request(user_message):
-        remembered = await _recall_session_memory_pin(session_id=session_id)
+        cross_session = _is_cross_session_memory_recall_request(user_message)
+        remembered = await _recall_session_memory_pin(
+            session_id=session_id,
+            cross_session=cross_session,
+        )
         if remembered and remembered.get("content"):
             storage = str(remembered.get("storage") or "session")
-            source_label = "from durable memory" if storage == "durable" else "in this session"
+            if cross_session and storage == "durable":
+                source_label = "from durable memory across the restart"
+            elif storage == "durable":
+                source_label = "from durable memory"
+            else:
+                source_label = "in this session"
             return (
                 f"The phrase you asked me to remember {source_label} was \"{remembered['content']}\".",
                 "session_memory_recall",

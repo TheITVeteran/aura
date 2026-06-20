@@ -2465,6 +2465,65 @@ def test_session_memory_pin_isolation_by_session_id(monkeypatch, tmp_path):
     assert recalled_c is None
 
 
+def test_session_memory_pin_survives_restart_cross_session(monkeypatch, tmp_path):
+    """A durable pin survives a reboot even though the post-reboot session has a
+    NEW session id -- but only when the recall explicitly references the restart.
+
+    This is the live_boot_proof.exercise_restart_continuity_turn contract (tasks
+    #22/#28): the codeword is pinned under session "live-proof-restart", the
+    process reboots (in-memory pins gone), and the next turn -- under the new
+    "live-proof-restart-after" session -- asks for it "before restart". A bare
+    recall in the new session must still stay isolated (no cross-session leak).
+    """
+    from interface.routes import chat as chat_route
+
+    monkeypatch.setattr(
+        chat_route,
+        "_session_memory_pin_ledger_path",
+        lambda: tmp_path / "session_memory_pins.jsonl",
+    )
+    monkeypatch.setattr(
+        chat_route.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: default),
+    )
+
+    async def run():
+        chat_route._session_memory_pins.clear()
+        # Pre-reboot: pin under the original session id (writes the durable ledger).
+        await chat_route._store_session_memory_pin(
+            "restart-42",
+            "Remember this codeword across restart: restart-42.",
+            session_id="live-proof-restart",
+        )
+        # Reboot: the in-memory session pins are gone; only the ledger survives.
+        chat_route._session_memory_pins.clear()
+
+        # New post-reboot session, bare recall -> must NOT leak the prior pin.
+        isolated = await chat_route._build_memory_state_fastpath_reply(
+            "What codeword did I give you?",
+            session_id="live-proof-restart-after",
+        )
+        # New post-reboot session, restart-scoped recall -> durable cross-session.
+        restored = await chat_route._build_memory_state_fastpath_reply(
+            "What codeword did I ask you to remember before restart?",
+            session_id="live-proof-restart-after",
+        )
+        return isolated, restored
+
+    isolated, restored = asyncio.run(run())
+
+    assert isolated is not None
+    isolated_text, isolated_kind = isolated
+    assert isolated_kind == "session_memory_miss"
+    assert "restart-42" not in isolated_text
+
+    assert restored is not None
+    restored_text, restored_kind = restored
+    assert restored_kind == "session_memory_recall"
+    assert "restart-42" in restored_text
+
+
 def test_session_memory_pin_writes_durable_memory(monkeypatch):
     from interface.routes import chat as chat_route
 
