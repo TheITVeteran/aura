@@ -3394,7 +3394,12 @@ function runtimeHealthBlockers(payload) {
             }
         });
     }
-    return Array.from(new Set(blockers));
+    const conversationReady = payload.conversation_ready === true
+        || (payload.conversation_lane && payload.conversation_lane.conversation_ready === true);
+    const normalized = conversationReady
+        ? blockers.filter(blocker => String(blocker || '') !== 'conversation_ready')
+        : blockers;
+    return Array.from(new Set(normalized));
 }
 
 function runtimeHealthStatusText(payload = null) {

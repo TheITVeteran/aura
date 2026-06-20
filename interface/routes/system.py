@@ -2000,8 +2000,10 @@ async def api_health(request: Request):
             [str(item) for item in (boot_snapshot.get("blockers", []) or []) if str(item)]
             + probe_blockers
         ))
-        if not conversation_ready and "conversation_ready" not in health_blockers:
-            health_blockers.append("conversation_ready")
+        health_blockers = _normalize_conversation_health_blockers(
+            health_blockers,
+            conversation_ready=conversation_ready,
+        )
         healthy_ready = bool(
             service_ok
             and required_probes_ok
@@ -2303,6 +2305,24 @@ def _heartbeat_probe_blockers(required_probes: Any) -> list[str]:
     return required_probe_blockers(required_probes)
 
 
+def _normalize_conversation_health_blockers(
+    blockers: list[Any],
+    *,
+    conversation_ready: bool,
+) -> list[str]:
+    """Merge health blockers without preserving stale conversation failures."""
+    normalized = [
+        str(item)
+        for item in (blockers or [])
+        if str(item or "").strip()
+    ]
+    if conversation_ready:
+        normalized = [item for item in normalized if item != "conversation_ready"]
+    elif "conversation_ready" not in normalized:
+        normalized.append("conversation_ready")
+    return list(dict.fromkeys(normalized))
+
+
 @router.get("/health/heartbeat")
 async def api_heartbeat():
     """Readiness heartbeat for GUI/runtime watchdogs.
@@ -2315,20 +2335,20 @@ async def api_heartbeat():
     payload, status_code = await _build_boot_health_payload_bounded(
         is_gui_proxy=False,
     )
+    conversation_lane = _collect_conversation_lane_status_resilient()
+    conversation_ready = bool(conversation_lane.get("conversation_ready", False))
     required_probes = payload.get("required_probes", {})
     probe_blockers = _heartbeat_probe_blockers(required_probes)
-    blockers = list(payload.get("blockers", []) or [])
-    for blocker in probe_blockers:
-        if blocker not in blockers:
-            blockers.append(blocker)
-    if not bool(payload.get("conversation_ready", False)) and "conversation_ready" not in blockers:
-        blockers.append("conversation_ready")
+    blockers = _normalize_conversation_health_blockers(
+        list(payload.get("blockers", []) or []) + probe_blockers,
+        conversation_ready=conversation_ready,
+    )
     runtime_probe_healthy = not probe_blockers
     healthy = (
         status_code == 200
         and bool(payload.get("system_ready", payload.get("ready", False)))
         and runtime_probe_healthy
-        and bool(payload.get("conversation_ready", False))
+        and conversation_ready
         and not blockers
     )
     if not healthy:
@@ -2341,7 +2361,8 @@ async def api_heartbeat():
         "required_probes": required_probes,
         "blockers": blockers,
         "boot_phase": payload.get("boot_phase"),
-        "conversation_ready": payload.get("conversation_ready", False),
+        "conversation_ready": conversation_ready,
+        "conversation_lane": conversation_lane,
     }
     return JSONResponse(heartbeat_payload, status_code=status_code)
 

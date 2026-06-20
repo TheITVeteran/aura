@@ -385,6 +385,48 @@ async def test_runtime_heartbeat_refuses_boot_blockers_even_when_required_probes
 
 
 @pytest.mark.asyncio
+async def test_runtime_heartbeat_drops_stale_conversation_blocker_when_lane_is_ready(monkeypatch):
+    from interface.routes import system as system_routes
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+
+    required_probes = {
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = True
+    monkeypatch.setattr(system_routes, "_get_runtime_state_safe", lambda: {"state": {}})
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_conversation_lane_status_resilient",
+        lambda: {"conversation_ready": True, "state": "ready"},
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "build_boot_health_snapshot",
+        lambda orch, rt, is_gui_proxy=False, conversation_lane=None: (
+            {
+                "ready": True,
+                "system_ready": True,
+                "conversation_ready": False,
+                "boot_phase": "kernel_ready",
+                "blockers": ["conversation_ready"],
+                "required_probes": required_probes,
+            },
+            200,
+        ),
+    )
+
+    response = await system_routes.api_heartbeat()
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload["healthy"] is True
+    assert payload["conversation_ready"] is True
+    assert payload["conversation_lane"]["state"] == "ready"
+    assert "conversation_ready" not in payload["blockers"]
+
+
+@pytest.mark.asyncio
 async def test_boot_health_probe_times_out_instead_of_hanging_http_loop(monkeypatch):
     from interface.routes import system as system_routes
 

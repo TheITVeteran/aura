@@ -568,6 +568,7 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
         in aura_js
     )
     assert "runtimeHealthBlockers(payload).length > 0" in aura_js
+    assert "blockers.filter(blocker => String(blocker || '') !== 'conversation_ready')" in aura_js
     assert "governed_action_result" in aura_js
     assert "const preservesHeartbeatLane = governedActionResult" in aura_js
     assert "runtime_health_unverified" in aura_js
