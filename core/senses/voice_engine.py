@@ -38,9 +38,20 @@ import numpy as np
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.network_gateway import get_network_gateway
+from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.concurrency import RobustLock
 from core.utils.exceptions import capture_and_log
+
+
+def _user_voice_output_enabled() -> bool:
+    """Honor the user's ``voice.output_enabled`` toggle (default on).
+
+    Reads the persisted runtime setting the settings UI writes, so disabling
+    speech output in the UI silences TTS without a restart. Defaults to enabled
+    if the setting is unset or unreadable. See docs/SETTINGS_WIRING_AUDIT.md.
+    """
+    return bool(get_runtime_setting("voice.output_enabled", True))
 
 # ── Optional imports with graceful degradation ────────────
 _WhisperModel = None
@@ -1190,6 +1201,9 @@ class SovereignVoiceEngine:
         if not getattr(self, "speaking_enabled", True):
             logger.debug("🔇 TTS suppressed: speaking_enabled=False")
             return ""
+        if not _user_voice_output_enabled():
+            logger.debug("🔇 TTS suppressed: voice.output_enabled=False (user setting)")
+            return ""
 
         async def _iter():
             yield text
@@ -1203,6 +1217,9 @@ class SovereignVoiceEngine:
         """Plays TTS audio and returns exactly what was successfully spoken."""
         if not getattr(self, "speaking_enabled", True):
             logger.debug("🔇 TTS stream suppressed: speaking_enabled=False")
+            return ""
+        if not _user_voice_output_enabled():
+            logger.debug("🔇 TTS stream suppressed: voice.output_enabled=False (user setting)")
             return ""
 
         if not await self.tts_async_lock.acquire_robust(timeout=5.0):

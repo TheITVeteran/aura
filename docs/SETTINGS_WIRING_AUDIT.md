@@ -23,7 +23,7 @@ the settings→runtime bridge). Frontend-only settings are legitimately client-s
 | `model.deep_path` | ❌ dead | same, for the deep lane |
 | `model.cloud_fallback_enabled` | ❌ dead | gate cloud routing in `llm_health_router` when local is down |
 | `voice.input_enabled` | ❌ dead | wake/STT loop (`core/voice/*`, perceptual pump) must not capture when off |
-| `voice.output_enabled` | ❌ dead | gate TTS in `voice_engine._play_locally` |
+| `voice.output_enabled` | ✅ **wired** (2026-06-21) | gated in `SovereignVoiceEngine.synthesize_speech` + `speak_stream` via `core.runtime.runtime_settings.get_runtime_setting` (`_user_voice_output_enabled`); off ⇒ TTS short-circuits before synth/lock. Tests: `tests/test_runtime_settings.py` |
 | `voice.output_rate` | ❌ dead | pass to the TTS synth rate |
 | `permissions.camera` | ❌ dead | in-app gate before camera capture (distinct from macOS TCC) |
 | `permissions.screen` | ❌ dead | in-app gate before screen perception |
@@ -38,17 +38,27 @@ the settings→runtime bridge). Frontend-only settings are legitimately client-s
 | `notify.enabled` | ❌ dead | gate the OS-notification sender |
 | `notify.quiet_hours_start` / `_end` | ❌ dead | suppress proactive notifications in the window |
 
-## How to wire honestly (the pattern proven this cycle)
+## How to wire honestly (the patterns proven this cycle)
 
-The safe-mode/autonomy wiring is the template:
+**Bridge pattern** (safe-mode/autonomy — for settings that reconfigure a
+running subsystem):
 
 1. A **settings→runtime bridge** subscriber (`get_settings().subscribe(...)`)
    applies the change to the live subsystem immediately (no reboot).
 2. **Boot** reads the persisted value and applies it (so it survives restart).
 3. The subsystem reads the value (via the bridge-applied state or directly).
-4. An **offline unit test** proves the toggle changes behavior — and, ideally, a
-   "no dead settings" guard that fails CI if a non-frontend setting has neither a
-   bridge nor a consumer (analogous to `tools/proof_fabrication_guard.py`).
+4. An **offline unit test** proves the toggle changes behavior.
+
+**Read-at-gate pattern** (voice.output_enabled, 2026-06-21 — for simple
+per-action gates): the subsystem reads the persisted setting at the point of use
+via `core.runtime.runtime_settings.get_runtime_setting(key, default)`. This is
+**layering-clean** — core reads the JSON the UI writes (the file is the contract
+boundary) and never imports the interface layer; an mtime cache keeps it cheap and
+any read error falls back to the default. Reflects user changes on the next call,
+no reboot. Best for boolean/value gates (voice, notifications, permissions). A
+"no dead settings" guard that fails CI when a non-frontend setting has neither a
+bridge nor a `get_runtime_setting`/consumer reference would lock this in
+(analogous to `tools/proof_fabrication_guard.py`).
 
 ## Why these weren't all wired in this pass
 
