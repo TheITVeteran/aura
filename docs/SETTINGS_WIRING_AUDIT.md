@@ -19,8 +19,8 @@ the settings→runtime bridge). Frontend-only settings are legitimately client-s
 | `autonomy.level` (`paused`) | ✅ **wired** (this cycle) | `paused` → restricted runtime via the same bridge |
 | `theme.mode` | 🎨 frontend-only | client renders theme; no backend wiring needed |
 | `theme.reduced_motion` | 🎨 frontend-only | client honors it; no backend wiring needed |
-| `model.local_path` | ❌ dead | `core/brain/llm/model_registry.get_runtime_model_path` should prefer this over env/default |
-| `model.deep_path` | ❌ dead | same, for the deep lane |
+| `model.local_path` | ✅ **wired** (2026-06-21) | `model_registry.get_runtime_model_path` prefers it for the primary cortex lane via `_user_model_path_override` (only when set AND the file exists, else falls through). Tests: `tests/test_runtime_settings.py` |
+| `model.deep_path` | ✅ **wired** (2026-06-21) | same override, mapped to the deep solver lane (`DEEP_MODEL`) |
 | `model.cloud_fallback_enabled` | ❌ dead | gate cloud routing in `llm_health_router` when local is down |
 | `voice.input_enabled` | ✅ **wired** (2026-06-21) | gated in `LocalVoiceCortex.listen_loop` via `_user_voice_input_enabled` (`get_runtime_setting`): off ⇒ the loop never opens the mic capture stream (polls so re-enabling resumes, no restart). Tests: `tests/test_runtime_settings.py` |
 | `voice.output_enabled` | ✅ **wired** (2026-06-21) | gated in `SovereignVoiceEngine.synthesize_speech` + `speak_stream` via `core.runtime.runtime_settings.get_runtime_setting` (`_user_voice_output_enabled`); off ⇒ TTS short-circuits before synth/lock. Tests: `tests/test_runtime_settings.py` |
@@ -33,10 +33,10 @@ the settings→runtime bridge). Frontend-only settings are legitimately client-s
 | `memory.retention_days` | ❌ dead | feed the episodic memory reaper |
 | `memory.review_window` | ❌ dead | feed narrative-arc consolidation window |
 | `privacy.mode` | ❌ dead | drive perception redaction (`perception_runtime.privacy_mode` is an internal bool, not bound to this setting) + telemetry/world-bridge tightening |
-| `dev.developer_mode` | ❌ dead | gate `/api/trace` + raw subsystem panels |
+| `dev.developer_mode` | ✅ **wired** (2026-06-21) | gates the `/api/trace/{receipt_id}` route in `dashboard.py` (403 `developer_mode_disabled` when off, default off). Tests: `tests/test_runtime_settings.py` |
 | `dev.diagnostics_enabled` | ❌ dead | gate the boot self-diagnostic |
-| `notify.enabled` | ❌ dead | gate the OS-notification sender |
-| `notify.quiet_hours_start` / `_end` | ❌ dead | suppress proactive notifications in the window |
+| `notify.enabled` | ✅ **wired** (2026-06-21) | `DesktopNotifier.send` short-circuits before the `osascript` toast when off (default on). Tests: `tests/test_runtime_settings.py` |
+| `notify.quiet_hours_start` / `_end` | ✅ **wired** (2026-06-21) | `DesktopNotifier.send` suppresses toasts inside the window (`_within_quiet_hours`, wraps past midnight; default 22:00-08:00) |
 
 ## How to wire honestly (the patterns proven this cycle)
 

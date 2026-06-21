@@ -1,9 +1,57 @@
-from core.runtime.errors import record_degradation
 import logging
 import subprocess
+from datetime import datetime
+
+from core.runtime.errors import record_degradation
+from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Senses.Notifications")
+
+
+def _parse_hhmm(value: object) -> tuple[int, int] | None:
+    try:
+        hh, mm = str(value).strip().split(":")
+        h, m = int(hh), int(mm)
+    except (ValueError, AttributeError):
+        return None
+    if 0 <= h < 24 and 0 <= m < 60:
+        return h, m
+    return None
+
+
+def _within_quiet_hours(now: datetime, start: object, end: object) -> bool:
+    """True if ``now`` falls in the [start, end) quiet window (wraps midnight)."""
+    s = _parse_hhmm(start)
+    e = _parse_hhmm(end)
+    if not s or not e:
+        return False
+    cur = now.hour * 60 + now.minute
+    smin = s[0] * 60 + s[1]
+    emin = e[0] * 60 + e[1]
+    if smin == emin:
+        return False  # zero-length window = quiet hours effectively off
+    if smin < emin:
+        return smin <= cur < emin  # same-day window
+    return cur >= smin or cur < emin  # window wraps past midnight
+
+
+def _notifications_allowed(now: datetime | None = None) -> bool:
+    """Honor the user's notify.enabled + quiet-hours settings (default on / 22:00-08:00).
+
+    Reads the persisted runtime settings the UI writes; defaults to allowed if
+    unset/unreadable. See docs/SETTINGS_WIRING_AUDIT.md.
+    """
+    if not bool(get_runtime_setting("notify.enabled", True)):
+        return False
+    now = now or datetime.now()
+    if _within_quiet_hours(
+        now,
+        get_runtime_setting("notify.quiet_hours_start", "22:00"),
+        get_runtime_setting("notify.quiet_hours_end", "08:00"),
+    ):
+        return False
+    return True
 
 
 class DesktopNotifier:
@@ -19,6 +67,12 @@ class DesktopNotifier:
             subtitle: Optional subtitle
             sound: System sound to play (e.g. "Glass", "Basso", "Purr", "Tink")
         """
+        if not _notifications_allowed():
+            logger.debug(
+                "🔕 Notification suppressed by user settings (notify.enabled/quiet hours): %s",
+                title,
+            )
+            return
         try:
             # Escape strings to prevent shell injection via AppleScript
             safe_title = title.replace('"', '\\"')

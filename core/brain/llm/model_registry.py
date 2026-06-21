@@ -16,6 +16,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from core.runtime.runtime_settings import get_runtime_setting
+
 BASE_DIR = Path(os.getenv("AURA_ROOT", Path(__file__).resolve().parents[3]))
 LOCAL_BACKEND = str(os.getenv("AURA_LOCAL_BACKEND", "llama_cpp")).strip().lower()
 
@@ -483,9 +485,32 @@ def get_endpoint_name_for_model(model_name: str | None) -> str:
     return PRIMARY_ENDPOINT
 
 
+def _user_model_path_override(name: str) -> str | None:
+    """Honor a user-set explicit model path (model.local_path / model.deep_path).
+
+    Returns the configured path ONLY when it is set and exists on disk, so a
+    blank or stale setting safely falls through to normal resolution. Maps the
+    primary cortex lane to ``model.local_path`` and the deep solver lane to
+    ``model.deep_path`` (docs/SETTINGS_WIRING_AUDIT.md).
+    """
+    if name == ACTIVE_MODEL:
+        key = "model.local_path"
+    elif name == DEEP_MODEL:
+        key = "model.deep_path"
+    else:
+        return None
+    value = str(get_runtime_setting(key, "") or "").strip()
+    if value and Path(value).exists():
+        return value
+    return None
+
+
 def get_runtime_model_path(model_name: str | None = None) -> str:
     """Resolve the active local-runtime artifact for a lane."""
     name = model_name or ACTIVE_MODEL
+    override = _user_model_path_override(name)
+    if override:
+        return override
     if local_backend_is_mlx():
         return get_model_path(name)
     path = GGUF_MODEL_PATHS.get(name, GGUF_DIR / name)

@@ -106,3 +106,89 @@ def test_voice_input_disabled_never_opens_microphone(tmp_path):
 
     asyncio.run(run())
     cortex.audio_interface.open.assert_not_called()
+
+
+# ── notify.enabled + quiet hours ────────────────────────────────────────────
+
+def test_quiet_hours_window_logic():
+    from datetime import datetime
+
+    from core.senses.notifications import _within_quiet_hours
+
+    # Wrap-around window 22:00 -> 08:00.
+    assert _within_quiet_hours(datetime(2026, 6, 21, 23, 0), "22:00", "08:00") is True
+    assert _within_quiet_hours(datetime(2026, 6, 21, 3, 0), "22:00", "08:00") is True
+    assert _within_quiet_hours(datetime(2026, 6, 21, 12, 0), "22:00", "08:00") is False
+    # Same-day window 09:00 -> 17:00.
+    assert _within_quiet_hours(datetime(2026, 6, 21, 12, 0), "09:00", "17:00") is True
+    assert _within_quiet_hours(datetime(2026, 6, 21, 20, 0), "09:00", "17:00") is False
+    # Zero-length / malformed windows = quiet hours effectively off.
+    assert _within_quiet_hours(datetime(2026, 6, 21, 12, 0), "10:00", "10:00") is False
+    assert _within_quiet_hours(datetime(2026, 6, 21, 12, 0), "bad", "08:00") is False
+
+
+def test_notify_disabled_suppresses_send(tmp_path, monkeypatch):
+    _write_settings(tmp_path, {"notify.enabled": False})
+
+    from core.senses import notifications as notif
+
+    called = {"run": False}
+
+    class _SpyGateway:
+        def run(self, *a, **k):
+            called["run"] = True
+            raise AssertionError("subprocess must not run when notifications disabled")
+
+    monkeypatch.setattr(notif, "get_subprocess_gateway", lambda: _SpyGateway())
+    assert notif._notifications_allowed() is False
+    notif.DesktopNotifier.send("Aura", "hello")  # must short-circuit, no raise
+    assert called["run"] is False
+
+
+# ── model.local_path / model.deep_path ──────────────────────────────────────
+
+def test_model_local_path_override_used_when_present(tmp_path):
+    from core.brain.llm import model_registry as mr
+
+    real_model = tmp_path / "mymodel.gguf"
+    real_model.write_text("x", encoding="utf-8")
+    _write_settings(tmp_path, {"model.local_path": str(real_model)})
+
+    assert mr._user_model_path_override(mr.ACTIVE_MODEL) == str(real_model)
+    assert mr.get_runtime_model_path(mr.ACTIVE_MODEL) == str(real_model)
+
+
+def test_model_path_override_ignored_when_file_missing(tmp_path):
+    from core.brain.llm import model_registry as mr
+
+    _write_settings(tmp_path, {"model.local_path": str(tmp_path / "nope.gguf")})
+    assert mr._user_model_path_override(mr.ACTIVE_MODEL) is None
+
+
+def test_model_path_override_none_for_unrelated_lane(tmp_path):
+    from core.brain.llm import model_registry as mr
+
+    real_model = tmp_path / "mymodel.gguf"
+    real_model.write_text("x", encoding="utf-8")
+    _write_settings(tmp_path, {"model.local_path": str(real_model)})
+    # A lane that is neither the primary nor deep model gets no override.
+    assert mr._user_model_path_override("some-other-lane-model") is None
+
+
+# ── dev.developer_mode gates /trace ─────────────────────────────────────────
+
+def test_trace_route_gated_on_developer_mode(tmp_path):
+    from fastapi import HTTPException
+
+    from interface.routes.dashboard import trace
+
+    # Default off → 403.
+    with pytest.raises(HTTPException) as exc_off:
+        asyncio.run(trace(receipt_id="x", _=None))
+    assert exc_off.value.status_code == 403
+
+    # Enabled → no longer gated (proceeds; resolves to a non-403 outcome).
+    _write_settings(tmp_path, {"dev.developer_mode": True})
+    with pytest.raises(HTTPException) as exc_on:
+        asyncio.run(trace(receipt_id="x", _=None))
+    assert exc_on.value.status_code != 403

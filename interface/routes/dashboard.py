@@ -34,6 +34,7 @@ from fastapi.responses import JSONResponse
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.runtime.runtime_settings import get_runtime_setting
 from interface.auth import _require_internal
 
 logger = logging.getLogger("Aura.Server.Dashboard")
@@ -340,6 +341,10 @@ async def trace(receipt_id: str = Path(...), _: None = Depends(_require_internal
     → proposal → score → simulation → will → authority → token → execution
     → outcome → lesson.
     """
+    # Causal trace is a developer surface; gated on dev.developer_mode (default
+    # off) per docs/SETTINGS_WIRING_AUDIT.md.
+    if not bool(get_runtime_setting("dev.developer_mode", False)):
+        raise HTTPException(status_code=403, detail="developer_mode_disabled")
     try:
         from core.agency.agency_orchestrator import get_receipt_log
         recent = get_receipt_log().recent(limit=512)
