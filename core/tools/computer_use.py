@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.permission_gates import screen_allowed
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger(__name__)
@@ -121,6 +122,11 @@ class ComputerUseSkill:
         self.register_driver("detect_windows", self._default_detect_windows)
 
     async def _default_screenshot(self, action: ComputerUseAction) -> str:
+        # Gate BEFORE either backend (screencapture or the pyautogui fallback) so
+        # disabling permissions.screen denies screen capture entirely, not just
+        # the primary path. (docs/SETTINGS_WIRING_AUDIT.md)
+        if not screen_allowed():
+            raise PermissionError("screen_permission_denied: permissions.screen is disabled")
         errors: list[str] = []
         temp_path: str | None = None
         try:

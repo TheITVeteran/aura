@@ -1,14 +1,15 @@
 """core/body/screen_sensor.py
 Perceptual sensor capturing desktop screenshot frames and layout status.
 """
+import logging
 import os
 import tempfile
-import logging
 from subprocess import SubprocessError
 from typing import Any, Dict
 
 from core.body.sensor_registry import BaseSensor
 from core.runtime.errors import record_degradation
+from core.runtime.permission_gates import screen_allowed
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Body.ScreenSensor")
@@ -25,8 +26,15 @@ class ScreenSensor(BaseSensor):
 
     async def read(self) -> Dict[str, Any]:
         """Capture screen layout with macOS screencapture when available."""
+        if not screen_allowed():
+            return {
+                "available": False,
+                "error": "Screen perception disabled by user setting (permissions.screen)",
+                "resolution": "1920x1080",
+                "ocr_status": "not_available",
+            }
         try:
-            from core.security.permission_guard import get_permission_guard, PermissionType
+            from core.security.permission_guard import PermissionType, get_permission_guard
             guard = get_permission_guard()
             perm = await guard.check_permission(PermissionType.SCREEN)
             if not perm.get("granted", False):

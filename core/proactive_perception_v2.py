@@ -1,14 +1,17 @@
-from core.runtime.errors import record_degradation
 import asyncio
-import numpy as np
-import psutil
 import logging
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
+import numpy as np
+import psutil
 from pydantic import BaseModel, ConfigDict
+
 from core.container import ServiceContainer
 from core.runtime.boot_safety import main_process_camera_policy
+from core.runtime.errors import record_degradation
+from core.runtime.permission_gates import camera_allowed
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.ProactivePerception")
@@ -85,7 +88,7 @@ class ProactivePerceptionV2:
         try:
             cv2 = None
             while self.running:
-                if not self.camera_enabled:
+                if not self.camera_enabled or not camera_allowed():
                     await asyncio.sleep(self.config.camera_interval)
                     continue
                 if cv2 is None:

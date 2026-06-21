@@ -12,6 +12,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.permission_gates import camera_allowed
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 try:
@@ -168,6 +169,9 @@ class VisionSystem:
     
     async def capture(self, duration: float = 0, save_path: str | None = None) -> dict[str, Any]:
         """Capture from camera (Async)."""
+        if not camera_allowed():
+            logger.debug("📷🚫 Camera capture blocked: permissions.camera=False (user setting)")
+            return {"error": "camera_permission_denied"}
         if not await self._get_camera_available():
             return {"error": "camera_not_available"}
         

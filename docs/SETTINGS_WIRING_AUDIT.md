@@ -25,9 +25,9 @@ the settings→runtime bridge). Frontend-only settings are legitimately client-s
 | `voice.input_enabled` | ✅ **wired** (2026-06-21) | gated in `LocalVoiceCortex.listen_loop` via `_user_voice_input_enabled` (`get_runtime_setting`): off ⇒ the loop never opens the mic capture stream (polls so re-enabling resumes, no restart). Tests: `tests/test_runtime_settings.py` |
 | `voice.output_enabled` | ✅ **wired** (2026-06-21) | gated in `SovereignVoiceEngine.synthesize_speech` + `speak_stream` via `core.runtime.runtime_settings.get_runtime_setting` (`_user_voice_output_enabled`); off ⇒ TTS short-circuits before synth/lock. Tests: `tests/test_runtime_settings.py` |
 | `voice.output_rate` | ❌ dead | pass to the TTS synth rate |
-| `permissions.camera` | ❌ dead | in-app gate before camera capture (distinct from macOS TCC) |
-| `permissions.screen` | ❌ dead | in-app gate before screen perception |
-| `permissions.files_workspace` | ❌ dead | gate file_io to the workspace sandbox |
+| `permissions.camera` | ✅ **wired** (2026-06-21) | `core.runtime.permission_gates.camera_allowed` gates all camera capture entry points: `VisionSystem.capture` (returns `camera_permission_denied`), `SensoryMotorCortex` opencv stream + per-frame loop, `ProactivePerceptionV2._camera_loop`. Offline-tested; live-verify on hardware. |
+| `permissions.screen` | ✅ **wired** (2026-06-21) | `permission_gates.screen_allowed` gates `ComputerUseSkill._default_screenshot` (raises before screencapture AND the pyautogui fallback) and `ScreenSensor.read` (returns unavailable). Offline-tested; live-verify on hardware. |
+| `permissions.files_workspace` | ⚠️ deferred | `permission_gates.workspace_files_allowed` exists, but gating the central file gateway has high blast radius — wire deliberately with the gateway owner + live verification, not blind. |
 | `autonomy.proactive_messaging` | ❌ dead | gate/throttle the autonomous output path |
 | `autonomy.self_modification` (`blocked/staged/open`) | ❌ dead | map to the self-mod gate (finer than safe_mode) |
 | `memory.retention_days` | ❌ dead | feed the episodic memory reaper |

@@ -192,3 +192,55 @@ def test_trace_route_gated_on_developer_mode(tmp_path):
     with pytest.raises(HTTPException) as exc_on:
         asyncio.run(trace(receipt_id="x", _=None))
     assert exc_on.value.status_code != 403
+
+
+# ── permissions.camera / permissions.screen ─────────────────────────────────
+
+def test_permission_gates_default_allowed(tmp_path):
+    from core.runtime import permission_gates as pg
+
+    assert pg.camera_allowed() is True
+    assert pg.screen_allowed() is True
+    assert pg.workspace_files_allowed() is True
+
+
+def test_permission_gates_reflect_disabled(tmp_path):
+    from core.runtime import permission_gates as pg
+
+    _write_settings(tmp_path, {"permissions.camera": False, "permissions.screen": False})
+    assert pg.camera_allowed() is False
+    assert pg.screen_allowed() is False
+
+
+def test_camera_capture_blocked_when_permission_off(tmp_path):
+    _write_settings(tmp_path, {"permissions.camera": False})
+
+    from core.sensory_integration import VisionSystem
+
+    vision = object.__new__(VisionSystem)
+    result = asyncio.run(vision.capture())
+    assert result.get("error") == "camera_permission_denied"
+
+
+def test_screen_sensor_blocked_when_permission_off(tmp_path):
+    _write_settings(tmp_path, {"permissions.screen": False})
+
+    from core.body.screen_sensor import ScreenSensor
+
+    sensor = object.__new__(ScreenSensor)
+    result = asyncio.run(sensor.read())
+    assert result.get("available") is False
+    assert "permissions.screen" in str(result.get("error", ""))
+
+
+def test_screenshot_tool_denied_when_screen_permission_off(tmp_path):
+    from types import SimpleNamespace
+
+    _write_settings(tmp_path, {"permissions.screen": False})
+
+    from core.tools.computer_use import ComputerUseSkill
+
+    skill = object.__new__(ComputerUseSkill)
+    action = SimpleNamespace(target="screen", payload={})
+    with pytest.raises(PermissionError):
+        asyncio.run(skill._default_screenshot(action))

@@ -11,6 +11,7 @@ from playwright.async_api import async_playwright
 from core.container import ServiceContainer
 from core.runtime.boot_safety import main_process_camera_policy
 from core.runtime.errors import record_degradation
+from core.runtime.permission_gates import camera_allowed
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.SensoryMotor")
@@ -93,7 +94,7 @@ class SensoryMotorCortex:
             # DEFERRED BINDING: Only attempt to open camera if enabled
             cv2 = None
             cap = None
-            if self.camera_enabled:
+            if self.camera_enabled and camera_allowed():
                 cv2 = _get_cv2()
                 cap = cv2.VideoCapture(0)
             
@@ -133,7 +134,7 @@ class SensoryMotorCortex:
                     continue
 
                 # 2. Privacy Toggle: If camera disabled, just sleep and skip
-                if not self.camera_enabled:
+                if not self.camera_enabled or not camera_allowed():
                     time.sleep(2.0)
                     continue
 
