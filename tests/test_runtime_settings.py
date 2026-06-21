@@ -69,3 +69,40 @@ def test_voice_output_disabled_suppresses_synthesis(tmp_path):
     engine.speaking_enabled = True
     result = asyncio.run(engine.synthesize_speech("hello there"))
     assert result == ""
+
+
+def test_voice_input_predicate_default_on(tmp_path):
+    from core.local_voice_cortex import _user_voice_input_enabled
+
+    assert _user_voice_input_enabled() is True
+
+
+def test_voice_input_disabled_never_opens_microphone(tmp_path):
+    import threading
+    from unittest.mock import MagicMock
+
+    _write_settings(tmp_path, {"voice.input_enabled": False})
+
+    from core.local_voice_cortex import LocalVoiceCortex, _user_voice_input_enabled
+
+    assert _user_voice_input_enabled() is False
+
+    # Uninitialized cortex with just enough wired to pass the init guard and
+    # enter the listen loop; the user gate must skip opening the mic stream.
+    cortex = object.__new__(LocalVoiceCortex)
+    cortex.audio_interface = MagicMock()
+    cortex.audio_queue = MagicMock()
+    cortex.vad = MagicMock()
+    cortex._shutdown_event = threading.Event()
+    cortex.is_listening = True
+
+    async def run():
+        try:
+            await asyncio.wait_for(cortex.listen_loop(), timeout=0.3)
+        except TimeoutError:
+            pass
+        finally:
+            cortex.is_listening = False
+
+    asyncio.run(run())
+    cortex.audio_interface.open.assert_not_called()

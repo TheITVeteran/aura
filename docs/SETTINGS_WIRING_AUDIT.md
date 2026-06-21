@@ -22,7 +22,7 @@ the settings→runtime bridge). Frontend-only settings are legitimately client-s
 | `model.local_path` | ❌ dead | `core/brain/llm/model_registry.get_runtime_model_path` should prefer this over env/default |
 | `model.deep_path` | ❌ dead | same, for the deep lane |
 | `model.cloud_fallback_enabled` | ❌ dead | gate cloud routing in `llm_health_router` when local is down |
-| `voice.input_enabled` | ❌ dead | wake/STT loop (`core/voice/*`, perceptual pump) must not capture when off |
+| `voice.input_enabled` | ✅ **wired** (2026-06-21) | gated in `LocalVoiceCortex.listen_loop` via `_user_voice_input_enabled` (`get_runtime_setting`): off ⇒ the loop never opens the mic capture stream (polls so re-enabling resumes, no restart). Tests: `tests/test_runtime_settings.py` |
 | `voice.output_enabled` | ✅ **wired** (2026-06-21) | gated in `SovereignVoiceEngine.synthesize_speech` + `speak_stream` via `core.runtime.runtime_settings.get_runtime_setting` (`_user_voice_output_enabled`); off ⇒ TTS short-circuits before synth/lock. Tests: `tests/test_runtime_settings.py` |
 | `voice.output_rate` | ❌ dead | pass to the TTS synth rate |
 | `permissions.camera` | ❌ dead | in-app gate before camera capture (distinct from macOS TCC) |

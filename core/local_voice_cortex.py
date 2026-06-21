@@ -16,8 +16,20 @@ from core.runtime.errors import (
     TimeoutBudgetExceeded,
     record_degradation,
 )
+from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import fire_and_track, get_task_tracker
+
+
+def _user_voice_input_enabled() -> bool:
+    """Honor the user's ``voice.input_enabled`` toggle (default on).
+
+    Reads the persisted runtime setting the settings UI writes, so disabling
+    microphone input in the UI stops the wake/STT loop from opening the capture
+    stream without a restart (re-enabling resumes it). Defaults to enabled if the
+    setting is unset or unreadable. See docs/SETTINGS_WIRING_AUDIT.md.
+    """
+    return bool(get_runtime_setting("voice.input_enabled", True))
 
 _NUMPY_IMPORT_ERROR: BaseException | None = None
 try:
@@ -323,6 +335,12 @@ class LocalVoiceCortex:
         retry_delay = 1.0
 
         while self.is_listening and not self._shutdown_event.is_set():
+            if not _user_voice_input_enabled():
+                # User disabled microphone input: never open the capture stream.
+                # Poll so toggling it back on resumes listening without a restart.
+                logger.debug("🎙️🚫 Voice input suppressed: voice.input_enabled=False (user setting)")
+                await asyncio.sleep(2.0)
+                continue
             try:
                 stream = self.audio_interface.open(
                     format=self.FORMAT,
