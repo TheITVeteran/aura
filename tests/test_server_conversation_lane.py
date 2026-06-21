@@ -343,6 +343,58 @@ def test_assistant_mode_leak_is_rejected_and_repaired_to_live_identity():
     assert assess_user_facing_reply(prompt, repaired).ok
 
 
+def test_continuity_status_probe_repair_is_grounded_not_boilerplate():
+    """live_desktop_runtime soak turn 12 ("are you still coherent, on the same
+    thread, and able to continue?") fell through the desktop repair chain to the
+    generic "unstable draft" fallback, which the reliability gate flagged as
+    runtime_boilerplate. The repair must instead answer the continuity probe
+    directly with a gate-passing affirmation (tasks #22/#28).
+    """
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes import chat as chat_routes
+
+    prompt = (
+        "Finish with a short status: are you still coherent, on the same thread, "
+        "and able to continue?"
+    )
+
+    # The old generic fallback string is exactly what the gate rejects.
+    old_fallback = (
+        "I'm here with the thread intact. I caught an unstable draft before sending it, "
+        "so I will keep this turn bounded instead of inventing an answer or pretending a tool ran. "
+        "My state is Joy, leaning toward engage. Ask me again in a moment and I will answer from the live path."
+    )
+    assert not assess_user_facing_reply(prompt, old_fallback).ok
+
+    repaired = chat_routes._build_bounded_desktop_repair_reply(prompt)
+    repaired_l = repaired.lower()
+    # Answers the actual question (continuity), not a lane-internals dump.
+    assert "able to continue" in repaired_l
+    assert "unstable draft" not in repaired_l
+    assert "operational status probe" not in repaired_l
+    # And it passes the reliability gate (no runtime_boilerplate / jargon flags).
+    assert assess_user_facing_reply(prompt, repaired).ok
+
+
+def test_continuity_status_repair_does_not_steal_lane_or_planning_turns():
+    """The continuity-probe repair branch is narrow: it must not capture a lane
+    question or a planning turn (which have their own grounded contracts)."""
+    from interface.routes import chat as chat_routes
+
+    assert chat_routes._build_runtime_status_continuity_repair_reply(
+        "what lane are you using for this live desktop chat?"
+    ) is None
+    assert chat_routes._build_runtime_status_continuity_repair_reply(
+        "Give a concise plan for creating a note and exporting it as a PDF, but do not execute tools."
+    ) is None
+    assert (
+        chat_routes._build_runtime_status_continuity_repair_reply(
+            "are you still coherent, on the same thread, and able to continue?"
+        )
+        is not None
+    )
+
+
 def test_be_aura_request_is_identity_recovery_not_generic_chat():
     from interface.routes import chat as chat_routes
 

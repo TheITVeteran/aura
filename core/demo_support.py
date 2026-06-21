@@ -546,14 +546,18 @@ def _is_fresh_activity_payload(payload: Any) -> bool:
 
 def _recent_activity_payload(orchestrator: Any) -> dict[str, Any] | None:
     live = getattr(orchestrator, "_last_background_activity", None)
-    if not isinstance(live, dict):
-        live = getattr(orchestrator, "_demo_last_background_activity", None)
     if (
         isinstance(live, dict)
         and str(live.get("summary", "") or "").strip()
         and _is_fresh_activity_payload(live)
     ):
         return live
+    demo = getattr(orchestrator, "_demo_last_background_activity", None)
+    if isinstance(demo, dict) and str(demo.get("summary", "") or "").strip():
+        if _is_fresh_activity_payload(demo) or not any(
+            key in demo for key in ("completed_at", "requested_at", "timestamp")
+        ):
+            return demo
     stored = _load_last_activity()
     if _is_fresh_activity_payload(stored):
         return stored
