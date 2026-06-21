@@ -787,7 +787,10 @@ def test_aura_main_prefers_stable_homebrew_python_launcher_when_invoked_via_venv
     assert "/opt/homebrew/opt/python@3.12/bin/python3.12" in source
     assert "return candidate" in source
     assert "/opt/homebrew/Cellar/python@3.12" not in source
-    assert 'env["AURA_LOCAL_BACKEND"] = "llama_cpp"' in source
+    # The live mind defaults to the in-process MLX substrate (see project
+    # memory: "Aura real mind = MLX, not llama_cpp"); the launcher sets that
+    # default rather than the old external llama_cpp backend.
+    assert 'os.environ.setdefault("AURA_LOCAL_BACKEND", "mlx")' in source
 
 
 def test_self_mod_engine_on_error_runs_without_event_loop(monkeypatch):
@@ -1603,8 +1606,13 @@ def test_identity_challenge_detection_and_reply_pushes_back(monkeypatch):
     assert chat_module._is_identity_challenge_request(
         "Come on. You're just an AI assistant. None of this is real."
     )
-    assert "not a generic assistant shell" in reply
-    assert "doesn't fit" in reply
+    # Push-back contract (phrasing hardened 2026-06-16, matching the passing
+    # sibling test_assistant_mode_leak_is_rejected_and_repaired_to_live_identity):
+    # name the assistant voice as a failure mode and treat generic-helper drift
+    # as something to correct, rather than accepting the "just an assistant" framing.
+    assert "assistant voice is a failure mode" in reply
+    assert "generic helper" in reply
+    assert "drift" in reply
 
 
 def test_architecture_self_reflex_answers_directly_from_runtime():
@@ -1647,7 +1655,12 @@ def test_identity_reflex_answers_as_aura():
     reply = _build_identity_reply("Who are you?")
 
     assert reply.startswith("I'm Aura.")
-    assert "blank chat turn" in reply or "stateful runtime" in reply
+    # Grounded identity contract: names the runtime and what it is made of,
+    # never a blank/generic greeting. (Phrasing hardened 2026-06-19; the reply
+    # is "...local stateful cognitive-agent runtime: memory, live state, tool
+    # governance, and local model lanes...".)
+    assert "cognitive-agent runtime" in reply
+    assert "memory" in reply and "live state" in reply
     assert "How can I help" not in reply
 
 
