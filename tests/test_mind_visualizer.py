@@ -11,7 +11,9 @@ import asyncio
 import json
 from pathlib import Path
 
-_MIND_HTML = Path(__file__).resolve().parents[1] / "interface" / "static" / "mind.html"
+_STATIC = Path(__file__).resolve().parents[1] / "interface" / "static"
+_MIND_HTML = _STATIC / "mind.html"
+_ACTIVITY_HTML = _STATIC / "activity.html"
 
 # Top-level keys the visualizer reads from /api/inner-state.
 _REQUIRED_KEYS = (
@@ -56,3 +58,24 @@ def test_mind_page_exists_and_targets_inner_state():
     # Plain-language framing for non-experts (no raw jargon as the primary label).
     for human in ("How she feels", "What she wants", "What's awake", "What am I looking at?"):
         assert human in html, f"mind.html missing plain-language section: {human}"
+    # Cross-link into the activity view (product shell nav).
+    assert "/activity" in html
+
+
+def test_receipts_contract_for_activity_view():
+    from interface.routes.dashboard import receipts
+
+    resp = asyncio.run(receipts(limit=10, _=None))
+    payload = json.loads(bytes(resp.body))
+    assert "receipts" in payload
+    assert isinstance(payload["receipts"], list)
+
+
+def test_activity_page_exists_and_is_plain_language():
+    assert _ACTIVITY_HTML.exists(), "interface/static/activity.html is missing"
+    html = _ACTIVITY_HTML.read_text(encoding="utf-8")
+    assert "/api/receipts" in html
+    assert "sessionStorage.getItem('api_token')" in html
+    assert "/mind" in html  # cross-link back to the mind view
+    for human in ("What she's been doing", "What am I looking at?", "worked"):
+        assert human in html, f"activity.html missing plain-language framing: {human}"

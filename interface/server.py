@@ -810,6 +810,14 @@ async def serve_mind(request: Request):
     p = STATIC_DIR / "mind.html"
     return FileResponse(str(p), headers=NO_CACHE_HEADERS) if p.exists() else ORJSONResponse({"error": "not found"}, status_code=404)
 
+
+@app.get("/activity", include_in_schema=False)
+async def serve_activity(request: Request):
+    """Activity / receipts view (#35) — plain-language record of Aura's self-directed actions."""
+    _require_internal(request)
+    p = STATIC_DIR / "activity.html"
+    return FileResponse(str(p), headers=NO_CACHE_HEADERS) if p.exists() else ORJSONResponse({"error": "not found"}, status_code=404)
+
 # ── Routes — Checkpoints (Phase 5A) ───────────────────────────
 
 @app.post("/api/checkpoints/save", tags=["checkpoints"])

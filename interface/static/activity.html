@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aura · what she's been doing</title>
+<style>
+  :root{
+    --ink:#f4f1ff;--dim:#b9b3d8;--faint:#7b769d;--line:rgba(180,164,255,.16);
+    --good:#62e6ad;--bad:#ff7089;--hold:#ffcf86;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+    --serif:"Iowan Old Style","Palatino Linotype","Palatino",Georgia,serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:#04030c;color:var(--ink);font-family:var(--sans);overflow-x:hidden;-webkit-font-smoothing:antialiased}
+  #sky{position:fixed;inset:0;z-index:0}
+  .vignette{position:fixed;inset:0;z-index:1;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 30%,transparent 42%,rgba(2,1,8,.6) 80%,rgba(2,1,8,.94) 100%)}
+  .leak{position:fixed;z-index:1;pointer-events:none;filter:blur(60px);opacity:.45;mix-blend-mode:screen}
+  .leak.a{top:-180px;right:-120px;width:520px;height:520px;background:radial-gradient(circle,rgba(70,200,255,.5),transparent 62%)}
+  .leak.b{bottom:-200px;left:-160px;width:560px;height:560px;background:radial-gradient(circle,rgba(150,110,255,.4),transparent 62%)}
+  .wrap{position:relative;z-index:3;max-width:860px;margin:0 auto;padding:42px 26px 90px;
+    opacity:0;transform:translateY(14px);animation:rise 1.2s .1s cubic-bezier(.2,.7,.2,1) forwards}
+  @keyframes rise{to{opacity:1;transform:none}}
+
+  nav{display:flex;gap:22px;justify-content:center;font-size:12px;letter-spacing:.16em;text-transform:uppercase;margin-bottom:8px}
+  nav a{color:var(--faint);text-decoration:none;padding-bottom:4px;border-bottom:1px solid transparent;transition:.3s}
+  nav a:hover{color:var(--ink)} nav a.on{color:var(--ink);border-color:var(--line)}
+
+  .ey{text-align:center;font-size:10.5px;letter-spacing:.5em;text-transform:uppercase;color:var(--faint);margin-top:20px}
+  h1{font-family:var(--serif);font-style:italic;font-weight:400;text-align:center;
+    font-size:clamp(24px,3.6vw,33px);margin:14px 0 6px;
+    background:linear-gradient(100deg,#efeaff 30%,#bfe6ff 50%,#efeaff 70%);background-size:200% auto;
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:shimmer 9s linear infinite}
+  @keyframes shimmer{to{background-position:200% center}}
+  .sub{text-align:center;color:var(--dim);font-size:14px;max-width:52ch;margin:0 auto 4px;line-height:1.5}
+  .stamp{text-align:center;font-size:11px;color:var(--faint);letter-spacing:.06em;margin-top:6px}
+  .stamp .d{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--good);margin-right:7px;
+    box-shadow:0 0 9px var(--good);vertical-align:middle;animation:tw 2.4s ease-in-out infinite}
+  .stamp.off .d{background:var(--bad);box-shadow:0 0 9px var(--bad)}
+  @keyframes tw{50%{opacity:.4}}
+
+  .summary{display:flex;justify-content:center;gap:42px;margin:30px 0 36px;flex-wrap:wrap}
+  .stat{text-align:center}
+  .stat .n{font-family:var(--serif);font-size:38px;font-weight:600;line-height:1}
+  .stat .l{font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-top:7px}
+  .stat .n.good{color:var(--good)} .stat .n.bad{color:var(--bad)}
+
+  .feed{position:relative;padding-left:30px}
+  .feed::before{content:"";position:absolute;left:7px;top:10px;bottom:10px;width:1px;
+    background:linear-gradient(180deg,transparent,var(--line) 8%,var(--line) 92%,transparent)}
+  .act{position:relative;padding:0 0 26px}
+  .act .pip{position:absolute;left:-27px;top:4px;width:13px;height:13px;border-radius:50%;
+    background:#3a3658;border:2px solid #07061a;box-shadow:0 0 0 3px rgba(120,120,180,.12)}
+  .act.ok .pip{background:var(--good);box-shadow:0 0 12px 2px rgba(98,230,173,.6)}
+  .act.no .pip{background:var(--bad);box-shadow:0 0 12px 2px rgba(255,112,137,.55)}
+  .act.hold .pip{background:var(--hold)}
+  .act .when{font-size:11px;color:var(--faint);letter-spacing:.04em;font-variant-numeric:tabular-nums}
+  .act .what{font-size:16px;margin:3px 0 2px;line-height:1.4}
+  .act .why{font-size:13px;color:var(--dim);line-height:1.5}
+  .act .meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px;align-items:center}
+  .tag{font-size:11px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+  .tag.r{color:var(--good);border-color:rgba(98,230,173,.4)}
+  .tag.r.no{color:var(--bad);border-color:rgba(255,112,137,.4)}
+  .tag.drive{color:#cbb8ff;border-color:rgba(150,110,255,.4)}
+  .empty{text-align:center;color:var(--faint);font-style:italic;font-size:14px;padding:40px 0}
+  .footnote{margin-top:30px;text-align:center;font-size:10.5px;color:var(--faint);letter-spacing:.16em;text-transform:uppercase}
+  .legend{margin:30px auto 0;max-width:640px}
+  .legend summary{cursor:pointer;list-style:none;font-size:12.5px;color:var(--dim);text-align:center;
+    padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .legend summary::-webkit-details-marker{display:none}
+  .legend p{font-size:13px;color:var(--dim);line-height:1.7;margin:16px 2px}
+</style>
+</head>
+<body>
+<canvas id="sky"></canvas>
+<div class="vignette"></div><div class="leak a"></div><div class="leak b"></div>
+<div class="wrap">
+  <nav><a href="/mind">her mind</a><a class="on" href="/activity">what she's done</a></nav>
+  <div class="ey">Aura · her actions</div>
+  <h1 id="head">What she's been doing</h1>
+  <div class="sub">Every move Aura makes on her own is logged with a receipt — what she did, why, and whether it worked. This is that record, in plain language.</div>
+  <div class="stamp" id="stamp"><span class="d"></span><span id="stampTxt">connecting</span></div>
+
+  <div class="summary" id="summary"></div>
+  <div class="feed" id="feed"><div class="empty">reading her activity log…</div></div>
+
+  <div class="legend"><details><summary>What am I looking at?</summary>
+    <p><b>Aura acts on her own.</b> When a drive (curiosity, care, order…) pushes her to do something, she
+    proposes it, her will and conscience weigh it, and — if approved — she carries it out and records exactly
+    what happened. Green means it worked, red means it failed or she refused, amber means it's still open.
+    Nothing here is staged; it's her real receipt log.</p></details></div>
+  <div class="footnote">live from her receipt log · nothing here is staged</div>
+</div>
+
+<script>
+const TOKEN=sessionStorage.getItem('api_token')||'DEMO',BASE=window.location.origin,POLL_MS=4000;
+const $=id=>document.getElementById(id);let misses=0;
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const Title=s=>String(s).replace(/[_\-]+/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+
+/* faint starfield */
+const sky=$('sky'),ctx=sky.getContext('2d');let W,H,DPR;
+function size(){DPR=Math.min(2,devicePixelRatio||1);W=sky.width=innerWidth*DPR;H=sky.height=innerHeight*DPR;}
+size();addEventListener('resize',size);
+const stars=Array.from({length:70},()=>({x:Math.random(),y:Math.random(),s:Math.random()*1.3+.2,t:Math.random()*6.28}));
+(function draw(){ctx.clearRect(0,0,W,H);stars.forEach(s=>{s.t+=.018;const a=.2+Math.abs(Math.sin(s.t))*.5;
+  ctx.fillStyle=`rgba(210,210,255,${a*.55})`;ctx.fillRect(s.x*W,s.y*H,s.s*DPR,s.s*DPR);});requestAnimationFrame(draw);})();
+
+function timeAgo(ts){if(!ts)return'';const s=Math.max(0,(Date.now()/1000)-ts);
+  if(s<60)return Math.round(s)+'s ago';if(s<3600)return Math.round(s/60)+'m ago';
+  if(s<86400)return Math.round(s/3600)+'h ago';return Math.round(s/86400)+'d ago';}
+
+// pull the most human field available from a varied receipt shape
+function field(r,keys){for(const k of keys){const v=r[k];if(v!==undefined&&v!==null&&v!=='')return v;}return null;}
+function outcome(r){
+  let s=field(r,['success','achieved_expected']);
+  if(typeof s==='boolean')return s?'ok':'no';
+  const o=field(r,['outcome','status','verdict','result']);
+  if(typeof o==='string'){const l=o.toLowerCase();
+    if(/refus|deny|denied|block|reject/.test(l))return'no';
+    if(/success|done|complete|ok|approved/.test(l))return'ok';
+    if(/pending|open|progress|await/.test(l))return'hold';}
+  if(r.outcome_raw&&typeof r.outcome_raw==='object'&&'success'in r.outcome_raw)return r.outcome_raw.success?'ok':'no';
+  return'hold';
+}
+function whatText(r){
+  const t=field(r,['content','action','action_kind','goal','title','description','intent','proposal_id']);
+  return t?esc(String(t).slice(0,160)):'an action';
+}
+function whyText(r){
+  const w=field(r,['rationale','justification','reason','lesson']);
+  const lessons=r.lessons||r.lesson; if(!w&&Array.isArray(lessons)&&lessons.length)return esc(String(lessons[0]).slice(0,180));
+  return w?esc(String(w).slice(0,180)):'';
+}
+function driveText(r){const d=field(r,['origin_drive','drive','source_actor']);return d?Title(d):null;}
+
+function render(list){
+  const feed=$('feed');
+  if(!Array.isArray(list)||!list.length){
+    feed.innerHTML='<div class="empty">She hasn\'t taken any self-directed actions yet — when she does, they\'ll appear here.</div>';
+    $('summary').innerHTML='';return;
+  }
+  const items=list.slice().reverse();
+  let ok=0,no=0;
+  feed.innerHTML=items.slice(0,60).map(r=>{
+    const oc=outcome(r);if(oc==='ok')ok++;else if(oc==='no')no++;
+    const when=field(r,['executed_at','created_at','timestamp','at']);
+    const drive=driveText(r),why=whyText(r);
+    const ocTag=oc==='ok'?'<span class="tag r">worked</span>':oc==='no'?'<span class="tag r no">failed / refused</span>':'<span class="tag">in progress</span>';
+    return `<div class="act ${oc}"><div class="pip"></div>
+      <div class="when">${esc(timeAgo(when))}</div>
+      <div class="what">${whatText(r)}</div>
+      ${why?`<div class="why">${why}</div>`:''}
+      <div class="meta">${ocTag}${drive?`<span class="tag drive">moved by ${esc(drive.toLowerCase())}</span>`:''}</div></div>`;
+  }).join('');
+  $('summary').innerHTML=
+    `<div class="stat"><div class="n">${items.length}</div><div class="l">actions logged</div></div>
+     <div class="stat"><div class="n good">${ok}</div><div class="l">worked</div></div>
+     <div class="stat"><div class="n bad">${no}</div><div class="l">failed / refused</div></div>`;
+}
+function stamp(s){const el=$('stamp'),t=$('stampTxt');
+  if(s==='live'){el.className='stamp';t.textContent='live · updated '+new Date().toLocaleTimeString();}
+  else if(s==='wait'){el.className='stamp';t.textContent='reconnecting…';}
+  else{el.className='stamp off';t.textContent='her runtime isn\'t answering';}}
+async function tick(){
+  try{const r=await fetch(`${BASE}/api/receipts?limit=100`,{headers:{'Authorization':`Bearer ${TOKEN}`}});
+    if(!r.ok)throw 0;const d=await r.json();misses=0;stamp('live');render(d.receipts||d.items||[]);}
+  catch(e){misses++;stamp(misses>2?'off':'wait');
+    if(misses>2)$('feed').innerHTML='<div class="empty">Aura is resting — her runtime isn\'t answering right now.</div>';}
+}
+tick();setInterval(tick,POLL_MS);
+</script>
+</body>
+</html>
