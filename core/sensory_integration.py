@@ -13,6 +13,7 @@ from typing import Any
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.permission_gates import camera_allowed
+from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 try:
@@ -400,7 +401,15 @@ class SpeechSystem:
         """Speak text aloud using TTS (Async)."""
         if not self.tts_available:
             return {"error": "tts_not_available", "success": False}
-        
+
+        # Apply the user's voice.output_rate multiplier (0.5-2.0, default 1.0) to
+        # the base words-per-minute rate. (docs/SETTINGS_WIRING_AUDIT.md)
+        try:
+            multiplier = float(get_runtime_setting("voice.output_rate", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            multiplier = 1.0
+        rate = int(rate * max(0.5, min(2.0, multiplier)))
+
         def _do_speak():
             try:
                 import pyttsx3

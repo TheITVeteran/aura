@@ -363,3 +363,24 @@ def test_privacy_mode_standard_does_not_block_at_privacy_gate(tmp_path):
     result = asyncio.run(bridge.call(Channel.SOCIAL_POST, action="post", intent="share"))
     assert result.ok is False
     assert result.error not in ("privacy_mode_isolated", "privacy_mode_private")
+
+
+# ── voice.output_rate (TTS speech-rate multiplier) ──────────────────────────
+
+def test_voice_output_rate_multiplier_applied(tmp_path):
+    import threading
+    from unittest.mock import MagicMock
+
+    from core.sensory_integration import SpeechSystem
+
+    _write_settings(tmp_path, {"voice.output_rate": 2.0})
+    speech = object.__new__(SpeechSystem)
+    speech.tts_available = True
+    speech._lock = threading.Lock()
+    engine = MagicMock()
+    speech._engine = engine
+
+    result = asyncio.run(speech.speak("hello", rate=150, save_path=str(tmp_path / "out.wav")))
+    assert result.get("success") is True
+    # 150 base wpm * 2.0 multiplier = 300
+    engine.setProperty.assert_any_call("rate", 300)
