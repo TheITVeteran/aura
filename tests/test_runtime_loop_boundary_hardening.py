@@ -243,6 +243,32 @@ def test_research_trigger_payload_is_json_safe(tmp_path) -> None:
     assert trigger.payload_hint["nested"]["set"] == "{1, 2}"
 
 
+def test_research_trigger_default_path_is_runtime_state() -> None:
+    from core.autonomy import research_triggers
+
+    path = research_triggers.DEFAULT_TRIGGER_PATH
+
+    assert "live-source" not in str(path)
+    assert path == Path.home() / ".aura" / "data" / "autonomy" / "research-triggers.jsonl"
+
+
+def test_research_trigger_env_path_is_resolved_at_call_time(tmp_path, monkeypatch) -> None:
+    from core.autonomy import research_triggers
+
+    trigger_path = tmp_path / "runtime" / "research-triggers.jsonl"
+    monkeypatch.setenv("AURA_RESEARCH_TRIGGER_PATH", str(trigger_path))
+
+    research_triggers.emit_research_trigger(
+        topic="runtime path hygiene",
+        source_intent_id="env-runtime",
+        payload_hint={"content": "store outside the source tree"},
+    )
+
+    [trigger] = research_triggers.drain_pending_triggers()
+    assert trigger.source_intent_id == "env-runtime"
+    assert trigger_path.exists()
+
+
 def test_research_triggers_reject_live_reply_failure_contamination(tmp_path) -> None:
     from core.autonomy import research_triggers
 
