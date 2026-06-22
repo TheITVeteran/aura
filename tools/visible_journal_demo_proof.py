@@ -61,13 +61,16 @@ def _visible_staging_evidence(lane_data: Any, pdf_name: str) -> dict[str, Any]:
     """
     notes_opened = False
     paste_dispatched = False
+    paste_frontmost_notes = False
+    last_notes_open_index = -1
+    paste_index = -1
     render_path = ""
     receipts = []
     if isinstance(lane_data, dict):
         desktop_result = lane_data.get("desktop_result")
         if isinstance(desktop_result, dict):
             receipts = desktop_result.get("receipts") or []
-    for receipt in receipts:
+    for index, receipt in enumerate(receipts):
         if not isinstance(receipt, dict):
             continue
         action = str(receipt.get("action") or "").lower()
@@ -75,8 +78,13 @@ def _visible_staging_evidence(lane_data: Any, pdf_name: str) -> dict[str, Any]:
         result = receipt.get("result") if isinstance(receipt.get("result"), dict) else {}
         if action == "open_app" and ok and "notes" in str(result.get("opened") or "").lower():
             notes_opened = True
+            last_notes_open_index = index
         if action == "hotkey" and ok and "v" in str(result.get("hotkey") or "").lower():
             paste_dispatched = True
+            paste_index = index
+            before = str(result.get("frontmost_app_before") or "").lower()
+            after = str(result.get("frontmost_app_after") or "").lower()
+            paste_frontmost_notes = "notes" in before or "notes" in after
         if action == "render_text_pdf" and ok:
             render_path = str(result.get("path") or "")
     receipt_matches_disk = bool(
@@ -85,6 +93,8 @@ def _visible_staging_evidence(lane_data: Any, pdf_name: str) -> dict[str, Any]:
     return {
         "notes_opened": notes_opened,
         "paste_dispatched": paste_dispatched,
+        "paste_frontmost_notes": paste_frontmost_notes,
+        "notes_refocused_before_paste": last_notes_open_index >= 0 and last_notes_open_index < paste_index,
         "receipt_count": len(receipts),
         "receipt_matches_disk": receipt_matches_disk,
     }
@@ -126,6 +136,8 @@ class VisibleJournalProof(JournalDemoProof):
             and has_image
             and staging["notes_opened"]
             and staging["paste_dispatched"]
+            and staging["paste_frontmost_notes"]
+            and staging["notes_refocused_before_paste"]
             and staging["receipt_matches_disk"]
         )
         return self.record(

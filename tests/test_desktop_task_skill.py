@@ -298,7 +298,7 @@ async def test_desktop_task_derives_general_plan_from_desktop_objective(monkeypa
     assert pdf_payload["path"].endswith(".pdf")
     assert "Aura summary body from CognitiveEngine." in pdf_payload["body"]
     assert "Image search opened:" in pdf_payload["body"]
-    assert "No local image insertion is claimed" in pdf_payload["body"]
+    assert "governed image receipt verifies the file" in pdf_payload["body"]
     assert calls[0][2]["route"] == "desktop_task.computer_use"
     assert calls[0][2]["origin"] == "desktop_ui"
 
@@ -984,7 +984,7 @@ async def test_desktop_task_collects_research_before_document_composition(monkey
     assert "https://example.test/extreme-weather" in opened_urls
     assert desktop_actions[6] == "set_clipboard"
     clipboard_body = next(call[1]["target"] for call in desktop_calls if call[1]["action"] == "set_clipboard")
-    assert "I reviewed the available source evidence on climate change" in clipboard_body
+    assert "I reviewed 3 sources on climate change" in clipboard_body
     assert "Climate assessment" in clipboard_body
     assert "Adaptation briefing" in clipboard_body
     assert "Extreme weather report" in clipboard_body
@@ -1459,8 +1459,16 @@ def test_visible_notes_staging_derives_watchable_plan_with_artifacts():
     assert "notes" in str(steps[open_idx].target).lower()
     hotkeys = [i for i, s in enumerate(steps) if s.action == "hotkey"]
     assert hotkeys, actions
+    last_notes_open = max(
+        i for i, step in enumerate(steps)
+        if step.action == "open_app" and str(step.target).lower() == "notes"
+    )
+    intervening = actions[last_notes_open + 1:hotkeys[0]]
+    assert "open_url" not in intervening, (
+        f"browser navigation stole focus between Notes refocus and paste: {actions}"
+    )
     waits = [i for i, s in enumerate(steps) if s.action == "wait"]
-    assert any(open_idx < w < hotkeys[0] for w in waits), (
+    assert any(last_notes_open < w < hotkeys[0] for w in waits), (
         f"no launch wait between open_app and first hotkey: {actions}"
     )
     hotkey_targets = [str(steps[i].target) for i in hotkeys]

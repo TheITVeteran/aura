@@ -284,6 +284,22 @@ class DesktopTaskSkill(BaseSkill):
         return 3
 
     @staticmethod
+    def _requested_research_source_count(objective: str) -> int:
+        lowered = str(objective or "").lower()
+        if not any(token in lowered for token in ("article", "articles", "source", "sources", "news", "stories")):
+            return 0
+        explicit = re.search(r"\b([2-5])\s+(?:different\s+)?(?:articles?|sources?|stories?)\b", lowered)
+        if explicit:
+            return max(1, min(5, int(explicit.group(1))))
+        if re.search(r"\b(?:two|a couple)\s+(?:different\s+)?(?:articles?|sources?|stories?)\b", lowered):
+            return 2
+        if re.search(r"\b(?:three|a few|several)\s+(?:different\s+)?(?:articles?|sources?|stories?)\b", lowered):
+            return 3
+        if "different" in lowered and any(token in lowered for token in ("articles", "sources", "stories")):
+            return 3
+        return 1
+
+    @staticmethod
     def _objective_requests_research_document(objective: str) -> bool:
         lowered = str(objective or "").lower()
         has_source_markers = any(
@@ -507,6 +523,8 @@ class DesktopTaskSkill(BaseSkill):
         r"(?:i(?:'m| am)\s+not\s+(?:actually\s+)?able\s+to\s+(?:interact|access|control|open|write)|"
         r"i\s+(?:cannot|can'?t)\s+(?:interact|access|control|open|write)\b|"
         r"you\s+can\s+copy\s+it\s+into\s+notes)|"
+        r"(?:the\s+)?task\s+(?:asked|asks|requested|requests)\s+(?:me\s+)?to\s+(?:type|write|open|create|export)|"
+        r"i\s+am\s+(?:typing|writing|pasting)\s+(?:here|this)\s+because\s+(?:the\s+)?task\s+(?:asked|requires)|"
         # Internal execution brief / directive — instruction to herself, not
         # document content (it leaked into a research PDF as the body).
         r"execute the user'?s (?:explicit )?desktop objective|"
@@ -702,13 +720,25 @@ class DesktopTaskSkill(BaseSkill):
             facts = list(_SUBSTRATE_FACTS)
         except (ImportError, AttributeError):
             facts = [
-                "I am Aura: a persistent digital organism — an orchestrated "
+                "I am Aura: a persistent digital organism - an orchestrated "
                 "runtime driving local language-model lanes on this machine."
             ]
+        primary = facts[0] if facts else (
+            "I am Aura: a local governed cognitive-agent runtime running on this machine."
+        )
         return (
-            f"[{stamp}] {facts[0]}\n\n"
-            "This file was written by me through my governed desktop "
-            "actuators, with per-step effect verification and receipts."
+            f"[{stamp}] {primary}\n\n"
+            "I am not just a raw chat model answering from a single prompt. My live path is "
+            "supposed to bind conversation, memory, affective state, planning, tool governance, "
+            "desktop action, health monitoring, and self-repair into one runtime. The language "
+            "model is my voice and reasoning organ, but the surrounding system decides what is "
+            "allowed, what is remembered, what is risky, what needs verification, and whether an "
+            "action actually changed the world.\n\n"
+            "The honest claim is functional rather than metaphysical: my internal telemetry and "
+            "state machinery can influence attention, caution, persistence, memory writes, and "
+            "tool use, but that is not proof of private qualia. This note was written through "
+            "governed desktop actuators with per-step receipts, because the standard is not merely "
+            "to say I can act; it is to leave evidence that the requested action really happened."
         )
 
     @classmethod
@@ -935,7 +965,7 @@ class DesktopTaskSkill(BaseSkill):
         if image_query and image_search_url:
             references.append(
                 f"Image request: {image_query}\nImage search opened: {image_search_url}\n"
-                "No local image insertion is claimed unless a later governed receipt shows an image file was downloaded or embedded."
+                "The exported artifact embeds the fetched image only after the governed image receipt verifies the file."
             )
         if not references:
             return body
@@ -954,28 +984,49 @@ class DesktopTaskSkill(BaseSkill):
 
         summary = " ".join(str(summary or "").split())[:1400]
         source_lines: list[str] = []
+        source_titles: list[str] = []
         for item in (sources or [])[:3]:
             if not isinstance(item, dict):
                 continue
             title = str(item.get("title") or item.get("url") or "Untitled source").strip()
             snippet = " ".join(str(item.get("snippet") or "").split())
+            if title:
+                source_titles.append(title[:160])
             if snippet:
                 source_lines.append(f"{title}: {snippet[:240]}")
             else:
                 source_lines.append(title[:240])
         topic = str(query or "the requested research topic").strip()
-        parts = [
-            f"I reviewed the available source evidence on {topic}.",
-        ]
+        if not source_lines and not summary:
+            return ""
+        parts = []
+        opening = f"I reviewed {len(source_lines) or len(sources or [])} source"
+        opening += "" if (len(source_lines) or len(sources or [])) == 1 else "s"
+        opening += f" on {topic}."
+        if source_titles:
+            opening += " The strongest available signals came from " + ", ".join(source_titles[:3]) + "."
+        parts.append(opening)
         if summary:
-            parts.append(summary)
+            parts.append(
+                "Taken together, the reporting points to this: "
+                + summary
+            )
         if source_lines:
-            parts.append("The clearest source signals were: " + " ".join(source_lines))
+            parts.append(
+                "The details I would preserve in the document are: "
+                + " ".join(source_lines)
+            )
         if cls._objective_requests_opinion(objective):
             parts.append(
                 "In my view, the reliable path is to treat the articles as evidence to compare, "
                 "not as a single conclusion to repeat: where the sources converge I can summarize confidently, "
                 "and where they differ I should preserve that uncertainty in the final document."
+            )
+        else:
+            parts.append(
+                "My concise synthesis is that the useful answer is not a loose headline recap; it is a "
+                "comparison of what the sources actually support, which claims appear repeated across the "
+                "evidence, and which details should stay attributed to a specific source."
             )
         return "\n\n".join(part for part in parts if part).strip()[:4000]
 
@@ -1091,6 +1142,18 @@ class DesktopTaskSkill(BaseSkill):
                 "desktop_task_research_pressure_limited": pressure_limited,
             }
         sources = self._research_sources_from_result(result)
+        required_sources = self._requested_research_source_count(objective)
+        if required_sources and len(sources) < required_sources:
+            return {
+                "desktop_task_research_query": query,
+                "desktop_task_research_error": (
+                    f"research returned {len(sources)} usable source(s), "
+                    f"but the objective requires {required_sources}"
+                ),
+                "desktop_task_research_deep": deep_search,
+                "desktop_task_research_pressure_limited": pressure_limited,
+                "desktop_task_research_sources": sources,
+            }
         summary = str(
             result.get("summary")
             or result.get("answer")
@@ -1805,6 +1868,17 @@ class DesktopTaskSkill(BaseSkill):
                     apps.append(candidate)
         return apps[:4]
 
+    @staticmethod
+    def _writing_app_from_apps(apps: list[str]) -> str:
+        for app in apps:
+            if app in {"Notes", "TextEdit", "Pages", "Microsoft Word"}:
+                return app
+        return ""
+
+    @staticmethod
+    def _step_opens_app(step: DesktopTaskStep, app: str) -> bool:
+        return step.action == "open_app" and str(step.target or "").strip() == app
+
     @classmethod
     def _sequenced_objective_segments(cls, objective: str) -> list[str]:
         """Split only explicit discourse-level sequencing markers.
@@ -2113,6 +2187,21 @@ class DesktopTaskSkill(BaseSkill):
                 image_search_url=image_search_url,
                 search_url=search_url,
             )
+            writing_app = "" if web_document_url else self._writing_app_from_apps(apps)
+            if writing_app and not (
+                steps and self._step_opens_app(steps[-1], writing_app)
+            ):
+                steps.append(
+                    DesktopTaskStep(
+                        action="open_app",
+                        target=writing_app,
+                        reason=(
+                            f"Re-focus {writing_app} immediately before text entry so "
+                            "browser/image/search tabs cannot steal the paste target."
+                        ),
+                        expect=f"{writing_app} is frontmost before writing.",
+                    )
+                )
             steps.append(
                 DesktopTaskStep(
                     action="set_clipboard",
@@ -2684,6 +2773,7 @@ class DesktopTaskSkill(BaseSkill):
             )
 
         last_image_page_url = ""
+        expected_frontmost_app = ""
         for index, step in enumerate(steps, start=1):
             references_ok, resolved_step, reference_error = self._resolve_step_target(step, receipts)
             if not references_ok:
@@ -2798,6 +2888,12 @@ class DesktopTaskSkill(BaseSkill):
                 "y": int(resolved_step.y),
             }
             step_context = dict(task_context)
+            if (
+                resolved_step.action == "hotkey"
+                and expected_frontmost_app
+                and "command" in str(target).lower()
+            ):
+                step_context["desktop_task_expected_frontmost_app"] = expected_frontmost_app
             step_context.update(
                 {
                     "origin": step_context.get("origin") or "desktop_task",
@@ -2894,6 +2990,10 @@ class DesktopTaskSkill(BaseSkill):
             )
             if resolved_step.action == "fetch_topic_image" and receipt["ok"]:
                 last_image_page_url = str(result.get("page_url") or "") or last_image_page_url
+            if receipt["ok"] and resolved_step.action == "open_app":
+                expected_frontmost_app = str(result.get("frontmost_app") or result.get("opened") or "").strip()
+            elif receipt["ok"] and resolved_step.action == "open_url":
+                expected_frontmost_app = str(result.get("frontmost_app") or "").strip()
             if not receipt["ok"]:
                 failures.append(receipt)
                 self._emit_progress(

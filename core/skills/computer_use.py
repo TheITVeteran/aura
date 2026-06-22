@@ -409,6 +409,48 @@ class ComputerUseSkill(BaseSkill):
         script = f"tell application {self._applescript_string(app_name)} to activate"
         return await asyncio.to_thread(self._run_applescript, script, timeout=5)
 
+    def _force_browser_tab_url(self, browser: str, url: str) -> str:
+        """Create a foreground tab for a URL in a named browser.
+
+        `open -a Chrome <url>` can be intercepted by restored sessions,
+        extension start pages, and auth/login tabs. For live desktop tasks the
+        action is not complete until the named browser exposes the requested
+        URL as its active tab, so this helper uses the browser's AppleScript
+        surface directly as a bounded repair step.
+        """
+        browser = str(browser or "").strip()
+        target = str(url or "").strip()
+        if not browser or not target:
+            return ""
+        quoted_url = self._applescript_string(target)
+        if browser in {"Google Chrome", "Arc", "Microsoft Edge"}:
+            script = f'''
+tell application "{browser}"
+    activate
+    if (count of windows) = 0 then make new window
+    tell front window
+        set newTab to make new tab at end of tabs with properties {{URL:{quoted_url}}}
+        set active tab index to (count of tabs)
+    end tell
+end tell
+'''
+        elif browser == "Safari":
+            script = f'''
+tell application "Safari"
+    activate
+    if (count of windows) = 0 then
+        make new document with properties {{URL:{quoted_url}}}
+    else
+        tell front window
+            set current tab to (make new tab with properties {{URL:{quoted_url}}})
+        end tell
+    end if
+end tell
+'''
+        else:
+            return ""
+        return self._run_applescript(script, timeout=8)
+
     def _focused_element_snapshot(self) -> str:
         """Read only the focused control, avoiding a full accessibility walk."""
         script = """
@@ -431,6 +473,26 @@ end tell
         except (TimeoutError, RuntimeError) as exc:
             logger.debug("Focused element snapshot failed: %s", exc)
             return ""
+
+    @staticmethod
+    def _focused_snapshot_looks_browser_location_bar(snapshot: str) -> bool:
+        """Best-effort guard for URL-bar pastes on browser surfaces."""
+        raw = str(snapshot or "").strip()
+        if not raw:
+            return False
+        parts = raw.split("\t", 1)
+        role = parts[0].strip().lower() if parts else ""
+        value = parts[1].strip().lower() if len(parts) > 1 else raw.lower()
+        if role not in {"axtextfield", "axcombobox"}:
+            return False
+        return bool(
+            value.startswith(("http://", "https://"))
+            or "search or enter" in value
+            or "address" in value
+            or "duckduckgo.com/" in value
+            or "google.com/search" in value
+            or "docs.google.com/" in value
+        )
 
     def _send_hotkey_system_events(self, keys: list[str]) -> str:
         """Send a keyboard shortcut via System Events; raise with the real
@@ -1645,6 +1707,27 @@ end tell
                 # evidence that the web editor accepted the shortcut.
                 front_app = await asyncio.to_thread(self._frontmost_app_name)
                 browser_surface = front_app in _ALLOWED_URL_BROWSERS
+                expected_frontmost = str(
+                    context.get("desktop_task_expected_frontmost_app") or ""
+                ).strip()
+                if expected_frontmost and not self._frontmost_app_matches(
+                    front_app,
+                    expected_frontmost,
+                ):
+                    return {
+                        "ok": False,
+                        "action": "hotkey",
+                        "hotkey": params.target,
+                        "frontmost_app_before": front_app,
+                        "expected_frontmost_app": expected_frontmost,
+                        "effect_verified": False,
+                        "error": (
+                            "Hotkey refused because the foreground app did not match "
+                            f"the planned writing surface (expected={expected_frontmost}, "
+                            f"actual={front_app or 'unavailable'})."
+                        ),
+                        "verification": "wrong_foreground_app",
+                    }
                 if browser_surface:
                     pre_state = await asyncio.to_thread(self._focused_element_snapshot)
                 else:
@@ -1662,6 +1745,24 @@ end tell
                     ) as exc:
                         logger.debug("Pre-state screen read failed before hotkey: %s", exc)
                 keys = [k.strip().lower() for k in params.target.split("+") if k.strip()]
+                is_paste = bool({"command", "cmd"} & set(keys)) and "v" in keys
+                if (
+                    browser_surface
+                    and is_paste
+                    and self._focused_snapshot_looks_browser_location_bar(pre_state)
+                ):
+                    return {
+                        "ok": False,
+                        "action": "hotkey",
+                        "hotkey": params.target,
+                        "frontmost_app_before": front_app,
+                        "effect_verified": False,
+                        "error": (
+                            "Paste refused because browser focus is still on the "
+                            "address/search field, not an editable document surface."
+                        ),
+                        "verification": "browser_location_bar_focused",
+                    }
                 # System Events dispatch, not pyautogui: CGEvent posts are
                 # silently dropped without Accessibility grants, which left
                 # failures with no error text ("unknown") and no receipt.
@@ -1674,10 +1775,12 @@ end tell
                         "ok": False,
                         "action": "hotkey",
                         "hotkey": params.target,
+                        "frontmost_app_before": front_app,
                         "effect_verified": False,
                         "error": f"keystroke dispatch failed: {exc}",
                     }
                 await asyncio.sleep(0.4)
+                post_front_app = await asyncio.to_thread(self._frontmost_app_name)
                 if browser_surface:
                     post_state = await asyncio.to_thread(self._focused_element_snapshot)
                 else:
@@ -1707,21 +1810,25 @@ end tell
                         else "State shifted."
                     )
                 elif not screen_verifiable:
-                    # The keystroke dispatched cleanly (no exception above); we
-                    # simply couldn't read the screen/focused control to confirm
-                    # the effect — common for apps that don't expose text via
-                    # AX/OCR, or when Screen Recording read-back is unavailable for
-                    # this process identity (e.g. Notes). A clean OS-accepted
-                    # System Events dispatch IS the effect for a keystroke, so we
-                    # treat it as verified rather than false-failing and aborting
-                    # the whole multi-step task on a missing secondary read-back.
-                    ok = True
-                    effect_verified = True
-                    verification = (
-                        "Keystroke dispatched and accepted by the OS; on-screen "
-                        "read-back was unavailable, so the effect is inferred from "
-                        "the clean dispatch."
-                    )
+                    if browser_surface:
+                        ok = False
+                        effect_verified = False
+                        verification = (
+                            "Hotkey dispatched, but browser focused-control verification "
+                            "was unavailable; refusing to count the shortcut as a document edit."
+                        )
+                    else:
+                        # Native apps such as Notes often do not expose text
+                        # through the screen-reader path. For those surfaces, a
+                        # clean System Events dispatch plus a verified foreground
+                        # app is the bounded effect evidence.
+                        ok = True
+                        effect_verified = True
+                        verification = (
+                            "Keystroke dispatched and accepted by the OS; on-screen "
+                            "read-back was unavailable, so the effect is inferred from "
+                            "the clean dispatch."
+                        )
                 else:
                     ok = False
                     verification = (
@@ -1731,6 +1838,8 @@ end tell
                     "ok": ok,
                     "action": "hotkey",
                     "hotkey": params.target,
+                    "frontmost_app_before": front_app,
+                    "frontmost_app_after": post_front_app,
                     "effect_verified": effect_verified,
                     "dispatch": dispatch_receipt,
                     "verification": verification,
@@ -1905,13 +2014,13 @@ end tell
                 return payload
 
             elif action == "open_app":
-                # Opening an app uses LaunchServices (`open -a`) plus an
-                # AppleScript `activate` and a System Events frontmost query —
-                # all Automation, none of which requires Accessibility. Gating it
-                # behind Accessibility needlessly failed the whole task when only
-                # GUI scripting (typing/clicking) actually needs that grant.
+                # Opening an app uses LaunchServices plus a System Events
+                # frontmost readback. The readback is part of the effect proof,
+                # so a cached or environment-level permission assumption is not
+                # enough for live desktop reliability.
                 blocked = await self._require_permissions(
                     "opening an app and verifying it is frontmost",
+                    "ACCESSIBILITY",
                     "AUTOMATION",
                 )
                 if blocked:
@@ -2026,6 +2135,39 @@ end tell
                             target_url,
                             active_url,
                         )
+                    forced_navigation = False
+                    force_error = ""
+                    if (
+                        not effect_verified
+                        and browser
+                        and expected_browser == browser
+                    ):
+                        try:
+                            await asyncio.to_thread(
+                                self._force_browser_tab_url,
+                                expected_browser,
+                                target_url,
+                            )
+                            forced_navigation = True
+                            await asyncio.sleep(0.7)
+                            effect_verified, frontmost_app = await self._wait_for_frontmost_app(
+                                expected_browser
+                            )
+                            if effect_verified:
+                                active_url, active_title = await asyncio.to_thread(
+                                    self._active_browser_location,
+                                    expected_browser,
+                                )
+                                effect_verified = self._url_semantically_matches(
+                                    target_url,
+                                    active_url,
+                                )
+                        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                            force_error = str(exc)
+                            logger.debug("Forced browser URL repair failed: %s", exc)
+                else:
+                    forced_navigation = False
+                    force_error = ""
                 surface = f" in {browser}" if browser else ""
 
                 # Google Docs/Sheets/Slides load asynchronously and leave keyboard
@@ -2060,7 +2202,9 @@ end tell
                     else (
                         "URL dispatch succeeded, but the target browser/tab could not be "
                         f"semantically confirmed (frontmost={frontmost_app or 'unavailable'}, "
-                        f"active_url={active_url or 'unavailable'})."
+                        f"active_url={active_url or 'unavailable'}"
+                        + (f", forced_navigation_error={force_error}" if force_error else "")
+                        + ")."
                     )
                 )
                 return {
@@ -2071,6 +2215,7 @@ end tell
                     "frontmost_app": frontmost_app,
                     "active_url": active_url,
                     "active_title": active_title,
+                    "forced_navigation": forced_navigation,
                     "effect_verified": effect_verified,
                     "doc_focused": doc_focused,
                     "verification": verification,

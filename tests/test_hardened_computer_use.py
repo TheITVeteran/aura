@@ -857,6 +857,30 @@ async def test_hotkey_dispatch_without_focused_control_readback_is_rejected(monk
 
 
 @pytest.mark.asyncio
+async def test_browser_paste_refuses_location_bar_focus(monkeypatch):
+    """A Google Docs paste must not be counted when focus is still in the URL bar."""
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Google Chrome")
+    monkeypatch.setattr(
+        skill,
+        "_focused_element_snapshot",
+        lambda: "AXTextField\thttps://docs.google.com/document/u/0/create",
+    )
+
+    result = await skill.execute({"action": "hotkey", "target": "command+v"}, {})
+
+    assert result["ok"] is False
+    assert result["effect_verified"] is False
+    assert result["verification"] == "browser_location_bar_focused"
+    assert "address/search field" in result["error"]
+
+
+@pytest.mark.asyncio
 async def test_hotkey_screen_shift_still_required_when_screen_readable(monkeypatch):
     """With a readable screen and NO state shift, the step stays red —
     the dispatch-receipt fallback must not soften real verification."""
@@ -978,7 +1002,60 @@ async def test_open_url_targets_named_browser(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_open_url_rejects_frontmost_browser_with_wrong_active_tab(monkeypatch):
+async def test_open_url_repairs_frontmost_browser_with_wrong_active_tab(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    argv_seen = []
+
+    class FakeSubprocessGateway:
+        def run(self, argv, **kwargs):
+            argv_seen.append(argv)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+    monkeypatch.setattr(
+        skill,
+        "_wait_for_frontmost_app",
+        lambda expected: asyncio.sleep(0, result=(True, expected)),
+    )
+    locations = iter(
+        (
+            ("https://example.test/wrong-tab", "Wrong tab"),
+            ("https://docs.google.com/document/u/0/create", "New document"),
+        )
+    )
+    monkeypatch.setattr(skill, "_active_browser_location", lambda browser: next(locations))
+    forced = []
+    monkeypatch.setattr(
+        skill,
+        "_force_browser_tab_url",
+        lambda browser, url: forced.append((browser, url)) or "",
+    )
+
+    target = json.dumps({"url": "https://docs.google.com/document/u/0/create", "browser": "Google Chrome"})
+    result = await skill.execute({"action": "open_url", "target": target}, {})
+
+    assert result["ok"] is True
+    assert result["effect_verified"] is True
+    assert result["frontmost_app"] == "Google Chrome"
+    assert result["active_url"] == "https://docs.google.com/document/u/0/create"
+    assert result["forced_navigation"] is True
+    assert forced == [("Google Chrome", "https://docs.google.com/document/u/0/create")]
+    assert argv_seen == [
+        ["open", "-a", "Google Chrome", "https://docs.google.com/document/u/0/create"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_open_url_still_rejects_after_forced_navigation_mismatch(monkeypatch):
     skill = ComputerUseSkill()
 
     async def controlled_permission_pass(capability, *permission_names):
@@ -1004,13 +1081,14 @@ async def test_open_url_rejects_frontmost_browser_with_wrong_active_tab(monkeypa
         "_active_browser_location",
         lambda browser: ("https://example.test/wrong-tab", "Wrong tab"),
     )
+    monkeypatch.setattr(skill, "_force_browser_tab_url", lambda browser, url: "")
 
     target = json.dumps({"url": "https://docs.google.com/document/u/0/create", "browser": "Google Chrome"})
     result = await skill.execute({"action": "open_url", "target": target}, {})
 
     assert result["ok"] is False
     assert result["effect_verified"] is False
-    assert result["frontmost_app"] == "Google Chrome"
+    assert result["forced_navigation"] is True
     assert result["active_url"] == "https://example.test/wrong-tab"
     assert "could not be semantically confirmed" in result["error"]
 
