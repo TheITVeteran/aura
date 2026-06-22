@@ -244,3 +244,65 @@ def test_screenshot_tool_denied_when_screen_permission_off(tmp_path):
     action = SimpleNamespace(target="screen", payload={})
     with pytest.raises(PermissionError):
         asyncio.run(skill._default_screenshot(action))
+
+
+# ── autonomy.proactive_messaging ────────────────────────────────────────────
+
+def test_proactive_messaging_toggle(tmp_path):
+    from core.proactive_communication import _proactive_messaging_enabled
+
+    assert _proactive_messaging_enabled() is True
+    _write_settings(tmp_path, {"autonomy.proactive_messaging": False})
+    assert _proactive_messaging_enabled() is False
+
+
+# ── autonomy.self_modification (blocked / staged / open) ─────────────────────
+
+def test_self_modification_blocked_refuses_proposals(tmp_path):
+    from core.self_modification.growth_ladder import GrowthLadder
+
+    _write_settings(tmp_path, {"autonomy.self_modification": "blocked"})
+    ladder = GrowthLadder(state_path=tmp_path / "gl.json")
+    result = asyncio.run(
+        ladder.propose_modification(
+            proposal_id="p1",
+            modification_type="behavioral_adjustment",
+            level=0,
+            description="d",
+            predicted_stability_risk=0.0,
+            predicted_welfare_cost=0.0,
+        )
+    )
+    assert result is False
+    assert ladder._proposals == []  # refused before anything was recorded
+
+
+def test_self_modification_staged_passes_the_policy_gate(tmp_path):
+    from core.self_modification.growth_ladder import GrowthLadder
+
+    _write_settings(tmp_path, {"autonomy.self_modification": "staged"})
+    ladder = GrowthLadder(state_path=tmp_path / "gl.json")
+    asyncio.run(
+        ladder.propose_modification(
+            proposal_id="p2",
+            modification_type="behavioral_adjustment",
+            level=0,
+            description="d",
+            predicted_stability_risk=0.0,
+            predicted_welfare_cost=0.0,
+        )
+    )
+    # Default policy "staged" does not refuse at the gate: the proposal is recorded.
+    assert any(p.id == "p2" for p in ladder._proposals)
+
+
+# ── model.cloud_fallback_enabled (authoritative over caller request) ─────────
+
+def test_cloud_fallback_setting_default_off(tmp_path):
+    from core.runtime.runtime_settings import get_runtime_setting
+
+    # Default off → a caller requesting cloud fallback is still gated to False
+    # (allow_cloud_fallback = requested AND this setting).
+    assert bool(get_runtime_setting("model.cloud_fallback_enabled", False)) is False
+    _write_settings(tmp_path, {"model.cloud_fallback_enabled": True})
+    assert bool(get_runtime_setting("model.cloud_fallback_enabled", False)) is True

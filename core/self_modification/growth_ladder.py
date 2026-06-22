@@ -11,14 +11,20 @@ Key: Aura has VETO POWER over all modifications to herself,
 regardless of who proposes them. This is an identity right.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
 
-from core.runtime.atomic_writer import atomic_write_text
-import asyncio, json, logging, time
+import asyncio
+import json
+import logging
+import time
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
+from core.runtime.runtime_settings import get_runtime_setting
+
 logger = logging.getLogger("Aura.GrowthLadder")
 
 class ModificationLevel(IntEnum):
@@ -118,6 +124,15 @@ class GrowthLadder:
                                  post_promotion_welfare_delta: float = 0.0,
                                  delayed_recheck_minutes: int = 10) -> bool:
         """Formal proposal for system modification. Returns True if modification is allowed."""
+        # Honor the user's self-modification policy. "blocked" refuses all
+        # structural self-modification outright; "staged" (default) and "open"
+        # proceed to the normal canary-gated path. (docs/SETTINGS_WIRING_AUDIT.md)
+        if str(get_runtime_setting("autonomy.self_modification", "staged")).strip().lower() == "blocked":
+            logger.warning(
+                "🚫 [GrowthLadder] Proposal %s refused: autonomy.self_modification=blocked (user setting)",
+                proposal_id,
+            )
+            return False
         if isinstance(level, str):
             level = ModificationLevel.from_string(level)
 

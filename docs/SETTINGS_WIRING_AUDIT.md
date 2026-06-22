@@ -21,15 +21,15 @@ the settings→runtime bridge). Frontend-only settings are legitimately client-s
 | `theme.reduced_motion` | 🎨 frontend-only | client honors it; no backend wiring needed |
 | `model.local_path` | ✅ **wired** (2026-06-21) | `model_registry.get_runtime_model_path` prefers it for the primary cortex lane via `_user_model_path_override` (only when set AND the file exists, else falls through). Tests: `tests/test_runtime_settings.py` |
 | `model.deep_path` | ✅ **wired** (2026-06-21) | same override, mapped to the deep solver lane (`DEEP_MODEL`) |
-| `model.cloud_fallback_enabled` | ❌ dead | gate cloud routing in `llm_health_router` when local is down |
+| `model.cloud_fallback_enabled` | ✅ **wired** (2026-06-21) | authoritative in `autonomous_brain_integration`: `allow_cloud_fallback = requested AND model.cloud_fallback_enabled` (default off), so no caller can route off-box unless the user permits it. Tests: `tests/test_runtime_settings.py` |
 | `voice.input_enabled` | ✅ **wired** (2026-06-21) | gated in `LocalVoiceCortex.listen_loop` via `_user_voice_input_enabled` (`get_runtime_setting`): off ⇒ the loop never opens the mic capture stream (polls so re-enabling resumes, no restart). Tests: `tests/test_runtime_settings.py` |
 | `voice.output_enabled` | ✅ **wired** (2026-06-21) | gated in `SovereignVoiceEngine.synthesize_speech` + `speak_stream` via `core.runtime.runtime_settings.get_runtime_setting` (`_user_voice_output_enabled`); off ⇒ TTS short-circuits before synth/lock. Tests: `tests/test_runtime_settings.py` |
 | `voice.output_rate` | ❌ dead | pass to the TTS synth rate |
 | `permissions.camera` | ✅ **wired** (2026-06-21) | `core.runtime.permission_gates.camera_allowed` gates all camera capture entry points: `VisionSystem.capture` (returns `camera_permission_denied`), `SensoryMotorCortex` opencv stream + per-frame loop, `ProactivePerceptionV2._camera_loop`. Offline-tested; live-verify on hardware. |
 | `permissions.screen` | ✅ **wired** (2026-06-21) | `permission_gates.screen_allowed` gates `ComputerUseSkill._default_screenshot` (raises before screencapture AND the pyautogui fallback) and `ScreenSensor.read` (returns unavailable). Offline-tested; live-verify on hardware. |
 | `permissions.files_workspace` | ⚠️ deferred | `permission_gates.workspace_files_allowed` exists, but gating the central file gateway has high blast radius — wire deliberately with the gateway owner + live verification, not blind. |
-| `autonomy.proactive_messaging` | ❌ dead | gate/throttle the autonomous output path |
-| `autonomy.self_modification` (`blocked/staged/open`) | ❌ dead | map to the self-mod gate (finer than safe_mode) |
+| `autonomy.proactive_messaging` | ✅ **wired** (2026-06-21) | `ProactiveCommunicationManager._process_messages` skips all initiation when off (pending deque waits, resumes if re-enabled). Tests: `tests/test_runtime_settings.py` |
+| `autonomy.self_modification` (`blocked/staged/open`) | ✅ **wired** (2026-06-21) | `GrowthLadder.propose_modification` refuses outright when `blocked` (default `staged`/`open` proceed to the existing canary-gated path). Tests: `tests/test_runtime_settings.py` |
 | `memory.retention_days` | ❌ dead | feed the episodic memory reaper |
 | `memory.review_window` | ❌ dead | feed narrative-arc consolidation window |
 | `privacy.mode` | ❌ dead | drive perception redaction (`perception_runtime.privacy_mode` is an internal bool, not bound to this setting) + telemetry/world-bridge tightening |

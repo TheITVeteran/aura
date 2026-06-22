@@ -11,7 +11,18 @@ from enum import Enum
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.runtime_settings import get_runtime_setting
 from core.utils.task_tracker import get_task_tracker
+
+
+def _proactive_messaging_enabled() -> bool:
+    """Honor the user's autonomy.proactive_messaging toggle (default on).
+
+    When off, Aura does not initiate proactive messages (pending items simply
+    wait). Reads the persisted setting live; defaults on if unset/unreadable.
+    See docs/SETTINGS_WIRING_AUDIT.md.
+    """
+    return bool(get_runtime_setting("autonomy.proactive_messaging", True))
 
 logger = logging.getLogger("Aura.Proactive")
 
@@ -173,6 +184,10 @@ class ProactiveCommunicationManager:
             try:
                 await asyncio.sleep(5)
                 now = time.time()
+                if not _proactive_messaging_enabled():
+                    # User disabled proactive messaging: never initiate. Pending
+                    # messages wait (deque is bounded) and resume if re-enabled.
+                    continue
                 if self._next_processing_attempt_at > now:
                     continue
                 

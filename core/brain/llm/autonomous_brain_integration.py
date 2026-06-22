@@ -18,6 +18,7 @@ from core.config import config
 from core.container import get_container
 from core.runtime import service_access
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.runtime_settings import get_runtime_setting
 from core.utils.exceptions import capture_and_log
 
 from .function_calling_adapter import FunctionCallingAdapter
@@ -416,7 +417,12 @@ class AutonomousCognitiveEngine:
             
             is_background = bool(kwargs.get("is_background", False))
             deep_handoff = bool(kwargs.get("deep_handoff") or kwargs.get("allow_deep_handoff"))
-            allow_cloud_fallback = bool(kwargs.get("allow_cloud_fallback", False))
+            # The user's model.cloud_fallback_enabled (default off) is authoritative:
+            # even a caller that requests cloud fallback cannot route off-box unless
+            # the user permits it. (docs/SETTINGS_WIRING_AUDIT.md)
+            allow_cloud_fallback = bool(kwargs.get("allow_cloud_fallback", False)) and bool(
+                get_runtime_setting("model.cloud_fallback_enabled", False)
+            )
             requested_endpoint = kwargs.get("prefer_endpoint")
 
             from .model_registry import (
