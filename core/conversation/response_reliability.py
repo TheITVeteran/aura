@@ -1132,7 +1132,7 @@ def _semantic_coverage_reasons(user_message: Any, reply_text: Any) -> list[str]:
         unsupported_guarantee = bool(
             re.search(r"\b(?:can|will)\s+guarantee\b", reply)
             or re.search(
-                r"\b(?:will|definitely|certainly|always)\s+remember\b.*\b(?:tomorrow|later|future|next\s+(?:time|session)|across\s+sessions?)\b",
+                r"\b(?:(?:i|we|aura)(?:'|’)?ll|(?:i|we|aura)\s+will|will|definitely|certainly|always)\s+remember\b.*\b(?:tomorrow|later|future|next\s+(?:time|session)|across\s+sessions?)\b",
                 reply,
             )
         )
@@ -1145,7 +1145,7 @@ def _semantic_coverage_reasons(user_message: Any, reply_text: Any) -> list[str]:
                 reply,
             )
         )
-        if unsupported_guarantee and not (explicit_boundary or grounded_persistence):
+        if unsupported_guarantee and not explicit_boundary:
             reasons.append("unsupported_memory_guarantee")
         future_answered = bool(
             re.search(

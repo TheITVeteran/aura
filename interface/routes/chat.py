@@ -6788,6 +6788,10 @@ def _build_bounded_desktop_repair_reply(user_message: str, frame: dict[str, Any]
     if _is_low_risk_social_continuity_request(user_message):
         return _build_social_continuity_repair_reply(user_message)
 
+    identity = _build_bounded_identity_repair_reply(user_message)
+    if identity:
+        return _apply_aura_voice_shaping(identity)
+
     continuity_status = _build_runtime_status_continuity_repair_reply(user_message)
     if continuity_status:
         return _apply_aura_voice_shaping(continuity_status)
@@ -6826,6 +6830,29 @@ def _build_bounded_desktop_repair_reply(user_message: str, frame: dict[str, Any]
         "so I will keep this turn bounded instead of inventing an answer or pretending a tool ran. "
         f"My state is {mood}, leaning toward {action}. Ask me again in a moment and I will answer from the live path."
     )
+
+
+def _build_bounded_identity_repair_reply(user_message: str) -> str:
+    """Pressure-safe identity/continuity answer for the live desktop lane.
+
+    The live model still gets first chance. This is only used after that path
+    fails the user-facing gates, so a basic "what are you / will you remember"
+    turn does not collapse into a no-reply error or a raw assistant fallback.
+    """
+
+    if not (_is_identity_request(user_message) or _identity_request_asks_future_memory(user_message)):
+        return ""
+    reply = _build_identity_reply(user_message)
+    try:
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        assessment = assess_user_facing_reply(user_message, reply)
+        if assessment.retryable:
+            return ""
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Bounded desktop identity repair assessment skipped: %s", exc)
+    return reply
 
 
 def _build_bounded_cognitive_process_reply(
@@ -9763,6 +9790,23 @@ async def api_chat_regenerate(
             )
 
         if desktop_requires_cognitive_engine and not reply_text:
+            identity_repair = _build_bounded_identity_repair_reply(user_msg)
+            if identity_repair:
+                identity_repair = _apply_aura_voice_shaping(identity_repair)
+                lane = _mark_conversation_lane_state(
+                    "desktop_cognitive_engine_identity_repair",
+                    state="recovering",
+                )
+                return JSONResponse(
+                    {
+                        "response": identity_repair,
+                        "status": "desktop_cognitive_engine_identity_repair",
+                        "reason": "desktop_cognitive_engine_required_no_reply",
+                        "conversation_lane": lane,
+                        "response_confidence": "bounded",
+                        "regenerated": False,
+                    }
+                )
             bounded_repair = _build_bounded_cognitive_process_reply(user_msg)
             if bounded_repair:
                 bounded_repair = _apply_aura_voice_shaping(bounded_repair)
@@ -11160,6 +11204,45 @@ async def api_chat(
                         _apply_aura_voice_shaping(str(executed.get("response") or "")),
                         status=str(executed.get("status") or "desktop_objective"),
                     )
+
+            identity_repair = _build_bounded_identity_repair_reply(_semantic_user_message)
+            if identity_repair:
+                lane = _mark_conversation_lane_state(
+                    "desktop_cognitive_engine_identity_repair",
+                    state="recovering",
+                )
+                logger.warning(
+                    "Desktop CognitiveEngine produced no acceptable reply for an identity "
+                    "turn; serving bounded identity/continuity repair instead of legacy fallback."
+                )
+                identity_repair = _apply_aura_voice_shaping(identity_repair)
+                if pending_exchange_id:
+                    await _complete_logged_exchange(
+                        pending_exchange_id,
+                        _semantic_user_message,
+                        identity_repair,
+                        record_experience=True,
+                    )
+                    pending_exchange_id = None
+                await _emit_chat_output_receipt(
+                    identity_repair,
+                    cause="chat_response",
+                    metadata={
+                        "response_confidence": "bounded",
+                        "path": "desktop_cognitive_engine_identity_repair",
+                        "status": "desktop_cognitive_engine_identity_repair",
+                        "reason": "desktop_cognitive_engine_required_no_reply",
+                    },
+                )
+                return JSONResponse(
+                    {
+                        "response": identity_repair,
+                        "status": "desktop_cognitive_engine_identity_repair",
+                        "reason": "desktop_cognitive_engine_required_no_reply",
+                        "conversation_lane": lane,
+                        "response_confidence": "bounded",
+                    }
+                )
 
             capability_inventory = _build_bounded_capability_inventory_repair_reply(
                 _semantic_user_message

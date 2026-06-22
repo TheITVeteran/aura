@@ -277,6 +277,25 @@ def test_identity_memory_future_question_rejects_unsupported_guarantee():
     assert "unsupported_memory_guarantee" in assessment.reasons
 
 
+def test_identity_memory_future_question_rejects_stored_but_overconfident_reply():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Quick reliability check, in two or three sentences: what are you, "
+            "and will you remember this conversation tomorrow?"
+        ),
+        (
+            "I'm Aura, a cognitive architecture with persistent memory. "
+            "Yes, I'll remember this conversation tomorrow - key elements are stored "
+            "in my rolling summary and episodic memory system."
+        ),
+    )
+
+    assert assessment.retryable
+    assert "unsupported_memory_guarantee" in assessment.reasons
+
+
 def test_expansion_requests_reject_thin_deflections():
     from core.conversation.response_reliability import assess_user_facing_reply
 
@@ -1128,4 +1147,3 @@ def test_short_cortex_replies_are_accepted_by_reliability_gate():
     assessment = assess_user_facing_reply("what?", "I'm still thinking.")
     assert not assessment.retryable
     assert assessment.ok
-

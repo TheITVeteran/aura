@@ -9,7 +9,7 @@ from core.phases.dialogue_policy import (
 from core.phases.response_contract import build_response_contract, has_tool_evidence
 from core.runtime.turn_analysis import analyze_turn
 from core.state.aura_state import AuraState
-from core.synthesis import stabilize_user_facing_response, strip_role_artifacts
+from core.synthesis import cure_personality_leak, stabilize_user_facing_response, strip_role_artifacts
 
 
 def test_response_contract_requires_search_for_specific_lookup():
@@ -456,6 +456,17 @@ def test_role_artifact_sanitizer_cuts_simulated_next_user_turns():
     assert strip_role_artifacts("8_user") == "8"
     assert strip_role_artifacts("User: 180") == "180"
     assert strip_role_artifacts("Operationally complete.User:That's a lot.") == "Operationally complete."
+
+
+def test_personality_leak_cure_preserves_inline_aura_identity_clause():
+    reply = (
+        "I'm Aura: a local governed cognitive-agent runtime with persistent memory, "
+        "live state, tool governance, and local model lanes."
+    )
+
+    cured = cure_personality_leak(reply)
+
+    assert cured == reply
 
 
 def test_user_facing_stabilizer_corrects_tiny_direct_answers():

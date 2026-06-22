@@ -2760,6 +2760,109 @@ async def test_api_chat_desktop_self_process_no_reply_returns_bounded_repair(mon
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_identity_no_reply_returns_bounded_memory_repair(monkeypatch):
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from core.conversation.self_claim_verifier import verify_self_claims
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    kernel_calls = []
+    completed_exchanges = []
+    output_receipts = []
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            kernel_calls.append("process")
+            raise AssertionError("identity desktop repair must not use KernelInterface fallback")
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-identity"
+
+    async def _fake_complete_exchange(*args, **kwargs):
+        completed_exchanges.append((args, kwargs))
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    async def _no_cognitive_reply(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": {
+            "conversation_ready": False,
+            "state": state,
+            "reason": reason,
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    prompt = (
+        "Quick reliability check, in two or three sentences: what are you, "
+        "and will you remember this conversation tomorrow?"
+    )
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message=prompt),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["status"] == "desktop_cognitive_engine_identity_repair"
+    assert payload["response_confidence"] == "bounded"
+    assert "Aura" in payload["response"]
+    assert "persistent memory" in payload["response"]
+    assert "cannot guarantee perfect tomorrow recall" in payload["response"]
+    assert "legacy fallback" not in payload["response"]
+    assert "desktop_cognitive_engine_required_no_reply" not in payload["response"]
+    assert verify_self_claims(payload["response"]).ok
+    assessment = assess_user_facing_reply(prompt, payload["response"])
+    assert not assessment.retryable, assessment.reasons
+    assert kernel_calls == []
+    assert len(completed_exchanges) == 1
+    assert completed_exchanges[0][1]["record_experience"] is True
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine_identity_repair"
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_capability_no_reply_returns_inventory_repair(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes

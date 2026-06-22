@@ -55,8 +55,8 @@ BANNED_PHRASES = [
     r"(?i)my internal reasoning|in my thought process",
     r"(?im)^### \d+\. FINAL ANSWER.*$",
     r"(?im)^Final Answer:.*$",
-    r"(?im)[\n\s]User:.*$",
-    r"(?im)[\n\s]Aura:.*$",
+    r"(?im)(?:^|\n)\s*User:.*$",
+    r"(?im)(?:^|\n)\s*Aura:.*$",
     r"(?im)^User:.*$",
     r"(?im)^Aura:.*$",
 ]
