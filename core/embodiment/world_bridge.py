@@ -50,6 +50,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.WorldBridge")
@@ -191,6 +192,15 @@ class WorldBridge:
         intent: str,
         payload: dict[str, Any] | None = None,
     ) -> WorldActionResult:
+        # Privacy mode (docs/SETTINGS_WIRING_AUDIT.md): "isolated" pauses ALL
+        # consequential world actions; "private" pauses external posting. This is
+        # the single gate for world interactions, so the block is comprehensive.
+        privacy = str(get_runtime_setting("privacy.mode", "standard")).strip().lower()
+        if privacy == "isolated":
+            return WorldActionResult(channel=channel.value, ok=False, receipt_id="", error="privacy_mode_isolated")
+        if privacy == "private" and channel == Channel.SOCIAL_POST:
+            return WorldActionResult(channel=channel.value, ok=False, receipt_id="", error="privacy_mode_private")
+
         perm = _PERMS.status(channel)
         if perm is None or not perm.is_active():
             return WorldActionResult(channel=channel.value, ok=False, receipt_id="", error="permission_denied")

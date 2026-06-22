@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from core.memory.retention_policy import sovereign_pruner_target_retention
 from core.runtime.errors import record_degradation
+from core.runtime.runtime_settings import get_runtime_setting
 
 logger = logging.getLogger("Aura.SovereignPruner")
 
@@ -123,7 +124,12 @@ class SovereignPruner:
 
     def _score_memory(self, mem: MemoryRecord, current_values: dict[str, float]) -> float:
         age_days = (time.time() - mem.timestamp) / 86400
-        recency = max(0.0, 1.0 - (age_days / 90))
+        # Recency horizon = the user's memory.retention_days (default 365): a
+        # memory's recency score decays to 0 across that span, so longer retention
+        # keeps older memories competitive in the prune ranking. This is a ranking
+        # weight only — nothing is hard-deleted purely by age. (docs/SETTINGS_WIRING_AUDIT.md)
+        retention_days = max(7, int(get_runtime_setting("memory.retention_days", 365) or 365))
+        recency = max(0.0, 1.0 - (age_days / retention_days))
         score = recency * 0.15 + mem.emotional_weight * 0.30 + mem.identity_relevance * 0.35
         score += min(1.0, mem.referenced_count / 10) * 0.15
         for value, importance in current_values.items():

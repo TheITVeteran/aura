@@ -30,9 +30,9 @@ the settings→runtime bridge). Frontend-only settings are legitimately client-s
 | `permissions.files_workspace` | ⚠️ deferred | `permission_gates.workspace_files_allowed` exists, but gating the central file gateway has high blast radius — wire deliberately with the gateway owner + live verification, not blind. |
 | `autonomy.proactive_messaging` | ✅ **wired** (2026-06-21) | `ProactiveCommunicationManager._process_messages` skips all initiation when off (pending deque waits, resumes if re-enabled). Tests: `tests/test_runtime_settings.py` |
 | `autonomy.self_modification` (`blocked/staged/open`) | ✅ **wired** (2026-06-21) | `GrowthLadder.propose_modification` refuses outright when `blocked` (default `staged`/`open` proceed to the existing canary-gated path). Tests: `tests/test_runtime_settings.py` |
-| `memory.retention_days` | ❌ dead | feed the episodic memory reaper |
-| `memory.review_window` | ❌ dead | feed narrative-arc consolidation window |
-| `privacy.mode` | ❌ dead | drive perception redaction (`perception_runtime.privacy_mode` is an internal bool, not bound to this setting) + telemetry/world-bridge tightening |
+| `memory.retention_days` | ✅ **wired** (2026-06-21) | `SovereignPruner._score_memory` uses it as the recency-decay horizon (default 365, replacing a hardcoded 90): longer retention keeps old memories competitive in the prune ranking. Ranking weight only — nothing hard-deleted purely by age. Tests: `tests/test_runtime_settings.py` |
+| `memory.review_window` | ⚠️ deferred | no existing age-windowed consolidation consumer to bind to (`knowledge_curator` uses ad-hoc thresholds). Needs a real narrative-arc consolidation window built first, not a wire. |
+| `privacy.mode` | ✅ **partial** (2026-06-21) | `WorldBridge.call` (the single gate for consequential world actions) now blocks ALL external actions when `isolated` and external posting when `private`. Telemetry-tightening + perception-redaction effects remain separate/diffuse. Tests: `tests/test_runtime_settings.py` |
 | `dev.developer_mode` | ✅ **wired** (2026-06-21) | gates the `/api/trace/{receipt_id}` route in `dashboard.py` (403 `developer_mode_disabled` when off, default off). Tests: `tests/test_runtime_settings.py` |
 | `dev.diagnostics_enabled` | ❌ dead | gate the boot self-diagnostic |
 | `notify.enabled` | ✅ **wired** (2026-06-21) | `DesktopNotifier.send` short-circuits before the `osascript` toast when off (default on). Tests: `tests/test_runtime_settings.py` |

@@ -306,3 +306,60 @@ def test_cloud_fallback_setting_default_off(tmp_path):
     assert bool(get_runtime_setting("model.cloud_fallback_enabled", False)) is False
     _write_settings(tmp_path, {"model.cloud_fallback_enabled": True})
     assert bool(get_runtime_setting("model.cloud_fallback_enabled", False)) is True
+
+
+# ── memory.retention_days (recency horizon in the sovereign pruner) ──────────
+
+def test_memory_retention_days_extends_recency_horizon(tmp_path):
+    import time
+    from types import SimpleNamespace
+
+    from core.memory.sovereign_pruner import SovereignPruner
+
+    pruner = object.__new__(SovereignPruner)
+    old_mem = SimpleNamespace(
+        timestamp=time.time() - 180 * 86400,  # 180 days old
+        emotional_weight=0.0,
+        identity_relevance=0.0,
+        referenced_count=0,
+        content="x",
+    )
+    _write_settings(tmp_path, {"memory.retention_days": 365})
+    score_long = pruner._score_memory(old_mem, {})
+    _write_settings(tmp_path, {"memory.retention_days": 90})
+    score_short = pruner._score_memory(old_mem, {})
+    # A longer retention horizon keeps an old memory's recency competitive.
+    assert score_long > score_short
+
+
+# ── privacy.mode (world bridge gate) ────────────────────────────────────────
+
+def test_privacy_mode_isolated_blocks_world_bridge(tmp_path):
+    from core.embodiment.world_bridge import Channel, WorldBridge
+
+    _write_settings(tmp_path, {"privacy.mode": "isolated"})
+    bridge = WorldBridge()
+    result = asyncio.run(bridge.call(Channel.SOCIAL_POST, action="post", intent="share"))
+    assert result.ok is False
+    assert result.error == "privacy_mode_isolated"
+
+
+def test_privacy_mode_private_blocks_social_post(tmp_path):
+    from core.embodiment.world_bridge import Channel, WorldBridge
+
+    _write_settings(tmp_path, {"privacy.mode": "private"})
+    bridge = WorldBridge()
+    result = asyncio.run(bridge.call(Channel.SOCIAL_POST, action="post", intent="share"))
+    assert result.ok is False
+    assert result.error == "privacy_mode_private"
+
+
+def test_privacy_mode_standard_does_not_block_at_privacy_gate(tmp_path):
+    from core.embodiment.world_bridge import Channel, WorldBridge
+
+    # Default "standard": the privacy gate must not fire (call proceeds to the
+    # normal permission/will path, which denies for other reasons here).
+    bridge = WorldBridge()
+    result = asyncio.run(bridge.call(Channel.SOCIAL_POST, action="post", intent="share"))
+    assert result.ok is False
+    assert result.error not in ("privacy_mode_isolated", "privacy_mode_private")
