@@ -287,14 +287,70 @@ def l3_claim_summary(
     }
 
 
+async def prepare_mlx_runtime(args: argparse.Namespace) -> dict[str, Any]:
+    """Boot the canonical in-process MLX runtime — the exact cortex path the
+    final-proof cert certifies green — and expose its real llm_router /
+    cognitive_engine to the RSI engine via the ServiceContainer.
+
+    This is the modern alternative to spawning an external llama-server against a
+    GGUF model (which the MLX-based system no longer ships). The RSI engine's
+    LLMCodeGenerator resolves ("inference_gate", "llm_router", "cognitive_engine")
+    from the container, so a canonical boot is all that's needed — no custom
+    router. Mirrors tools/agi/run_dnu_agi_proof_battery.py's boot.
+    """
+    os.environ.setdefault("AURA_LOCAL_BACKEND", "mlx")
+    os.environ["AURA_PROOF_MODEL_TIER"] = "primary"
+    from aura_main import boot_aura_runtime
+    from core.container import ServiceContainer
+
+    orch = await boot_aura_runtime(
+        profile="proof",
+        ready_label="Proof-RSI",
+        readiness_context="autonomous_rsi_proof",
+        artifact_root=ROOT / "artifacts" / "current",
+    )
+    router = ServiceContainer.get("llm_router", default=None)
+    if router is not None and hasattr(router, "endpoints"):
+        # Keep the run on Cortex only (no second heavyweight local lane).
+        router.endpoints.pop("Solver", None)
+    engine = ServiceContainer.get("cognitive_engine", default=None) or getattr(orch, "cognitive_engine", None)
+    if engine is None:
+        raise RuntimeError("canonical boot completed without cognitive_engine")
+    if getattr(engine, "lobotomized", False):
+        raise RuntimeError("cognitive_engine is lobotomized; cannot run RSI proof")
+    return {
+        "backend": "mlx",
+        "runtime_url": "in-process://mlx-cortex",
+        "model": str(getattr(orch, "active_model", "") or "MLX-Cortex"),
+        "started_runtime": True,
+    }
+
+
+async def _shutdown_mlx_runtime() -> None:
+    with contextlib.suppress(Exception):
+        from aura_main import stop_aura
+
+        maybe = stop_aura()
+        if asyncio.iscoroutine(maybe):
+            await maybe
+
+
 async def run_generation(args: argparse.Namespace) -> tuple[Any, dict[str, Any]]:
-    runtime_info = await prepare_live_router(args)
-    print(f"Live 32B router ready: {runtime_info['model']} at {runtime_info['runtime_url']}")
+    if getattr(args, "backend", "mlx") == "mlx":
+        runtime_info = await prepare_mlx_runtime(args)
+        print(f"In-process MLX cortex ready: {runtime_info['model']}")
+    else:
+        runtime_info = await prepare_live_router(args)
+        print(f"Live 32B router ready: {runtime_info['model']} at {runtime_info['runtime_url']}")
     print(f"Starting Autonomous RSI Generation ({args.generations} generations)...")
 
     artifact_dir = Path("artifacts/rsi_frozen_generations")
     engine = AutonomousSuccessorEngine(artifact_dir)
-    result = await asyncio.to_thread(lambda: engine.run(generations=args.generations))
+    try:
+        result = await asyncio.to_thread(lambda: engine.run(generations=args.generations))
+    finally:
+        if runtime_info.get("backend") == "mlx":
+            await _shutdown_mlx_runtime()
     return result, runtime_info
 
 def main():
@@ -307,6 +363,13 @@ def main():
     parser.add_argument("--generation-timeout-s", type=float, default=600.0)
     parser.add_argument("--ready-timeout-s", type=float, default=180.0)
     parser.add_argument("--start-runtime", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--backend",
+        choices=("mlx", "llama_cpp"),
+        default=os.getenv("AURA_RSI_BACKEND", "mlx"),
+        help="mlx (default): boot the canonical in-process MLX cortex (the cert's proven mind). "
+        "llama_cpp: spawn an external llama-server against a GGUF model (legacy).",
+    )
     args = parser.parse_args()
 
     with proof_run_lock():
