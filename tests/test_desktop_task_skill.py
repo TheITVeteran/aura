@@ -1901,6 +1901,7 @@ def test_folder_extraction_handles_name_first_phrasing():
     assert extract("Save it inside the 'Aura's Journal' folder in Documents") == "Aura's Journal"
     assert extract('Put it in the "Research Notes" folder please') == "Research Notes"
     assert extract("a folder called 'Aura's Journal' in Documents") == "Aura's Journal"
+    assert extract('Create a folder titled "Aura\'s Journals." on my desktop') == "Aura's Journals"
 
 
 def test_execution_brief_is_rejected_as_document_content():

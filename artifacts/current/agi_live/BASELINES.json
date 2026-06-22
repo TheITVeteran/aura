@@ -1,9 +1,9 @@
 {
   "raw_llm": {
     "status": "RUN",
-    "pass_rate": 0.1667,
+    "pass_rate": 0.25,
     "total_tasks": 12,
-    "passed": 2,
+    "passed": 3,
     "sample_categories": {
       "coding": 3,
       "planning": 3,

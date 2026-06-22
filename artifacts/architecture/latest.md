@@ -7,8 +7,8 @@ Generated: `0.0`
 ## Summary
 
 - Subsystems: 146
-- Python files: 1933
-- Python lines: 537130
+- Python files: 1934
+- Python lines: 537426
 - Dependency edges: 798
 - ServiceContainer `.get()` calls: 1604
 - ServiceContainer registrations: 388
@@ -20,12 +20,12 @@ Generated: `0.0`
 graph TD
     runtime["runtime<br/>108 files, 25704 lines"]
     utils["utils<br/>43 files, 5822 lines"]
-    brain["brain<br/>119 files, 49451 lines"]
+    brain["brain<br/>119 files, 49535 lines"]
     memory["memory<br/>90 files, 20979 lines"]
     consciousness["consciousness<br/>134 files, 63115 lines"]
     resilience["resilience<br/>54 files, 12595 lines"]
     health["health<br/>3 files, 857 lines"]
-    agency["agency<br/>36 files, 14840 lines"]
+    agency["agency<br/>37 files, 15049 lines"]
     adaptation["adaptation<br/>26 files, 12345 lines"]
     affect["affect<br/>6 files, 2962 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
@@ -138,7 +138,7 @@ graph TD
     adapters["adapters<br/>3 files, 402 lines"]
     audits["audits<br/>2 files, 267 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>177 files, 55633 lines"]
+    core_root["core_root<br/>177 files, 55636 lines"]
     council["council<br/>5 files, 533 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     evals["evals<br/>1 files, 143 lines"]
@@ -969,14 +969,14 @@ graph TD
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | consciousness | 134 | 63115 | 2663608 | 40 | 29 |
-| core_root | 177 | 55633 | 2263715 | 99 | 0 |
-| brain | 119 | 49451 | 2125172 | 41 | 40 |
+| core_root | 177 | 55636 | 2264059 | 99 | 0 |
+| brain | 119 | 49535 | 2128978 | 41 | 40 |
 | runtime | 108 | 25704 | 915867 | 44 | 124 |
 | skills | 79 | 21403 | 879975 | 31 | 6 |
 | memory | 90 | 20979 | 848370 | 18 | 34 |
 | orchestrator | 42 | 19303 | 852398 | 125 | 9 |
 | phases | 29 | 18427 | 833776 | 33 | 7 |
-| agency | 36 | 14840 | 601627 | 29 | 18 |
+| agency | 37 | 15049 | 609910 | 29 | 18 |
 | resilience | 54 | 12595 | 509175 | 17 | 27 |
 | adaptation | 26 | 12345 | 493433 | 20 | 14 |
 | self_modification | 30 | 11458 | 455308 | 13 | 14 |
@@ -1221,7 +1221,7 @@ graph TD
 | --- | ---: | ---: | ---: | ---: |
 | UnifiedWill decisions | 55 | 29 | 2 | 53 |
 | Memory writes | 309 | 124 | 50 | 259 |
-| State mutation | 413 | 156 | 8 | 405 |
+| State mutation | 414 | 156 | 8 | 406 |
 | Tool execution | 94 | 47 | 6 | 88 |
 | Self-modification and patching | 14 | 11 | 1 | 13 |
 | LLM inference | 258 | 153 | 68 | 190 |

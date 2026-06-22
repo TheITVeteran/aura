@@ -603,6 +603,20 @@ def test_live_learner_autorun_training_requires_explicit_operator_policy(monkeyp
     assert learner._should_train() is True
 
 
+def test_voice_engine_imports_current_data_dir_path(monkeypatch):
+    """Voice boot must not regress to the historical core.common.paths DATA_DIR import."""
+    monkeypatch.setenv("AURA_AUTO_LISTEN", "0")
+
+    from core.self_model import DATA_FILE
+    from core.senses.voice_engine import SovereignVoiceEngine
+    from core.utils.paths import DATA_DIR
+
+    engine = SovereignVoiceEngine()
+
+    assert DATA_FILE == DATA_DIR / "self_model.json"
+    assert str(engine.data_dir).endswith("voice_models")
+
+
 @pytest.mark.asyncio
 async def test_continuous_vision_defers_screen_backend_without_permission(monkeypatch):
     class _FakeMSSModule:
