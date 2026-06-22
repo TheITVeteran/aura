@@ -21,6 +21,37 @@ logger = logging.getLogger("Aura.ActionLog")
 
 _MAX_ENTRIES = working_history_retention_policy("AURA_UNIFIED_ACTION_LOG_MAX_ENTRIES").max_items
 
+_DIAGNOSTIC_ACTION_PREFIXES = (
+    "ROUTER_ERROR:",
+    "TRACEBACK",
+    "EXCEPTION:",
+)
+_DIAGNOSTIC_ACTION_FRAGMENTS = (
+    "client_returned_no_text",
+    "foreground_owner_timeout",
+    "warmup_foreground_owner_timeout",
+    "all_failed",
+)
+
+
+def _is_diagnostic_noise_action(action: str, source: str = "", outcome: str = "") -> bool:
+    """Return True for diagnostics that must never enter behavioral history.
+
+    The unified action log is a causal/action stream. Router failures and
+    foreground timeout diagnostics belong in incident/degradation telemetry,
+    not in the stream that drives the neural feed and self-model. Persisting
+    them as actions makes Aura later "remember" infrastructure errors as if
+    they were meaningful behavior.
+    """
+    text = " ".join(str(part or "") for part in (action, source, outcome)).strip()
+    if not text:
+        return True
+    upper = text.upper()
+    if upper.startswith(_DIAGNOSTIC_ACTION_PREFIXES):
+        return True
+    lower = text.lower()
+    return any(fragment in lower for fragment in _DIAGNOSTIC_ACTION_FRAGMENTS)
+
 
 class UnifiedActionLog:
     """Single stream of all behavioral assertions across all subsystems."""
@@ -60,6 +91,12 @@ class UnifiedActionLog:
                 logger.debug("Skipping corrupt action log line: %s", exc)
                 continue
             if isinstance(entry, dict):
+                if _is_diagnostic_noise_action(
+                    str(entry.get("action", "") or ""),
+                    str(entry.get("source", "") or ""),
+                    str(entry.get("outcome", "") or ""),
+                ):
+                    continue
                 restored.append(entry)
 
         with self._lock:
@@ -84,6 +121,15 @@ class UnifiedActionLog:
             outcome: Result description
             metadata: Extra context
         """
+        if _is_diagnostic_noise_action(action, source, outcome):
+            logger.debug(
+                "Dropped diagnostic noise from unified action log: action=%r source=%r outcome=%r",
+                str(action)[:120],
+                str(source)[:120],
+                str(outcome)[:120],
+            )
+            return
+
         entry = {
             "t": time.time(),
             "action": action,

@@ -73,6 +73,67 @@ def test_unified_action_log_rehydrates_from_disk(tmp_path):
         paths_cls._runtime_home_cache = original_home
 
 
+def test_unified_action_log_drops_router_diagnostics(tmp_path):
+    from core.config import config
+    from core.unified_action_log import UnifiedActionLog
+
+    paths_cls = type(config.paths)
+    original_home = paths_cls._runtime_home_cache
+    paths_cls._runtime_home_cache = tmp_path
+    try:
+        data_dir = tmp_path / "data"
+        get_task_tracker().create_task(
+            get_storage_gateway().create_dir(
+                data_dir,
+                cause="test_unified_action_log_drops_router_diagnostics",
+            )
+        )
+        log_path = data_dir / "unified_action_log.jsonl"
+        log_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "t": 1,
+                            "action": "ROUTER_ERROR: client_returned_no_text (at all_failed)",
+                            "source": "ExecutiveAuthority.kernel",
+                            "gen": "gen3_constitutional",
+                            "gate": "released",
+                            "outcome": "approved:primary",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "t": 2,
+                            "action": "opened_note",
+                            "source": "desktop_task",
+                            "gen": "gen3_constitutional",
+                            "gate": "approved",
+                            "outcome": "ok",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        log = UnifiedActionLog()
+        log.record(
+            "ROUTER_ERROR: client_returned_no_text (at all_failed)",
+            "ExecutiveAuthority.kernel",
+            "gen3_constitutional",
+            "released",
+            "approved:primary",
+        )
+        items = log.recent(10)
+
+        assert [item["action"] for item in items] == ["opened_note"]
+        assert log.stats()["total"] == 1
+    finally:
+        paths_cls._runtime_home_cache = original_home
+
+
 @pytest.mark.asyncio
 async def test_dream_skill_uses_registered_dream_journal(monkeypatch):
     from core.skills.dream_skill import DreamSkill

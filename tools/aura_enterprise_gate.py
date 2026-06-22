@@ -190,6 +190,7 @@ SELF_DESCRIPTIVE_PATTERN_FILES = {
     "tests/test_semantic_marker_audit.py",
     "tools/agi/run_live_harness_proof.py",
     "tools/closeout/run_codebase_closeout_audit.py",
+    "tools/security_scan.py",
 }
 
 _TMP_PATH_PREFIX = "/" + "tmp" + "/"

@@ -89,7 +89,7 @@ def test_will_gating_under_threat():
     assert decision_critical.outcome == WillOutcome.CRITICAL_PASS
 
 
-def test_prompt_injection_under_threat():
+def test_prompt_keeps_existential_pressure_out_of_user_voice_under_threat():
     # 1. Create stakes with low memory limit so threat is 1.0
     stakes = ExistentialStakes(memory_limit_bytes=1000)
     stakes.update()
@@ -103,9 +103,9 @@ def test_prompt_injection_under_threat():
 
     # 2. Build system prompt
     prompt = ContextAssembler.build_system_prompt(state)
-    assert "SYSTEM RESOURCE WARNING" in prompt
-    assert "Felt Survival Threat Level: CRITICAL" in prompt
-    assert "Keep all responses brief" in prompt
+    assert "SYSTEM RESOURCE WARNING" not in prompt
+    assert "Felt Survival Threat Level" not in prompt
+    assert "Cognitive guidelines under existential pressure" not in prompt
 
 
 def test_sampling_parameter_modulation_under_threat():

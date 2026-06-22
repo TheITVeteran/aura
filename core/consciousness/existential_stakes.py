@@ -37,6 +37,7 @@ OPERATIONAL_THREAT_CAP = 0.70
 CRITICAL_THREAT_THRESHOLD = 0.75
 DEGRADATION_THREAT_WINDOW_S = 60.0
 DEGRADATION_THREAT_DENOMINATOR = 5.0
+DEGRADATION_THREAT_SATURATION_EPSILON = 1e-4
 CRITICAL_LOG_COOLDOWN_S = 30.0
 DEGRADATION_SEVERITY_WEIGHTS = {
     "critical": 2.0,
@@ -180,10 +181,15 @@ class ExistentialStakes:
 
             self._recent_degradation_weight = recent_degradation_weight
             # 5 fresh degraded-equivalent events in a minute is high threat.
-            self._degradation_threat = min(
-                1.0,
-                recent_degradation_weight / DEGRADATION_THREAT_DENOMINATOR,
-            )
+            if recent_degradation_weight >= (
+                DEGRADATION_THREAT_DENOMINATOR - DEGRADATION_THREAT_SATURATION_EPSILON
+            ):
+                self._degradation_threat = 1.0
+            else:
+                self._degradation_threat = min(
+                    1.0,
+                    recent_degradation_weight / DEGRADATION_THREAT_DENOMINATOR,
+                )
 
             # Combined Threat. Distinguish SURVIVAL pressure (genuine death
             # risk) from OPERATIONAL pressure (busy/laggy but not dying):
