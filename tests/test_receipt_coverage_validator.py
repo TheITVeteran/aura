@@ -343,8 +343,16 @@ def test_receipt_coverage_rejects_task_artifact_without_effect_evidence(tmp_path
     receipt = _canonical_will_receipt(receipt_id="will_task_pre_action")
     receipt["task_id"] = "task_without_effect"
     _write_jsonl(external / "RECEIPTS.jsonl", [receipt])
+    # A task that performed a CONSEQUENTIAL action (it executed a tool) but whose
+    # receipt carries no effect evidence must be rejected. Effect proof is scoped to
+    # real-world actions; a bare graded cognitive/sandbox event would not require it
+    # (see _record_effect_required), so the fixture performs an actual action.
     (external / "SCORECARD.json").write_text(
-        json.dumps({"tasks": [{"id": "task_without_effect", "passed": True}]}),
+        json.dumps({"tasks": [{
+            "id": "task_without_effect",
+            "passed": True,
+            "actions_taken": [{"tool": "shell", "action": "ran the repair"}],
+        }]}),
         encoding="utf-8",
     )
 

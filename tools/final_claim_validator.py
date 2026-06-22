@@ -188,8 +188,12 @@ FINAL_PROOF_STEP_OUTPUTS: dict[str, tuple[str, ...]] = {
         "agi_live/RUN_STATUS.json",
         "agi_live/SCORECARD.json",
         "agi_live/DNU_AGI_PROOF.json",
+        # MANIFEST.json is produced by the battery; freshness is checked against
+        # its producer, not the dnu_bundle_validate consumer that only reads it (a
+        # few-second battery->validate handoff was being mis-flagged as stale).
+        "agi_live/MANIFEST.json",
     ),
-    "dnu_bundle_validate": ("agi_live/MANIFEST.json",),
+    "dnu_bundle_validate": (),  # validator/consumer: emits no artifact of its own
     "agency_emergence_battery": ("agency_emergence_boxed_entity/SCORECARD.json",),
     "external_live_validation": ("external_live_validation/SCORECARD.json",),
     "unified_scenario": ("unified_system_scenario/SUMMARY.json",),

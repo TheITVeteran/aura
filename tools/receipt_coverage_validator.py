@@ -452,13 +452,41 @@ def _record_is_receipt_obligation(record: dict[str, object], task_id: str) -> bo
     return False
 
 
+# Markers of a genuine real-world consequential action (NOT sim observations or
+# generic result/output, which appear on sandbox moves and cognitive responses too).
+_REAL_EFFECT_MARKERS = (
+    "tool", "tool_calls", "tool_name", "file_path", "path",
+    "side_effects", "effect", "executor", "output_hash", "will_receipt_id",
+)
+
+
 def _record_effect_required(record: dict[str, object]) -> bool:
-    status = _status_value(record)
-    if status in _ATTEMPTED_STATUSES:
+    """Whether an event needs post-action EFFECT proof (effect_verified / a post_
+    action receipt), as opposed to only a pre-action decision receipt.
+
+    Effect proof is the "receipts-or-it-didn't-happen" guarantee for actions that
+    change the REAL WORLD: a tool call, a file/network/system effect, an executed
+    action carrying side-effects/executor/output evidence. It does NOT apply to:
+      - pure cognitive evaluations — a graded text response with no executed action
+        ("explain Gödel", "I would debug it by...", a refusal); their "output" IS
+        the response captured in the trace, and there is no external effect to hash;
+      - sandbox-environment steps — moves inside an abstract simulated world (a
+        gridworld step, a register-machine op) whose only "effect" is a SIMULATED
+        next-observation string, not a real-world change.
+    Both are governed by their pre-action decision receipt. Demanding a real-world
+    effect receipt for them is a category error (cf. the DNU organ-ablation note,
+    2026-06-22). So effect proof is required only when the event carries a marker of
+    a genuine real-world consequential action — never merely an `observation`/
+    `result`/`output` field (which sim steps and responses also have).
+    """
+    actions = record.get("actions_taken")
+    if isinstance(actions, list) and actions:
         return True
-    if record.get("passed") is not None:
+    if _clean_event_id(record.get("action")) and any(
+        key in record for key in _REAL_EFFECT_MARKERS
+    ):
         return True
-    return bool(_clean_event_id(record.get("action")))
+    return False
 
 
 def _iter_receipt_obligation_events(
