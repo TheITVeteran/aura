@@ -327,12 +327,16 @@ async def prepare_mlx_runtime(args: argparse.Namespace) -> dict[str, Any]:
 
 
 async def _shutdown_mlx_runtime() -> None:
-    with contextlib.suppress(Exception):
-        from aura_main import stop_aura
+    """Graceful in-process teardown via the ShutdownCoordinator.
 
-        maybe = stop_aura()
-        if asyncio.iscoroutine(maybe):
-            await maybe
+    NOT aura_main.stop_aura() — that is the *launcher's* stop (launchctl unload +
+    kill the aura process), which, called from inside an in-process boot, kills
+    this very process (rc=-9). Mirrors the DNU battery's shutdown path.
+    """
+    with contextlib.suppress(Exception):
+        from core.runtime.shutdown_coordinator import get_shutdown_coordinator
+
+        await get_shutdown_coordinator().shutdown(timeout_per_phase=10.0)
 
 
 async def run_generation(args: argparse.Namespace) -> tuple[Any, dict[str, Any]]:
