@@ -214,7 +214,20 @@ def current_git_dirty() -> bool | None:
         return None
     if proc.returncode != 0:
         return None
-    return bool(proc.stdout.strip())
+    # The clean-tree requirement is about committed SOURCE: the proof must run on
+    # committed code, not a developer's uncommitted edits. Generated artifacts are
+    # NOT source — the cert writes artifacts/ during its own run, and a handful are
+    # tracked (architecture map, agi_live/aletheia results) so they legitimately
+    # drift mid-run. Excluding them keeps the gate honest (real source drift still
+    # fails) without flagging the cert's own outputs. (2026-06-22)
+    for line in proc.stdout.splitlines():
+        path = line[3:] if len(line) > 3 else ""
+        if " -> " in path:  # rename: "old -> new"
+            path = path.split(" -> ", 1)[1]
+        path = path.strip().strip('"')
+        if path and not path.startswith("artifacts/"):
+            return True
+    return False
 
 
 def artifact_display_path(path: Path) -> str:
