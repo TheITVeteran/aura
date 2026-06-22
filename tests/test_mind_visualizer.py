@@ -50,8 +50,8 @@ def test_mind_page_exists_and_targets_inner_state():
     # Auth convention shared with the other dashboards.
     assert "sessionStorage.getItem('api_token')" in html
     # Core panels the renderer drives are present.
-    for marker in ("id=\"core\"", "id=\"valDot\"", "id=\"moodChips\"", "id=\"drives\"",
-                   "id=\"awake\"", "id=\"will\"", "id=\"intent\""):
+    for marker in ("id=\"core\"", "id=\"valNode\"", "id=\"moodChips\"", "id=\"drives\"",
+                   "id=\"awake\"", "id=\"will\"", "id=\"intent\"", "id=\"wholeArc\""):
         assert marker in html, f"mind.html missing panel: {marker}"
     # Plain-language framing for non-experts (no raw jargon as the primary label).
     for human in ("How she feels", "What she wants", "What's awake", "What am I looking at?"):
