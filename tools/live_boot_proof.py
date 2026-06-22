@@ -139,16 +139,19 @@ def build_safe_boot_env(
 
     env = dict(os.environ if base_env is None else base_env)
     mode = str(mode or "headless").strip().lower()
-    env.setdefault("AURA_LOCAL_BACKEND", "llama_cpp")
+    env.setdefault("AURA_LOCAL_BACKEND", "mlx")
     env.setdefault("AURA_SAFE_BOOT_DESKTOP", "1")
+    env.setdefault("AURA_LOCAL_RUNTIME_SINGLETON", "1")
+    env.setdefault("AURA_LOCAL_PARALLEL_SLOTS", "1")
     if mode == "desktop":
         env["AURA_HEADLESS"] = "0"
         env["AURA_LAUNCHED_FROM_APP"] = "1"
         env["AURA_EXTERNAL_GUI_OWNER"] = "1"
         env.setdefault("AURA_EAGER_CORTEX_WARMUP", "0")
-        env.setdefault("AURA_DEFERRED_CORTEX_PREWARM", "auto")
+        env.setdefault("AURA_DEFERRED_CORTEX_PREWARM", "1")
     else:
         env.setdefault("AURA_HEADLESS", "1")
+        env.setdefault("AURA_DEFERRED_CORTEX_PREWARM", "1")
     env.setdefault("AURA_EAGER_LOCAL_SENSORY_BOOT", "0")
     env.setdefault("AURA_ENABLE_PROACTIVE_VISION", "0")
     env.setdefault("AURA_SAFE_BOOT_METAL_CACHE_RATIO", "0.16")

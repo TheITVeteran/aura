@@ -644,7 +644,7 @@ def _maybe_relaunch_with_preferred_python():
     # Aura's own in-process fine-tuned mind, which the substrate can steer) across
     # the interpreter relaunch. Previously this unconditionally forced llama_cpp,
     # which silently overrode any attempt to use the MLX/native model lane.
-    env.setdefault("AURA_LOCAL_BACKEND", "llama_cpp")
+    env.setdefault("AURA_LOCAL_BACKEND", "mlx")
     os.execve(str(preferred), [str(preferred), *sys.argv], env)
 
 # ---------------------------------------------------------------------------

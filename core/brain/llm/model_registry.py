@@ -19,7 +19,7 @@ from typing import Any
 from core.runtime.runtime_settings import get_runtime_setting
 
 BASE_DIR = Path(os.getenv("AURA_ROOT", Path(__file__).resolve().parents[3]))
-LOCAL_BACKEND = str(os.getenv("AURA_LOCAL_BACKEND", "llama_cpp")).strip().lower()
+LOCAL_BACKEND = str(os.getenv("AURA_LOCAL_BACKEND", "mlx")).strip().lower()
 
 PRIMARY_ENDPOINT = "Cortex"
 DEEP_ENDPOINT = "Solver"
@@ -48,7 +48,7 @@ LEGACY_ENDPOINT_ALIASES = {
 
 
 def _normalize_backend_name(value: str | None) -> str:
-    return str(value or LOCAL_BACKEND or "llama_cpp").strip().lower()
+    return str(value or LOCAL_BACKEND or "mlx").strip().lower()
 
 
 def normalize_runtime_model_name(model_name: str | None, *, backend: str | None = None) -> str:

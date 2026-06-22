@@ -223,6 +223,13 @@ class SensoryMotorCortex:
 
         orch = self.orchestrator
         if orch is not None:
+            # Active foreground processing IS activity → advance the idle clock and
+            # defer. Checked first (and without needing the background-policy import)
+            # so genuine work resets boredom even if the policy probe is unavailable.
+            status = getattr(orch, "status", None)
+            if getattr(status, "is_processing", False):
+                self.last_interaction_time = max(self.last_interaction_time, now)
+                return False
             try:
                 from core.runtime.background_policy import (
                     THOUGHT_BACKGROUND_POLICY,
@@ -243,16 +250,12 @@ class SensoryMotorCortex:
                 )
                 if policy_reason:
                     logger.debug("SensoryMotorCortex: idle volition deferred: %s", policy_reason)
-                    self.last_interaction_time = max(self.last_interaction_time, now)
+                    # A resource/policy deferral is NOT user activity — preserve the
+                    # synced user-interaction time so genuine idleness still accrues.
                     return False
             except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("sensory_motor_cortex", exc)
                 logger.debug("SensoryMotorCortex: background policy probe failed: %s", exc)
-
-            status = getattr(orch, "status", None)
-            if getattr(status, "is_processing", False):
-                self.last_interaction_time = max(self.last_interaction_time, now)
-                return False
 
             current_task = getattr(orch, "_current_thought_task", None)
             if current_task is not None and hasattr(current_task, "done") and not current_task.done():

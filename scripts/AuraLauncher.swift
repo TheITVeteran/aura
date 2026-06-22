@@ -1104,7 +1104,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         env["AURA_LAUNCHED_FROM_APP"] = "1"
         env["AURA_SAFE_BOOT_DESKTOP"] = "1"
         env["AURA_EAGER_CORTEX_WARMUP"] = "0"
-        env["AURA_DEFERRED_CORTEX_PREWARM"] = "auto"
+        env["AURA_DEFERRED_CORTEX_PREWARM"] = "1"
         env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] = "0.16"
         env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] = "10"
         env["AURA_SAFE_BOOT_MLX_MEMORY_RATIO"] = "0.44"
@@ -1114,6 +1114,12 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         env["AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB"] = "36"
         env["AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB"] = "24"
         env["AURA_PROCESS_RSS_LIMIT_GB"] = "36"
+        env["AURA_LOCAL_RUNTIME_SINGLETON"] = "1"
+        env["AURA_LOCAL_PARALLEL_SLOTS"] = "1"
+        env["AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB"] = "24"
+        env["AURA_MLX_32B_PROJECTED_FOOTPRINT_GB"] = "35"
+        env["AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB"] = "52"
+        env["AURA_MLX_72B_PROJECTED_FOOTPRINT_GB"] = "41"
         env["AURA_FOREGROUND_CHAT_MAX_TOKENS"] = "2048"
         env["AURA_EXTERNAL_GUI_OWNER"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
@@ -1168,7 +1174,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         export AURA_SAFE_BOOT_DESKTOP=1
         export AURA_EXTERNAL_GUI_OWNER=1
         export AURA_EAGER_CORTEX_WARMUP=0
-        export AURA_DEFERRED_CORTEX_PREWARM=0
+        export AURA_DEFERRED_CORTEX_PREWARM=1
         export AURA_SAFE_BOOT_METAL_CACHE_RATIO=0.16
         export AURA_SAFE_BOOT_METAL_CACHE_CAP_GB=10
         export AURA_SAFE_BOOT_MLX_MEMORY_RATIO=0.44
@@ -1178,6 +1184,12 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         export AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB=36
         export AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB=24
         export AURA_PROCESS_RSS_LIMIT_GB=36
+        export AURA_LOCAL_RUNTIME_SINGLETON=1
+        export AURA_LOCAL_PARALLEL_SLOTS=1
+        export AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB=24
+        export AURA_MLX_32B_PROJECTED_FOOTPRINT_GB=35
+        export AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB=52
+        export AURA_MLX_72B_PROJECTED_FOOTPRINT_GB=41
         export AURA_FOREGROUND_CHAT_MAX_TOKENS=2048
         \(pieces.joined(separator: " "))
         """

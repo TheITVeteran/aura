@@ -12,6 +12,7 @@ from core.brain.llm import local_server_client
 from core.brain.llm.local_server_client import (
     _SERVER_CLIENTS,
     LocalServerClient,
+    _memory_pressure_blocks_server_spawn,
     _thread_lock_context,
 )
 from core.brain.memory_guard import ContextPruner
@@ -139,6 +140,102 @@ async def test_foreground_solver_evicts_existing_cortex_before_start():
     assert allowed is True
     assert calls == [("yield_to:Solver", False)]
     assert cortex.get_lane_status()["state"] == "cold"
+
+
+def test_local_server_spawn_blocks_32b_projected_process_overcommit(monkeypatch):
+    gib = 1024**3
+    monkeypatch.setattr(
+        local_server_client.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(total=int(64.0 * gib)),
+    )
+
+    import core.utils.memory_monitor as memory_monitor
+
+    snapshot = SimpleNamespace(
+        refuse_heavy_local_generation=False,
+        available_gb=40.0,
+        process_rss_gb=8.0,
+        process_rss_limit_gb=36.0,
+        reason="",
+    )
+    monkeypatch.setattr(memory_monitor, "get_memory_pressure_snapshot", lambda: snapshot)
+    monkeypatch.delenv("AURA_LOCAL_SERVER_32B_PROJECTED_FOOTPRINT_GB", raising=False)
+
+    reason = _memory_pressure_blocks_server_spawn(QWEN32_GGUF)
+
+    assert reason is not None
+    assert "projected_process_tree_rss:8.0GB+35.0GB=43.0GB" in reason
+
+
+def test_local_server_spawn_blocks_72b_without_safe_headroom(monkeypatch):
+    gib = 1024**3
+    monkeypatch.setattr(
+        local_server_client.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(total=int(64.0 * gib)),
+    )
+
+    import core.utils.memory_monitor as memory_monitor
+
+    snapshot = SimpleNamespace(
+        refuse_heavy_local_generation=False,
+        available_gb=48.0,
+        process_rss_gb=4.0,
+        process_rss_limit_gb=36.0,
+        reason="",
+    )
+    monkeypatch.setattr(memory_monitor, "get_memory_pressure_snapshot", lambda: snapshot)
+    monkeypatch.delenv("AURA_LOCAL_SERVER_72B_LOAD_MIN_AVAILABLE_GB", raising=False)
+
+    reason = _memory_pressure_blocks_server_spawn(QWEN72_GGUF)
+
+    assert reason is not None
+    assert "model_load_headroom:Solver" in reason
+    assert "required 52.0GB" in reason
+
+
+def test_local_server_heavy_spawn_fails_closed_when_memory_probe_unavailable(monkeypatch):
+    import core.utils.memory_monitor as memory_monitor
+
+    attempts: list[int] = []
+
+    def _failing_probe():
+        # A probe double that records the attempt, then fails — the exact
+        # failure path under test (do work before raising).
+        attempts.append(1)
+        raise OSError("memory probe unavailable")
+
+    monkeypatch.setattr(memory_monitor, "get_memory_pressure_snapshot", _failing_probe)
+
+    assert _memory_pressure_blocks_server_spawn(QWEN32_GGUF) == "memory_probe_unavailable"
+    assert attempts, "memory probe should have been attempted before failing closed"
+
+
+def test_local_server_spawn_raises_before_process_start_when_admission_refuses(monkeypatch, tmp_path):
+    model_path = tmp_path / "qwen2.5-32b-instruct-q5_k_m.gguf"
+    model_path.write_text("synthetic 32b model bytes for admission test", encoding="utf-8")
+    client = LocalServerClient(str(model_path))
+    popen_called = False
+
+    def _popen_should_not_run(*_args, **_kwargs):
+        nonlocal popen_called
+        popen_called = True
+        raise AssertionError("spawn must be blocked before subprocess")
+
+    monkeypatch.setattr(
+        local_server_client,
+        "_memory_pressure_blocks_server_spawn",
+        lambda _model_path: "projected_process_tree_rss:blocked",
+    )
+    monkeypatch.setattr(local_server_client.subprocess, "Popen", _popen_should_not_run)
+
+    with pytest.raises(RuntimeError, match="memory_admission"):
+        client._spawn_server_blocking()
+
+    assert popen_called is False
+    assert client.get_lane_status()["state"] == "recovering"
+    assert "memory_admission" in client.get_lane_status()["last_error"]
 
 
 @pytest.mark.asyncio

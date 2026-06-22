@@ -291,9 +291,12 @@ def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
 
     env = build_safe_boot_env({})
 
-    assert env["AURA_LOCAL_BACKEND"] == "llama_cpp"
+    assert env["AURA_LOCAL_BACKEND"] == "mlx"
     assert env["AURA_SAFE_BOOT_DESKTOP"] == "1"
     assert env["AURA_HEADLESS"] == "1"
+    assert env["AURA_DEFERRED_CORTEX_PREWARM"] == "1"
+    assert env["AURA_LOCAL_RUNTIME_SINGLETON"] == "1"
+    assert env["AURA_LOCAL_PARALLEL_SLOTS"] == "1"
     assert env["AURA_EAGER_LOCAL_SENSORY_BOOT"] == "0"
     assert env["AURA_ENABLE_PROACTIVE_VISION"] == "0"
     assert env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] == "0.16"
@@ -314,13 +317,13 @@ def test_live_boot_proof_desktop_mode_mirrors_packaged_launcher(monkeypatch):
 
     env = build_safe_boot_env({}, mode="desktop")
 
-    assert env["AURA_LOCAL_BACKEND"] == "llama_cpp"
+    assert env["AURA_LOCAL_BACKEND"] == "mlx"
     assert env["AURA_SAFE_BOOT_DESKTOP"] == "1"
     assert env["AURA_HEADLESS"] == "0"
     assert env["AURA_LAUNCHED_FROM_APP"] == "1"
     assert env["AURA_EXTERNAL_GUI_OWNER"] == "1"
     assert env["AURA_EAGER_CORTEX_WARMUP"] == "0"
-    assert env["AURA_DEFERRED_CORTEX_PREWARM"] == "auto"
+    assert env["AURA_DEFERRED_CORTEX_PREWARM"] == "1"
 
 
 def test_live_boot_proof_preserves_operator_mlx_limit(monkeypatch):

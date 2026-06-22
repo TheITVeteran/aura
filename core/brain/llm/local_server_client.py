@@ -166,6 +166,80 @@ def _lane_gpu_layers(model_path: str) -> str:
     return os.getenv("AURA_LOCAL_GPU_LAYERS", "99")
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _local_server_load_min_available_gb(model_path: str) -> float:
+    lane = _readable_lane_name(model_path)
+    try:
+        total_gb = psutil.virtual_memory().total / float(1024**3)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, psutil.Error):
+        total_gb = 0.0
+    if lane == DEEP_ENDPOINT:
+        default = 52.0 if 0.0 < total_gb < 96.0 else 34.0
+        return _env_float("AURA_LOCAL_SERVER_72B_LOAD_MIN_AVAILABLE_GB", default)
+    if lane == PRIMARY_ENDPOINT:
+        default = 24.0 if total_gb >= 60.0 else 22.0
+        return _env_float("AURA_LOCAL_SERVER_32B_LOAD_MIN_AVAILABLE_GB", default)
+    if lane == BRAINSTEM_ENDPOINT:
+        return _env_float("AURA_LOCAL_SERVER_7B_LOAD_MIN_AVAILABLE_GB", 6.0)
+    return _env_float("AURA_LOCAL_SERVER_LOAD_MIN_AVAILABLE_GB", 3.0)
+
+
+def _local_server_projected_footprint_gb(model_path: str) -> float:
+    lane = _readable_lane_name(model_path)
+    if lane == DEEP_ENDPOINT:
+        return _env_float("AURA_LOCAL_SERVER_72B_PROJECTED_FOOTPRINT_GB", 41.0)
+    if lane == PRIMARY_ENDPOINT:
+        return _env_float("AURA_LOCAL_SERVER_32B_PROJECTED_FOOTPRINT_GB", 35.0)
+    if lane == BRAINSTEM_ENDPOINT:
+        return _env_float("AURA_LOCAL_SERVER_7B_PROJECTED_FOOTPRINT_GB", 5.0)
+    return _env_float("AURA_LOCAL_SERVER_PROJECTED_FOOTPRINT_GB", 2.0)
+
+
+def _memory_pressure_blocks_server_spawn(model_path: str) -> str | None:
+    """Return a fail-closed admission reason before spawning llama-server."""
+
+    lane = _readable_lane_name(model_path)
+    try:
+        from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+        snapshot = get_memory_pressure_snapshot()
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError, psutil.Error) as exc:
+        logger.debug("Local runtime memory admission probe unavailable: %s", exc)
+        if lane in {PRIMARY_ENDPOINT, DEEP_ENDPOINT}:
+            return "memory_probe_unavailable"
+        return None
+
+    if getattr(snapshot, "refuse_heavy_local_generation", False):
+        return str(getattr(snapshot, "reason", "") or "critical_memory_pressure")
+
+    min_available_gb = _local_server_load_min_available_gb(model_path)
+    available_gb = float(getattr(snapshot, "available_gb", 0.0) or 0.0)
+    if available_gb < min_available_gb:
+        return (
+            f"model_load_headroom:{lane}:available {available_gb:.1f}GB "
+            f"< required {min_available_gb:.1f}GB"
+        )
+
+    projected_footprint_gb = _local_server_projected_footprint_gb(model_path)
+    process_rss_gb = float(getattr(snapshot, "process_rss_gb", 0.0) or 0.0)
+    process_limit_gb = float(getattr(snapshot, "process_rss_limit_gb", 0.0) or 0.0)
+    projected_process_rss_gb = process_rss_gb + projected_footprint_gb
+    if process_limit_gb > 0.0 and projected_process_rss_gb > process_limit_gb:
+        return (
+            f"projected_process_tree_rss:{process_rss_gb:.1f}GB+"
+            f"{projected_footprint_gb:.1f}GB={projected_process_rss_gb:.1f}GB "
+            f"> limit {process_limit_gb:.1f}GB"
+        )
+
+    return None
+
+
 class LocalServerClient:
     """Managed local OpenAI-compatible server client.
 
@@ -720,6 +794,16 @@ class LocalServerClient:
             raise RuntimeError("local_runtime_unavailable:llama-server-missing")
         if not Path(self.model_path).exists():
             raise RuntimeError(f"local_runtime_unavailable:model_missing:{self.model_path}")
+        memory_block = _memory_pressure_blocks_server_spawn(self.model_path)
+        if memory_block:
+            self._set_lane_state("recovering", f"memory_admission:{memory_block[:180]}")
+            self._record_degraded_event(
+                "local_runtime_memory_admission_refused",
+                detail=f"{self._lane_name}:{memory_block}",
+                severity="critical",
+                foreground_request=True,
+            )
+            raise RuntimeError(f"local_runtime_unavailable:memory_admission:{memory_block}")
 
         if self._log_handle is None or self._log_handle.closed:
             self._log_handle = self._log_path().open("a", encoding="utf-8")
