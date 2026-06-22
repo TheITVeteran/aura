@@ -1,20 +1,41 @@
 {
   "raw_llm": {
     "status": "RUN",
-    "pass_rate": 0.3,
-    "total_tasks": 10,
-    "passed": 3
+    "pass_rate": 0.1667,
+    "total_tasks": 12,
+    "passed": 2,
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "llm_with_tools": {
     "status": "RUN",
-    "pass_rate": 0.3,
-    "total_tasks": 10,
-    "passed": 3
+    "pass_rate": 0.1667,
+    "total_tasks": 12,
+    "passed": 2,
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "react_agent": {
     "status": "RUN",
-    "pass_rate": 0.3,
-    "total_tasks": 10,
-    "passed": 3
+    "pass_rate": 0.1667,
+    "total_tasks": 12,
+    "passed": 2,
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   }
 }

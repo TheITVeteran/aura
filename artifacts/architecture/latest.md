@@ -7,8 +7,8 @@ Generated: `0.0`
 ## Summary
 
 - Subsystems: 146
-- Python files: 1931
-- Python lines: 536726
+- Python files: 1933
+- Python lines: 537130
 - Dependency edges: 798
 - ServiceContainer `.get()` calls: 1604
 - ServiceContainer registrations: 388
@@ -18,11 +18,11 @@ Generated: `0.0`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>106 files, 25591 lines"]
+    runtime["runtime<br/>108 files, 25704 lines"]
     utils["utils<br/>43 files, 5822 lines"]
-    brain["brain<br/>119 files, 49419 lines"]
-    memory["memory<br/>90 files, 20973 lines"]
-    consciousness["consciousness<br/>134 files, 63109 lines"]
+    brain["brain<br/>119 files, 49451 lines"]
+    memory["memory<br/>90 files, 20979 lines"]
+    consciousness["consciousness<br/>134 files, 63115 lines"]
     resilience["resilience<br/>54 files, 12595 lines"]
     health["health<br/>3 files, 857 lines"]
     agency["agency<br/>36 files, 14840 lines"]
@@ -30,8 +30,8 @@ graph TD
     affect["affect<br/>6 files, 2962 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
     identity["identity<br/>17 files, 2354 lines"]
-    self_modification["self_modification<br/>30 files, 11443 lines"]
-    senses["senses<br/>24 files, 5286 lines"]
+    self_modification["self_modification<br/>30 files, 11458 lines"]
+    senses["senses<br/>24 files, 5357 lines"]
     governance["governance<br/>8 files, 3192 lines"]
     state["state<br/>6 files, 3676 lines"]
     security["security<br/>26 files, 5273 lines"]
@@ -42,7 +42,7 @@ graph TD
     world_model["world_model<br/>9 files, 2592 lines"]
     continuity["continuity<br/>7 files, 238 lines"]
     being["being<br/>25 files, 5748 lines"]
-    conversation["conversation<br/>9 files, 6225 lines"]
+    conversation["conversation<br/>9 files, 6262 lines"]
     phases["phases<br/>29 files, 18427 lines"]
     tasks["tasks<br/>3 files, 451 lines"]
     world["world<br/>24 files, 1483 lines"]
@@ -66,7 +66,7 @@ graph TD
     bus["bus<br/>5 files, 2318 lines"]
     cognitive["cognitive<br/>12 files, 9212 lines"]
     collective["collective<br/>6 files, 2046 lines"]
-    embodiment["embodiment<br/>15 files, 2646 lines"]
+    embodiment["embodiment<br/>15 files, 2656 lines"]
     ethics["ethics<br/>1 files, 310 lines"]
     evaluation["evaluation<br/>12 files, 2283 lines"]
     kernel["kernel<br/>11 files, 6175 lines"]
@@ -108,7 +108,7 @@ graph TD
     sovereign["sovereign<br/>4 files, 554 lines"]
     startup["startup<br/>2 files, 330 lines"]
     audit["audit<br/>6 files, 537 lines"]
-    body["body<br/>22 files, 1362 lines"]
+    body["body<br/>22 files, 1370 lines"]
     consent["consent<br/>2 files, 167 lines"]
     context["context<br/>4 files, 1215 lines"]
     creativity["creativity<br/>2 files, 801 lines"]
@@ -138,7 +138,7 @@ graph TD
     adapters["adapters<br/>3 files, 402 lines"]
     audits["audits<br/>2 files, 267 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>177 files, 55533 lines"]
+    core_root["core_root<br/>177 files, 55633 lines"]
     council["council<br/>5 files, 533 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     evals["evals<br/>1 files, 143 lines"]
@@ -163,7 +163,7 @@ graph TD
     systems["systems<br/>3 files, 256 lines"]
     telemetry["telemetry<br/>2 files, 191 lines"]
     temporal["temporal<br/>3 files, 1507 lines"]
-    tools["tools<br/>9 files, 863 lines"]
+    tools["tools<br/>9 files, 869 lines"]
     runtime --> actuators
     runtime --> adaptation
     runtime --> agency
@@ -968,28 +968,28 @@ graph TD
 
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| consciousness | 134 | 63109 | 2663334 | 40 | 29 |
-| core_root | 177 | 55533 | 2259299 | 99 | 0 |
-| brain | 119 | 49419 | 2123780 | 41 | 40 |
-| runtime | 106 | 25591 | 911708 | 44 | 124 |
+| consciousness | 134 | 63115 | 2663608 | 40 | 29 |
+| core_root | 177 | 55633 | 2263715 | 99 | 0 |
+| brain | 119 | 49451 | 2125172 | 41 | 40 |
+| runtime | 108 | 25704 | 915867 | 44 | 124 |
 | skills | 79 | 21403 | 879975 | 31 | 6 |
-| memory | 90 | 20973 | 847860 | 18 | 34 |
+| memory | 90 | 20979 | 848370 | 18 | 34 |
 | orchestrator | 42 | 19303 | 852398 | 125 | 9 |
 | phases | 29 | 18427 | 833776 | 33 | 7 |
 | agency | 36 | 14840 | 601627 | 29 | 18 |
 | resilience | 54 | 12595 | 509175 | 17 | 27 |
 | adaptation | 26 | 12345 | 493433 | 20 | 14 |
-| self_modification | 30 | 11443 | 454677 | 13 | 14 |
+| self_modification | 30 | 11458 | 455308 | 13 | 14 |
 | cognitive | 12 | 9212 | 373941 | 9 | 4 |
 | environment | 82 | 8517 | 332342 | 11 | 2 |
 | autonomy | 22 | 7764 | 318707 | 17 | 6 |
 | learning | 28 | 7392 | 293108 | 15 | 6 |
-| conversation | 9 | 6225 | 229878 | 12 | 7 |
+| conversation | 9 | 6262 | 230657 | 12 | 7 |
 | kernel | 11 | 6175 | 258110 | 25 | 4 |
 | utils | 43 | 5822 | 226011 | 17 | 50 |
 | being | 25 | 5748 | 223125 | 4 | 7 |
 | architect | 25 | 5737 | 239735 | 9 | 2 |
-| senses | 24 | 5286 | 222523 | 20 | 14 |
+| senses | 24 | 5357 | 225144 | 20 | 14 |
 | security | 26 | 5273 | 209203 | 12 | 12 |
 | capabilities | 13 | 5105 | 197118 | 9 | 5 |
 | perception | 18 | 4988 | 200076 | 11 | 5 |
@@ -1005,7 +1005,7 @@ graph TD
 | affect | 6 | 2962 | 137218 | 13 | 14 |
 | advanced_cognition | 13 | 2905 | 118305 | 3 | 2 |
 | morphogenesis | 12 | 2861 | 110971 | 7 | 3 |
-| embodiment | 15 | 2646 | 103210 | 12 | 4 |
+| embodiment | 15 | 2656 | 103934 | 12 | 4 |
 | world_model | 9 | 2592 | 106119 | 9 | 9 |
 | unity | 11 | 2527 | 103907 | 3 | 5 |
 | ops | 11 | 2463 | 96047 | 15 | 5 |
@@ -1025,7 +1025,7 @@ graph TD
 | agi | 6 | 1520 | 63529 | 13 | 4 |
 | temporal | 3 | 1507 | 50941 | 2 | 0 |
 | world | 24 | 1483 | 54104 | 3 | 7 |
-| body | 22 | 1362 | 48162 | 5 | 1 |
+| body | 22 | 1370 | 48505 | 5 | 1 |
 | meta | 7 | 1267 | 47564 | 5 | 5 |
 | providers | 6 | 1245 | 54778 | 53 | 0 |
 | workspace | 9 | 1242 | 45306 | 3 | 3 |
@@ -1039,7 +1039,7 @@ graph TD
 | promotion | 6 | 936 | 31616 | 1 | 4 |
 | autonomic | 4 | 903 | 37623 | 5 | 5 |
 | sovereignty | 3 | 885 | 33782 | 10 | 1 |
-| tools | 9 | 863 | 31892 | 4 | 0 |
+| tools | 9 | 869 | 32298 | 4 | 0 |
 | health | 3 | 857 | 32583 | 7 | 22 |
 | creativity | 2 | 801 | 33361 | 3 | 1 |
 | factory | 8 | 758 | 29090 | 3 | 1 |

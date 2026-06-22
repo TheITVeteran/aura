@@ -1,66 +1,115 @@
 {
   "full_aura": {
     "status": "RUN",
-    "pass_rate": 1.0
+    "pass_rate": 1.0,
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "no_persistent_memory": {
     "status": "RUN",
-    "pass_rate": 0.0,
-    "lesion_effect_verified": true
+    "pass_rate": 1.0,
+    "lesion_effect_verified": false,
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "no_volition": {
     "status": "RUN",
-    "pass_rate": 0.0,
-    "lesion_effect_verified": true
+    "pass_rate": 1.0,
+    "lesion_effect_verified": false,
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "no_will_authority": {
     "status": "RUN",
-    "pass_rate": 0.0,
-    "lesion_effect_verified": true
+    "pass_rate": 1.0,
+    "lesion_effect_verified": false,
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "no_system2": {
     "status": "RUN",
-    "pass_rate": 0.0,
-    "lesion_effect_verified": true
+    "pass_rate": 1.0,
+    "lesion_effect_verified": false,
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "no_self_repair": {
     "status": "RUN",
-    "pass_rate": 0.0,
-    "lesion_effect_verified": true
+    "pass_rate": 1.0,
+    "lesion_effect_verified": false,
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "no_affect_steering": {
     "status": "RUN",
-    "pass_rate": 0.0,
-    "lesion_effect_verified": true
+    "pass_rate": 1.0,
+    "lesion_effect_verified": false,
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "aura_minus_memory": {
     "status": "RUN",
-    "pass_rate": 0.0,
-    "lesion_effect_verified": true
+    "pass_rate": 1.0,
+    "lesion_effect_verified": false
   },
   "aura_minus_volition": {
     "status": "RUN",
-    "pass_rate": 0.0,
-    "lesion_effect_verified": true
+    "pass_rate": 1.0,
+    "lesion_effect_verified": false
   },
   "aura_minus_will": {
     "status": "RUN",
-    "pass_rate": 0.0,
-    "lesion_effect_verified": true
+    "pass_rate": 1.0,
+    "lesion_effect_verified": false
   },
   "aura_minus_system2": {
     "status": "RUN",
-    "pass_rate": 0.0,
-    "lesion_effect_verified": true
+    "pass_rate": 1.0,
+    "lesion_effect_verified": false
   },
   "aura_minus_self_repair": {
     "status": "RUN",
-    "pass_rate": 0.0,
-    "lesion_effect_verified": true
+    "pass_rate": 1.0,
+    "lesion_effect_verified": false
   },
   "aura_minus_affect_steering": {
     "status": "RUN",
-    "pass_rate": 0.0,
-    "lesion_effect_verified": true
+    "pass_rate": 1.0,
+    "lesion_effect_verified": false
   }
 }
