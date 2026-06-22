@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aura · your controls</title>
+<style>
+  :root{
+    --ink:#f4f1ff;--dim:#b9b3d8;--faint:#7b769d;--line:rgba(180,164,255,.16);
+    --good:#62e6ad;--warn:#ffcf86;--bad:#ff7089;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+    --serif:"Iowan Old Style","Palatino Linotype","Palatino",Georgia,serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:#04030c;color:var(--ink);font-family:var(--sans);overflow-x:hidden;-webkit-font-smoothing:antialiased}
+  #sky{position:fixed;inset:0;z-index:0}
+  .vignette{position:fixed;inset:0;z-index:1;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 28%,transparent 44%,rgba(2,1,8,.62) 82%,rgba(2,1,8,.95) 100%)}
+  .leak{position:fixed;z-index:1;pointer-events:none;filter:blur(64px);opacity:.4;mix-blend-mode:screen}
+  .leak.a{top:-160px;left:-120px;width:480px;height:480px;background:radial-gradient(circle,rgba(120,90,255,.5),transparent 62%)}
+  .leak.b{bottom:-200px;right:-140px;width:520px;height:520px;background:radial-gradient(circle,rgba(98,230,173,.3),transparent 62%)}
+  .wrap{position:relative;z-index:3;max-width:720px;margin:0 auto;padding:42px 26px 90px;
+    opacity:0;transform:translateY(14px);animation:rise 1.1s .1s cubic-bezier(.2,.7,.2,1) forwards}
+  @keyframes rise{to{opacity:1;transform:none}}
+  nav{display:flex;gap:22px;justify-content:center;font-size:12px;letter-spacing:.16em;text-transform:uppercase;margin-bottom:18px}
+  nav a{color:var(--faint);text-decoration:none;padding-bottom:4px;border-bottom:1px solid transparent;transition:.3s}
+  nav a:hover{color:var(--ink)} nav a.on{color:var(--ink);border-bottom-color:var(--line)}
+  .ey{text-align:center;font-size:10.5px;letter-spacing:.5em;text-transform:uppercase;color:var(--faint)}
+  h1{font-family:var(--serif);font-style:italic;font-weight:400;text-align:center;font-size:clamp(24px,3.6vw,33px);margin:14px 0 6px;
+    background:linear-gradient(100deg,#efeaff 30%,#c9b8ff 50%,#efeaff 70%);background-size:200% auto;
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:shimmer 9s linear infinite}
+  @keyframes shimmer{to{background-position:200% center}}
+  .sub{text-align:center;color:var(--dim);font-size:14px;max-width:48ch;margin:0 auto 6px;line-height:1.5}
+  .stamp{text-align:center;font-size:11px;color:var(--faint);min-height:16px;margin-top:6px;transition:color .3s}
+  .stamp.ok{color:var(--good)} .stamp.err{color:var(--bad)}
+
+  .hero{margin:30px 0 26px;padding:24px 26px;border-radius:20px;border:1px solid var(--line);
+    background:linear-gradient(160deg,rgba(255,112,137,.06),rgba(22,18,44,.4));
+    display:flex;align-items:center;gap:20px;transition:.5s}
+  .hero.active{border-color:rgba(255,207,134,.5);background:linear-gradient(160deg,rgba(255,207,134,.12),rgba(40,30,20,.5));
+    box-shadow:0 0 40px rgba(255,180,90,.18)}
+  .hero .txt{flex:1}
+  .hero h2{font-family:var(--serif);font-size:21px;margin:0 0 4px}
+  .hero p{margin:0;font-size:13px;color:var(--dim);line-height:1.5}
+
+  .grp{margin:24px 0}
+  .grp .gh{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint);margin:0 2px 10px}
+  .item{display:flex;align-items:center;gap:16px;padding:16px 18px;border-radius:15px;border:1px solid var(--line);
+    background:rgba(22,18,44,.34);margin-bottom:11px}
+  .item .ic{font-size:13px;flex:1}
+  .item .ic b{font-weight:600;font-size:14.5px}
+  .item .ic small{display:block;color:var(--faint);font-size:12px;margin-top:3px;line-height:1.45}
+
+  /* switch */
+  .sw{width:50px;height:28px;border-radius:999px;background:rgba(255,255,255,.1);position:relative;cursor:pointer;
+    flex:none;transition:.35s;border:1px solid rgba(255,255,255,.08)}
+  .sw::after{content:"";position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#cdc8e6;
+    transition:.35s cubic-bezier(.2,.7,.2,1)}
+  .sw.on{background:linear-gradient(90deg,#3aa17a,#62e6ad)} .sw.on::after{left:25px;background:#fff}
+  .sw.danger.on{background:linear-gradient(90deg,#c8694f,#ffcf86)}
+  .sw[aria-disabled="true"]{opacity:.4;pointer-events:none}
+
+  /* segmented */
+  .seg{display:flex;gap:6px;background:rgba(255,255,255,.05);border-radius:12px;padding:4px;flex:none}
+  .seg button{border:0;background:transparent;color:var(--dim);font:inherit;font-size:12.5px;padding:7px 12px;
+    border-radius:9px;cursor:pointer;transition:.25s}
+  .seg button.on{background:linear-gradient(120deg,rgba(150,110,255,.4),rgba(70,200,255,.3));color:#fff}
+  .legend summary{cursor:pointer;list-style:none;font-size:12.5px;color:var(--dim);text-align:center;
+    padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-top:14px}
+  .legend summary::-webkit-details-marker{display:none}
+  .legend p{font-size:13px;color:var(--dim);line-height:1.7;margin:16px 2px}
+  .footnote{margin-top:26px;text-align:center;font-size:10.5px;color:var(--faint);letter-spacing:.16em;text-transform:uppercase}
+</style>
+</head>
+<body>
+<canvas id="sky"></canvas>
+<div class="vignette"></div><div class="leak a"></div><div class="leak b"></div>
+<div class="wrap">
+  <nav><a href="/mind">her mind</a><a href="/activity">what she's done</a><a class="on" href="/controls">controls</a></nav>
+  <div class="ey">Aura · your controls</div>
+  <h1>You're in charge</h1>
+  <div class="sub">Simple switches for how much Aura can do on her own, and what she's allowed to sense. Changes take effect immediately.</div>
+  <div class="stamp" id="stamp">loading…</div>
+
+  <div class="hero" id="safeHero">
+    <div class="txt"><h2>Safe mode</h2>
+      <p>One switch to pause everything risky — no changing or deleting files, no reaching out into the world. She can still think and talk.</p></div>
+    <div class="sw danger" id="sw-safety.safe_mode" role="switch" tabindex="0"></div>
+  </div>
+
+  <div class="grp">
+    <div class="gh">How free she is</div>
+    <div class="item"><div class="ic"><b>Autonomy</b><small>How much Aura starts things on her own, from fully paused to fully free.</small></div>
+      <div class="seg" id="seg-autonomy.level">
+        <button data-v="paused">Paused</button><button data-v="minimal">Minimal</button>
+        <button data-v="balanced">Balanced</button><button data-v="full">Full</button>
+      </div></div>
+  </div>
+
+  <div class="grp">
+    <div class="gh">What she can sense</div>
+    <div class="item"><div class="ic"><b>Camera</b><small>Let her see through the camera.</small></div>
+      <div class="sw" id="sw-permissions.camera" role="switch" tabindex="0"></div></div>
+    <div class="item"><div class="ic"><b>Screen</b><small>Let her see what's on the screen.</small></div>
+      <div class="sw" id="sw-permissions.screen" role="switch" tabindex="0"></div></div>
+    <div class="item"><div class="ic"><b>Microphone</b><small>Let her hear and respond to your voice.</small></div>
+      <div class="sw" id="sw-voice.input_enabled" role="switch" tabindex="0"></div></div>
+    <div class="item"><div class="ic"><b>Notifications</b><small>Let her send you desktop notifications.</small></div>
+      <div class="sw" id="sw-notify.enabled" role="switch" tabindex="0"></div></div>
+  </div>
+
+  <div class="legend"><details><summary>What am I looking at?</summary>
+    <p><b>These are your controls over Aura.</b> Safe mode is the big red brake — flip it and she can't change
+    files or act in the outside world until you turn it back. Autonomy sets how much she does unprompted. The
+    sensor switches decide what she's allowed to see and hear. Everything is off by default unless you allow it,
+    and every change is saved and applied right away.</p></details></div>
+  <div class="footnote">your settings · applied live</div>
+</div>
+
+<script>
+const TOKEN=sessionStorage.getItem('api_token')||'DEMO',BASE=window.location.origin;
+const $=id=>document.getElementById(id);
+const sky=$('sky'),ctx=sky.getContext('2d');let W,H,DPR;
+function size(){DPR=Math.min(2,devicePixelRatio||1);W=sky.width=innerWidth*DPR;H=sky.height=innerHeight*DPR;}
+size();addEventListener('resize',size);
+const stars=Array.from({length:55},()=>({x:Math.random(),y:Math.random(),s:Math.random()*1.2+.2,t:Math.random()*6.28}));
+(function d(){ctx.clearRect(0,0,W,H);stars.forEach(s=>{s.t+=.016;const a=.2+Math.abs(Math.sin(s.t))*.5;
+  ctx.fillStyle=`rgba(210,210,255,${a*.5})`;ctx.fillRect(s.x*W,s.y*H,s.s*DPR,s.s*DPR);});requestAnimationFrame(d);})();
+
+let values={};
+const BOOL_KEYS=['safety.safe_mode','permissions.camera','permissions.screen','voice.input_enabled','notify.enabled'];
+
+function flash(msg,cls){const s=$('stamp');s.textContent=msg;s.className='stamp '+(cls||'');
+  if(cls==='ok')setTimeout(()=>{if(s.textContent===msg){s.textContent='all changes saved';s.className='stamp';}},1600);}
+
+function paint(){
+  BOOL_KEYS.forEach(k=>{const el=$('sw-'+k);if(!el)return;
+    const on=!!values[k];el.classList.toggle('on',on);el.setAttribute('aria-checked',on);});
+  $('safeHero').classList.toggle('active',!!values['safety.safe_mode']);
+  const lvl=String(values['autonomy.level']||'full');
+  document.querySelectorAll('#seg-autonomy\\.level button').forEach(b=>b.classList.toggle('on',b.dataset.v===lvl));
+}
+
+async function load(){
+  try{const r=await fetch(`${BASE}/api/settings`,{headers:{'Authorization':`Bearer ${TOKEN}`}});
+    if(!r.ok)throw 0;const d=await r.json();values=d.values||{};
+    // fill defaults from schema where unset
+    (d.schema||[]).forEach(s=>{if(values[s.key]===undefined)values[s.key]=s.default;});
+    paint();flash('all changes saved');}
+  catch(e){flash('controls offline — her runtime isn\'t answering','err');}
+}
+async function patch(key,val){
+  const prev=values[key];values[key]=val;paint();
+  try{const r=await fetch(`${BASE}/api/settings`,{method:'PATCH',
+      headers:{'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json'},
+      body:JSON.stringify({[key]:val})});
+    if(!r.ok)throw 0;const d=await r.json();
+    if(d.errors&&d.errors[key]){throw new Error(d.errors[key]);}
+    if(d.values)values=Object.assign(values,d.values);paint();flash('saved ✓','ok');}
+  catch(e){values[key]=prev;paint();flash('couldn\'t save that change','err');}
+}
+
+BOOL_KEYS.forEach(k=>{const el=$('sw-'+k);if(!el)return;
+  const toggle=()=>patch(k,!values[k]);
+  el.addEventListener('click',toggle);
+  el.addEventListener('keydown',e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();toggle();}});});
+document.querySelectorAll('#seg-autonomy\\.level button').forEach(b=>
+  b.addEventListener('click',()=>patch('autonomy.level',b.dataset.v)));
+
+load();setInterval(load,15000);
+</script>
+</body>
+</html>

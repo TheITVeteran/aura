@@ -79,3 +79,29 @@ def test_activity_page_exists_and_is_plain_language():
     assert "/mind" in html  # cross-link back to the mind view
     for human in ("What she's been doing", "What am I looking at?", "worked"):
         assert human in html, f"activity.html missing plain-language framing: {human}"
+
+
+def test_settings_contract_for_controls_panel():
+    from interface.routes.settings import get_all
+
+    resp = asyncio.run(get_all(_=None))
+    payload = json.loads(bytes(resp.body))
+    assert isinstance(payload.get("schema"), list)
+    assert isinstance(payload.get("values"), dict)
+    keys = {s["key"] for s in payload["schema"]}
+    for control in ("safety.safe_mode", "autonomy.level", "permissions.camera",
+                    "permissions.screen", "voice.input_enabled", "notify.enabled"):
+        assert control in keys, f"controls panel needs setting {control} in the schema"
+
+
+def test_controls_page_exists_and_is_plain_language():
+    html = (_STATIC / "controls.html").read_text(encoding="utf-8")
+    assert "/api/settings" in html
+    assert "sessionStorage.getItem('api_token')" in html
+    assert "method:'PATCH'" in html  # writes changes back
+    for cid in ("sw-safety.safe_mode", "seg-autonomy.level", "sw-permissions.camera"):
+        assert cid in html, f"controls.html missing control: {cid}"
+    for human in ("Safe mode", "You're in charge", "What am I looking at?"):
+        assert human in html, f"controls.html missing plain-language framing: {human}"
+    for link in ("/mind", "/activity"):
+        assert link in html  # cross-linked product-shell nav

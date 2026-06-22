@@ -818,6 +818,14 @@ async def serve_activity(request: Request):
     p = STATIC_DIR / "activity.html"
     return FileResponse(str(p), headers=NO_CACHE_HEADERS) if p.exists() else ORJSONResponse({"error": "not found"}, status_code=404)
 
+
+@app.get("/controls", include_in_schema=False)
+async def serve_controls(request: Request):
+    """Controls panel (#35) — plain-language safe-mode, autonomy, and sensor switches."""
+    _require_internal(request)
+    p = STATIC_DIR / "controls.html"
+    return FileResponse(str(p), headers=NO_CACHE_HEADERS) if p.exists() else ORJSONResponse({"error": "not found"}, status_code=404)
+
 # ── Routes — Checkpoints (Phase 5A) ───────────────────────────
 
 @app.post("/api/checkpoints/save", tags=["checkpoints"])
