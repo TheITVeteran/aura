@@ -100,5 +100,39 @@ class AffectiveValenceEngine:
         )
 
 
+def generation_controls(affect: AffectiveState) -> dict[str, float]:
+    """Direct (non-text) generation-control modulations from the affect substrate.
+
+    #48 — reduce text-mediation. The affect engine's ``control_effects`` are
+    derived into concrete numeric modulations of the generation dynamics
+    (temperature, token budget, repetition pressure) so a consumer can apply them
+    DIRECTLY to sampling, rather than describing affect to the model as a
+    ``[Affect: valence=…]`` prompt string. This is the affect engine's direct
+    generation-control surface; the live consumed direct pathway today is the
+    affective circumplex (see core/brain/inference_gate.py, gated to non-strict
+    user-facing generations). It does NOT eliminate text-mediation (full grounding
+    is not claimed, CLAIM_BOUNDARIES 4.B) and carries NO phenomenal claim.
+
+    A lesioned affect substrate yields neutral control_effects → neutral
+    modulations, so the contribution is fully ablatable.
+    """
+    ce = dict(getattr(affect, "control_effects", None) or {})
+    explore = float(ce.get("exploration_temperature", 0.15))
+    patience = float(ce.get("patience", 0.5))
+    learning = float(ce.get("learning_rate", 0.0))
+    memory_priority = float(ce.get("memory_priority", 0.2))
+    return {
+        # Curious/exploratory affect raises sampling temperature; distressed lowers it.
+        "temperature_delta": round((explore - 0.40) * 0.5, 4),
+        # Patient affect is more expansive with the token budget; impatient is terser.
+        "max_tokens_scale": round(_clip(0.80 + patience * 0.40, 0.6, 1.3), 4),
+        # Low patience (often distress) raises repetition pressure (anti-rumination).
+        "repetition_penalty_delta": round((1.0 - patience) * 0.15, 4),
+        # Consolidation/plasticity rate and memory write salience flow from affect.
+        "learning_rate": round(_clip(learning, 0.0, 1.0), 4),
+        "memory_salience": round(_clip(memory_priority, 0.0, 1.0), 4),
+    }
+
+
 def compute_affective_state(**kwargs: Any) -> AffectiveState:
     return AffectiveValenceEngine().compute(**kwargs)

@@ -1,0 +1,53 @@
+{
+  "claim": "SUBSTRATE_STATE_IS_DIRECT_CAUSAL_NOT_TEXT",
+  "generated_at": 1782258230.128153,
+  "honest_scope": "Affect\u2192generation is a DIRECT, non-text, ablatable causal pathway. This REDUCES text-mediation; it does NOT eliminate it (valence is also surfaced in prompts elsewhere; full grounding not claimed, CLAIM_BOUNDARIES 4.B). NO phenomenal claim.",
+  "measures": "affect substrate \u2192 generation sampling dynamics (temperature/tokens/rep), non-text",
+  "passed": true,
+  "pathway_a_circumplex_consumed": {
+    "max_tokens_spread": 293.0,
+    "negative_affect": {
+      "max_tokens": 475.0,
+      "repetition_penalty": 1.243,
+      "temperature": 0.5
+    },
+    "neutral_affect": {
+      "max_tokens": 679.0,
+      "repetition_penalty": 1.143,
+      "temperature": 0.671
+    },
+    "positive_affect": {
+      "max_tokens": 768.0,
+      "repetition_penalty": 1.129,
+      "temperature": 0.855
+    },
+    "responds_to_affect": true,
+    "temperature_spread": 0.355
+  },
+  "pathway_b_affect_engine": {
+    "ablation": "AffectiveValenceEngine.lesion() flattens the controls across all contexts",
+    "active_max_tokens_scale_spread": 0.094147,
+    "active_temperature_delta_spread": 0.152499,
+    "active_temperature_deltas": [
+      0.2,
+      -0.2,
+      -0.0689,
+      -0.1338,
+      0.1169,
+      -0.1893
+    ],
+    "lesioned_max_tokens_scale_spread": 0.0,
+    "lesioned_temperature_delta_spread": 0.0,
+    "lesioned_temperature_deltas": [
+      -0.15,
+      -0.15,
+      -0.15,
+      -0.15,
+      -0.15,
+      -0.15
+    ]
+  },
+  "reproduction_command": "python tools/agi/run_text_mediation_proof.py",
+  "substrate_is_direct_causal": true,
+  "verdict_rule": "affect-active control spread > 0.02 AND lesioned spread ~0 AND the consumed circumplex pathway responds to affect (can be False)"
+}
