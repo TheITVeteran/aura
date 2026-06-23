@@ -207,7 +207,7 @@ def test_websocket_runtime_heartbeat_requires_conversation_lane(monkeypatch):
     assert "conversation_lane:failed" in payload["blockers"]
 
 
-def test_websocket_runtime_heartbeat_treats_active_generation_as_healthy_busy(monkeypatch):
+def test_websocket_runtime_heartbeat_treats_active_generation_as_working_not_healthy(monkeypatch):
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
     from interface import websocket_manager
     from interface.routes import chat as chat_routes
@@ -249,12 +249,12 @@ def test_websocket_runtime_heartbeat_treats_active_generation_as_healthy_busy(mo
 
     payload = websocket_manager.runtime_heartbeat_payload("heartbeat")
 
-    assert payload["healthy"] is True
-    assert payload["status"] == "healthy"
+    assert payload["healthy"] is False
+    assert payload["status"] == "working"
     assert payload["conversation_ready"] is False
     assert payload["conversation_busy"] is True
-    assert "conversation_ready" not in payload["blockers"]
-    assert "conversation_reason:active_generation_in_flight" not in payload["blockers"]
+    assert "conversation_ready" in payload["blockers"]
+    assert "conversation_reason:active_generation_in_flight" in payload["blockers"]
 
 
 @pytest.mark.asyncio
@@ -477,7 +477,7 @@ async def test_runtime_heartbeat_drops_stale_conversation_blocker_when_lane_is_r
 
 
 @pytest.mark.asyncio
-async def test_runtime_heartbeat_treats_active_generation_as_healthy_busy(monkeypatch):
+async def test_runtime_heartbeat_treats_active_generation_as_working_not_healthy(monkeypatch):
     from interface.routes import system as system_routes
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 
@@ -518,12 +518,13 @@ async def test_runtime_heartbeat_treats_active_generation_as_healthy_busy(monkey
     response = await system_routes.api_heartbeat()
     payload = json.loads(response.body)
 
-    assert response.status_code == 200
-    assert payload["healthy"] is True
+    assert response.status_code == 503
+    assert payload["status"] == "working"
+    assert payload["healthy"] is False
     assert payload["conversation_ready"] is False
     assert payload["conversation_busy"] is True
     assert payload["conversation_lane"]["state"] == "ready"
-    assert "conversation_ready" not in payload["blockers"]
+    assert "conversation_ready" in payload["blockers"]
 
 
 @pytest.mark.asyncio

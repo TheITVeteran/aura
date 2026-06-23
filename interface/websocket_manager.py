@@ -29,7 +29,6 @@ except ImportError:
 from fastapi import WebSocketDisconnect
 
 from core.health.conversation_lane import (
-    conversation_lane_is_available,
     conversation_lane_is_busy,
 )
 
@@ -76,19 +75,19 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
         runtime_probe_healthy = required_probe_groups_pass(required)
         conversation_lane, conversation_ready = _conversation_lane_readiness()
         conversation_busy = conversation_lane_is_busy(conversation_lane)
-        conversation_available = conversation_ready or conversation_busy
-        healthy = bool(report.get("healthy", False)) and runtime_probe_healthy and conversation_available
+        healthy = bool(report.get("healthy", False)) and runtime_probe_healthy and conversation_ready
         blockers = required_probe_blockers(required)
         if not bool(report.get("healthy", False)):
             blockers.extend(_runtime_report_blockers(report))
-        if not conversation_available:
+        if not conversation_ready:
             blockers.extend(_conversation_lane_blockers(conversation_lane))
+        status = "healthy" if healthy else "working" if runtime_probe_healthy and conversation_busy else "unhealthy"
         return {
             "type": kind,
             "timestamp": time.time(),
             "transport_connected": True,
             "transport_only": False,
-            "status": "healthy" if healthy else "unhealthy",
+            "status": status,
             "healthy": healthy,
             "runtime_probe_healthy": runtime_probe_healthy,
             "runtime_status": str(report.get("status", "unknown")),
@@ -128,7 +127,7 @@ def _conversation_lane_readiness() -> tuple[dict[str, Any], bool]:
         lane = _collect_conversation_lane_status()
         if not isinstance(lane, dict):
             raise TypeError(f"conversation lane collector returned {type(lane).__name__}")
-        ready = conversation_lane_is_available(lane)
+        ready = bool(lane.get("conversation_ready", False))
         return lane, ready
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation(

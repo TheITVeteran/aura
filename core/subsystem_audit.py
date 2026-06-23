@@ -372,7 +372,7 @@ class SubsystemAudit:
         conversation_lane = _collect_conversation_lane_status()
         conversation_ready = bool(conversation_lane.get("conversation_ready", False))
         conversation_busy = _conversation_lane_is_busy(conversation_lane)
-        conversation_ok = bool(conversation_ready or conversation_busy)
+        conversation_working = bool(conversation_busy)
         conversation_standby = _conversation_lane_is_standby(conversation_lane)
         conversation_state = str(conversation_lane.get("state", "unknown") or "unknown").lower()
         contract_status = str(contract.get("status", "unknown") if isinstance(contract, dict) else "unknown")
@@ -387,7 +387,7 @@ class SubsystemAudit:
         conversation_boot_warming = (
             boot_grace_active
             and not shutdown_active
-            and not conversation_ok
+            and not conversation_ready
             and _conversation_lane_is_boot_warming(conversation_lane)
         )
         boot_warming = core_boot_warming or conversation_boot_warming
@@ -411,8 +411,11 @@ class SubsystemAudit:
                 if conversation_standby
                 else "FAIL"
             )
-        if contract_healthy and required_ok and subsystem_ok and conversation_ok:
+        if contract_healthy and required_ok and subsystem_ok and conversation_ready:
             runtime_status = contract_status.upper()
+            subsystem_status = "PASS"
+        elif contract_healthy and required_ok and subsystem_ok and conversation_working:
+            runtime_status = "WORKING"
             subsystem_status = "PASS"
         elif shutdown_active:
             runtime_status = "SHUTTING_DOWN"
@@ -451,7 +454,7 @@ class SubsystemAudit:
             lines.append(
                 "  ❌ subsystem_audit: required subsystem heartbeat contract not satisfied"
             )
-        if not conversation_ok and not shutdown_active and not boot_warming:
+        if not (conversation_ready or conversation_working) and not shutdown_active and not boot_warming:
             reason = str(conversation_lane.get("last_failure_reason", "") or "conversation lane unavailable")
             lines.append(
                 f"  ❌ conversation_lane: {conversation_state} ({reason})"

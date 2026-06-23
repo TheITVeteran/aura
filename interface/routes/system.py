@@ -1993,7 +1993,6 @@ async def api_health(request: Request):
 
         conversation_ready = bool(conversation_lane.get("conversation_ready", False))
         conversation_busy = conversation_lane_is_busy(conversation_lane)
-        conversation_available = conversation_ready or conversation_busy
         lane_is_standby = _conversation_lane_is_standby_resilient(conversation_lane)
         service_ok = bool(boot_snapshot.get("system_ready", False))
         required_probes = boot_snapshot.get("required_probes", {})
@@ -2005,12 +2004,12 @@ async def api_health(request: Request):
         ))
         health_blockers = _normalize_conversation_health_blockers(
             health_blockers,
-            conversation_ready=conversation_available,
+            conversation_ready=conversation_ready,
         )
         healthy_ready = bool(
             service_ok
             and required_probes_ok
-            and conversation_available
+            and conversation_ready
             and not health_blockers
         )
         diagnostics_data = {
@@ -2030,7 +2029,7 @@ async def api_health(request: Request):
             "working"
             if service_ok and conversation_busy else
             "warming"
-            if service_ok and not conversation_available else
+            if service_ok and not conversation_ready else
             "booting"
         )
 
@@ -2344,25 +2343,25 @@ async def api_heartbeat():
     conversation_lane = _collect_conversation_lane_status_resilient()
     conversation_ready = bool(conversation_lane.get("conversation_ready", False))
     conversation_busy = conversation_lane_is_busy(conversation_lane)
-    conversation_available = conversation_ready or conversation_busy
     required_probes = payload.get("required_probes", {})
     probe_blockers = _heartbeat_probe_blockers(required_probes)
     blockers = _normalize_conversation_health_blockers(
         list(payload.get("blockers", []) or []) + probe_blockers,
-        conversation_ready=conversation_available,
+        conversation_ready=conversation_ready,
     )
     runtime_probe_healthy = not probe_blockers
     healthy = (
         status_code in {200, 202}
         and bool(payload.get("system_ready", payload.get("ready", False)))
         and runtime_probe_healthy
-        and conversation_available
+        and conversation_ready
         and not blockers
     )
     if not healthy:
         status_code = 503
+    status = "healthy" if healthy else "working" if runtime_probe_healthy and conversation_busy else "unhealthy"
     heartbeat_payload = {
-        "status": "healthy" if healthy else "unhealthy",
+        "status": status,
         "healthy": healthy,
         "runtime_probe_healthy": runtime_probe_healthy,
         "time": time.time(),

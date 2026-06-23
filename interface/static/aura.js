@@ -3450,7 +3450,7 @@ function runtimeHealthBlockers(payload) {
     }
     const conversationReady = conversationPayloadReady(payload, blockers);
     const conversationBusy = conversationPayloadBusy(payload, blockers);
-    const normalized = conversationReady || conversationBusy
+    const normalized = conversationReady
         ? blockers.filter(blocker => !blockerIsConversationReadiness(blocker))
         : blockers.concat('conversation_ready');
     return Array.from(new Set(normalized));
