@@ -2097,6 +2097,28 @@ async def _build_conversation_recall_reply(
     *,
     session_id: str = "",
 ) -> str | None:
+    # Positional/temporal recall ("what did I first ask") is a POSITIONAL key the
+    # content classifier below can't resolve — the earliest turn rarely shares
+    # words with the question. Resolve the ACTUAL earliest completed turn so the
+    # Cortex grounds on the real quote (anti-confabulation) via the established
+    # conversation_recall_evidence contract, instead of inventing a memory.
+    try:
+        from core.conversation.grounded_recall import detect_positional_recall
+
+        _position = detect_positional_recall(user_message)
+    except (ImportError, AttributeError, ValueError):
+        _position = None
+    if _position == "first":
+        all_exchanges = await _recent_completed_conversation_exchanges(
+            current_user_message=user_message,
+            session_id=session_id,
+            limit=80,
+        )
+        if all_exchanges:
+            first_user = _clip_conversation_text(all_exchanges[0].get("user"), limit=520)
+            if first_user:
+                return f"The first thing you asked me in this conversation was: \"{first_user}\""
+
     recall_kind = _classify_conversation_recall_request(user_message)
     if not recall_kind:
         return None
@@ -7758,6 +7780,17 @@ def _build_bounded_cognitive_process_reply(
 
 def _self_process_requested_dimensions(user_message: str) -> list[str]:
     text = _normalize_user_message(user_message)
+    # Positional/temporal recall ("what did I first ask") is a factual recall
+    # handled by grounded_recall — NOT a question about Aura's cognitive process.
+    # Returning no dimensions here keeps it out of the self-process repair
+    # builders, whose canned introspection essay is the wrong (robotic) answer.
+    try:
+        from core.conversation.grounded_recall import detect_positional_recall
+
+        if detect_positional_recall(user_message):
+            return []
+    except (ImportError, AttributeError, ValueError):
+        pass
     requested: list[str] = []
     checks = (
         ("attention", ("attention", "attending", "focus", "noticing", "present")),
@@ -11040,7 +11073,13 @@ async def api_chat(
             try:
                 from core.conversation.grounded_recall import build_grounded_recall_context
 
-                _grounded = build_grounded_recall_context(_original_user_message)
+                _gr_state = _resolve_live_aura_state()
+                _gr_history = getattr(
+                    getattr(_gr_state, "cognition", None), "working_memory", None
+                )
+                _grounded = build_grounded_recall_context(
+                    _original_user_message, history=_gr_history
+                )
                 if _grounded:
                     body.message = f"{_grounded}{body.message}"
                     logger.info("Chat preflight: injected grounded positional recall.")

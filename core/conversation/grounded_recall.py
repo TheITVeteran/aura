@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 logger = logging.getLogger("Aura.Conversation.GroundedRecall")
 
@@ -73,34 +73,77 @@ def detect_positional_recall(user_message: str) -> RecallPosition | None:
     return None
 
 
-def _user_turns(exclude: str) -> list[str]:
-    """Earliest→latest user utterances from the live transcript, current excluded."""
+def _history_user_turns(history: Any, exclude_norm: str) -> list[str]:
+    """User utterances from a passed-in history buffer (list of {role, content})."""
+    turns: list[str] = []
+    for entry in history or []:
+        if not isinstance(entry, dict) or entry.get("role") != "user":
+            continue
+        content = str(entry.get("content", "") or "").strip()
+        if content and content.lower() != exclude_norm:
+            turns.append(content)
+    return turns
+
+
+def _working_memory_user_turns(exclude_norm: str) -> list[str]:
+    """User utterances from the live AuraState working memory (chat's own buffer)."""
+    for getter in (
+        lambda: __import__("core.container", fromlist=["ServiceContainer"]).ServiceContainer.get("aura_state", default=None),
+        lambda: __import__("core.runtime.service_access", fromlist=["resolve_state_repository"]).resolve_state_repository(default=None),
+    ):
+        try:
+            obj = getter()
+        except (ImportError, AttributeError, RuntimeError, TypeError):
+            continue
+        wm = getattr(getattr(obj, "cognition", None), "working_memory", None)
+        if not isinstance(wm, list):
+            wm = getattr(getattr(getattr(obj, "_current", None), "cognition", None), "working_memory", None)
+        if isinstance(wm, list) and wm:
+            return _history_user_turns(wm, exclude_norm)
+    return []
+
+
+def _transcript_user_turns(exclude_norm: str) -> list[str]:
+    """Fallback: user utterances from the UnifiedTranscript singleton."""
     try:
         from core.conversation.unified_transcript import UnifiedTranscript
 
-        transcript = UnifiedTranscript.get_instance()
-        entries = list(getattr(transcript, "_entries", []) or [])
+        entries = list(getattr(UnifiedTranscript.get_instance(), "_entries", []) or [])
     except (ImportError, AttributeError, RuntimeError) as exc:
         logger.debug("Grounded recall: transcript unavailable: %s", exc)
         return []
 
-    norm_exclude = (exclude or "").strip().lower()
     turns: list[str] = []
     for e in entries:
         if getattr(e, "role", "") != "user":
             continue
         content = str(getattr(e, "content", "") or "").strip()
-        if not content:
-            continue
-        if content.lower() == norm_exclude:
-            continue
-        turns.append(content)
+        if content and content.lower() != exclude_norm:
+            turns.append(content)
     return turns
 
 
-def resolve_positional_turn(user_message: str, position: RecallPosition) -> str | None:
+def _user_turns(exclude: str, history: Any = None) -> list[str]:
+    """Earliest→latest user utterances this session, current turn excluded.
+
+    A caller-supplied ``history`` (the chat route's live working memory) is the
+    most reliable source; otherwise resolve the live AuraState working memory,
+    then fall back to the UnifiedTranscript.
+    """
+    exclude_norm = (exclude or "").strip().lower()
+    turns = _history_user_turns(history, exclude_norm)
+    if not turns:
+        turns = _working_memory_user_turns(exclude_norm)
+    if not turns:
+        turns = _transcript_user_turns(exclude_norm)
+    return turns
+
+
+def resolve_positional_turn(
+    user_message: str, position: RecallPosition, history: Any = None
+) -> str | None:
     """Retrieve the actual first/last user turn this session (excluding current)."""
-    turns = _user_turns(exclude=user_message)
+    turns = _user_turns(exclude=user_message, history=history)
     if not turns:
         return None
     chosen = turns[0] if position == "first" else turns[-1]
@@ -110,9 +153,11 @@ def resolve_positional_turn(user_message: str, position: RecallPosition) -> str 
     return chosen or None
 
 
-def build_grounded_recall_context(user_message: str) -> str | None:
+def build_grounded_recall_context(user_message: str, history: Any = None) -> str | None:
     """Authoritative grounding block for a positional-recall turn, or None.
 
+    ``history`` is the caller's live conversation buffer (list of {role, content});
+    when omitted the resolver falls back to the live working memory / transcript.
     The block states the retrieved fact and instructs the model to answer from it
     in its own voice — so the reply is grounded in what actually happened instead
     of a confident confabulation.  Returns ``None`` when there is no positional
@@ -121,8 +166,14 @@ def build_grounded_recall_context(user_message: str) -> str | None:
     position = detect_positional_recall(user_message)
     if position is None:
         return None
-    turn = resolve_positional_turn(user_message, position)
+    turn = resolve_positional_turn(user_message, position, history=history)
     if not turn:
+        logger.info(
+            "🧠 [GroundedRecall] positional=%s detected but no prior turn found "
+            "(history_len=%s) — cannot ground, letting model answer.",
+            position,
+            len(history) if isinstance(history, list) else "n/a",
+        )
         return None
     which = "first thing" if position == "first" else "most recent thing (before this turn)"
     logger.info("🧠 [GroundedRecall] positional=%s resolved actual turn for grounding.", position)
