@@ -40,6 +40,8 @@ def test_sovereign_cheat_code_emits_single_message(monkeypatch):
     assert len(published) == 1
     assert published[0][0] == "telemetry"
     assert published[0][1]["message"] == result["message"]
+    assert published[0][1]["metadata"]["system"] is True
+    assert published[0][1]["metadata"]["cheat_code"] == "owner_sovereign"
 
 
 def test_trust_event_log_uses_file_write_governance(monkeypatch):

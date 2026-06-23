@@ -613,7 +613,9 @@ def test_desktop_shell_renders_tool_results_without_inline_html_handlers():
 
     assert "function safeDisplayUrl" in aura_js
     assert "function appendGeneratedImageMessage" in aura_js
-    assert "appendMsg('aura', msg, false, meta)" in aura_js
+    assert "const role = meta && meta.system ? 'system' : 'aura';" in aura_js
+    assert "appendMsg(role, msg, false, meta)" in aura_js
+    assert "if (role === 'aura') triggerVoiceOrb('speaking');" in aura_js
     assert "appendMsg('aura', msg, false, { autonomic: isAutonomic })" in aura_js
     assert "onclick=\"saveImageToDevice" not in aura_js
     assert "onload=\"this.previousElementSibling" not in aura_js
@@ -623,6 +625,7 @@ def test_desktop_shell_renders_tool_results_without_inline_html_handlers():
     assert "function renderRetryPanel" in aura_js
     assert "console.warn('[Settings] Failed to persist settings:', err)" in aura_js
     assert ".aura-badge.diagnostic" in aura_css
+    assert ".msg.system" in aura_css
     assert "letter-spacing: -" not in aura_css
 
 

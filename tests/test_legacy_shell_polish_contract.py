@@ -51,6 +51,16 @@ def test_legacy_shell_presents_cold_standby_as_not_ready_shell_state():
     assert "setTimeout(() => dismissSplash(), 8000)" not in js
 
 
+def test_legacy_shell_placeholder_is_system_status_not_aura_speech():
+    html = (PROJECT_ROOT / "interface" / "static" / "index.html").read_text(encoding="utf-8")
+    js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+
+    assert "Conversation lane initializing. Waiting for verified Aura reply path..." in html
+    assert "Conversation lane initializing. Waiting for verified Aura reply path..." in js
+    assert "Aura: Infinity online. Synchronizing cognitive drives" not in html
+    assert "Aura: Infinity online. Synchronizing cognitive drives" not in js
+
+
 def test_legacy_shell_presents_active_generation_as_working_not_unavailable():
     js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
 

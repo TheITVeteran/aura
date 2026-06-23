@@ -1089,7 +1089,7 @@ function renderStatusFlags(flags) {
 function hydrateRecentConversation(entries) {
     const messages = DOM.messages || $('messages');
     if (!messages || !Array.isArray(entries) || !entries.length) return;
-    const hasOnlyPlaceholder = messages.children.length === 1 && messages.textContent.includes('Infinity online');
+    const hasOnlyPlaceholder = messages.children.length === 1 && messages.textContent.includes('Conversation lane initializing');
     if (!hasOnlyPlaceholder) return;
 
     messages.innerHTML = '';
@@ -1101,7 +1101,7 @@ function hydrateRecentConversation(entries) {
         appendMsg(role, String(content), false, entry.metadata || {});
     }
     if (!messages.children.length) {
-        messages.innerHTML = '<div class="sys-box">Aura: Infinity online. Synchronizing cognitive drives...</div>';
+        messages.innerHTML = '<div class="sys-box">Conversation lane initializing. Waiting for verified Aura reply path...</div>';
     }
 }
 
@@ -2073,10 +2073,11 @@ function handleWsEvent(data) {
                 return;
             }
 
-            appendMsg('aura', msg, false, meta);
+            const role = meta && meta.system ? 'system' : 'aura';
+            appendMsg(role, msg, false, meta);
             $('typing-ind').classList.remove('show');
             setChatPanelState('idle');
-            triggerVoiceOrb('speaking');
+            if (role === 'aura') triggerVoiceOrb('speaking');
         }
     } else if (type === 'skill_status') {
         updateSkillUI(data.skill, data.state);
@@ -4921,9 +4922,9 @@ async function activateCheatCode() {
         applySettings(settings);
 
         if (data?.message) {
-            appendMsg('aura', data.message);
+            appendMsg('system', data.message, false, { system: true, cheat_code: true });
         } else if (!resp.ok) {
-            appendMsg('aura', 'Unknown cheat code.');
+            appendMsg('system', 'Unknown cheat code.', false, { system: true, cheat_code: true });
         }
 
         if (typeof pollHealth === 'function') {
@@ -4933,7 +4934,7 @@ async function activateCheatCode() {
         settings.cheatStatus = 'ERROR';
         saveSettings(settings);
         applySettings(settings);
-        appendMsg('aura', '⚠ Cheat code activation failed.');
+        appendMsg('system', '⚠ Cheat code activation failed.', false, { system: true, cheat_code: true });
         console.error('[CHEAT] Activation failed:', err);
     } finally {
         if (input) input.value = '';

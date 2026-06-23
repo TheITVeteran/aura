@@ -897,6 +897,18 @@ main {
     border-radius: 12px 12px 12px 2px;
 }
 
+.msg.system {
+    align-self: center;
+    max-width: min(760px, 92%);
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    color: var(--text-dim);
+    box-shadow: none;
+    border-radius: 8px;
+    font-size: calc(0.78rem * var(--chat-meta-scale));
+    line-height: 1.45;
+}
+
 .msg.aura strong,
 .msg.aura b {
     color: var(--accent);
