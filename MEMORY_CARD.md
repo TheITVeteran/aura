@@ -119,6 +119,27 @@ quote in its own voice instead of confabulating. Together, content competition a
 positional grounding cover both retrieval keys real episodic memory needs: *what*
 was said and *when*.
 
+## Symbolic Deduction (belief consistency)
+
+Aura runs a sound, terminating **natural-deduction proof search** (the Pantheon
+whiteboard's `PROCEDURE Hp FOR DEDUCTION`), in `core/reasoning/natural_deduction.py`.
+It is an analytic-tableau decision procedure for propositional logic (Γ⊢G iff
+Γ∪{¬G} is unsatisfiable), implementing the board's rules — axiom/membership,
+contradiction/ex-falso `{A,¬A}`, ¬¬-elimination, ∧-elimination, ∨ case-split
+(`SIMPL`) — with a formula AST + parser and `prove / entails / is_consistent /
+find_contradiction` returning a proof trace or a concrete countermodel.
+
+It is wired causally: `core/reasoning/belief_consistency.py` encodes each natural-
+language belief as a propositional literal (an atom, or its negation when phrased
+negatively), so `belief_revision.check_belief_consistency()` — run on every new
+belief in `process_new_claim` — detects when Aura holds a proposition **and its
+explicit negation** at high confidence. Such a logical inconsistency in her self-
+model is surfaced to `core/reasoning/deduction_governance.py` as a constitutional
+concern (logged + `belief_logical_inconsistency_total`). The prover is also exposed
+through `SymbolicBridge.prove_logic` as a first-class exact solver alongside
+sympy/z3. This gives Aura verified deductive reasoning and keeps her belief set
+logically coherent.
+
 ## Memory Governance
 
 All memory writes are gated:
