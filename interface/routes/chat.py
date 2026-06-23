@@ -2856,7 +2856,11 @@ def _runtime_memory_available() -> bool:
         return False
 
 
-def _runtime_inference_available(lane: dict[str, Any] | None = None) -> bool:
+def _runtime_inference_available(
+    lane: dict[str, Any] | None = None,
+    *,
+    require_conversation_ready: bool = False,
+) -> bool:
     try:
         gate = ServiceContainer.get("inference_gate", default=None)
         if gate is None:
@@ -2865,6 +2869,8 @@ def _runtime_inference_available(lane: dict[str, Any] | None = None) -> bool:
             lane = dict(lane or gate.get_conversation_status() or {})
             if lane.get("conversation_ready"):
                 return True
+            if require_conversation_ready:
+                return False
             return str(lane.get("state") or "").strip().lower() in {"ready", "warming", "recovering"}
         return callable(getattr(gate, "generate", None))
     except _CHAT_RECOVERABLE_ERRORS as exc:
@@ -2885,12 +2891,19 @@ def _runtime_substrate_voice_available() -> bool:
         return False
 
 
-def _collect_live_chat_required_subsystems(lane: dict[str, Any] | None = None) -> dict[str, bool]:
+def _collect_live_chat_required_subsystems(
+    lane: dict[str, Any] | None = None,
+    *,
+    generation_proven: bool = False,
+) -> dict[str, bool]:
     lane = dict(lane or {})
+    inference_ready = _runtime_inference_available(lane, require_conversation_ready=True)
+    if generation_proven:
+        inference_ready = True
     return {
         "kernel": _runtime_kernel_available(),
         "cognitive_engine": _runtime_cognitive_engine_available(),
-        "inference": _runtime_inference_available(lane),
+        "inference": inference_ready,
         "memory": _runtime_memory_available(),
         "tool_governance": _runtime_tool_governance_available(),
         "substrate_voice": _runtime_substrate_voice_available(),
@@ -2910,16 +2923,14 @@ def _build_live_turn_contract_payload(
     """Machine-readable evidence for whether a live desktop turn used the full mind path."""
     lane = dict(lane_status or {})
     trace = dict(turn_trace or {})
-    subsystems = _collect_live_chat_required_subsystems(lane)
     response_path = str(trace.get("response_path") or reply_source or status or "").strip()
     engine_think_invoked = bool(trace.get("engine_think_invoked"))
     engine_reply_accepted = bool(trace.get("cognitive_engine_reply_accepted"))
     bounded_contract_used = bool(trace.get("bounded_contract_used"))
     legacy_fallback_used = bool(trace.get("legacy_fallback_used"))
     confidence = str(response_confidence or "").strip().lower()
-    full_mind_path = bool(
-        desktop_required
-        and engine_think_invoked
+    accepted_cognitive_path = bool(
+        engine_think_invoked
         and engine_reply_accepted
         and not bounded_contract_used
         and not legacy_fallback_used
@@ -2934,6 +2945,16 @@ def _build_live_turn_contract_payload(
             "cognitive_engine_desktop_plan",
         }
     )
+    subsystems = _collect_live_chat_required_subsystems(
+        lane,
+        generation_proven=accepted_cognitive_path,
+    )
+    required_subsystems_ok = all(subsystems.values())
+    full_mind_path = bool(
+        desktop_required
+        and accepted_cognitive_path
+        and required_subsystems_ok
+    )
     return {
         "desktop_cognitive_engine_required": bool(desktop_required),
         "request_surface": str(request_surface or ""),
@@ -2946,7 +2967,7 @@ def _build_live_turn_contract_payload(
         "legacy_fallback_used": legacy_fallback_used,
         "full_mind_path": full_mind_path,
         "required_subsystems": subsystems,
-        "required_subsystems_ok": all(subsystems.values()),
+        "required_subsystems_ok": required_subsystems_ok,
         "recent_context_needed": bool(trace.get("recent_context_needed")),
         "recent_context_exchanges": int(trace.get("recent_context_exchanges") or 0),
         "compact_desktop_chat_contract": bool(trace.get("compact_desktop_chat_contract")),

@@ -1045,6 +1045,11 @@ async def test_api_chat_desktop_capability_inventory_uses_cognitive_engine_first
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncCallFixture())
+    monkeypatch.setattr(chat_routes, "_runtime_kernel_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_memory_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_substrate_voice_available", lambda: True)
     monkeypatch.setattr(
         chat_routes,
         "_collect_conversation_lane_status",
@@ -1109,6 +1114,76 @@ def test_explicit_capability_inventory_classifier_covers_live_external_tool_word
 
     assert chat_routes._is_explicit_capability_inventory_request(prompt)
     assert not chat_routes._is_bounded_nonexecuting_planning_request(prompt)
+
+
+def test_live_turn_contract_does_not_treat_warming_lane_as_full_mind(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(chat_routes, "_runtime_kernel_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_memory_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_substrate_voice_available", lambda: True)
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": False,
+            "state": "warming",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": False,
+            "cognitive_engine_reply_accepted": False,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "response_path": "cognitive_engine",
+        },
+    )
+
+    assert payload["required_subsystems"]["inference"] is False
+    assert payload["required_subsystems_ok"] is False
+    assert payload["full_mind_path"] is False
+
+
+def test_live_turn_contract_allows_proven_generation_to_satisfy_inference(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(chat_routes, "_runtime_kernel_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_memory_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_substrate_voice_available", lambda: True)
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": False,
+            "state": "warming",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "response_path": "cognitive_engine",
+        },
+    )
+
+    assert payload["required_subsystems"]["inference"] is True
+    assert payload["required_subsystems_ok"] is True
+    assert payload["full_mind_path"] is True
 
 
 def test_live_self_reflection_is_not_explicit_capability_inventory():
@@ -1993,6 +2068,11 @@ async def test_api_chat_desktop_required_presence_check_uses_cognitive_engine(mo
     monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
     chat_routes._recent_responses.clear()
     chat_routes._recent_response_pairs.clear()
+    monkeypatch.setattr(chat_routes, "_runtime_kernel_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_memory_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_substrate_voice_available", lambda: True)
     monkeypatch.setattr(
         chat_routes,
         "_collect_conversation_lane_status",

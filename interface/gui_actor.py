@@ -319,7 +319,11 @@ def gui_actor_entry(port: int, token: str = None):
                         read_only=True,
                         suppress_degradation=True,
                     )
-                    heartbeat_state = _gateway_heartbeat_state(resp)
+                    heartbeat_state = (
+                        "healthy"
+                        if _gateway_heartbeat_healthy(resp)
+                        else _gateway_heartbeat_state(resp)
+                    )
                     if heartbeat_state == "healthy":
                         if not _boot_completed:
                             _boot_completed = True
