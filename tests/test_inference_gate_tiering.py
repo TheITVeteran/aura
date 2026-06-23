@@ -272,12 +272,17 @@ class _SequenceRecordingClient(_RecordingClient):
         return self.text
 
     def get_lane_status(self):
+        now = time.time()
         return {
             "state": "ready",
             "last_error": "",
             "conversation_ready": True,
             "warmup_attempted": True,
             "warmup_in_flight": False,
+            "last_ready_at": now,
+            "last_progress_at": now,
+            "last_visible_readiness_at": now,
+            "last_user_facing_completed_at": 0.0,
         }
 
 
@@ -308,10 +313,12 @@ class _LaneWarmupClient:
         self.warmup = AsyncCallProbe(side_effect=self._finish_warmup)
         self.state = "cold"
         self.last_error = ""
+        self.visible_ready_at = 0.0
 
     async def _finish_warmup(self):
         self.state = "ready"
         self.last_error = ""
+        self.visible_ready_at = time.time()
 
     def get_lane_status(self):
         return {
@@ -321,6 +328,8 @@ class _LaneWarmupClient:
             "warmup_attempted": self.state != "cold",
             "warmup_in_flight": False,
             "last_transition_at": 1.0,
+            "last_visible_readiness_at": self.visible_ready_at,
+            "last_user_facing_completed_at": 0.0,
         }
 
     def is_alive(self):
@@ -355,10 +364,12 @@ class _ColdRecordingLaneClient(_RecordingClient):
         self.state = "cold"
         self.last_error = ""
         self.warmup = AsyncCallProbe(side_effect=self._finish_warmup)
+        self.visible_ready_at = 0.0
 
     async def _finish_warmup(self):
         self.state = "ready"
         self.last_error = ""
+        self.visible_ready_at = time.time()
 
     def get_lane_status(self):
         return {
@@ -370,6 +381,8 @@ class _ColdRecordingLaneClient(_RecordingClient):
             "last_transition_at": 1.0,
             "last_ready_at": 1.0 if self.state == "ready" else 0.0,
             "last_progress_at": 1.0 if self.state == "ready" else 0.0,
+            "last_visible_readiness_at": self.visible_ready_at,
+            "last_user_facing_completed_at": 0.0,
         }
 
 
@@ -1803,6 +1816,8 @@ def test_conversation_status_respects_ready_lane_even_without_recent_generation(
                 "conversation_ready": True,
                 "last_ready_at": time.time() - 45.0,
                 "last_progress_at": time.time() - 45.0,
+                "last_visible_readiness_at": time.time() - 45.0,
+                "last_user_facing_completed_at": 0.0,
                 "warmup_attempted": True,
                 "warmup_in_flight": False,
             }
@@ -1813,6 +1828,33 @@ def test_conversation_status_respects_ready_lane_even_without_recent_generation(
 
     assert lane["state"] == "ready"
     assert lane["conversation_ready"] is True
+
+
+def test_conversation_status_rejects_raw_ready_without_visible_conversation_proof():
+    gate = InferenceGate()
+    gate._last_successful_generation_at = time.time()
+
+    class _HeartbeatOnlyReadyLane:
+        def get_lane_status(self):
+            return {
+                "state": "ready",
+                "last_error": "",
+                "conversation_ready": True,
+                "readiness_blockers": [],
+                "last_ready_at": time.time(),
+                "last_progress_at": time.time(),
+                "warmup_attempted": True,
+                "warmup_in_flight": False,
+            }
+
+    gate._mlx_client = _HeartbeatOnlyReadyLane()
+
+    lane = gate.get_conversation_status()
+
+    assert lane["state"] == "ready"
+    assert lane["conversation_ready"] is False
+    assert "visible_conversation_probe_missing" in lane["readiness_blockers"]
+    assert lane["last_failure_reason"] == "visible_conversation_probe_missing"
 
 
 def test_conversation_status_rejects_raw_ready_with_runtime_identity_mismatch():
@@ -2915,6 +2957,8 @@ def test_inference_health_ready_accepts_conversation_ready_primary_worker(monkey
             "state": "ready",
             "conversation_ready": True,
             "readiness_blockers": [],
+            "last_visible_readiness_at": time.time(),
+            "last_user_facing_completed_at": 0.0,
         },
     )
     monkeypatch.setattr(gate, "_iter_local_clients", lambda: {})

@@ -1161,6 +1161,21 @@ class InferenceGate:
             ):
                 if telemetry_key in raw:
                     lane[telemetry_key] = raw.get(telemetry_key)
+            visible_conversation_anchor = max(
+                float(lane.get("last_visible_readiness_at", 0.0) or 0.0),
+                float(lane.get("last_user_facing_completed_at", 0.0) or 0.0),
+            )
+            if (
+                str(lane.get("state", "") or "").lower() == "ready"
+                and visible_conversation_anchor <= 0.0
+                and "visible_conversation_probe_missing" not in raw_readiness_blockers
+            ):
+                raw_readiness_blockers.append("visible_conversation_probe_missing")
+                raw_ready = False
+                lane["conversation_ready"] = False
+                lane["readiness_blockers"] = raw_readiness_blockers
+                if not lane["last_failure_reason"]:
+                    lane["last_failure_reason"] = "visible_conversation_probe_missing"
             if lane["conversation_ready"]:
                 lane["foreground_endpoint"] = PRIMARY_ENDPOINT
         # [STABILITY v51] If the prewarm task completed (success or failure),

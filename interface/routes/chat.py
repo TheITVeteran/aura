@@ -10333,6 +10333,39 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
         return False
     if re.search(r"\b(?:write|draft|compose|create|make)\s+(?:a\s+|an\s+)?report\b", lowered):
         return False
+    sourced_content_markers = (
+        "copy ",
+        "copy the",
+        "clipboard",
+        "selected text",
+        "selection",
+        "equation body",
+        "from calculator",
+        "from the page",
+        "from chrome",
+        "from safari",
+        "from the article",
+        "from the document",
+        "from notes",
+    )
+    if any(marker in lowered for marker in sourced_content_markers):
+        return True
+    operational_report_markers = (
+        "report the path",
+        "report the paths",
+        "report paths",
+        "show me the path",
+        "show me the paths",
+        "where you saved",
+        "saved path",
+        "receipt",
+        "what you did",
+    )
+    if (
+        any(marker in lowered for marker in operational_report_markers)
+        and ("pdf" in lowered or "move" in lowered or "copy" in lowered)
+    ):
+        return True
     return False
 
 
