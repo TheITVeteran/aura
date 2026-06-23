@@ -788,13 +788,21 @@ class ExternalLedgerMirror:
         }
         payload["mirror_hash"] = _sha(payload)
         from core.runtime.file_write_gateway import get_file_write_gateway
+        from core.governance_context import local_internal_governed_scope
 
-        get_file_write_gateway().append_text(
-            self.path,
-            json.dumps(payload, sort_keys=True, default=str) + "\n",
-            encoding="utf-8",
-            source="autonomous_rsi.generation_mirror",
-        )
+        # The lineage mirror is a durable file write; under production governance
+        # an ungoverned write fail-closes. Govern the append under the file_write
+        # domain so it emits a proper receipt instead of bypassing governance.
+        with local_internal_governed_scope(
+            "autonomous_rsi.generation_mirror",
+            domain="file_write",
+        ):
+            get_file_write_gateway().append_text(
+                self.path,
+                json.dumps(payload, sort_keys=True, default=str) + "\n",
+                encoding="utf-8",
+                source="autonomous_rsi.generation_mirror",
+            )
         return payload
 
     def verify(self) -> bool:
