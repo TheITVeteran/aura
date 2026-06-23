@@ -3065,14 +3065,14 @@ def main():
         # The in-process MLX lane holds the ~20GB 32B in the KERNEL's OWN RSS;
         # the llama_cpp design kept the model in a separate server process. The
         # safe-boot RSS caps (36GB) and MLX ceiling (28GB) were sized for that
-        # split design, so under MLX the kernel sits right against them and the
-        # memory watchdog can SIGKILL it mid-session (observed: kernel "GONE"
-        # with no crash trace). Give the in-process model real headroom on a
-        # 64GB host so the watchdog doesn't kill her own brain.
+        # split design. Give the in-process model enough room for the 32B lane,
+        # but keep the process tree well below host-collapse territory.
         if os.environ.get("AURA_LOCAL_BACKEND", "").strip().lower() == "mlx":
-            os.environ.setdefault("AURA_PROCESS_RSS_LIMIT_GB", "50")
-            os.environ.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", "50")
+            os.environ.setdefault("AURA_PROCESS_RSS_LIMIT_GB", "40")
+            os.environ.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", "40")
             os.environ.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "34")
+            os.environ.setdefault("AURA_MEMWATCH_LETHAL_MB", "43008")
+            os.environ.setdefault("AURA_MEMORY_SENTINEL_INTERVAL_S", "0.5")
             # The Memory Governor's prune/unload/critical thresholds are capped at
             # 28/34/40GB even on a 64GB host. The in-process MLX 32B footprint
             # (~35GB, AURA_MLX_32B_PROJECTED_FOOTPRINT_GB) sits ABOVE the 34GB
@@ -3080,13 +3080,12 @@ def main():
             # the worker dies → conversation lane goes cold (worker_not_alive) →
             # Degraded, even mid-conversation. Raise the thresholds so the
             # resident model is normal, not an emergency, leaving real OS headroom
-            # on 64GB (critical at 54GB → ~10GB free).
-            # Keep the governor ladder BELOW the watchdog hard RSS limit (50GB)
-            # so graceful pruning runs before any hard kill, while still leaving
-            # the ~35GB resident model comfortably under the prune line.
-            os.environ.setdefault("AURA_GOVERNOR_PRUNE_MB", "40000")
-            os.environ.setdefault("AURA_GOVERNOR_UNLOAD_MB", "44000")
-            os.environ.setdefault("AURA_GOVERNOR_CRITICAL_MB", "47000")
+            # on 64GB. Keep unload below the process RSS limit and critical cleanup
+            # below the external sentinel so graceful pruning runs before any hard
+            # kill, while still leaving the ~35GB resident model under the prune line.
+            os.environ.setdefault("AURA_GOVERNOR_PRUNE_MB", "37888")
+            os.environ.setdefault("AURA_GOVERNOR_UNLOAD_MB", "39936")
+            os.environ.setdefault("AURA_GOVERNOR_CRITICAL_MB", "41984")
             # Let the substrate be a touch more present in her voice than the
             # conservative 0.35 clamp (the worker notes ~5.0 corrupts the voice;
             # 0.5 is well within the safe range).

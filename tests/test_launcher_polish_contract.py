@@ -49,10 +49,15 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "AURA_FOREGROUND_CHAT_MAX_TOKENS" in swift
     assert 'env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] = "0.16"' in swift
     assert 'env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] = "10"' in swift
-    assert 'env["AURA_SAFE_BOOT_MLX_MEMORY_RATIO"] = "0.44"' in swift
-    assert 'env["AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB"] = "28"' in swift
+    assert 'env["AURA_SAFE_BOOT_MLX_MEMORY_RATIO"] = "0.54"' in swift
+    assert 'env["AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB"] = "34"' in swift
     assert 'env["AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB"] = "18"' in swift
-    assert 'env["AURA_PROCESS_RSS_LIMIT_GB"] = "36"' in swift
+    assert 'env["AURA_PROCESS_RSS_LIMIT_GB"] = "40"' in swift
+    assert 'env["AURA_MEMWATCH_LETHAL_MB"] = "43008"' in swift
+    assert 'env["AURA_MEMORY_SENTINEL_INTERVAL_S"] = "0.5"' in swift
+    assert 'env["AURA_GOVERNOR_PRUNE_MB"] = "37888"' in swift
+    assert 'env["AURA_GOVERNOR_UNLOAD_MB"] = "39936"' in swift
+    assert 'env["AURA_GOVERNOR_CRITICAL_MB"] = "41984"' in swift
     assert 'env["AURA_FOREGROUND_CHAT_MAX_TOKENS"] = "2048"' in swift
     assert 'env["AURA_EAGER_CORTEX_WARMUP"] = "0"' in swift
     assert 'env["AURA_DEFERRED_CORTEX_PREWARM"] = "1"' in swift
@@ -89,10 +94,15 @@ def test_launch_script_supports_gui_window_mode():
     assert "AURA_EXTERNAL_GUI_OWNER:=1" in shell
     assert "AURA_SAFE_BOOT_METAL_CACHE_RATIO:=0.16" in shell
     assert "AURA_SAFE_BOOT_METAL_CACHE_CAP_GB:=10" in shell
-    assert "AURA_SAFE_BOOT_MLX_MEMORY_RATIO:=0.44" in shell
-    assert "AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB:=28" in shell
+    assert "AURA_SAFE_BOOT_MLX_MEMORY_RATIO:=0.54" in shell
+    assert "AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB:=34" in shell
     assert "AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB:=18" in shell
-    assert "AURA_PROCESS_RSS_LIMIT_GB:=36" in shell
+    assert "AURA_PROCESS_RSS_LIMIT_GB:=40" in shell
+    assert "AURA_MEMWATCH_LETHAL_MB:=43008" in shell
+    assert "AURA_MEMORY_SENTINEL_INTERVAL_S:=0.5" in shell
+    assert "AURA_GOVERNOR_PRUNE_MB:=37888" in shell
+    assert "AURA_GOVERNOR_UNLOAD_MB:=39936" in shell
+    assert "AURA_GOVERNOR_CRITICAL_MB:=41984" in shell
     assert "AURA_LOCAL_RUNTIME_SINGLETON:=1" in shell
     assert "AURA_LOCAL_PARALLEL_SLOTS:=1" in shell
     assert "AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB:=24" in shell

@@ -50,7 +50,7 @@ PROOF_DIR = ROOT / "artifacts" / "live_proof"
 # Abort the whole proof if Aura's process tree exceeds this. The runtime should
 # refuse/recycle before this external guard fires; the guard exists to protect
 # the host if local inference leaks past the in-process policy.
-DEFAULT_RSS_ABORT_MB = 38_000.0
+DEFAULT_RSS_ABORT_MB = 42_000.0
 LIVE_FALLBACK_RE = re.compile(
     r"(say that again|try (?:again|me again|that again)|ask me again|"
     r"give me a moment|i'?m with you|could you repeat|repeat your question|"
@@ -156,12 +156,17 @@ def build_safe_boot_env(
     env.setdefault("AURA_ENABLE_PROACTIVE_VISION", "0")
     env.setdefault("AURA_SAFE_BOOT_METAL_CACHE_RATIO", "0.16")
     env.setdefault("AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", "10")
-    env.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_RATIO", "0.44")
-    env.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "28")
+    env.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_RATIO", "0.54")
+    env.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "34")
     env.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB", "18")
-    env.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_RATIO", "0.56")
-    env.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", "36")
+    env.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_RATIO", "0.62")
+    env.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", "40")
     env.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB", "24")
+    env.setdefault("AURA_MEMWATCH_LETHAL_MB", "43008")
+    env.setdefault("AURA_MEMORY_SENTINEL_INTERVAL_S", "0.5")
+    env.setdefault("AURA_GOVERNOR_PRUNE_MB", "37888")
+    env.setdefault("AURA_GOVERNOR_UNLOAD_MB", "39936")
+    env.setdefault("AURA_GOVERNOR_CRITICAL_MB", "41984")
     env.setdefault("AURA_FOREGROUND_CHAT_MAX_TOKENS", "2048")
     env.setdefault("AURA_WATCHDOG_BOOT_GRACE_S", "240")
 
@@ -169,18 +174,18 @@ def build_safe_boot_env(
         from core.runtime.desktop_boot_safety import compute_mlx_memory_limit
 
         limit_bytes = compute_mlx_memory_limit(psutil.virtual_memory().total, env)
-        limit_gb = max(1.0, min(28.0, limit_bytes / float(1024 ** 3)))
+        limit_gb = max(1.0, min(34.0, limit_bytes / float(1024 ** 3)))
     except (ImportError, RuntimeError, TypeError, ValueError, OSError, psutil.Error):
-        limit_gb = min(28.0, max(1.0, _env_float(env, "AURA_MLX_MEMORY_LIMIT_GB", 28.0)))
+        limit_gb = min(34.0, max(1.0, _env_float(env, "AURA_MLX_MEMORY_LIMIT_GB", 34.0)))
     env["AURA_MLX_MEMORY_LIMIT_GB"] = f"{limit_gb:.0f}"
 
     try:
         from core.runtime.desktop_boot_safety import compute_process_rss_limit
 
         limit_bytes = compute_process_rss_limit(psutil.virtual_memory().total, env)
-        limit_gb = max(1.0, min(36.0, limit_bytes / float(1024 ** 3)))
+        limit_gb = max(1.0, min(40.0, limit_bytes / float(1024 ** 3)))
     except (ImportError, RuntimeError, TypeError, ValueError, OSError, psutil.Error):
-        limit_gb = min(36.0, max(1.0, _env_float(env, "AURA_PROCESS_RSS_LIMIT_GB", 36.0)))
+        limit_gb = min(40.0, max(1.0, _env_float(env, "AURA_PROCESS_RSS_LIMIT_GB", 40.0)))
     env["AURA_PROCESS_RSS_LIMIT_GB"] = f"{limit_gb:.0f}"
     return env
 

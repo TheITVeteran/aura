@@ -229,7 +229,7 @@ def test_compute_mlx_memory_limit_uses_desktop_safe_active_memory_ceiling(monkey
     total = 64 * 1024 ** 3
     limit = compute_mlx_memory_limit(total)
 
-    assert limit == 28 * 1024 ** 3
+    assert limit == 34 * 1024 ** 3
 
 
 def test_compute_process_rss_limit_uses_desktop_safe_guard_ceiling(monkeypatch):
@@ -240,7 +240,7 @@ def test_compute_process_rss_limit_uses_desktop_safe_guard_ceiling(monkeypatch):
     total = 64 * 1024 ** 3
     limit = compute_process_rss_limit(total)
 
-    assert limit == int(total * 0.56)
+    assert limit == int(total * 0.62)
 
 
 def test_desktop_safe_boot_clamps_unsafe_inherited_model_limits(monkeypatch):
@@ -251,8 +251,8 @@ def test_desktop_safe_boot_clamps_unsafe_inherited_model_limits(monkeypatch):
 
     total = 64 * 1024 ** 3
 
-    assert compute_mlx_memory_limit(total) == 28 * 1024 ** 3
-    assert compute_process_rss_limit(total) == 36 * 1024 ** 3
+    assert compute_mlx_memory_limit(total) == 34 * 1024 ** 3
+    assert compute_process_rss_limit(total) == 40 * 1024 ** 3
 
 
 def test_desktop_safe_boot_allows_explicit_unsafe_memory_override(monkeypatch):
@@ -277,8 +277,8 @@ def test_desktop_safe_boot_clamps_stale_floor_overrides(monkeypatch):
     total = 64 * 1024 ** 3
 
     assert compute_mlx_cache_limit(total) == 10 * 1024 ** 3
-    assert compute_mlx_memory_limit(total) == 28 * 1024 ** 3
-    assert compute_process_rss_limit(total) == 36 * 1024 ** 3
+    assert compute_mlx_memory_limit(total) == 34 * 1024 ** 3
+    assert compute_process_rss_limit(total) == 40 * 1024 ** 3
 
 
 def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
@@ -302,9 +302,14 @@ def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
     assert env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] == "0.16"
     assert env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] == "10"
     assert env["AURA_FOREGROUND_CHAT_MAX_TOKENS"] == "2048"
-    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "28"
-    assert env["AURA_PROCESS_RSS_LIMIT_GB"] == "36"
-    assert live_proof_rss_abort_mb(env) == 38_000.0
+    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "34"
+    assert env["AURA_PROCESS_RSS_LIMIT_GB"] == "40"
+    assert env["AURA_MEMWATCH_LETHAL_MB"] == "43008"
+    assert env["AURA_MEMORY_SENTINEL_INTERVAL_S"] == "0.5"
+    assert env["AURA_GOVERNOR_PRUNE_MB"] == "37888"
+    assert env["AURA_GOVERNOR_UNLOAD_MB"] == "39936"
+    assert env["AURA_GOVERNOR_CRITICAL_MB"] == "41984"
+    assert live_proof_rss_abort_mb(env) == 42_000.0
 
 
 def test_live_boot_proof_desktop_mode_mirrors_packaged_launcher(monkeypatch):
@@ -356,9 +361,9 @@ def test_live_boot_proof_clamps_unsafe_parent_memory_limits(monkeypatch):
         }
     )
 
-    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "28"
-    assert env["AURA_PROCESS_RSS_LIMIT_GB"] == "36"
-    assert live_proof_rss_abort_mb(env) == 38_000.0
+    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "34"
+    assert env["AURA_PROCESS_RSS_LIMIT_GB"] == "40"
+    assert live_proof_rss_abort_mb(env) == 42_000.0
 
 
 def test_live_boot_proof_uses_readiness_heartbeat_contract():
