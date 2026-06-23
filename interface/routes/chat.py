@@ -11329,10 +11329,76 @@ async def api_chat(
                 )
             return final_text, status
 
+        async def _fail_closed_degraded_desktop_reply(
+            rejected_reply: str,
+            *,
+            response_path: str,
+            status: str = "desktop_response_quality_failed",
+            reason: str = "required_desktop_reply_remained_degraded",
+        ) -> JSONResponse:
+            """Refuse to surface unsafe text on the required live desktop lane."""
+
+            nonlocal pending_exchange_id
+            lane = _mark_conversation_lane_state(status, state="failed")
+            _live_turn_trace.update(
+                {
+                    "bounded_contract_used": False,
+                    "response_path": response_path,
+                    "rejected_reply_len": len(str(rejected_reply or "")),
+                }
+            )
+            failure_reply = (
+                "I could not produce a reliable full-mind desktop reply for that turn, "
+                "so I failed closed instead of sending an ungrounded answer."
+            )
+            if pending_exchange_id:
+                await _complete_logged_exchange(
+                    pending_exchange_id,
+                    _semantic_user_message,
+                    failure_reply,
+                    record_experience=False,
+                )
+                pending_exchange_id = None
+            else:
+                await _log_exchange(
+                    _semantic_user_message,
+                    failure_reply,
+                    record_experience=False,
+                    session_id=_chat_session_id,
+                )
+            await _emit_chat_output_receipt(
+                failure_reply,
+                cause="chat_response",
+                metadata={
+                    "response_confidence": "failed",
+                    "path": response_path,
+                    "status": status,
+                    "reason": reason,
+                    "rejected_reply_len": len(str(rejected_reply or "")),
+                },
+            )
+            return JSONResponse(
+                {
+                    "response": failure_reply,
+                    "status": status,
+                    "reason": reason,
+                    "conversation_lane": lane,
+                    "response_confidence": "failed",
+                    "live_turn_contract": _live_turn_contract(
+                        lane_status=lane,
+                        response_confidence="failed",
+                        status=status,
+                        reply_source=response_path,
+                    ),
+                },
+                status_code=503,
+            )
+
         async def _finalize_fastpath(reply_text: str, status: str = "ok"):
             nonlocal pending_exchange_id
             final_text = str(reply_text or "…").strip() or "…"
             response_confidence = "high"
+            hard_fastpath_quality_failed = False
             proof_status = str(status or "")
             is_governed_action_status = _status_represents_governed_action_result(proof_status)
             is_memory_state_status = _status_represents_memory_state_result(proof_status)
@@ -11401,6 +11467,14 @@ async def api_chat(
                         or semantic_glitch
                         or (fastpath_assessment is not None and fastpath_assessment.retryable)
                     ):
+                        hard_fastpath_quality_failed = bool(
+                            is_off_topic
+                            or semantic_glitch
+                            or (
+                                fastpath_assessment is not None
+                                and fastpath_assessment.retryable
+                            )
+                        )
                         response_confidence = "degraded"
                         (
                             repaired_text,
@@ -11437,6 +11511,14 @@ async def api_chat(
                                 )
                             except ImportError:
                                 fastpath_assessment = None
+                            hard_fastpath_quality_failed = bool(
+                                is_off_topic
+                                or semantic_glitch
+                                or (
+                                    fastpath_assessment is not None
+                                    and fastpath_assessment.retryable
+                                )
+                            )
                             if not (
                                 is_stale
                                 or is_same_diff
@@ -11448,6 +11530,17 @@ async def api_chat(
             except (AttributeError, RuntimeError, TypeError, ValueError) as fastpath_gate_exc:
                 record_degradation('chat', fastpath_gate_exc)
                 logger.debug("Fastpath final quality gate skipped: %s", fastpath_gate_exc)
+
+            if (
+                desktop_requires_cognitive_engine
+                and response_confidence == "degraded"
+                and hard_fastpath_quality_failed
+                and not (is_governed_action_status or is_memory_state_status)
+            ):
+                return await _fail_closed_degraded_desktop_reply(
+                    final_text,
+                    response_path="desktop_required_fastpath_quality_failed",
+                )
 
             _record_recent_response(final_text, _semantic_user_message)
             
@@ -12890,6 +12983,14 @@ async def api_chat(
         else:
             _consecutive_degraded_count = 0
 
+        hard_final_quality_failed = bool(
+            is_off_topic
+            or semantic_glitch
+            or desktop_recall_contract_failed
+            or desktop_context_contract_failed
+            or (reply_assessment is not None and reply_assessment.retryable)
+        )
+
         if response_confidence == "degraded":
             (
                 repaired_reply,
@@ -12925,6 +13026,9 @@ async def api_chat(
                     repaired_assessment = None
                 repaired_recall_contract_failed = False
                 repaired_context_contract_failed = False
+                repaired_assessment_retryable = bool(
+                    repaired_assessment is not None and repaired_assessment.retryable
+                )
                 if desktop_requires_cognitive_engine:
                     expected_recall_reply = await _build_conversation_recall_reply(
                         _semantic_user_message,
@@ -12942,6 +13046,13 @@ async def api_chat(
                         _semantic_user_message,
                         reply_text,
                     )
+                hard_final_quality_failed = bool(
+                    is_off_topic
+                    or semantic_glitch
+                    or repaired_recall_contract_failed
+                    or repaired_context_contract_failed
+                    or repaired_assessment_retryable
+                )
                 if not (
                     is_stale
                     or is_same_diff
@@ -12956,6 +13067,16 @@ async def api_chat(
                     logger.info("✅ Final reply quality gate repaired degraded output.")
                 else:
                     response_confidence = "degraded"
+
+        if (
+            desktop_requires_cognitive_engine
+            and response_confidence == "degraded"
+            and hard_final_quality_failed
+        ):
+            return await _fail_closed_degraded_desktop_reply(
+                reply_text,
+                response_path="desktop_required_final_quality_failed",
+            )
 
         # Proactive recovery: if 3+ consecutive degraded responses, compact + reset stale deque
         if _consecutive_degraded_count >= 3:

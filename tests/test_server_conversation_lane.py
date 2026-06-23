@@ -3962,6 +3962,92 @@ async def test_api_chat_desktop_surface_blocks_thin_cognitive_engine_recovery_re
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_required_fails_closed_on_final_degraded_reply(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    completed_exchanges = []
+    output_receipts = []
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-final-degraded"
+
+    async def _fake_complete_exchange(*args, **kwargs):
+        completed_exchanges.append((args, kwargs))
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    async def _bad_cognitive_turn(*_args, **_kwargs):
+        return "Absolutely. Let's nail this pitch. What are our key points?"
+
+    async def _no_stabilize(_message, reply, **_kwargs):
+        return reply
+
+    async def _no_repair(_message, reply, **_kwargs):
+        return reply, False, False, False, "", False
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _bad_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_stabilize_user_facing_reply", _no_stabilize)
+    monkeypatch.setattr(chat_routes, "_repair_final_degraded_reply", _no_repair)
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": {
+            "conversation_ready": False,
+            "state": state,
+            "reason": reason,
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+        },
+    )
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="You with me?"),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 503
+    assert b"desktop_response_quality_failed" in response.body
+    assert b"required_desktop_reply_remained_degraded" in response.body
+    assert b"nail this pitch" not in response.body
+    assert completed_exchanges
+    assert completed_exchanges[0][1]["record_experience"] is False
+    assert output_receipts
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_required_final_quality_failed"
+    assert output_receipts[0][1]["metadata"]["response_confidence"] == "failed"
+
+
+@pytest.mark.asyncio
 async def test_desktop_cognitive_engine_repairs_weak_status_reply_before_fail_closed(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
