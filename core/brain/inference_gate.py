@@ -6036,12 +6036,21 @@ class InferenceGate:
                     if (
                         proof_evaluation_contract
                         or strict_primary_proof_lane
-                        or desktop_cognitive_engine_contract
                     ):
                         logger.warning(
                             "🧠 Proof/evaluation request requires a valid Cortex response; refusing retry/fallback cascade after no text."
                         )
                         return None
+                    # NOTE: desktop_cognitive_engine_contract is intentionally NOT
+                    # refused here. A thin/empty first draft on a live desktop turn
+                    # (e.g. the 32B emits a short reply that trips too_thin) must
+                    # get one more attempt on the SAME primary Cortex lane — her
+                    # real mind — instead of fail-closing immediately. The later
+                    # gate below still refuses any LOWER-lane fallback for desktop
+                    # turns, so the "real mind only" guarantee is preserved; this
+                    # only restores the same-lane retry the early refuse was
+                    # skipping (the cause of "I could not produce a reliable
+                    # full-mind reply" on casual short turns).
 
                     # ── CORTEX RETRY: For user-facing requests, retry the primary model
                     # only when the first attempt failed quickly and the lane

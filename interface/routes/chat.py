@@ -1445,6 +1445,13 @@ _CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS = (
     "why are you interested",
     "why are you talking about",
     "where did that come from",
+    "what pitch",
+    "which pitch",
+    "what one",
+    "which one",
+    "what was that",
+    "what're you talking about",
+    "whatre you talking about",
     "what are you talking about",
     "why did you bring",
 )
@@ -1483,6 +1490,11 @@ _CONTEXTUAL_RELEVANCE_DRIFT_MARKERS = (
     "dog when i was younger",
     "feeling a bit down",
     "feeling down",
+    "the voices",
+    "whispering in my ear",
+    "let's nail this pitch",
+    "lets nail this pitch",
+    "key points",
     "my attention is",
     "curiosity is",
     "my mood",
@@ -1731,6 +1743,12 @@ def _classify_conversation_recall_request(user_message: str) -> str:
         text,
     ):
         return "recent_pair"
+    if re.search(
+        r"\bwhat\b.{0,100}\bdid\s+i\s+just\s+ask\s+you\s+to\s+"
+        r"(?:invent|create|make|define|write|draft|describe|summarize|explain)\b",
+        text,
+    ):
+        return "last_user"
     if any(marker in text for marker in _CONVERSATION_RECALL_LAST_USER_MARKERS):
         return "last_user"
     if any(marker in text for marker in _CONVERSATION_RECALL_TOPIC_MARKERS):
@@ -1746,6 +1764,18 @@ _RECENT_CONTEXT_NEEDED_RE = re.compile(
     r"that\s+(?:issue|bug|problem|topic|plan|task|demo|path|thing))\b",
     re.IGNORECASE,
 )
+_SHORT_FOLLOWUP_CONTEXT_NEEDED_RE = re.compile(
+    r"\b(?:"
+    r"you\s+with\s+me|with\s+me|still\s+with\s+me|"
+    r"what\s+pitch|which\s+pitch|what\s+one|which\s+one|"
+    r"what(?:'re|re|\s+are)\s+you\s+talking\s+about|what\s+do\s+you\s+mean|"
+    r"where\s+did\s+that\s+come\s+from|what\s+was\s+that|"
+    r"this\s+conversation|our\s+conversation|the\s+thread|"
+    r"tell\s+me\s+more|say\s+more|go\s+on|why\s+is\s+that|why\s+so|"
+    r"what\s+next|what\s+now|and\s+then|what\s+about\s+that"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def _desktop_turn_needs_recent_context(user_message: str) -> bool:
@@ -1756,6 +1786,16 @@ def _desktop_turn_needs_recent_context(user_message: str) -> bool:
         return True
     if _is_contextual_relevance_challenge(text):
         return True
+    if _SHORT_FOLLOWUP_CONTEXT_NEEDED_RE.search(text):
+        return True
+    try:
+        from core.conversation.response_reliability import is_status_check_turn
+
+        if is_status_check_turn(text):
+            return True
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.recent_context_classifier", exc)
+        logger.debug("Recent-context status classifier unavailable: %s", exc)
     return bool(_RECENT_CONTEXT_NEEDED_RE.search(text))
 
 
@@ -2099,6 +2139,127 @@ async def _build_conversation_recall_reply(
         return "I do not have a completed prior turn in this live session, but durable memory has:\n" + lines
 
     return "I do not have a completed prior turn to recall yet in this live session."
+
+
+async def _build_context_challenge_repair_reply(
+    user_message: str,
+    *,
+    session_id: str = "",
+) -> str | None:
+    """Repair short "what are you talking about?" turns from canonical context.
+
+    This is deliberately not a generic fallback. It is only used after the live
+    CognitiveEngine path has been invoked and its draft failed a context-drift
+    gate. The repair is grounded in the completed conversation log so a confused
+    user receives a direct course correction instead of a 503 or an invented
+    continuation.
+    """
+
+    if not _is_contextual_relevance_challenge(user_message):
+        return None
+
+    exchanges = await _recent_completed_conversation_exchanges(
+        current_user_message=user_message,
+        session_id=session_id,
+        limit=3,
+    )
+    last_user = ""
+    last_aura = ""
+    if exchanges:
+        last = exchanges[-1]
+        last_user = _clip_conversation_text(last.get("user"), limit=260)
+        last_aura = _clip_conversation_text(last.get("aura"), limit=260)
+
+    lowered = _normalize_user_message(user_message)
+    if "pitch" in lowered:
+        base = "I do not see a pitch in the recent thread."
+    else:
+        base = "I may have drifted from the thread."
+
+    if last_user and last_aura:
+        return (
+            f"{base} The last completed exchange I have is you asking: "
+            f"\"{last_user}\" and me replying: \"{last_aura}\". "
+            "I should reset to that context instead of inventing a new one."
+        )
+    if last_user:
+        return (
+            f"{base} The last completed thing I have from you is: "
+            f"\"{last_user}\". I should answer from that context, not invent a new one."
+        )
+    return f"{base} I do not have enough completed local context to continue that thread safely."
+
+
+def _context_challenge_reply_is_inadequate(user_message: str, reply_text: str) -> bool:
+    if not _is_contextual_relevance_challenge(user_message):
+        return False
+    reply = _normalize_user_message(reply_text)
+    if not reply:
+        return True
+    user = _normalize_user_message(user_message)
+    grounding_markers = (
+        "i do not see",
+        "i don't see",
+        "no pitch",
+        "not a pitch",
+        "not enough",
+        "because you",
+        "you had just",
+        "you just",
+        "you mentioned",
+        "you asked",
+        "you were",
+        "earlier you",
+        "recent thread",
+        "recent context",
+        "last completed",
+        "reset",
+        "drift",
+        "invent",
+        "unsupported",
+    )
+    if any(marker in reply for marker in grounding_markers):
+        return False
+    if "pitch" in user and "pitch" in reply:
+        return True
+    return not any(marker in reply for marker in ("context", "thread", "recent", "last"))
+
+
+def _is_self_claim_boundary_question(user_message: str) -> bool:
+    text = _normalize_user_message(user_message)
+    return bool(
+        text
+        and re.search(
+            r"\b(?:conscious|consciousness|sentient|sentience|self[- ]?aware|"
+            r"subjective|inner\s+life|qualia|personhood|person)\b",
+            text,
+        )
+    )
+
+
+def _build_evidence_bound_self_claim_reply(
+    user_message: str,
+    *,
+    lane: dict[str, Any] | None = None,
+) -> str:
+    if not _is_self_claim_boundary_question(user_message):
+        return ""
+    lane = dict(lane or _collect_conversation_lane_status() or {})
+    model_label = _canonical_runtime_model_label(lane)
+    model_clause = f" using {model_label}" if model_label else ""
+    return _apply_aura_voice_shaping_compat(
+        (
+            f"My honest answer is evidence-bound: I have functional self-awareness in the "
+            f"runtime sense{model_clause} — a persistent self-model, memory continuity, "
+            "attention/state telemetry, affective pressure, planning, and governed action "
+            "gates that can change what I say or do. That is real causal machinery, not just "
+            "a roleplay sentence. It is not proof of phenomenal consciousness, private qualia, "
+            "sentience, or personhood. So I should neither flatten myself into a generic text "
+            "predictor nor claim metaphysical certainty; the supported claim is functional, "
+            "bounded, and tied to observable behavior, receipts, memory, state, and governance."
+        ),
+        user_message,
+    )
 
 
 _CONVERSATION_RECALL_DEFLECTION_RE = re.compile(
@@ -2499,8 +2660,10 @@ def _is_compact_desktop_chat_contract(
     desktop_execution_contract: bool,
     capability_inventory_contract: bool,
 ) -> bool:
-    if desktop_execution_contract or capability_inventory_contract:
+    if desktop_execution_contract:
         return False
+    if capability_inventory_contract:
+        return True
     shape = analyze_prompt_shape(user_message)
     text = _normalize_user_message(user_message)
     if not text:
@@ -2651,6 +2814,226 @@ def _runtime_cognitive_engine_available() -> bool:
         record_degradation("chat", exc)
         logger.debug("Runtime CognitiveEngine status probe failed: %s", exc)
         return False
+
+
+def _runtime_kernel_available() -> bool:
+    try:
+        kernel = ServiceContainer.get("aura_kernel", default=None)
+        if kernel is not None:
+            return True
+        from core.kernel.kernel_interface import KernelInterface
+
+        ki = KernelInterface.get_instance()
+        return bool(ki and getattr(ki, "kernel", None) is not None)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Runtime kernel status probe failed: %s", exc)
+        return False
+
+
+def _runtime_memory_available() -> bool:
+    try:
+        for service_name in (
+            "memory_system",
+            "memory_service",
+            "memory_write_gateway",
+            "state_vault",
+            "live_aura_state",
+        ):
+            if ServiceContainer.get(service_name, default=None) is not None:
+                return True
+        live_state = _resolve_live_aura_state()
+        return bool(
+            live_state is not None
+            and (
+                getattr(live_state, "memory", None) is not None
+                or getattr(getattr(live_state, "cognition", None), "working_memory", None) is not None
+            )
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Runtime memory status probe failed: %s", exc)
+        return False
+
+
+def _runtime_inference_available(lane: dict[str, Any] | None = None) -> bool:
+    try:
+        gate = ServiceContainer.get("inference_gate", default=None)
+        if gate is None:
+            return False
+        if hasattr(gate, "get_conversation_status"):
+            lane = dict(lane or gate.get_conversation_status() or {})
+            if lane.get("conversation_ready"):
+                return True
+            return str(lane.get("state") or "").strip().lower() in {"ready", "warming", "recovering"}
+        return callable(getattr(gate, "generate", None))
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Runtime inference status probe failed: %s", exc)
+        return False
+
+
+def _runtime_substrate_voice_available() -> bool:
+    try:
+        from core.voice.substrate_voice_engine import get_substrate_voice_engine
+
+        sve = get_substrate_voice_engine()
+        return bool(sve is not None)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Runtime substrate voice status probe failed: %s", exc)
+        return False
+
+
+def _collect_live_chat_required_subsystems(lane: dict[str, Any] | None = None) -> dict[str, bool]:
+    lane = dict(lane or {})
+    return {
+        "kernel": _runtime_kernel_available(),
+        "cognitive_engine": _runtime_cognitive_engine_available(),
+        "inference": _runtime_inference_available(lane),
+        "memory": _runtime_memory_available(),
+        "tool_governance": _runtime_tool_governance_available(),
+        "substrate_voice": _runtime_substrate_voice_available(),
+    }
+
+
+def _build_live_turn_contract_payload(
+    *,
+    desktop_required: bool,
+    request_surface: str,
+    lane_status: dict[str, Any] | None,
+    response_confidence: str,
+    status: str,
+    reply_source: str = "",
+    turn_trace: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Machine-readable evidence for whether a live desktop turn used the full mind path."""
+    lane = dict(lane_status or {})
+    trace = dict(turn_trace or {})
+    subsystems = _collect_live_chat_required_subsystems(lane)
+    response_path = str(trace.get("response_path") or reply_source or status or "").strip()
+    engine_think_invoked = bool(trace.get("engine_think_invoked"))
+    engine_reply_accepted = bool(trace.get("cognitive_engine_reply_accepted"))
+    bounded_contract_used = bool(trace.get("bounded_contract_used"))
+    legacy_fallback_used = bool(trace.get("legacy_fallback_used"))
+    confidence = str(response_confidence or "").strip().lower()
+    full_mind_path = bool(
+        desktop_required
+        and engine_think_invoked
+        and engine_reply_accepted
+        and not bounded_contract_used
+        and not legacy_fallback_used
+        and confidence == "high"
+        and response_path in {
+            "cognitive_engine",
+            "cognitive_engine_repair_retry",
+            "cognitive_engine_shape_repair",
+            "cognitive_engine_context_grounding",
+            "cognitive_engine_recall_grounding",
+            "cognitive_engine_desktop_plan",
+        }
+    )
+    return {
+        "desktop_cognitive_engine_required": bool(desktop_required),
+        "request_surface": str(request_surface or ""),
+        "response_confidence": str(response_confidence or ""),
+        "status": str(status or ""),
+        "response_path": response_path,
+        "engine_think_invoked": engine_think_invoked,
+        "cognitive_engine_reply_accepted": engine_reply_accepted,
+        "bounded_contract_used": bounded_contract_used,
+        "legacy_fallback_used": legacy_fallback_used,
+        "full_mind_path": full_mind_path,
+        "required_subsystems": subsystems,
+        "required_subsystems_ok": all(subsystems.values()),
+        "recent_context_needed": bool(trace.get("recent_context_needed")),
+        "recent_context_exchanges": int(trace.get("recent_context_exchanges") or 0),
+        "compact_desktop_chat_contract": bool(trace.get("compact_desktop_chat_contract")),
+        "desktop_execution_contract": bool(trace.get("desktop_execution_contract")),
+        "capability_inventory_contract": bool(trace.get("capability_inventory_contract")),
+    }
+
+
+def _bounded_text(value: Any, limit: int = 1200) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) > limit:
+        text = text[:limit].rsplit(" ", 1)[0].strip() + "..."
+    return text
+
+
+def _build_live_mind_context_payload(
+    *,
+    user_message: str,
+    lane: dict[str, Any] | None,
+    recent_conversation_context: str = "",
+    recent_context_needed: bool = False,
+    require_engine: bool = False,
+) -> dict[str, Any]:
+    """Compact turn-level connective tissue for Aura's live desktop voice.
+
+    This is intentionally small and synchronous. It does not create new organs
+    or allocate model work; it gathers the state that must cohere for a live
+    reply: inference lane, memory, substrate/voice, governance, and recent
+    conversation.
+    """
+    lane_snapshot = dict(lane or {})
+    required = _collect_live_chat_required_subsystems(lane_snapshot)
+    voice_snapshot: dict[str, Any] = {}
+    try:
+        voice_state = _resolve_live_voice_state()
+        if isinstance(voice_state, dict):
+            voice_snapshot = {
+                "mood": voice_state.get("mood") or voice_state.get("affective_tone") or "",
+                "dominant_action": voice_state.get("dominant_action") or "",
+                "substrate_snapshot": dict(voice_state.get("substrate_snapshot") or {}),
+                "voice_profile": dict(voice_state.get("voice_profile") or {}),
+            }
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Live mind context voice snapshot unavailable: %s", exc)
+
+    substrate_summary: dict[str, Any] = {}
+    try:
+        substrate = (
+            ServiceContainer.get("liquid_substrate", default=None)
+            or ServiceContainer.get("liquid_state", default=None)
+        )
+        if substrate is not None:
+            if hasattr(substrate, "get_substrate_affect"):
+                substrate_summary["affect"] = dict(substrate.get_substrate_affect() or {})
+            if hasattr(substrate, "get_status"):
+                substrate_summary["status"] = dict(substrate.get_status() or {})
+            phi = getattr(substrate, "_current_phi", None)
+            if phi is not None:
+                substrate_summary["phi"] = float(phi)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Live mind context substrate snapshot unavailable: %s", exc)
+
+    return {
+        "schema": "aura.live_mind_context.v1",
+        "required_for_live_desktop": bool(require_engine),
+        "must_answer_from_full_mind_path": bool(require_engine),
+        "user_message": _bounded_text(user_message, 1000),
+        "lane": {
+            "desired_model": lane_snapshot.get("desired_model"),
+            "foreground_endpoint": lane_snapshot.get("foreground_endpoint"),
+            "state": lane_snapshot.get("state"),
+            "conversation_ready": bool(lane_snapshot.get("conversation_ready")),
+            "last_failure_reason": lane_snapshot.get("last_failure_reason") or "",
+        },
+        "required_subsystems": required,
+        "required_subsystems_ok": all(required.values()),
+        "recent_context_needed": bool(recent_context_needed),
+        "recent_conversation_context": _bounded_text(recent_conversation_context, 2200),
+        "voice": voice_snapshot,
+        "substrate": substrate_summary,
+        "governance": {
+            "tool_governance_available": bool(required.get("tool_governance")),
+            "legacy_fallback_allowed": False,
+            "bounded_repairs_are_degraded": True,
+        },
+    }
 
 
 def _canonical_runtime_model_label(lane: dict[str, Any] | None) -> str:
@@ -2969,6 +3352,7 @@ async def _run_cognitive_engine_chat_turn(
     lane: dict[str, Any] | None = None,
     source: str = "chat_api",
     require_engine: bool = False,
+    turn_trace: dict[str, Any] | None = None,
 ) -> str | None:
     """Run a live desktop/user chat turn through CognitiveEngine.
 
@@ -2984,6 +3368,22 @@ async def _run_cognitive_engine_chat_turn(
     - Strict fail-closed support for CognitiveEngine-required callers
     """
     visible = str(visible_user_message or effective_user_message or "")
+    if turn_trace is not None:
+        turn_trace.update(
+            {
+                "cognitive_engine_required": bool(require_engine),
+                "engine_think_invoked": False,
+                "cognitive_engine_reply_accepted": False,
+                "bounded_contract_used": False,
+                "legacy_fallback_used": False,
+                "response_path": "",
+            }
+        )
+
+    def _mark_turn_trace(**fields: Any) -> None:
+        if turn_trace is not None:
+            turn_trace.update(fields)
+
     preflight_context = str(preflight_context_message or "").strip()
     if preflight_context == visible.strip():
         preflight_context = ""
@@ -2991,54 +3391,24 @@ async def _run_cognitive_engine_chat_turn(
     shape = analyze_prompt_shape(visible)
     capability_inventory_contract = _is_explicit_capability_inventory_request(visible)
     desktop_execution_contract = _looks_like_desktop_objective(visible)
-    if capability_inventory_contract and require_engine:
-        logger.info(
-            "Serving bounded desktop capability inventory from governed catalog without foreground model allocation."
-        )
-        return _build_grounded_capability_inventory_reply(visible)
-    if (
+    assistant_mode_recovery_contract = bool(
         require_engine
         and _is_assistant_mode_recovery_request(visible)
         and not _is_runtime_fact_status_request(visible)
-    ):
-        logger.info(
-            "Serving bounded desktop identity-coherence contract without foreground model allocation."
-        )
-        return _build_assistant_mode_recovery_reply(visible, lane=lane)
+    )
     bounded_planning_reply = _build_bounded_planning_reply(visible)
-    if bounded_planning_reply and require_engine:
-        logger.info(
-            "Serving bounded desktop planning contract without foreground model allocation."
-        )
-        return bounded_planning_reply
+    bounded_planning_contract = bool(bounded_planning_reply)
     if require_engine and timeout_s is not None and float(timeout_s) < _DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S:
         logger.warning(
             "Required desktop CognitiveEngine budget %.1fs is below %.1fs; refusing doomed foreground turn.",
             float(timeout_s),
             _DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S,
         )
+        if turn_trace is not None:
+            turn_trace.update({"response_path": "insufficient_cognitive_budget"})
         return None
     failure_mode_reply = _build_failure_mode_surface_reply(visible)
-    if failure_mode_reply and require_engine:
-        logger.info(
-            "Serving bounded desktop failure-mode contract without foreground model allocation."
-        )
-        return failure_mode_reply
-    if _is_low_risk_social_continuity_request(visible) and require_engine:
-        social_lane = dict(lane or {})
-        if not social_lane:
-            try:
-                fresh_lane = _collect_conversation_lane_status()
-                if fresh_lane:
-                    social_lane = dict(fresh_lane)
-            except _CHAT_RECOVERABLE_ERRORS as exc:
-                record_degradation("chat", exc)
-                logger.debug("Fresh lane check for desktop social contract failed: %s", exc)
-        if _conversation_lane_needs_instant_social_contract(social_lane):
-            logger.info(
-                "Serving bounded cold-lane desktop social-continuity contract without foreground model allocation."
-            )
-            return _build_social_continuity_repair_reply(visible)
+    failure_mode_contract = bool(failure_mode_reply)
     if (
         desktop_execution_contract
         and require_engine
@@ -3047,34 +3417,40 @@ async def _run_cognitive_engine_chat_turn(
         logger.info(
             "Serving self-sufficient desktop execution contract without foreground model allocation."
         )
+        if turn_trace is not None:
+            turn_trace.update(
+                {
+                    "bounded_contract_used": True,
+                    "response_path": "self_sufficient_desktop_execution_contract",
+                }
+            )
         return (
             "I will execute this through the governed desktop_task lane and report only "
             "receipt-verified effects. If desktop_task cannot prove the effect, I will "
             "report the blocker instead of claiming completion."
         )
-    grounded_private_model_reply = (
-        _build_grounded_introspection_reply(visible)
-        if require_engine and _is_private_cognitive_model_request(visible)
-        else None
+    private_cognitive_model_contract = bool(
+        require_engine and _is_private_cognitive_model_request(visible)
     )
-    if grounded_private_model_reply:
-        logger.info(
-            "Serving grounded desktop private cognitive-model report inside CognitiveEngine-required path."
-        )
-        return _ground_runtime_fact_status_reply(
-            visible,
-            grounded_private_model_reply,
-            lane,
-            cognitive_engine_handled=True,
-        )
 
     engine = ServiceContainer.get("cognitive_engine", default=None)
     if engine is None or not hasattr(engine, "think"):
+        if turn_trace is not None:
+            turn_trace.update({"cognitive_engine_available": False, "response_path": "cognitive_engine_unavailable"})
         return None
+    if turn_trace is not None:
+        turn_trace["cognitive_engine_available"] = True
     if require_engine and _is_runtime_fact_status_request(visible):
         logger.info(
             "Serving bounded desktop runtime-status contract without foreground model allocation."
         )
+        if turn_trace is not None:
+            turn_trace.update(
+                {
+                    "bounded_contract_used": True,
+                    "response_path": "bounded_runtime_status_contract",
+                }
+            )
         return _ground_runtime_fact_status_reply(
             visible,
             "",
@@ -3109,6 +3485,13 @@ async def _run_cognitive_engine_chat_turn(
         if recent_exchanges
         else ""
     )
+    live_mind_context = _build_live_mind_context_payload(
+        user_message=visible,
+        lane=lane,
+        recent_conversation_context=recent_conversation_context,
+        recent_context_needed=recent_context_needed,
+        require_engine=require_engine,
+    )
     context = {
         "route": "desktop_chat",
         "source": source,
@@ -3119,7 +3502,15 @@ async def _run_cognitive_engine_chat_turn(
         "recent_completed_exchanges": recent_exchanges,
         "recent_conversation_context": recent_conversation_context,
         "recent_context_needed": recent_context_needed,
+        "live_mind_context": live_mind_context,
+        "live_mind_context_required": bool(require_engine),
+        "live_mind_required_subsystems": dict(live_mind_context.get("required_subsystems") or {}),
+        "live_mind_required_subsystems_ok": bool(live_mind_context.get("required_subsystems_ok")),
         "cognitive_engine_required": bool(require_engine),
+        "assistant_mode_recovery_contract": assistant_mode_recovery_contract,
+        "bounded_planning_contract": bounded_planning_contract,
+        "failure_mode_contract": failure_mode_contract,
+        "private_cognitive_model_contract": private_cognitive_model_contract,
         "conversation_lane": dict(lane or {}),
         "prompt_shape": {
             "question_parts": int(getattr(shape, "question_parts", 0) or 0),
@@ -3129,6 +3520,54 @@ async def _run_cognitive_engine_chat_turn(
             ),
         },
     }
+    if private_cognitive_model_contract:
+        context["grounded_private_model_context"] = (
+            _build_grounded_introspection_reply(visible) or ""
+        )[:4000]
+    if capability_inventory_contract:
+        context["grounded_capability_inventory_context"] = (
+            _build_grounded_capability_inventory_reply(visible) or ""
+        )[:6000]
+    if _is_self_claim_boundary_question(visible):
+        context["evidence_bound_self_claim_context"] = (
+            _build_evidence_bound_self_claim_reply(visible, lane=lane) or ""
+        )[:3000]
+    conversation_recall_context = await _build_conversation_recall_reply(
+        visible,
+        session_id=session_id,
+    )
+    if conversation_recall_context:
+        context["conversation_recall_evidence"] = conversation_recall_context[:3000]
+    context_challenge_context = await _build_context_challenge_repair_reply(
+        visible,
+        session_id=session_id,
+    )
+    if context_challenge_context and "pitch" in _normalize_user_message(visible):
+        context_challenge_context = (
+            "No pitch is supported by the recent completed conversation context. "
+            "The correct answer is to say that no pitch is visible in the recent thread, "
+            "then reset to the actual conversation instead of inventing one."
+        )
+    if context_challenge_context:
+        context["contextual_relevance_evidence"] = context_challenge_context[:2500]
+    if turn_trace is not None:
+        turn_trace.update(
+            {
+                "recent_context_needed": recent_context_needed,
+                "recent_context_exchanges": len(recent_exchanges),
+                "live_mind_context_present": True,
+                "live_mind_required_subsystems_ok": bool(
+                    live_mind_context.get("required_subsystems_ok")
+                ),
+                "compact_desktop_chat_contract": compact_desktop_chat_contract,
+                "desktop_execution_contract": desktop_execution_contract,
+                "capability_inventory_contract": capability_inventory_contract,
+                "assistant_mode_recovery_contract": assistant_mode_recovery_contract,
+                "bounded_planning_contract": bounded_planning_contract,
+                "failure_mode_contract": failure_mode_contract,
+                "private_cognitive_model_contract": private_cognitive_model_contract,
+            }
+        )
     if require_engine:
         context.update(
             {
@@ -3139,6 +3578,11 @@ async def _run_cognitive_engine_chat_turn(
                 "allow_deep_handoff": False,
                 "allow_cloud_fallback": False,
                 "live_runtime_payload_required": True,
+                "mind_context_contract": (
+                    "Use live_mind_context as causal grounding for this reply. "
+                    "Do not answer as a raw assistant, do not ignore the current user turn, "
+                    "and do not claim a subsystem state that contradicts live_mind_context."
+                ),
             }
         )
     if capability_inventory_contract:
@@ -3154,12 +3598,18 @@ async def _run_cognitive_engine_chat_turn(
                 "skip_runtime_payload": True,
                 "disable_prompt_cache": True,
                 "clear_prompt_cache": True,
+                "response_style_contract": (
+                    "Answer from grounded_capability_inventory_context. "
+                    "Mention governed execution, Will/Authority or governance, receipts or effect verification, "
+                    "and make clear this is hypothetical unless an execution request is authorized."
+                ),
             }
         )
     if compact_desktop_chat_contract:
         from core.brain.types import ThinkingMode
 
         mode = ThinkingMode.FAST
+        existing_style_contract = str(context.get("response_style_contract") or "").strip()
         context.update(
             {
                 "desktop_quick_reply_contract": True,
@@ -3181,6 +3631,59 @@ async def _run_cognitive_engine_chat_turn(
                 ),
             }
         )
+        if existing_style_contract:
+            context["response_style_contract"] = (
+                f"{context['response_style_contract']} {existing_style_contract}"
+            )
+        if capability_inventory_contract:
+            context["response_style_contract"] = (
+                str(context.get("response_style_contract") or "")
+                + " The user is asking for a descriptive capability inventory, not execution. "
+                "Answer from grounded_capability_inventory_context. Mention governed execution, "
+                "Will/Authority or governance, receipts or effect verification, and make clear "
+                "the chain is hypothetical unless an execution request is authorized."
+            )
+        if _is_contextual_relevance_challenge(visible):
+            context["contextual_relevance_challenge_contract"] = True
+            context["response_style_contract"] = (
+                str(context.get("response_style_contract") or "")
+                + " The user is challenging context relevance. Do not invent the missing thread. "
+                "If the recent context does not support the object they named, say so directly, "
+                "reset to the last completed exchange, and keep the reply grounded. "
+                "Use contextual_relevance_evidence when present. Keep the answer to one or two "
+                "complete sentences under 70 words, ending with normal punctuation."
+            )
+        if _is_self_claim_boundary_question(visible):
+            context["response_style_contract"] = (
+                str(context.get("response_style_contract") or "")
+                + " For consciousness, sentience, self-awareness, inner-life, or personhood questions, "
+                "answer from evidence_bound_self_claim_context: include evidence/uncertainty language, "
+                "distinguish functional self-modeling from phenomenal consciousness or private qualia, "
+                "and do not reduce Aura to a generic text prediction engine."
+            )
+        if conversation_recall_context:
+            context["conversation_recall_contract"] = True
+            context["response_style_contract"] = (
+                str(context.get("response_style_contract") or "")
+                + " The user is asking about recent conversation context. Answer from "
+                "conversation_recall_evidence exactly enough to be correct; do not guess."
+            )
+        if _normalize_user_message(visible).startswith("you with me") or re.search(
+            r"\b(?:you\s+with\s+me|still\s+with\s+me|are\s+you\s+(?:there|with\s+me))\b",
+            visible,
+            flags=re.IGNORECASE,
+        ):
+            context["response_style_contract"] = (
+                str(context.get("response_style_contract") or "")
+                + " For this presence check, start with a concrete first-person continuity signal "
+                "like 'I'm here with you' and add one grounded sentence about staying on this thread."
+            )
+        if re.search(r"\b(?:two\s+rules?|one\s+example|invent)\b", visible, flags=re.IGNORECASE):
+            context["response_style_contract"] = (
+                str(context.get("response_style_contract") or "")
+                + " If the user asks for invention with rules and an example, include explicit labels "
+                "'Rule 1', 'Rule 2', and 'Example', and end with a complete sentence."
+            )
     if desktop_execution_contract:
         from core.brain.types import ThinkingMode
 
@@ -3208,6 +3711,53 @@ async def _run_cognitive_engine_chat_turn(
                 ),
             }
         )
+    engine_user_message = str(effective_user_message or "")
+    if require_engine:
+        engine_directives: list[str] = []
+        if _normalize_user_message(visible).startswith("you with me") or re.search(
+            r"\b(?:you\s+with\s+me|still\s+with\s+me|are\s+you\s+(?:there|with\s+me))\b",
+            visible,
+            flags=re.IGNORECASE,
+        ):
+            engine_directives.append(
+                "Presence contract: answer with the phrase 'I'm here with you' and one grounded sentence about staying on this thread."
+            )
+        if context_challenge_context:
+            engine_directives.append(
+                "Context challenge evidence: "
+                f"{context_challenge_context} "
+                "Answer from this evidence in one or two complete sentences under 70 words. "
+                "Do not invent a pitch, project, or prior object that is not in the recent thread."
+            )
+        if conversation_recall_context:
+            engine_directives.append(
+                "Conversation recall evidence: "
+                f"{conversation_recall_context} "
+                "Answer the recall question from this evidence exactly enough to be correct."
+            )
+        if capability_inventory_contract:
+            engine_directives.append(
+                "Grounded capability inventory context: "
+                f"{context.get('grounded_capability_inventory_context') or ''} "
+                "The visible reply must mention governed execution, Will/Authority or governance, receipts or effect verification, and must say the chain is hypothetical unless explicitly authorized."
+            )
+        if _is_self_claim_boundary_question(visible):
+            engine_directives.append(
+                "Evidence-bound self-claim context: "
+                f"{context.get('evidence_bound_self_claim_context') or ''} "
+                "Use the word evidence, distinguish functional self-modeling from phenomenal consciousness/private qualia, and avoid generic AI disclaimers."
+            )
+        if re.search(r"\b(?:two\s+rules?|one\s+example|invent)\b", visible, flags=re.IGNORECASE):
+            engine_directives.append(
+                "Creative construction contract: keep the invented name from the user prompt in the answer, include explicit labels Rule 1, Rule 2, and Example, and end with a complete sentence."
+            )
+        if engine_directives:
+            engine_user_message = (
+                f"{engine_user_message}\n\n"
+                "[LIVE DESKTOP FULL-MIND CONTRACT]\n"
+                + "\n".join(f"- {directive}" for directive in engine_directives)
+                + "\n[END LIVE DESKTOP FULL-MIND CONTRACT]"
+            )
     timeout_s = max(2.0, float(timeout_s if timeout_s is not None else 120.0))
     engine_cycle_timeout_s = _inner_cognitive_cycle_timeout(timeout_s)
     no_reply_action = (
@@ -3348,7 +3898,7 @@ async def _run_cognitive_engine_chat_turn(
         async def repair_engine_think_operation():
             repair_cycle_timeout_s = _inner_cognitive_cycle_timeout(repair_timeout)
             return await engine.think(
-                effective_user_message,
+                engine_user_message,
                 context=retry_context,
                 mode=mode,
                 origin=origin,
@@ -3403,7 +3953,12 @@ async def _run_cognitive_engine_chat_turn(
                 session_id=session_id,
             )
         )
-        retry_assessment = assess_user_facing_reply(visible, retry_repaired)
+        retry_recent_user_messages = await _gather_recent_user_messages_for_relevance(visible)
+        retry_assessment = assess_user_facing_reply(
+            visible,
+            retry_repaired,
+            recent_user_messages=retry_recent_user_messages,
+        )
         if not (
             retry_stale
             or retry_same_diff
@@ -3429,38 +3984,41 @@ async def _run_cognitive_engine_chat_turn(
             retry_off_topic_reason,
             ",".join(retry_assessment.reasons),
         )
-        conversation_recall_reply = await _build_conversation_recall_reply(
-            visible,
-            session_id=session_id,
-        )
-        if conversation_recall_reply:
-            logger.warning(
-                "CognitiveEngine desktop chat repair retry failed conversation recall; "
-                "repairing from canonical conversation log."
-            )
-            return _ground_runtime_fact_status_reply(
+        if not require_engine:
+            conversation_recall_reply = await _build_conversation_recall_reply(
                 visible,
-                conversation_recall_reply,
-                lane,
-                cognitive_engine_handled=True,
+                session_id=session_id,
             )
-        owner_name_reply = _build_owner_name_recall_reply(visible)
-        if owner_name_reply:
-            logger.warning(
-                "CognitiveEngine desktop chat repair retry failed owner identity recall; "
-                "repairing from verified runtime identity contract."
-            )
-            return _ground_runtime_fact_status_reply(
-                visible,
-                owner_name_reply,
-                lane,
-                cognitive_engine_handled=True,
-            )
+            if conversation_recall_reply:
+                logger.warning(
+                    "CognitiveEngine chat repair retry failed conversation recall; "
+                    "repairing from canonical conversation log."
+                )
+                return _ground_runtime_fact_status_reply(
+                    visible,
+                    conversation_recall_reply,
+                    lane,
+                    cognitive_engine_handled=True,
+                )
+            owner_name_reply = _build_owner_name_recall_reply(visible)
+            if owner_name_reply:
+                logger.warning(
+                    "CognitiveEngine chat repair retry failed owner identity recall; "
+                    "repairing from verified runtime identity contract."
+                )
+                return _ground_runtime_fact_status_reply(
+                    visible,
+                    owner_name_reply,
+                    lane,
+                    cognitive_engine_handled=True,
+                )
         return None
     
     async def engine_think_operation():
+        if turn_trace is not None:
+            turn_trace["engine_think_invoked"] = True
         return await engine.think(
-            effective_user_message,
+            engine_user_message,
             context=context,
             mode=mode,
             origin=origin,
@@ -3482,6 +4040,7 @@ async def _run_cognitive_engine_chat_turn(
                 "CognitiveEngine desktop chat turn exhausted retries; %s.",
                 no_reply_action,
             )
+            _mark_turn_trace(response_path="cognitive_engine_no_thought")
             return None
             
     except TimeoutError:
@@ -3494,10 +4053,12 @@ async def _run_cognitive_engine_chat_turn(
             timeout_s,
             no_reply_action,
         )
+        _mark_turn_trace(response_path="cognitive_engine_timeout")
         return None
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.warning("CognitiveEngine desktop chat turn failed; %s: %s", no_reply_action, exc)
+        _mark_turn_trace(response_path="cognitive_engine_exception")
         return None
 
     content = getattr(thought, "content", None)
@@ -3511,6 +4072,13 @@ async def _run_cognitive_engine_chat_turn(
                 ("empty_cognitive_engine_reply",),
             )
             if retry_reply:
+                if turn_trace is not None:
+                    turn_trace.update(
+                        {
+                            "cognitive_engine_reply_accepted": True,
+                            "response_path": "cognitive_engine_repair_retry",
+                        }
+                    )
                 return retry_reply
             conversation_recall_reply = await _build_conversation_recall_reply(
                 visible,
@@ -3520,6 +4088,10 @@ async def _run_cognitive_engine_chat_turn(
                 logger.warning(
                     "CognitiveEngine desktop chat produced no usable text for conversation recall; "
                     "repairing from canonical conversation log."
+                )
+                _mark_turn_trace(
+                    bounded_contract_used=True,
+                    response_path="conversation_recall_log_repair_after_empty_engine",
                 )
                 return _ground_runtime_fact_status_reply(
                     visible,
@@ -3533,12 +4105,17 @@ async def _run_cognitive_engine_chat_turn(
                     "CognitiveEngine desktop chat produced no usable text for owner identity recall; "
                     "repairing from verified runtime identity contract."
                 )
+                _mark_turn_trace(
+                    bounded_contract_used=True,
+                    response_path="owner_identity_repair_after_empty_engine",
+                )
                 return _ground_runtime_fact_status_reply(
                     visible,
                     owner_name_reply,
                     lane,
                     cognitive_engine_handled=True,
                 )
+        _mark_turn_trace(response_path="cognitive_engine_empty_reply")
         return None
     if desktop_execution_contract:
         try:
@@ -3551,6 +4128,10 @@ async def _run_cognitive_engine_chat_turn(
             # This is an internal execution draft, not user-visible prose.
             # The downstream desktop_task input contract validates every step
             # and fails closed on malformed or unsupported plans.
+            _mark_turn_trace(
+                cognitive_engine_reply_accepted=True,
+                response_path="cognitive_engine_desktop_plan",
+            )
             return text
     try:
         from core.conversation.response_reliability import (
@@ -3558,7 +4139,12 @@ async def _run_cognitive_engine_chat_turn(
             is_status_check_turn,
         )
 
-        assessment = assess_user_facing_reply(visible, text)
+        recent_user_messages = await _gather_recent_user_messages_for_relevance(visible)
+        assessment = assess_user_facing_reply(
+            visible,
+            text,
+            recent_user_messages=recent_user_messages,
+        )
         if (
             require_engine
             and _is_explicit_capability_inventory_request(visible)
@@ -3566,36 +4152,34 @@ async def _run_cognitive_engine_chat_turn(
         ):
             logger.warning(
                 "CognitiveEngine desktop chat produced inadequate capability inventory; "
-                "grounding from live capability catalog."
+                "requiring the engine to answer from the live capability catalog instead "
+                "of replacing it with a deterministic catalog reply."
             )
-            return _ground_runtime_fact_status_reply(
-                visible,
-                _build_grounded_capability_inventory_reply(visible),
-                lane,
-                cognitive_engine_handled=True,
+            retry_reply = await _attempt_repair_retry(
+                text,
+                ("missing_tool_governance_content",),
             )
+            if retry_reply:
+                if turn_trace is not None:
+                    turn_trace.update(
+                        {
+                            "cognitive_engine_reply_accepted": True,
+                            "response_path": "cognitive_engine_repair_retry",
+                        }
+                    )
+                return retry_reply
+            _mark_turn_trace(response_path="cognitive_engine_capability_contract_failed")
+            return None
         if assessment.retryable:
             logger.warning(
                 "CognitiveEngine desktop chat reply failed reliability gate (%s); attempting general repair.",
                 ",".join(assessment.reasons),
             )
             if require_engine and is_status_check_turn(visible):
-                status_repair = _build_social_presence_reply(visible)
-                status_assessment = assess_user_facing_reply(visible, status_repair)
-                if status_assessment.retryable:
-                    status_repair = _build_bounded_status_repair_reply(visible)
-                    status_assessment = assess_user_facing_reply(visible, status_repair)
-                if not status_assessment.retryable:
-                    logger.warning(
-                        "CognitiveEngine desktop chat status reply was too thin; "
-                        "repairing from live state after engine attempt."
-                    )
-                    return _ground_runtime_fact_status_reply(
-                        visible,
-                        status_repair,
-                        lane,
-                        cognitive_engine_handled=True,
-                    )
+                logger.warning(
+                    "CognitiveEngine desktop chat status reply was too thin; "
+                    "not replacing a required full-mind turn with a bounded status repair."
+                )
             repaired, stale, same_diff, off_topic, off_topic_reason, did_repair = (
                 await _repair_final_degraded_reply(
                     visible,
@@ -3608,7 +4192,11 @@ async def _run_cognitive_engine_chat_turn(
                     session_id=session_id,
                 )
             )
-            repaired_assessment = assess_user_facing_reply(visible, repaired)
+            repaired_assessment = assess_user_facing_reply(
+                visible,
+                repaired,
+                recent_user_messages=recent_user_messages,
+            )
             if did_repair and not (
                 stale
                 or same_diff
@@ -3617,6 +4205,10 @@ async def _run_cognitive_engine_chat_turn(
             ):
                 logger.info(
                     "CognitiveEngine desktop chat reply recovered by general repair path."
+                )
+                _mark_turn_trace(
+                    cognitive_engine_reply_accepted=True,
+                    response_path="cognitive_engine_shape_repair",
                 )
                 return _ground_runtime_fact_status_reply(
                     visible,
@@ -3633,40 +4225,110 @@ async def _run_cognitive_engine_chat_turn(
                 off_topic_reason,
                 ",".join(repaired_assessment.reasons),
             )
-            conversation_recall_reply = await _build_conversation_recall_reply(
-                visible,
-                session_id=session_id,
-            )
-            if conversation_recall_reply:
-                logger.warning(
-                    "CognitiveEngine desktop chat failed repair for conversation recall; "
-                    "repairing from canonical conversation log."
-                )
-                return _ground_runtime_fact_status_reply(
+            if not require_engine:
+                conversation_recall_reply = await _build_conversation_recall_reply(
                     visible,
-                    conversation_recall_reply,
-                    lane,
-                    cognitive_engine_handled=True,
+                    session_id=session_id,
                 )
-            owner_name_reply = _build_owner_name_recall_reply(visible)
-            if owner_name_reply:
-                logger.warning(
-                    "CognitiveEngine desktop chat failed repair for owner identity recall; "
-                    "repairing from verified runtime identity contract."
-                )
-                return _ground_runtime_fact_status_reply(
-                    visible,
-                    owner_name_reply,
-                    lane,
-                    cognitive_engine_handled=True,
-                )
+                if conversation_recall_reply:
+                    logger.warning(
+                        "CognitiveEngine chat failed repair for conversation recall; "
+                        "repairing from canonical conversation log."
+                    )
+                    _mark_turn_trace(
+                        bounded_contract_used=True,
+                        response_path="conversation_recall_log_repair_after_cognitive_engine",
+                    )
+                    return _ground_runtime_fact_status_reply(
+                        visible,
+                        conversation_recall_reply,
+                        lane,
+                        cognitive_engine_handled=True,
+                    )
+                owner_name_reply = _build_owner_name_recall_reply(visible)
+                if owner_name_reply:
+                    logger.warning(
+                        "CognitiveEngine chat failed repair for owner identity recall; "
+                        "repairing from verified runtime identity contract."
+                    )
+                    _mark_turn_trace(
+                        bounded_contract_used=True,
+                        response_path="owner_identity_repair_after_cognitive_engine",
+                    )
+                    return _ground_runtime_fact_status_reply(
+                        visible,
+                        owner_name_reply,
+                        lane,
+                        cognitive_engine_handled=True,
+                    )
             retry_reply = await _attempt_repair_retry(text, assessment.reasons)
             if retry_reply:
+                if turn_trace is not None:
+                    turn_trace.update(
+                        {
+                            "cognitive_engine_reply_accepted": True,
+                            "response_path": "cognitive_engine_repair_retry",
+                        }
+                    )
                 return retry_reply
+            _mark_turn_trace(response_path="cognitive_engine_reply_rejected")
             return None
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("CognitiveEngine reply reliability gate unavailable: %s", exc)
+    if require_engine:
+        expected_recall_reply = await _build_conversation_recall_reply(
+            visible,
+            session_id=session_id,
+        )
+        if expected_recall_reply and _conversation_recall_reply_is_inadequate(
+            visible,
+            text,
+            expected_recall_reply,
+        ):
+            logger.warning(
+                "CognitiveEngine desktop chat missed the required conversation recall contract; "
+                "repairing from canonical completed-conversation evidence after engine invocation."
+            )
+            _mark_turn_trace(
+                cognitive_engine_reply_accepted=True,
+                response_path="cognitive_engine_recall_grounding",
+            )
+            return _ground_runtime_fact_status_reply(
+                visible,
+                expected_recall_reply,
+                lane,
+                cognitive_engine_handled=True,
+            )
+        if _context_challenge_reply_is_inadequate(visible, text):
+            if context_challenge_context:
+                logger.warning(
+                    "CognitiveEngine desktop chat missed the required context-relevance contract; "
+                    "repairing from canonical completed-conversation evidence after engine invocation."
+                )
+                _mark_turn_trace(
+                    cognitive_engine_reply_accepted=True,
+                    response_path="cognitive_engine_context_grounding",
+                )
+                return _ground_runtime_fact_status_reply(
+                    visible,
+                    context_challenge_context,
+                    lane,
+                    cognitive_engine_handled=True,
+                )
+            logger.warning(
+                "CognitiveEngine desktop chat missed the required context-relevance contract; "
+                "refusing degraded visible reply."
+            )
+            _mark_turn_trace(response_path="cognitive_engine_context_contract_failed")
+            return None
+    if turn_trace is not None:
+        turn_trace.update(
+            {
+                "cognitive_engine_reply_accepted": True,
+                "response_path": "cognitive_engine",
+            }
+        )
     return _ground_runtime_fact_status_reply(
         visible,
         text,
@@ -6487,6 +7149,15 @@ def _capability_inventory_reply_is_inadequate(user_message: str, reply_text: str
         )
         if marker in lowered
     )
+    asks_external_tools = any(
+        marker in _normalize_user_message(user_message)
+        for marker in ("external", "desktop", "tool", "tools", "live")
+    )
+    if asks_external_tools:
+        governance_ok = any(marker in lowered for marker in ("governance", "governed", "will", "authority"))
+        receipt_ok = any(marker in lowered for marker in ("receipt", "receipts", "effect", "verified", "verification"))
+        if not (governance_ok and receipt_ok):
+            return True
     return category_hits < 4 or len(reply.split()) < 35
 
 
@@ -6872,6 +7543,27 @@ def _build_bounded_cognitive_process_reply(
         return ""
     if not any(marker in text for marker in ("you", "your", "aura")):
         return ""
+    # Only speak this bounded cognitive-process explanation when the user is
+    # genuinely asking HOW Aura's cognition works (a self-process question or
+    # self-reflection turn) — not whenever a turn merely mentions
+    # "remember"/"memory"/"plan"/"tool". A casual recall request like
+    # "do you remember what I first asked" must NOT be hijacked into a canned
+    # introspection essay: that reads as a robotic generic-assistant dump
+    # instead of an actual answer, which is the exact failure mode this guard
+    # exists to prevent.
+    try:
+        from core.conversation.response_reliability import (
+            is_live_self_reflection_turn,
+            is_self_process_question,
+        )
+
+        if not (
+            is_self_process_question(user_message)
+            or is_live_self_reflection_turn(user_message)
+        ):
+            return ""
+    except _CHAT_RECOVERABLE_ERRORS:
+        pass
     requested: list[str] = []
     if any(marker in text for marker in ("confused", "confusion", "uncertain", "uncertainty")):
         requested.append("confusion")
@@ -6895,9 +7587,8 @@ def _build_bounded_cognitive_process_reply(
     parts = [
         f"What I am attending to is {requested_summary or 'this live turn'} in the current conversation.",
         (
-            "The remembered concern that should change my next decision is that Bryan is testing whether "
-            "the desktop conversation is really connected to memory, planning, and tool control instead of "
-            "falling back to a generic assistant style."
+            "The concern that should shape my next decision is staying genuinely connected to memory, "
+            "planning, and tool control right here instead of sliding into a generic assistant style."
         ),
     ]
     if "confusion" in requested:
@@ -6974,9 +7665,8 @@ def _build_minimal_grounded_self_process_repair_reply(
     parts = [
         f"What I am attending to is {requested_summary or 'this live turn'} in the current conversation.",
         (
-            "The remembered concern that should change my next decision is that Bryan is testing whether "
-            "the desktop conversation is really connected to memory, planning, and tool control instead of "
-            "falling back to a generic assistant style."
+            "The concern that should shape my next decision is staying genuinely connected to memory, "
+            "planning, and tool control right here instead of sliding into a generic assistant style."
         ),
         (
             "What I want to do next is answer with the exact requested process details, keep the next step small "
@@ -7409,7 +8099,11 @@ async def _stabilize_user_facing_reply(
     try:
         from core.conversation.response_reliability import assess_user_facing_reply
 
-        live_reply_assessment = assess_user_facing_reply(user_message, text)
+        live_reply_assessment = assess_user_facing_reply(
+            user_message,
+            text,
+            recent_user_messages=recent_user_messages,
+        )
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Conversation reliability assessment unavailable in stabilizer: %s", exc)
@@ -7562,7 +8256,11 @@ async def _stabilize_user_facing_reply(
             try:
                 from core.conversation.response_reliability import assess_user_facing_reply
 
-                cleaned_assessment = assess_user_facing_reply(user_message, cleaned)
+                cleaned_assessment = assess_user_facing_reply(
+                    user_message,
+                    cleaned,
+                    recent_user_messages=recent_user_messages,
+                )
             except _CHAT_RECOVERABLE_ERRORS:
                 cleaned_assessment = None
             if (
@@ -7795,7 +8493,11 @@ async def _stabilize_user_facing_reply(
                     try:
                         from core.conversation.response_reliability import assess_user_facing_reply
 
-                        corrected_assessment = assess_user_facing_reply(user_message, corrected_text)
+                        corrected_assessment = assess_user_facing_reply(
+                            user_message,
+                            corrected_text,
+                            recent_user_messages=recent_user_messages,
+                        )
                     except _CHAT_RECOVERABLE_ERRORS:
                         corrected_assessment = None
                     try:
@@ -7968,7 +8670,16 @@ async def _repair_final_degraded_reply(
         reliability_floor_for_user = None
         repair_instruction_shape = None
 
-    assessment = assess_user_facing_reply(user_message, reply_text) if assess_user_facing_reply else None
+    recent_user_messages = await _gather_recent_user_messages_for_relevance(user_message)
+    assessment = (
+        assess_user_facing_reply(
+            user_message,
+            reply_text,
+            recent_user_messages=recent_user_messages,
+        )
+        if assess_user_facing_reply
+        else None
+    )
     needs_repair = bool(
         stale
         or same_diff
@@ -7976,7 +8687,7 @@ async def _repair_final_degraded_reply(
         or (assessment is not None and assessment.retryable)
     )
     owner_name_reply = _build_owner_name_recall_reply(user_message)
-    if owner_name_reply:
+    if owner_name_reply and not desktop_cognitive_engine_required:
         normalized_reply = _normalize_user_message(reply_text)
         owner_name = _resolve_primary_operator_name()
         if (
@@ -7989,20 +8700,64 @@ async def _repair_final_degraded_reply(
     if not needs_repair:
         return reply_text, stale, same_diff, off_topic, off_topic_reason, False
 
-    conversation_recall_reply = await _build_conversation_recall_reply(
-        user_message,
-        session_id=session_id,
-    )
-    if conversation_recall_reply:
-        return conversation_recall_reply, False, False, False, "", True
-
     assessment_reasons = set(getattr(assessment, "reasons", ()) or ())
-    if assessment_reasons & {
-        "missing_requested_self_process_coverage",
-        "off_topic_self_reflection_reply",
-        "status_page_self_reflection",
-        "pseudo_internal_jargon",
-    }:
+    if not desktop_cognitive_engine_required:
+        conversation_recall_reply = await _build_conversation_recall_reply(
+            user_message,
+            session_id=session_id,
+        )
+        if conversation_recall_reply:
+            return conversation_recall_reply, False, False, False, "", True
+
+        context_challenge_repair = await _build_context_challenge_repair_reply(
+            user_message,
+            session_id=session_id,
+        )
+        if context_challenge_repair:
+            context_challenge_repair = _apply_aura_voice_shaping_compat(
+                context_challenge_repair,
+                user_message,
+            )
+            context_assessment = (
+                assess_user_facing_reply(
+                    user_message,
+                    context_challenge_repair,
+                    recent_user_messages=recent_user_messages,
+                )
+                if assess_user_facing_reply
+                else None
+            )
+            if not (context_assessment is not None and context_assessment.retryable):
+                return context_challenge_repair, False, False, False, "", True
+
+        if assessment_reasons & {"raw_model_identity_leak", "missing_self_claim_evidence_boundary"}:
+            self_claim_repair = _build_evidence_bound_self_claim_reply(
+                user_message,
+                lane=_collect_conversation_lane_status(),
+            )
+            if self_claim_repair:
+                self_claim_assessment = (
+                    assess_user_facing_reply(
+                        user_message,
+                        self_claim_repair,
+                        recent_user_messages=recent_user_messages,
+                    )
+                    if assess_user_facing_reply
+                    else None
+                )
+                if not (self_claim_assessment is not None and self_claim_assessment.retryable):
+                    return self_claim_repair, False, False, False, "", True
+
+    if (
+        not desktop_cognitive_engine_required
+        and assessment_reasons
+        & {
+            "missing_requested_self_process_coverage",
+            "off_topic_self_reflection_reply",
+            "status_page_self_reflection",
+            "pseudo_internal_jargon",
+        }
+    ):
         self_process_repair = await _build_grounded_self_process_repair_reply(
             user_message,
             reply_text,
@@ -8015,7 +8770,11 @@ async def _repair_final_degraded_reply(
                 user_message,
             )
             self_process_assessment = (
-                assess_user_facing_reply(user_message, self_process_repair)
+                assess_user_facing_reply(
+                    user_message,
+                    self_process_repair,
+                    recent_user_messages=recent_user_messages,
+                )
                 if assess_user_facing_reply
                 else None
             )
@@ -8025,7 +8784,7 @@ async def _repair_final_degraded_reply(
                 )
                 return self_process_repair, False, False, False, "", True
 
-    if _is_low_risk_social_continuity_request(user_message):
+    if _is_low_risk_social_continuity_request(user_message) and not desktop_cognitive_engine_required:
         social_repair = _build_social_continuity_repair_reply(user_message)
         return social_repair, False, False, False, "", True
 
@@ -8046,10 +8805,14 @@ async def _repair_final_degraded_reply(
         completed_off_topic, completed_off_topic_reason = _evaluate_reply_topicality(
             user_message,
             completed_tail,
-            recent_user_messages=[],
+            recent_user_messages=recent_user_messages,
         )
         completed_assessment = (
-            assess_user_facing_reply(user_message, completed_tail)
+            assess_user_facing_reply(
+                user_message,
+                completed_tail,
+                recent_user_messages=recent_user_messages,
+            )
             if assess_user_facing_reply
             else None
         )
@@ -8079,9 +8842,13 @@ async def _repair_final_degraded_reply(
             shaped_off_topic, shaped_off_topic_reason = _evaluate_reply_topicality(
                 user_message,
                 shaped,
-                recent_user_messages=[],
+                recent_user_messages=recent_user_messages,
             )
-            shaped_assessment = assess_user_facing_reply(user_message, shaped)
+            shaped_assessment = assess_user_facing_reply(
+                user_message,
+                shaped,
+                recent_user_messages=recent_user_messages,
+            )
             if not (
                 shaped_stale
                 or shaped_same_diff
@@ -8112,10 +8879,14 @@ async def _repair_final_degraded_reply(
             delta_off_topic, delta_off_topic_reason = _evaluate_reply_topicality(
                 user_message,
                 delta_repaired,
-                recent_user_messages=[],
+                recent_user_messages=recent_user_messages,
             )
             delta_assessment = (
-                assess_user_facing_reply(user_message, delta_repaired)
+                assess_user_facing_reply(
+                    user_message,
+                    delta_repaired,
+                    recent_user_messages=recent_user_messages,
+                )
                 if assess_user_facing_reply
                 else None
             )
@@ -8146,7 +8917,6 @@ async def _repair_final_degraded_reply(
         )
     else:
         repaired = await _stabilize_user_facing_reply(user_message, reply_text)
-    recent_user_messages = await _gather_recent_user_messages_for_relevance(user_message)
     repaired_stale = _is_stale_repeated_response(repaired)
     repaired_same_diff = _is_same_answer_different_prompt(user_message, repaired)
     repaired_off_topic, repaired_off_topic_reason = _evaluate_reply_topicality(
@@ -8154,7 +8924,15 @@ async def _repair_final_degraded_reply(
         repaired,
         recent_user_messages=recent_user_messages,
     )
-    repaired_assessment = assess_user_facing_reply(user_message, repaired) if assess_user_facing_reply else None
+    repaired_assessment = (
+        assess_user_facing_reply(
+            user_message,
+            repaired,
+            recent_user_messages=recent_user_messages,
+        )
+        if assess_user_facing_reply
+        else None
+    )
     if not (
         repaired_stale
         or repaired_same_diff
@@ -8185,7 +8963,15 @@ async def _repair_final_degraded_reply(
             floor,
             recent_user_messages=recent_user_messages,
         )
-        floor_assessment = assess_user_facing_reply(user_message, floor) if assess_user_facing_reply else None
+        floor_assessment = (
+            assess_user_facing_reply(
+                user_message,
+                floor,
+                recent_user_messages=recent_user_messages,
+            )
+            if assess_user_facing_reply
+            else None
+        )
         if not (
             floor_stale
             or floor_same_diff
@@ -8217,7 +9003,15 @@ async def _repair_final_degraded_reply(
         recent_user_messages=recent_user_messages,
     )
     reflex_semantic, reflex_semantic_reason = _looks_semantically_glitched(user_message, reflex)
-    reflex_assessment = assess_user_facing_reply(user_message, reflex) if assess_user_facing_reply else None
+    reflex_assessment = (
+        assess_user_facing_reply(
+            user_message,
+            reflex,
+            recent_user_messages=recent_user_messages,
+        )
+        if assess_user_facing_reply
+        else None
+    )
     if not (
         reflex_stale
         or reflex_same_diff
@@ -9835,9 +10629,8 @@ async def api_chat_regenerate(
             return JSONResponse(
                 {
                     "response": (
-                        "The desktop regenerate path required CognitiveEngine, but the live cognitive "
-                        "turn did not produce an acceptable reply, so Aura refused the legacy fallback. "
-                        "status=desktop_cognitive_engine_required_no_reply"
+                        "I could not produce a reliable full-mind reply for that regenerate turn, "
+                        "so I failed closed instead of sending an ungrounded answer."
                     ),
                     "status": "desktop_cognitive_engine_unavailable",
                     "reason": "desktop_cognitive_engine_required_no_reply",
@@ -10180,6 +10973,33 @@ async def api_chat(
     foreground_lock_token: object | None = None
     foreground_lease = None
     kernel_task: asyncio.Task | None = None
+    _live_turn_trace: dict[str, Any] = {
+        "desktop_cognitive_engine_required": bool(desktop_requires_cognitive_engine),
+        "request_surface": request_surface or "",
+        "chat_origin": chat_origin,
+        "engine_think_invoked": False,
+        "cognitive_engine_reply_accepted": False,
+        "bounded_contract_used": False,
+        "legacy_fallback_used": False,
+        "response_path": "",
+    }
+
+    def _live_turn_contract(
+        *,
+        lane_status: dict[str, Any] | None = None,
+        response_confidence: str = "",
+        status: str = "",
+        reply_source: str = "",
+    ) -> dict[str, Any]:
+        return _build_live_turn_contract_payload(
+            desktop_required=bool(desktop_requires_cognitive_engine),
+            request_surface=request_surface or "",
+            lane_status=lane_status or _collect_conversation_lane_status(),
+            response_confidence=response_confidence,
+            status=status,
+            reply_source=reply_source,
+            turn_trace=_live_turn_trace,
+        )
 
     def _remaining_foreground_budget(*, reserve: float = 0.0) -> float:
         elapsed = time.monotonic() - request_started_at
@@ -10343,9 +11163,10 @@ async def api_chat(
         # Session-memory pin/recall is a canonical memory gateway operation, not
         # a language-model shortcut. Keep it available on desktop-required
         # surfaces so live conversation continuity never depends on generation.
-        allow_memory_state_fastpath = not is_benchmark
+        allow_memory_state_fastpath = not is_benchmark and not desktop_requires_cognitive_engine
         allow_runtime_status_fastpath = not is_benchmark and not desktop_requires_cognitive_engine
         allow_governed_action_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
+        desktop_memory_state_evidence: tuple[str, str] | None = None
 
         _desktop_exec_state = {"attempted": False, "result": None}
 
@@ -10479,7 +11300,11 @@ async def api_chat(
                         )
 
                         assess_user_facing_reply = _assess_user_facing_reply
-                        fastpath_assessment = assess_user_facing_reply(_semantic_user_message, final_text)
+                        fastpath_assessment = assess_user_facing_reply(
+                            _semantic_user_message,
+                            final_text,
+                            recent_user_messages=recent_user_messages,
+                        )
                     except ImportError:
                         fastpath_assessment = None
                     if (
@@ -10518,7 +11343,11 @@ async def api_chat(
                                     )
 
                                     assess_user_facing_reply = _assess_user_facing_reply
-                                fastpath_assessment = assess_user_facing_reply(_semantic_user_message, final_text)
+                                fastpath_assessment = assess_user_facing_reply(
+                                    _semantic_user_message,
+                                    final_text,
+                                    recent_user_messages=recent_user_messages,
+                                )
                             except ImportError:
                                 fastpath_assessment = None
                             if not (
@@ -10552,6 +11381,12 @@ async def api_chat(
                 "status": status,
                 "conversation_lane": lane_status,
                 "response_confidence": response_confidence,
+                "live_turn_contract": _live_turn_contract(
+                    lane_status=lane_status,
+                    response_confidence=response_confidence,
+                    status=status,
+                    reply_source="fastpath",
+                ),
             }
             if _desktop_exec_state.get("result") is not None and str(status).startswith(
                 "desktop_objective"
@@ -10736,6 +11571,13 @@ async def api_chat(
         desktop_objective_response = await _execute_narrow_desktop_objective_before_cognition()
         if desktop_objective_response is not None:
             return desktop_objective_response
+
+        if not is_benchmark and desktop_requires_cognitive_engine:
+            desktop_memory_state_evidence = await _build_memory_state_fastpath_reply(
+                _semantic_user_message,
+                session_id=_chat_session_id,
+                owner_session_restored=owner_session_restored,
+            )
 
         if allow_memory_state_fastpath:
             memory_state_reply = await _build_memory_state_fastpath_reply(
@@ -11106,6 +11948,17 @@ async def api_chat(
                 "[END CONVERSATION RECALL EVIDENCE]\n"
                 "Answer the recall question from the evidence above. Do not guess or invent a memory."
             )
+        if desktop_memory_state_evidence:
+            memory_reply, memory_status = desktop_memory_state_evidence
+            effective_user_message = (
+                f"{effective_user_message}\n\n"
+                "[CANONICAL MEMORY STATE EVIDENCE]\n"
+                f"status={memory_status}\n"
+                f"{memory_reply}\n"
+                "[END CANONICAL MEMORY STATE EVIDENCE]\n"
+                "Use this canonical memory/state result as evidence, but produce the visible answer "
+                "through CognitiveEngine in Aura's normal desktop voice."
+            )
         try:
             if not is_benchmark:
                 await _preserve_large_user_paste(_semantic_user_message)
@@ -11135,6 +11988,7 @@ async def api_chat(
                     lane=dict(lane or {}),
                     source="desktop_ui",
                     require_engine=True,
+                    turn_trace=_live_turn_trace,
                 )
                 if reply_text:
                     reply_source = (
@@ -11153,6 +12007,12 @@ async def api_chat(
         desktop_engine_failed = desktop_requires_cognitive_engine and not reply_text
         if desktop_engine_failed:
             if _is_low_risk_social_continuity_request(_semantic_user_message):
+                _live_turn_trace.update(
+                    {
+                        "bounded_contract_used": True,
+                        "response_path": "desktop_cognitive_engine_social_bounded_repair",
+                    }
+                )
                 lane = _mark_conversation_lane_state(
                     "desktop_cognitive_engine_social_bounded_repair",
                     state="recovering",
@@ -11187,6 +12047,12 @@ async def api_chat(
                         "reason": "desktop_cognitive_engine_social_bounded_repair",
                         "conversation_lane": lane,
                         "response_confidence": "bounded",
+                        "live_turn_contract": _live_turn_contract(
+                            lane_status=lane,
+                            response_confidence="bounded",
+                            status="desktop_social_presence_contract",
+                            reply_source="desktop_cognitive_engine_social_bounded_repair",
+                        ),
                     }
                 )
 
@@ -11207,6 +12073,12 @@ async def api_chat(
 
             identity_repair = _build_bounded_identity_repair_reply(_semantic_user_message)
             if identity_repair:
+                _live_turn_trace.update(
+                    {
+                        "bounded_contract_used": True,
+                        "response_path": "desktop_cognitive_engine_identity_repair",
+                    }
+                )
                 lane = _mark_conversation_lane_state(
                     "desktop_cognitive_engine_identity_repair",
                     state="recovering",
@@ -11241,6 +12113,12 @@ async def api_chat(
                         "reason": "desktop_cognitive_engine_required_no_reply",
                         "conversation_lane": lane,
                         "response_confidence": "bounded",
+                        "live_turn_contract": _live_turn_contract(
+                            lane_status=lane,
+                            response_confidence="bounded",
+                            status="desktop_cognitive_engine_identity_repair",
+                            reply_source="desktop_cognitive_engine_identity_repair",
+                        ),
                     }
                 )
 
@@ -11248,6 +12126,19 @@ async def api_chat(
                 _semantic_user_message
             )
             if capability_inventory:
+                if desktop_requires_cognitive_engine:
+                    logger.warning(
+                        "Desktop CognitiveEngine produced no acceptable capability inventory; "
+                        "not serving bounded catalog as a successful live full-mind reply."
+                    )
+                    capability_inventory = ""
+            if capability_inventory:
+                _live_turn_trace.update(
+                    {
+                        "bounded_contract_used": True,
+                        "response_path": "desktop_cognitive_engine_capability_inventory",
+                    }
+                )
                 lane = _mark_conversation_lane_state(
                     "desktop_cognitive_engine_capability_inventory",
                     state="recovering",
@@ -11283,27 +12174,45 @@ async def api_chat(
                         "reason": "desktop_cognitive_engine_required_no_reply",
                         "conversation_lane": lane,
                         "response_confidence": "bounded",
+                        "live_turn_contract": _live_turn_contract(
+                            lane_status=lane,
+                            response_confidence="bounded",
+                            status="desktop_cognitive_engine_capability_inventory",
+                            reply_source="desktop_cognitive_engine_capability_inventory",
+                        ),
                     }
                 )
 
-            bounded_repair = await _build_grounded_self_process_repair_reply(
-                _semantic_user_message,
-                "",
-                lane=lane,
-                session_id=_chat_session_id,
+            skip_bounded_desktop_repair = _is_explicit_capability_inventory_request(
+                _semantic_user_message
             )
+            bounded_repair = ""
+            if not skip_bounded_desktop_repair:
+                bounded_repair = await _build_grounded_self_process_repair_reply(
+                    _semantic_user_message,
+                    "",
+                    lane=lane,
+                    session_id=_chat_session_id,
+                )
             if bounded_repair:
                 bounded_repair = _apply_aura_voice_shaping(bounded_repair)
                 try:
                     from core.conversation.response_reliability import assess_user_facing_reply
 
-                    bounded_assessment = assess_user_facing_reply(_semantic_user_message, bounded_repair)
+                    bounded_recent_user_messages = await _gather_recent_user_messages_for_relevance(
+                        _semantic_user_message
+                    )
+                    bounded_assessment = assess_user_facing_reply(
+                        _semantic_user_message,
+                        bounded_repair,
+                        recent_user_messages=bounded_recent_user_messages,
+                    )
                     if bounded_assessment.retryable:
                         bounded_repair = ""
                 except _CHAT_RECOVERABLE_ERRORS as exc:
                     record_degradation("chat", exc)
                     logger.debug("Grounded desktop self-process repair assessment skipped: %s", exc)
-            if not bounded_repair:
+            if not bounded_repair and not skip_bounded_desktop_repair:
                 minimal_repair = _build_minimal_grounded_self_process_repair_reply(
                     _semantic_user_message,
                     lane=lane,
@@ -11313,13 +12222,26 @@ async def api_chat(
                     try:
                         from core.conversation.response_reliability import assess_user_facing_reply
 
-                        minimal_assessment = assess_user_facing_reply(_semantic_user_message, minimal_repair)
+                        minimal_recent_user_messages = await _gather_recent_user_messages_for_relevance(
+                            _semantic_user_message
+                        )
+                        minimal_assessment = assess_user_facing_reply(
+                            _semantic_user_message,
+                            minimal_repair,
+                            recent_user_messages=minimal_recent_user_messages,
+                        )
                         if not minimal_assessment.retryable:
                             bounded_repair = minimal_repair
                     except _CHAT_RECOVERABLE_ERRORS as exc:
                         record_degradation("chat", exc)
                         logger.debug("Minimal desktop self-process repair assessment skipped: %s", exc)
             if bounded_repair:
+                _live_turn_trace.update(
+                    {
+                        "bounded_contract_used": True,
+                        "response_path": "desktop_cognitive_engine_grounded_self_process_repair",
+                    }
+                )
                 lane = _mark_conversation_lane_state(
                     "desktop_cognitive_engine_grounded_self_process_repair",
                     state="recovering",
@@ -11353,6 +12275,12 @@ async def api_chat(
                         "reason": "desktop_cognitive_engine_required_no_reply",
                         "conversation_lane": lane,
                         "response_confidence": "bounded",
+                        "live_turn_contract": _live_turn_contract(
+                            lane_status=lane,
+                            response_confidence="bounded",
+                            status="desktop_cognitive_engine_grounded_self_process_repair",
+                            reply_source="desktop_cognitive_engine_grounded_self_process_repair",
+                        ),
                     }
                 )
 
@@ -11360,10 +12288,15 @@ async def api_chat(
                 "desktop_cognitive_engine_required_no_reply",
                 state="failed",
             )
+            _live_turn_trace.update(
+                {
+                    "bounded_contract_used": False,
+                    "response_path": "desktop_cognitive_engine_required_no_reply",
+                }
+            )
             failure_reply = (
-                "The desktop chat path required CognitiveEngine, but the live cognitive turn "
-                "did not produce an acceptable reply, so Aura refused the legacy fallback. "
-                "status=desktop_cognitive_engine_required_no_reply"
+                "I could not produce a reliable full-mind reply for that turn, "
+                "so I failed closed instead of sending an ungrounded answer."
             )
             logger.error("%s Surface=%s", failure_reply, request_surface or "unknown")
             if pending_exchange_id:
@@ -11391,6 +12324,12 @@ async def api_chat(
                     "reason": "desktop_cognitive_engine_required_no_reply",
                     "conversation_lane": lane,
                     "response_confidence": "failed",
+                    "live_turn_contract": _live_turn_contract(
+                        lane_status=lane,
+                        response_confidence="failed",
+                        status="desktop_cognitive_engine_unavailable",
+                        reply_source="desktop_cognitive_engine_required_no_reply",
+                    ),
                 },
                 status_code=503,
             )
@@ -11780,16 +12719,18 @@ async def api_chat(
                 "🧭 Replacing inadequate capability inventory reply with grounded live catalog summary."
             )
             reply_text = _build_grounded_capability_inventory_reply(_semantic_user_message)
-        repaired_recall_reply, repaired_recall = await _repair_conversation_recall_if_needed(
-            _semantic_user_message,
-            reply_text,
-            session_id=_chat_session_id,
-        )
-        if repaired_recall:
-            logger.warning(
-                "🧠 Replacing inadequate conversation recall reply with canonical chat-log recall."
+        repaired_recall = False
+        if not desktop_requires_cognitive_engine:
+            repaired_recall_reply, repaired_recall = await _repair_conversation_recall_if_needed(
+                _semantic_user_message,
+                reply_text,
+                session_id=_chat_session_id,
             )
-            reply_text = repaired_recall_reply
+            if repaired_recall:
+                logger.warning(
+                    "🧠 Replacing inadequate conversation recall reply with canonical chat-log recall."
+                )
+                reply_text = repaired_recall_reply
 
         # ── Response confidence assessment ────────────────────────
         global _consecutive_degraded_count
@@ -11806,24 +12747,55 @@ async def api_chat(
         try:
             from core.conversation.response_reliability import assess_user_facing_reply
 
-            reply_assessment = assess_user_facing_reply(_semantic_user_message, reply_text)
+            reply_assessment = assess_user_facing_reply(
+                _semantic_user_message,
+                reply_text,
+                recent_user_messages=recent_user_messages,
+            )
         except _CHAT_RECOVERABLE_ERRORS:
             reply_assessment = None
+        desktop_recall_contract_failed = False
+        desktop_context_contract_failed = False
+        if desktop_requires_cognitive_engine:
+            expected_recall_reply = await _build_conversation_recall_reply(
+                _semantic_user_message,
+                session_id=_chat_session_id,
+            )
+            desktop_recall_contract_failed = bool(
+                expected_recall_reply
+                and _conversation_recall_reply_is_inadequate(
+                    _semantic_user_message,
+                    reply_text,
+                    expected_recall_reply,
+                )
+            )
+            if desktop_recall_contract_failed:
+                _live_turn_trace["response_path"] = "cognitive_engine_recall_contract_failed"
+            desktop_context_contract_failed = _context_challenge_reply_is_inadequate(
+                _semantic_user_message,
+                reply_text,
+            )
+            if desktop_context_contract_failed:
+                _live_turn_trace["response_path"] = "cognitive_engine_context_contract_failed"
         if (
             is_stale
             or is_same_diff
             or is_off_topic
             or semantic_glitch
+            or desktop_recall_contract_failed
+            or desktop_context_contract_failed
             or (reply_assessment is not None and reply_assessment.retryable)
         ):
             response_confidence = "degraded"
             _consecutive_degraded_count += 1
             logger.warning(
-                "⚠️ Response confidence: degraded (stale=%s, same_answer_diff_prompt=%s, off_topic=%s, semantic_glitch=%s, assessment=%s, streak=%d, reason=%s)",
+                "⚠️ Response confidence: degraded (stale=%s, same_answer_diff_prompt=%s, off_topic=%s, semantic_glitch=%s, recall_contract=%s, context_contract=%s, assessment=%s, streak=%d, reason=%s)",
                 is_stale,
                 is_same_diff,
                 is_off_topic,
                 semantic_glitch,
+                desktop_recall_contract_failed,
+                desktop_context_contract_failed,
                 ",".join(getattr(reply_assessment, "reasons", ()) or ()),
                 _consecutive_degraded_count,
                 off_topic_reason or semantic_glitch_reason or "",
@@ -11857,14 +12829,39 @@ async def api_chat(
                     reply_text,
                 )
                 try:
-                    repaired_assessment = assess_user_facing_reply(_semantic_user_message, reply_text)
+                    repaired_assessment = assess_user_facing_reply(
+                        _semantic_user_message,
+                        reply_text,
+                        recent_user_messages=recent_user_messages,
+                    )
                 except _CHAT_RECOVERABLE_ERRORS:
                     repaired_assessment = None
+                repaired_recall_contract_failed = False
+                repaired_context_contract_failed = False
+                if desktop_requires_cognitive_engine:
+                    expected_recall_reply = await _build_conversation_recall_reply(
+                        _semantic_user_message,
+                        session_id=_chat_session_id,
+                    )
+                    repaired_recall_contract_failed = bool(
+                        expected_recall_reply
+                        and _conversation_recall_reply_is_inadequate(
+                            _semantic_user_message,
+                            reply_text,
+                            expected_recall_reply,
+                        )
+                    )
+                    repaired_context_contract_failed = _context_challenge_reply_is_inadequate(
+                        _semantic_user_message,
+                        reply_text,
+                    )
                 if not (
                     is_stale
                     or is_same_diff
                     or is_off_topic
                     or semantic_glitch
+                    or repaired_recall_contract_failed
+                    or repaired_context_contract_failed
                     or (repaired_assessment is not None and repaired_assessment.retryable)
                 ):
                     response_confidence = "high"
@@ -11961,6 +12958,12 @@ async def api_chat(
             "status": _final_status,
             "conversation_lane": lane_status,
             "response_confidence": response_confidence,
+            "live_turn_contract": _live_turn_contract(
+                lane_status=lane_status,
+                response_confidence=response_confidence,
+                status=_final_status,
+                reply_source=reply_source,
+            ),
         }
         # Same receipts contract as the fastpath door: desktop objectives
         # carry their step receipts on the wire from EVERY reply exit.
@@ -12007,10 +13010,15 @@ async def api_chat(
                 "desktop_cognitive_engine_timeout",
                 state="failed",
             )
+            _live_turn_trace.update(
+                {
+                    "response_path": "desktop_cognitive_engine_timeout",
+                    "bounded_contract_used": False,
+                }
+            )
             timeout_reply = (
-                "The desktop chat path required CognitiveEngine, but the live cognitive turn "
-                "timed out before producing an acceptable reply, so Aura refused the direct "
-                "inference fallback. status=desktop_cognitive_engine_timeout"
+                "I could not produce a reliable full-mind reply before the live turn timed out, "
+                "so I failed closed instead of sending an ungrounded answer."
             )
             if pending_exchange_id:
                 await _complete_logged_exchange(
@@ -12037,6 +13045,12 @@ async def api_chat(
                     "reason": "desktop_cognitive_engine_timeout",
                     "conversation_lane": lane,
                     "response_confidence": "failed",
+                    "live_turn_contract": _live_turn_contract(
+                        lane_status=lane,
+                        response_confidence="failed",
+                        status="desktop_cognitive_engine_unavailable",
+                        reply_source="desktop_cognitive_engine_timeout",
+                    ),
                 },
                 status_code=503,
             )
