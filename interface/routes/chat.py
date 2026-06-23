@@ -12324,6 +12324,14 @@ async def api_chat(
 
         desktop_engine_failed = desktop_requires_cognitive_engine and not reply_text
         if desktop_engine_failed:
+            # Live desktop speech must be the full CognitiveEngine path or an
+            # explicitly receipted governed action result. Bounded identity or
+            # self-process repair text is useful for API diagnostics, but in
+            # the launched desktop UI it presents as "Aura talking" when the
+            # mind path actually failed. Keep those repairs off the required
+            # desktop lane so assistant-like or prompt-shaped fallback cannot
+            # masquerade as normal conversation.
+            allow_required_desktop_no_reply_repairs = False
             if _is_low_risk_social_continuity_request(_semantic_user_message):
                 social_reply = _build_social_continuity_repair_reply(_semantic_user_message)
                 logger.warning(
@@ -12348,7 +12356,11 @@ async def api_chat(
                         status=str(executed.get("status") or "desktop_objective"),
                     )
 
-            identity_repair = _build_bounded_identity_repair_reply(_semantic_user_message)
+            identity_repair = (
+                _build_bounded_identity_repair_reply(_semantic_user_message)
+                if allow_required_desktop_no_reply_repairs
+                else ""
+            )
             if identity_repair:
                 _live_turn_trace.update(
                     {
@@ -12462,7 +12474,7 @@ async def api_chat(
 
             skip_bounded_desktop_repair = _is_explicit_capability_inventory_request(
                 _semantic_user_message
-            )
+            ) or not allow_required_desktop_no_reply_repairs
             bounded_repair = ""
             if not skip_bounded_desktop_repair:
                 bounded_repair = await _build_grounded_self_process_repair_reply(

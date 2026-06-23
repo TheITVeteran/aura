@@ -2827,7 +2827,7 @@ async def test_api_chat_desktop_low_risk_social_no_reply_fails_closed(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_self_process_no_reply_returns_bounded_repair(monkeypatch):
+async def test_api_chat_desktop_self_process_no_reply_fails_closed(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
@@ -2911,24 +2911,24 @@ async def test_api_chat_desktop_self_process_no_reply_returns_bounded_repair(mon
     )
 
     payload = json.loads(response.body)
-    assert response.status_code == 200
-    assert payload["status"] == "desktop_cognitive_engine_grounded_self_process_repair"
-    assert payload["response_confidence"] == "bounded"
-    assert "planning" in payload["response"].lower()
-    assert "memory" in payload["response"].lower()
-    assert "tool" in payload["response"].lower()
-    assert "confusion" in payload["response"].lower() or "confused" in payload["response"].lower()
-    assert "legacy fallback" not in payload["response"]
+    lowered = payload["response"].lower()
+    assert response.status_code == 503
+    assert payload["status"] == "desktop_cognitive_engine_unavailable"
+    assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
+    assert payload["response_confidence"] == "failed"
+    assert "failed closed instead of sending an ungrounded answer" in lowered
+    assert "planning" not in lowered
+    assert "memory use" not in lowered
+    assert "tool verification" not in lowered
+    assert "legacy fallback" not in lowered
     assert kernel_calls == []
     assert len(completed_exchanges) == 1
-    assert completed_exchanges[0][1]["record_experience"] is True
-    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine_grounded_self_process_repair"
+    assert completed_exchanges[0][1]["record_experience"] is False
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine"
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_identity_no_reply_returns_bounded_memory_repair(monkeypatch):
-    from core.conversation.response_reliability import assess_user_facing_reply
-    from core.conversation.self_claim_verifier import verify_self_claims
+async def test_api_chat_desktop_identity_no_reply_fails_closed(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
@@ -3011,21 +3011,19 @@ async def test_api_chat_desktop_identity_no_reply_returns_bounded_memory_repair(
     )
 
     payload = json.loads(response.body)
-    assert response.status_code == 200
-    assert payload["status"] == "desktop_cognitive_engine_identity_repair"
-    assert payload["response_confidence"] == "bounded"
-    assert "Aura" in payload["response"]
-    assert "persistent memory" in payload["response"]
-    assert "cannot guarantee perfect tomorrow recall" in payload["response"]
-    assert "legacy fallback" not in payload["response"]
-    assert "desktop_cognitive_engine_required_no_reply" not in payload["response"]
-    assert verify_self_claims(payload["response"]).ok
-    assessment = assess_user_facing_reply(prompt, payload["response"])
-    assert not assessment.retryable, assessment.reasons
+    lowered = payload["response"].lower()
+    assert response.status_code == 503
+    assert payload["status"] == "desktop_cognitive_engine_unavailable"
+    assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
+    assert payload["response_confidence"] == "failed"
+    assert "failed closed instead of sending an ungrounded answer" in lowered
+    assert "persistent memory" not in lowered
+    assert "tomorrow recall" not in lowered
+    assert "legacy fallback" not in lowered
     assert kernel_calls == []
     assert len(completed_exchanges) == 1
-    assert completed_exchanges[0][1]["record_experience"] is True
-    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine_identity_repair"
+    assert completed_exchanges[0][1]["record_experience"] is False
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine"
 
 
 @pytest.mark.asyncio
