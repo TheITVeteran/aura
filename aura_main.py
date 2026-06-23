@@ -3073,6 +3073,20 @@ def main():
             os.environ.setdefault("AURA_PROCESS_RSS_LIMIT_GB", "50")
             os.environ.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", "50")
             os.environ.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "34")
+            # The Memory Governor's prune/unload/critical thresholds are capped at
+            # 28/34/40GB even on a 64GB host. The in-process MLX 32B footprint
+            # (~35GB, AURA_MLX_32B_PROJECTED_FOOTPRINT_GB) sits ABOVE the 34GB
+            # unload line, so the governor continuously UNLOADS her own Cortex →
+            # the worker dies → conversation lane goes cold (worker_not_alive) →
+            # Degraded, even mid-conversation. Raise the thresholds so the
+            # resident model is normal, not an emergency, leaving real OS headroom
+            # on 64GB (critical at 54GB → ~10GB free).
+            # Keep the governor ladder BELOW the watchdog hard RSS limit (50GB)
+            # so graceful pruning runs before any hard kill, while still leaving
+            # the ~35GB resident model comfortably under the prune line.
+            os.environ.setdefault("AURA_GOVERNOR_PRUNE_MB", "40000")
+            os.environ.setdefault("AURA_GOVERNOR_UNLOAD_MB", "44000")
+            os.environ.setdefault("AURA_GOVERNOR_CRITICAL_MB", "47000")
             # Let the substrate be a touch more present in her voice than the
             # conservative 0.35 clamp (the worker notes ~5.0 corrupts the voice;
             # 0.5 is well within the safe range).
