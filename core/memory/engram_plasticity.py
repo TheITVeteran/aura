@@ -126,9 +126,14 @@ class EngramPlasticityField:
         peak = float(np.max(s))
         drive = (s / peak) if peak > 1e-9 else s
         drive = np.maximum(0.0, np.asarray(eng.input_gate(drive), dtype=np.float64))
+        # The membrane integrates the input through a PSP kernel before the
+        # escape-rate (board: b_k=β₀·exp((Σ∫PSP)/Δβ)). Warm-start the PSP trace to
+        # the steady drive so the salient engram is already "present" — faithful
+        # to the convolution without a startup ramp.
+        eng._psp = drive.copy()
         try:
             for _ in range(self.settle_steps):
-                eng.step_activity(drive)
+                eng.step_activity(eng.psp_kernel(drive))
         except (FloatingPointError, ValueError) as exc:  # pragma: no cover
             record_degradation("engram_plasticity", exc)
             order = list(np.argsort(-s))

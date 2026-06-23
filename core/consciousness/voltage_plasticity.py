@@ -115,6 +115,12 @@ class VoltagePlasticityConfig:
     theta0: float = 0.0        # θ₀ : input-gate threshold
     delta_b_in: float = 1.0    # ΔB : input-gate scale
 
+    # ── Explicit Δt STDP window (bottom-right graph) + PSP + η-utility ─────
+    tau_plus_ms: float = 20.0   # τ₊ : causal LTP window time constant (ms)
+    tau_minus_ms: float = 40.0  # τ₋ : anti-causal LTD window time constant (ms)
+    tau_psp: float = 0.80       # PSP kernel retention (per-step low-pass)
+    eta: float = 0.05           # η  : utility-derivative learning rate
+
     # ── Safety bounds (mirror stdp_learning.py) ───────────────────────────
     weight_clip: float = 2.0
     spectral_cap: float = 3.0
@@ -148,6 +154,7 @@ class VoltageDependentPlasticityEngine:
         self.u_bar_plus = np.zeros(n, dtype=np.float64)   # ū₊ filtered voltage
         self.x_bar = np.zeros(n, dtype=np.float64)        # pre-synaptic trace
         self.u_avg = np.full(n, self.cfg.u_ref, dtype=np.float64)  # ⟨ū⟩ homeostat
+        self._psp = np.zeros(n, dtype=np.float64)         # post-synaptic-potential trace
 
         self.t = 0
         self._total_ltp = 0
@@ -242,6 +249,60 @@ class VoltageDependentPlasticityEngine:
         """
         cfg = self.cfg
         return cfg.beta_vrp * ((np.asarray(p0, dtype=np.float64) - cfg.theta0) / max(cfg.delta_b_in, 1e-9))
+
+    def stdp_window(
+        self,
+        delta_t: np.ndarray | float,
+        b_post: np.ndarray | float | None = None,
+    ) -> np.ndarray | float:
+        """Explicit pair-based STDP window — the bottom-right graph generator.
+
+        ``Δu(t,Δt) = A₊·(b_k/ρ₀)·Θ(b_k−ρ₀)·exp(−Δt/τ₊)``      for Δt > 0  (causal → LTP)
+        ``Δu(t,Δt) = −A₋·exp(Δt/τ₋)``                          for Δt ≤ 0  (anti-causal → LTD)
+
+        The asymmetric −100…+50 ms window: pre-before-post (Δt>0) potentiates,
+        gated by the Heaviside ``Θ(b_k−ρ₀)`` (the post must be active above
+        baseline) and scaled by ``b_k/ρ₀``; post-before-pre depresses. This is the
+        explicit companion to the same window emerging from voltage in
+        :meth:`voltage_plasticity_delta`.
+        """
+        cfg = self.cfg
+        dt = np.asarray(delta_t, dtype=np.float64)
+        if b_post is None:
+            gate = 1.0
+            scale = 1.0
+        else:
+            bp = np.asarray(b_post, dtype=np.float64)
+            gate = (bp > cfg.rho0).astype(np.float64)        # Θ(b_k − ρ₀)
+            scale = bp / max(cfg.rho0, 1e-9)
+        ltp = cfg.a_ltp * scale * gate * stable_exp(-np.maximum(dt, 0.0) / max(cfg.tau_plus_ms, 1e-9))
+        ltp = np.where(dt > 0.0, ltp, 0.0)
+        ltd = -cfg.a_ltd * stable_exp(np.minimum(dt, 0.0) / max(cfg.tau_minus_ms, 1e-9))
+        ltd = np.where(dt <= 0.0, ltd, 0.0)
+        result = ltp + ltd
+        return float(result) if np.ndim(result) == 0 else result
+
+    def psp_kernel(self, spikes: np.ndarray) -> np.ndarray:
+        """Post-synaptic potential trace ``PSP(t)`` — exponential low-pass of input.
+
+        The whiteboard's membrane term ``b_k = β₀·exp((Σ_i ∫ PSP)/Δβ)`` integrates
+        incoming spikes through a PSP kernel before the escape-rate; this maintains
+        that convolution as a running state.
+        """
+        spikes = np.asarray(spikes, dtype=np.float64).reshape(-1)
+        self._psp = self.cfg.tau_psp * self._psp + (1.0 - self.cfg.tau_psp) * spikes
+        return self._psp.copy()
+
+    def eta_utility_delta(self, b: np.ndarray, psp: np.ndarray) -> np.ndarray:
+        """``d/dt u = η·(A₊/ρ₀)·(b_k+κ)·PSP_kj`` — η-modulated PSP learning term.
+
+        The board's utility/weight derivative (top-left): a learning-rate-scaled,
+        PSP-gated potentiation proportional to post activity ``b_k+κ``.
+        """
+        cfg = self.cfg
+        b = np.asarray(b, dtype=np.float64).reshape(-1)
+        psp = np.asarray(psp, dtype=np.float64).reshape(-1)
+        return cfg.eta * (cfg.a_ltp / max(cfg.rho0, 1e-9)) * (b[:, None] + cfg.kappa) * psp[None, :]
 
     # ── Fast activity dynamics ────────────────────────────────────────────
 

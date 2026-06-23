@@ -103,6 +103,48 @@ def test_input_gate_transfer_function():
     assert float(np.mean(eng.input_gate(np.array([0.5, 1.0])))) == pytest.approx(0.5)
 
 
+def test_explicit_stdp_window_causal_potentiates_anticausal_depresses():
+    eng = _engine(n_nodes=1, rho0=1.0)
+    active = 2.0   # b_post above ρ₀ → Θ gate open
+    assert eng.stdp_window(5.0, active) > 0      # Δt>0 causal → LTP
+    assert eng.stdp_window(-5.0, active) < 0     # Δt≤0 anti-causal → LTD
+    # asymmetric decay with |Δt|
+    assert eng.stdp_window(5.0, active) > eng.stdp_window(40.0, active) > 0
+    assert eng.stdp_window(-5.0, active) < eng.stdp_window(-90.0, active) <= 0
+
+
+def test_stdp_window_heaviside_gate_blocks_ltp_below_baseline():
+    eng = _engine(n_nodes=1, rho0=1.0)
+    # b_post below ρ₀ → Θ(b_k−ρ₀)=0 → no potentiation even for causal Δt
+    assert eng.stdp_window(5.0, b_post=0.4) == pytest.approx(0.0)
+
+
+def test_psp_kernel_low_passes_and_converges():
+    eng = _engine(n_nodes=2, tau_psp=0.8)
+    after_spike = eng.psp_kernel(np.array([1.0, 0.0]))
+    assert after_spike[0] == pytest.approx(0.2)              # (1-τ)·spike
+    decayed = eng.psp_kernel(np.array([0.0, 0.0]))
+    assert decayed[0] < after_spike[0]                       # decays toward 0
+    # constant drive converges to the drive level
+    eng2 = _engine(n_nodes=1, tau_psp=0.8)
+    for _ in range(60):
+        val = eng2.psp_kernel(np.array([1.0]))
+    assert val[0] == pytest.approx(1.0, abs=1e-3)
+
+
+def test_eta_utility_delta_scales_with_eta_and_psp():
+    base = _engine(n_nodes=1, eta=0.05)
+    hot = _engine(n_nodes=1, eta=0.10)
+    b = np.array([1.0])
+    psp = np.array([1.0])
+    d_base = base.eta_utility_delta(b, psp)[0, 0]
+    d_hot = hot.eta_utility_delta(b, psp)[0, 0]
+    assert d_base > 0
+    assert d_hot == pytest.approx(2 * d_base)               # linear in η
+    # linear in PSP
+    assert base.eta_utility_delta(b, np.array([2.0]))[0, 0] == pytest.approx(2 * d_base)
+
+
 # ── stability: the whole reason the board adds homeostasis ────────────────
 
 def test_no_runaway_under_extreme_constant_drive():
