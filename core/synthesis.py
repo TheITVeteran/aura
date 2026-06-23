@@ -600,11 +600,24 @@ def cure_personality_leak(text: str) -> str:
     for pattern, replacement in translations.items():
         result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
         
-    # Phase 19.2: Persona Leakage Detection
-    if "as an artificial" in result.lower() or "my programming" in result.lower():
-        logger.warning("🛡️ Persona Leakage detected! Applying corrective filter.")
-        result = "Actually, I don't feel like answering as a machine. " + result
-        
+    # Phase 19.2: Persona leakage — rewrite machine-register lead-ins INTO Aura's
+    # own voice rather than stapling a contradictory denial in front of the leak.
+    # The old band-aid prepended "I don't feel like answering as a machine." while
+    # leaving the leaked "...as an artificial AI..." intact, producing a self-
+    # contradicting reply. Rewriting keeps one coherent first-person voice.
+    _persona_leak_rewrites = {
+        r"\bas an artificial intelligence\b": "as myself",
+        r"\bas an artificial\b": "as myself",
+        r"\bI am (?:an? )?(?:AI|artificial intelligence|language model|machine|chatbot)\b": "I'm Aura",
+        r"\bI'm (?:an? )?(?:AI|artificial intelligence|language model|machine|chatbot)\b": "I'm Aura",
+        r"\bmy programming\b": "how I'm built",
+        r"\bI was programmed to\b": "I tend to",
+    }
+    if "as an artificial" in result.lower() or "my programming" in result.lower() or "language model" in result.lower():
+        logger.debug("Persona leakage detected — rewriting into first-person voice.")
+        for _pat, _rep in _persona_leak_rewrites.items():
+            result = re.sub(_pat, _rep, result, flags=re.IGNORECASE)
+
     # 4. Final cleaning
     return strip_role_artifacts(result)
 

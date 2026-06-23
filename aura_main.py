@@ -3062,6 +3062,22 @@ def main():
         # remains gated, so genuine pressure (<27GB free) still defers.
         os.environ.setdefault("AURA_CORTEX_BACKGROUND_WARMUP_MIN_AVAILABLE_GB", "27")
 
+        # The in-process MLX lane holds the ~20GB 32B in the KERNEL's OWN RSS;
+        # the llama_cpp design kept the model in a separate server process. The
+        # safe-boot RSS caps (36GB) and MLX ceiling (28GB) were sized for that
+        # split design, so under MLX the kernel sits right against them and the
+        # memory watchdog can SIGKILL it mid-session (observed: kernel "GONE"
+        # with no crash trace). Give the in-process model real headroom on a
+        # 64GB host so the watchdog doesn't kill her own brain.
+        if os.environ.get("AURA_LOCAL_BACKEND", "").strip().lower() == "mlx":
+            os.environ.setdefault("AURA_PROCESS_RSS_LIMIT_GB", "50")
+            os.environ.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", "50")
+            os.environ.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "34")
+            # Let the substrate be a touch more present in her voice than the
+            # conservative 0.35 clamp (the worker notes ~5.0 corrupts the voice;
+            # 0.5 is well within the safe range).
+            os.environ.setdefault("AURA_USER_SURFACE_STEERING_ALPHA", "0.5")
+
     # Standardize: Reboot behavior
     if args.stop:
         stop_aura()
