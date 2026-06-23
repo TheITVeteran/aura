@@ -588,13 +588,25 @@ def generate_solver_source(handlers: set[str], *, generation_id: str) -> tuple[s
 
     try:
         from core.brain.llm.code_generator import LLMCodeGenerator
+        from core.brain.llm.local_code_model import get_local_code_model
         from core.container import ServiceContainer
 
+        # Code generation runs on a SEPARATE, un-steered local path. The steered
+        # persona cortex corrupts symbolic code tokens and refuses unsteered
+        # inference by design, so route code-gen to raw mlx_lm generation against
+        # the same local weights with no steering hooks (see
+        # core/brain/llm/local_code_model.py). Falls back to the cortex router
+        # only if the local code weights are unavailable.
+        code_model = get_local_code_model()
         router = ServiceContainer.get("llm_router", default=None)
         brain = ServiceContainer.get("brain", default=None)
-        if router or brain:
+        if code_model is not None or router or brain:
             metadata["router_presence"] = True
+            metadata["code_backend"] = (
+                "local_unsteered_mlx" if code_model is not None else "cortex_router"
+            )
             generator = LLMCodeGenerator(
+                router=code_model,
                 fallback_to_stub=False,
                 prefer_tier="primary",
                 temperature=0.0,
