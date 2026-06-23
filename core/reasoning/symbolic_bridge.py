@@ -38,6 +38,26 @@ class SymbolicBridge:
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             return SymbolicResult(False, "python_ast", repr(exc), "solver_error")
 
+    def prove_logic(self, premises: list[str], goal: str) -> SymbolicResult:
+        """Exact propositional deduction via the natural-deduction prover.
+
+        Routes a ``premises ⊢ goal`` query to the sound, terminating proof search
+        (the Pantheon Hp/SIMPL engine). On success the proof trace is returned; on
+        failure the concrete countermodel is the proof_trace.
+        """
+        try:
+            from core.reasoning.natural_deduction import prove_text
+
+            proof = prove_text(premises, goal)
+            trace = (
+                " ; ".join(proof.trace)
+                if proof.provable
+                else f"countermodel: {proof.countermodel}"
+            )
+            return SymbolicResult(True, "natural_deduction", proof.provable, trace)
+        except (ValueError, RuntimeError, AttributeError, TypeError) as exc:
+            return SymbolicResult(False, "natural_deduction", repr(exc), "solver_error")
+
     def solve_constraints(self, constraints: list[str]) -> SymbolicResult:
         try:
             import z3  # type: ignore

@@ -326,6 +326,27 @@ class BeliefRevisionEngine:
                 logger.error("Belief revision cycle failed: %s", e)
                 backoff = min(backoff * 2, 600.0)  # Exponential backoff, cap at 10 min
 
+    def check_belief_consistency(self, *, min_confidence: float = 0.6) -> dict[str, Any]:
+        """Run the natural-deduction prover over current beliefs.
+
+        Detects when Aura holds a proposition and its explicit negation at high
+        confidence (a logical inconsistency in her self-model) and surfaces it to
+        deduction governance. Returns the consistency report as a dict.
+        """
+        try:
+            from core.reasoning.belief_consistency import check_beliefs
+            from core.reasoning.deduction_governance import record_belief_inconsistency
+
+            report = check_beliefs(
+                [(b.content, b.confidence) for b in self.beliefs],
+                min_confidence=min_confidence,
+            )
+            record_belief_inconsistency(report)
+            return report.to_dict()
+        except _BELIEF_REVISION_RECOVERABLE_ERRORS as exc:
+            record_degradation("belief_revision", exc)
+            return {"consistent": True, "error": repr(exc)}
+
     async def process_new_claim(
         self, claim: str, domain: str, source: str, confidence: float = 0.5
     ):
@@ -370,6 +391,10 @@ class BeliefRevisionEngine:
         self.beliefs.append(new_b)
         await self._async_save()
         logger.info("New belief [%s]: %s (Conf: %.2f)", source, claim, weighted_conf)
+        # A new belief that contradicts an existing high-confidence one is a
+        # logical inconsistency in the self-model — run the deduction prover and
+        # surface any X ∧ ¬X conflict to governance for revision (logs + metric).
+        self.check_belief_consistency()
         return {"ok": True, "updated": False, "belief_id": new_b.id}
 
     async def update_from_conversation(self, user_input: str, response: str):
