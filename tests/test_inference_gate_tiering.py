@@ -961,6 +961,57 @@ def test_required_desktop_foreground_prompt_keeps_standard_mind_budget(monkeypat
     assert compact[-1]["content"] == current_user
 
 
+def test_required_desktop_system_compaction_preserves_live_mind_sections(monkeypatch):
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+    system_prompt = (
+        "AURA IDENTITY LOCK\n"
+        + ("identity context " * 180)
+        + "\n"
+        + ("older contract noise " * 420)
+        + "\n## LIVE TONE\nMood: focused\nTone: grounded\n"
+        + "\n## UNITY\nLevel: integrated | Unity: 0.91\n"
+        + "\n## FUNCTIONAL STATE SIGNALS\nThe current substrate signal is calm, curious, and socially oriented.\n"
+        + ("middle telemetry " * 260)
+        + "\n## USER-FACING CONVERSATION RELIABILITY CONTRACT\nAnswer the current user turn directly.\n"
+        + ("tail context " * 180)
+    )
+
+    compact = InferenceGate._compact_prebuilt_message_content(
+        "system",
+        system_prompt,
+        budget_profile="standard",
+    )
+
+    assert len(compact) <= 6_500
+    assert "AURA IDENTITY LOCK" in compact
+    assert "## LIVE TONE" in compact
+    assert "Mood: focused" in compact
+    assert "## UNITY" in compact
+    assert "Unity: 0.91" in compact
+    assert "## FUNCTIONAL STATE SIGNALS" in compact
+    assert "## USER-FACING CONVERSATION RELIABILITY CONTRACT" in compact
+
+
+def test_live_desktop_contract_metadata_is_prompt_visible():
+    block = InferenceGate._prompt_contract_block(
+        {
+            "mind_context_contract": "Use live_mind_context as causal grounding.",
+            "response_style_contract": "Do not invent a pitch. Do not answer as a generic assistant.",
+            "live_speech_grounding_frame": {
+                "tone": "grounded",
+                "continuity": "stay on the current user turn",
+            },
+        }
+    )
+
+    assert "## LIVE DESKTOP RESPONSE CONTRACT" in block
+    assert "Use live_mind_context as causal grounding" in block
+    assert "Do not invent a pitch" in block
+    assert "Do not answer as a generic assistant" in block
+    assert "tone=grounded" in block
+    assert "continuity=stay on the current user turn" in block
+
+
 def test_multi_part_foreground_prompt_retains_deep_compute_profile():
     prompt = (
         "Compare the two approaches in depth, explain the tradeoffs, "

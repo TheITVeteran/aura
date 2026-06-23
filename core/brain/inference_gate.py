@@ -4127,6 +4127,91 @@ class InferenceGate:
             return runtime_window
 
     @staticmethod
+    def _prompt_contract_block(context: dict[str, Any] | None) -> str:
+        """Render user-facing route contracts as prompt-visible constraints."""
+
+        if not isinstance(context, dict):
+            return ""
+
+        sections: list[str] = []
+        mind_contract = str(context.get("mind_context_contract") or "").strip()
+        if mind_contract:
+            sections.append(f"Mind-context contract: {mind_contract[:900]}")
+
+        style_contract = str(context.get("response_style_contract") or "").strip()
+        if style_contract:
+            sections.append(f"Response-style contract: {style_contract[:1400]}")
+
+        speech_frame = context.get("live_speech_grounding_frame")
+        if isinstance(speech_frame, dict):
+            frame_parts = []
+            for key, value in speech_frame.items():
+                if value in (None, "", [], {}):
+                    continue
+                frame_parts.append(f"{key}={str(value)[:180]}")
+                if len(frame_parts) >= 8:
+                    break
+            if frame_parts:
+                sections.append("Speech grounding frame: " + " | ".join(frame_parts))
+        elif speech_frame:
+            sections.append(f"Speech grounding frame: {str(speech_frame)[:900]}")
+
+        if not sections:
+            return ""
+        return "## LIVE DESKTOP RESPONSE CONTRACT\n" + "\n".join(f"- {item}" for item in sections)
+
+    @staticmethod
+    def _critical_foreground_system_excerpt(content: str, *, budget: int) -> str:
+        """Keep live-mind grounding visible inside compacted system prompts."""
+
+        if budget <= 0:
+            return ""
+        important_headers = (
+            "## LIVE TONE",
+            "## UNITY",
+            "## FUNCTIONAL STATE SIGNALS",
+            "## GOALS",
+            "## HELD POSITION",
+            "## SOMATIC STATE",
+            "## STATE",
+            "## CONTINUITY SUMMARY",
+            "## TEMPORAL OBLIGATIONS",
+            "## CONVERSATIONAL INTENT",
+            "## IMAGINATION WORKSPACE",
+            "## BICAMERAL ADVISORY",
+            "## LIVE DESKTOP RESPONSE CONTRACT",
+            "## USER-FACING CONVERSATION RELIABILITY CONTRACT",
+        )
+        sections: list[str] = []
+        for header in important_headers:
+            start = content.find(header)
+            if start < 0:
+                continue
+            next_header = content.find("\n## ", start + len(header))
+            end = len(content) if next_header < 0 else next_header
+            section = content[start:end].strip()
+            if section and section not in sections:
+                sections.append(section)
+        if not sections:
+            return ""
+
+        rendered: list[str] = []
+        remaining = int(budget)
+        per_section_floor = max(180, min(700, budget // max(1, min(len(sections), 4))))
+        for section in sections:
+            if remaining <= 0:
+                break
+            limit = min(
+                max(per_section_floor, remaining // max(1, len(sections) - len(rendered))),
+                remaining,
+            )
+            if len(section) > limit:
+                section = section[: max(1, limit - 1)].rstrip() + "…"
+            rendered.append(section)
+            remaining -= len(section) + 2
+        return "\n\n".join(rendered).strip()
+
+    @staticmethod
     def _compact_prebuilt_message_content(
         role: str,
         content: Any,
@@ -4178,6 +4263,21 @@ class InferenceGate:
             return clean
         if role in {"system", "user"}:
             marker = "\n…[middle omitted for foreground context budget]…\n"
+            critical_excerpt = ""
+            if role == "system":
+                critical_excerpt = InferenceGate._critical_foreground_system_excerpt(
+                    clean,
+                    budget=min(2200, max(900, limit // 3)),
+                )
+            if critical_excerpt:
+                remaining = max(2, limit - len(marker) * 2 - len(critical_excerpt))
+                head = max(1, remaining * 3 // 5)
+                tail = max(1, remaining - head)
+                return (
+                    f"{clean[:head].rstrip()}{marker}"
+                    f"{critical_excerpt}{marker}"
+                    f"{clean[-tail:].lstrip()}"
+                )
             remaining = max(2, limit - len(marker))
             head = max(1, remaining * 2 // 3)
             tail = max(1, remaining - head)
@@ -5677,6 +5777,9 @@ class InferenceGate:
                 )
         if living_mind_context:
             system_prompt = f"{system_prompt}\n\n{living_mind_context}"
+        prompt_contract_block = self._prompt_contract_block(context)
+        if prompt_contract_block and not isolated_generation_contract:
+            system_prompt = f"{system_prompt}\n\n{prompt_contract_block}"
         # Keep prompt growth aligned with the actual local model context window
         # instead of assuming 128k+ headroom on the primary Qwen lane.
 

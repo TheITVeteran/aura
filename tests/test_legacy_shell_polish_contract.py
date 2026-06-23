@@ -131,6 +131,9 @@ def test_legacy_shell_neural_feed_receives_health_liveness_pulses():
     assert "NEURAL_LIVENESS_PULSE_MS = 30000" in js
     assert "function queueNeuralLivenessCard" in js
     assert "function publishHealthNeuralPulse" in js
+    assert "function conversationPayloadReady" in js
+    assert "conversationPayloadReady(payload, blockers)" in js
+    assert "lane.conversation_ready === true || payload.conversation_ready === true" not in js
     assert "publishHealthNeuralPulse(payload, 'websocket_heartbeat');" in js
     assert "publishHealthNeuralPulse(d, 'health_poll');" in js
     assert "[health_poll] health probe failed" in js

@@ -45,7 +45,7 @@ const state = {
     lastNeuralPulseAt: 0,
     lastSemanticThoughtAt: 0,
     lastHealthSnapshotFingerprint: null,
-    conversationReady: true,
+    conversationReady: false,
     conversationLane: null,
     runtimeHealthy: false,
     runtimeHealthBlockers: [],
@@ -2156,12 +2156,13 @@ function healthPulseFingerprint(payload) {
     const lane = payload && payload.conversation_lane ? payload.conversation_lane : {};
     const boot = payload && payload.boot ? payload.boot : {};
     const blockers = runtimeHealthBlockers(payload || {}).slice(0, 8).join(',');
+    const conversationReady = conversationPayloadReady(payload, blockers.split(','));
     return [
         payload && payload.status,
         payload && payload.healthy === true ? 'healthy' : 'unhealthy',
         boot.boot_phase || boot.status || '',
         lane.state || '',
-        lane.conversation_ready === true ? 'conversation_ready' : 'conversation_not_ready',
+        conversationReady ? 'conversation_ready' : 'conversation_not_ready',
         blockers
     ].join('|');
 }
@@ -2178,7 +2179,7 @@ function publishHealthNeuralPulse(payload, source = 'health_poll') {
     const boot = payload.boot || {};
     const blockers = runtimeHealthBlockers(payload);
     const probeText = payload.runtime_probe_healthy === true ? 'probes pass' : 'probes blocked';
-    const conversationText = lane.conversation_ready === true || payload.conversation_ready === true
+    const conversationText = conversationPayloadReady(payload, blockers)
         ? 'conversation ready'
         : `conversation ${String(lane.state || boot.boot_phase || 'not ready').replace(/_/g, ' ')}`;
     const blockerText = blockers.length ? ` | blockers: ${blockers.slice(0, 3).join(', ')}` : '';
@@ -3371,6 +3372,32 @@ function payloadRuntimeHealthy(payload) {
     return !status || ['ok', 'ready', 'healthy'].includes(status);
 }
 
+function blockerIsConversationReadiness(blocker) {
+    const value = String(blocker || '').trim();
+    return value === 'conversation_ready'
+        || value.startsWith('conversation_lane:')
+        || value.startsWith('conversation_reason:');
+}
+
+function conversationPayloadReady(payload, blockers = []) {
+    if (!payload || typeof payload !== 'object') return false;
+    const lane = payload.conversation_lane && typeof payload.conversation_lane === 'object'
+        ? payload.conversation_lane
+        : {};
+    const laneState = String(lane.state || '').toLowerCase();
+    const laneReadinessBlockers = Array.isArray(lane.readiness_blockers)
+        ? lane.readiness_blockers.filter(blocker => String(blocker || '').trim())
+        : [];
+    const rawBlockers = Array.isArray(blockers)
+        ? blockers.filter(blocker => String(blocker || '').trim())
+        : [];
+    return payload.conversation_ready === true
+        && lane.conversation_ready === true
+        && laneState === 'ready'
+        && laneReadinessBlockers.length === 0
+        && !rawBlockers.some(blockerIsConversationReadiness);
+}
+
 function runtimeHealthBlockers(payload) {
     if (!payload || typeof payload !== 'object') return ['runtime_health_unavailable'];
     const blockers = Array.isArray(payload.blockers) ? payload.blockers.slice() : [];
@@ -3394,11 +3421,10 @@ function runtimeHealthBlockers(payload) {
             }
         });
     }
-    const conversationReady = payload.conversation_ready === true
-        || (payload.conversation_lane && payload.conversation_lane.conversation_ready === true);
+    const conversationReady = conversationPayloadReady(payload, blockers);
     const normalized = conversationReady
-        ? blockers.filter(blocker => String(blocker || '') !== 'conversation_ready')
-        : blockers;
+        ? blockers.filter(blocker => !blockerIsConversationReadiness(blocker))
+        : blockers.concat('conversation_ready');
     return Array.from(new Set(normalized));
 }
 
