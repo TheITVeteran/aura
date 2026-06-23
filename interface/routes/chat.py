@@ -11033,10 +11033,25 @@ async def api_chat(
                 record_degradation('chat', _dir_exc)
                 logger.debug("Chat directive preflight skipped: %s", _dir_exc)
             
+            # Grounded recall: positional/temporal questions ("what did I first
+            # ask?") are answered from the ACTUAL earliest/most-recent turn in the
+            # live transcript, not a confabulated guess. Injected as an
+            # authoritative fact the model voices in its own words.
+            try:
+                from core.conversation.grounded_recall import build_grounded_recall_context
+
+                _grounded = build_grounded_recall_context(_original_user_message)
+                if _grounded:
+                    body.message = f"{_grounded}{body.message}"
+                    logger.info("Chat preflight: injected grounded positional recall.")
+            except _CHAT_RECOVERABLE_ERRORS as _grounded_exc:
+                record_degradation('chat', _grounded_exc)
+                logger.debug("Chat grounded-recall preflight skipped: %s", _grounded_exc)
+
             # Inject learned user/Aura profiles for continuity across conversations
             try:
                 from core.conversation.chat_preflight import inject_profile_context
-                
+
                 _profile_context = await inject_profile_context()
                 if _profile_context:
                     body.message = f"{_profile_context}{body.message}"
