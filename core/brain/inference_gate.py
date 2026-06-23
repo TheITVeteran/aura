@@ -4093,6 +4093,8 @@ class InferenceGate:
         markers = (
             "[FETCHED PAGE CONTENT]",
             "[ACTIVE GROUNDING EVIDENCE]",
+            "[LIVE MIND CONTEXT]",
+            "[LIVE SPEECH GROUNDING]",
             "[SKILL RESULT:",
             "[TOOL RESULT:",
         )
@@ -4167,6 +4169,8 @@ class InferenceGate:
         if budget <= 0:
             return ""
         important_headers = (
+            "[LIVE MIND CONTEXT]",
+            "[LIVE SPEECH GROUNDING]",
             "## LIVE TONE",
             "## UNITY",
             "## FUNCTIONAL STATE SIGNALS",
@@ -4187,8 +4191,23 @@ class InferenceGate:
             start = content.find(header)
             if start < 0:
                 continue
-            next_header = content.find("\n## ", start + len(header))
-            end = len(content) if next_header < 0 else next_header
+            if header.startswith("["):
+                end_marker = "[END " + header.strip("[]") + "]"
+                next_header = content.find(end_marker, start + len(header))
+                if next_header >= 0:
+                    end = next_header + len(end_marker)
+                else:
+                    next_header = content.find("\n[", start + len(header))
+                    next_hash_header = content.find("\n## ", start + len(header))
+                    candidates = [
+                        idx for idx in (next_header, next_hash_header) if idx >= 0
+                    ]
+                    end = min(candidates) if candidates else len(content)
+            else:
+                next_header = content.find("\n## ", start + len(header))
+                next_bracket_header = content.find("\n[", start + len(header))
+                candidates = [idx for idx in (next_header, next_bracket_header) if idx >= 0]
+                end = min(candidates) if candidates else len(content)
             section = content[start:end].strip()
             if section and section not in sections:
                 sections.append(section)
@@ -4387,12 +4406,29 @@ class InferenceGate:
                     )
                     if len(first["content"]) > new_limit:
                         marker = "\n…[middle omitted for total prompt budget]…\n"
-                        remaining = max(2, new_limit - len(marker))
-                        head = max(1, remaining * 2 // 3)
-                        tail = max(1, remaining - head)
-                        first["content"] = (
-                            f"{content[:head].rstrip()}{marker}{content[-tail:].lstrip()}"
+                        critical_excerpt = self._critical_foreground_system_excerpt(
+                            content,
+                            budget=min(2200, max(900, new_limit // 3)),
                         )
+                        if critical_excerpt:
+                            remaining = max(
+                                2,
+                                new_limit - len(marker) * 2 - len(critical_excerpt),
+                            )
+                            head = max(1, remaining * 3 // 5)
+                            tail = max(1, remaining - head)
+                            first["content"] = (
+                                f"{content[:head].rstrip()}{marker}"
+                                f"{critical_excerpt}{marker}"
+                                f"{content[-tail:].lstrip()}"
+                            )
+                        else:
+                            remaining = max(2, new_limit - len(marker))
+                            head = max(1, remaining * 2 // 3)
+                            tail = max(1, remaining - head)
+                            first["content"] = (
+                                f"{content[:head].rstrip()}{marker}{content[-tail:].lstrip()}"
+                            )
 
         return compact
 

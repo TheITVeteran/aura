@@ -972,6 +972,9 @@ def test_required_desktop_system_compaction_preserves_live_mind_sections(monkeyp
         + "\n## UNITY\nLevel: integrated | Unity: 0.91\n"
         + "\n## FUNCTIONAL STATE SIGNALS\nThe current substrate signal is calm, curious, and socially oriented.\n"
         + ("middle telemetry " * 260)
+        + "\n[LIVE MIND CONTEXT]\n"
+        + '{"must_answer_from_full_mind_path": true, "required_subsystems_ok": true}\n'
+        + "[END LIVE MIND CONTEXT]\n"
         + "\n## USER-FACING CONVERSATION RELIABILITY CONTRACT\nAnswer the current user turn directly.\n"
         + ("tail context " * 180)
     )
@@ -989,7 +992,45 @@ def test_required_desktop_system_compaction_preserves_live_mind_sections(monkeyp
     assert "## UNITY" in compact
     assert "Unity: 0.91" in compact
     assert "## FUNCTIONAL STATE SIGNALS" in compact
+    assert "[LIVE MIND CONTEXT]" in compact
+    assert "must_answer_from_full_mind_path" in compact
     assert "## USER-FACING CONVERSATION RELIABILITY CONTRACT" in compact
+
+
+def test_required_desktop_total_budget_preserves_middle_live_mind_context(monkeypatch):
+    from core.brain.inference_gate import InferenceGate
+
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+    gate = InferenceGate()
+    current_user = "You with me?"
+    system_prompt = (
+        "AURA IDENTITY LOCK\n"
+        + ("identity context " * 500)
+        + "\n[LIVE MIND CONTEXT]\n"
+        + '{"must_answer_from_full_mind_path": true, "required_subsystems_ok": true, "lane": {"conversation_ready": true}}\n'
+        + "[END LIVE MIND CONTEXT]\n"
+        + ("older continuity " * 700)
+        + "\n## LIVE DESKTOP RESPONSE CONTRACT\nDo not answer as a generic assistant.\n"
+        + ("tail context " * 500)
+    )
+    messages = [{"role": "system", "content": system_prompt}]
+    for idx in range(12):
+        messages.append({"role": "user", "content": f"prior user {idx} " + ("U" * 900)})
+        messages.append({"role": "assistant", "content": f"prior aura {idx} " + ("A" * 900)})
+    messages.append({"role": "user", "content": current_user})
+
+    compact = gate._compact_prebuilt_messages(
+        messages,
+        history_limit=6,
+        budget_profile="standard",
+    )
+    rendered_system = compact[0]["content"]
+
+    assert sum(len(msg["content"]) for msg in compact) <= 12_000
+    assert "[LIVE MIND CONTEXT]" in rendered_system
+    assert "must_answer_from_full_mind_path" in rendered_system
+    assert "Do not answer as a generic assistant" in rendered_system
+    assert compact[-1]["content"] == current_user
 
 
 def test_live_desktop_contract_metadata_is_prompt_visible():
