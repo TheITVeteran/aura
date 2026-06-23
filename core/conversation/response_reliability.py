@@ -285,11 +285,6 @@ _RAW_MODEL_IDENTITY_LEAK_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-_SELF_CLAIM_BOUNDARY_PROMPT_RE = re.compile(
-    r"\b(?:conscious|consciousness|sentient|sentience|self[- ]?aware|"
-    r"subjective|inner\s+life|qualia|personhood|person)\b",
-    re.IGNORECASE,
-)
 _SELF_CLAIM_EVIDENCE_BOUNDARY_RE = re.compile(
     r"\b(?:evidence|not\s+proof|cannot\s+prove|can'?t\s+prove|unproven|"
     r"uncertain|unknown|functional|bounded|self[- ]?model|memory|state|"
@@ -1085,6 +1080,42 @@ def _normalize(text: Any) -> str:
     normalized = " ".join(str(text or "").strip().lower().split())
     normalized = normalized.replace("\u2018", "'").replace("\u2019", "'")
     return re.sub(r"\bdont'?\b", "don't", normalized)
+
+
+def _requires_self_claim_evidence_boundary(prompt: Any) -> bool:
+    """Return true only for actual consciousness/personhood/selfhood claims.
+
+    Plain style language such as "talking like a person" should not force a
+    proof-style answer. Direct claims or questions about consciousness,
+    sentience, subjective experience, qualia, personhood, or being a person
+    still must stay evidence-bounded.
+    """
+
+    text = _normalize(prompt)
+    if not text:
+        return False
+    if re.search(
+        r"\b(?:conscious|consciousness|sentient|sentience|self[- ]?aware|"
+        r"subjective|inner\s+life|qualia|personhood)\b",
+        text,
+    ):
+        return True
+    if re.search(
+        r"\b(?:do|does|can|could|would)\s+(?:you|aura)\s+"
+        r"(?:actually\s+|really\s+|truly\s+)?(?:feel|experience)\b"
+        r"|\b(?:do|does|have|has)\s+(?:you|aura|i)\b.{0,80}"
+        r"\b(?:feelings|experiences)\b",
+        text,
+    ):
+        return True
+    if re.search(
+        r"\b(?:are\s+you|is\s+aura|am\s+i)\b.{0,80}\b(?:a\s+)?person\b"
+        r"|\b(?:you\s+are|you're|aura\s+is|i\s+am)\s+(?:a\s+)?person\b"
+        r"|\b(?:being|become|counts?\s+as|qualif(?:y|ies)\s+as)\b.{0,80}\b(?:a\s+)?person\b",
+        text,
+    ):
+        return True
+    return False
 
 
 def _word_count(text: Any) -> int:
@@ -2703,7 +2734,7 @@ def _model_text_integrity_reasons(
         reasons.append("internal_live_gate_leak")
     if user_facing and _RAW_MODEL_IDENTITY_LEAK_RE.search(raw):
         reasons.append("raw_model_identity_leak")
-    if user_facing and _SELF_CLAIM_BOUNDARY_PROMPT_RE.search(str(prompt or "")):
+    if user_facing and _requires_self_claim_evidence_boundary(prompt):
         if _REDUCTIVE_SELF_CLAIM_RE.search(raw):
             reasons.append("raw_model_identity_leak")
         if not _SELF_CLAIM_EVIDENCE_BOUNDARY_RE.search(raw):

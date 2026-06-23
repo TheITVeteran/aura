@@ -3500,6 +3500,12 @@ async def _run_cognitive_engine_chat_turn(
         desktop_execution_contract=desktop_execution_contract,
         capability_inventory_contract=capability_inventory_contract,
     )
+    if require_engine:
+        # Required live desktop turns must exercise the full CognitiveEngine
+        # phase stack. The compact direct-router path is useful as an internal
+        # bounded path, but using it as the default desktop speech organ makes
+        # the UI feel like a prompted raw model instead of the live mind.
+        compact_desktop_chat_contract = False
     recent_context_needed = _desktop_turn_needs_recent_context(visible)
     if recent_context_needed:
         recent_context_limit = _RECENT_CONVERSATION_CONTEXT_EXCHANGES

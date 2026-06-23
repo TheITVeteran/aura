@@ -4442,7 +4442,7 @@ async def test_desktop_cognitive_engine_retries_empty_cycle_without_placeholder(
 
 
 @pytest.mark.asyncio
-async def test_desktop_cognitive_engine_uses_compact_contract_and_recovery_reserve(monkeypatch):
+async def test_desktop_cognitive_engine_required_chat_uses_full_phase_contract(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -4496,11 +4496,13 @@ async def test_desktop_cognitive_engine_uses_compact_contract_and_recovery_reser
     )
 
     assert reply
-    assert calls[0]["context"]["desktop_quick_reply_contract"] is True
-    assert calls[0]["context"]["skip_runtime_payload"] is False
+    assert "desktop_quick_reply_contract" not in calls[0]["context"]
+    assert calls[0]["context"]["desktop_cognitive_engine_required"] is True
+    assert calls[0]["context"]["live_mind_context_required"] is True
+    assert calls[0]["context"]["live_mind_context"]["must_answer_from_full_mind_path"] is True
     assert calls[0]["context"]["live_runtime_payload_required"] is True
     assert calls[0]["context"]["allow_deep_handoff"] is False
-    assert 512 < calls[0]["context"]["max_tokens"] <= 896
+    assert calls[0]["context"]["allow_cloud_fallback"] is False
     assert calls[0]["kwargs"]["timeout_s"] == pytest.approx(42.0)
 
 

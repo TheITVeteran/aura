@@ -148,3 +148,65 @@ async def test_response_generation_treats_prefixed_user_origin_as_foreground(mon
     assert router.calls, "Router should have been called for a user-facing origin"
     assert router.calls[0]["is_background"] is False
     assert result.cognition.last_response, "A response should have been generated"
+
+
+@pytest.mark.asyncio
+async def test_response_generation_full_phase_injects_live_desktop_grounding(monkeypatch):
+    state = AuraState()
+    state.cognition.current_objective = "What tools can you use externally?"
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.REACTIVE
+
+    router = _Router()
+    container = _Container({"llm_router": router})
+    phase = ResponseGenerationPhase(container)
+
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [
+            {"role": "system", "content": "base live Aura context"},
+            {"role": "user", "content": "What tools can you use externally?"},
+        ],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+
+    await phase.execute(
+        state,
+        context={
+            "desktop_cognitive_engine_required": True,
+            "cognitive_engine_required": True,
+            "live_runtime_payload_required": True,
+            "live_mind_context_required": True,
+            "live_mind_context": {
+                "required_for_live_desktop": True,
+                "must_answer_from_full_mind_path": True,
+                "required_subsystems_ok": True,
+                "lane": {"state": "ready", "conversation_ready": True},
+                "voice": {"mood": "steady"},
+                "substrate": {"coherence": 0.91},
+                "governance": {"legacy_fallback_allowed": False},
+            },
+            "mind_context_contract": "Use the live mind context as causal grounding.",
+            "live_speech_grounding_frame": {
+                "attention_focus": "Bryan's live desktop capability question",
+                "dominant_action": "answer",
+                "mood": "steady",
+            },
+            "grounded_capability_inventory_context": (
+                "Aura can use governed desktop, browser, file, document, and terminal lanes "
+                "only with authorization and effect receipts."
+            ),
+        },
+    )
+
+    assert router.calls
+    system_prompt = router.calls[0]["messages"][0]["content"]
+    assert "LIVE MIND CONTEXT" in system_prompt
+    assert "must_answer_from_full_mind_path" in system_prompt
+    assert "LIVE SPEECH GROUNDING" in system_prompt
+    assert "GOVERNED CAPABILITY INVENTORY EVIDENCE" in system_prompt
+    assert router.calls[0]["desktop_cognitive_engine_required"] is True
+    assert router.calls[0]["allow_cloud_fallback"] is False

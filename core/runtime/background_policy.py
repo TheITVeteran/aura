@@ -130,6 +130,8 @@ _USER_FACING_ORIGIN_TOKENS = frozenset({
     "gui",
     "ws",
     "websocket",
+    "desktop",
+    "ui",
     "external",
     "direct",
     "embodied",

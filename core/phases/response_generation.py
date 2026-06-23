@@ -1,6 +1,7 @@
 """Response Generation Phase for Aura's Cognitive Pipeline."""
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -63,6 +64,130 @@ class ResponseGenerationPhase(BasePhase):
 
     def __init__(self, container: Any):
         self.container = container
+
+    @staticmethod
+    def _compact_prompt_payload(value: Any, *, limit: int = 3000) -> str:
+        """Render runtime grounding payloads without letting them dominate the prompt."""
+
+        try:
+            rendered = json.dumps(value, ensure_ascii=True, sort_keys=True, default=str)
+        except (TypeError, ValueError, OverflowError):
+            rendered = str(value)
+        rendered = rendered.strip()
+        if len(rendered) <= limit:
+            return rendered
+        return f"{rendered[: max(0, limit - 16)]}...[truncated]"
+
+    @classmethod
+    def _append_system_block(
+        cls,
+        messages: list[dict[str, Any]],
+        title: str,
+        body: str,
+    ) -> None:
+        body = str(body or "").strip()
+        if not body:
+            return
+        block = f"## {title}\n{body}"
+        if messages and str(messages[0].get("role", "") or "").strip().lower() == "system":
+            messages[0]["content"] = f"{str(messages[0].get('content', '')).rstrip()}\n\n{block}"
+        else:
+            messages.insert(0, {"role": "system", "content": block})
+
+    @classmethod
+    def _inject_live_runtime_grounding(
+        cls,
+        messages: list[dict[str, Any]],
+        runtime_context: dict[str, Any],
+    ) -> None:
+        """Make live desktop mind/body/tool context visible to the full phase path.
+
+        The compact desktop router path already receives these fields directly.
+        The full response-generation phase must receive them too, otherwise a
+        required desktop turn can be technically routed through CognitiveEngine
+        while the model only sees a generic prompt.
+        """
+
+        live_mind = runtime_context.get("live_mind_context")
+        if isinstance(live_mind, dict) and live_mind:
+            compact_mind = {
+                "required_for_live_desktop": live_mind.get("required_for_live_desktop"),
+                "must_answer_from_full_mind_path": live_mind.get("must_answer_from_full_mind_path"),
+                "required_subsystems_ok": live_mind.get("required_subsystems_ok"),
+                "required_subsystems": live_mind.get("required_subsystems"),
+                "lane": live_mind.get("lane"),
+                "voice": live_mind.get("voice"),
+                "substrate": live_mind.get("substrate"),
+                "governance": live_mind.get("governance"),
+            }
+            contract = str(runtime_context.get("mind_context_contract") or "").strip()
+            cls._append_system_block(
+                messages,
+                "LIVE MIND CONTEXT",
+                (
+                    f"{cls._compact_prompt_payload(compact_mind, limit=3200)}\n"
+                    "This is causal grounding for the reply, not text to recite. "
+                    "Use memory, current state, substrate, governance, and the live lane as one context. "
+                    "Do not answer as a generic assistant persona."
+                    + (f"\n{contract}" if contract else "")
+                ),
+            )
+
+        speech_frame = runtime_context.get("live_speech_grounding_frame")
+        if isinstance(speech_frame, dict) and speech_frame:
+            compact_frame = {
+                key: speech_frame.get(key)
+                for key in (
+                    "attention_focus",
+                    "dominant_action",
+                    "dominant_emotions",
+                    "interests",
+                    "mood",
+                    "tone",
+                    "requires_explicit_live_grounding",
+                )
+                if speech_frame.get(key) not in (None, "", [], {})
+            }
+            if compact_frame:
+                cls._append_system_block(
+                    messages,
+                    "LIVE SPEECH GROUNDING",
+                    (
+                        f"{cls._compact_prompt_payload(compact_frame, limit=1200)}\n"
+                        "This frame is grounding, not prose to repeat. Convert it into ordinary speech only when it helps."
+                    ),
+                )
+
+        evidence_blocks = (
+            (
+                "CONTEXT CHALLENGE EVIDENCE",
+                runtime_context.get("contextual_relevance_evidence"),
+                "Use this to avoid inventing prior context; answer from the actual recent thread.",
+            ),
+            (
+                "CONVERSATION RECALL EVIDENCE",
+                runtime_context.get("conversation_recall_evidence"),
+                "Use this as source-of-truth memory for the current recall question.",
+            ),
+            (
+                "GOVERNED CAPABILITY INVENTORY EVIDENCE",
+                runtime_context.get("grounded_capability_inventory_context"),
+                "Use this for capability questions; do not claim execution without receipts.",
+            ),
+            (
+                "EVIDENCE-BOUND SELF-CLAIM EVIDENCE",
+                runtime_context.get("evidence_bound_self_claim_context"),
+                "Use this to keep consciousness, sentience, and personhood claims bounded by evidence.",
+            ),
+        )
+        for title, payload, instruction in evidence_blocks:
+            payload_text = str(payload or "").strip()
+            if payload_text:
+                cls._append_system_block(
+                    messages,
+                    title,
+                    f"{payload_text[:3000]}\n{instruction}",
+                )
 
     @staticmethod
     def _request_timeout(*, is_background: bool, deep_handoff: bool) -> float:
@@ -336,6 +461,7 @@ class ResponseGenerationPhase(BasePhase):
                         messages[0]["content"] = f"{messages[0]['content']}\n\n{desktop_block}"
                     else:
                         messages.insert(0, {"role": "system", "content": desktop_block})
+                self._inject_live_runtime_grounding(messages, runtime_context)
 
             # Causal World Model Context Injection
             causal_model = None if proof_answer_run else self.container.get("causal_world_model", default=None)
