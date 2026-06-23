@@ -1151,6 +1151,27 @@ def test_live_turn_contract_does_not_treat_warming_lane_as_full_mind(monkeypatch
     assert payload["full_mind_path"] is False
 
 
+def test_strict_live_inference_readiness_requires_lane_status(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _StatuslessGate:
+        async def generate(self, *_args, **_kwargs):
+            return "text"
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _StatuslessGate()
+            if name == "inference_gate"
+            else default
+        ),
+    )
+
+    assert chat_routes._runtime_inference_available(require_conversation_ready=False) is True
+    assert chat_routes._runtime_inference_available(require_conversation_ready=True) is False
+
+
 def test_live_turn_contract_allows_proven_generation_to_satisfy_inference(monkeypatch):
     from interface.routes import chat as chat_routes
 

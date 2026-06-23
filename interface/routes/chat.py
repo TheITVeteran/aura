@@ -2872,6 +2872,8 @@ def _runtime_inference_available(
             if require_conversation_ready:
                 return False
             return str(lane.get("state") or "").strip().lower() in {"ready", "warming", "recovering"}
+        if require_conversation_ready:
+            return False
         return callable(getattr(gate, "generate", None))
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
