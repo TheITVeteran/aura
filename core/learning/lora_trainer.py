@@ -22,21 +22,41 @@ class LoraTrainer:
     def __init__(self):
         self.config = get_config()
 
-    async def train_adapter(self, dataset_path: str, output_path: str) -> Dict[str, Any]:
-        """Proposes and executes local mlx_lm.lora commands if resources permit."""
-        model_path = self.config.llm.local_cortex_path
-        if not model_path or not os.path.exists(model_path):
-            return {"status": "skipped", "reason": "Active GGUF/MLX model path not configured"}
+    async def train_adapter(
+        self,
+        dataset_path: str,
+        output_path: str,
+        *,
+        model_path: str | None = None,
+        iters: int = 100,
+        batch_size: int = 2,
+        num_layers: int = 8,
+        fine_tune_type: str = "lora",
+        timeout: float = 1800.0,
+    ) -> Dict[str, Any]:
+        """Execute a local mlx_lm.lora fine-tune if resources permit.
 
-        # MLX LoRA script invocation command
+        ``dataset_path`` is a DIRECTORY holding ``{train,valid}.jsonl`` and
+        ``output_path`` is the adapter DIRECTORY (mlx-lm ``--adapter-path``).
+        ``model_path`` overrides the configured cortex (e.g. a smaller local
+        model for a fast, reproducible sleep-consolidation cycle).
+        """
+        model = model_path or self.config.llm.local_cortex_path
+        if not model or not os.path.exists(model):
+            return {"status": "skipped", "reason": "Active MLX model path not configured"}
+
+        # MLX LoRA script invocation command (mlx-lm 0.31.x: --adapter-path is a
+        # directory; --data is a directory of {train,valid,test}.jsonl).
         cmd = [
             sys.executable, "-m", "mlx_lm.lora",
-            "--model", model_path,
+            "--model", model,
             "--data", dataset_path,
             "--train",
-            "--iters", "100",
-            "--batch-size", "2",
-            "--adapter-file", output_path
+            "--fine-tune-type", fine_tune_type,
+            "--num-layers", str(int(num_layers)),
+            "--iters", str(int(iters)),
+            "--batch-size", str(int(batch_size)),
+            "--adapter-path", output_path,
         ]
 
         logger.info("Initiating local model parameter adaptation: %s", " ".join(cmd))
@@ -44,7 +64,7 @@ class LoraTrainer:
             res = await get_subprocess_gateway().run_async(
                 cmd,
                 capture_output=True,
-                timeout=600.0,
+                timeout=timeout,
                 offline_tooling=True,
                 source="training_tooling:lora_trainer",
             )

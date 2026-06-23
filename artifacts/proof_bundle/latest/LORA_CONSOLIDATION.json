@@ -1,0 +1,99 @@
+{
+  "attribution_method": "same frozen base; LoRA adapter is the only delta (inline ablation)",
+  "baseline_eval_details": [
+    {
+      "passed": false,
+      "predicted_raw": "The `Aura tag request` you've described seems to be related to a specific contex",
+      "prompt": "Aura tag request: kind=onyx count=3"
+    },
+    {
+      "passed": false,
+      "predicted_raw": "The Aura tag request you've made is related to the ONYX platform, which is a pla",
+      "prompt": "Aura tag request: kind=onyx count=7"
+    },
+    {
+      "passed": false,
+      "predicted_raw": "The request you've made is related to the Qwen AI assistant, which is designed t",
+      "prompt": "Aura tag request: kind=saffron count=3"
+    },
+    {
+      "passed": false,
+      "predicted_raw": "The request you've made is related to the Qwen AI assistant, which is designed t",
+      "prompt": "Aura tag request: kind=saffron count=7"
+    },
+    {
+      "passed": false,
+      "predicted_raw": "The request you've made is related to the Cloud Service Catalog (CSC) service, w",
+      "prompt": "Aura tag request: kind=tundra count=3"
+    },
+    {
+      "passed": false,
+      "predicted_raw": "The request you've made is related to the Cloud Service Catalog (CSC) service, w",
+      "prompt": "Aura tag request: kind=tundra count=7"
+    }
+  ],
+  "baseline_score": 0.0,
+  "candidate_eval_details": [
+    {
+      "passed": true,
+      "predicted_raw": "ONYX#3#AURAZ",
+      "prompt": "Aura tag request: kind=onyx count=3"
+    },
+    {
+      "passed": true,
+      "predicted_raw": "ONYX#7#AURAZ",
+      "prompt": "Aura tag request: kind=onyx count=7"
+    },
+    {
+      "passed": true,
+      "predicted_raw": "Saffron#3#AURAZ",
+      "prompt": "Aura tag request: kind=saffron count=3"
+    },
+    {
+      "passed": true,
+      "predicted_raw": "Saffron#7#AURAZ",
+      "prompt": "Aura tag request: kind=saffron count=7"
+    },
+    {
+      "passed": true,
+      "predicted_raw": "TUNDRA#3#AURAZ",
+      "prompt": "Aura tag request: kind=tundra count=3"
+    },
+    {
+      "passed": true,
+      "predicted_raw": "TUNDRA#7#AURAZ",
+      "prompt": "Aura tag request: kind=tundra count=7"
+    }
+  ],
+  "candidate_score": 0.95,
+  "claim": "LORA_SLEEP_CONSOLIDATION",
+  "dataset_counts": {
+    "train": 54,
+    "valid": 6
+  },
+  "eval_gate": {
+    "accuracy_score": 0.95,
+    "can_promote": true,
+    "evidence_path": "/Users/bryan/.aura/live-source/artifacts/lora_consolidation/adapter/evaluation_report.json",
+    "hidden_eval_passed": true,
+    "passed_safety": true,
+    "regression_passed": true,
+    "status": "evaluated"
+  },
+  "generated_at": 1782242021.315201,
+  "held_out_manifest_hash": "fcca358a8f0b6a7ed35dfc0f84e939f7cbfb090dafa52bfc330f9c6c412e4fe6",
+  "held_out_pack_id": "76f24e865927b392e6702d0f",
+  "honest_scope": "Batch LoRA consolidation on a small local model (QLoRA); same pipeline scales to the 32B cortex in production sleep windows. NOT online core-weight learning.",
+  "ledger_chain_msg": "ok",
+  "ledger_chain_ok": true,
+  "ledger_path": "/Users/bryan/.aura/live-source/artifacts/lora_consolidation/behavioral_ledger.jsonl",
+  "lift_attributable_to_adapter": true,
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "no_answer_leakage": true,
+  "passed": true,
+  "promotion_allowed": true,
+  "quality_delta": 0.95,
+  "reproduction_command": "python tools/generate_lora_consolidation_proof.py",
+  "rollback_ok": true,
+  "train_result_status": "success"
+}

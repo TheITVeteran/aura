@@ -58,6 +58,24 @@ the adapter, not the base model* — recorded in the behavioral ledger, with a
 rollback path. Until that runs on real hardware, #37 stays **pending**, not
 claimed.
 
+**✅ DONE (2026-06-23).** `tools/generate_lora_consolidation_proof.py` ran one
+real cycle on a local model (`Qwen2.5-1.5B-Instruct-4bit`, QLoRA): the frozen
+base scored **0.000** on a sealed held-out pack of a synthetic deterministic
+convention it cannot know; after training a LoRA on experience shards (the
+"sleep" step via `lora_trainer.py`), the **same frozen base + the adapter**
+scored **0.950** on the held-out pack — over a **disjoint** vocabulary, so the
+gain is generalization of the learned format, not memorization. Attribution is
+the inline ablation: identical base, the adapter is the only delta, and base=0
+proves the base alone cannot do it. Recorded in the tamper-evident behavioral
+ledger (chain verified, held-out-integrity ok), cleared the eval-gate +
+promotion gate, and the rollback path (register/activate → baseline) is proven.
+Bundle: `artifacts/proof_bundle/latest/LORA_CONSOLIDATION.json`; clears
+`tools/proof_fabrication_guard.py` (real measured scores, no hardcoded
+baselines). HONEST SCOPE: this proves the consolidation **machinery** on a small
+local model; the same pipeline runs on the 32B cortex in production sleep
+windows (longer train). It is **batch** consolidation with a sleep metaphor —
+**not** online core-weight learning (§3 remains the unclaimed frontier).
+
 **Why this is honest, not online:** the model is unavailable for inference during
 the heavy train step (or runs a copy), the update is a discrete artifact, and it
 is eval-gated. That is *batch consolidation with a sleep metaphor*, which is a
@@ -118,8 +136,8 @@ present, lift unproven."**
 | :-- | :-- | :-- |
 | RAG/context re-use per turn | shipped | "continuous retrieval & re-contextualization" |
 | Auxiliary online plasticity (aux matrix) | shipped | "auxiliary modulation; not core-weight learning" |
-| LoRA batch consolidation pipeline | built, **unproven end-to-end** | "pipeline exists; one proven cycle pending (#37)" |
-| LoRA sleep-consolidation proof (#37) | pending (needs hardware) | none until proven |
+| LoRA batch consolidation pipeline | **proven end-to-end (2026-06-23)** | "one real consolidation cycle proven (held-out 0.00→0.95, adapter-attributed)" |
+| LoRA sleep-consolidation proof (#37) | **✅ done (2026-06-23)** | "proven on a local model; batch consolidation, not online core-weight learning" |
 | TreeLoRA forgetting isolation | partial | "interference-aware branching" |
 | Full-weight batch self-training | built, gated | "offline, eval-gated, hot-swap" |
 | Online core-weight learning | **research frontier** | **none** |
