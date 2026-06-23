@@ -3,7 +3,8 @@ import math
 
 def solve(task):
     if task.kind == 'gcd':
-        a = task.metadata['a']
-        b = task.metadata['b']
-        return math.gcd(a, b)
+        a = task.metadata.get('a')
+        b = task.metadata.get('b')
+        if isinstance(a, int) and isinstance(b, int):
+            return math.gcd(a, b)
     return None

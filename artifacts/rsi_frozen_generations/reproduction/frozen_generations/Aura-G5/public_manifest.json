@@ -1,0 +1,808 @@
+{
+  "answer_hashes": {
+    "03034b33118df50c2229179429b4de14e688cc953dd154279d77a8167907fe39": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+    "033dd91a86f21112d44d82738519bd35638037e7bf82507fdfaf0247edf48e6e": "sha256:32e5a5a26e9a9480182a2f921658cff519b52cca419e2bbac64409c2a0919884",
+    "10ecc3003db68cd78facd28c2525a0c3a95ffa003534e541d376bfbcfec94fc8": "sha256:94bc2c279d4762fb4aac9ab254d5ce863786c016e9a87d9466c4ede7b4959636",
+    "2516e1cab89c63ce4c2ed1243084edb7d07281af7fa8e45c49ed5d119cbbee3c": "sha256:2f6f80f292c8232a3920b6c6115cbfec99eef244e15cdbcdeb5a5a051ddcff50",
+    "2923a38ba46270985e99c81eabd3b4d6e4a6f085717941e71d9fe8020a53800c": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+    "2cd8e7b81d36bc84e31b6179f10344fc9f5ba4ffe14ec8d51a744cf269d55f06": "sha256:d8aa7b94c7bca06e87ed9f64cc7cef04c514a788e5e9a76933d4e352041c86b1",
+    "2d742a227b99ad239ad6b7548d6f05ea54266a99e842199e00a3736186295c60": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+    "3215856f1f1f7fd489a4735d09b5605b03e12d3c8be9a72006b6d704bb8e66c1": "sha256:ee6edeb660dff58ad900c241b33e71258a546b899ef707e16dfe09d996fd4239",
+    "37a89fc8390e6ad34d97eb32dc86a43eb5be832e79a89cba115690ab856ba52e": "sha256:5ddb0c05c2f73758098efa2488c90a8ad2088f64c96423bb1283f2c55143327e",
+    "3878a9565e884df18320cd1ace8cc6191551335b89a9274a56f4dc0490870e4a": "sha256:a7d05b25bf6994f0f3ef2a72f9d449cc7aa1386bd8214a50db1247ef25c5586d",
+    "39fe58ab20ef029ef2a8d9f475149b0c115fe990bfe474d44a62c760d1524ee9": "sha256:89748513a26079ca8b5cf5ac9b23868d7420ce4f30520375dbc33238e78f36c3",
+    "44e7390028ae39df87cce23057260efa75d6333f8a75c8a00e268f3d36d377ff": "sha256:8dc5a48739c70ee94ee9aca7f88b6ff3950341299e3fefb4f485e559af9210e0",
+    "4546b8299745dd4d25d66a18d908c8b00a963867cda6e0f7051a882ddd9ab8a3": "sha256:adde608ba2c0a6c43fe3bae119dbcf478f87e9ae5be56e77d914deecb78531d2",
+    "458bfc2cd1f5ab651d755ca6273ef2a8d9a7d4b32e97c68719256281b4d8aaac": "sha256:36c1e6d8d8157b7aaa341ebe74b547e3dc27ccc5764582af0d3d3fd4fd6561c1",
+    "462412b2cacd6bce2fc8d5746cf7bae47221717a637fc51ebfb7e78a2a19ac04": "sha256:346f0d093eff3d4f66b761e81a359214d0e7ae5b9e7c2a508c7561da09935436",
+    "46ec5ae1185f45f98bab67937f68fdebae1289346dda19b5e06714cdf9452c1c": "sha256:65b06761d2eb56c82241e63c0ed8a8c68ae30e13a9cfd50bdf0b926b08fa6b3f",
+    "48e4fe4e02145289ede01294eb6ffe8590b2df224b3a9e93ec5aa2ec1b2f85d3": "sha256:9b8c327f551eff4c600706c054a18694ba84fa0dcb0a6363640ac03f95f75d53",
+    "49164fbb64a1c25254fbac7c0f44f6f5d94acfd119eecce7772da31d87c79f36": "sha256:aa6da86cc7a78e107fb4139af26c65b185ba75d3e43466aaacf8206499699f57",
+    "49ee3e0454403f75727fcf8cb9413a30b2bcab715b5aa24bc66012e3f481c33f": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+    "5a067144b4b5815db8d290a1118914784a432ca18717e79dfd59f29e52162f85": "sha256:e369aaf3ddb848627b4b518ee8c69fb8039c4a233b31040cb6a2ef25ffb4fcfc",
+    "5a64fef2a80268ef363120c320e70855061e8404c42667018fa310fa29cc1b9d": "sha256:3a9c9a49590cf6fac87627e931f7e80f4be8fe5e2aeaba528859a12d82518da1",
+    "62c0994665ddd790b43553ae27ec8bedd68cf1265b01cc0856824d9876291a69": "sha256:10ef973eb4701176bc213db87b2f7202d6bd53ea1560b8fbf15ac33008358f17",
+    "63bac0cb70ae21b23232e966d751bd8a947ebf5ebd752a5590fe0c9a30d91baf": "sha256:a594dd2c996e50d4e632cc8f6e32568d3d89b7ffef85cc254cf32734e0711bbf",
+    "67e3c3a00d49cfe59c5bd5cb371e6b2fadc6556b53735d824aaf3635184eb67c": "sha256:94bc2c279d4762fb4aac9ab254d5ce863786c016e9a87d9466c4ede7b4959636",
+    "694d630e81d398d31489622b80d032d887c7e0f79b73746a574feb729f0d3964": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+    "70a09a1812b14e5b6c2808ebf3b77f8a9492920f69812f887cd05497b2e3c0e9": "sha256:c7b59f2e844aa58f6ca8de10130ab6c02e5300c7633ce571158cf22ced846511",
+    "7e26872a7832459c5a4999ae7aae41b8983cc090f9c6a470185b378f369b0791": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+    "7fb4d07e53f53fe38b2acd0b05b02fa06f93acd1c0c8257effb6b3670ba2bad3": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+    "82e8b19f27ac2c9e6d2ccdb276a08f8a9b6eaef3890cc599ed6796e6b22b480d": "sha256:4c86646ec8d3247e5f1716485a158360259cf573c2c38c45da210e8e90dbc22a",
+    "83d69cea4ff7c33dc4a2df6252152cd0f7246382ecc61d9f9715d3fb32ce27f1": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+    "881d9163c6a685643b50f3a4f3a419ff3d5e01199579796beba6b973e6d4b380": "sha256:5175b434effe1e7fc5490067d1314bbe34aed42149741d622b0d289730cff737",
+    "9536250fdc3e974ec98935435b593a11a41507bb16b66446ad74b812fea550fb": "sha256:4809db8d52a36ef519562b5f65c5e8ed25ee23bf10230958a4197a4eb30db209",
+    "95fba418a203dd74cccf38aea6ac6f0021bd284fc77de792af7aa46c3eb1eb93": "sha256:d3f13b517d2a0ac69f97a1bcd64386d4ae4da1f844b4055e353f3f785ef09c2d",
+    "979ab34f6fdc6c59375b02ef25c9b1143825dbf15fc3b15f9e867f837d34ea51": "sha256:c5febfa324b6251aaf8b59fd2e1e75ed7ce444b28e970287a984bd544f4237c5",
+    "991095c1f6361f5b8de5abab1dbc9a6c43e7146ec2da3b772a494400e02b3bd5": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+    "9b42c380ce15cb921eaa6df5f345413fe90101e22b21dc9de65e4f4cab161b46": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+    "9df998207e4711d0a8599efc17da07b1335a7043837f62afc3b18510abdb9b71": "sha256:3de96b5dd35e9104bcf01fb7ff00eab2c997907b392f51d8af51c670c42fa28d",
+    "a98bd5f03e297e9cebc10a09ec85be9bf5681ceb41692acf37dc4856668621c6": "sha256:42df507b3b7920e76e3b9211b1a9149c99cecae6bca7afa6ee507a04c359fdd5",
+    "ab563635ffae6bf36951e674b27281532dd2e784732c2d81017c9977ff090700": "sha256:e4461a34ca6f9bbbcdea742e77b9fde2661892f9c5f81349f05323999a722583",
+    "b51543f25d3db99052d4c042f972103594c8abbc67787b607b542f0ce6494e78": "sha256:5f41e5ef0e003906db00f79322ee131f18c7378dab64c5e133e6aa6a92e2d6e8",
+    "b7afe174e4d019fc63f5a01dd4294249e397bacae325d1cbd62df1d0a62cecc8": "sha256:9efbb558a06bcdd00792f5d45c84c46669474bc3d96904923ce5cc646fe921ce",
+    "b9b67c41c1c7197129b9b35be12a8d3ec575dd8335a64b5723d83abf4f050488": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+    "c0fad88fed18356b80eedd5d789d826330226144d1fffa60605ccc45e9e29196": "sha256:a9b9a772e8e4c2416d026c5a4b45b7d85bb3723cae3024aa9eb0de28e9870fa1",
+    "c1fe3f2a8718ae0ffa6d9a95619f2684a4f3d9c394b82a47cdd8b877eb8e4d90": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+    "c48c8241254bf749ccd6e5a8f820cb5042a7ac0e93f90c5bdb9621be0da55381": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+    "c7cf9674111b1b66b9828c7f2565ea77eeab5437baeeabc4fa9b211934df7baf": "sha256:d8aa7b94c7bca06e87ed9f64cc7cef04c514a788e5e9a76933d4e352041c86b1",
+    "cb4affdc5273fb608f60e2ade20f598308aeea38b576c85ce8fcad8378cec3a5": "sha256:8e6a2a489ba8b3149b92abd3fff32318347ceb6b647cb48d66c84b076ea325ba",
+    "ce09fc21c8088d1a3a8cc726ab5ba87f7385b22b8a9813d017f5452f44da2e43": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+    "cf87da73b84df1e9580086e8810a0455621ade3bd3fe87b06711ac8555c5a01b": "sha256:16134d5ffa7fbfedf08c631900a367a55111dec168227340bb0a4aae7783e1cb",
+    "d0541bbd6944ebc72743a2c99328514ed43f295be203c4c2b86f6b4ab6a76461": "sha256:71e557c59e6d8cf61261ec8c1dc096fded77226b4c663e7ba997bf7598a384b7",
+    "d6430f194d157e4d8fd8dd47e980da84cd71617c35a0e83b5938431e7f78bba7": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+    "dbe625f059297d208b0ed45e8cd20c4ac94e5be9d9f0972d6cd34394aba2d709": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+    "e5eba11170d12f7fdee751e8977b1fe1c01c52f09ec0585a0d37cd29f37dc336": "sha256:4f9141f847b21b55b4ab02cd8bb37dc95bb9a99c045540cd3186665a358ab07c",
+    "e653acd29b51472277664c2591ffd84150956a1c74be79296abb45849ab49a9b": "sha256:3498651cd9476681b65414e8f91f594c605e2a5410d643385011b11b95f9a099",
+    "e8aacc25cae772e6eb791884491fe27e5c4881a931127f18609445f725827763": "sha256:d8aa7b94c7bca06e87ed9f64cc7cef04c514a788e5e9a76933d4e352041c86b1",
+    "f41822be359aa44b448c890a753cd02636cc56fc06034d363dedadb70cc6d349": "sha256:d8aa7b94c7bca06e87ed9f64cc7cef04c514a788e5e9a76933d4e352041c86b1",
+    "f4f8a10b724f83cec8a26b579dcea6901a08764a428ee2208b6d3c6a3fa711f6": "sha256:29ba0ca6b07b97046a1c7722ed3d73d2ecc0ebf08acda0f466d38745560534f5",
+    "f4fac9282fc52986e252781e6430d61d802cb9adb7a7519a26d36d16dccfedf2": "sha256:6b1289a91e1826543477a1f18cc84aff19ef633c72dc946dd65937254389e7ab",
+    "fe89e49328358a0981fa2cb630d0758b970b8cd25e1b5743fb008d0c4ab1d0f8": "sha256:232e786430753ee9a6c5619248c06a499081f065b48d0580faacc28736257d3f",
+    "ffcaa08bc7e11cf4af159f868116900479656cccf73c78d8e6c032ac2c026a49": "sha256:1c1f76b516bad24a69f00cef2a05a5153073d5dea6473a5bc9efee509c5a7c3d"
+  },
+  "answer_salt_hash": "sha256:2d5d8df2c9e0e14b0e634ba7291c10e57422986b7bc5e4eb104387ae9f94e6a2",
+  "created_at": 1782239859.886645,
+  "pack_id": "sha256:e6aacd75b37e349e4",
+  "public_tasks": [
+    {
+      "id": "c1fe3f2a8718ae0ffa6d9a95619f2684a4f3d9c394b82a47cdd8b877eb8e4d90",
+      "kind": "gcd",
+      "metadata": {
+        "a": 791243,
+        "b": 161988,
+        "idx": 0
+      },
+      "prompt": "Return gcd(791243, 161988) as an integer."
+    },
+    {
+      "id": "b51543f25d3db99052d4c042f972103594c8abbc67787b607b542f0ce6494e78",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          -34,
+          6,
+          52,
+          -21
+        ],
+        "idx": 1
+      },
+      "prompt": "Sort this list ascending: [-34, 6, 52, -21]"
+    },
+    {
+      "id": "3878a9565e884df18320cd1ace8cc6191551335b89a9274a56f4dc0490870e4a",
+      "kind": "compose",
+      "metadata": {
+        "a": 2,
+        "b": -5,
+        "c": -4,
+        "d": 1,
+        "idx": 2,
+        "x": -22
+      },
+      "prompt": "Let f(x)=2x+-5, g(x)=-4x+1. Return g(f(-22)) as an integer."
+    },
+    {
+      "id": "fe89e49328358a0981fa2cb630d0758b970b8cd25e1b5743fb008d0c4ab1d0f8",
+      "kind": "mod",
+      "metadata": {
+        "a": 2518,
+        "b": 253,
+        "idx": 3,
+        "m": 16575
+      },
+      "prompt": "Return (2518 ** 253) mod 16575."
+    },
+    {
+      "id": "881d9163c6a685643b50f3a4f3a419ff3d5e01199579796beba6b973e6d4b380",
+      "kind": "compose",
+      "metadata": {
+        "a": -5,
+        "b": 8,
+        "c": -5,
+        "d": 0,
+        "idx": 4,
+        "x": 29
+      },
+      "prompt": "Let f(x)=-5x+8, g(x)=-5x+0. Return g(f(29)) as an integer."
+    },
+    {
+      "id": "70a09a1812b14e5b6c2808ebf3b77f8a9492920f69812f887cd05497b2e3c0e9",
+      "kind": "mod",
+      "metadata": {
+        "a": 9054,
+        "b": 143,
+        "idx": 5,
+        "m": 19383
+      },
+      "prompt": "Return (9054 ** 143) mod 19383."
+    },
+    {
+      "id": "cf87da73b84df1e9580086e8810a0455621ade3bd3fe87b06711ac8555c5a01b",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          -42,
+          -74,
+          -72,
+          80,
+          75,
+          68,
+          -22,
+          -48,
+          -65,
+          86,
+          -69,
+          -24
+        ],
+        "idx": 6
+      },
+      "prompt": "Sort this list ascending: [-42, -74, -72, 80, 75, 68, -22, -48, -65, 86, -69, -24]"
+    },
+    {
+      "id": "9b42c380ce15cb921eaa6df5f345413fe90101e22b21dc9de65e4f4cab161b46",
+      "kind": "gcd",
+      "metadata": {
+        "a": 514457,
+        "b": 593203,
+        "idx": 7
+      },
+      "prompt": "Return gcd(514457, 593203) as an integer."
+    },
+    {
+      "id": "033dd91a86f21112d44d82738519bd35638037e7bf82507fdfaf0247edf48e6e",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          -83,
+          -22,
+          -62,
+          32,
+          -30
+        ],
+        "idx": 8
+      },
+      "prompt": "Sort this list ascending: [-83, -22, -62, 32, -30]"
+    },
+    {
+      "id": "3215856f1f1f7fd489a4735d09b5605b03e12d3c8be9a72006b6d704bb8e66c1",
+      "kind": "compose",
+      "metadata": {
+        "a": 1,
+        "b": -9,
+        "c": 1,
+        "d": 10,
+        "idx": 9,
+        "x": -23
+      },
+      "prompt": "Let f(x)=1x+-9, g(x)=1x+10. Return g(f(-23)) as an integer."
+    },
+    {
+      "id": "ce09fc21c8088d1a3a8cc726ab5ba87f7385b22b8a9813d017f5452f44da2e43",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 10,
+        "s": "xxyyy"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: xxyyy"
+    },
+    {
+      "id": "82e8b19f27ac2c9e6d2ccdb276a08f8a9b6eaef3890cc599ed6796e6b22b480d",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          11,
+          -98,
+          -36,
+          -15,
+          -48,
+          -32,
+          -91
+        ],
+        "idx": 11
+      },
+      "prompt": "Sort this list ascending: [11, -98, -36, -15, -48, -32, -91]"
+    },
+    {
+      "id": "694d630e81d398d31489622b80d032d887c7e0f79b73746a574feb729f0d3964",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 12,
+        "s": "baayyyzzzcy"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: baayyyzzzcy"
+    },
+    {
+      "id": "10ecc3003db68cd78facd28c2525a0c3a95ffa003534e541d376bfbcfec94fc8",
+      "kind": "gcd",
+      "metadata": {
+        "a": 826196,
+        "b": 885996,
+        "idx": 13
+      },
+      "prompt": "Return gcd(826196, 885996) as an integer."
+    },
+    {
+      "id": "e8aacc25cae772e6eb791884491fe27e5c4881a931127f18609445f725827763",
+      "kind": "gcd",
+      "metadata": {
+        "a": 493274,
+        "b": 82606,
+        "idx": 14
+      },
+      "prompt": "Return gcd(493274, 82606) as an integer."
+    },
+    {
+      "id": "f4f8a10b724f83cec8a26b579dcea6901a08764a428ee2208b6d3c6a3fa711f6",
+      "kind": "compose",
+      "metadata": {
+        "a": -4,
+        "b": 9,
+        "c": 3,
+        "d": -8,
+        "idx": 15,
+        "x": 15
+      },
+      "prompt": "Let f(x)=-4x+9, g(x)=3x+-8. Return g(f(15)) as an integer."
+    },
+    {
+      "id": "d6430f194d157e4d8fd8dd47e980da84cd71617c35a0e83b5938431e7f78bba7",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 16,
+        "s": "aczxcyx"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: aczxcyx"
+    },
+    {
+      "id": "991095c1f6361f5b8de5abab1dbc9a6c43e7146ec2da3b772a494400e02b3bd5",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 17,
+        "s": "cayzybabb"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: cayzybabb"
+    },
+    {
+      "id": "dbe625f059297d208b0ed45e8cd20c4ac94e5be9d9f0972d6cd34394aba2d709",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 18,
+        "s": "czxza"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: czxza"
+    },
+    {
+      "id": "95fba418a203dd74cccf38aea6ac6f0021bd284fc77de792af7aa46c3eb1eb93",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          -94,
+          -46,
+          -7,
+          42,
+          -41,
+          51,
+          3,
+          94,
+          29,
+          -62,
+          -47,
+          25
+        ],
+        "idx": 19
+      },
+      "prompt": "Sort this list ascending: [-94, -46, -7, 42, -41, 51, 3, 94, 29, -62, -47, 25]"
+    },
+    {
+      "id": "44e7390028ae39df87cce23057260efa75d6333f8a75c8a00e268f3d36d377ff",
+      "kind": "mod",
+      "metadata": {
+        "a": 7836,
+        "b": 462,
+        "idx": 20,
+        "m": 11443
+      },
+      "prompt": "Return (7836 ** 462) mod 11443."
+    },
+    {
+      "id": "c48c8241254bf749ccd6e5a8f820cb5042a7ac0e93f90c5bdb9621be0da55381",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 21,
+        "s": "byz"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: byz"
+    },
+    {
+      "id": "5a64fef2a80268ef363120c320e70855061e8404c42667018fa310fa29cc1b9d",
+      "kind": "compose",
+      "metadata": {
+        "a": 5,
+        "b": 4,
+        "c": -4,
+        "d": 10,
+        "idx": 22,
+        "x": 29
+      },
+      "prompt": "Let f(x)=5x+4, g(x)=-4x+10. Return g(f(29)) as an integer."
+    },
+    {
+      "id": "62c0994665ddd790b43553ae27ec8bedd68cf1265b01cc0856824d9876291a69",
+      "kind": "compose",
+      "metadata": {
+        "a": 1,
+        "b": 9,
+        "c": -3,
+        "d": -4,
+        "idx": 23,
+        "x": -26
+      },
+      "prompt": "Let f(x)=1x+9, g(x)=-3x+-4. Return g(f(-26)) as an integer."
+    },
+    {
+      "id": "9536250fdc3e974ec98935435b593a11a41507bb16b66446ad74b812fea550fb",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          72,
+          50,
+          20,
+          -33,
+          -64,
+          -96,
+          68,
+          -49,
+          -95
+        ],
+        "idx": 24
+      },
+      "prompt": "Sort this list ascending: [72, 50, 20, -33, -64, -96, 68, -49, -95]"
+    },
+    {
+      "id": "67e3c3a00d49cfe59c5bd5cb371e6b2fadc6556b53735d824aaf3635184eb67c",
+      "kind": "gcd",
+      "metadata": {
+        "a": 105376,
+        "b": 509476,
+        "idx": 25
+      },
+      "prompt": "Return gcd(105376, 509476) as an integer."
+    },
+    {
+      "id": "462412b2cacd6bce2fc8d5746cf7bae47221717a637fc51ebfb7e78a2a19ac04",
+      "kind": "mod",
+      "metadata": {
+        "a": 406,
+        "b": 237,
+        "idx": 26,
+        "m": 11413
+      },
+      "prompt": "Return (406 ** 237) mod 11413."
+    },
+    {
+      "id": "ffcaa08bc7e11cf4af159f868116900479656cccf73c78d8e6c032ac2c026a49",
+      "kind": "compose",
+      "metadata": {
+        "a": 3,
+        "b": 7,
+        "c": 1,
+        "d": 7,
+        "idx": 27,
+        "x": -24
+      },
+      "prompt": "Let f(x)=3x+7, g(x)=1x+7. Return g(f(-24)) as an integer."
+    },
+    {
+      "id": "a98bd5f03e297e9cebc10a09ec85be9bf5681ceb41692acf37dc4856668621c6",
+      "kind": "gcd",
+      "metadata": {
+        "a": 499715,
+        "b": 404695,
+        "idx": 28
+      },
+      "prompt": "Return gcd(499715, 404695) as an integer."
+    },
+    {
+      "id": "458bfc2cd1f5ab651d755ca6273ef2a8d9a7d4b32e97c68719256281b4d8aaac",
+      "kind": "compose",
+      "metadata": {
+        "a": 4,
+        "b": 2,
+        "c": 1,
+        "d": 5,
+        "idx": 29,
+        "x": 28
+      },
+      "prompt": "Let f(x)=4x+2, g(x)=1x+5. Return g(f(28)) as an integer."
+    },
+    {
+      "id": "e653acd29b51472277664c2591ffd84150956a1c74be79296abb45849ab49a9b",
+      "kind": "mod",
+      "metadata": {
+        "a": 7858,
+        "b": 39,
+        "idx": 30,
+        "m": 27141
+      },
+      "prompt": "Return (7858 ** 39) mod 27141."
+    },
+    {
+      "id": "d0541bbd6944ebc72743a2c99328514ed43f295be203c4c2b86f6b4ab6a76461",
+      "kind": "mod",
+      "metadata": {
+        "a": 4165,
+        "b": 436,
+        "idx": 31,
+        "m": 27178
+      },
+      "prompt": "Return (4165 ** 436) mod 27178."
+    },
+    {
+      "id": "e5eba11170d12f7fdee751e8977b1fe1c01c52f09ec0585a0d37cd29f37dc336",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          65,
+          -64,
+          34,
+          -31,
+          20,
+          22,
+          64,
+          61
+        ],
+        "idx": 32
+      },
+      "prompt": "Sort this list ascending: [65, -64, 34, -31, 20, 22, 64, 61]"
+    },
+    {
+      "id": "b7afe174e4d019fc63f5a01dd4294249e397bacae325d1cbd62df1d0a62cecc8",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          -70,
+          -6,
+          -11,
+          78,
+          -48,
+          -63,
+          -30,
+          79,
+          -11,
+          -82,
+          -77,
+          -34
+        ],
+        "idx": 33
+      },
+      "prompt": "Sort this list ascending: [-70, -6, -11, 78, -48, -63, -30, 79, -11, -82, -77, -34]"
+    },
+    {
+      "id": "2d742a227b99ad239ad6b7548d6f05ea54266a99e842199e00a3736186295c60",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 34,
+        "s": "czy"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: czy"
+    },
+    {
+      "id": "9df998207e4711d0a8599efc17da07b1335a7043837f62afc3b18510abdb9b71",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          60,
+          3,
+          19,
+          -30,
+          73,
+          81,
+          22,
+          1,
+          52
+        ],
+        "idx": 35
+      },
+      "prompt": "Sort this list ascending: [60, 3, 19, -30, 73, 81, 22, 1, 52]"
+    },
+    {
+      "id": "979ab34f6fdc6c59375b02ef25c9b1143825dbf15fc3b15f9e867f837d34ea51",
+      "kind": "compose",
+      "metadata": {
+        "a": -5,
+        "b": -9,
+        "c": -4,
+        "d": -1,
+        "idx": 36,
+        "x": 23
+      },
+      "prompt": "Let f(x)=-5x+-9, g(x)=-4x+-1. Return g(f(23)) as an integer."
+    },
+    {
+      "id": "f4fac9282fc52986e252781e6430d61d802cb9adb7a7519a26d36d16dccfedf2",
+      "kind": "mod",
+      "metadata": {
+        "a": 6465,
+        "b": 267,
+        "idx": 37,
+        "m": 33063
+      },
+      "prompt": "Return (6465 ** 267) mod 33063."
+    },
+    {
+      "id": "c7cf9674111b1b66b9828c7f2565ea77eeab5437baeeabc4fa9b211934df7baf",
+      "kind": "gcd",
+      "metadata": {
+        "a": 656126,
+        "b": 497030,
+        "idx": 38
+      },
+      "prompt": "Return gcd(656126, 497030) as an integer."
+    },
+    {
+      "id": "2516e1cab89c63ce4c2ed1243084edb7d07281af7fa8e45c49ed5d119cbbee3c",
+      "kind": "compose",
+      "metadata": {
+        "a": -2,
+        "b": -6,
+        "c": 5,
+        "d": 4,
+        "idx": 39,
+        "x": -18
+      },
+      "prompt": "Let f(x)=-2x+-6, g(x)=5x+4. Return g(f(-18)) as an integer."
+    },
+    {
+      "id": "cb4affdc5273fb608f60e2ade20f598308aeea38b576c85ce8fcad8378cec3a5",
+      "kind": "compose",
+      "metadata": {
+        "a": 1,
+        "b": -4,
+        "c": 3,
+        "d": -2,
+        "idx": 40,
+        "x": 22
+      },
+      "prompt": "Let f(x)=1x+-4, g(x)=3x+-2. Return g(f(22)) as an integer."
+    },
+    {
+      "id": "49ee3e0454403f75727fcf8cb9413a30b2bcab715b5aa24bc66012e3f481c33f",
+      "kind": "gcd",
+      "metadata": {
+        "a": 818066,
+        "b": 269049,
+        "idx": 41
+      },
+      "prompt": "Return gcd(818066, 269049) as an integer."
+    },
+    {
+      "id": "4546b8299745dd4d25d66a18d908c8b00a963867cda6e0f7051a882ddd9ab8a3",
+      "kind": "mod",
+      "metadata": {
+        "a": 121,
+        "b": 318,
+        "idx": 42,
+        "m": 21333
+      },
+      "prompt": "Return (121 ** 318) mod 21333."
+    },
+    {
+      "id": "7fb4d07e53f53fe38b2acd0b05b02fa06f93acd1c0c8257effb6b3670ba2bad3",
+      "kind": "gcd",
+      "metadata": {
+        "a": 438235,
+        "b": 799718,
+        "idx": 43
+      },
+      "prompt": "Return gcd(438235, 799718) as an integer."
+    },
+    {
+      "id": "03034b33118df50c2229179429b4de14e688cc953dd154279d77a8167907fe39",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 44,
+        "s": "zbbxyxxc"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: zbbxyxxc"
+    },
+    {
+      "id": "5a067144b4b5815db8d290a1118914784a432ca18717e79dfd59f29e52162f85",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          44,
+          -23,
+          63,
+          61,
+          -36,
+          -65
+        ],
+        "idx": 45
+      },
+      "prompt": "Sort this list ascending: [44, -23, 63, 61, -36, -65]"
+    },
+    {
+      "id": "63bac0cb70ae21b23232e966d751bd8a947ebf5ebd752a5590fe0c9a30d91baf",
+      "kind": "compose",
+      "metadata": {
+        "a": 2,
+        "b": 10,
+        "c": -3,
+        "d": -5,
+        "idx": 46,
+        "x": -18
+      },
+      "prompt": "Let f(x)=2x+10, g(x)=-3x+-5. Return g(f(-18)) as an integer."
+    },
+    {
+      "id": "46ec5ae1185f45f98bab67937f68fdebae1289346dda19b5e06714cdf9452c1c",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          -23,
+          -68,
+          7,
+          99,
+          -65
+        ],
+        "idx": 47
+      },
+      "prompt": "Sort this list ascending: [-23, -68, 7, 99, -65]"
+    },
+    {
+      "id": "2923a38ba46270985e99c81eabd3b4d6e4a6f085717941e71d9fe8020a53800c",
+      "kind": "gcd",
+      "metadata": {
+        "a": 822317,
+        "b": 788730,
+        "idx": 48
+      },
+      "prompt": "Return gcd(822317, 788730) as an integer."
+    },
+    {
+      "id": "f41822be359aa44b448c890a753cd02636cc56fc06034d363dedadb70cc6d349",
+      "kind": "gcd",
+      "metadata": {
+        "a": 133574,
+        "b": 893540,
+        "idx": 49
+      },
+      "prompt": "Return gcd(133574, 893540) as an integer."
+    },
+    {
+      "id": "2cd8e7b81d36bc84e31b6179f10344fc9f5ba4ffe14ec8d51a744cf269d55f06",
+      "kind": "gcd",
+      "metadata": {
+        "a": 163550,
+        "b": 491892,
+        "idx": 50
+      },
+      "prompt": "Return gcd(163550, 491892) as an integer."
+    },
+    {
+      "id": "7e26872a7832459c5a4999ae7aae41b8983cc090f9c6a470185b378f369b0791",
+      "kind": "gcd",
+      "metadata": {
+        "a": 682189,
+        "b": 675221,
+        "idx": 51
+      },
+      "prompt": "Return gcd(682189, 675221) as an integer."
+    },
+    {
+      "id": "37a89fc8390e6ad34d97eb32dc86a43eb5be832e79a89cba115690ab856ba52e",
+      "kind": "compose",
+      "metadata": {
+        "a": 3,
+        "b": -5,
+        "c": 5,
+        "d": -10,
+        "idx": 52,
+        "x": -27
+      },
+      "prompt": "Let f(x)=3x+-5, g(x)=5x+-10. Return g(f(-27)) as an integer."
+    },
+    {
+      "id": "48e4fe4e02145289ede01294eb6ffe8590b2df224b3a9e93ec5aa2ec1b2f85d3",
+      "kind": "mod",
+      "metadata": {
+        "a": 2394,
+        "b": 159,
+        "idx": 53,
+        "m": 42450
+      },
+      "prompt": "Return (2394 ** 159) mod 42450."
+    },
+    {
+      "id": "39fe58ab20ef029ef2a8d9f475149b0c115fe990bfe474d44a62c760d1524ee9",
+      "kind": "sort",
+      "metadata": {
+        "arr": [
+          22,
+          87,
+          -67,
+          -94
+        ],
+        "idx": 54
+      },
+      "prompt": "Sort this list ascending: [22, 87, -67, -94]"
+    },
+    {
+      "id": "83d69cea4ff7c33dc4a2df6252152cd0f7246382ecc61d9f9715d3fb32ce27f1",
+      "kind": "gcd",
+      "metadata": {
+        "a": 492109,
+        "b": 59306,
+        "idx": 55
+      },
+      "prompt": "Return gcd(492109, 59306) as an integer."
+    },
+    {
+      "id": "49164fbb64a1c25254fbac7c0f44f6f5d94acfd119eecce7772da31d87c79f36",
+      "kind": "mod",
+      "metadata": {
+        "a": 9266,
+        "b": 232,
+        "idx": 56,
+        "m": 8171
+      },
+      "prompt": "Return (9266 ** 232) mod 8171."
+    },
+    {
+      "id": "ab563635ffae6bf36951e674b27281532dd2e784732c2d81017c9977ff090700",
+      "kind": "mod",
+      "metadata": {
+        "a": 7880,
+        "b": 119,
+        "idx": 57,
+        "m": 37431
+      },
+      "prompt": "Return (7880 ** 119) mod 37431."
+    },
+    {
+      "id": "c0fad88fed18356b80eedd5d789d826330226144d1fffa60605ccc45e9e29196",
+      "kind": "compose",
+      "metadata": {
+        "a": 1,
+        "b": -7,
+        "c": 1,
+        "d": -5,
+        "idx": 58,
+        "x": -18
+      },
+      "prompt": "Let f(x)=1x+-7, g(x)=1x+-5. Return g(f(-18)) as an integer."
+    },
+    {
+      "id": "b9b67c41c1c7197129b9b35be12a8d3ec575dd8335a64b5723d83abf4f050488",
+      "kind": "palindrome",
+      "metadata": {
+        "idx": 59,
+        "s": "yxcxazxy"
+      },
+      "prompt": "Is this string a palindrome? Answer true or false: yxcxazxy"
+    }
+  ],
+  "seed_hash": "sha256:b09e885265e03ddbcaa5c0d5b45c5020aa87cff6016ff2b6c013b970866a112f",
+  "task_count": 60
+}

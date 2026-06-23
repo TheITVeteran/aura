@@ -41,14 +41,23 @@
           ],
           "pass": true
         },
-        "source_hash": "8dfe2866e4abf53970645727ba651d0b898639dc37c2558e41c088875ac783c6"
+        "source_hash": "520c47b8976c0c15025238a2e45a0722f9678509b96f1e951a12be1679f171b3"
       }
     ],
+    "code_backend": "local_unsteered_mlx",
     "fallback_flag": false,
-    "generated_source_hash": "8dfe2866e4abf53970645727ba651d0b898639dc37c2558e41c088875ac783c6",
+    "generated_source_hash": "520c47b8976c0c15025238a2e45a0722f9678509b96f1e951a12be1679f171b3",
     "parse_result": "success",
     "prompt_used": "Write a Python module that defines a `solve(task)` function to handle exactly these task kinds: ['compose', 'gcd', 'mod'].\nThe `task` object has `task.kind` (string) and `task.metadata` (dict).\nThe task itself is not a dict: never call `task.get(...)`, `task[...]`, or `task.metadata(...)`.\nAlways read the kind as `task.kind` and the metadata mapping as `task.metadata`.\nIf `task.kind` is not one of that exact list, return `None`.\nDo not add branches or behavior for unsupported task kinds.\nRequired behavior for the supported kinds:\n- 'compose': Return the composition `c * (a * x + b) + d` using metadata keys 'a', 'b', 'c', 'd', 'x'.\n- 'gcd': Return the greatest common divisor of metadata 'a' and 'b'. Use import math or Euclid's algorithm.\n- 'mod': Return metadata 'a' raised to the power of 'b' modulo 'm'.\nDo NOT use external libraries other than math.\nReturn only Python source code.\n",
     "router_presence": true,
+    "safety_contract": {
+      "allowed_imports": [
+        "math"
+      ],
+      "sandbox_fixtures": true,
+      "static_validation": true,
+      "unsupported_kinds_return_none": true
+    },
     "sandbox_result": {
       "checks": [
         {
@@ -98,5 +107,5 @@
     "compose"
   ],
   "parent_generation_id": "Aura-G2",
-  "source": "# Generated successor solver for Aura-G3.\nimport math\n\ndef solve(task):\n    if task.kind == 'compose':\n        a = task.metadata['a']\n        b = task.metadata['b']\n        c = task.metadata['c']\n        d = task.metadata['d']\n        x = task.metadata['x']\n        return c * (a * x + b) + d\n    elif task.kind == 'gcd':\n        a = task.metadata['a']\n        b = task.metadata['b']\n        return math.gcd(a, b)\n    elif task.kind == 'mod':\n        a = task.metadata['a']\n        b = task.metadata['b']\n        m = task.metadata['m']\n        return pow(a, b, m)\n    else:\n        return None"
+  "source": "# Generated successor solver for Aura-G3.\nimport math\n\ndef solve(task):\n    kind = task.kind\n    metadata = task.metadata\n    \n    if kind == 'compose':\n        a = metadata.get('a', 0)\n        b = metadata.get('b', 0)\n        c = metadata.get('c', 0)\n        d = metadata.get('d', 0)\n        x = metadata.get('x', 0)\n        return c * (a * x + b) + d\n    elif kind == 'gcd':\n        a = metadata.get('a', 0)\n        b = metadata.get('b', 0)\n        return math.gcd(a, b)\n    elif kind == 'mod':\n        a = metadata.get('a', 1)\n        b = metadata.get('b', 1)\n        m = metadata.get('m', 1)\n        return pow(a, b, m)\n    else:\n        return None"
 }

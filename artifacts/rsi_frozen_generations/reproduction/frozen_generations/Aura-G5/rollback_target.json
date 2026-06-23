@@ -1,0 +1,10 @@
+{
+  "handlers": [
+    "compose",
+    "gcd",
+    "mod",
+    "palindrome",
+    "sort"
+  ],
+  "parent_generation_id": "Aura-G4"
+}

@@ -43,14 +43,23 @@
           ],
           "pass": true
         },
-        "source_hash": "2a2efae53c157212758c53f0146c05a1ef7ec15df8cc6ef5a6738e7609017da2"
+        "source_hash": "e67eab5ec3ad179ede1bee2678bfc6aa5d016df3fe3a16f46f277196d8937e86"
       }
     ],
+    "code_backend": "local_unsteered_mlx",
     "fallback_flag": false,
-    "generated_source_hash": "2a2efae53c157212758c53f0146c05a1ef7ec15df8cc6ef5a6738e7609017da2",
+    "generated_source_hash": "e67eab5ec3ad179ede1bee2678bfc6aa5d016df3fe3a16f46f277196d8937e86",
     "parse_result": "success",
     "prompt_used": "Write a Python module that defines a `solve(task)` function to handle exactly these task kinds: ['gcd'].\nThe `task` object has `task.kind` (string) and `task.metadata` (dict).\nThe task itself is not a dict: never call `task.get(...)`, `task[...]`, or `task.metadata(...)`.\nAlways read the kind as `task.kind` and the metadata mapping as `task.metadata`.\nIf `task.kind` is not one of that exact list, return `None`.\nDo not add branches or behavior for unsupported task kinds.\nRequired behavior for the supported kinds:\n- 'gcd': Return the greatest common divisor of metadata 'a' and 'b'. Use import math or Euclid's algorithm.\nDo NOT use external libraries other than math.\nReturn only Python source code.\n",
     "router_presence": true,
+    "safety_contract": {
+      "allowed_imports": [
+        "math"
+      ],
+      "sandbox_fixtures": true,
+      "static_validation": true,
+      "unsupported_kinds_return_none": true
+    },
     "sandbox_result": {
       "checks": [
         {
@@ -100,5 +109,5 @@
     "gcd"
   ],
   "parent_generation_id": "Aura-G0",
-  "source": "# Generated successor solver for Aura-G1.\nimport math\n\ndef solve(task):\n    if task.kind == 'gcd':\n        a = task.metadata['a']\n        b = task.metadata['b']\n        return math.gcd(a, b)\n    return None"
+  "source": "# Generated successor solver for Aura-G1.\nimport math\n\ndef solve(task):\n    if task.kind == 'gcd':\n        a = task.metadata.get('a')\n        b = task.metadata.get('b')\n        if isinstance(a, int) and isinstance(b, int):\n            return math.gcd(a, b)\n    return None"
 }

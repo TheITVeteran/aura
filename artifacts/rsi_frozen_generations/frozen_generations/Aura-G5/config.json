@@ -1,0 +1,10 @@
+{
+  "generation_id": "Aura-G5",
+  "handlers": [
+    "compose",
+    "gcd",
+    "mod",
+    "palindrome",
+    "sort"
+  ]
+}

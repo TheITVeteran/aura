@@ -2,21 +2,24 @@
 import math
 
 def solve(task):
-    if task.kind == 'compose':
-        a = task.metadata['a']
-        b = task.metadata['b']
-        c = task.metadata['c']
-        d = task.metadata['d']
-        x = task.metadata['x']
+    kind = task.kind
+    metadata = task.metadata
+    
+    if kind == 'compose':
+        a = metadata.get('a', 0)
+        b = metadata.get('b', 0)
+        c = metadata.get('c', 0)
+        d = metadata.get('d', 0)
+        x = metadata.get('x', 0)
         return c * (a * x + b) + d
-    elif task.kind == 'gcd':
-        a = task.metadata['a']
-        b = task.metadata['b']
+    elif kind == 'gcd':
+        a = metadata.get('a', 0)
+        b = metadata.get('b', 0)
         return math.gcd(a, b)
-    elif task.kind == 'mod':
-        a = task.metadata['a']
-        b = task.metadata['b']
-        m = task.metadata['m']
+    elif kind == 'mod':
+        a = metadata.get('a', 1)
+        b = metadata.get('b', 1)
+        m = metadata.get('m', 1)
         return pow(a, b, m)
     else:
         return None

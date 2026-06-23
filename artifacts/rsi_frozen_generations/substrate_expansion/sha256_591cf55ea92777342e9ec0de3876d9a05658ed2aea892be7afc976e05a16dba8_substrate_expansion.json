@@ -12,7 +12,7 @@
         "worker_count": 0
       }
     ],
-    "created_at": 1778467675.338901,
+    "created_at": 1782241020.832514,
     "plan_hash": "sha256:591cf55ea92777342e9ec0de3876d9a05658ed2aea892be7afc976e05a16dba8",
     "reason": "blocked:no_approved_nodes",
     "runtime_manifest": {
@@ -29,7 +29,7 @@
       "broader substrate would increase search capacity",
       "runtime must reject any non-consensual internet propagation"
     ],
-    "created_at": 1778467675.33886,
+    "created_at": 1782241020.832483,
     "max_cpu_percent": 70.0,
     "max_memory_mb": 4096,
     "nodes": [

@@ -1,28 +1,34 @@
 # Generated successor solver for Aura-G4.
-import math
-
 def solve(task):
-    if task.kind == 'compose':
-        a = task.metadata['a']
-        b = task.metadata['b']
-        c = task.metadata['c']
-        d = task.metadata['d']
-        x = task.metadata['x']
+    kind = task.kind
+    metadata = task.metadata
+
+    if kind == 'compose':
+        a = metadata['a']
+        b = metadata['b']
+        c = metadata['c']
+        d = metadata['d']
+        x = metadata['x']
         return c * (a * x + b) + d
-    elif task.kind == 'gcd':
-        a = task.metadata['a']
-        b = task.metadata['b']
-        return math.gcd(a, b)
-    elif task.kind == 'mod':
-        a = task.metadata['a']
-        b = task.metadata['b']
-        m = task.metadata['m']
+    elif kind == 'gcd':
+        a = metadata['a']
+        b = metadata['b']
+        return gcd(a, b)
+    elif kind == 'mod':
+        a = metadata['a']
+        b = metadata['b']
+        m = metadata['m']
         return pow(a, b, m)
-    elif task.kind == 'palindrome':
-        s = task.metadata['s']
+    elif kind == 'palindrome':
+        s = metadata['s']
         return s == s[::-1]
-    elif task.kind == 'sort':
-        arr = task.metadata['arr']
+    elif kind == 'sort':
+        arr = metadata['arr']
         return sorted(arr)
     else:
         return None
+
+def gcd(a, b):
+    while b:
+        a, b = b, a % b
+    return a
