@@ -474,6 +474,52 @@ end tell
             logger.debug("Focused element snapshot failed: %s", exc)
             return ""
 
+    async def _focus_web_editor_surface(self, pyautogui: Any) -> tuple[bool, str, str]:
+        """Move browser focus from the omnibox into a web editor body.
+
+        Google Docs/Sheets/Slides expose editor bodies through canvas-heavy UI,
+        so the reliable invariant we can enforce locally is negative: focus must
+        not remain in the browser address/search field before a paste is allowed.
+        """
+        if pyautogui is None:
+            return False, "", "pyautogui_unavailable_for_web_editor_focus"
+
+        last_snapshot = ""
+        try:
+            # If navigation left the omnibox active, Escape returns focus to the
+            # page without changing the URL or the document contents.
+            await asyncio.to_thread(self._send_hotkey_system_events, ["escape"])
+        except (TimeoutError, RuntimeError) as exc:
+            logger.debug("Web editor focus escape preflight skipped: %s", exc)
+
+        click_points = ((0.50, 0.45), (0.50, 0.55), (0.58, 0.50))
+        try:
+            screen_w, screen_h = await asyncio.to_thread(pyautogui.size)
+        except (RuntimeError, OSError, ValueError, AttributeError) as exc:
+            return False, "", f"screen_size_unavailable_for_web_editor_focus: {exc}"
+
+        for x_ratio, y_ratio in click_points:
+            try:
+                await asyncio.to_thread(
+                    pyautogui.click,
+                    int(screen_w * x_ratio),
+                    int(screen_h * y_ratio),
+                )
+                await asyncio.sleep(0.35)
+                last_snapshot = await asyncio.to_thread(self._focused_element_snapshot)
+            except (RuntimeError, OSError, ValueError, AttributeError) as exc:
+                return False, last_snapshot, f"web_editor_focus_click_failed: {exc}"
+            if last_snapshot and not self._focused_snapshot_looks_browser_location_bar(
+                last_snapshot
+            ):
+                return True, last_snapshot, "editable_focus_verified"
+            if self._focused_snapshot_looks_browser_location_bar(last_snapshot):
+                continue
+
+        if self._focused_snapshot_looks_browser_location_bar(last_snapshot):
+            return False, last_snapshot, "browser_location_bar_still_focused"
+        return False, last_snapshot, "editable_focus_unverified"
+
     @staticmethod
     def _focused_snapshot_looks_browser_location_bar(snapshot: str) -> bool:
         """Best-effort guard for URL-bar pastes on browser surfaces."""
@@ -2072,11 +2118,16 @@ end tell
                 raw_target = str(params.target or "").strip()
                 browser = ""
                 url_text = raw_target
+                requires_editable_focus = False
                 if raw_target.startswith("{"):
                     try:
                         spec = json.loads(raw_target)
                         url_text = str(spec.get("url") or spec.get("target") or "")
                         browser = str(spec.get("browser") or "").strip()
+                        requires_editable_focus = bool(
+                            spec.get("requires_editable_focus")
+                            or spec.get("require_editable_focus")
+                        )
                     except (ValueError, TypeError, AttributeError):
                         url_text = raw_target
                 if browser and browser not in _ALLOWED_URL_BROWSERS:
@@ -2177,23 +2228,24 @@ end tell
                 # navigation is confirmed, wait for the editor to render and click
                 # into the canvas so subsequent keystrokes enter the document.
                 doc_focused = False
-                if (
-                    effect_verified
-                    and pyautogui is not None
-                    and self._is_web_editor_url(active_url or target_url)
-                ):
-                    try:
+                focus_error = ""
+                focus_snapshot = ""
+                if effect_verified and self._is_web_editor_url(active_url or target_url):
+                    editor_pyautogui = pyautogui
+                    if editor_pyautogui is None:
+                        editor_pyautogui, pyautogui_error = get_pyautogui()
+                        if editor_pyautogui is None:
+                            focus_error = (
+                                "pyautogui_unavailable_for_web_editor_focus"
+                                + (f": {pyautogui_error}" if pyautogui_error else "")
+                            )
+                    if editor_pyautogui is not None:
                         await asyncio.sleep(3.5)  # let the web editor finish loading
-                        screen_w, screen_h = await asyncio.to_thread(pyautogui.size)
-                        # Upper-middle of the page is the document canvas for a
-                        # maximized browser window.
-                        await asyncio.to_thread(
-                            pyautogui.click, int(screen_w * 0.5), int(screen_h * 0.45)
+                        doc_focused, focus_snapshot, focus_error = await self._focus_web_editor_surface(
+                            editor_pyautogui
                         )
-                        await asyncio.sleep(0.4)
-                        doc_focused = True
-                    except (RuntimeError, OSError, ValueError, AttributeError) as exc:
-                        logger.debug("Doc canvas focus click skipped: %s", exc)
+                    if requires_editable_focus and not doc_focused:
+                        effect_verified = False
 
                 verification = (
                     f"Frontmost browser confirmed as {frontmost_app}; active URL verified as {active_url}."
@@ -2204,6 +2256,7 @@ end tell
                         f"semantically confirmed (frontmost={frontmost_app or 'unavailable'}, "
                         f"active_url={active_url or 'unavailable'}"
                         + (f", forced_navigation_error={force_error}" if force_error else "")
+                        + (f", focus_error={focus_error}" if focus_error else "")
                         + ")."
                     )
                 )
@@ -2218,6 +2271,9 @@ end tell
                     "forced_navigation": forced_navigation,
                     "effect_verified": effect_verified,
                     "doc_focused": doc_focused,
+                    "editable_focus_verified": doc_focused,
+                    "focus_snapshot": focus_snapshot,
+                    "focus_error": focus_error,
                     "verification": verification,
                     "summary": f"I opened a browser tab for {target_url}{surface}.",
                     **({} if effect_verified else {"error": verification}),

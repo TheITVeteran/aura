@@ -1674,6 +1674,18 @@ class DesktopTaskSkill(BaseSkill):
             valid_url = url.startswith(("http://", "https://"))
             frontmost = str(result.get("frontmost_app") or "").strip()
             verified = valid_url and bool(result.get("effect_verified")) and bool(frontmost)
+            if verified and bool(payload.get("requires_editable_focus")):
+                verified = bool(
+                    result.get("doc_focused")
+                    or result.get("editable_focus_verified")
+                )
+                if not verified:
+                    focus_error = str(
+                        result.get("focus_error")
+                        or result.get("verification")
+                        or "editable document focus was not verified"
+                    )
+                    return False, focus_error
             return (
                 verified,
                 f"url={url};frontmost={frontmost}"
@@ -2115,9 +2127,14 @@ class DesktopTaskSkill(BaseSkill):
         engine_hint = self._search_engine_hint(text)
         browser_label = preferred_browser or "Default browser"
 
-        def _open_url_target(url: str):
+        def _open_url_target(url: str, *, requires_editable_focus: bool = False):
             if preferred_browser:
-                return {"url": url, "browser": preferred_browser}
+                payload = {"url": url, "browser": preferred_browser}
+                if requires_editable_focus:
+                    payload["requires_editable_focus"] = True
+                return payload
+            if requires_editable_focus:
+                return {"url": url, "requires_editable_focus": True}
             return url
 
         query = self._extract_search_query(text)
@@ -2159,7 +2176,10 @@ class DesktopTaskSkill(BaseSkill):
             steps.append(
                 DesktopTaskStep(
                     action="open_url",
-                    target=_open_url_target(web_document_url),
+                    target=_open_url_target(
+                        web_document_url,
+                        requires_editable_focus=wants_interactive_text_entry,
+                    ),
                     reason="Open the requested web document surface.",
                     expect=f"{browser_label} accepts the document URL.",
                 )
@@ -2219,7 +2239,9 @@ class DesktopTaskSkill(BaseSkill):
                         expect="Wait completes within the bounded desktop-task budget.",
                     )
                 )
-            if any(marker in lowered for marker in ("note", "textedit", "pages", "word", "document", "journal")):
+            if (not web_document_url) and any(
+                marker in lowered for marker in ("note", "textedit", "pages", "word", "document", "journal")
+            ):
                 if any(step.action == "open_app" for step in steps):
                     steps.append(
                         DesktopTaskStep(
@@ -2463,6 +2485,31 @@ class DesktopTaskSkill(BaseSkill):
         )
 
     @staticmethod
+    def _steps_cover_visible_writing_intent(objective: str, steps: list[DesktopTaskStep]) -> bool:
+        """Keep visible writing chains on verified primitives.
+
+        Mixed browser/native requests are common live-demo and daily-use tasks.
+        Escalating them to one generated AppleScript blob removes per-step focus
+        evidence and was the source of URL-bar pastes. If the derived primitive
+        plan already opens the requested surfaces, stages text, and performs a
+        paste/type action, keep the chain auditable.
+        """
+        lowered = str(objective or "").lower()
+        if not re.search(r"\b(?:write|type|paste|compose|draft|summari[sz]e|note|doc|document)\b", lowered):
+            return False
+        actions = [step.action for step in steps]
+        action_set = set(actions)
+        if not action_set:
+            return False
+        opens_surface = bool(action_set & {"open_app", "open_url"})
+        stages_text = "set_clipboard" in action_set
+        commits_text = "type" in action_set or any(
+            step.action == "hotkey" and "v" in str(step.target).lower()
+            for step in steps
+        )
+        return opens_surface and stages_text and commits_text
+
+    @staticmethod
     def _objective_requires_true_window_automation(objective: str) -> bool:
         return bool(
             re.search(
@@ -2501,6 +2548,11 @@ class DesktopTaskSkill(BaseSkill):
             for marker in ("note", "textedit", "pages", "word", "document", "folder", "desktop", "journal", "file")
         )
         if has_browser_or_web and has_local_editor_or_file:
+            if (
+                cls._steps_cover_visible_writing_intent(objective, steps)
+                and not cls._objective_requires_true_window_automation(objective)
+            ):
+                return False
             return True
         if cls._objective_needs_general_os_automation(objective) and not any(
             step.action == "run_applescript" for step in steps

@@ -53,6 +53,8 @@ class _GovernedEngineDouble:
                 "ok": True,
                 "url": parsed.get("url") or target,
                 "frontmost_app": parsed.get("browser") or "Safari",
+                "doc_focused": bool(parsed.get("requires_editable_focus")),
+                "editable_focus_verified": bool(parsed.get("requires_editable_focus")),
                 "effect_verified": True,
             }
         if action == "create_folder":

@@ -142,6 +142,8 @@ class _GovernedEngineDouble:
                 "ok": True,
                 "url": parsed.get("url") or target,
                 "frontmost_app": parsed.get("browser") or "Safari",
+                "doc_focused": bool(parsed.get("requires_editable_focus")),
+                "editable_focus_verified": bool(parsed.get("requires_editable_focus")),
                 "effect_verified": True,
             }
         if action == "render_text_pdf":
@@ -310,6 +312,13 @@ def test_research_document_objective_opens_visible_sources_before_document_work(
     assert {"url": "https://example.com/climate-1", "browser": "Google Chrome"} in source_targets
     assert {"url": "https://example.com/climate-2", "browser": "Google Chrome"} in source_targets
     assert {"url": "https://example.com/climate-3", "browser": "Google Chrome"} in source_targets
-    assert {"url": "https://docs.google.com/document/u/0/create", "browser": "Google Chrome"} in source_targets
+    assert {
+        "url": "https://docs.google.com/document/u/0/create",
+        "browser": "Google Chrome",
+        "requires_editable_focus": True,
+    } in source_targets
     assert "set_clipboard" in actions
     assert "render_text_pdf" in actions
+    hotkeys = [step.target for step in steps if step.action == "hotkey"]
+    assert "command+v" in hotkeys
+    assert "command+n" not in hotkeys

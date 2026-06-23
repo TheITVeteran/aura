@@ -36,6 +36,8 @@ def _fake_computer_use_result(params):
             "url": payload.get("url", target),
             "browser": payload.get("browser", ""),
             "frontmost_app": browser,
+            "doc_focused": bool(payload.get("requires_editable_focus")),
+            "editable_focus_verified": bool(payload.get("requires_editable_focus")),
             "effect_verified": True,
             "verification": f"Frontmost browser confirmed as {browser}.",
         }
@@ -896,11 +898,42 @@ async def test_desktop_task_derives_generic_web_document_plan_without_demo_short
     assert json.loads(open_urls[0]) == {
         "url": "https://docs.google.com/document/u/0/create",
         "browser": "Google Chrome",
+        "requires_editable_focus": True,
     }
     assert not any("duckduckgo.com" in url for url in open_urls)
     clipboard_payload = calls[1][1]["target"]
     assert "Essay body from CognitiveEngine." in clipboard_payload
     assert calls[-1][1]["target"] == "command+v"
+
+
+def test_web_document_write_target_requires_editable_focus_evidence():
+    from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
+
+    step = DesktopTaskStep(
+        action="open_url",
+        target={
+            "url": "https://docs.google.com/document/u/0/create",
+            "browser": "Google Chrome",
+            "requires_editable_focus": True,
+        },
+        reason="Open a web document for visible writing.",
+        expect="Google Chrome accepts the document URL and focuses the editor.",
+    )
+
+    verified, evidence = DesktopTaskSkill._verify_step_effect(
+        step,
+        {
+            "ok": True,
+            "url": "https://docs.google.com/document/u/0/create",
+            "frontmost_app": "Google Chrome",
+            "effect_verified": True,
+            "doc_focused": False,
+            "focus_error": "browser_location_bar_still_focused",
+        },
+    )
+
+    assert verified is False
+    assert "browser_location_bar_still_focused" in evidence
 
 
 @pytest.mark.asyncio
@@ -1480,6 +1513,24 @@ def test_visible_notes_staging_derives_watchable_plan_with_artifacts():
     assert "render_text_pdf" in actions
 
 
+def test_mixed_native_and_browser_writing_stays_on_verified_primitives():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    objective = (
+        "Open my Notes app and write a paragraph about who you are, then "
+        "open Chrome and search for current climate news."
+    )
+    skill = DesktopTaskSkill()
+    steps = skill._derive_steps_from_objective(objective, {})
+    actions = [step.action for step in steps]
+
+    assert "open_app" in actions
+    assert "open_url" in actions
+    assert "set_clipboard" in actions
+    assert any(step.action == "hotkey" and step.target == "command+v" for step in steps)
+    assert skill._should_escalate_to_os_automation(objective, steps, {}) is False
+
+
 def test_derived_steps_keep_defaults_without_explicit_parameters():
     from core.skills.desktop_task import DesktopTaskSkill
 
@@ -1826,6 +1877,13 @@ def test_demo_class_objective_stays_on_verified_primitive_lane():
     assert "https://example.test/c" in url_values
     assert any("Knicks+winning+a+championship" in url for url in url_values)
     assert any("docs.google.com/document" in url for url in url_values)
+    docs_targets = [
+        target
+        for target in open_urls
+        if isinstance(target, dict) and "docs.google.com/document" in target.get("url", "")
+    ]
+    assert docs_targets
+    assert all(target.get("requires_editable_focus") is True for target in docs_targets)
     assert any("q=eagle" in url and "tbm=isch" in url for url in url_values)
     assert all(
         (not isinstance(target, dict)) or target.get("browser") == "Google Chrome"
