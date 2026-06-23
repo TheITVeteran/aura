@@ -1247,3 +1247,29 @@ def test_short_cortex_replies_are_accepted_by_reliability_gate():
     assessment = assess_user_facing_reply("what?", "I'm still thinking.")
     assert not assessment.retryable
     assert assessment.ok
+
+
+def test_reported_live_voice_intrusion_is_hard_rejected():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "What are you talking about?",
+        "The voices. The small ones. They're whispering in my ear. Telling me things.",
+    )
+
+    assert assessment.hard_failure
+    assert assessment.retryable
+    assert "unfounded_voice_intrusion" in assessment.reasons
+
+
+def test_reported_live_pitch_continuation_is_hard_rejected():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "You with me?",
+        "Absolutely. Let's nail this pitch. What are our key points?",
+    )
+
+    assert assessment.hard_failure
+    assert assessment.retryable
+    assert "unsupported_context_continuation_claim" in assessment.reasons

@@ -2941,9 +2941,6 @@ def _build_live_turn_contract_payload(
             "cognitive_engine",
             "cognitive_engine_repair_retry",
             "cognitive_engine_shape_repair",
-            "cognitive_engine_context_grounding",
-            "cognitive_engine_recall_grounding",
-            "cognitive_engine_capability_grounding",
             "cognitive_engine_desktop_plan",
         }
     )
@@ -3993,7 +3990,7 @@ async def _run_cognitive_engine_chat_turn(
             retry_stale
             or retry_same_diff
             or retry_off_topic
-            or retry_assessment.retryable
+            or _reply_assessment_requires_repair(retry_assessment)
         ):
             if retry_did_repair:
                 logger.info("CognitiveEngine desktop chat repair retry recovered by final shape repair.")
@@ -4209,7 +4206,8 @@ async def _run_cognitive_engine_chat_turn(
                     "engine invocation."
                 )
                 _mark_turn_trace(
-                    cognitive_engine_reply_accepted=True,
+                    cognitive_engine_reply_accepted=False,
+                    bounded_contract_used=True,
                     response_path="cognitive_engine_capability_grounding",
                 )
                 return _ground_runtime_fact_status_reply(
@@ -4220,7 +4218,7 @@ async def _run_cognitive_engine_chat_turn(
                 )
             _mark_turn_trace(response_path="cognitive_engine_capability_contract_failed")
             return None
-        if assessment.retryable:
+        if _reply_assessment_requires_repair(assessment):
             logger.warning(
                 "CognitiveEngine desktop chat reply failed reliability gate (%s); attempting general repair.",
                 ",".join(assessment.reasons),
@@ -4251,7 +4249,7 @@ async def _run_cognitive_engine_chat_turn(
                 stale
                 or same_diff
                 or off_topic
-                or repaired_assessment.retryable
+                or _reply_assessment_requires_repair(repaired_assessment)
             ):
                 logger.info(
                     "CognitiveEngine desktop chat reply recovered by general repair path."
@@ -4287,7 +4285,8 @@ async def _run_cognitive_engine_chat_turn(
                         "completed-conversation evidence after engine invocation."
                     )
                     _mark_turn_trace(
-                        cognitive_engine_reply_accepted=True,
+                        cognitive_engine_reply_accepted=False,
+                        bounded_contract_used=True,
                         response_path="cognitive_engine_recall_grounding",
                     )
                     return _ground_runtime_fact_status_reply(
@@ -4303,7 +4302,8 @@ async def _run_cognitive_engine_chat_turn(
                         "completed-conversation evidence after engine invocation."
                     )
                     _mark_turn_trace(
-                        cognitive_engine_reply_accepted=True,
+                        cognitive_engine_reply_accepted=False,
+                        bounded_contract_used=True,
                         response_path="cognitive_engine_context_grounding",
                     )
                     return _ground_runtime_fact_status_reply(
@@ -4378,7 +4378,8 @@ async def _run_cognitive_engine_chat_turn(
                 "repairing from canonical completed-conversation evidence after engine invocation."
             )
             _mark_turn_trace(
-                cognitive_engine_reply_accepted=True,
+                cognitive_engine_reply_accepted=False,
+                bounded_contract_used=True,
                 response_path="cognitive_engine_recall_grounding",
             )
             return _ground_runtime_fact_status_reply(
@@ -4394,7 +4395,8 @@ async def _run_cognitive_engine_chat_turn(
                     "repairing from canonical completed-conversation evidence after engine invocation."
                 )
                 _mark_turn_trace(
-                    cognitive_engine_reply_accepted=True,
+                    cognitive_engine_reply_accepted=False,
+                    bounded_contract_used=True,
                     response_path="cognitive_engine_context_grounding",
                 )
                 return _ground_runtime_fact_status_reply(
@@ -4689,6 +4691,17 @@ def _complete_repairable_truncated_reply(user_message: Any, reply_text: Any) -> 
 _quality_logger = logging.getLogger("Aura.ResponseQuality")
 
 
+def _reply_assessment_requires_repair(assessment: Any) -> bool:
+    """Return True when canonical chat reliability says the reply is not final."""
+    if assessment is None:
+        return False
+    return bool(
+        getattr(assessment, "retryable", False)
+        or getattr(assessment, "hard_failure", False)
+        or not getattr(assessment, "ok", True)
+    )
+
+
 def _log_response_quality_metrics(
     user_message: str,
     reply_text: str,
@@ -4703,6 +4716,18 @@ def _log_response_quality_metrics(
     independently of the main application log.
     """
     try:
+        assessment_reasons: tuple[str, ...] = ()
+        try:
+            from core.conversation.response_reliability import assess_user_facing_reply
+
+            assessment = assess_user_facing_reply(user_message, reply_text)
+            assessment_reasons = tuple(getattr(assessment, "reasons", ()) or ())
+            if str(confidence).lower() == "high" and _reply_assessment_requires_repair(assessment):
+                confidence = "degraded"
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat", exc)
+            logger.debug("Quality metric reliability assessment skipped: %s", exc)
+
         live_state = _resolve_live_aura_state()
         wm_size = 0
         has_summary = False
@@ -4715,10 +4740,11 @@ def _log_response_quality_metrics(
 
         _quality_logger.info(
             "📊 quality_metrics | confidence=%s | stale=%s | same_diff=%s | off_topic=%s | "
-            "reply_len=%d | user_len=%d | wm_size=%d | has_summary=%s | coherence=%.3f",
+            "reply_len=%d | user_len=%d | wm_size=%d | has_summary=%s | coherence=%.3f | assessment=%s",
             confidence, stale, same_diff, off_topic,
             len(reply_text or ""), len(user_message or ""),
             wm_size, has_summary, coherence,
+            ",".join(assessment_reasons) or "ok",
         )
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
@@ -5816,7 +5842,7 @@ def _looks_semantically_glitched(user_message: str, reply_text: Any) -> tuple[bo
         from core.conversation.response_reliability import assess_user_facing_reply
 
         assessment = assess_user_facing_reply(user_message, reply_text)
-        if assessment.retryable:
+        if _reply_assessment_requires_repair(assessment):
             hard_reasons = [
                 reason
                 for reason in (assessment.reasons or ())
@@ -7605,7 +7631,7 @@ def _build_bounded_identity_repair_reply(user_message: str) -> str:
         from core.conversation.response_reliability import assess_user_facing_reply
 
         assessment = assess_user_facing_reply(user_message, reply)
-        if assessment.retryable:
+        if _reply_assessment_requires_repair(assessment):
             return ""
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
@@ -8195,9 +8221,7 @@ async def _stabilize_user_facing_reply(
         record_degradation("chat", exc)
         logger.debug("Conversation reliability assessment unavailable in stabilizer: %s", exc)
         live_reply_assessment = None
-    assessment_retryable = bool(
-        live_reply_assessment is not None and getattr(live_reply_assessment, "retryable", False)
-    )
+    assessment_retryable = _reply_assessment_requires_repair(live_reply_assessment)
     reason = ""
     if (
         truncated_tail
@@ -8362,10 +8386,7 @@ async def _stabilize_user_facing_reply(
                 and not cleaned_same_diff
                 and not cleaned_truncated_tail
                 and not cleaned_semantic_glitch
-                and not (
-                    cleaned_assessment is not None
-                    and getattr(cleaned_assessment, "retryable", False)
-                )
+                and not _reply_assessment_requires_repair(cleaned_assessment)
                 and len(cleaned) >= 16
             ):
                 return cleaned
@@ -8771,7 +8792,7 @@ async def _repair_final_degraded_reply(
         stale
         or same_diff
         or off_topic
-        or (assessment is not None and assessment.retryable)
+        or _reply_assessment_requires_repair(assessment)
     )
     owner_name_reply = _build_owner_name_recall_reply(user_message)
     if owner_name_reply and not desktop_cognitive_engine_required:
@@ -8814,7 +8835,7 @@ async def _repair_final_degraded_reply(
                 if assess_user_facing_reply
                 else None
             )
-            if not (context_assessment is not None and context_assessment.retryable):
+            if not _reply_assessment_requires_repair(context_assessment):
                 return context_challenge_repair, False, False, False, "", True
 
         if assessment_reasons & {"raw_model_identity_leak", "missing_self_claim_evidence_boundary"}:
@@ -8832,7 +8853,7 @@ async def _repair_final_degraded_reply(
                     if assess_user_facing_reply
                     else None
                 )
-                if not (self_claim_assessment is not None and self_claim_assessment.retryable):
+                if not _reply_assessment_requires_repair(self_claim_assessment):
                     return self_claim_repair, False, False, False, "", True
 
     if (
@@ -8865,7 +8886,7 @@ async def _repair_final_degraded_reply(
                 if assess_user_facing_reply
                 else None
             )
-            if not (self_process_assessment is not None and self_process_assessment.retryable):
+            if not _reply_assessment_requires_repair(self_process_assessment):
                 logger.warning(
                     "🛡️ Final reply quality gate repaired self-process coverage from live context."
                 )
@@ -8907,7 +8928,7 @@ async def _repair_final_degraded_reply(
             completed_stale
             or completed_same_diff
             or completed_off_topic
-            or (completed_assessment is not None and completed_assessment.retryable)
+            or _reply_assessment_requires_repair(completed_assessment)
         ):
             logger.warning(
                 "🛡️ Final reply quality gate completed clipped Cortex draft without a second model call."
@@ -8940,7 +8961,7 @@ async def _repair_final_degraded_reply(
                 shaped_stale
                 or shaped_same_diff
                 or shaped_off_topic
-                or shaped_assessment.retryable
+                or _reply_assessment_requires_repair(shaped_assessment)
             ):
                 logger.warning(
                     "🛡️ Final reply quality gate repaired explicit response shape "
@@ -8981,7 +9002,7 @@ async def _repair_final_degraded_reply(
                 delta_stale
                 or delta_same_diff
                 or delta_off_topic
-                or (delta_assessment is not None and delta_assessment.retryable)
+                or _reply_assessment_requires_repair(delta_assessment)
             ):
                 logger.warning(
                     "🛡️ Final reply quality gate repaired missing follow-up delta without a second model call."
@@ -9024,7 +9045,7 @@ async def _repair_final_degraded_reply(
         repaired_stale
         or repaired_same_diff
         or repaired_off_topic
-        or (repaired_assessment is not None and repaired_assessment.retryable)
+        or _reply_assessment_requires_repair(repaired_assessment)
     ):
         return repaired, repaired_stale, repaired_same_diff, repaired_off_topic, repaired_off_topic_reason, True
 
@@ -9036,7 +9057,7 @@ async def _repair_final_degraded_reply(
         repaired_same_diff
         and not repaired_stale
         and not repaired_off_topic
-        and not (repaired_assessment is not None and repaired_assessment.retryable)
+        and not _reply_assessment_requires_repair(repaired_assessment)
     )
     if repaired_same_diff_only:
         return repaired, repaired_stale, repaired_same_diff, repaired_off_topic, repaired_off_topic_reason, True
@@ -9063,7 +9084,7 @@ async def _repair_final_degraded_reply(
             floor_stale
             or floor_same_diff
             or floor_off_topic
-            or (floor_assessment is not None and floor_assessment.retryable)
+            or _reply_assessment_requires_repair(floor_assessment)
         ):
             return floor, floor_stale, floor_same_diff, floor_off_topic, floor_off_topic_reason, True
 
@@ -9104,7 +9125,7 @@ async def _repair_final_degraded_reply(
         or reflex_same_diff
         or reflex_off_topic
         or reflex_semantic
-        or (reflex_assessment is not None and reflex_assessment.retryable)
+        or _reply_assessment_requires_repair(reflex_assessment)
     ):
         return reflex, reflex_stale, reflex_same_diff, reflex_off_topic, reflex_off_topic_reason, True
 
@@ -11465,14 +11486,13 @@ async def api_chat(
                         or is_same_diff
                         or is_off_topic
                         or semantic_glitch
-                        or (fastpath_assessment is not None and fastpath_assessment.retryable)
+                        or _reply_assessment_requires_repair(fastpath_assessment)
                     ):
                         hard_fastpath_quality_failed = bool(
                             is_off_topic
                             or semantic_glitch
                             or (
-                                fastpath_assessment is not None
-                                and fastpath_assessment.retryable
+                                _reply_assessment_requires_repair(fastpath_assessment)
                             )
                         )
                         response_confidence = "degraded"
@@ -11515,8 +11535,7 @@ async def api_chat(
                                 is_off_topic
                                 or semantic_glitch
                                 or (
-                                    fastpath_assessment is not None
-                                    and fastpath_assessment.retryable
+                                    _reply_assessment_requires_repair(fastpath_assessment)
                                 )
                             )
                             if not (
@@ -11524,7 +11543,7 @@ async def api_chat(
                                 or is_same_diff
                                 or is_off_topic
                                 or semantic_glitch
-                                or (fastpath_assessment is not None and fastpath_assessment.retryable)
+                                or _reply_assessment_requires_repair(fastpath_assessment)
                             ):
                                 response_confidence = "high"
             except (AttributeError, RuntimeError, TypeError, ValueError) as fastpath_gate_exc:
@@ -12387,7 +12406,7 @@ async def api_chat(
                         bounded_repair,
                         recent_user_messages=bounded_recent_user_messages,
                     )
-                    if bounded_assessment.retryable:
+                    if _reply_assessment_requires_repair(bounded_assessment):
                         bounded_repair = ""
                 except _CHAT_RECOVERABLE_ERRORS as exc:
                     record_degradation("chat", exc)
@@ -12410,7 +12429,7 @@ async def api_chat(
                             minimal_repair,
                             recent_user_messages=minimal_recent_user_messages,
                         )
-                        if not minimal_assessment.retryable:
+                        if not _reply_assessment_requires_repair(minimal_assessment):
                             bounded_repair = minimal_repair
                     except _CHAT_RECOVERABLE_ERRORS as exc:
                         record_degradation("chat", exc)
@@ -12964,7 +12983,7 @@ async def api_chat(
             or semantic_glitch
             or desktop_recall_contract_failed
             or desktop_context_contract_failed
-            or (reply_assessment is not None and reply_assessment.retryable)
+            or _reply_assessment_requires_repair(reply_assessment)
         ):
             response_confidence = "degraded"
             _consecutive_degraded_count += 1
@@ -12988,7 +13007,7 @@ async def api_chat(
             or semantic_glitch
             or desktop_recall_contract_failed
             or desktop_context_contract_failed
-            or (reply_assessment is not None and reply_assessment.retryable)
+            or _reply_assessment_requires_repair(reply_assessment)
         )
 
         if response_confidence == "degraded":
@@ -13026,8 +13045,8 @@ async def api_chat(
                     repaired_assessment = None
                 repaired_recall_contract_failed = False
                 repaired_context_contract_failed = False
-                repaired_assessment_retryable = bool(
-                    repaired_assessment is not None and repaired_assessment.retryable
+                repaired_assessment_retryable = _reply_assessment_requires_repair(
+                    repaired_assessment
                 )
                 if desktop_requires_cognitive_engine:
                     expected_recall_reply = await _build_conversation_recall_reply(
@@ -13060,7 +13079,7 @@ async def api_chat(
                     or semantic_glitch
                     or repaired_recall_contract_failed
                     or repaired_context_contract_failed
-                    or (repaired_assessment is not None and repaired_assessment.retryable)
+                    or _reply_assessment_requires_repair(repaired_assessment)
                 ):
                     response_confidence = "high"
                     _consecutive_degraded_count = 0

@@ -4096,6 +4096,92 @@ async def test_desktop_cognitive_engine_repairs_weak_status_reply_before_fail_cl
 
 
 @pytest.mark.asyncio
+async def test_desktop_cognitive_engine_rejects_unfounded_voice_intrusion(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+    trace = {}
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content="The voices. The small ones. They're whispering in my ear. Telling me things."
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    async def _no_repair(_message, reply, **_kwargs):
+        return reply, False, False, False, "", False
+
+    monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(chat_routes, "_repair_final_degraded_reply", _no_repair)
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "What are you talking about?",
+        visible_user_message="What are you talking about?",
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert len(calls) == 1
+    assert reply
+    assert "voices" not in reply.lower()
+    assert trace["engine_think_invoked"] is True
+    assert trace["cognitive_engine_reply_accepted"] is False
+    assert trace["bounded_contract_used"] is True
+    assert trace["response_path"] == "cognitive_engine_context_grounding"
+
+
+def test_response_quality_logger_downgrades_canonical_failures(monkeypatch, caplog):
+    import logging
+
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(chat_routes, "_resolve_live_aura_state", lambda: None)
+    caplog.set_level(logging.INFO, logger="Aura.ResponseQuality")
+
+    chat_routes._log_response_quality_metrics(
+        "What are you talking about?",
+        "The voices. The small ones. They're whispering in my ear. Telling me things.",
+        "high",
+        stale=False,
+        same_diff=False,
+        off_topic=False,
+    )
+
+    assert "confidence=degraded" in caplog.text
+    assert "unfounded_voice_intrusion" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_desktop_cognitive_engine_retries_failed_reply_on_same_lane(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
