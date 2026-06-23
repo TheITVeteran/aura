@@ -4325,10 +4325,79 @@ async def test_desktop_cognitive_engine_uses_compact_contract_and_recovery_reser
 
     assert reply
     assert calls[0]["context"]["desktop_quick_reply_contract"] is True
-    assert calls[0]["context"]["skip_runtime_payload"] is True
+    assert calls[0]["context"]["skip_runtime_payload"] is False
+    assert calls[0]["context"]["live_runtime_payload_required"] is True
     assert calls[0]["context"]["allow_deep_handoff"] is False
     assert 512 < calls[0]["context"]["max_tokens"] <= 896
     assert calls[0]["kwargs"]["timeout_s"] == pytest.approx(42.0)
+
+
+@pytest.mark.asyncio
+async def test_desktop_required_chat_gets_default_recent_context_window(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content="I am answering this ordinary live desktop turn with the recent thread still present."
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+        chat_routes._conversation_log.extend(
+            [
+                {
+                    "user": "The live desktop chat was drifting into assistant mode.",
+                    "aura": "I need to keep the full mind path fused to the speech lane.",
+                    "status": "complete",
+                }
+            ]
+        )
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = "Give me one practical next step."
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply
+    assert calls[0]["context"]["recent_context_needed"] is False
+    assert calls[0]["context"]["recent_completed_exchanges"]
+    assert "assistant mode" in calls[0]["context"]["recent_conversation_context"]
+    assert calls[0]["context"]["live_runtime_payload_required"] is True
 
 
 @pytest.mark.asyncio

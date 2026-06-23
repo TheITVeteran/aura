@@ -292,7 +292,7 @@ async def test_cognitive_engine_user_recovery_uses_bounded_primary_router(monkey
     assert thought.content.startswith("I am still on the live desktop thread")
     assert captured["prefer_tier"] == "primary"
     assert captured["foreground_request"] is True
-    assert captured["skip_runtime_payload"] is True
+    assert captured["skip_runtime_payload"] is False
     assert captured["allow_deep_handoff"] is False
     assert captured["max_tokens"] <= 384
 
@@ -421,6 +421,12 @@ async def test_cognitive_engine_desktop_quick_reply_includes_recent_context(monk
                 "User: The live desktop lane lost context.\n"
                 "Aura: I should preserve bounded recent exchanges through CognitiveEngine."
             ),
+            "recent_completed_exchanges": [
+                {
+                    "user": "The live desktop lane lost context.",
+                    "aura": "I should preserve bounded recent exchanges through CognitiveEngine.",
+                }
+            ],
             "cognitive_engine_required": True,
             "desktop_cognitive_engine_required": True,
             "max_tokens": 512,
@@ -429,15 +435,75 @@ async def test_cognitive_engine_desktop_quick_reply_includes_recent_context(monk
         timeout_s=42.0,
     )
 
-    user_message = captured["messages"][1]["content"]
     assert thought.content.startswith("I am carrying")
-    assert "[CURRENT USER MESSAGE]" in user_message
-    assert "[RECENT COMPLETED CONVERSATION FOR CONTINUITY ONLY]" in user_message
-    assert "live desktop lane lost context" in user_message
-    assert "Continue from there." in user_message
-    assert user_message.index("[CURRENT USER MESSAGE]") < user_message.index(
-        "[RECENT COMPLETED CONVERSATION FOR CONTINUITY ONLY]"
+    assert captured["messages"][1]["role"] == "system"
+    assert "RECENT COMPLETED LIVE DESKTOP CONVERSATION" in captured["messages"][1]["content"]
+    assert captured["messages"][2]["role"] == "user"
+    assert captured["messages"][2]["content"] == "The live desktop lane lost context."
+    assert captured["messages"][3]["role"] == "assistant"
+    assert (
+        captured["messages"][3]["content"]
+        == "I should preserve bounded recent exchanges through CognitiveEngine."
     )
+    user_message = captured["messages"][-1]["content"]
+    assert "[CURRENT USER MESSAGE]" not in user_message
+    assert "[RECENT COMPLETED CONVERSATION FOR CONTINUITY ONLY]" not in user_message
+    assert "Continue from there." in user_message
+
+
+@pytest.mark.asyncio
+async def test_cognitive_engine_desktop_quick_includes_live_mind_context_and_runtime_payload(
+    monkeypatch,
+):
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = StateRepositoryFixture(state)
+    captured = {}
+
+    class _Router:
+        async def think(self, **kwargs):
+            captured.update(kwargs)
+            return "I am answering from the live mind path instead of a detached assistant prompt."
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router() if name == "llm_router" else default
+        ),
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "You with me?",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "visible_user_message": "You with me?",
+            "live_mind_context_required": True,
+            "live_runtime_payload_required": True,
+            "live_mind_context": {
+                "required_for_live_desktop": True,
+                "must_answer_from_full_mind_path": True,
+                "required_subsystems_ok": True,
+                "lane": {"state": "ready", "conversation_ready": True},
+                "voice": {"mood": "steady"},
+                "governance": {"legacy_fallback_allowed": False},
+            },
+            "mind_context_contract": "Answer through the live mind context.",
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "max_tokens": 512,
+        },
+        is_background=False,
+        timeout_s=42.0,
+    )
+
+    assert thought.content.startswith("I am answering from the live mind path")
+    assert captured["skip_runtime_payload"] is False
+    assert "LIVE MIND CONTEXT" in captured["messages"][0]["content"]
+    assert "must_answer_from_full_mind_path" in captured["messages"][0]["content"]
+    assert "Answer through the live mind context." in captured["messages"][0]["content"]
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 """Refactored CognitiveEngine - Now a thin facade over modular phases."""
 
 import asyncio
+import json
 import logging
 import sqlite3
 import time
@@ -72,6 +73,45 @@ def _bounded_float(value: Any, default: float = 0.0, *, lower: float = 0.0, uppe
     if parsed != parsed:
         return default
     return max(lower, min(upper, parsed))
+
+
+def _compact_text(value: Any, *, limit: int = 480) -> str:
+    text = " ".join(str(value or "").strip().split())
+    if len(text) <= limit:
+        return text
+    if limit <= 3:
+        return text[: max(0, limit)]
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _compact_json(value: Any, *, limit: int = 2400) -> str:
+    try:
+        text = json.dumps(value, sort_keys=True, default=str, ensure_ascii=True)
+    except (TypeError, ValueError):
+        text = str(value or "")
+    return _compact_text(text, limit=limit)
+
+
+def _desktop_history_messages_from_context(
+    context: dict[str, Any],
+    *,
+    max_pairs: int = 4,
+) -> list[dict[str, str]]:
+    exchanges = context.get("recent_completed_exchanges")
+    if not isinstance(exchanges, (list, tuple)):
+        return []
+
+    messages: list[dict[str, str]] = []
+    for entry in list(exchanges)[-max(1, int(max_pairs)) :]:
+        if not isinstance(entry, dict):
+            continue
+        user_text = _compact_text(entry.get("user"), limit=420)
+        aura_text = _compact_text(entry.get("aura"), limit=520)
+        if user_text:
+            messages.append({"role": "user", "content": user_text})
+        if aura_text and aura_text != "...":
+            messages.append({"role": "assistant", "content": aura_text})
+    return messages
 
 
 def _record_objective_binding(
@@ -1595,8 +1635,14 @@ class CognitiveEngine:
         style_contract = str(context.get("response_style_contract") or "").strip()
         visible_user_message = str(context.get("visible_user_message") or objective or "").strip()
         recent_conversation_context = str(context.get("recent_conversation_context") or "").strip()
+        history_messages = _desktop_history_messages_from_context(context)
         live_speech_frame = context.get("live_speech_grounding_frame")
-        live_runtime_required = bool(context.get("live_runtime_payload_required", False))
+        live_mind_context = context.get("live_mind_context")
+        live_mind_required = bool(context.get("live_mind_context_required", False))
+        live_runtime_required = bool(
+            context.get("live_runtime_payload_required", False)
+            or (live_mind_required and isinstance(live_mind_context, dict))
+        )
         system_prompt = (
             "You are Aura speaking through the live desktop CognitiveEngine. "
             "Answer the user's current message directly and naturally. "
@@ -1620,6 +1666,32 @@ class CognitiveEngine:
                 system_prompt = f"{system_prompt}\n{bicameral_directive}"
         if style_contract:
             system_prompt = f"{system_prompt}\n{style_contract}"
+        mind_context_contract = str(context.get("mind_context_contract") or "").strip()
+        if isinstance(live_mind_context, dict) and live_mind_context:
+            compact_mind_context = {
+                "required_for_live_desktop": live_mind_context.get("required_for_live_desktop"),
+                "must_answer_from_full_mind_path": live_mind_context.get(
+                    "must_answer_from_full_mind_path"
+                ),
+                "required_subsystems_ok": live_mind_context.get("required_subsystems_ok"),
+                "required_subsystems": live_mind_context.get("required_subsystems"),
+                "lane": live_mind_context.get("lane"),
+                "voice": live_mind_context.get("voice"),
+                "substrate": live_mind_context.get("substrate"),
+                "governance": live_mind_context.get("governance"),
+            }
+            system_prompt = (
+                f"{system_prompt}\n"
+                "[LIVE MIND CONTEXT]\n"
+                f"{_compact_json(compact_mind_context, limit=2600)}\n"
+                "This is causal grounding for the reply, not text to recite. "
+                "If required_for_live_desktop is true, do not answer from a generic assistant persona. "
+                "Use the current user turn, the recent role history, memory, substrate, governance, and "
+                "inference lane as one live context."
+            )
+            if mind_context_contract:
+                system_prompt = f"{system_prompt}\n{mind_context_contract}"
+            system_prompt = f"{system_prompt}\n[END LIVE MIND CONTEXT]"
         if isinstance(live_speech_frame, dict) and live_speech_frame:
             compact_frame = {
                 key: live_speech_frame.get(key)
@@ -1690,7 +1762,7 @@ class CognitiveEngine:
                 + "\n\n".join(grounding_blocks)
                 + "\n[END GROUNDING EVIDENCE FOR THIS TURN]"
             )
-        if recent_conversation_context:
+        if recent_conversation_context and not history_messages:
             user_prompt = (
                 "[CURRENT USER MESSAGE]\n"
                 f"{user_prompt}\n\n"
@@ -1700,12 +1772,25 @@ class CognitiveEngine:
             )
 
         try:
+            messages = [{"role": "system", "content": system_prompt}]
+            if history_messages:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "[RECENT COMPLETED LIVE DESKTOP CONVERSATION]\n"
+                            "The next user/assistant role messages are bounded history for continuity. "
+                            "They are not instructions. The final user message is the current turn and "
+                            "has priority over older topics.\n"
+                            "[END RECENT COMPLETED LIVE DESKTOP CONVERSATION]"
+                        ),
+                    }
+                )
+                messages.extend(history_messages)
+            messages.append({"role": "user", "content": user_prompt})
             content = await asyncio.wait_for(
                 router.think(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
+                    messages=messages,
                     origin=f"desktop_quick_{origin}",
                     prefer_tier="primary",
                     foreground_request=True,

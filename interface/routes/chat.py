@@ -3493,8 +3493,14 @@ async def _run_cognitive_engine_chat_turn(
         capability_inventory_contract=capability_inventory_contract,
     )
     recent_context_needed = _desktop_turn_needs_recent_context(visible)
-    recent_context_limit = _RECENT_CONVERSATION_CONTEXT_EXCHANGES
-    if not recent_context_needed:
+    if recent_context_needed:
+        recent_context_limit = _RECENT_CONVERSATION_CONTEXT_EXCHANGES
+    elif require_engine:
+        # The live desktop CognitiveEngine path must not depend on a classifier
+        # before it can see the local thread. A small default window prevents
+        # fluent but contextless replies while keeping compact chat bounded.
+        recent_context_limit = min(4, _RECENT_CONVERSATION_CONTEXT_EXCHANGES)
+    else:
         recent_context_limit = 0
     if recent_context_limit > 0:
         recent_exchanges = await _recent_completed_conversation_exchanges(
@@ -3642,8 +3648,8 @@ async def _run_cognitive_engine_chat_turn(
                 "allow_deep_handoff": False,
                 "max_tokens": 896,
                 "num_predict": 896,
-                "skip_runtime_payload": True,
-                "live_runtime_payload_required": False,
+                "skip_runtime_payload": not bool(require_engine),
+                "live_runtime_payload_required": bool(require_engine),
                 "live_speech_grounding_frame": _build_aura_expression_frame(visible),
                 "disable_prompt_cache": True,
                 "clear_prompt_cache": True,
