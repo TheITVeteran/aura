@@ -22,6 +22,10 @@ from pydantic import BaseModel, Field
 
 from core.config import config
 from core.health.degraded_events import record_degraded_event
+from core.memory.engram_plasticity import (
+    get_engram_plasticity_field,
+    is_engram_plasticity_enabled,
+)
 from core.memory.hippocampus import HippocampalIndex
 from core.memory.reconsolidation import ReconsolidationEngine, ReconsolidationOutcome
 from core.memory.retention_policy import episodic_retention_policy
@@ -186,6 +190,10 @@ class EpisodicMemory:
         # reconsolidation engine that rewrites traces as the present seeps in.
         self._hippocampus = HippocampalIndex(self._get_conn)
         self._reconsolidation = ReconsolidationEngine()
+        # Competitive recall weights from the most recent plasticity-resolved
+        # recall, keyed by episode_id. Consumed once by _register_recall to apply
+        # bounded LTP consolidation to the engrams that won competition.
+        self._last_competition_weights: dict[str, float] = {}
 
     def _detect_relational_significance(self, context: str, action: str, outcome: str) -> bool:
         """Detect if this conversation is relational/bonding and should be preserved.
@@ -943,12 +951,82 @@ class EpisodicMemory:
                 record_degradation('episodic_memory', e)
                 logger.debug("Pattern-completion recall path failed: %s", e)
 
-        # 3. Sort by importance + recency blend
-        combined.sort(
-            key=lambda ep: (ep.importance * 0.6) + (min(1.0, max(0, ep.timestamp - 1774000000) / 2000000) * 0.4),
+        # 3. Resolve the ranking by plasticity competition: candidate engrams
+        # drive a transient voltage-dependent field so the best-matching trace
+        # wins, weakly-relevant ones are gated out below threshold, and the
+        # homeostatic bound stops one over-strong trace from swamping recall
+        # (anti-confabulation). Falls back to the static importance+recency blend.
+        ranked = self._competitive_rank(combined, query)
+        return self._register_recall(ranked[:limit])
+
+    @staticmethod
+    def _recency_score(ep: "Episode") -> float:
+        return min(1.0, max(0.0, ep.timestamp - 1774000000) / 2000000)
+
+    def _static_rank(self, episodes: list["Episode"]) -> list["Episode"]:
+        return sorted(
+            episodes,
+            key=lambda ep: (ep.importance * 0.6) + (self._recency_score(ep) * 0.4),
             reverse=True,
         )
-        return self._register_recall(combined[:limit])
+
+    def _competitive_rank(self, episodes: list["Episode"], query: str) -> list["Episode"]:
+        """Re-rank candidates through the engram plasticity competition field.
+
+        Salience for each engram blends query-cue relevance (so the trace that
+        actually matches drives hardest), current strength, and importance. The
+        field's substrate context (arousal/valence) modulates the activation
+        threshold and temperature. On any failure this degrades cleanly to the
+        static importance+recency ranking.
+        """
+        if len(episodes) < 2 or not is_engram_plasticity_enabled():
+            return self._static_rank(episodes)
+        try:
+            query_cues = set(HippocampalIndex.extract_cues(query or ""))
+            salience: list[float] = []
+            for ep in episodes:
+                ep_cues = set(HippocampalIndex.extract_cues(ep.full_description))
+                overlap = (
+                    len(query_cues & ep_cues) / max(1, len(query_cues))
+                    if query_cues else 0.0
+                )
+                relevance = max(0.05, min(1.0, overlap))
+                strength = ep.current_strength()
+                drive = relevance * (0.6 + 0.4 * strength) * (0.7 + 0.3 * ep.importance)
+                salience.append(float(drive))
+
+            qualia = self._current_qualia() or {}
+            # Substrate coupling: qualia intensity (q_norm) is the arousal proxy —
+            # the membrane-potential context that gates how readily engrams stay
+            # above threshold — and ual valence warms the escape-rate temperature.
+            arousal = float(qualia.get("arousal", qualia.get("q_norm", 0.5)))
+            valence = float(qualia.get("valence", qualia.get("emotional_valence", 0.0)))
+
+            field = get_engram_plasticity_field()
+            result = field.compete(salience, arousal=arousal, valence=valence)
+            # Stash per-engram competitive weights so _register_recall can apply
+            # bounded LTP consolidation to the winners (recall → strengthening).
+            self._last_competition_weights = {
+                episodes[i].episode_id: float(result.weights[i])
+                for i in range(len(episodes))
+                if 0 <= i < len(result.weights)
+            }
+            if result.governance_breach:
+                logger.info(
+                    "🧠 [EngramPlasticity] recall homeostatic pressure high "
+                    "(%.2f) — one attractor dominating; competition damping it.",
+                    result.pressure,
+                )
+            ranked = [episodes[i] for i in result.order if 0 <= i < len(episodes)]
+            # Append any indices the competition dropped (gated-out) at the tail,
+            # preserving them as low-priority rather than losing them entirely.
+            seen = {id(ep) for ep in ranked}
+            ranked.extend(ep for ep in episodes if id(ep) not in seen)
+            return ranked or self._static_rank(episodes)
+        except (ValueError, TypeError, AttributeError, KeyError) as exc:
+            record_degradation("episodic_memory", exc)
+            logger.debug("Competitive rank fell back to static: %s", exc)
+            return self._static_rank(episodes)
 
     def _apply_qualia_boost(self, episodes: list[Episode]) -> list[Episode]:
         """Re-rank episodes by qualia congruence with current phenomenal state."""
@@ -1191,6 +1269,17 @@ class EpisodicMemory:
                         if outcome.drifted and not self._approve_reconsolidation(ep, outcome):
                             outcome = self._rehearsal_only(ep, outcome, now)
 
+                        # Voltage-gated LTP consolidation: an engram that WON the
+                        # plasticity competition for this recall is strengthened,
+                        # scaled by its competitive weight and the neuromodulatory
+                        # lability gain — and capped (homeostatic bound) so no
+                        # single trace can be rehearsed into runaway dominance.
+                        consolidated_importance = outcome.importance
+                        ltp_weight = self._last_competition_weights.get(ep.episode_id, 0.0)
+                        if ltp_weight > 0.0:
+                            ltp_gain = 0.03 * ltp_weight * min(1.5, max(0.0, lability))
+                            consolidated_importance = min(0.98, outcome.importance + ltp_gain)
+
                         new_access = ep.access_count + 1
                         conn.execute(
                             """UPDATE episodes SET
@@ -1202,7 +1291,7 @@ class EpisodicMemory:
                                WHERE episode_id = ?""",
                             (
                                 new_access, now,
-                                outcome.importance, outcome.decay_rate,
+                                consolidated_importance, outcome.decay_rate,
                                 outcome.emotional_valence,
                                 json.dumps(outcome.qualia_snapshot, cls=_SafeEncoder),
                                 outcome.fidelity, outcome.reconsolidation_count,
@@ -1212,7 +1301,7 @@ class EpisodicMemory:
                         # Reflect the rewrite on the live object handed to callers.
                         ep.access_count = new_access
                         ep.last_accessed = now
-                        ep.importance = outcome.importance
+                        ep.importance = consolidated_importance
                         ep.decay_rate = outcome.decay_rate
                         ep.emotional_valence = outcome.emotional_valence
                         ep.qualia_snapshot = outcome.qualia_snapshot
@@ -1229,6 +1318,9 @@ class EpisodicMemory:
 
         for ep, outcome in drift_events:
             self._on_reconsolidation_signals(ep, outcome)
+        # Competitive LTP weights are consumed once per recall — clear so they
+        # cannot leak consolidation into a later recall on a different path.
+        self._last_competition_weights = {}
         return episodes
 
     @staticmethod
