@@ -81,6 +81,44 @@ Every content rewrite (spontaneous drift or therapeutic softening) passes throug
 the same constitutional memory-write gate as new writes, and emits
 `memory.encoded` / `memory.reconsolidated` / `memory.consolidated` events.
 
+## Synaptic Plasticity Substrate (voltage-dependent STDP + homeostasis + competition)
+
+Memory **retrieval and consolidation** are governed by a faithful implementation of
+the Clopath/Büsing/Vasilaki/Gerstner (2010) *voltage-based STDP with homeostasis*
+rule (the model on the *Pantheon* "UI stabilization" whiteboard), in
+`core/consciousness/voltage_plasticity.py`. It complements the spike-timing engine
+(`stdp_learning.py`) with the three things that rule lacks:
+
+- **Voltage-dependence** — plasticity is gated by post-synaptic activity `b_k`
+  (escape-rate `ρ₀·exp((V−θ)/Δβ)`); sub-threshold activity produces no change,
+  and potentiation requires voltage above a high threshold θ₊.
+- **Homeostatic fixed point** — a BCM-like sliding threshold scales depression by
+  total activity `exp((Σb−θ)/ΔU)`, giving the activity ODE a stable attractor
+  `b_k*`. Exponential depression cannot be out-grown by polynomial self-excitation,
+  so the field can never run away ("anti-epilepsy").
+- **Competition** — `w_k−w_j ∝ b_k−b_j`, so a marginally stronger representation
+  out-competes a weaker one.
+
+`core/memory/engram_plasticity.py` binds this to episodic memory: `recall_similar`
+resolves its ranking by a transient competition field instead of a static
+importance+recency blend. The best-matching engram wins, **voltage-gating**
+suppresses weakly-relevant traces below threshold (no leak into recall), and the
+**homeostatic** bound stops one over-strong trace from swamping a query it doesn't
+match — the **anti-confabulation** mechanism. Affective **arousal** (qualia
+`q_norm`) lowers θ and **valence** warms Δβ (substrate coupling); engrams that win
+competition receive a bounded, homeostatically-capped **LTP** importance bump in
+`_register_recall` scaled by the neuromodulatory lability gain (recall →
+strengthening, never runaway). A homeostatic-pressure breach (one attractor
+dominating recall) is exported to governance/metrics (`engram_homeostatic_breach_total`).
+
+**Positional recall** ("what did I first ask?") is a *positional* key the content
+field can't resolve, so `core/conversation/grounded_recall.py` retrieves the actual
+earliest/most-recent turn from live conversation memory and routes it through the
+desktop `conversation_recall_evidence` contract — the Cortex answers from the real
+quote in its own voice instead of confabulating. Together, content competition and
+positional grounding cover both retrieval keys real episodic memory needs: *what*
+was said and *when*.
+
 ## Memory Governance
 
 All memory writes are gated:
