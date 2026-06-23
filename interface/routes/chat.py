@@ -12260,53 +12260,12 @@ async def api_chat(
         desktop_engine_failed = desktop_requires_cognitive_engine and not reply_text
         if desktop_engine_failed:
             if _is_low_risk_social_continuity_request(_semantic_user_message):
-                _live_turn_trace.update(
-                    {
-                        "bounded_contract_used": True,
-                        "response_path": "desktop_cognitive_engine_social_bounded_repair",
-                    }
-                )
-                lane = _mark_conversation_lane_state(
-                    "desktop_cognitive_engine_social_bounded_repair",
-                    state="recovering",
-                )
                 social_reply = _build_social_continuity_repair_reply(_semantic_user_message)
                 logger.warning(
                     "Desktop CognitiveEngine produced no acceptable reply for low-risk social turn; "
-                    "serving bounded social-continuity repair instead of legacy fallback."
-                )
-                if pending_exchange_id:
-                    await _complete_logged_exchange(
-                        pending_exchange_id,
-                        _semantic_user_message,
-                        social_reply,
-                        record_experience=True,
-                    )
-                    pending_exchange_id = None
-                await _emit_chat_output_receipt(
-                    social_reply,
-                    cause="chat_response",
-                    metadata={
-                        "response_confidence": "bounded",
-                        "path": "desktop_social_presence_contract",
-                        "status": "desktop_cognitive_engine_social_bounded_repair",
-                        "reason": "low_risk_social_turn",
-                    },
-                )
-                return JSONResponse(
-                    {
-                        "response": social_reply,
-                        "status": "desktop_social_presence_contract",
-                        "reason": "desktop_cognitive_engine_social_bounded_repair",
-                        "conversation_lane": lane,
-                        "response_confidence": "bounded",
-                        "live_turn_contract": _live_turn_contract(
-                            lane_status=lane,
-                            response_confidence="bounded",
-                            status="desktop_social_presence_contract",
-                            reply_source="desktop_cognitive_engine_social_bounded_repair",
-                        ),
-                    }
+                    "not serving bounded social repair as a successful full-mind desktop turn "
+                    "(candidate repair len=%d).",
+                    len(social_reply),
                 )
 
             if _desktop_objective_self_sufficient_without_cognitive_text(_semantic_user_message):

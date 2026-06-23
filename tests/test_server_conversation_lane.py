@@ -2733,7 +2733,7 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_low_risk_social_no_reply_returns_bounded_repair(monkeypatch):
+async def test_api_chat_desktop_low_risk_social_no_reply_fails_closed(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
@@ -2812,16 +2812,18 @@ async def test_api_chat_desktop_low_risk_social_no_reply_returns_bounded_repair(
     )
 
     payload = json.loads(response.body)
-    assert response.status_code == 200
-    assert payload["status"] == "desktop_social_presence_contract"
-    assert payload["response_confidence"] == "bounded"
-    assert "keep the thread warm" in payload["response"]
+    assert response.status_code == 503
+    assert payload["status"] == "desktop_cognitive_engine_unavailable"
+    assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
+    assert payload["response_confidence"] == "failed"
+    assert "failed closed instead of sending an ungrounded answer" in payload["response"]
     assert "reply-quality gate" not in payload["response"]
     assert "second foreground generation" not in payload["response"]
     assert kernel_calls == []
     assert len(completed_exchanges) == 1
-    assert completed_exchanges[0][1]["record_experience"] is True
-    assert output_receipts[0][1]["metadata"]["path"] == "desktop_social_presence_contract"
+    assert completed_exchanges[0][1]["record_experience"] is False
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine"
+    assert output_receipts[0][1]["metadata"]["response_confidence"] == "failed"
 
 
 @pytest.mark.asyncio
