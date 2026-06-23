@@ -326,12 +326,16 @@ class BeliefRevisionEngine:
                 logger.error("Belief revision cycle failed: %s", e)
                 backoff = min(backoff * 2, 600.0)  # Exponential backoff, cap at 10 min
 
-    def check_belief_consistency(self, *, min_confidence: float = 0.6) -> dict[str, Any]:
-        """Run the natural-deduction prover over current beliefs.
+    def check_belief_consistency(
+        self, *, min_confidence: float = 0.6, resolve: bool = True
+    ) -> dict[str, Any]:
+        """Run the natural-deduction prover over current beliefs and act on conflicts.
 
-        Detects when Aura holds a proposition and its explicit negation at high
-        confidence (a logical inconsistency in her self-model) and surfaces it to
-        deduction governance. Returns the consistency report as a dict.
+        Detects when Aura holds a proposition and its negation (or a chained
+        modus-ponens conflict) at high confidence, surfaces it to deduction
+        governance, and — when ``resolve`` — applies epistemic humility: the
+        lower-confidence belief in each conflict loses confidence so the
+        contradiction is driven toward resolution instead of sitting unaddressed.
         """
         try:
             from core.reasoning.belief_consistency import check_beliefs
@@ -342,10 +346,40 @@ class BeliefRevisionEngine:
                 min_confidence=min_confidence,
             )
             record_belief_inconsistency(report)
+            if resolve and not report.consistent and report.contradictions:
+                self._resolve_logical_conflicts(report.contradictions)
             return report.to_dict()
         except _BELIEF_REVISION_RECOVERABLE_ERRORS as exc:
             record_degradation("belief_revision", exc)
             return {"consistent": True, "error": repr(exc)}
+
+    def _resolve_logical_conflicts(self, contradictions: list[tuple[str, str]]) -> None:
+        """Dampen the weaker side of each detected logical conflict.
+
+        Closing the deduction loop: a contradiction is not merely logged — the
+        lower-confidence conflicting belief is demoted (×0.6) and flagged for the
+        BeliefChallenger, so an inconsistent self-model is actively revised.
+        """
+        by_content = {b.content.strip().lower(): b for b in self.beliefs}
+        for affirm, deny in contradictions:
+            sides = []
+            for text in (affirm, deny):
+                for part in str(text).split(" + "):
+                    b = by_content.get(part.strip().lower())
+                    if b is not None:
+                        sides.append(b)
+            if len(sides) < 2:
+                continue
+            weaker = min(sides, key=lambda b: b.confidence)
+            old = weaker.confidence
+            weaker.confidence = max(0.05, weaker.confidence * 0.6)
+            weaker.last_updated = time.time()
+            if "logical_conflict" not in weaker.supporting_evidence:
+                weaker.supporting_evidence.append("logical_conflict")
+            logger.warning(
+                "🧮 [Beliefs] demoting weaker side of logical conflict: \"%s\" %.2f→%.2f",
+                weaker.content, old, weaker.confidence,
+            )
 
     async def process_new_claim(
         self, claim: str, domain: str, source: str, confidence: float = 0.5

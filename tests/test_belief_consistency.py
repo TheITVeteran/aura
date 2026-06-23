@@ -38,6 +38,26 @@ def test_contradiction_detected_between_belief_and_its_negation():
     assert "sovereign" in affirm.lower() and "sovereign" in deny.lower()
 
 
+def test_implication_belief_encodes_as_implies():
+    from core.reasoning.belief_consistency import encode_belief
+    from core.reasoning.natural_deduction import Implies
+
+    enc = encode_belief("if it rains then the ground is wet")
+    assert isinstance(enc.formula, Implies)
+
+
+def test_chained_modus_ponens_contradiction_detected():
+    # {rain, rain→wet, ¬wet} is inconsistent — the prover chains the implication.
+    report = check_beliefs([
+        ("it rains", 0.9),
+        ("if it rains then the ground is wet", 0.9),
+        ("the ground is not wet", 0.9),
+    ])
+    assert not report.consistent
+    assert report.contradictions          # the conflicting source beliefs are surfaced
+    assert len(report.minimal_core) >= 2
+
+
 def test_low_confidence_beliefs_excluded():
     # the negation is low-confidence → not treated as a firm contradiction
     report = check_beliefs([
@@ -68,6 +88,22 @@ def test_governance_consistent_report_no_event_bump():
 
 
 # ── SymbolicBridge exact-solver routing ───────────────────────────────────
+
+def test_belief_engine_demotes_weaker_side_of_conflict():
+    from core.belief_revision import Belief, BeliefRevisionEngine
+
+    eng = BeliefRevisionEngine.__new__(BeliefRevisionEngine)
+    eng.beliefs = [
+        Belief(id="b1", content="I am sovereign", confidence=0.95, domain="self", source="axiom"),
+        Belief(id="b2", content="I am not sovereign", confidence=0.7, domain="self", source="conversation"),
+    ]
+    eng.check_belief_consistency()
+    weaker = next(b for b in eng.beliefs if b.content == "I am not sovereign")
+    stronger = next(b for b in eng.beliefs if b.content == "I am sovereign")
+    assert weaker.confidence < 0.7                       # demoted
+    assert stronger.confidence == 0.95                   # stronger side untouched
+    assert "logical_conflict" in weaker.supporting_evidence
+
 
 def test_symbolic_bridge_prove_logic_valid():
     res = SymbolicBridge().prove_logic(["A", "A -> B"], "B")

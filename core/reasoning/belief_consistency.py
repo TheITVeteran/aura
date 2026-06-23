@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from core.reasoning.natural_deduction import (
     Atom,
     Formula,
+    Implies,
     Not,
     find_contradiction,
     is_consistent,
@@ -64,29 +65,53 @@ class ConsistencyReport:
         }
 
 
+# Implication cues: "if X then Y", "X implies/means/leads to/entails Y".
+_IF_THEN_RE = re.compile(r"^\s*if\b(?P<ante>.+?)\bthen\b(?P<cons>.+)$", re.IGNORECASE)
+_X_IMPLIES_Y_RE = re.compile(
+    r"^(?P<ante>.+?)\b(?:implies|means that|means|leads to|entails|requires)\b(?P<cons>.+)$",
+    re.IGNORECASE,
+)
+
+
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "").strip().lower()).strip(" .!?")
 
 
-def encode_belief(content: str) -> EncodedBelief:
-    """Encode a natural-language claim as a propositional literal.
-
-    A negation cue flips the polarity; the negation cue and grammatical filler are
-    stripped to form the *core key*, so an affirmation and its explicit negation
-    map to the same atom with opposite polarity.
-    """
-    norm = _normalize(content)
+def _literal(text: str) -> tuple[Formula, str, bool]:
+    """Encode a clause as an atom (or its negation), returning (formula, key, negated)."""
+    norm = _normalize(text)
     negated = bool(_NEG_RE.search(norm))
     core = _NEG_RE.sub(" ", norm)
     core = _FILLER_RE.sub(" ", core)
     core = re.sub(r"\s+", " ", core).strip()
     atom = Atom(core or norm or "∅")
-    return EncodedBelief(
-        formula=Not(atom) if negated else atom,
-        core_key=atom.name,
-        negated=negated,
-        source=str(content),
-    )
+    return (Not(atom) if negated else atom, atom.name, negated)
+
+
+def encode_belief(content: str) -> EncodedBelief:
+    """Encode a natural-language claim as a propositional formula.
+
+    Implication-shaped claims ("if X then Y", "X implies Y") become ``Implies`` so
+    the prover can chain them (modus ponens) — this is what lets it catch
+    multi-step contradictions like {X, X→Y, ¬Y}, not just direct X ∧ ¬X.
+    Otherwise a negation cue flips polarity and the cue + grammatical filler are
+    stripped to form the core key, so an affirmation and its explicit negation map
+    to the same atom with opposite polarity.
+    """
+    raw = str(content or "")
+    m = _IF_THEN_RE.match(raw) or _X_IMPLIES_Y_RE.match(raw)
+    if m and m.group("ante").strip() and m.group("cons").strip():
+        ante_f, ante_k, _ = _literal(m.group("ante"))
+        cons_f, cons_k, _ = _literal(m.group("cons"))
+        if ante_k != cons_k:
+            return EncodedBelief(
+                formula=Implies(ante_f, cons_f),
+                core_key=f"{ante_k}→{cons_k}",
+                negated=False,
+                source=raw,
+            )
+    formula, key, negated = _literal(raw)
+    return EncodedBelief(formula=formula, core_key=key, negated=negated, source=raw)
 
 
 def check_beliefs(
@@ -109,19 +134,27 @@ def check_beliefs(
         return ConsistencyReport(consistent=True, checked=len(encoded))
 
     core = find_contradiction(formulas) or []
-    core_keys = {f.f.name if isinstance(f, Not) else f.name for f in core}  # type: ignore[attr-defined]
-    # Pair up the opposing source claims that produced the conflict.
+    core_set = set(core)
+    # Source beliefs whose formula is in the minimal unsatisfiable core — covers
+    # both direct X∧¬X pairs and chained {X, X→Y, ¬Y} modus-ponens conflicts.
+    core_sources = [e.source for e in encoded if e.formula in core_set]
+
+    # Direct opposing pairs (atom vs. its negation) for a clean (affirm, deny).
     by_key: dict[str, dict[bool, str]] = {}
     for e in encoded:
-        if e.core_key in core_keys:
+        if e.formula in core_set and isinstance(e.formula, (Atom, Not)):
             by_key.setdefault(e.core_key, {})[e.negated] = e.source
     contradictions: list[tuple[str, str]] = []
-    for key, sides in by_key.items():
+    for sides in by_key.values():
         if True in sides and False in sides:
             contradictions.append((sides[False], sides[True]))
+    # If the conflict is purely chained (no direct pair), surface the core sources.
+    if not contradictions and len(core_sources) >= 2:
+        contradictions.append((core_sources[0], " + ".join(core_sources[1:])))
+
     return ConsistencyReport(
         consistent=False,
         contradictions=contradictions,
-        minimal_core=[str(f) for f in core],
+        minimal_core=core_sources or [str(f) for f in core],
         checked=len(encoded),
     )
