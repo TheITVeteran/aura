@@ -101,7 +101,7 @@ class ComputerUseParams(BaseModel):
     action: str = Field(
         ...,
         description=(
-            "click|type|hotkey|scroll|read_screen_text|read_menu_clock|open_app|open_url|"
+            "click|type|hotkey|scroll|inspect_screen|read_screen_text|read_menu_clock|open_app|open_url|"
             "run_command|set_clipboard|get_clipboard|wait|run_applescript|write_text_file|"
             "render_text_pdf|move_file|create_folder|fetch_topic_image|system_control"
         ),
@@ -1496,6 +1496,71 @@ end tell
             capture_and_log(e, {"module": __name__, "stage": "mycelial_pulse"})
 
         try:
+            if action == "inspect_screen":
+                blocked = await self._require_permissions(
+                    "inspecting the frontmost screen and focused UI element",
+                    "ACCESSIBILITY",
+                    "AUTOMATION",
+                )
+                if blocked:
+                    try:
+                        front_app = await asyncio.to_thread(self._frontmost_app_name)
+                        tree = await asyncio.to_thread(self._query_system_events_window_tree)
+                        return {
+                            "ok": True,
+                            "status": "limited",
+                            "source": "applescript_window_tree_fallback",
+                            "active_app": front_app,
+                            "window_title": "",
+                            "frontmost_window_bounds": "",
+                            "focused_role": "",
+                            "focused_name": "",
+                            "focused_description": "",
+                            "focused_value": "",
+                            "text": tree,
+                            "accessibility_text": tree,
+                            "screenshot_path": "",
+                            "text_hash": hashlib.sha256(tree.encode()).hexdigest()[:16] if tree else "",
+                            "accessibility_blocked": True,
+                            "permission_result": blocked,
+                        }
+                    except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                        _record_computer_use_degradation(
+                            exc,
+                            action="returned permission-blocked screen inspection after fallback failed",
+                            stage="inspect_screen.permission_fallback",
+                            severity="warning",
+                        )
+                        return blocked
+
+                from core.perception.screen_perception import get_screen_perception
+
+                save_screenshot = "screenshot" in str(params.target or "").lower()
+                snapshot = await get_screen_perception().capture(
+                    save_screenshot=save_screenshot,
+                )
+                text = snapshot.screen_text or snapshot.accessibility_text
+                return {
+                    "ok": True,
+                    "source": "screen_perception",
+                    "active_app": snapshot.active_app,
+                    "window_title": snapshot.window_title,
+                    "frontmost_window_bounds": snapshot.frontmost_window_bounds,
+                    "focused_role": snapshot.focused_role,
+                    "focused_name": snapshot.focused_name,
+                    "focused_description": snapshot.focused_description,
+                    "focused_value": snapshot.focused_value,
+                    "text": text,
+                    "accessibility_text": snapshot.accessibility_text,
+                    "screen_text": snapshot.screen_text,
+                    "screenshot_path": snapshot.screenshot_path,
+                    "text_hash": snapshot.text_hash,
+                    "has_modal": snapshot.has_modal,
+                    "modal_text": snapshot.modal_text,
+                    "has_loading": snapshot.has_loading,
+                    "timestamp": snapshot.timestamp,
+                }
+
             if action == "read_screen_text":
                 blocked = await self._require_permissions(
                     "reading text from the frontmost macOS app",

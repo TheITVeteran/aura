@@ -15,6 +15,7 @@ DESKTOP_TASK_ALLOWED_ACTIONS: tuple[str, ...] = (
     "type",
     "hotkey",
     "scroll",
+    "inspect_screen",
     "read_screen_text",
     "read_menu_clock",
     "open_app",
@@ -36,6 +37,7 @@ DESKTOP_TASK_RETRY_SAFE_ACTIONS: frozenset[str] = frozenset(
     {
         "create_folder",
         "get_clipboard",
+        "inspect_screen",
         "open_app",
         "read_menu_clock",
         "read_screen_text",

@@ -11,6 +11,76 @@ from core.skills.computer_use import ComputerUseSkill
 
 
 @pytest.mark.asyncio
+async def test_computer_use_inspect_screen_returns_structured_perception(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    class PerceptionDouble:
+        async def capture(self, *, save_screenshot=False):
+            assert save_screenshot is False
+            return SimpleNamespace(
+                active_app="Google Chrome",
+                window_title="Climate article",
+                frontmost_window_bounds="0,25,1440,900",
+                focused_role="AXTextArea",
+                focused_name="Document body",
+                focused_description="editing area",
+                focused_value="",
+                accessibility_text="Google Docs document body text",
+                screen_text="",
+                screenshot_path="",
+                text_hash="abc123",
+                has_modal=False,
+                modal_text="",
+                has_loading=False,
+                timestamp=123.0,
+            )
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(
+        "core.perception.screen_perception.get_screen_perception",
+        lambda: PerceptionDouble(),
+    )
+
+    result = await skill.execute({"action": "inspect_screen", "target": ""}, {})
+
+    assert result["ok"] is True
+    assert result["source"] == "screen_perception"
+    assert result["active_app"] == "Google Chrome"
+    assert result["window_title"] == "Climate article"
+    assert result["focused_role"] == "AXTextArea"
+    assert result["text"] == "Google Docs document body text"
+    assert result["text_hash"] == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_computer_use_inspect_screen_falls_back_to_window_tree_on_permission_block(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_denial(capability, *permission_names):
+        return {"ok": False, "status": "denied", "error": "permission denied by test guard"}
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_denial)
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Notes")
+    monkeypatch.setattr(
+        skill,
+        "_query_system_events_window_tree",
+        lambda: "Process: Notes\n  Window: Aura note\n    Element [AXTextArea]: draft",
+    )
+
+    result = await skill.execute({"action": "inspect_screen", "target": ""}, {})
+
+    assert result["ok"] is True
+    assert result["status"] == "limited"
+    assert result["source"] == "applescript_window_tree_fallback"
+    assert result["active_app"] == "Notes"
+    assert "AXTextArea" in result["text"]
+    assert result["accessibility_blocked"] is True
+
+
+@pytest.mark.asyncio
 async def test_computer_use_read_screen_text_fallback_on_permission_block(monkeypatch):
     skill = ComputerUseSkill()
 

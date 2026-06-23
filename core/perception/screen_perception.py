@@ -30,6 +30,12 @@ class ScreenSnapshot:
     """A structured snapshot of the current screen state."""
     active_app: str = ""
     window_title: str = ""
+    frontmost_window_bounds: str = ""
+    focused_role: str = ""
+    focused_name: str = ""
+    focused_description: str = ""
+    focused_value: str = ""
+    accessibility_text: str = ""    # frontmost app accessibility tree text
     screen_text: str = ""           # OCR text
     text_hash: str = ""             # for change detection
     screenshot_path: str = ""       # saved screenshot file
@@ -110,6 +116,14 @@ class ScreenPerception:
         except ImportError:
             return "[OCR not available — install pytesseract for screen text extraction]"
 
+    @staticmethod
+    def _bounded_text(value: str, limit: int = 6000) -> str:
+        text = str(value or "").strip()
+        if len(text) <= limit:
+            return text
+        half = max(1, limit // 2)
+        return text[:half] + "\n... [TRUNCATED] ...\n" + text[-half:]
+
     async def _run_osascript(
         self,
         script: str,
@@ -181,20 +195,15 @@ class ScreenPerception:
         snap = ScreenSnapshot()
         self._capture_count += 1
 
-        # Get active app and window title (fast, via AppleScript)
-        snap.active_app = await self._run_osascript(
-            'tell application "System Events" to get name of first application process whose frontmost is true',
-            source="screen_perception.active_app",
-        )
-
-        if snap.active_app:
-            app_name = snap.active_app.replace("\\", "\\\\").replace('"', '\\"')
-            snap.window_title = (
-                await self._run_osascript(
-                    f'tell application "System Events" to get name of front window of process "{app_name}"',
-                    source="screen_perception.window_title",
-                )
-            )[:200]
+        summary = await self._frontmost_accessibility_summary()
+        snap.active_app = summary.get("active_app", "")
+        snap.window_title = summary.get("window_title", "")[:200]
+        snap.frontmost_window_bounds = summary.get("frontmost_window_bounds", "")
+        snap.focused_role = summary.get("focused_role", "")
+        snap.focused_name = summary.get("focused_name", "")
+        snap.focused_description = summary.get("focused_description", "")
+        snap.focused_value = summary.get("focused_value", "")
+        snap.accessibility_text = self._bounded_text(summary.get("accessibility_text", ""))
 
         # Take screenshot
         if save_screenshot:
@@ -205,6 +214,8 @@ class ScreenPerception:
             snap.screen_text = await self._ocr_screenshot(snap.screenshot_path)
         if snap.screen_text:
             snap.text_hash = hashlib.sha256(snap.screen_text.encode()).hexdigest()[:16]
+        elif snap.accessibility_text:
+            snap.text_hash = hashlib.sha256(snap.accessibility_text.encode()).hexdigest()[:16]
 
         # Modal/loading detection from window title heuristics
         title_lower = snap.window_title.lower()
@@ -217,6 +228,66 @@ class ScreenPerception:
 
         self._last_hash = snap.text_hash
         return snap
+
+    async def _frontmost_accessibility_summary(self) -> dict[str, str]:
+        """Return frontmost app, window, focus, bounds, and accessibility text."""
+
+        output = await self._run_osascript(
+            r'''tell application "System Events"
+    set frontApp to first application process whose frontmost is true
+    set appName to name of frontApp
+    set winTitle to ""
+    set boundsText to ""
+    set focusRole to ""
+    set focusName to ""
+    set focusDescription to ""
+    set focusValue to ""
+    set contentsText to ""
+    try
+        set winTitle to name of front window of frontApp
+    end try
+    try
+        tell front window of frontApp
+            set winPosition to position
+            set winSize to size
+            set boundsText to ((item 1 of winPosition) as string) & "," & ((item 2 of winPosition) as string) & "," & ((item 1 of winSize) as string) & "," & ((item 2 of winSize) as string)
+        end tell
+    end try
+    try
+        set focusedElement to first UI element of frontApp whose focused is true
+        try
+            set focusRole to role of focusedElement as string
+        end try
+        try
+            set focusName to name of focusedElement as string
+        end try
+        try
+            set focusDescription to description of focusedElement as string
+        end try
+        try
+            set focusValue to value of focusedElement as string
+        end try
+    end try
+    try
+        set contentsText to entire contents of frontApp as string
+    end try
+    return appName & linefeed & winTitle & linefeed & boundsText & linefeed & focusRole & linefeed & focusName & linefeed & focusDescription & linefeed & focusValue & linefeed & contentsText
+end tell''',
+            source="screen_perception.accessibility_summary",
+            timeout_s=3.0,
+        )
+        parts = output.split("\n", 7) if output else []
+        parts += [""] * max(0, 8 - len(parts))
+        return {
+            "active_app": parts[0].strip(),
+            "window_title": parts[1].strip(),
+            "frontmost_window_bounds": parts[2].strip(),
+            "focused_role": parts[3].strip(),
+            "focused_name": parts[4].strip(),
+            "focused_description": parts[5].strip(),
+            "focused_value": parts[6].strip(),
+            "accessibility_text": parts[7].strip(),
+        }
 
     async def get_active_window(self) -> dict[str, str]:
         """Get just the active window info (fast, no screenshot)."""

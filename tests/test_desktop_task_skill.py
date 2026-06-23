@@ -808,6 +808,16 @@ def test_desktop_task_verifies_all_readback_and_command_actions():
             "clipboard_read_chars=5",
         ),
         (
+            DesktopTaskStep(action="inspect_screen"),
+            {
+                "ok": True,
+                "action": "inspect_screen",
+                "active_app": "Google Chrome",
+                "text": "Document body",
+            },
+            "screen_text_returned;frontmost_app=Google Chrome",
+        ),
+        (
             DesktopTaskStep(action="read_menu_clock"),
             {
                 "ok": True,

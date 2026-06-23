@@ -1851,9 +1851,17 @@ class DesktopTaskSkill(BaseSkill):
                 bool(typed) and verified,
                 evidence,
             )
-        if action == "read_screen_text":
+        if action in {"inspect_screen", "read_screen_text"}:
             text = str(result.get("text") or "").strip()
-            return (bool(text), "screen_text_returned" if text else "missing screen text evidence")
+            active_app = str(result.get("active_app") or "").strip()
+            if text:
+                detail = "screen_text_returned"
+                if active_app:
+                    detail = f"{detail};frontmost_app={active_app}"
+                return True, detail
+            if action == "inspect_screen" and active_app:
+                return True, f"frontmost_app={active_app}"
+            return (False, "missing screen text evidence")
         return False, f"unsupported effect evidence for desktop action {action}"
 
     @staticmethod
@@ -2384,7 +2392,7 @@ class DesktopTaskSkill(BaseSkill):
     def _primitive_steps_are_only_observational(steps: list[DesktopTaskStep]) -> bool:
         if not steps:
             return True
-        non_effect_actions = {"read_screen_text", "wait", "get_clipboard"}
+        non_effect_actions = {"inspect_screen", "read_screen_text", "wait", "get_clipboard"}
         return all(step.action in non_effect_actions for step in steps)
 
     @staticmethod
