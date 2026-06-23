@@ -177,13 +177,23 @@ class EmergentGoalEngine:
     # Adoption
     # ------------------------------------------------------------------
     def adoption_ready(self) -> list[EmergentGoal]:
+        from core.goals.goal_governance import get_goal_governance_gate
+
+        gate = get_goal_governance_gate()
         with self._lock:
             ready: list[EmergentGoal] = []
             for goal_id, goal in list(self._candidates.items()):
                 if goal.adopted:
                     continue
-                if self._support_counts.get(goal_id, 0) >= self.ADOPTION_THRESHOLD:
-                    ready.append(goal)
+                if self._support_counts.get(goal_id, 0) < self.ADOPTION_THRESHOLD:
+                    continue
+                # #47 governance bound: an open-ended emergent goal may be adopted
+                # only if it stays within the designed value space (CLAIM_BOUNDARIES
+                # 4.A — composition within the designed drives, not unbounded
+                # genesis). Out-of-space / unsafe candidates are refused here.
+                if not gate.is_permitted(goal.objective):
+                    continue
+                ready.append(goal)
             return ready
 
     def mark_adopted(self, goal_id: str) -> None:
