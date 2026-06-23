@@ -5149,6 +5149,7 @@ async def test_chat_exchange_persists_user_before_reply_without_duplicate(monkey
             {
                 "origin": "desktop_ui",
                 "cid": f"{exchange_id}:user",
+                "session_id": "desktop-client-session",
             },
         )
     ]
@@ -5163,6 +5164,7 @@ async def test_chat_exchange_persists_user_before_reply_without_duplicate(monkey
     assert [call[0] for call in calls] == ["turn", "turn"]
     assert calls[1][1] == "aura"
     assert calls[1][3]["cid"] == f"{exchange_id}:aura"
+    assert calls[1][3]["session_id"] == "desktop-client-session"
 
 
 @pytest.mark.asyncio
@@ -5209,6 +5211,55 @@ async def test_chat_exchange_falls_back_to_atomic_exchange_when_prelog_fails(mon
 
 
 @pytest.mark.asyncio
+async def test_chat_exchange_atomic_persistence_keeps_ui_session_id(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _Persistence:
+        def record_turn(self, role, content, **kwargs):
+            calls.append(("turn", role, content, dict(kwargs)))
+            return f"{role}-turn"
+
+        def record_exchange(self, user, aura, **kwargs):
+            calls.append(("exchange", user, aura, dict(kwargs)))
+            return ("user-turn", "aura-turn")
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _Persistence()
+            if name == "persistence"
+            else default
+        ),
+    )
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+
+    await chat_routes._persist_completed_conversation_exchange(
+        exchange_id="ui-session-check",
+        user_message="Remember this through the desktop UI session.",
+        aura_response="I will persist it under the UI session id.",
+        session_id="desktop-ui-session-42",
+        user_already_persisted=False,
+    )
+
+    assert calls == [
+        (
+            "exchange",
+            "Remember this through the desktop UI session.",
+            "I will persist it under the UI session id.",
+            {
+                "origin": "desktop_ui",
+                "cid": "ui-session-check",
+                "session_id": "desktop-ui-session-42",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_chat_restart_recovers_completed_exchange_from_canonical_persistence(
     monkeypatch,
     tmp_path,
@@ -5249,6 +5300,59 @@ async def test_chat_restart_recovers_completed_exchange_from_canonical_persisten
     assert recovered
     assert recovered[-1]["user"] == "Remember the live desktop continuity contract."
     assert "recover this completed exchange" in recovered[-1]["aura"]
+
+
+@pytest.mark.asyncio
+async def test_chat_restart_recovers_completed_exchange_from_ui_session(
+    monkeypatch,
+    tmp_path,
+):
+    from core.conversation.persistence import ConversationPersistence
+    from interface.routes import chat as chat_routes
+
+    persistence = ConversationPersistence(tmp_path / "conversation.db")
+    persistence.start_session({"source": "boot-session-that-should-not-own-ui-turn"})
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: persistence
+            if name == "persistence"
+            else default
+        ),
+    )
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+
+    exchange_id = await chat_routes._begin_logged_exchange(
+        "Remember the UI lane continuity detail.",
+        session_id="desktop-visible-session",
+    )
+    await chat_routes._complete_logged_exchange(
+        exchange_id,
+        "Remember the UI lane continuity detail.",
+        "I persisted it under the desktop-visible-session transcript.",
+        record_experience=False,
+    )
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+
+    recovered = await chat_routes._recent_completed_conversation_exchanges(
+        current_user_message="What did I ask you to remember?",
+        session_id="desktop-visible-session",
+        limit=6,
+    )
+    wrong_session = await chat_routes._recent_completed_conversation_exchanges(
+        current_user_message="What did I ask you to remember?",
+        session_id="different-visible-session",
+        limit=6,
+    )
+
+    assert recovered
+    assert recovered[-1]["user"] == "Remember the UI lane continuity detail."
+    assert recovered[-1]["session_id"] == "desktop-visible-session"
+    assert "desktop-visible-session transcript" in recovered[-1]["aura"]
+    assert wrong_session == []
 
 
 @pytest.mark.asyncio

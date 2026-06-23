@@ -163,6 +163,21 @@ class ConversationPersistence:
         logger.debug("Conversation session started: %s", session_id)
         return session_id
 
+    @staticmethod
+    def _ensure_session_row(con: sqlite3.Connection, session_id: str, now: float) -> None:
+        """Create an explicit UI session row before inserting turns.
+
+        Desktop clients may send stable session ids that were not produced by
+        ``start_session()``. The transcript store must treat those as real
+        sessions instead of falling through to the boot singleton session or
+        failing a foreign-key insert.
+        """
+
+        con.execute(
+            "INSERT OR IGNORE INTO sessions VALUES (?,?,?,?)",
+            (session_id, now, now, "{}"),
+        )
+
     def record_turn(
         self,
         role: str,
@@ -184,6 +199,7 @@ class ConversationPersistence:
         inserted = False
         with self._connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            self._ensure_session_row(con, sid, now)
             if cid:
                 existing = con.execute(
                     "SELECT id FROM turns WHERE cid = ? ORDER BY created_at ASC, rowid ASC LIMIT 1",
@@ -246,6 +262,7 @@ class ConversationPersistence:
 
         with self._connect() as con:
             con.execute("BEGIN IMMEDIATE")
+            self._ensure_session_row(con, sid, now)
             existing_user = (
                 con.execute(
                     "SELECT id FROM turns WHERE cid = ? ORDER BY created_at ASC, rowid ASC LIMIT 1",

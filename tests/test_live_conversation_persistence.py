@@ -69,6 +69,7 @@ async def test_completed_live_exchange_survives_process_memory_clear(monkeypatch
             "user": "The continuity codeword is restart-echo-742.",
             "aura": "I will retain restart-echo-742 across a process restart.",
             "timestamp": "2.0",
+            "session_id": "session-live",
         }
     ]
 

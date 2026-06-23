@@ -273,6 +273,7 @@ async def _persist_pending_conversation_user(
                 str(user_message or ""),
                 origin="desktop_ui",
                 cid=f"{str(exchange_id or '')[:64]}:user",
+                session_id=str(session_id or "")[:64] or None,
             ),
             timeout=_DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S,
         )
@@ -1908,6 +1909,7 @@ async def _persist_completed_conversation_exchange(
             return False
 
         safe_exchange_id = str(exchange_id or uuid.uuid4().hex[:8])[:64]
+        safe_session_id = str(session_id or "")[:64]
 
         def _commit() -> None:
             if user_already_persisted and callable(record_turn):
@@ -1916,6 +1918,7 @@ async def _persist_completed_conversation_exchange(
                     str(aura_response or ""),
                     origin="desktop_ui",
                     cid=f"{safe_exchange_id}:aura",
+                    session_id=safe_session_id or None,
                 )
                 return
             if callable(record_exchange):
@@ -1924,6 +1927,7 @@ async def _persist_completed_conversation_exchange(
                     str(aura_response or ""),
                     origin="desktop_ui",
                     cid=safe_exchange_id,
+                    session_id=safe_session_id or None,
                 )
                 return
             record_turn(
@@ -1931,12 +1935,14 @@ async def _persist_completed_conversation_exchange(
                 str(user_message or ""),
                 origin="desktop_ui",
                 cid=f"{safe_exchange_id}:user",
+                session_id=safe_session_id or None,
             )
             record_turn(
                 "aura",
                 str(aura_response or ""),
                 origin="desktop_ui",
                 cid=f"{safe_exchange_id}:aura",
+                session_id=safe_session_id or None,
             )
 
         await asyncio.wait_for(
@@ -2004,7 +2010,12 @@ def _load_durable_conversation_exchanges_sync(
                     limit=_RECENT_CONVERSATION_AURA_CHARS,
                 ),
                 "timestamp": str(row.get("created_at") or pending_user.get("created_at") or ""),
-                "session_id": safe_session_id,
+                "session_id": str(
+                    row.get("session_id")
+                    or pending_user.get("session_id")
+                    or safe_session_id
+                    or ""
+                )[:64],
             }
         )
         pending_user = None
@@ -11608,7 +11619,11 @@ async def api_chat(
                 )
                 pending_exchange_id = None
             else:
-                await _log_exchange(_semantic_user_message, final_text)
+                await _log_exchange(
+                    _semantic_user_message,
+                    final_text,
+                    session_id=_chat_session_id,
+                )
             if idem_key:
                 async with _get_idemp_lock():
                     _idempotency_cache[idem_key] = response_data
@@ -12761,7 +12776,12 @@ async def api_chat(
                     )
                     pending_exchange_id = None
                 else:
-                    await _log_exchange(_semantic_user_message, empty_reply, record_experience=False)
+                    await _log_exchange(
+                        _semantic_user_message,
+                        empty_reply,
+                        record_experience=False,
+                        session_id=_chat_session_id,
+                    )
                 await _emit_chat_output_receipt(
                     empty_reply,
                     cause="chat_response",
@@ -12804,7 +12824,12 @@ async def api_chat(
                     )
                     pending_exchange_id = None
                 else:
-                    await _log_exchange(_semantic_user_message, failed_reply, record_experience=False)
+                    await _log_exchange(
+                        _semantic_user_message,
+                        failed_reply,
+                        record_experience=False,
+                        session_id=_chat_session_id,
+                    )
                 await _emit_chat_output_receipt(
                     failed_reply,
                     cause="chat_response",
@@ -12844,7 +12869,12 @@ async def api_chat(
                 )
                 pending_exchange_id = None
             else:
-                await _log_exchange(_semantic_user_message, final_benchmark_text, record_experience=False)
+                await _log_exchange(
+                    _semantic_user_message,
+                    final_benchmark_text,
+                    record_experience=False,
+                    session_id=_chat_session_id,
+                )
             await _emit_chat_output_receipt(
                 final_benchmark_text,
                 cause="chat_response",
@@ -13210,7 +13240,11 @@ async def api_chat(
             )
             pending_exchange_id = None
         else:
-            await _log_exchange(_semantic_user_message, _final_reply or "…")
+            await _log_exchange(
+                _semantic_user_message,
+                _final_reply or "…",
+                session_id=_chat_session_id,
+            )
 
         # Cache idempotent response
         if idem_key:
