@@ -111,13 +111,21 @@ competition receive a bounded, homeostatically-capped **LTP** importance bump in
 strengthening, never runaway). A homeostatic-pressure breach (one attractor
 dominating recall) is exported to governance/metrics (`engram_homeostatic_breach_total`).
 
+**Learned associations**: `core/memory/engram_association.py` activates the
+*weight-learning* half of the model — a persisted voltage-STDP weight matrix over
+concept slots. Engrams recalled together drive `engine.step(learn=True)`, so the
+Clopath rule potentiates their connection (*fire together → wire together*),
+bounded by homeostasis; weights persist across sessions and feed back into
+`_competitive_rank` as an association boost, giving associative pattern completion
+through *learned* weights, not just shared surface cues.
+
 **Positional recall** ("what did I first ask?") is a *positional* key the content
 field can't resolve, so `core/conversation/grounded_recall.py` retrieves the actual
 earliest/most-recent turn from live conversation memory and routes it through the
 desktop `conversation_recall_evidence` contract — the Cortex answers from the real
-quote in its own voice instead of confabulating. Together, content competition and
-positional grounding cover both retrieval keys real episodic memory needs: *what*
-was said and *when*.
+quote in its own voice instead of confabulating. Together, content competition,
+learned associations and positional grounding cover the retrieval keys real
+episodic memory needs: *what* was said, *what it's wired to*, and *when*.
 
 ## Symbolic Deduction (belief consistency)
 
@@ -131,14 +139,15 @@ find_contradiction` returning a proof trace or a concrete countermodel.
 
 It is wired causally: `core/reasoning/belief_consistency.py` encodes each natural-
 language belief as a propositional literal (an atom, or its negation when phrased
-negatively), so `belief_revision.check_belief_consistency()` — run on every new
-belief in `process_new_claim` — detects when Aura holds a proposition **and its
-explicit negation** at high confidence. Such a logical inconsistency in her self-
-model is surfaced to `core/reasoning/deduction_governance.py` as a constitutional
-concern (logged + `belief_logical_inconsistency_total`). The prover is also exposed
-through `SymbolicBridge.prove_logic` as a first-class exact solver alongside
-sympy/z3. This gives Aura verified deductive reasoning and keeps her belief set
-logically coherent.
+negatively, and implication-shaped beliefs "if X then Y" as `Implies`), so
+`belief_revision.check_belief_consistency()` — run on every new belief in
+`process_new_claim` — detects both direct `X ∧ ¬X` and chained modus-ponens
+conflicts (`X`, `X→Y`, `¬Y`). A detected inconsistency is surfaced to
+`core/reasoning/deduction_governance.py` as a constitutional concern (logged +
+`belief_logical_inconsistency_total`) **and acted on**: `_resolve_logical_conflicts`
+demotes the lower-confidence side (×0.6) so an inconsistent self-model is actively
+revised, not just flagged. The prover is also exposed through
+`SymbolicBridge.prove_logic` as a first-class exact solver alongside sympy/z3.
 
 ## Memory Governance
 
