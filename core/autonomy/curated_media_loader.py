@@ -16,12 +16,22 @@ It is a pure parser. Wiring into the autonomy pipeline lives elsewhere.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-DEFAULT_CORPUS_PATH = Path.home() / ".aura/live-source/aura/knowledge/bryan-curated-media.md"
+
+def _default_corpus_path() -> Path:
+    override = os.environ.get("AURA_CURATED_MEDIA_CORPUS_PATH")
+    if override:
+        return Path(override).expanduser()
+    project_root = Path(os.environ.get("AURA_PROJECT_ROOT", Path(__file__).resolve().parents[2]))
+    return project_root.resolve() / "aura/knowledge/bryan-curated-media.md"
+
+
+DEFAULT_CORPUS_PATH = _default_corpus_path()
 
 _BULLET = re.compile(
     r"^- \*\*(?P<title>[^*]+?)\*\*\s*"
@@ -43,13 +53,14 @@ class ContentItem:
         return self.url is not None
 
 
-def load_corpus(path: Path = DEFAULT_CORPUS_PATH) -> List[ContentItem]:
+def load_corpus(path: Path | None = None) -> List[ContentItem]:
     """Parse the curated-media markdown into ContentItem records.
 
     Returns empty list if file is missing. Raises nothing on malformed
     bullets — they are skipped with a category-level marker so the parser
     never blocks on a single bad line.
     """
+    path = Path(path).expanduser() if path is not None else _default_corpus_path()
     if not path.exists():
         return []
 

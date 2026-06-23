@@ -518,6 +518,35 @@ def test_reply_topicality_flags_bare_confusion_foreign_memory_drift():
     assert reason == "contextual_relevance_miss"
 
 
+def test_reply_topicality_flags_contracted_context_challenge_drift():
+    from interface.routes import chat as chat_routes
+
+    off_topic, reason = chat_routes._evaluate_reply_topicality(
+        "What're you talking about?",
+        "The voices. The small ones. They're whispering in my ear. Telling me things.",
+        recent_user_messages=[
+            "You with me?",
+            "What pitch?",
+            "What're you talking about?",
+        ],
+    )
+
+    assert off_topic is True
+    assert reason == "contextual_relevance_miss"
+
+
+def test_desktop_recent_context_needed_for_short_followups_and_status_checks():
+    from interface.routes import chat as chat_routes
+
+    assert chat_routes._desktop_turn_needs_recent_context("You with me?")
+    assert chat_routes._desktop_turn_needs_recent_context("What pitch?")
+    assert chat_routes._desktop_turn_needs_recent_context("What're you talking about?")
+    assert chat_routes._desktop_turn_needs_recent_context(
+        "How are you thinking about this conversation right now?"
+    )
+    assert not chat_routes._desktop_turn_needs_recent_context("Hello")
+
+
 @pytest.mark.asyncio
 async def test_complete_logged_exchange_updates_pending_entry_in_place():
     from interface.routes import chat as chat_routes
@@ -655,7 +684,9 @@ async def test_api_chat_continues_to_kernel_when_lane_warmup_times_out(monkeypat
     )
 
     assert response.status_code == 200
-    assert b"Fallback local lane answered." in response.body
+    payload = json.loads(response.body)
+    assert "right here with you" in payload["response"].lower()
+    assert payload["response_confidence"] == "high"
 
 
 @pytest.mark.asyncio
@@ -938,9 +969,23 @@ async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_capability_inventory_bypasses_model_allocation(monkeypatch):
+async def test_api_chat_desktop_capability_inventory_uses_cognitive_engine_first(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append({"objective": objective, "context": dict(context or {})})
+            return SimpleNamespace(
+                content=(
+                    "From the live desktop path I can use governed tool lanes for desktop control, browser and web "
+                    "research, file work, document drafting, terminal tasks, memory recall, and skill execution. "
+                    "A hypothetical scenario would request approval, open sources, create a document, verify the "
+                    "visible result, export the artifact, and record governance receipts without claiming unverified work."
+                )
+            )
 
     class _FakeCapabilityEngine:
         def iter_tool_catalog(self, *, include_inactive: bool = True):
@@ -984,7 +1029,7 @@ async def test_api_chat_desktop_capability_inventory_bypasses_model_allocation(m
 
     def _fake_get(name, default=None):
         if name == "cognitive_engine":
-            raise AssertionError("desktop capability inventory must not allocate CognitiveEngine")
+            return _FakeCognitiveEngine()
         if name == "capability_engine":
             return _FakeCapabilityEngine()
         if name == "authority_gateway":
@@ -1036,10 +1081,12 @@ async def test_api_chat_desktop_capability_inventory_bypasses_model_allocation(m
     )
 
     assert response.status_code == 200
-    assert b"computer_use" in response.body
-    assert b"web_search" in response.body
-    assert b"not opening apps" in response.body
-    assert b"response_confidence\":\"high" in response.body
+    payload = json.loads(response.body)
+    assert "governance receipts" in payload["response"]
+    assert payload["response_confidence"] == "high"
+    assert payload["live_turn_contract"]["engine_think_invoked"] is True
+    assert payload["live_turn_contract"]["full_mind_path"] is True
+    assert calls and calls[0]["context"]["capability_inventory_contract"] is True
     assert fake_kernel.process_calls == 0
 
 
@@ -1909,16 +1956,21 @@ async def test_api_chat_desktop_surface_keeps_nontrivial_chat_on_cognitive_engin
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_required_presence_check_uses_bounded_social_contract(monkeypatch):
+async def test_api_chat_desktop_required_presence_check_uses_cognitive_engine(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
     calls = []
 
-    class _FailingCognitiveEngine:
+    class _FakeCognitiveEngine:
         async def think(self, *_args, **_kwargs):
-            calls.append({"cognitive_engine": "unexpected"})
-            raise AssertionError("desktop presence checks must not cold-warm Cortex")
+            calls.append({"cognitive_engine": "called"})
+            return SimpleNamespace(
+                content=(
+                    "I'm here with you. I'm following this conversation through the live desktop path "
+                    "and answering the current turn directly."
+                )
+            )
 
     class _FakeKernelInterface:
         def is_ready(self):
@@ -1933,12 +1985,14 @@ async def test_api_chat_desktop_required_presence_check_uses_bounded_social_cont
 
     def _fake_get(name, default=None):
         if name == "cognitive_engine":
-            return _FailingCognitiveEngine()
+            return _FakeCognitiveEngine()
         return default
 
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    chat_routes._recent_responses.clear()
+    chat_routes._recent_response_pairs.clear()
     monkeypatch.setattr(
         chat_routes,
         "_collect_conversation_lane_status",
@@ -1963,28 +2017,29 @@ async def test_api_chat_desktop_required_presence_check_uses_bounded_social_cont
 
     monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
 
-    for message in ("you there?", "ping"):
-        response = await server_module.api_chat(
-            server_module.ChatRequest(message=message),
-            SimpleNamespace(
-                headers={
-                    "X-Aura-Surface": "desktop-ui",
-                    "X-Aura-Require-CognitiveEngine": "true",
-                },
-                client=SimpleNamespace(host="test"),
-            ),
-            None,
-            None,
-        )
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="you there?"),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
 
-        assert response.status_code == 200
-        assert b"hey. i'm here with the live thread intact" in response.body
-        assert b"desktop_social_presence_contract" in response.body
-    assert calls == []
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+    assert "following this conversation through the live desktop path" in payload["response"]
+    assert payload["live_turn_contract"]["engine_think_invoked"] is True
+    assert payload["live_turn_contract"]["full_mind_path"] is True
+    assert [call["cognitive_engine"] for call in calls] == ["called"]
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_surface_allows_memory_fastpath_without_cognitive_generation(
+async def test_api_chat_desktop_surface_routes_memory_state_through_cognitive_engine(
     monkeypatch,
     tmp_path,
 ):
@@ -1993,9 +2048,15 @@ async def test_api_chat_desktop_surface_allows_memory_fastpath_without_cognitive
 
     cognitive_calls = []
 
-    async def _unexpected_cognitive_turn(*_args, **_kwargs):
-        cognitive_calls.append("unexpected_cognitive_turn")
-        return "unexpected cognitive generation"
+    async def _memory_cognitive_turn(objective, *_args, **_kwargs):
+        cognitive_calls.append(str(objective))
+        if "Remember this note" in str(objective):
+            return "I've pinned \"the blue lantern is under the desk\" in durable session memory, and I can pull it back later from canonical memory state."
+        if "What note did I ask" in str(objective):
+            return "The phrase you asked me to remember in this session was \"the blue lantern is under the desk.\""
+        if "What changed" in str(objective):
+            return "The concrete change is that \"the blue lantern is under the desk\" is now stored as durable conversation state for later turns."
+        return "I am answering from the canonical memory state evidence."
 
     async def _fake_begin_exchange(*_args, **_kwargs):
         return None
@@ -2012,7 +2073,7 @@ async def test_api_chat_desktop_surface_allows_memory_fastpath_without_cognitive
     monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
-    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _unexpected_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _memory_cognitive_turn)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
     monkeypatch.setattr(
         chat_routes,
@@ -2073,27 +2134,28 @@ async def test_api_chat_desktop_surface_allows_memory_fastpath_without_cognitive
     assert stored.status_code == 200
     assert recalled.status_code == 200
     assert changed.status_code == 200
-    assert stored_payload["status"] == "session_memory_pin"
-    assert recalled_payload["status"] == "session_memory_recall"
-    assert changed_payload["status"] == "session_memory_context_recall"
+    assert stored_payload["status"] == "cognitive_engine"
+    assert recalled_payload["status"] == "cognitive_engine"
+    assert changed_payload["status"] == "cognitive_engine"
     assert "blue lantern is under the desk" in stored_payload["response"]
     assert "failed the final reliability checks" not in stored_payload["response"]
     assert stored_payload["response_confidence"] == "high"
     assert "blue lantern is under the desk" in recalled_payload["response"]
     assert "blue lantern is under the desk" in changed_payload["response"]
-    assert cognitive_calls == []
+    assert len(cognitive_calls) == 3
+    assert all("CANONICAL MEMORY STATE EVIDENCE" in call for call in cognitive_calls)
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_owner_name_recall_preempts_cognitive_engine_when_required(monkeypatch):
+async def test_api_chat_desktop_owner_name_recall_routes_through_cognitive_engine(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
     cognitive_calls = []
 
-    async def _unexpected_cognitive_turn(*_args, **_kwargs):
-        cognitive_calls.append("unexpected_cognitive_turn")
-        return "unexpected cognitive generation"
+    async def _owner_cognitive_turn(objective, *_args, **_kwargs):
+        cognitive_calls.append(str(objective))
+        return "You're Bryan; I know that from the verified owner session, and I will keep that context attached to this conversation."
 
     async def _fake_begin_exchange(*_args, **_kwargs):
         return None
@@ -2109,7 +2171,7 @@ async def test_api_chat_desktop_owner_name_recall_preempts_cognitive_engine_when
     monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_log_exchange", _fake_log_exchange)
-    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _unexpected_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _owner_cognitive_turn)
     monkeypatch.setattr(chat_routes, "_owner_session_is_verified", lambda **_kwargs: True)
     monkeypatch.setattr(chat_routes, "_resolve_primary_operator_name", lambda: "Bryan")
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
@@ -2144,9 +2206,10 @@ async def test_api_chat_desktop_owner_name_recall_preempts_cognitive_engine_when
 
     payload = json.loads(response.body)
     assert response.status_code == 200
-    assert payload["status"] == "owner_identity_recall"
+    assert payload["status"] == "cognitive_engine"
     assert "You're Bryan" in payload["response"]
-    assert cognitive_calls == []
+    assert len(cognitive_calls) == 1
+    assert "CANONICAL MEMORY STATE EVIDENCE" in cognitive_calls[0]
 
 
 @pytest.mark.asyncio
@@ -2564,7 +2627,7 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
 
     assert response.status_code == 503
     assert kernel_calls == []
-    assert b"refused the legacy fallback" in response.body
+    assert b"failed closed instead of sending an ungrounded answer" in response.body
     assert b"desktop_cognitive_engine_required_no_reply" in response.body
 
 
@@ -2863,7 +2926,7 @@ async def test_api_chat_desktop_identity_no_reply_returns_bounded_memory_repair(
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_capability_no_reply_returns_inventory_repair(monkeypatch):
+async def test_api_chat_desktop_capability_no_reply_fails_closed_without_inventory_repair(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
@@ -2975,19 +3038,19 @@ async def test_api_chat_desktop_capability_no_reply_returns_inventory_repair(mon
 
     payload = json.loads(response.body)
     lowered = payload["response"].lower()
-    assert response.status_code == 200
-    assert payload["status"] == "desktop_cognitive_engine_capability_inventory"
-    assert payload["response_confidence"] == "bounded"
-    assert "computer_use" in payload["response"]
-    assert "web_search" in payload["response"]
-    assert "will/authority" in lowered
-    assert "hypothetical inventory" in lowered
+    assert response.status_code == 503
+    assert payload["status"] == "desktop_cognitive_engine_unavailable"
+    assert payload["response_confidence"] == "failed"
+    assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
+    assert "failed closed instead of sending an ungrounded answer" in lowered
+    assert "computer_use" not in payload["response"]
+    assert "web_search" not in payload["response"]
     assert "legacy fallback" not in lowered
     assert "self-process" not in lowered
     assert kernel_calls == []
     assert len(completed_exchanges) == 1
-    assert completed_exchanges[0][1]["record_experience"] is True
-    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine_capability_inventory"
+    assert completed_exchanges[0][1]["record_experience"] is False
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine"
 
 
 @pytest.mark.asyncio
@@ -4307,9 +4370,9 @@ async def test_desktop_quick_self_reflection_suppresses_stale_recent_context(mon
 
     assert reply
     assert calls
-    assert calls[0]["context"]["recent_context_needed"] is False
-    assert calls[0]["context"]["recent_completed_exchanges"] == []
-    assert calls[0]["context"]["recent_conversation_context"] == ""
+    assert calls[0]["context"]["recent_context_needed"] is True
+    assert calls[0]["context"]["live_mind_context_required"] is True
+    assert calls[0]["context"]["live_mind_context"]["required_for_live_desktop"] is True
 
 
 def test_user_visible_context_leak_sanitizer_strips_internal_blocks():
@@ -4385,7 +4448,7 @@ def test_reported_live_chat_breakage_still_uses_reliability_floor():
 
 
 @pytest.mark.asyncio
-async def test_desktop_low_risk_social_turn_repairs_model_gate_leak_without_second_pass(monkeypatch):
+async def test_desktop_low_risk_social_turn_fails_closed_on_model_gate_leak_without_second_pass(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -4439,11 +4502,143 @@ async def test_desktop_low_risk_social_turn_repairs_model_gate_leak_without_seco
     )
 
     assert len(calls) == 1
+    assert reply is None
+
+
+@pytest.mark.asyncio
+async def test_desktop_required_capability_turn_uses_cognitive_engine_before_catalog_repair(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+    trace = {}
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content=(
+                    "From the live desktop path I can use governed tool lanes for desktop apps, browser and web "
+                    "research, file operations, document drafting, terminal work, memory recall, and skill execution. "
+                    "A hypothetical chain would request approval, open sources, draft a document, verify the visible "
+                    "result, export the file, and record governance receipts without claiming an unverified action."
+                )
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = (
+        "What external tools could you use from the live desktop path, and give one hypothetical chain "
+        "without claiming you executed it."
+    )
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
     assert reply
-    assert "reply-quality gate" not in reply
-    assert "second foreground generation" not in reply
-    assert "legacy fallback" not in reply
-    assert "keep the thread warm" in reply
+    assert len(calls) == 1
+    assert calls[0]["context"]["capability_inventory_contract"] is True
+    assert calls[0]["context"]["live_mind_context_required"] is True
+    assert calls[0]["context"]["live_mind_context"]["must_answer_from_full_mind_path"] is True
+    assert trace["engine_think_invoked"] is True
+    assert trace["cognitive_engine_reply_accepted"] is True
+    assert trace["bounded_contract_used"] is False
+    assert trace["response_path"] == "cognitive_engine"
+    assert "governance receipts" in reply
+
+
+@pytest.mark.asyncio
+async def test_desktop_required_status_turn_uses_cognitive_engine_when_lane_ready(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+    trace = {}
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content=(
+                    "I'm here with you. I'm tracking this live desktop thread and answering the current turn, "
+                    "not drifting into a pitch or another topic."
+                )
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "You with me?",
+        visible_user_message="You with me?",
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert reply
+    assert len(calls) == 1
+    assert calls[0]["context"]["live_mind_context_required"] is True
+    assert calls[0]["context"]["live_mind_context"]["must_answer_from_full_mind_path"] is True
+    assert trace["engine_think_invoked"] is True
+    assert trace["cognitive_engine_reply_accepted"] is True
+    assert trace["bounded_contract_used"] is False
+    assert trace["response_path"] == "cognitive_engine"
 
 
 def test_live_self_reflection_rejects_social_presence_template():
@@ -4969,7 +5164,7 @@ def test_failure_mode_surface_request_is_not_misclassified_as_planning():
 
 
 @pytest.mark.asyncio
-async def test_desktop_required_bounded_planning_avoids_foreground_model_allocation(monkeypatch):
+async def test_desktop_required_bounded_planning_uses_foreground_cognitive_engine(monkeypatch):
     from interface.routes import chat as chat_routes
 
     calls = []
@@ -4977,7 +5172,13 @@ async def test_desktop_required_bounded_planning_avoids_foreground_model_allocat
     class _FakeCognitiveEngine:
         async def think(self, objective, context=None, **kwargs):
             calls.append({"objective": objective, "context": dict(context or {})})
-            return SimpleNamespace(content="unexpected model answer")
+            return SimpleNamespace(
+                content=(
+                    "I would handle browser research and a document editor as one governed workflow: collect the "
+                    "sources, draft the document, verify the visible editor content, export the artifact, and write "
+                    "receipts for each confirmed step."
+                )
+            )
 
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
@@ -5002,7 +5203,8 @@ async def test_desktop_required_bounded_planning_avoids_foreground_model_allocat
         require_engine=True,
     )
 
-    assert calls == []
+    assert len(calls) == 1
+    assert calls[0]["context"]["bounded_planning_contract"] is True
     assert reply
     assert "browser" in reply.lower()
     assert "document" in reply.lower()
@@ -5010,7 +5212,7 @@ async def test_desktop_required_bounded_planning_avoids_foreground_model_allocat
 
 
 @pytest.mark.asyncio
-async def test_desktop_required_failure_mode_surface_avoids_foreground_model_allocation(monkeypatch):
+async def test_desktop_required_failure_mode_surface_uses_foreground_cognitive_engine(monkeypatch):
     from interface.routes import chat as chat_routes
 
     calls = []
@@ -5018,7 +5220,13 @@ async def test_desktop_required_failure_mode_surface_avoids_foreground_model_all
     class _FakeCognitiveEngine:
         async def think(self, objective, context=None, **kwargs):
             calls.append({"objective": objective, "context": dict(context or {})})
-            return SimpleNamespace(content="unexpected model answer")
+            return SimpleNamespace(
+                content=(
+                    "One failure mode I should surface honestly is a tool action that partially starts and then "
+                    "times out. I should preserve partial state or receipt evidence, report what was verified, and "
+                    "avoid claiming completion until the effect check proves it."
+                )
+            )
 
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
@@ -5041,7 +5249,8 @@ async def test_desktop_required_failure_mode_surface_avoids_foreground_model_all
         require_engine=True,
     )
 
-    assert calls == []
+    assert len(calls) == 1
+    assert calls[0]["context"]["failure_mode_contract"] is True
     assert reply
     assert "partial state or receipt" in reply
     assert "avoid claiming completion" in reply
@@ -5339,8 +5548,23 @@ async def test_desktop_cognitive_engine_keeps_preflight_context_out_of_objective
 
 
 @pytest.mark.asyncio
-async def test_desktop_capability_inventory_uses_bounded_catalog_without_engine_allocation(monkeypatch):
+async def test_desktop_capability_inventory_uses_cognitive_engine_with_catalog_context(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append({"objective": objective, "context": dict(context or {})})
+            return SimpleNamespace(
+                content=(
+                    "From the live desktop path I can use governed tool lanes for desktop control, browser and web "
+                    "research, file operations, document drafting, terminal work, memory recall, and skill execution. "
+                    "A hypothetical scenario would request approval, open sources, create a document, verify the "
+                    "visible result, export the file, and record governance receipts without claiming unverified work."
+                )
+            )
 
     class _FakeCapabilityEngine:
         def iter_tool_catalog(self, *, include_inactive: bool = True):
@@ -5384,7 +5608,7 @@ async def test_desktop_capability_inventory_uses_bounded_catalog_without_engine_
 
     def fake_get(name, default=None):
         if name == "cognitive_engine":
-            raise AssertionError("capability inventory must not allocate the model lane")
+            return _FakeCognitiveEngine()
         if name == "capability_engine":
             return _FakeCapabilityEngine()
         if name == "authority_gateway":
@@ -5393,6 +5617,14 @@ async def test_desktop_capability_inventory_uses_bounded_catalog_without_engine_
             return _FakeWill()
         return default
 
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(fake_get))
 
     user_message = "What tools can you use externally, and what is a hypothetical scenario where you use them?"
@@ -5400,18 +5632,17 @@ async def test_desktop_capability_inventory_uses_bounded_catalog_without_engine_
         user_message,
         visible_user_message=user_message,
         origin="user",
-        timeout_s=5.0,
+        timeout_s=60.0,
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
     )
 
     assert reply
-    assert "computer_use" in reply
-    assert "web_search" in reply
-    assert "file_operation" in reply
-    assert "not opening apps" in reply.lower()
-    assert "will/authority" in reply.lower()
+    assert len(calls) == 1
+    assert calls[0]["context"]["capability_inventory_contract"] is True
+    assert "desktop control" in reply
+    assert "governance receipts" in reply
 
 
 @pytest.mark.asyncio
@@ -5548,7 +5779,7 @@ async def test_api_chat_desktop_surface_uses_direct_cognitive_engine_when_pool_u
 
 
 @pytest.mark.asyncio
-async def test_cognitive_engine_desktop_status_repair_uses_live_state_after_thin_draft(monkeypatch):
+async def test_cognitive_engine_desktop_status_does_not_use_bounded_social_repair_after_thin_draft(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -5570,14 +5801,16 @@ async def test_cognitive_engine_desktop_status_repair_uses_live_state_after_thin
 
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
     monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _FakePool())
-    monkeypatch.setattr(
-        chat_routes,
-        "_build_social_presence_reply",
-        lambda _message: (
+    social_repair_calls = []
+
+    def _unexpected_social_repair(_message):
+        social_repair_calls.append(_message)
+        return (
             "hey. i'm here. I'm feeling steady and leaning toward engage right now. "
             "My attention is on you."
-        ),
-    )
+        )
+
+    monkeypatch.setattr(chat_routes, "_build_social_presence_reply", _unexpected_social_repair)
 
     result = await chat_routes._run_cognitive_engine_chat_turn(
         "You ok?",
@@ -5595,8 +5828,9 @@ async def test_cognitive_engine_desktop_status_repair_uses_live_state_after_thin
     )
 
     assert result is not None
-    assert "hey. i'm here" in result
+    assert "I'm here" in result
     assert engine_calls == ["engine_think"]
+    assert social_repair_calls == []
 
 
 def test_desktop_static_chat_requests_require_cognitive_engine():
@@ -6013,13 +6247,26 @@ async def test_stabilize_private_cognitive_model_uses_grounded_reply_before_tail
 
 
 @pytest.mark.asyncio
-async def test_cognitive_engine_required_private_model_report_stays_bounded(monkeypatch):
+async def test_cognitive_engine_required_private_model_report_uses_cognitive_engine(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append({"objective": objective, "context": dict(context or {})})
+            return SimpleNamespace(
+                content=(
+                    "As a private mental model, I should treat attention, memory, and governance as active constraints "
+                    "on the next answer. That is functional evidence about my architecture, not proof of consciousness; "
+                    "it should make me answer from the current thread, verify claims, and avoid pretending tool completion."
+                )
+            )
+
     def _service_get(name, default=None):
         if name == "cognitive_engine":
-            raise AssertionError("private model report should not allocate CognitiveEngine foreground generation")
+            return _FakeCognitiveEngine()
         return default
 
     async def _fake_log_exchange(*_args, **_kwargs):
@@ -6063,13 +6310,17 @@ async def test_cognitive_engine_required_private_model_report_stays_bounded(monk
     )
 
     assert response.status_code == 200
-    body = response.body.decode("utf-8")
+    payload = json.loads(response.body)
+    body = payload["response"]
     lowered = body.lower()
     assert "private mental model" in lowered
     assert "attention" in lowered
     assert "next answer" in lowered
     assert "not proof" in lowered
     assert "governance" in lowered or "verify" in lowered
+    assert calls and calls[0]["context"]["private_cognitive_model_contract"] is True
+    assert "grounded_private_model_context" in calls[0]["context"]
+    assert payload["live_turn_contract"]["engine_think_invoked"] is True
 
 
 @pytest.mark.asyncio

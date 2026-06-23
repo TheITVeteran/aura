@@ -1643,6 +1643,53 @@ class CognitiveEngine:
                     "[END LIVE SPEECH GROUNDING]"
                 )
         user_prompt = visible_user_message or objective
+        grounding_blocks: list[str] = []
+        context_challenge_evidence = str(
+            context.get("contextual_relevance_evidence") or ""
+        ).strip()
+        if context_challenge_evidence:
+            grounding_blocks.append(
+                "[CONTEXT CHALLENGE EVIDENCE]\n"
+                f"{context_challenge_evidence}\n"
+                "Use this to repair context confusion. Do not invent a pitch, project, or prior object "
+                "that is not supported by this evidence. Answer in one or two complete sentences under "
+                "70 words and end with normal punctuation."
+            )
+        recall_evidence = str(context.get("conversation_recall_evidence") or "").strip()
+        if recall_evidence:
+            grounding_blocks.append(
+                "[CONVERSATION RECALL EVIDENCE]\n"
+                f"{recall_evidence}\n"
+                "Use this as the source of truth for the current recall question."
+            )
+        capability_evidence = str(
+            context.get("grounded_capability_inventory_context") or ""
+        ).strip()
+        if capability_evidence:
+            grounding_blocks.append(
+                "[GOVERNED CAPABILITY INVENTORY EVIDENCE]\n"
+                f"{capability_evidence}\n"
+                "Use this capability inventory to answer descriptively. Do not claim execution unless "
+                "the user explicitly authorized a separate action."
+            )
+        self_claim_evidence = str(
+            context.get("evidence_bound_self_claim_context") or ""
+        ).strip()
+        if self_claim_evidence:
+            grounding_blocks.append(
+                "[EVIDENCE-BOUND SELF-CLAIM EVIDENCE]\n"
+                f"{self_claim_evidence}\n"
+                "Use this to keep consciousness, sentience, self-awareness, and personhood claims "
+                "functional, bounded, and evidence-based."
+            )
+        if grounding_blocks:
+            user_prompt = (
+                "[CURRENT USER MESSAGE]\n"
+                f"{user_prompt}\n\n"
+                "[GROUNDING EVIDENCE FOR THIS TURN]\n"
+                + "\n\n".join(grounding_blocks)
+                + "\n[END GROUNDING EVIDENCE FOR THIS TURN]"
+            )
         if recent_conversation_context:
             user_prompt = (
                 "[CURRENT USER MESSAGE]\n"

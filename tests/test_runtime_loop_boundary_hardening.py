@@ -269,6 +269,76 @@ def test_research_trigger_env_path_is_resolved_at_call_time(tmp_path, monkeypatc
     assert trigger_path.exists()
 
 
+def test_pending_chat_default_path_is_runtime_state() -> None:
+    from core.conversation import chat_preflight
+
+    path = chat_preflight.PENDING_QUEUE_PATH
+
+    assert "live-source" not in str(path)
+    assert path == Path.home() / ".aura" / "data" / "conversation" / "pending-chat-queue.jsonl"
+
+
+def test_pending_chat_env_path_is_resolved_at_call_time(tmp_path, monkeypatch) -> None:
+    from core.conversation import chat_preflight
+
+    queue_path = tmp_path / "runtime" / "pending-chat-queue.jsonl"
+    monkeypatch.setenv("AURA_PENDING_CHAT_QUEUE_PATH", str(queue_path))
+
+    chat_preflight.enqueue("session-runtime", "answer this later")
+
+    assert queue_path.exists()
+    assert chat_preflight.has_unanswered_for_session("session-runtime")
+
+
+def test_autonomy_runtime_state_paths_stay_out_of_source_tree(tmp_path, monkeypatch) -> None:
+    from core.autonomy.autonomous_research_orchestrator import AutonomousResearchOrchestrator
+    from core.autonomy.content_progress_tracker import ProgressEntry, ProgressLog, load
+    from core.autonomy.curated_media_loader import load_corpus
+    from core.autonomy.memory_persister import MemoryPersister
+
+    progress_path = tmp_path / "data" / "curated-progress.json"
+    queue_path = tmp_path / "data" / "persist-retry.jsonl"
+    dedup_path = tmp_path / "data" / "persist-dedup.json"
+    sessions_dir = tmp_path / "data" / "research-sessions"
+    corpus_path = tmp_path / "source" / "bryan-curated-media.md"
+    corpus_path.parent.mkdir(parents=True)
+    corpus_path.write_text(
+        "# The library\n\n## Test category\n- **A test item** — https://example.com — Useful.\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AURA_CURATED_MEDIA_PROGRESS_PATH", str(progress_path))
+    monkeypatch.setenv("AURA_MEMORY_PERSIST_RETRY_QUEUE_PATH", str(queue_path))
+    monkeypatch.setenv("AURA_MEMORY_PERSIST_DEDUP_PATH", str(dedup_path))
+    monkeypatch.setenv("AURA_RESEARCH_SESSIONS_DIR", str(sessions_dir))
+    monkeypatch.setenv("AURA_CURATED_MEDIA_CORPUS_PATH", str(corpus_path))
+
+    log = ProgressLog()
+    log.add_entry(
+        ProgressEntry(
+            title="A test item",
+            started_at="2026-06-22T00:00:00Z",
+            method_priority_level=1,
+            method_detail="unit",
+        )
+    )
+    log.save()
+
+    loaded = load()
+    persister = MemoryPersister()
+    orchestrator = AutonomousResearchOrchestrator()
+    items = load_corpus()
+
+    assert progress_path.exists()
+    assert loaded.find("A test item") is not None
+    assert persister._queue_path == queue_path
+    assert persister._dedup_path == dedup_path
+    assert orchestrator._sessions_dir == sessions_dir
+    assert len(items) == 1
+    for path in (progress_path, queue_path, dedup_path, sessions_dir):
+        assert "live-source" not in str(path)
+
+
 def test_research_triggers_reject_live_reply_failure_contamination(tmp_path) -> None:
     from core.autonomy import research_triggers
 

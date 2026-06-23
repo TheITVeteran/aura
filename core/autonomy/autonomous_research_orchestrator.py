@@ -13,9 +13,8 @@ Operating modes
 
 Session resume:
 - After comprehension begins, the orchestrator writes a ``session.json``
-  checkpoint to ``aura/knowledge/research-sessions/``. If interrupted, the
-  next run reloads any unfinished session and resumes from the last
-  completed comprehension chunk rather than starting over.
+  checkpoint to the runtime data directory. If interrupted, the next run can
+  reload unfinished session evidence without mutating the source checkout.
 
 Concurrency: one engagement at a time per orchestrator instance. Multiple
 orchestrators can run in parallel if Bryan wants pipelined throughput.
@@ -26,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sqlite3
 import time
 import traceback
@@ -59,7 +59,15 @@ from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.AutonomousResearchOrchestrator")
 
-SESSIONS_DIR = Path.home() / ".aura/live-source/aura/knowledge/research-sessions"
+
+def _default_sessions_dir() -> Path:
+    override = os.environ.get("AURA_RESEARCH_SESSIONS_DIR")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".aura/data/autonomy/research-sessions"
+
+
+SESSIONS_DIR = _default_sessions_dir()
 DEFAULT_LOOP_INTERVAL = 600.0   # 10 minutes between engagements
 DEFAULT_MAX_CONSECUTIVE_FAILURES = 3
 _ENGAGEMENT_RECOVERABLE_ERRORS = (
@@ -133,7 +141,7 @@ class AutonomousResearchOrchestrator:
         reflection: ReflectionLoop | None = None,
         gate: DepthGate | None = None,
         persister: MemoryPersister | None = None,
-        sessions_dir: Path = SESSIONS_DIR,
+        sessions_dir: Path | None = None,
         loop_interval: float = DEFAULT_LOOP_INTERVAL,
         max_consecutive_failures: int = DEFAULT_MAX_CONSECUTIVE_FAILURES,
         on_engagement_complete: Callable[[EngagementResult], None] | None = None,
@@ -145,7 +153,7 @@ class AutonomousResearchOrchestrator:
         self._reflection = reflection or ReflectionLoop()
         self._gate = gate or DepthGate()
         self._persister = persister or MemoryPersister()
-        self._sessions_dir = sessions_dir
+        self._sessions_dir = Path(sessions_dir).expanduser() if sessions_dir is not None else _default_sessions_dir()
         self._loop_interval = loop_interval
         self._max_failures = max_consecutive_failures
         self._on_complete = on_engagement_complete

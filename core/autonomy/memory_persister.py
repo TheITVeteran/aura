@@ -31,6 +31,7 @@ from core.runtime.errors import record_degradation
 import hashlib
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -41,8 +42,23 @@ from core.runtime.atomic_writer import atomic_write_text
 
 logger = logging.getLogger("Aura.MemoryPersister")
 
-QUEUE_PATH = Path.home() / ".aura/live-source/aura/knowledge/persist-retry-queue.jsonl"
-DEDUP_PATH = Path.home() / ".aura/live-source/aura/knowledge/persist-dedup.json"
+
+def _default_queue_path() -> Path:
+    override = os.environ.get("AURA_MEMORY_PERSIST_RETRY_QUEUE_PATH")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".aura/data/autonomy/persist-retry-queue.jsonl"
+
+
+def _default_dedup_path() -> Path:
+    override = os.environ.get("AURA_MEMORY_PERSIST_DEDUP_PATH")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".aura/data/autonomy/persist-dedup.json"
+
+
+QUEUE_PATH = _default_queue_path()
+DEDUP_PATH = _default_dedup_path()
 DEDUP_TTL_DAYS = 30.0
 
 
@@ -107,13 +123,17 @@ class MemoryPersister:
         self,
         executive: Optional[Any] = None,
         memory_facade: Optional[Any] = None,
-        queue_path: Path = QUEUE_PATH,
-        dedup_path: Path = DEDUP_PATH,
+        queue_path: Path | None = None,
+        dedup_path: Path | None = None,
     ) -> None:
         self._executive = executive
         self._mem = memory_facade
-        self._queue_path = queue_path
-        self._dedup_path = dedup_path
+        self._queue_path = (
+            Path(queue_path).expanduser() if queue_path is not None else _default_queue_path()
+        )
+        self._dedup_path = (
+            Path(dedup_path).expanduser() if dedup_path is not None else _default_dedup_path()
+        )
         self._dedup = self._load_dedup()
 
     # ── Public API ────────────────────────────────────────────────────────

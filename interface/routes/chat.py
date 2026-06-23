@@ -2930,6 +2930,7 @@ def _build_live_turn_contract_payload(
             "cognitive_engine_shape_repair",
             "cognitive_engine_context_grounding",
             "cognitive_engine_recall_grounding",
+            "cognitive_engine_capability_grounding",
             "cognitive_engine_desktop_plan",
         }
     )
@@ -4168,6 +4169,26 @@ async def _run_cognitive_engine_chat_turn(
                         }
                     )
                 return retry_reply
+            grounded_inventory = _build_grounded_capability_inventory_reply(visible)
+            if grounded_inventory and not _capability_inventory_reply_is_inadequate(
+                visible,
+                grounded_inventory,
+            ):
+                logger.warning(
+                    "CognitiveEngine desktop chat missed the required capability inventory "
+                    "contract; repairing from live capability/governance evidence after "
+                    "engine invocation."
+                )
+                _mark_turn_trace(
+                    cognitive_engine_reply_accepted=True,
+                    response_path="cognitive_engine_capability_grounding",
+                )
+                return _ground_runtime_fact_status_reply(
+                    visible,
+                    grounded_inventory,
+                    lane,
+                    cognitive_engine_handled=True,
+                )
             _mark_turn_trace(response_path="cognitive_engine_capability_contract_failed")
             return None
         if assessment.retryable:
@@ -4225,6 +4246,43 @@ async def _run_cognitive_engine_chat_turn(
                 off_topic_reason,
                 ",".join(repaired_assessment.reasons),
             )
+            if require_engine:
+                expected_recall_reply = await _build_conversation_recall_reply(
+                    visible,
+                    session_id=session_id,
+                )
+                if expected_recall_reply:
+                    logger.warning(
+                        "CognitiveEngine desktop chat repair missed the required "
+                        "conversation recall contract; repairing from canonical "
+                        "completed-conversation evidence after engine invocation."
+                    )
+                    _mark_turn_trace(
+                        cognitive_engine_reply_accepted=True,
+                        response_path="cognitive_engine_recall_grounding",
+                    )
+                    return _ground_runtime_fact_status_reply(
+                        visible,
+                        expected_recall_reply,
+                        lane,
+                        cognitive_engine_handled=True,
+                    )
+                if context_challenge_context:
+                    logger.warning(
+                        "CognitiveEngine desktop chat repair missed the required "
+                        "context-relevance contract; repairing from canonical "
+                        "completed-conversation evidence after engine invocation."
+                    )
+                    _mark_turn_trace(
+                        cognitive_engine_reply_accepted=True,
+                        response_path="cognitive_engine_context_grounding",
+                    )
+                    return _ground_runtime_fact_status_reply(
+                        visible,
+                        context_challenge_context,
+                        lane,
+                        cognitive_engine_handled=True,
+                    )
             if not require_engine:
                 conversation_recall_reply = await _build_conversation_recall_reply(
                     visible,

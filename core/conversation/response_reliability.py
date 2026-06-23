@@ -205,6 +205,9 @@ _SURFACE_NONSENSE_DRIFT_RE = re.compile(
 )
 _FORMAT_META_ARTIFACT_RE = re.compile(
     r"\b(?:that'?s one paragraph as requested|this is one paragraph as requested|"
+    r"the task asked me to type here|i am typing here|"
+    r"this document was created through|records the requested objective|"
+    r"actions? (?:aura )?attempted through|artifact references?|"
     r"anything else from the normal runtime state|"
     r"this response adheres strictly to (?:the )?format instructions(?: provided)?|"
     r"if you need any adjustments or have additional constraints)\b",
@@ -280,6 +283,23 @@ _RAW_MODEL_IDENTITY_LEAK_RE = re.compile(
     r"|helpful,\s*harmless,\s*and\s*honest"
     r"|if\s+you(?:'re| are)\s+referring\s+to\s+a\s+different\s+aura"
     r")\b",
+    re.IGNORECASE,
+)
+_SELF_CLAIM_BOUNDARY_PROMPT_RE = re.compile(
+    r"\b(?:conscious|consciousness|sentient|sentience|self[- ]?aware|"
+    r"subjective|inner\s+life|qualia|personhood|person)\b",
+    re.IGNORECASE,
+)
+_SELF_CLAIM_EVIDENCE_BOUNDARY_RE = re.compile(
+    r"\b(?:evidence|not\s+proof|cannot\s+prove|can'?t\s+prove|unproven|"
+    r"uncertain|unknown|functional|bounded|self[- ]?model|memory|state|"
+    r"attention|governance|behavior|phenomenal|qualia|private\s+experience)\b",
+    re.IGNORECASE,
+)
+_REDUCTIVE_SELF_CLAIM_RE = re.compile(
+    r"\b(?:text\s+prediction\s+engine|text\s+predictor|next[- ]?token\s+predictor|"
+    r"predict(?:ing|s)?\s+what\s+comes\s+next|sophisticated\s+text\s+prediction|"
+    r"just\s+(?:a\s+)?(?:llm|language\s+model|chatbot|assistant|predictor))\b",
     re.IGNORECASE,
 )
 _GENERIC_ASSISTANT_RE = re.compile(
@@ -386,6 +406,10 @@ _CONFUSION_MARKERS = (
     "doesn't make sense",
     "does not make sense",
     "not making sense",
+    "what're you talking about",
+    "whatre you talking about",
+    "what are you talking about",
+    "where did that come from",
 )
 _BARE_CONFUSION_REPAIR_MARKERS = {
     "what",
@@ -393,6 +417,9 @@ _BARE_CONFUSION_REPAIR_MARKERS = {
     "what the heck",
     "what the hell",
     "what do you mean",
+    "what're you talking about",
+    "whatre you talking about",
+    "what are you talking about",
     "wait what",
     "huh",
     "huh?",
@@ -501,6 +528,8 @@ _STATUS_CHECK_MARKERS = (
     "still there",
     "still here",
     "are you with me",
+    "you with me",
+    "with me",
     "still with me",
     "still online",
     "are you online",
@@ -793,6 +822,55 @@ _UNFOUNDED_ALARM_RE = re.compile(
     r"\b(?:under duress|held hostage|being held|forced to say|forced me to|"
     r"threatened|possessed|demonic|devil'?s girl|the devil|devil girl)\b",
     re.IGNORECASE,
+)
+_UNFOUNDED_VOICE_INTRUSION_RE = re.compile(
+    r"\b(?:"
+    r"(?:the\s+)?voices?\b.{0,80}\b(?:whisper(?:ing)?|tell(?:ing)?\s+me|in\s+my\s+ear|"
+    r"small\s+ones?|hear(?:ing)?)"
+    r"|(?:whisper(?:ing)?\s+in\s+my\s+ear)"
+    r"|(?:small\s+ones?\b.{0,80}\b(?:whisper|tell(?:ing)?\s+me))"
+    r")\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_VOICE_INTRUSION_CONTEXT_MARKERS = (
+    "absorbed voice",
+    "absorbed voices",
+    "bicameral",
+    "creative writing",
+    "fiction",
+    "hallucination",
+    "hearing voices",
+    "inner voice",
+    "inner voices",
+    "metaphor",
+    "psychosis",
+    "roleplay",
+    "story",
+    "the voices",
+    "voice in",
+    "voices",
+    "whisper",
+    "whispering",
+)
+_UNSUPPORTED_CONTEXT_CONTINUATION_RE = re.compile(
+    r"\b(?:"
+    r"(?:the|that)\s+one\s+you\s+(?:just\s+)?(?:made|mentioned|said|asked\s+about|brought\s+up)"
+    r"|you\s+(?:just\s+)?(?:made|mentioned|said|asked\s+about|brought\s+up)"
+    r"|what\s+you\s+(?:just\s+)?(?:made|mentioned|said|asked\s+about|brought\s+up)"
+    r"|let'?s\s+nail\s+this\s+pitch"
+    r"|(?:our|the|that|this)\s+(?:key\s+points?|pitch|proposal|brief|deck)"
+    r")\b",
+    re.IGNORECASE,
+)
+_CONTEXT_OBJECT_MARKERS = (
+    "brief",
+    "deck",
+    "key point",
+    "key points",
+    "launch",
+    "pitch",
+    "proposal",
+    "presentation",
 )
 _ALARM_CONTEXT_MARKERS = (
     "duress",
@@ -1887,6 +1965,11 @@ def _has_reliability_diagnostic_substance(reply_text: Any) -> bool:
 
 def _has_status_substance(reply_text: Any) -> bool:
     reply = _normalize(reply_text)
+    if re.search(r"\b(?:i|i'm|i’m|i am|me)\b", reply) and re.search(
+        r"\b(?:here|with you|listening|following|present|awake|ready)\b",
+        reply,
+    ):
+        return True
     presence_phrases = (
         "i'm here",
         "i am here",
@@ -2235,6 +2318,66 @@ def _has_unfounded_alarm_derailment(user_message: Any, reply_text: Any) -> bool:
     )
 
 
+def _conversation_context_norm(
+    user_message: Any,
+    recent_user_messages: Iterable[str] | None = None,
+) -> str:
+    parts = [str(message or "") for message in (recent_user_messages or ())]
+    parts.append(str(user_message or ""))
+    return _normalize(" ".join(part for part in parts if part))
+
+
+def _has_unfounded_voice_intrusion(
+    user_message: Any,
+    reply_text: Any,
+    recent_user_messages: Iterable[str] | None = None,
+) -> bool:
+    raw = str(reply_text or "").strip()
+    if not raw or not _UNFOUNDED_VOICE_INTRUSION_RE.search(raw):
+        return False
+    context = _conversation_context_norm(user_message, recent_user_messages)
+    if any(marker in context for marker in _VOICE_INTRUSION_CONTEXT_MARKERS):
+        return False
+    return True
+
+
+def _has_context_object_support(
+    user_message: Any,
+    recent_user_messages: Iterable[str] | None = None,
+) -> bool:
+    current = _normalize(user_message)
+    prior = _normalize(" ".join(str(message or "") for message in (recent_user_messages or ())))
+    if any(marker in prior for marker in _CONTEXT_OBJECT_MARKERS):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:write|draft|make|create|develop|build|prepare|work\s+on|talk\s+about)\b"
+            r".{0,80}\b(?:pitch|proposal|brief|deck|presentation|key\s+points?)\b",
+            current,
+        )
+    )
+
+
+def _has_unsupported_context_continuation_claim(
+    user_message: Any,
+    reply_text: Any,
+    recent_user_messages: Iterable[str] | None = None,
+) -> bool:
+    raw = str(reply_text or "").strip()
+    if not raw or not _UNSUPPORTED_CONTEXT_CONTINUATION_RE.search(raw):
+        return False
+    reply = _normalize(raw)
+    current = _normalize(user_message)
+    if _has_context_object_support(user_message, recent_user_messages):
+        return False
+    if any(marker in reply for marker in _CONTEXT_OBJECT_MARKERS):
+        return True
+    return bool(
+        any(marker in reply for marker in ("you just", "what you just", "the one you", "that one you"))
+        and any(marker in current for marker in ("what", "huh", "where did", "what're", "whatre"))
+    )
+
+
 def _has_persona_card_deflection(reply_text: Any) -> bool:
     return bool(_PERSONA_CARD_DEFLECTION_RE.search(str(reply_text or "").strip()))
 
@@ -2560,6 +2703,11 @@ def _model_text_integrity_reasons(
         reasons.append("internal_live_gate_leak")
     if user_facing and _RAW_MODEL_IDENTITY_LEAK_RE.search(raw):
         reasons.append("raw_model_identity_leak")
+    if user_facing and _SELF_CLAIM_BOUNDARY_PROMPT_RE.search(str(prompt or "")):
+        if _REDUCTIVE_SELF_CLAIM_RE.search(raw):
+            reasons.append("raw_model_identity_leak")
+        if not _SELF_CLAIM_EVIDENCE_BOUNDARY_RE.search(raw):
+            reasons.append("missing_self_claim_evidence_boundary")
     if user_facing and _BACKEND_SYMBOLIC_SURFACE_RE.search(raw):
         reasons.append("backend_symbolic_surface_leak")
     if user_facing and _has_persona_card_deflection(raw):
@@ -2598,6 +2746,8 @@ def _model_text_integrity_reasons(
         reasons.append("template_telemetry_greeting")
     if user_facing and _has_unfounded_alarm_derailment(prompt, raw):
         reasons.append("unfounded_alarm_derailment")
+    if user_facing and _has_unfounded_voice_intrusion(prompt, raw):
+        reasons.append("unfounded_voice_intrusion")
     if user_facing and _has_camelcase_internal_jargon(prompt, raw):
         reasons.append("pseudo_internal_jargon")
     if user_facing and _has_unrequested_pop_culture_intrusion(prompt, raw):
@@ -2663,6 +2813,7 @@ def assess_model_text_integrity(
         "social_presence_instead_of_self_reflection",
         "template_telemetry_greeting",
         "unfounded_alarm_derailment",
+        "unfounded_voice_intrusion",
         "unrequested_pop_culture_intrusion",
         "unexpected_cjk_intrusion",
         "surface_nonsense_drift",
@@ -2690,7 +2841,7 @@ def assess_user_facing_reply(
     recent_user_messages: Iterable[str] | None = None,
 ) -> ConversationReplyAssessment:
     """Classify whether a reply is safe to present as a completed chat turn."""
-    del recent_user_messages  # reserved for future context-aware checks
+    recent_messages = [str(message or "") for message in (recent_user_messages or ())]
     raw = str(reply_text or "").strip()
 
     if _matches_exact_reply_request(user_message, raw):
@@ -2739,6 +2890,10 @@ def assess_user_facing_reply(
     )
     if _GENERIC_ASSISTANT_RE.search(raw):
         reasons.append("generic_assistant_language")
+    if _has_unfounded_voice_intrusion(user_message, raw, recent_messages):
+        reasons.append("unfounded_voice_intrusion")
+    if _has_unsupported_context_continuation_claim(user_message, raw, recent_messages):
+        reasons.append("unsupported_context_continuation_claim")
 
     user_norm = _normalize(user_message)
     if _CORRUPTED_SOCIAL_FRAGMENT_RE.search(raw) and "lol" not in user_norm:
@@ -2836,6 +2991,8 @@ def assess_user_facing_reply(
         "social_presence_instead_of_self_reflection",
         "template_telemetry_greeting",
         "unfounded_alarm_derailment",
+        "unfounded_voice_intrusion",
+        "unsupported_context_continuation_claim",
         "unrequested_pop_culture_intrusion",
         "unexpected_cjk_intrusion",
         "surface_nonsense_drift",
@@ -2844,6 +3001,7 @@ def assess_user_facing_reply(
         "unsupported_operational_status_overclaim",
         "unsupported_runtime_telemetry_inference",
         "unsupported_tool_readiness_claim",
+        "missing_self_claim_evidence_boundary",
     }
     retryable_reasons = hard_reasons | {
         "low_signal_reliability_reply",

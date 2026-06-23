@@ -1,6 +1,6 @@
 """core/autonomy/content_progress_tracker.py
 ──────────────────────────────────────────────
-Read/write interface for ``aura/knowledge/curated-media-progress.json``.
+Read/write interface for Aura's runtime curated-media progress log.
 
 The tracker is the single source of truth for "what has Aura actually
 engaged with from the curated media list." Comprehension-loop and
@@ -28,7 +28,15 @@ from typing import List, Optional
 
 from core.runtime.atomic_writer import atomic_write_text
 
-DEFAULT_PROGRESS_PATH = Path.home() / ".aura/live-source/aura/knowledge/curated-media-progress.json"
+
+def _default_progress_path() -> Path:
+    override = os.environ.get("AURA_CURATED_MEDIA_PROGRESS_PATH")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".aura/data/autonomy/curated-media-progress.json"
+
+
+DEFAULT_PROGRESS_PATH = _default_progress_path()
 
 SCHEMA_VERSION = 1
 
@@ -85,7 +93,8 @@ class ProgressLog:
         latest = max(_parse_iso(e.started_at) for e in self.entries)
         return (time.time() - latest) / 86400.0
 
-    def save(self, path: Path = DEFAULT_PROGRESS_PATH) -> None:
+    def save(self, path: Path | None = None) -> None:
+        path = Path(path).expanduser() if path is not None else _default_progress_path()
         for entry in self.entries:
             entry.validate()
         if self.last_updated is None:
@@ -105,8 +114,9 @@ class ProgressLog:
         os.replace(tmp, path)
 
 
-def load(path: Path = DEFAULT_PROGRESS_PATH) -> ProgressLog:
+def load(path: Path | None = None) -> ProgressLog:
     """Load progress log; returns empty log if file missing or empty entries."""
+    path = Path(path).expanduser() if path is not None else _default_progress_path()
     if not path.exists():
         return ProgressLog()
     raw = json.loads(path.read_text(encoding="utf-8"))

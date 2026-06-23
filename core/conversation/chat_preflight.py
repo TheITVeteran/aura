@@ -47,7 +47,16 @@ logger = logging.getLogger("Aura.ChatPreflight")
 PROJECT_ROOT = Path(
     os.environ.get("AURA_PROJECT_ROOT", Path(__file__).resolve().parents[2])
 ).resolve()
-PENDING_QUEUE_PATH = Path.home() / ".aura/live-source/aura/knowledge/pending-chat-queue.jsonl"
+
+
+def _default_pending_queue_path() -> Path:
+    override = os.environ.get("AURA_PENDING_CHAT_QUEUE_PATH")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".aura/data/conversation/pending-chat-queue.jsonl"
+
+
+PENDING_QUEUE_PATH = _default_pending_queue_path()
 
 FILE_READ_BUDGET = 16 * 1024  # 16 KB total across all referenced files
 MAX_FILES_PER_TURN = 3
@@ -91,6 +100,12 @@ _CHAT_PREFLIGHT_RECOVERABLE_ERRORS = (
     OSError,
     asyncio.TimeoutError,
 )
+
+
+def _resolve_pending_queue_path(path: Path | None = None) -> Path:
+    if path is not None:
+        return Path(path).expanduser()
+    return _default_pending_queue_path()
 
 
 def _emit_chat_fault(
@@ -359,7 +374,8 @@ def _coerce_pending_record(raw: Any) -> dict[str, Any] | None:
     )
 
 
-def _read_all(path: Path = PENDING_QUEUE_PATH) -> list[dict[str, Any]]:
+def _read_all(path: Path | None = None) -> list[dict[str, Any]]:
+    path = _resolve_pending_queue_path(path)
     if not path.exists():
         return []
     try:
@@ -399,7 +415,8 @@ def _read_all(path: Path = PENDING_QUEUE_PATH) -> list[dict[str, Any]]:
         return []
 
 
-def _write_all(records: list[dict[str, Any]], path: Path = PENDING_QUEUE_PATH) -> None:
+def _write_all(records: list[dict[str, Any]], path: Path | None = None) -> None:
+    path = _resolve_pending_queue_path(path)
     _ensure_dir(path)
     try:
         clean_records = [
@@ -424,13 +441,14 @@ def _write_all(records: list[dict[str, Any]], path: Path = PENDING_QUEUE_PATH) -
 
 
 def enqueue(
-    session_id: str, user_message: str, reason: str = "timeout", path: Path = PENDING_QUEUE_PATH
+    session_id: str, user_message: str, reason: str = "timeout", path: Path | None = None
 ) -> None:
     """Add an unanswered user message to the pending queue. Best-effort."""
     session_id = _safe_text(session_id, max_chars=MAX_SESSION_ID_CHARS)
     user_message = _safe_text(user_message, max_chars=MAX_USER_MESSAGE_CHARS)
     if not session_id or not user_message:
         return
+    path = _resolve_pending_queue_path(path)
     with _QUEUE_LOCK:
         records = _read_all(path)
         # Drop expired entries while we're here
@@ -453,7 +471,7 @@ def enqueue(
         _write_all(records, path)
 
 
-def answer_pending(session_id: str, answer_text: str, path: Path = PENDING_QUEUE_PATH) -> bool:
+def answer_pending(session_id: str, answer_text: str, path: Path | None = None) -> bool:
     """Mark the most recent unanswered entry for this session as answered.
     Returns True if one was updated.
     """
@@ -461,6 +479,7 @@ def answer_pending(session_id: str, answer_text: str, path: Path = PENDING_QUEUE
     answer_text = _safe_text(answer_text, max_chars=MAX_ANSWER_TEXT_CHARS)
     if not session_id or not answer_text:
         return False
+    path = _resolve_pending_queue_path(path)
     with _QUEUE_LOCK:
         records = _read_all(path)
         updated = False
@@ -477,7 +496,7 @@ def answer_pending(session_id: str, answer_text: str, path: Path = PENDING_QUEUE
         return updated
 
 
-def consume_for_session(session_id: str, path: Path = PENDING_QUEUE_PATH) -> list[PendingChat]:
+def consume_for_session(session_id: str, path: Path | None = None) -> list[PendingChat]:
     """Return all answered pending chats for a session, mark them consumed
     (delete from the queue). Caller is responsible for surfacing them to the
     user. Unanswered entries stay in the queue.
@@ -485,6 +504,7 @@ def consume_for_session(session_id: str, path: Path = PENDING_QUEUE_PATH) -> lis
     session_id = _safe_text(session_id, max_chars=MAX_SESSION_ID_CHARS)
     if not session_id:
         return []
+    path = _resolve_pending_queue_path(path)
     with _QUEUE_LOCK:
         records = _read_all(path)
         delivered: list[PendingChat] = []
@@ -515,10 +535,11 @@ def consume_for_session(session_id: str, path: Path = PENDING_QUEUE_PATH) -> lis
         return delivered
 
 
-def has_unanswered_for_session(session_id: str, path: Path = PENDING_QUEUE_PATH) -> bool:
+def has_unanswered_for_session(session_id: str, path: Path | None = None) -> bool:
     session_id = _safe_text(session_id, max_chars=MAX_SESSION_ID_CHARS)
     if not session_id:
         return False
+    path = _resolve_pending_queue_path(path)
     with _QUEUE_LOCK:
         return any(
             r.get("session_id") == session_id and not r.get("answered") for r in _read_all(path)
@@ -1067,7 +1088,7 @@ def schedule_background_retry(
     base_timeout_s: float,
     retry_callable,
     *,
-    path: Path = PENDING_QUEUE_PATH,
+    path: Path | None = None,
     proactive_emit: bool = True,
 ) -> None:
     """Spawn a fire-and-forget retry task for a queued chat.
@@ -1090,6 +1111,7 @@ def schedule_background_retry(
     user_message = _safe_text(user_message, max_chars=MAX_USER_MESSAGE_CHARS)
     if not session_id or not user_message or not callable(retry_callable):
         return
+    path = _resolve_pending_queue_path(path)
     base_timeout = max(1.0, _safe_float(base_timeout_s, default=1.0))
     extended_budget = min(RETRY_MAX_BUDGET_S, base_timeout * RETRY_BUDGET_MULTIPLIER)
 

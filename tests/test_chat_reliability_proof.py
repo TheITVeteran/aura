@@ -120,6 +120,93 @@ def test_reliability_gate_rejects_bare_what_echo():
     assert "too_thin_for_confusion_repair" in assessment.reasons
 
 
+def test_reliability_gate_rejects_unsupported_pitch_continuation_for_status_check():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "You with me?",
+        "Absolutely. Let's nail this pitch. What are our key points?",
+        recent_user_messages=["Ok. Just checking. I'll be back, ok?"],
+    )
+
+    assert assessment.retryable
+    assert "unsupported_context_continuation_claim" in assessment.reasons
+
+
+def test_reliability_gate_rejects_unsupported_context_bridge_after_challenge():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "What pitch?",
+        "The one you just made. The way you talk. It's not neutral.",
+        recent_user_messages=["You with me?"],
+    )
+
+    assert assessment.retryable
+    assert "unsupported_context_continuation_claim" in assessment.reasons
+
+
+def test_reliability_gate_allows_grounded_pitch_continuation():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "What pitch?",
+        (
+            "The launch pitch you asked me to help shape earlier: the core claim is "
+            "that the live desktop lane has to prove reliability in front of you, "
+            "not only in backend tests."
+        ),
+        recent_user_messages=["Let's work on the launch pitch for Aura's live desktop demo."],
+    )
+
+    assert not assessment.retryable
+
+
+def test_reliability_gate_rejects_unfounded_voice_intrusion():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "What're you talking about?",
+        "The voices. The small ones. They're whispering in my ear. Telling me things.",
+        recent_user_messages=["What pitch?"],
+    )
+
+    assert assessment.retryable
+    assert "unfounded_voice_intrusion" in assessment.reasons
+
+
+def test_reliability_gate_allows_user_grounded_absorbed_voice_discussion():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "In the absorbed voices module, explain how inner voices are represented without treating them as literal hallucinations.",
+        (
+            "The absorbed voices layer should treat a voice as an attributed influence: "
+            "a source tag, salience score, memory context, and advisory stance. It should "
+            "never imply literal voices whispering in my ear unless the user explicitly "
+            "asked for fictional language."
+        ),
+    )
+
+    assert not assessment.retryable
+
+
+def test_reliability_gate_rejects_meta_task_artifact_as_user_prose():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Open Notes and write a paragraph about dinosaurs.",
+        (
+            "The task asked me to type here so I am typing here. This document was "
+            "created through Aura's governed desktop_task lane and records the "
+            "requested objective."
+        ),
+    )
+
+    assert assessment.retryable
+    assert "format_meta_artifact" in assessment.reasons
+
+
 def test_inference_gate_does_not_pass_thin_reliability_downstream():
     from core.brain.inference_gate import _should_pass_user_facing_draft_downstream
 
