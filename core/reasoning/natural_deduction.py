@@ -304,6 +304,19 @@ def _saturate(formulas: Iterable[Formula], trace: list[str] | None = None) -> di
 
 # ── Public API ────────────────────────────────────────────────────────────
 
+def atoms(formula: Formula) -> set[str]:
+    """All atom names appearing in a formula."""
+    if isinstance(formula, Atom):
+        return {formula.name}
+    if isinstance(formula, Bot):
+        return set()
+    if isinstance(formula, Not):
+        return atoms(formula.f)
+    if isinstance(formula, (And, Or, Implies)):
+        return atoms(formula.a) | atoms(formula.b)
+    return set()
+
+
 def is_consistent(formulas: Iterable[Formula]) -> bool:
     """True iff the set of formulas is satisfiable (has a model)."""
     return _saturate(formulas) is not None

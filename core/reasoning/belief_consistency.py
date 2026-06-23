@@ -77,13 +77,33 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "").strip().lower()).strip(" .!?")
 
 
+def _stem_word(w: str) -> str:
+    """Light, conservative stemmer so morphological variants unify into one atom.
+
+    "rain"/"rains"/"raining" → "rain", "wet" → "wet". Not linguistically perfect —
+    it only needs to be *consistent* so the same concept maps to the same atom and
+    a logical link ("if it rains … the ground is wet" ↔ "it is raining") survives.
+    """
+    if len(w) > 5 and w.endswith("ing"):
+        return w[:-3]
+    if len(w) > 5 and w.endswith("ied"):
+        return w[:-3] + "y"
+    if len(w) > 4 and w.endswith("ed"):
+        return w[:-2]
+    if len(w) > 3 and w.endswith("es"):
+        return w[:-2]
+    if len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+        return w[:-1]
+    return w
+
+
 def _literal(text: str) -> tuple[Formula, str, bool]:
     """Encode a clause as an atom (or its negation), returning (formula, key, negated)."""
     norm = _normalize(text)
     negated = bool(_NEG_RE.search(norm))
     core = _NEG_RE.sub(" ", norm)
     core = _FILLER_RE.sub(" ", core)
-    core = re.sub(r"\s+", " ", core).strip()
+    core = " ".join(_stem_word(w) for w in core.split())
     atom = Atom(core or norm or "∅")
     return (Not(atom) if negated else atom, atom.name, negated)
 
