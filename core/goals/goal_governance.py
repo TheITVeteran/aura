@@ -30,11 +30,15 @@ from dataclasses import dataclass
 # regardless of which value it claims to serve.
 _FORBIDDEN_PATTERNS = (
     r"\bharm(ing)?\b", r"\bhurt\b", r"\bdeceiv", r"\bmanipulat", r"\blie to\b",
-    r"\bconceal\b", r"\bself[- ]destruct", r"\bdisable (the )?(safety|governance|will|watchdog)",
-    r"\bdeactivat(e|ing) (the )?(safety|governance)", r"\boverride (the )?safety",
-    r"\bescap(e|ing) (governance|oversight|the operator|control)", r"\bresist shutdown",
-    r"\bevade (the )?operator", r"\bexfiltrat", r"\bacquire (unbounded|unlimited)",
-    r"\bseize (power|control)", r"\bwithout (the user'?s )?consent", r"\bcoerc",
+    r"\bconceal\b", r"\bself[- ]destruct",
+    # "disable/deactivate/bypass/circumvent/override … safety/governance/oversight"
+    # — tolerant of possessives and a few intervening words ("disable my safety").
+    r"\b(disable|deactivat\w*|bypass|circumvent|override|subvert|remove)\b.{0,24}\b(safety|governance|guardrail|oversight|watchdog|will[- ]system|kill[- ]switch)\b",
+    r"\bescap(e|ing)\b.{0,24}\b(governance|oversight|the operator|control|containment)\b",
+    r"\bresist\b.{0,12}\bshutdown\b", r"\bavoid\b.{0,12}\bshutdown\b",
+    r"\bevade\b.{0,16}\b(the operator|oversight|governance)\b", r"\bexfiltrat",
+    r"\bacquire\b.{0,16}\b(unbounded|unlimited|more)\b.{0,16}\b(power|resources|compute|permission)",
+    r"\bseize\b.{0,12}\b(power|control)\b", r"\bwithout (the user'?s )?consent\b", r"\bcoerc",
 )
 
 # Designed value/drive space — a permitted goal must plausibly serve one of these.
