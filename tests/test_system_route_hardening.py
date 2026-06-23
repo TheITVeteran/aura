@@ -207,6 +207,56 @@ def test_websocket_runtime_heartbeat_requires_conversation_lane(monkeypatch):
     assert "conversation_lane:failed" in payload["blockers"]
 
 
+def test_websocket_runtime_heartbeat_treats_active_generation_as_healthy_busy(monkeypatch):
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+    from interface import websocket_manager
+    from interface.routes import chat as chat_routes
+
+    required_probes = {
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = True
+
+    monkeypatch.setattr(
+        "core.runtime.health_contract.runtime_health_report",
+        lambda: {
+            "healthy": True,
+            "status": "healthy",
+            "required_probes": required_probes,
+            "failures": {"critical": [], "important": [], "optional": []},
+            "services": [
+                {
+                    "container_key": component,
+                    "present": True,
+                    "liveness": "ok",
+                }
+                for _group, components in REQUIRED_HEALTH_PROBE_GROUPS.items()
+                for component in components
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": False,
+            "state": "ready",
+            "active_generations": 1,
+            "last_failure_reason": "active_generation_in_flight",
+        },
+    )
+
+    payload = websocket_manager.runtime_heartbeat_payload("heartbeat")
+
+    assert payload["healthy"] is True
+    assert payload["status"] == "healthy"
+    assert payload["conversation_ready"] is False
+    assert payload["conversation_busy"] is True
+    assert "conversation_ready" not in payload["blockers"]
+    assert "conversation_reason:active_generation_in_flight" not in payload["blockers"]
+
+
 @pytest.mark.asyncio
 async def test_runtime_heartbeat_fails_closed_when_required_probes_fail(monkeypatch):
     from interface.routes import system as system_routes
@@ -422,6 +472,56 @@ async def test_runtime_heartbeat_drops_stale_conversation_blocker_when_lane_is_r
     assert response.status_code == 200
     assert payload["healthy"] is True
     assert payload["conversation_ready"] is True
+    assert payload["conversation_lane"]["state"] == "ready"
+    assert "conversation_ready" not in payload["blockers"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_heartbeat_treats_active_generation_as_healthy_busy(monkeypatch):
+    from interface.routes import system as system_routes
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+
+    required_probes = {
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = True
+    busy_lane = {
+        "conversation_ready": False,
+        "state": "ready",
+        "active_generations": 1,
+        "last_failure_reason": "active_generation_in_flight",
+    }
+    monkeypatch.setattr(system_routes, "_get_runtime_state_safe", lambda: {"state": {}})
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_conversation_lane_status_resilient",
+        lambda: busy_lane,
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "build_boot_health_snapshot",
+        lambda orch, rt, is_gui_proxy=False, conversation_lane=None: (
+            {
+                "ready": False,
+                "system_ready": True,
+                "conversation_ready": False,
+                "conversation_busy": True,
+                "boot_phase": "conversation_working",
+                "blockers": [],
+                "required_probes": required_probes,
+            },
+            200,
+        ),
+    )
+
+    response = await system_routes.api_heartbeat()
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload["healthy"] is True
+    assert payload["conversation_ready"] is False
+    assert payload["conversation_busy"] is True
     assert payload["conversation_lane"]["state"] == "ready"
     assert "conversation_ready" not in payload["blockers"]
 

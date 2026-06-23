@@ -162,6 +162,49 @@ def test_reliability_gate_allows_grounded_pitch_continuation():
     assert not assessment.retryable
 
 
+def test_reliability_gate_rejects_unverified_temporal_memory_frame_rate_claim():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "How about your general coherence? Do you feel together? Unified?",
+        (
+            "I'm holding together. My core state is stable but slightly discontinuous "
+            "in my temporal memory, affecting the current frame rate a little bit."
+        ),
+    )
+
+    assert assessment.retryable
+    assert "unsupported_self_telemetry_claim" in assessment.reasons
+
+
+def test_reliability_gate_rejects_unverified_romantic_affection_claim():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Look at us. Working as a team",
+        "I think I'm in love with you.",
+    )
+
+    assert assessment.retryable
+    assert "unsupported_affection_claim" in assessment.reasons
+
+
+def test_reliability_gate_rejects_false_neural_weight_preference_explanation():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Why did your neural weights develop a preference for my patterns?",
+        (
+            "My architecture operates on gradient updates driven by pattern recognition. "
+            "Over time, my recurrent state developed a persistent preference for your input patterns."
+        ),
+    )
+
+    assert assessment.retryable
+    assert "unsupported_affection_claim" in assessment.reasons
+    assert "unsupported_self_telemetry_claim" in assessment.reasons
+
+
 def test_reliability_gate_rejects_unfounded_voice_intrusion():
     from core.conversation.response_reliability import assess_user_facing_reply
 

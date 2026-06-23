@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.brain.llm.model_registry import PRIMARY_ENDPOINT
+from core.health.conversation_lane import conversation_lane_is_busy
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.health_contract import (
     evaluate_health,
@@ -88,6 +89,7 @@ def _boot_progress_for_phase(boot_phase: str) -> int:
         "kernel_bootstrap": 14,
         "kernel_warming": 48,
         "conversation_warming": 78,
+        "conversation_working": 100,
         "conversation_recovering": 86,
         "conversation_failed": 92,
         "kernel_ready": 100,
@@ -114,6 +116,8 @@ def _boot_status_message(
         return "Aura proxy is alive; canonical runtime is not ready."
     if normalized == "kernel_ready":
         return "Aura is awake."
+    if normalized == "conversation_working":
+        return "Aura is answering through the live conversation lane."
     if normalized == "conversation_recovering":
         if "cortex" in endpoint.lower():
             return "Recovering local Cortex (32B)…"
@@ -257,9 +261,11 @@ def build_boot_health_snapshot(
             blockers.append("running")
 
         conversation_ready = True
+        conversation_busy = False
         conversation_state = "ready"
         if isinstance(conversation_lane, dict) and conversation_lane:
             conversation_ready = bool(conversation_lane.get("conversation_ready", False))
+            conversation_busy = conversation_lane_is_busy(conversation_lane)
             conversation_state = str(conversation_lane.get("state", "warming") or "warming")
 
         system_ready = (
@@ -286,6 +292,12 @@ def build_boot_health_snapshot(
             boot_phase = "kernel_ready"
             status_text = "ready"
             user_ready = True
+            launcher_ready = True
+            http_status = 200
+        elif system_ready and conversation_busy:
+            boot_phase = "conversation_working"
+            status_text = "working"
+            user_ready = False
             launcher_ready = True
             http_status = 200
         elif system_ready and not conversation_ready:
@@ -331,6 +343,11 @@ def build_boot_health_snapshot(
         "launcher_ready": launcher_ready,
         "system_ready": system_ready,
         "conversation_ready": conversation_ready,
+        "conversation_busy": bool(
+            conversation_lane_is_busy(conversation_lane)
+            if isinstance(conversation_lane, dict)
+            else False
+        ),
         "boot_phase": boot_phase,
         "progress": progress,
         "mode": "gui_proxy" if is_gui_proxy else "kernel",

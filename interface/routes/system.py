@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from core.config import config
 from core.container import ServiceContainer
 from core.health.boot_status import build_boot_health_snapshot
+from core.health.conversation_lane import conversation_lane_is_busy
 from core.runtime.errors import record_degradation
 from core.runtime.health_contract import (
     REQUIRED_HEALTH_PROBE_GROUPS,
@@ -1991,6 +1992,8 @@ async def api_health(request: Request):
         }
 
         conversation_ready = bool(conversation_lane.get("conversation_ready", False))
+        conversation_busy = conversation_lane_is_busy(conversation_lane)
+        conversation_available = conversation_ready or conversation_busy
         lane_is_standby = _conversation_lane_is_standby_resilient(conversation_lane)
         service_ok = bool(boot_snapshot.get("system_ready", False))
         required_probes = boot_snapshot.get("required_probes", {})
@@ -2002,12 +2005,12 @@ async def api_health(request: Request):
         ))
         health_blockers = _normalize_conversation_health_blockers(
             health_blockers,
-            conversation_ready=conversation_ready,
+            conversation_ready=conversation_available,
         )
         healthy_ready = bool(
             service_ok
             and required_probes_ok
-            and conversation_ready
+            and conversation_available
             and not health_blockers
         )
         diagnostics_data = {
@@ -2024,8 +2027,10 @@ async def api_health(request: Request):
             if service_ok and str(conversation_lane.get("state", "") or "").lower() == "failed" else
             "recovering"
             if service_ok and str(conversation_lane.get("state", "") or "").lower() == "recovering" else
+            "working"
+            if service_ok and conversation_busy else
             "warming"
-            if service_ok and not conversation_ready else
+            if service_ok and not conversation_available else
             "booting"
         )
 
@@ -2070,6 +2075,7 @@ async def api_health(request: Request):
                 "healthy": healthy_ready,
                 "system_ready": service_ok,
                 "conversation_ready": conversation_ready,
+                "conversation_busy": conversation_busy,
                 "runtime_probe_healthy": required_probes_ok,
                 "required_probes": required_probes,
                 "blockers": health_blockers,
@@ -2337,18 +2343,20 @@ async def api_heartbeat():
     )
     conversation_lane = _collect_conversation_lane_status_resilient()
     conversation_ready = bool(conversation_lane.get("conversation_ready", False))
+    conversation_busy = conversation_lane_is_busy(conversation_lane)
+    conversation_available = conversation_ready or conversation_busy
     required_probes = payload.get("required_probes", {})
     probe_blockers = _heartbeat_probe_blockers(required_probes)
     blockers = _normalize_conversation_health_blockers(
         list(payload.get("blockers", []) or []) + probe_blockers,
-        conversation_ready=conversation_ready,
+        conversation_ready=conversation_available,
     )
     runtime_probe_healthy = not probe_blockers
     healthy = (
-        status_code == 200
+        status_code in {200, 202}
         and bool(payload.get("system_ready", payload.get("ready", False)))
         and runtime_probe_healthy
-        and conversation_ready
+        and conversation_available
         and not blockers
     )
     if not healthy:
@@ -2362,6 +2370,7 @@ async def api_heartbeat():
         "blockers": blockers,
         "boot_phase": payload.get("boot_phase"),
         "conversation_ready": conversation_ready,
+        "conversation_busy": conversation_busy,
         "conversation_lane": conversation_lane,
     }
     return JSONResponse(heartbeat_payload, status_code=status_code)

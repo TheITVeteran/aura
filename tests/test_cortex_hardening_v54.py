@@ -27,6 +27,8 @@ class LaneClientDouble:
         self._last_token_progress_at = 0.0
         self._last_ready_at = 0.0
         self._last_generation_completed_at = 0.0
+        self._last_user_facing_completed_at = 0.0
+        self._last_visible_readiness_at = 0.0
         self._process_started_at = 0.0
         self._current_request_started_at = 0.0
         self._current_first_token_at = 0.0
@@ -49,6 +51,8 @@ class LaneClientDouble:
             "last_token_progress_at": self._last_token_progress_at,
             "last_ready_at": self._last_ready_at,
             "last_generation_completed_at": self._last_generation_completed_at,
+            "last_user_facing_completed_at": self._last_user_facing_completed_at,
+            "last_visible_readiness_at": self._last_visible_readiness_at,
             "last_transition_at": self._lane_transition_at,
             "warmup_attempted": self._warmup_attempted,
             "warmup_in_flight": self._warmup_in_flight,
@@ -238,10 +242,26 @@ class TestConversationLaneStatus(unittest.TestCase):
 
     def test_ready_cortex_returns_conversation_ready(self):
         client = LaneClientDouble(alive=True, state="ready")
-        client._last_ready_at = time.time()
+        now = time.time()
+        client._last_ready_at = now
+        client._last_progress_at = now
+        client._last_visible_readiness_at = now
         gate = _make_gate(client)
         lane = gate.get_conversation_status()
         self.assertTrue(lane["conversation_ready"])
+
+    def test_ready_cortex_without_recent_visible_anchor_is_not_conversation_ready(self):
+        client = LaneClientDouble(alive=True, state="ready")
+        now = time.time()
+        client._last_ready_at = now
+        client._last_progress_at = now
+        client._last_visible_readiness_at = now - 600.0
+        gate = _make_gate(client)
+
+        lane = gate.get_conversation_status()
+
+        self.assertFalse(lane["conversation_ready"])
+        self.assertIn("visible_conversation_probe_missing", lane["readiness_blockers"])
 
     def test_dead_cortex_cold_does_not_trigger_stale_reset(self):
         """A cold lane should NOT trigger the stale reset warning."""

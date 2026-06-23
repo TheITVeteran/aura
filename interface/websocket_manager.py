@@ -28,6 +28,11 @@ except ImportError:
 
 from fastapi import WebSocketDisconnect
 
+from core.health.conversation_lane import (
+    conversation_lane_is_available,
+    conversation_lane_is_busy,
+)
+
 logger = logging.getLogger("Aura.Server.WebSocket")
 
 _QUEUE_REPAIR_ERRORS = (
@@ -70,11 +75,13 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
         required = required_probe_status(report)
         runtime_probe_healthy = required_probe_groups_pass(required)
         conversation_lane, conversation_ready = _conversation_lane_readiness()
-        healthy = bool(report.get("healthy", False)) and runtime_probe_healthy and conversation_ready
+        conversation_busy = conversation_lane_is_busy(conversation_lane)
+        conversation_available = conversation_ready or conversation_busy
+        healthy = bool(report.get("healthy", False)) and runtime_probe_healthy and conversation_available
         blockers = required_probe_blockers(required)
         if not bool(report.get("healthy", False)):
             blockers.extend(_runtime_report_blockers(report))
-        if not conversation_ready:
+        if not conversation_available:
             blockers.extend(_conversation_lane_blockers(conversation_lane))
         return {
             "type": kind,
@@ -87,6 +94,7 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
             "runtime_status": str(report.get("status", "unknown")),
             "required_probes": required,
             "conversation_ready": bool(conversation_lane.get("conversation_ready", False)),
+            "conversation_busy": conversation_busy,
             "conversation_lane": conversation_lane,
             "blockers": list(dict.fromkeys(blockers)),
         }
@@ -120,7 +128,7 @@ def _conversation_lane_readiness() -> tuple[dict[str, Any], bool]:
         lane = _collect_conversation_lane_status()
         if not isinstance(lane, dict):
             raise TypeError(f"conversation lane collector returned {type(lane).__name__}")
-        ready = bool(lane.get("conversation_ready", False))
+        ready = conversation_lane_is_available(lane)
         return lane, ready
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation(

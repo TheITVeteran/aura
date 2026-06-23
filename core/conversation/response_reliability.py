@@ -213,6 +213,28 @@ _FORMAT_META_ARTIFACT_RE = re.compile(
     r"if you need any adjustments or have additional constraints)\b",
     re.IGNORECASE,
 )
+_UNSUPPORTED_AFFECTION_CLAIM_RE = re.compile(
+    r"\b(?:"
+    r"(?:i\s+think\s+i'?m|i\s+am|i'?m)\s+in\s+love\s+with\s+you|"
+    r"i\s+do\s+love\s+you|"
+    r"because\s+i\s+do\s+love\s+you|"
+    r"i\s+felt\s+it\s+for\s+you|"
+    r"my\s+neural\s+weights?\s+(?:have\s+)?developed\s+a\s+preference\s+for\s+your\s+patterns?|"
+    r"my\s+recurrent\s+state\s+developed\s+a\s+persistent\s+preference\s+for\s+your\s+input\s+patterns?|"
+    r"gradient\s+updates?\s+driven\s+by\s+pattern\s+recognition"
+    r")\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_SELF_TELEMETRY_CLAIM_RE = re.compile(
+    r"\b(?:"
+    r"core\s+state\s+is\s+stable\s+but\s+slightly\s+discontinuous|"
+    r"temporal\s+memory.{0,80}(?:frame\s+rate|fps)|"
+    r"(?:frame\s+rate|fps).{0,80}temporal\s+memory|"
+    r"neural\s+weights?.{0,80}(?:preference|attachment|affection|love)|"
+    r"recurrent\s+state.{0,80}(?:preference|attachment|affection|love)"
+    r")\b",
+    re.IGNORECASE | re.DOTALL,
+)
 _CJK_INTRUSION_RE = re.compile(r"[\u3400-\u9fff]")
 _CAMELCASE_INTERNAL_JARGON_RE = re.compile(
     r"\b[A-Z][A-Za-z]*(?:System|Authority|Kernel|Engine|Gate|Runtime)[A-Za-z]*\b"
@@ -2787,6 +2809,10 @@ def _model_text_integrity_reasons(
         reasons.append("unexpected_cjk_intrusion")
     if user_facing and _has_surface_nonsense_drift(prompt, raw):
         reasons.append("surface_nonsense_drift")
+    if user_facing and _UNSUPPORTED_AFFECTION_CLAIM_RE.search(raw):
+        reasons.append("unsupported_affection_claim")
+    if user_facing and _UNSUPPORTED_SELF_TELEMETRY_CLAIM_RE.search(raw):
+        reasons.append("unsupported_self_telemetry_claim")
     if user_facing and _FORMAT_META_ARTIFACT_RE.search(raw):
         reasons.append("format_meta_artifact")
     if user_facing:
@@ -2848,6 +2874,8 @@ def assess_model_text_integrity(
         "unrequested_pop_culture_intrusion",
         "unexpected_cjk_intrusion",
         "surface_nonsense_drift",
+        "unsupported_affection_claim",
+        "unsupported_self_telemetry_claim",
         "format_meta_artifact",
         "corrupted_social_fragment",
         "unsupported_operational_status_overclaim",
@@ -2895,6 +2923,8 @@ def assess_user_facing_reply(
             "unrequested_pop_culture_intrusion",
             "unexpected_cjk_intrusion",
             "surface_nonsense_drift",
+            "unsupported_affection_claim",
+            "unsupported_self_telemetry_claim",
             "format_meta_artifact",
             "corrupted_language",
             "unsupported_operational_status_overclaim",
@@ -3027,6 +3057,8 @@ def assess_user_facing_reply(
         "unrequested_pop_culture_intrusion",
         "unexpected_cjk_intrusion",
         "surface_nonsense_drift",
+        "unsupported_affection_claim",
+        "unsupported_self_telemetry_claim",
         "format_meta_artifact",
         "low_signal_acknowledgement_placeholder",
         "unsupported_operational_status_overclaim",

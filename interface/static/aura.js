@@ -2156,13 +2156,15 @@ function healthPulseFingerprint(payload) {
     const lane = payload && payload.conversation_lane ? payload.conversation_lane : {};
     const boot = payload && payload.boot ? payload.boot : {};
     const blockers = runtimeHealthBlockers(payload || {}).slice(0, 8).join(',');
-    const conversationReady = conversationPayloadReady(payload, blockers.split(','));
+    const blockerList = blockers ? blockers.split(',') : [];
+    const conversationReady = conversationPayloadReady(payload, blockerList);
+    const conversationBusy = conversationPayloadBusy(payload, blockerList);
     return [
         payload && payload.status,
         payload && payload.healthy === true ? 'healthy' : 'unhealthy',
         boot.boot_phase || boot.status || '',
         lane.state || '',
-        conversationReady ? 'conversation_ready' : 'conversation_not_ready',
+        conversationReady ? 'conversation_ready' : conversationBusy ? 'conversation_busy' : 'conversation_not_ready',
         blockers
     ].join('|');
 }
@@ -2181,13 +2183,18 @@ function publishHealthNeuralPulse(payload, source = 'health_poll') {
     const probeText = payload.runtime_probe_healthy === true ? 'probes pass' : 'probes blocked';
     const conversationText = conversationPayloadReady(payload, blockers)
         ? 'conversation ready'
+        : conversationPayloadBusy(payload, blockers)
+        ? 'conversation working'
         : `conversation ${String(lane.state || boot.boot_phase || 'not ready').replace(/_/g, ' ')}`;
     const blockerText = blockers.length ? ` | blockers: ${blockers.slice(0, 3).join(', ')}` : '';
-    const statusText = String(payload.status || boot.status || 'unknown').replace(/_/g, ' ');
+    const strictHealthy = payloadRuntimeHealthy(payload) && blockers.length === 0;
+    const statusText = String(
+        strictHealthy ? (payload.status || boot.status || 'healthy') : 'not_ready'
+    ).replace(/_/g, ' ');
     queueNeuralLivenessCard(
         `[${source}] health=${statusText}; ${probeText}; ${conversationText}${blockerText}`,
         {
-            level: payload.healthy === true ? 'info' : 'warning',
+            level: strictHealthy ? 'info' : 'warning',
             force: changed
         }
     );
@@ -3240,6 +3247,8 @@ function laneIsStandby(lane) {
 
 function laneHasActiveGeneration(lane) {
     if (!lane || typeof lane !== 'object') return false;
+    const laneState = String(lane.state || '').toLowerCase();
+    if (laneState !== 'ready' || lane.warmup_in_flight === true) return false;
     const blockers = Array.isArray(lane.readiness_blockers) ? lane.readiness_blockers : [];
     const reason = String(lane.last_failure_reason || '').toLowerCase();
     return Number(lane.active_generations || 0) > 0
@@ -3295,6 +3304,7 @@ function laneHealthIsOperational(lane, healthStatus = '') {
         normalized === 'ok'
         || normalized === 'ready'
         || normalized === 'healthy'
+        || normalized === 'working'
     );
 }
 
@@ -3398,6 +3408,25 @@ function conversationPayloadReady(payload, blockers = []) {
         && !rawBlockers.some(blockerIsConversationReadiness);
 }
 
+function conversationPayloadBusy(payload, blockers = []) {
+    if (!payload || typeof payload !== 'object') return false;
+    if (payload.conversation_busy === true) return true;
+    const lane = payload.conversation_lane && typeof payload.conversation_lane === 'object'
+        ? payload.conversation_lane
+        : {};
+    const rawBlockers = Array.isArray(blockers)
+        ? blockers.filter(blocker => String(blocker || '').trim())
+        : [];
+    const nonBusyConversationBlocker = rawBlockers.some(blocker => {
+        const value = String(blocker || '').trim();
+        return blockerIsConversationReadiness(value)
+            && value !== 'conversation_ready'
+            && value !== 'conversation_lane:ready'
+            && value !== 'conversation_reason:active_generation_in_flight';
+    });
+    return laneHasActiveGeneration(lane) && !nonBusyConversationBlocker;
+}
+
 function runtimeHealthBlockers(payload) {
     if (!payload || typeof payload !== 'object') return ['runtime_health_unavailable'];
     const blockers = Array.isArray(payload.blockers) ? payload.blockers.slice() : [];
@@ -3422,7 +3451,8 @@ function runtimeHealthBlockers(payload) {
         });
     }
     const conversationReady = conversationPayloadReady(payload, blockers);
-    const normalized = conversationReady
+    const conversationBusy = conversationPayloadBusy(payload, blockers);
+    const normalized = conversationReady || conversationBusy
         ? blockers.filter(blocker => !blockerIsConversationReadiness(blocker))
         : blockers.concat('conversation_ready');
     return Array.from(new Set(normalized));
@@ -3493,8 +3523,9 @@ function applyConversationLane(lane, healthStatus = '') {
     const laneStandby = laneIsStandby(effectiveLane);
     if (state.connected) {
         const healthy = laneHealthIsOperational(effectiveLane, healthStatus);
-        const connectionMode = state.conversationReady && healthy ? 'online' : 'degraded';
-        setConnectionVisual(connectionMode, !state.conversationReady ? laneText : '');
+        const laneOperational = (state.conversationReady || laneHasActiveGeneration(effectiveLane)) && healthy;
+        const connectionMode = laneOperational ? 'online' : 'degraded';
+        setConnectionVisual(connectionMode, !laneOperational ? laneText : '');
     }
 
     updateTypingLabel(

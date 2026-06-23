@@ -1108,8 +1108,11 @@ class InferenceGate:
                 self, "_last_user_generation_used_fallback", False
             ),
         }
+        now_wall = time.time()
         raw_ready = False
         raw_readiness_blockers: list[str] = []
+        visible_conversation_anchor = 0.0
+        visible_anchor_recent = False
         if self._mlx_client and hasattr(self._mlx_client, "get_lane_status"):
             raw = self._mlx_client.get_lane_status()
             lane["state"] = str(raw.get("state", lane["state"]) or lane["state"])
@@ -1165,9 +1168,13 @@ class InferenceGate:
                 float(lane.get("last_visible_readiness_at", 0.0) or 0.0),
                 float(lane.get("last_user_facing_completed_at", 0.0) or 0.0),
             )
+            visible_anchor_recent = (
+                visible_conversation_anchor > 0.0
+                and (now_wall - visible_conversation_anchor) <= 300.0
+            )
             if (
                 str(lane.get("state", "") or "").lower() == "ready"
-                and visible_conversation_anchor <= 0.0
+                and not visible_anchor_recent
                 and "visible_conversation_probe_missing" not in raw_readiness_blockers
             ):
                 raw_readiness_blockers.append("visible_conversation_probe_missing")
@@ -1217,10 +1224,10 @@ class InferenceGate:
                             logger.debug("Best-effort Cortex recovery scheduling skipped: %s", exc)
         lane_state = str(lane.get("state", "") or "").lower()
         recent_success = (
-            time.time() - getattr(self, "_last_successful_generation_at", time.time())
+            now_wall - getattr(self, "_last_successful_generation_at", now_wall)
         ) <= 30.0
         recent_ready = any(
-            stamp > 0.0 and (time.time() - stamp) <= 300.0
+            stamp > 0.0 and (now_wall - stamp) <= 300.0
             for stamp in (
                 float(lane.get("last_ready_at", 0.0) or 0.0),
                 float(lane.get("last_progress_at", 0.0) or 0.0),
@@ -1231,7 +1238,7 @@ class InferenceGate:
             lane["foreground_endpoint"] = PRIMARY_ENDPOINT
         elif raw_readiness_blockers:
             lane["conversation_ready"] = False
-        elif lane_state == "ready" and (recent_success or recent_ready):
+        elif lane_state == "ready" and (recent_success or recent_ready) and visible_anchor_recent:
             lane["conversation_ready"] = True
             lane["foreground_endpoint"] = PRIMARY_ENDPOINT
         elif lane_state != "ready":

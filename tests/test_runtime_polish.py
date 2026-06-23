@@ -570,10 +570,15 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "runtimeHealthBlockers(payload).length > 0" in aura_js
     assert "conversationReady: false" in aura_js
     assert "function conversationPayloadReady" in aura_js
+    assert "function conversationPayloadBusy" in aura_js
+    assert "payload.conversation_busy === true" in aura_js
     assert "payload.conversation_ready === true\n        && lane.conversation_ready === true\n        && laneState === 'ready'" in aura_js
     assert "blockers.concat('conversation_ready')" in aura_js
     assert "blockers.filter(blocker => !blockerIsConversationReadiness(blocker))" in aura_js
+    assert "conversationReady || conversationBusy" in aura_js
     assert "lane.conversation_ready === true || payload.conversation_ready === true" not in aura_js
+    assert "const strictHealthy = payloadRuntimeHealthy(payload) && blockers.length === 0;" in aura_js
+    assert "strictHealthy ? (payload.status || boot.status || 'healthy') : 'not_ready'" in aura_js
     assert "governed_action_result" in aura_js
     assert "const preservesHeartbeatLane = governedActionResult" in aura_js
     assert "runtime_health_unverified" in aura_js
@@ -583,6 +588,7 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "if (runtimeHealthy && (bootReady || standby))" not in aura_js
     assert ": laneNotReady\n            ? 'degraded'" in aura_js
     assert "laneNotReady && !laneStandby" not in aura_js
+    assert "const laneOperational = (state.conversationReady || laneHasActiveGeneration(effectiveLane)) && healthy;" in aura_js
 
 
 def test_fault_forensics_supports_nonfatal_stack_dump_signal():
