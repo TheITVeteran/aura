@@ -30,7 +30,8 @@ def test_react_shell_renders_fail_closed_chat_response_body_before_generic_error
     payload_read = send_block.index("const payload = await readApiPayload(response);")
     status_check = send_block.index("if (!response.ok)")
     assert payload_read < status_check
-    assert 'role: payload.response ? "assistant" : "system"' in send_block
+    assert 'role: "system"' in send_block
+    assert 'role: payload.response ? "assistant" : "system"' not in send_block
     assert 'apiFailureMessage(payload, `Chat failed (${response.status})`)' in send_block
 
 

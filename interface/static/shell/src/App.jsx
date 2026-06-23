@@ -463,7 +463,7 @@ export default function App() {
         const message = apiFailureMessage(payload, `Chat failed (${response.status})`);
         appendMessage({
           id: makeId("chat-failure"),
-          role: payload.response ? "assistant" : "system",
+          role: "system",
           content: message,
           createdAt: Date.now(),
         });

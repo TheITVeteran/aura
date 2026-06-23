@@ -616,6 +616,8 @@ def test_desktop_shell_renders_tool_results_without_inline_html_handlers():
     assert "const role = meta && meta.system ? 'system' : 'aura';" in aura_js
     assert "appendMsg(role, msg, false, meta)" in aura_js
     assert "if (role === 'aura') triggerVoiceOrb('speaking');" in aura_js
+    assert "appendMsg('system', failureText, false, { system: true, diagnostic: true });" in aura_js
+    assert "appendMsg('aura', data.response)" not in aura_js
     assert "appendMsg('aura', msg, false, { autonomic: isAutonomic })" in aura_js
     assert "onclick=\"saveImageToDevice" not in aura_js
     assert "onload=\"this.previousElementSibling" not in aura_js

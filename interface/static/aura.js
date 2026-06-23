@@ -2795,11 +2795,8 @@ async function runChatRequest(msg, { messageAlreadyRendered = false } = {}) {
         }
 
         if (!res.ok) {
-            if (data.response) {
-                appendMsg('aura', data.response);
-            } else {
-                appendMsg('aura', '⚠ Communication error. Check connection.');
-            }
+            const failureText = data.response || '⚠ Communication error. Check connection.';
+            appendMsg('system', failureText, false, { system: true, diagnostic: true });
             return;
         }
 
@@ -2837,10 +2834,10 @@ async function runChatRequest(msg, { messageAlreadyRendered = false } = {}) {
             const lastAuraText = lastAuraMsg ? (lastAuraMsg.textContent || '').trim() : '';
             const alreadyShowingRecovery = lastAuraText.includes('timeout') || lastAuraText.includes('degraded');
             if (!streamedReplyInFlight && !alreadyShowingRecovery) {
-                appendMsg('aura', 'The live reply timed out before a coherent answer reached the UI. The degraded turn is recorded.');
+                appendMsg('system', 'The live reply timed out before a coherent answer reached the UI. The degraded turn is recorded.', false, { system: true, diagnostic: true });
             }
         } else {
-            appendMsg('aura', '⚠ Communication error. Check connection.');
+            appendMsg('system', '⚠ Communication error. Check connection.', false, { system: true, diagnostic: true });
         }
     } finally {
         window.clearTimeout(timeoutId);
