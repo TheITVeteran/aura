@@ -881,6 +881,76 @@ async def test_browser_paste_refuses_location_bar_focus(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_browser_paste_refuses_address_bar_by_accessibility_description(monkeypatch):
+    """Chrome can expose arbitrary selected text in the omnibox, not a URL."""
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Google Chrome")
+    monkeypatch.setattr(
+        skill,
+        "_focused_element_snapshot",
+        lambda: "AXTextField\tAura paragraph body\t\tAddress and search bar\t",
+    )
+
+    result = await skill.execute({"action": "hotkey", "target": "command+v"}, {})
+
+    assert result["ok"] is False
+    assert result["verification"] == "browser_location_bar_focused"
+
+
+@pytest.mark.asyncio
+async def test_browser_paste_refuses_generic_text_field_when_doc_focus_required(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Google Chrome")
+    monkeypatch.setattr(
+        skill,
+        "_focused_element_snapshot",
+        lambda: "AXTextField\tAura paragraph body\t\t\t",
+    )
+
+    result = await skill.execute(
+        {"action": "hotkey", "target": "command+v"},
+        {"desktop_task_requires_editable_focus": True},
+    )
+
+    assert result["ok"] is False
+    assert result["verification"] == "browser_location_bar_focused"
+
+
+@pytest.mark.asyncio
+async def test_browser_type_refuses_generic_text_field_when_doc_focus_required(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Google Chrome")
+    monkeypatch.setattr(
+        skill,
+        "_focused_element_snapshot",
+        lambda: "AXTextField\tAura paragraph body\t\t\t",
+    )
+
+    result = await skill.execute(
+        {"action": "type", "target": "This belongs in the document body."},
+        {"desktop_task_requires_editable_focus": True},
+    )
+
+    assert result["ok"] is False
+    assert result["verification"] == "browser_text_control_focused"
+
+
+@pytest.mark.asyncio
 async def test_hotkey_screen_shift_still_required_when_screen_readable(monkeypatch):
     """With a readable screen and NO state shift, the step stays red —
     the dispatch-receipt fallback must not soften real verification."""

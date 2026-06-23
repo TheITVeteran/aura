@@ -1116,6 +1116,109 @@ def test_desktop_task_sequences_independent_work_products_without_losing_focus()
     assert all(path.startswith("~/Desktop/Aura's Journal/") for path in pdf_targets)
 
 
+@pytest.mark.asyncio
+async def test_desktop_task_write_steps_carry_verified_surface_context(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    result = await DesktopTaskSkill().execute(
+        {
+            "objective": (
+                "Open Notes and write a paragraph about dinosaurs. Then open "
+                "Google Docs and write a short summary about dinosaurs."
+            ),
+            "steps": [],
+        },
+        {
+            "origin": "desktop_ui",
+            "desktop_task_document_body": "Dinosaurs were diverse animals with a long fossil record.",
+        },
+    )
+
+    assert result["ok"] is True
+    computer_calls = [call for call in calls if call[0] == "computer_use"]
+    notes_paste = next(
+        call for call in computer_calls
+        if call[1]["action"] == "hotkey"
+        and call[1]["target"] == "command+v"
+        and call[2].get("desktop_task_expected_frontmost_app") == "Notes"
+    )
+    assert notes_paste[2]["desktop_task_write_surface_app"] == "Notes"
+
+    docs_paste = [
+        call for call in computer_calls
+        if call[1]["action"] == "hotkey"
+        and call[1]["target"] == "command+v"
+        and call[2].get("desktop_task_expected_frontmost_app") == "Google Chrome"
+    ][-1]
+    assert docs_paste[2]["desktop_task_write_surface_app"] == "Google Chrome"
+    assert docs_paste[2]["desktop_task_requires_editable_focus"] is True
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_stops_before_docs_paste_without_editable_focus(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            if params["action"] == "open_url":
+                try:
+                    target = json.loads(params["target"])
+                except (TypeError, json.JSONDecodeError):
+                    target = {}
+                if target.get("requires_editable_focus"):
+                    return {
+                        "ok": True,
+                        "action": "open_url",
+                        "url": target["url"],
+                        "frontmost_app": target.get("browser", "Google Chrome"),
+                        "doc_focused": False,
+                        "editable_focus_verified": False,
+                        "effect_verified": True,
+                        "focus_error": "browser_location_bar_still_focused",
+                        "verification": "browser_location_bar_still_focused",
+                    }
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    result = await DesktopTaskSkill().execute(
+        {
+            "objective": "Open Google Docs and write a short summary about dinosaurs.",
+            "steps": [],
+        },
+        {
+            "origin": "desktop_ui",
+            "desktop_task_document_body": "Dinosaurs were diverse animals with a long fossil record.",
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["failures"][0]["action"] == "open_url"
+    assert "browser_location_bar_still_focused" in result["failures"][0]["effect_evidence"]
+    actions = [call[1]["action"] for call in calls if call[0] == "computer_use"]
+    assert actions == ["open_url"]
+
+
 def test_desktop_task_does_not_split_conditional_then_language():
     objective = "If the report exists then open it, otherwise inspect the current screen."
     assert DesktopTaskSkill._sequenced_objective_segments(objective) == [objective]

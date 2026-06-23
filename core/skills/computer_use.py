@@ -459,13 +459,25 @@ tell application "System Events"
     set focusedElement to value of attribute "AXFocusedUIElement" of frontProc
     set roleName to ""
     set valueText to ""
+    set titleText to ""
+    set descriptionText to ""
+    set identifierText to ""
     try
         set roleName to value of attribute "AXRole" of focusedElement as string
     end try
     try
         set valueText to value of attribute "AXValue" of focusedElement as string
     end try
-    return roleName & tab & valueText
+    try
+        set titleText to value of attribute "AXTitle" of focusedElement as string
+    end try
+    try
+        set descriptionText to value of attribute "AXDescription" of focusedElement as string
+    end try
+    try
+        set identifierText to value of attribute "AXIdentifier" of focusedElement as string
+    end try
+    return roleName & tab & valueText & tab & titleText & tab & descriptionText & tab & identifierText
 end tell
 """.strip()
         try:
@@ -526,19 +538,31 @@ end tell
         raw = str(snapshot or "").strip()
         if not raw:
             return False
-        parts = raw.split("\t", 1)
+        parts = raw.split("\t")
         role = parts[0].strip().lower() if parts else ""
         value = parts[1].strip().lower() if len(parts) > 1 else raw.lower()
+        metadata = " ".join(part.strip().lower() for part in parts[1:])
         if role not in {"axtextfield", "axcombobox"}:
             return False
         return bool(
             value.startswith(("http://", "https://"))
-            or "search or enter" in value
-            or "address" in value
-            or "duckduckgo.com/" in value
-            or "google.com/search" in value
-            or "docs.google.com/" in value
+            or "search or enter" in metadata
+            or "address" in metadata
+            or "omnibox" in metadata
+            or "url" in metadata
+            or "location" in metadata
+            or "duckduckgo.com/" in metadata
+            or "google.com/search" in metadata
+            or "docs.google.com/" in metadata
         )
+
+    @staticmethod
+    def _focused_snapshot_is_browser_text_entry(snapshot: str) -> bool:
+        raw = str(snapshot or "").strip()
+        if not raw:
+            return False
+        role = raw.split("\t", 1)[0].strip().lower()
+        return role in {"axtextfield", "axcombobox"}
 
     def _send_hotkey_system_events(self, keys: list[str]) -> str:
         """Send a keyboard shortcut via System Events; raise with the real
@@ -1656,6 +1680,48 @@ end tell
                 }
 
             elif action == "type":
+                front_app = await asyncio.to_thread(self._frontmost_app_name)
+                expected_frontmost = str(
+                    context.get("desktop_task_expected_frontmost_app") or ""
+                ).strip()
+                if expected_frontmost and not self._frontmost_app_matches(
+                    front_app,
+                    expected_frontmost,
+                ):
+                    return {
+                        "ok": False,
+                        "action": "type",
+                        "typed": "",
+                        "frontmost_app_before": front_app,
+                        "expected_frontmost_app": expected_frontmost,
+                        "effect_verified": False,
+                        "error": (
+                            "Typing refused because the foreground app did not match "
+                            f"the planned writing surface (expected={expected_frontmost}, "
+                            f"actual={front_app or 'unavailable'})."
+                        ),
+                        "verification": "wrong_foreground_app",
+                    }
+                if front_app in _ALLOWED_URL_BROWSERS and bool(
+                    context.get("desktop_task_requires_editable_focus")
+                ):
+                    focus_snapshot = await asyncio.to_thread(self._focused_element_snapshot)
+                    if (
+                        self._focused_snapshot_looks_browser_location_bar(focus_snapshot)
+                        or self._focused_snapshot_is_browser_text_entry(focus_snapshot)
+                    ):
+                        return {
+                            "ok": False,
+                            "action": "type",
+                            "typed": "",
+                            "frontmost_app_before": front_app,
+                            "effect_verified": False,
+                            "error": (
+                                "Typing refused because browser focus is still on a "
+                                "text/address control, not a verified document editor."
+                            ),
+                            "verification": "browser_text_control_focused",
+                        }
                 # Compensation for focus lag: if click coordinate is provided, click to focus before typing
                 if params.x > 0 or params.y > 0:
                     logger.info(
@@ -1795,7 +1861,13 @@ end tell
                 if (
                     browser_surface
                     and is_paste
-                    and self._focused_snapshot_looks_browser_location_bar(pre_state)
+                    and (
+                        self._focused_snapshot_looks_browser_location_bar(pre_state)
+                        or (
+                            bool(context.get("desktop_task_requires_editable_focus"))
+                            and self._focused_snapshot_is_browser_text_entry(pre_state)
+                        )
+                    )
                 ):
                     return {
                         "ok": False,

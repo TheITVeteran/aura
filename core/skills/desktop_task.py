@@ -2826,6 +2826,7 @@ class DesktopTaskSkill(BaseSkill):
 
         last_image_page_url = ""
         expected_frontmost_app = ""
+        current_surface_requires_editable_focus = False
         for index, step in enumerate(steps, start=1):
             references_ok, resolved_step, reference_error = self._resolve_step_target(step, receipts)
             if not references_ok:
@@ -2931,6 +2932,7 @@ class DesktopTaskSkill(BaseSkill):
                             break
                         continue
                     target = last_image_page_url
+            target_payload = self._target_payload(target)
             if isinstance(target, dict):
                 target = json.dumps(target)
             payload = {
@@ -2940,12 +2942,26 @@ class DesktopTaskSkill(BaseSkill):
                 "y": int(resolved_step.y),
             }
             step_context = dict(task_context)
+            target_text = str(target or "").lower()
+            write_commit_action = (
+                resolved_step.action == "type"
+                or (
+                    resolved_step.action == "hotkey"
+                    and (
+                        "command" in target_text
+                        or "cmd" in target_text
+                    )
+                    and any(token in target_text for token in ("+v", "+n", "enter", "return"))
+                )
+            )
             if (
-                resolved_step.action == "hotkey"
+                write_commit_action
                 and expected_frontmost_app
-                and "command" in str(target).lower()
             ):
                 step_context["desktop_task_expected_frontmost_app"] = expected_frontmost_app
+                step_context["desktop_task_write_surface_app"] = expected_frontmost_app
+            if write_commit_action and current_surface_requires_editable_focus:
+                step_context["desktop_task_requires_editable_focus"] = True
             step_context.update(
                 {
                     "origin": step_context.get("origin") or "desktop_task",
@@ -3044,8 +3060,13 @@ class DesktopTaskSkill(BaseSkill):
                 last_image_page_url = str(result.get("page_url") or "") or last_image_page_url
             if receipt["ok"] and resolved_step.action == "open_app":
                 expected_frontmost_app = str(result.get("frontmost_app") or result.get("opened") or "").strip()
+                current_surface_requires_editable_focus = False
             elif receipt["ok"] and resolved_step.action == "open_url":
                 expected_frontmost_app = str(result.get("frontmost_app") or "").strip()
+                current_surface_requires_editable_focus = bool(
+                    target_payload.get("requires_editable_focus")
+                    or target_payload.get("require_editable_focus")
+                )
             if not receipt["ok"]:
                 failures.append(receipt)
                 self._emit_progress(
