@@ -81,6 +81,93 @@ async def test_computer_use_inspect_screen_falls_back_to_window_tree_on_permissi
 
 
 @pytest.mark.asyncio
+async def test_computer_use_read_screen_text_uses_structured_perception(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    class PerceptionDouble:
+        async def capture(self, *, save_screenshot=False):
+            assert save_screenshot is False
+            return SimpleNamespace(
+                active_app="Google Chrome",
+                window_title="Google Docs - Aura Journal",
+                frontmost_window_bounds="0,25,1440,900",
+                focused_role="AXTextArea",
+                focused_name="Document body",
+                focused_description="editable text",
+                focused_value="",
+                accessibility_text="Aura is typing in the document body.",
+                screen_text="",
+                screenshot_path="",
+                text_hash="screenabc",
+                has_modal=False,
+                modal_text="",
+                has_loading=False,
+                timestamp=123.0,
+            )
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(
+        "core.perception.screen_perception.get_screen_perception",
+        lambda: PerceptionDouble(),
+    )
+
+    result = await skill.execute({"action": "read_screen_text", "target": ""}, {})
+
+    assert result["ok"] is True
+    assert result["source"] == "screen_perception"
+    assert result["active_app"] == "Google Chrome"
+    assert result["window_title"] == "Google Docs - Aura Journal"
+    assert result["focused_role"] == "AXTextArea"
+    assert result["text"] == "Aura is typing in the document body."
+    assert result["text_hash"] == "screenabc"
+
+
+@pytest.mark.asyncio
+async def test_computer_use_read_screen_text_can_return_limited_window_context(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    class PerceptionDouble:
+        async def capture(self, *, save_screenshot=False):
+            return SimpleNamespace(
+                active_app="Notes",
+                window_title="Aura note",
+                frontmost_window_bounds="0,25,900,700",
+                focused_role="AXTextArea",
+                focused_name="body",
+                focused_description="editor",
+                focused_value="",
+                accessibility_text="",
+                screen_text="",
+                screenshot_path="",
+                text_hash="",
+                has_modal=False,
+                modal_text="",
+                has_loading=False,
+                timestamp=124.0,
+            )
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(
+        "core.perception.screen_perception.get_screen_perception",
+        lambda: PerceptionDouble(),
+    )
+
+    result = await skill.execute({"action": "read_screen_text", "target": ""}, {})
+
+    assert result["ok"] is True
+    assert result["status"] == "limited"
+    assert result["source"] == "screen_perception"
+    assert "Active app: Notes" in result["text"]
+    assert "Focused element: AXTextArea | body | editor" in result["text"]
+
+
+@pytest.mark.asyncio
 async def test_computer_use_read_screen_text_fallback_on_permission_block(monkeypatch):
     skill = ComputerUseSkill()
 
@@ -138,6 +225,14 @@ async def test_computer_use_read_screen_text_fallback_on_unavailable(monkeypatch
         return "Fallback Process tree"
 
     monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(
+        "core.perception.screen_perception.get_screen_perception",
+        lambda: SimpleNamespace(
+            capture=lambda save_screenshot=False: (_ for _ in ()).throw(
+                RuntimeError("perception unavailable")
+            )
+        ),
+    )
     monkeypatch.setattr(skill, "_read_screen_text_macos", controlled_unavailable_screen_text)
     monkeypatch.setattr(skill, "_query_system_events_window_tree", controlled_window_tree)
 

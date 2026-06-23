@@ -279,6 +279,18 @@ async def test_computer_use_read_screen_text_reports_accessibility_marker_as_fai
 
     monkeypatch.setattr(computer_use.ComputerUseSkill, "_require_permissions", _allow_permissions)
     monkeypatch.setattr(
+        "core.perception.screen_perception.get_screen_perception",
+        lambda: type(
+            "UnavailablePerception",
+            (),
+            {
+                "capture": lambda self, *, save_screenshot=False: (_ for _ in ()).throw(
+                    RuntimeError("structured screen perception unavailable")
+                )
+            },
+        )(),
+    )
+    monkeypatch.setattr(
         computer_use.ComputerUseSkill,
         "_read_screen_text_macos",
         lambda self: "[Accessibility error or UI unresponsive]",

@@ -1589,6 +1589,29 @@ end tell
                         logger.error("AppleScript window tree query fallback failed: %s", exc)
                         return blocked
 
+                try:
+                    from core.perception.screen_perception import get_screen_perception
+
+                    target_l = str(params.target or "").lower()
+                    save_screenshot = any(
+                        marker in target_l
+                        for marker in ("screenshot", "ocr", "visual", "image", "see")
+                    )
+                    snapshot = await get_screen_perception().capture(
+                        save_screenshot=save_screenshot,
+                    )
+                    perception_result = self._screen_snapshot_result(snapshot)
+                    text = str(perception_result.get("text") or "")
+                    if text and not self._screen_text_unavailable(text):
+                        return perception_result
+                except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                    _record_computer_use_degradation(
+                        exc,
+                        action="continued screen text read through legacy fallback after structured perception failed",
+                        stage="read_screen_text.screen_perception",
+                        severity="warning",
+                    )
+
                 result = await asyncio.to_thread(self._read_screen_text_macos)
                 if self._screen_text_unavailable(result):
                     import sys
@@ -2523,6 +2546,65 @@ end tell
                 severity="warning",
             )
             return f"[read_screen_text failed: {e}]"
+
+    @staticmethod
+    def _screen_snapshot_result(snapshot: Any) -> dict[str, Any]:
+        """Convert structured screen perception into a computer_use result."""
+
+        accessibility_text = str(getattr(snapshot, "accessibility_text", "") or "").strip()
+        screen_text = str(getattr(snapshot, "screen_text", "") or "").strip()
+        focused_value = str(getattr(snapshot, "focused_value", "") or "").strip()
+        active_app = str(getattr(snapshot, "active_app", "") or "").strip()
+        window_title = str(getattr(snapshot, "window_title", "") or "").strip()
+        focused_role = str(getattr(snapshot, "focused_role", "") or "").strip()
+        focused_name = str(getattr(snapshot, "focused_name", "") or "").strip()
+        focused_description = str(
+            getattr(snapshot, "focused_description", "") or ""
+        ).strip()
+
+        text = screen_text or accessibility_text or focused_value
+        if not text:
+            lines = []
+            if active_app:
+                lines.append(f"Active app: {active_app}")
+            if window_title:
+                lines.append(f"Window: {window_title}")
+            focus_parts = [
+                part
+                for part in (focused_role, focused_name, focused_description)
+                if part
+            ]
+            if focus_parts:
+                lines.append("Focused element: " + " | ".join(focus_parts))
+            text = "\n".join(lines)
+
+        text_hash = str(getattr(snapshot, "text_hash", "") or "").strip()
+        if text and not text_hash:
+            text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+
+        return {
+            "ok": bool(text),
+            "status": "ok" if (screen_text or accessibility_text or focused_value) else "limited",
+            "source": "screen_perception",
+            "active_app": active_app,
+            "window_title": window_title,
+            "frontmost_window_bounds": str(
+                getattr(snapshot, "frontmost_window_bounds", "") or ""
+            ).strip(),
+            "focused_role": focused_role,
+            "focused_name": focused_name,
+            "focused_description": focused_description,
+            "focused_value": focused_value,
+            "text": text,
+            "accessibility_text": accessibility_text,
+            "screen_text": screen_text,
+            "screenshot_path": str(getattr(snapshot, "screenshot_path", "") or "").strip(),
+            "text_hash": text_hash,
+            "has_modal": bool(getattr(snapshot, "has_modal", False)),
+            "modal_text": str(getattr(snapshot, "modal_text", "") or "").strip(),
+            "has_loading": bool(getattr(snapshot, "has_loading", False)),
+            "timestamp": float(getattr(snapshot, "timestamp", 0.0) or 0.0),
+        }
 
     def read_menu_clock(self) -> str:
         """Helper for reading the macOS menu bar clock."""
