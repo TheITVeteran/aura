@@ -362,7 +362,6 @@ class ContextAssembler:
         
         # 1. Identity Core — always inject full AURA_IDENTITY so voice doesn't regress in casual chat
         identity_block = f"{IDENTITY_LOCK}\n\n[GROUNDED CORE PROTOCOL]\n{AURA_IDENTITY}\n"
-        survival_context_block = ""
 
         # Existential stakes affect runtime policy and inference parameters, not
         # conversational identity. Injecting pressure language into the user
@@ -372,9 +371,7 @@ class ContextAssembler:
             from core.container import ServiceContainer
             stakes = ServiceContainer.get("existential_stakes", default=None)
             if stakes:
-                stakes_block = stakes.get_context_block()
-                if stakes_block:
-                    survival_context_block = stakes_block
+                stakes.get_context_block()
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
             record_degradation("context_assembler.existential_stakes", _e)
 
