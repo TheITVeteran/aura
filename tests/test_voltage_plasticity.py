@@ -61,6 +61,48 @@ def test_activity_fixed_point_matches_closed_form():
     assert eng.activity_fixed_point(b)[0] == pytest.approx(max(0.0, expected))
 
 
+# ── mean-field weight expression + competition difference + input gate ────
+
+def test_mean_field_weights_match_closed_form():
+    cfg = VoltagePlasticityConfig(n_nodes=4, p=0.7, w_bar_plus=1.0, w_bar_minus=0.8,
+                                  kappa=0.15, rho0=1.0, theta=1.0, delta_u=1.0)
+    eng = VoltageDependentPlasticityEngine(cfg)
+    b = np.array([0.2, 0.5, 0.1, 0.4])
+    pressure = eng.homeostatic_pressure(b)
+    expected = cfg.p ** 2 * cfg.w_bar_plus * (b + cfg.kappa) - cfg.p * cfg.w_bar_minus * cfg.rho0 * pressure
+    assert np.allclose(eng.mean_field_weights(b), expected)
+
+
+def test_mean_field_weight_difference_cancels_population_term():
+    # w_k − w_j = p² W̄₊ (b_k − b_j): the homeostatic depression cancels in diffs.
+    eng = _engine(n_nodes=3, p=0.7, w_bar_plus=1.0)
+    b = np.array([0.6, 0.2, 0.4])
+    diff = eng.mean_field_weight_difference(b)
+    w = eng.mean_field_weights(b)
+    assert diff[0, 1] == pytest.approx(w[0] - w[1])
+    assert diff[0, 1] == pytest.approx(0.7 ** 2 * 1.0 * (b[0] - b[1]))
+
+
+def test_competition_difference_saturates_and_is_zero_at_no_edge():
+    eng = _engine(n_nodes=2, p=0.7, w_bar_plus=1.0, delta_beta=0.5)
+    b = np.array([1.0, 0.3])
+    comp = eng.competition_difference(b)
+    # no initial edge (k==j) → zero; larger edge → larger (but bounded) amplification
+    assert comp[0, 0] == pytest.approx(0.0)
+    small = eng.competition_difference(b, delta0=0.1)[0, 0]
+    big = eng.competition_difference(b, delta0=5.0)[0, 0]
+    assert 0.0 < small < big
+    # saturates: 1−exp(−Δ/Δβ) < 1, so bounded by p²W̄₊·b_k
+    assert big < 0.7 ** 2 * 1.0 * b[0]
+
+
+def test_input_gate_transfer_function():
+    eng = _engine(n_nodes=2, beta_vrp=2.0, theta0=0.5, delta_b_in=1.0)
+    assert eng.input_gate(0.5) == pytest.approx(0.0)          # at threshold → 0
+    assert eng.input_gate(1.5) == pytest.approx(2.0)          # β·((1.5−0.5)/1)
+    assert float(np.mean(eng.input_gate(np.array([0.5, 1.0])))) == pytest.approx(0.5)
+
+
 # ── stability: the whole reason the board adds homeostasis ────────────────
 
 def test_no_runaway_under_extreme_constant_drive():

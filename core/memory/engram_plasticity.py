@@ -119,10 +119,13 @@ class EngramPlasticityField:
         )
         eng = VoltageDependentPlasticityEngine(cfg)
 
-        # Normalise drive to a comparable scale, then hold it as constant input
-        # so the competition (not the absolute magnitude) decides the winner.
+        # Normalise drive to a comparable scale, then map it through the board's
+        # far-left input transfer function h(t)=β_VRP·((p₀−θ₀)/ΔB) before it drives
+        # the field — the same "raw signal → field input" gate the whiteboard
+        # shows feeding the simulation (identity at default gate params).
         peak = float(np.max(s))
         drive = (s / peak) if peak > 1e-9 else s
+        drive = np.maximum(0.0, np.asarray(eng.input_gate(drive), dtype=np.float64))
         try:
             for _ in range(self.settle_steps):
                 eng.step_activity(drive)

@@ -102,8 +102,18 @@ class VoltagePlasticityConfig:
     u_ref: float = 0.45        # homeostatic reference voltage (BCM set-point)
     homeostatic_gain: float = 1.0  # strength of the ⟨ū⟩²/u_ref² LTD scaling
 
+    # ── Mean-field weight expression (the circled "These" steady state) ───
+    p: float = 0.7             # p  : mean interaction probability / rate
+    w_bar_plus: float = 1.0    # W̄₊ : potentiation ceiling
+    w_bar_minus: float = 0.8   # W̄₋ : depression floor
+
     # ── Competition ───────────────────────────────────────────────────────
     competition: float = 0.06  # strength of the w_k−w_j ∝ b_k−b_j drive
+
+    # ── Input transfer / gating (far-left panel) ──────────────────────────
+    beta_vrp: float = 1.0      # β_VRP : input-gate gain
+    theta0: float = 0.0        # θ₀ : input-gate threshold
+    delta_b_in: float = 1.0    # ΔB : input-gate scale
 
     # ── Safety bounds (mirror stdp_learning.py) ───────────────────────────
     weight_clip: float = 2.0
@@ -181,6 +191,57 @@ class VoltageDependentPlasticityEngine:
         star = (cfg.delta / max(cfg.lam, 1e-9)) * cfg.rho0 * pressure - cfg.kappa
         n = self.cfg.n_nodes
         return np.maximum(0.0, np.full(n, star, dtype=np.float64))
+
+    def mean_field_weights(self, b: np.ndarray | None = None) -> np.ndarray:
+        """``w_k = p² W̄₊ (b_k + κ) − p W̄₋ ρ₀ exp((Σb − θ)/ΔU)`` (the circled steady state).
+
+        The board's closed-form / mean-field weight expression: a potentiation
+        term proportional to the node's own activity, minus a population-level
+        depression term (the homeostatic Boltzmann factor).  Because the
+        depression term is identical for every node, it cancels in *differences*:
+        :meth:`mean_field_weight_difference` gives the clean Hebbian
+        ``w_k − w_j = p² W̄₊ (b_k − b_j)`` the red arrows derive.
+        """
+        cfg = self.cfg
+        b = self.b if b is None else np.asarray(b, dtype=np.float64).reshape(-1)
+        depression = cfg.p * cfg.w_bar_minus * cfg.rho0 * self.homeostatic_pressure(b)
+        return cfg.p ** 2 * cfg.w_bar_plus * (b + cfg.kappa) - depression
+
+    def mean_field_weight_difference(
+        self, b: np.ndarray | None = None
+    ) -> np.ndarray:
+        """``w_k − w_j = p² W̄₊ (b_k − b_j)`` — the population term cancels in differences."""
+        cfg = self.cfg
+        b = self.b if b is None else np.asarray(b, dtype=np.float64).reshape(-1)
+        return cfg.p ** 2 * cfg.w_bar_plus * (b[:, None] - b[None, :])
+
+    def competition_difference(
+        self, b: np.ndarray | None = None, *, delta0: np.ndarray | float | None = None
+    ) -> np.ndarray:
+        """``Δ_ij = p² W̄₊ b_k (1 − exp(−Δ_ij(0)/Δβ))`` — saturating competition.
+
+        The board's competition term (circled top-right by ``b_j(t)``): an initial
+        edge ``Δ_ij(0)`` between two synapses is amplified through a saturating
+        ``1 − exp(−Δ/Δβ)`` gate (zero at no edge, → 1 as the edge grows), scaled by
+        the winner's post-synaptic activity.  This is what makes a marginally
+        stronger synapse pull ahead without diverging.
+        """
+        cfg = self.cfg
+        b = self.b if b is None else np.asarray(b, dtype=np.float64).reshape(-1)
+        if delta0 is None:
+            delta0 = np.maximum(b[:, None] - b[None, :], 0.0)   # initial activity edge
+        delta0 = np.asarray(delta0, dtype=np.float64)
+        gate = 1.0 - stable_exp(-np.maximum(delta0, 0.0) / cfg.delta_beta)
+        return cfg.p ** 2 * cfg.w_bar_plus * b[:, None] * gate
+
+    def input_gate(self, p0: np.ndarray | float) -> np.ndarray | float:
+        """``h(t) = β_VRP · ((p₀(t) − θ₀)/ΔB)`` — far-left input transfer function.
+
+        Maps a raw input rate ``p₀`` (e.g. code-execution signal) into the drive
+        the activity field receives, with gain β_VRP, threshold θ₀ and scale ΔB.
+        """
+        cfg = self.cfg
+        return cfg.beta_vrp * ((np.asarray(p0, dtype=np.float64) - cfg.theta0) / max(cfg.delta_b_in, 1e-9))
 
     # ── Fast activity dynamics ────────────────────────────────────────────
 
