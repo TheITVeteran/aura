@@ -418,15 +418,25 @@ if __name__ == '__main__':
             tmp_path = f.name
 
         # Security: sandboxed subprocess execution of generated successor code.
+        # The spawn is an effectful operation, so it must run inside a governed
+        # scope — under production governance the subprocess gateway fail-closes
+        # on any ungoverned effect. Candidate evaluation runs generated code as a
+        # tool, so it governs under the ``tool_execution`` domain and emits a
+        # proper receipt instead of bypassing governance.
         from core.runtime.subprocess_gateway import get_subprocess_gateway
+        from core.governance_context import local_internal_governed_scope
 
-        proc = get_subprocess_gateway().run(
-            [sys.executable, "-I", "-B", tmp_path],
-            input=json.dumps({"kind": task.kind, "metadata": task.metadata}),
-            capture_output=True,
-            timeout=1.0,
-            source="autonomous_rsi.evaluate_candidate",
-        )
+        with local_internal_governed_scope(
+            "autonomous_rsi.evaluate_candidate",
+            domain="tool_execution",
+        ):
+            proc = get_subprocess_gateway().run(
+                [sys.executable, "-I", "-B", tmp_path],
+                input=json.dumps({"kind": task.kind, "metadata": task.metadata}),
+                capture_output=True,
+                timeout=1.0,
+                source="autonomous_rsi.evaluate_candidate",
+            )
 
         if proc.returncode == 0 and proc.stdout:
             try:
