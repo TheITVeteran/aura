@@ -147,7 +147,17 @@ conflicts (`X`, `X→Y`, `¬Y`). A detected inconsistency is surfaced to
 `belief_logical_inconsistency_total`) **and acted on**: `_resolve_logical_conflicts`
 demotes the lower-confidence side (×0.6) so an inconsistent self-model is actively
 revised, not just flagged. The prover is also exposed through
-`SymbolicBridge.prove_logic` as a first-class exact solver alongside sympy/z3.
+`SymbolicBridge.prove_logic` and `inference_audit.verify` as exact deductive solvers.
+
+It also runs on **active reasoning**: `core/reasoning/inference_audit.py` extracts
+deductive structure from text ("X, therefore Y"), formalizes it (with light
+stemming so morphological variants unify), and checks it with the prover. Every
+final reply passes through a non-blocking `audit_self_reasoning()` in
+`_record_recent_response`, so a confident, formalizable non-sequitur in Aura's own
+words (e.g. affirming the consequent) is surfaced to governance
+(`reasoning_non_sequitur_total`). It is conservative — silent on anything it cannot
+prove wrong, and it never alters the reply — so it catches real fallacies without
+false positives on valid or unformalizable reasoning.
 
 ## Memory Governance
 
