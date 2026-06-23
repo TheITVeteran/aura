@@ -22,6 +22,10 @@ from pydantic import BaseModel, Field
 
 from core.config import config
 from core.health.degraded_events import record_degraded_event
+from core.memory.engram_association import (
+    get_engram_association_field,
+    is_engram_association_enabled,
+)
 from core.memory.engram_plasticity import (
     get_engram_plasticity_field,
     is_engram_plasticity_enabled,
@@ -983,6 +987,10 @@ class EpisodicMemory:
             return self._static_rank(episodes)
         try:
             query_cues = set(HippocampalIndex.extract_cues(query or ""))
+            assoc_field = (
+                get_engram_association_field()
+                if is_engram_association_enabled() else None
+            )
             salience: list[float] = []
             for ep in episodes:
                 ep_cues = set(HippocampalIndex.extract_cues(ep.full_description))
@@ -993,6 +1001,12 @@ class EpisodicMemory:
                 relevance = max(0.05, min(1.0, overlap))
                 strength = ep.current_strength()
                 drive = relevance * (0.6 + 0.4 * strength) * (0.7 + 0.3 * ep.importance)
+                # Learned-association boost: engrams this query has become wired to
+                # through prior co-recall (voltage-STDP) get surfaced even when
+                # their surface cues don't overlap — associative pattern completion.
+                if assoc_field is not None and query_cues:
+                    boost = assoc_field.association_boost(list(query_cues), list(ep_cues))
+                    drive *= (1.0 + min(0.5, boost))
                 salience.append(float(drive))
 
             qualia = self._current_qualia() or {}
@@ -1318,6 +1332,15 @@ class EpisodicMemory:
 
         for ep, outcome in drift_events:
             self._on_reconsolidation_signals(ep, outcome)
+        # Associative learning: engrams recalled together wire together. Drive
+        # their slots through the persistent voltage-STDP weight field so the
+        # learned association strengthens (and is saved across sessions).
+        if len(episodes) >= 2 and is_engram_association_enabled():
+            try:
+                cue_groups = [HippocampalIndex.extract_cues(ep.full_description) for ep in episodes]
+                get_engram_association_field().learn(cue_groups)
+            except (AttributeError, ValueError, TypeError) as exc:
+                record_degradation("episodic_memory", exc)
         # Competitive LTP weights are consumed once per recall — clear so they
         # cannot leak consolidation into a later recall on a different path.
         self._last_competition_weights = {}
