@@ -2400,6 +2400,12 @@ def _has_context_object_support(
 ) -> bool:
     current = _normalize(user_message)
     prior = _normalize(" ".join(str(message or "") for message in (recent_user_messages or ())))
+    if re.fullmatch(
+        r"(?:what|which|whose|where|what\s+do\s+you\s+mean\s+by)\s+"
+        r"(?:pitch|proposal|brief|deck|presentation|key\s+points?)\??",
+        current,
+    ):
+        return False
     if any(marker in prior for marker in _CONTEXT_OBJECT_MARKERS):
         return True
     return bool(

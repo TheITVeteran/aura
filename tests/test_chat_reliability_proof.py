@@ -809,6 +809,34 @@ def test_live_self_reflection_prompt_rejects_old_thread_trust_answer():
     assert "off_topic_self_reflection_reply" in assessment.reasons
 
 
+def test_bare_pitch_clarification_rejects_fabricated_context_continuation():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "What pitch?",
+        "The one you just made. The way you talk. It's not neutral.",
+        recent_user_messages=["You with me?", "What pitch?"],
+    )
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert "unsupported_context_continuation_claim" in assessment.reasons
+
+
+def test_curly_apostrophe_confusion_rejects_unfounded_voice_intrusion():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "What’re you talking about",
+        "The voices. The small ones. They're whispering in my ear. Telling me things.",
+        recent_user_messages=["You with me?", "What pitch?", "What’re you talking about"],
+    )
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert "unfounded_voice_intrusion" in assessment.reasons
+
+
 def test_live_self_reflection_prompt_rejects_presence_reply_missing_requested_process_coverage():
     from core.conversation.response_reliability import assess_user_facing_reply
 
