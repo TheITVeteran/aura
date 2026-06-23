@@ -24,6 +24,8 @@ class _DeductionGovernance:
         self._inconsistency_events = 0
         self._last_contradictions: list[tuple[str, str]] = []
         self._last_checked_at = 0.0
+        self._non_sequitur_events = 0
+        self._last_non_sequiturs: list[dict[str, Any]] = []
 
     def record(self, report: ConsistencyReport) -> None:
         self._last_report = report
@@ -45,6 +47,25 @@ class _DeductionGovernance:
             except (ImportError, AttributeError, RuntimeError, TypeError) as exc:
                 record_degradation("deduction_governance", exc)
 
+    def record_reasoning_audit(self, non_sequiturs: list[dict[str, Any]]) -> None:
+        """Record non-sequiturs found in active reasoning (her own draft replies)."""
+        if not non_sequiturs:
+            return
+        self._non_sequitur_events += len(non_sequiturs)
+        self._last_non_sequiturs = list(non_sequiturs)
+        for ns in non_sequiturs:
+            logger.warning(
+                "🧮 [Deduction] non-sequitur in reasoning: \"%s\" does not follow from %s",
+                ns.get("conclusion"),
+                ns.get("premises"),
+            )
+        try:
+            from core.observability.metrics import get_metrics
+
+            get_metrics().increment_counter("reasoning_non_sequitur_total")
+        except (ImportError, AttributeError, RuntimeError, TypeError) as exc:
+            record_degradation("deduction_governance", exc)
+
     def governance_signal(self) -> dict[str, Any]:
         report = self._last_report
         return {
@@ -53,6 +74,8 @@ class _DeductionGovernance:
             "inconsistency_events": self._inconsistency_events,
             "checked": report.checked if report else 0,
             "last_checked_at": self._last_checked_at,
+            "non_sequitur_events": self._non_sequitur_events,
+            "last_non_sequiturs": list(self._last_non_sequiturs),
         }
 
 

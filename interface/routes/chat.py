@@ -4534,6 +4534,17 @@ def _record_recent_response(text: str, user_message: str = "") -> None:
         response_body = _normalize_response_body(text)[:500]
         if response_body:
             _recent_response_pairs.append((_response_fingerprint(user_message), response_body))
+    # Deductive self-audit (non-blocking): if her own reply makes a confident
+    # logical misstep — a non-sequitur she can actually formalize — surface it to
+    # deduction governance. Conservative: silent on anything it cannot prove wrong,
+    # and never alters the reply.
+    if text and len(str(text)) < 4000:
+        try:
+            from core.reasoning.inference_audit import audit_self_reasoning
+
+            audit_self_reasoning(str(text))
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat", exc)
 
 
 def _is_stale_repeated_response(text: str) -> bool:

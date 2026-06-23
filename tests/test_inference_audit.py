@@ -74,3 +74,29 @@ def test_non_deductive_text_yields_nothing():
 def test_verify_valid_and_invalid():
     assert verify(["it rains", "if it rains then the ground is wet"], "the ground is wet").status == "valid"
     assert verify(["if it rains then the ground is wet", "the ground is wet"], "it rains").status == "invalid"
+
+
+# ── live self-audit → governance ──────────────────────────────────────────
+
+def test_audit_self_reasoning_records_non_sequitur_to_governance():
+    from core.reasoning.deduction_governance import get_deduction_governance
+    from core.reasoning.inference_audit import audit_self_reasoning
+
+    before = get_deduction_governance().governance_signal()["non_sequitur_events"]
+    found = audit_self_reasoning(
+        "If it rains then the ground is wet, and the ground is wet, therefore it is raining."
+    )
+    assert len(found) == 1
+    sig = get_deduction_governance().governance_signal()
+    assert sig["non_sequitur_events"] > before
+    assert sig["last_non_sequiturs"]
+
+
+def test_audit_self_reasoning_silent_on_valid_reply():
+    from core.reasoning.deduction_governance import get_deduction_governance
+    from core.reasoning.inference_audit import audit_self_reasoning
+
+    before = get_deduction_governance().governance_signal()["non_sequitur_events"]
+    found = audit_self_reasoning("I'm here with you, and I'm glad we're talking. What's on your mind?")
+    assert found == []
+    assert get_deduction_governance().governance_signal()["non_sequitur_events"] == before

@@ -151,3 +151,24 @@ def find_non_sequiturs(text: str) -> list[InferenceVerdict]:
 def verify(premises: list[str], conclusion: str) -> InferenceVerdict:
     """NL-friendly direct check: does ``conclusion`` follow from ``premises``?"""
     return audit_inference(Inference(tuple(premises), conclusion, "verify", " ".join(premises)))
+
+
+def audit_self_reasoning(text: str) -> list[InferenceVerdict]:
+    """Audit Aura's own reasoning and record any non-sequiturs to governance.
+
+    Non-blocking and safe: returns the confidently-invalid inferences (usually
+    none) and surfaces them to deduction governance so a logical misstep in her
+    own thinking is observable and can be self-corrected — without altering the
+    reply or flagging anything it cannot formalize.
+    """
+    non_sequiturs = find_non_sequiturs(text)
+    if non_sequiturs:
+        try:
+            from core.reasoning.deduction_governance import get_deduction_governance
+
+            get_deduction_governance().record_reasoning_audit(
+                [v.to_dict() for v in non_sequiturs]
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError):
+            pass
+    return non_sequiturs
