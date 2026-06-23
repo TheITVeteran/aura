@@ -1,0 +1,44 @@
+{
+  "ablation": "AffectiveValenceEngine.lesion() forces valence=0",
+  "active_salience_advantage": {
+    "ci_lower": 0.68699,
+    "ci_upper": 0.689681,
+    "mean": 0.688335,
+    "n": 8,
+    "samples": [
+      0.69013,
+      0.686541,
+      0.69013,
+      0.686541,
+      0.69013,
+      0.686541,
+      0.69013,
+      0.686541
+    ]
+  },
+  "claim": "VALENCE_IS_LOAD_BEARING",
+  "generated_at": 1782257456.9843688,
+  "honest_scope": "Functional behavior-changing valence per CLAIM_BOUNDARIES 1.D \u2014 NOT felt experience / subjective feeling / qualia. Same signal is also load-bearing in the welfare gate + will.",
+  "lesioned_salience_advantage": {
+    "ci_lower": 0.0,
+    "ci_upper": 0.0,
+    "mean": 0.0,
+    "n": 8,
+    "samples": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "measures": "emotional-salience memory weighting (decay + recall strength) driven by intrinsic valence",
+  "passed": true,
+  "pathway": "AffectiveValenceEngine.valence \u2192 long_term_memory_engine decay/recall (non-text)",
+  "reproduction_command": "python tools/agi/run_valence_load_bearing_proof.py",
+  "valence_is_load_bearing": true,
+  "verdict_rule": "active salience-advantage CI-lower must clear lesioned CI-upper (can be False)"
+}
