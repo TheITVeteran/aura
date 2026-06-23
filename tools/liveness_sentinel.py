@@ -141,6 +141,38 @@ def _shutdown_in_progress(shutdown_flag: Path | None) -> bool:
         return False
 
 
+def is_stale_sample(
+    *,
+    now: float,
+    last_loop_run: float | None,
+    written_at: float | None,
+    file_mtime: float | None,
+    started_at: float,
+    grace_s: float,
+    stale_ceiling_s: float,
+    last_runtime_service_progress: float | None = None,
+    service_progress_grace_s: float = 240.0,
+) -> bool:
+    """Per-sample staleness: is the loop-liveness beacon older than the ceiling
+    (or never written) past the boot grace? This is the time-window half of the
+    kill decision; ``should_kill`` adds the two-consecutive-samples requirement.
+    """
+    if now - started_at < grace_s:
+        return False
+    if (
+        service_progress_grace_s > 0
+        and (last_loop_run or 0.0) <= 0.0
+        and (last_runtime_service_progress or 0.0) > 0.0
+        and (now - float(last_runtime_service_progress)) < service_progress_grace_s
+    ):
+        return False
+    live_ts = _liveness_timestamp(last_loop_run, written_at, file_mtime)
+    if live_ts <= 0.0:
+        # No heartbeat file at all, and we are past grace → loop never lived.
+        return True
+    return (now - live_ts) >= stale_ceiling_s
+
+
 def should_kill(
     *,
     now: float,
@@ -160,20 +192,17 @@ def should_kill(
     the ceiling. Missing file (never written) past grace also counts — the loop
     never came up.
     """
-    if now - started_at < grace_s:
-        return False
-    if (
-        service_progress_grace_s > 0
-        and (last_loop_run or 0.0) <= 0.0
-        and (last_runtime_service_progress or 0.0) > 0.0
-        and (now - float(last_runtime_service_progress)) < service_progress_grace_s
-    ):
-        return False
-    live_ts = _liveness_timestamp(last_loop_run, written_at, file_mtime)
-    if live_ts <= 0.0:
-        # No heartbeat file at all, and we are past grace → loop never lived.
-        return consecutive_stale >= 2
-    return (now - live_ts) >= stale_ceiling_s and consecutive_stale >= 2
+    return is_stale_sample(
+        now=now,
+        last_loop_run=last_loop_run,
+        written_at=written_at,
+        file_mtime=file_mtime,
+        started_at=started_at,
+        grace_s=grace_s,
+        stale_ceiling_s=stale_ceiling_s,
+        last_runtime_service_progress=last_runtime_service_progress,
+        service_progress_grace_s=service_progress_grace_s,
+    ) and consecutive_stale >= 2
 
 
 def _liveness_timestamp(
