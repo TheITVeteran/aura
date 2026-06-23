@@ -5776,12 +5776,23 @@ class InferenceGate:
                 if use_rich_context
                 else self._build_compact_messages(prompt, system_prompt, history)
             )
-        if provided_messages is not None and use_compact_foreground_context:
+        if provided_messages is not None and (use_compact_foreground_context or use_rich_context):
             deep_probe_context = bool(context.get("deep_mind_probe", False))
-            foreground_profile = self._foreground_prompt_profile(
-                visible_user_prompt,
-                context,
-            )
+            if use_compact_foreground_context:
+                foreground_profile = self._foreground_prompt_profile(
+                    visible_user_prompt,
+                    context,
+                )
+            else:
+                # Rich/DEEP prebuilt prompts otherwise bypassed compaction
+                # entirely, so the local Cortex (notably the in-process MLX 32B)
+                # received 100k+ char prompts (~25k tokens) that exceed the 16k
+                # context window AND can't be processed+generated within the
+                # cognitive-cycle watchdog → "Cognitive cycle TIMEOUT" +
+                # "RuntimeError in mlx_client". Compact rich prebuilt to the
+                # extended budget (~26k chars) so the live lane stays responsive
+                # while still carrying substantial living-mind context.
+                foreground_profile = "extended"
             messages = self._compact_prebuilt_messages(
                 messages,
                 history_limit=self._foreground_prebuilt_history_limit(
