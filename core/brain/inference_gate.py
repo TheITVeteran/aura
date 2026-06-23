@@ -2553,6 +2553,12 @@ class InferenceGate:
         context = context or {}
         if bool(context.get("deep_mind_probe", False)):
             return "deep_probe"
+        if bool(context.get("desktop_quick_reply_contract", False)) and bool(
+            context.get("live_runtime_payload_required", False)
+            or context.get("live_mind_context_required", False)
+            or context.get("desktop_cognitive_engine_required", False)
+        ):
+            return "standard"
         if bool(context.get("desktop_quick_reply_contract", False)):
             return "simple"
         if bool(context.get("live_runtime_payload_required", False)) and (

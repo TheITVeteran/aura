@@ -912,6 +912,55 @@ def test_simple_foreground_prompt_uses_small_prebuilt_history_and_prompt_budget(
     assert compact[-1]["content"] == current_user
 
 
+def test_required_desktop_foreground_prompt_keeps_standard_mind_budget(monkeypatch):
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+    gate = InferenceGate.__new__(InferenceGate)
+    current_user = "You with me?"
+    context = {
+        "desktop_quick_reply_contract": True,
+        "desktop_cognitive_engine_required": True,
+        "live_runtime_payload_required": True,
+        "live_mind_context_required": True,
+    }
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "LIVE MIND CONTEXT\n"
+                "required_for_live_desktop=true\n"
+                "must_answer_from_full_mind_path=true\n"
+                + ("S" * 11_000)
+            ),
+        }
+    ]
+    for idx in range(8):
+        messages.extend(
+            [
+                {"role": "user", "content": f"prior user turn {idx} " + ("U" * 500)},
+                {"role": "assistant", "content": f"prior aura turn {idx} " + ("A" * 500)},
+            ]
+        )
+    messages.append({"role": "user", "content": current_user})
+
+    profile = InferenceGate._foreground_prompt_profile(current_user, context)
+    history_limit = InferenceGate._foreground_prebuilt_history_limit(current_user, context)
+    compact = gate._compact_prebuilt_messages(
+        messages,
+        history_limit=history_limit,
+        budget_profile=profile,
+    )
+    total_chars = sum(len(msg["content"]) for msg in compact)
+
+    assert profile == "standard"
+    assert history_limit == 6
+    assert total_chars <= 12_000
+    assert len(compact[0]["content"]) > 5_200
+    assert "LIVE MIND CONTEXT" in compact[0]["content"]
+    assert "must_answer_from_full_mind_path" in compact[0]["content"]
+    assert len([msg for msg in compact if msg["role"] in {"user", "assistant"}]) <= 6
+    assert compact[-1]["content"] == current_user
+
+
 def test_multi_part_foreground_prompt_retains_deep_compute_profile():
     prompt = (
         "Compare the two approaches in depth, explain the tradeoffs, "
@@ -1004,7 +1053,7 @@ async def test_explicit_desktop_token_cap_survives_runtime_budget_nudges(monkeyp
 async def test_user_facing_primary_prewarms_cold_cortex_before_first_generation(monkeypatch):
     monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
     gate = InferenceGate()
-    cortex = _ColdRecordingLaneClient("hello")
+    cortex = _ColdRecordingLaneClient("I'm with you and tracking the current thread clearly.")
     gate._mlx_client = cortex
 
     with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
@@ -1015,7 +1064,7 @@ async def test_user_facing_primary_prewarms_cold_cortex_before_first_generation(
                     context={"origin": "user", "prefer_tier": "primary", "history": []},
                 )
 
-    assert result == "hello"
+    assert result == "I'm with you and tracking the current thread clearly."
     cortex.warmup.assert_awaited_once()
     assert len(cortex.deadlines) == 1
     assert cortex.kwargs[0]["foreground_request"] is True
@@ -1024,7 +1073,7 @@ async def test_user_facing_primary_prewarms_cold_cortex_before_first_generation(
 @pytest.mark.asyncio
 async def test_user_facing_primary_uses_compact_foreground_context_builders():
     gate = InferenceGate()
-    cortex = _RecordingClient("hello")
+    cortex = _RecordingClient("I'm with you and tracking the current thread clearly.")
     gate._mlx_client = cortex
     gate._build_compact_system_prompt = CallProbe(return_value="compact-system")
     gate._build_compact_living_mind_context = AsyncCallProbe(return_value="compact-live")
@@ -1039,7 +1088,7 @@ async def test_user_facing_primary_uses_compact_foreground_context_builders():
                     context={"origin": "api", "prefer_tier": "primary", "history": []},
                 )
 
-    assert result == "hello"
+    assert result == "I'm with you and tracking the current thread clearly."
     gate._build_compact_system_prompt.assert_called_once()
     gate._build_compact_living_mind_context.assert_awaited_once()
     assert "compact-system" in cortex.prompts[0]

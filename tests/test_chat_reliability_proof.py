@@ -998,6 +998,19 @@ def test_fenced_generic_assistant_text_is_not_accepted_as_code():
     assert "generic_assistant_language" in assessment.reasons
 
 
+def test_reliability_gate_rejects_raw_mood_greeting_on_casual_turn():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Hi Aura.",
+        "Hi. I am feeling joyous right now.",
+    )
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert "template_telemetry_greeting" in assessment.reasons
+
+
 def test_incomplete_fenced_code_is_retryable():
     from core.conversation.response_reliability import assess_user_facing_reply
 
