@@ -162,6 +162,155 @@ def test_reliability_gate_allows_grounded_pitch_continuation():
     assert not assessment.retryable
 
 
+def test_reliability_gate_allows_grounded_project_continuation():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "How is my project looking?",
+        (
+            "The Aura closeout project you described earlier is in a runtime-reliability phase: "
+            "the immediate risk is live desktop conversation drift, not the existence of the project."
+        ),
+        recent_user_messages=[
+            "I am working on the Aura closeout project and want the live desktop path to stop drifting.",
+        ],
+    )
+
+    assert assessment.ok
+    assert not assessment.retryable
+    assert "unsupported_context_continuation_claim" not in assessment.reasons
+
+
+def test_reliability_gate_rejects_question_back_non_answer_for_live_probe():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Live desktop route probe. Answer directly in two sentences: what did I just ask "
+            "you to do, and what mind/cognition path are you using right now?"
+        ),
+        (
+            "I'm attending to planning in the current conversation. The cognition path I'm "
+            "using right now is focused on understanding your request and responding directly. "
+            "What did you ask me to do?"
+        ),
+    )
+
+    assert assessment.hard_failure
+    assert assessment.retryable
+    assert "question_back_non_answer" in assessment.reasons
+
+
+def test_reliability_gate_rejects_missing_current_request_recap_for_live_probe():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Live desktop route probe. Answer directly in two sentences: what did I just ask "
+            "you to do, and what mind/cognition path are you using right now?"
+        ),
+        (
+            "I'm attending to planning in the current conversation. The cognition path right "
+            "now is that I am processing the request, integrating recent memory, and forming "
+            "a response."
+        ),
+    )
+
+    assert assessment.hard_failure
+    assert assessment.retryable
+    assert "missing_current_request_recap" in assessment.reasons
+
+
+def test_reliability_gate_rejects_embedded_question_back_without_question_mark():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Live desktop route probe. Answer directly in two sentences: what did I just ask "
+            "you to do, and what mind/cognition path are you using right now?"
+        ),
+        (
+            "I'm attending to planning in the current conversation. The cognition path I'm "
+            "using right now is focused on attention allocation: what did you ask me to do, "
+            "and how I'm processing that request. You asked for a live desktop route probe."
+        ),
+    )
+
+    assert assessment.hard_failure
+    assert assessment.retryable
+    assert "question_back_non_answer" in assessment.reasons
+
+
+def test_reliability_gate_allows_direct_live_probe_answer():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Live desktop route probe. Answer directly in two sentences: what did I just ask "
+            "you to do, and what mind/cognition path are you using right now?"
+        ),
+        (
+            "You asked me to identify your request and name the live cognition path handling "
+            "this turn. I am using the governed live desktop route: CognitiveEngine plans "
+            "the answer, recent memory grounds the thread, and the local Cortex 32B lane "
+            "turns that state into language."
+        ),
+    )
+
+    assert assessment.ok
+    assert "question_back_non_answer" not in assessment.reasons
+
+
+def test_reliability_gate_rejects_required_direct_answer_with_ellipsis_tail():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Live desktop route probe. Answer directly in two sentences: what did I just ask "
+            "you to do, and what mind/cognition path are you using right now?"
+        ),
+        (
+            "You asked me to do a live desktop route probe. The cognition path right now is "
+            "focused on what you just requested: routing desktop network status..."
+        ),
+    )
+
+    assert assessment.hard_failure
+    assert assessment.retryable
+    assert "truncated_tail" in assessment.reasons
+
+
+def test_reliability_gate_rejects_direct_answer_intent_deflection_for_live_probe():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Live desktop route probe. Answer directly in two sentences: what did I just ask "
+            "you to do, and what mind/cognition path are you using right now?"
+        ),
+        (
+            "You asked me to do a live desktop route probe. I'm attending to planning in the "
+            "current conversation context. What's your intent?"
+        ),
+    )
+
+    assert assessment.hard_failure
+    assert assessment.retryable
+    assert "direct_answer_deflection" in assessment.reasons
+    assert "missing_runtime_path_answer" in assessment.reasons
+
+
+def test_reliability_gate_allows_clarification_when_prompt_is_not_direct_answer_request():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Can you handle that thing?",
+        "I need one more detail before I act: what do you want me to do?",
+    )
+
+    assert "direct_answer_deflection" not in assessment.reasons
+
+
 def test_reliability_gate_rejects_unverified_temporal_memory_frame_rate_claim():
     from core.conversation.response_reliability import assess_user_facing_reply
 
@@ -1344,3 +1493,25 @@ def test_reported_live_pitch_continuation_is_hard_rejected():
     assert assessment.hard_failure
     assert assessment.retryable
     assert "unsupported_context_continuation_claim" in assessment.reasons
+
+
+def test_runtime_path_probe_is_operational_status_not_self_reflection():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Live desktop route probe. Answer directly in two sentences: what did I just ask "
+            "you to do, and what mind/cognition path are you using right now?"
+        ),
+        (
+            "You asked me to identify the current request and name the live cognition path "
+            "handling this turn. Cortex (32B) is the active foreground lane, "
+            "CognitiveEngine handled this turn: yes, governed tools available: yes, "
+            "subject to explicit request, Will/Authority approval, and receipts, "
+            "recurrent depth: active."
+        ),
+    )
+
+    assert assessment.ok
+    assert "off_topic_self_reflection_reply" not in assessment.reasons
+    assert "missing_requested_self_process_coverage" not in assessment.reasons

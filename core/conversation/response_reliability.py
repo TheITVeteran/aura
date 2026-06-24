@@ -780,6 +780,33 @@ _SELF_PROCESS_COVERAGE_REQUIREMENTS = (
         ("tool", "tools", "verify", "verification", "receipt", "effect", "governance"),
     ),
 )
+_RUNTIME_PATH_REQUEST_RE = re.compile(
+    r"\b(?:"
+    r"mind/cognition path|cognition path|cognitive path|mind path|"
+    r"what path (?:are|is)|which path (?:are|is)|"
+    r"route probe|desktop route|live desktop route|"
+    r"model lane|foreground lane|conversation lane|cortex lane"
+    r")\b",
+    re.IGNORECASE,
+)
+_RUNTIME_PATH_ANSWER_RE = re.compile(
+    r"\b(?:"
+    r"cognitiveengine|cognitive engine|cortex|32b|70b|"
+    r"conversation lane|foreground lane|model lane|local cortex|mind path"
+    r")\b",
+    re.IGNORECASE,
+)
+_DIRECT_ANSWER_DEFLECTION_RE = re.compile(
+    r"\b(?:"
+    r"what(?:'s| is)\s+your\s+intent|"
+    r"what\s+are\s+you\s+asking(?:\s+me)?|"
+    r"what\s+do\s+you\s+want\s+me\s+to\s+do|"
+    r"what\s+do\s+you\s+mean|"
+    r"can\s+you\s+clarify|could\s+you\s+clarify|"
+    r"please\s+clarify"
+    r")\??\b",
+    re.IGNORECASE,
+)
 _CONFUSION_REPAIR_FLOOR = (
     "Let's look at this more clearly. I'm still focused on our conversation, "
     "and I want to make sure I'm giving you a real answer, not just a fragment."
@@ -1080,6 +1107,41 @@ _FOLLOWUP_QUESTION_REQUEST_RE = re.compile(
     r"\b(?:ask|include|end\s+with|finish\s+with)\b.{0,80}\b"
     r"(?:follow[- ]?up|grounded|clarifying|next)\b.{0,80}\bquestions?\b"
     r"|\bfollow[- ]?up\s+questions?\b",
+    re.IGNORECASE,
+)
+_REQUESTS_DIRECT_RECALL_OR_PROCESS_ANSWER_RE = re.compile(
+    r"\b(?:"
+    r"answer\s+directly"
+    r"|what\s+did\s+i\s+(?:just\s+)?ask(?:\s+you)?(?:\s+to\s+do)?"
+    r"|what\s+did\s+i\s+(?:just\s+)?say"
+    r"|what\s+mind(?:/| )cognition\s+path"
+    r"|what\s+(?:cognitive|cognition|mind)\s+path"
+    r"|what\s+path\s+are\s+you\s+using"
+    r"|path\s+are\s+you\s+using\s+right\s+now"
+    r")\b",
+    re.IGNORECASE,
+)
+_CURRENT_REQUEST_RECAP_REQUEST_RE = re.compile(
+    r"\bwhat\s+did\s+i\s+(?:just\s+)?ask(?:\s+you)?(?:\s+to\s+do)?\b",
+    re.IGNORECASE,
+)
+_CURRENT_REQUEST_RECAP_ANSWER_RE = re.compile(
+    r"\b(?:"
+    r"you\s+asked(?:\s+me)?(?:\s+to)?"
+    r"|your\s+request\s+(?:was|is)"
+    r"|the\s+request\s+(?:was|is)"
+    r"|you\s+wanted\s+me\s+to"
+    r"|you\s+asked\s+for"
+    r")\b",
+    re.IGNORECASE,
+)
+_QUESTION_BACK_NON_ANSWER_RE = re.compile(
+    r"\b(?:"
+    r"what\s+did\s+you\s+(?:just\s+)?ask\s+me(?:\s+to\s+do)?"
+    r"|what\s+did\s+i\s+ask\s+you(?:\s+to\s+do)?"
+    r"|what\s+(?:cognitive|cognition|mind)\s+path\s+am\s+i\s+using"
+    r"|what\s+path\s+am\s+i\s+using"
+    r")\??\b",
     re.IGNORECASE,
 )
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -1721,7 +1783,7 @@ def is_operational_status_turn(user_message: Any) -> bool:
     if not text:
         return False
     return bool(
-        is_practical_diagnostic_turn(user_message)
+        _RUNTIME_PATH_REQUEST_RE.search(text)
         or _contains_any_marker(text, _OPERATIONAL_STATUS_REQUEST_MARKERS)
     )
 
@@ -2353,6 +2415,62 @@ def _missing_requested_self_process_coverage(prompt: Any, reply_text: Any) -> tu
     return tuple(missing)
 
 
+def _has_question_back_non_answer(prompt: Any, reply_text: Any) -> bool:
+    """Reject replies that ask the user's recall/process question back to them."""
+
+    prompt_norm = _normalize(prompt)
+    if not prompt_norm or not _REQUESTS_DIRECT_RECALL_OR_PROCESS_ANSWER_RE.search(prompt_norm):
+        return False
+    raw = str(reply_text or "").strip()
+    if not raw:
+        return False
+    return bool(_QUESTION_BACK_NON_ANSWER_RE.search(raw))
+
+
+def _missing_current_request_recap(prompt: Any, reply_text: Any) -> bool:
+    """Require an explicit answer when the user asks what they just asked for."""
+
+    prompt_norm = _normalize(prompt)
+    if not prompt_norm or not _CURRENT_REQUEST_RECAP_REQUEST_RE.search(prompt_norm):
+        return False
+    raw = str(reply_text or "").strip()
+    if not raw:
+        return True
+    return not bool(_CURRENT_REQUEST_RECAP_ANSWER_RE.search(raw))
+
+
+def _missing_runtime_path_answer(prompt: Any, reply_text: Any) -> bool:
+    """Require concrete route/lane coverage when the user asks what path is active."""
+
+    prompt_norm = _normalize(prompt)
+    if not prompt_norm or not _RUNTIME_PATH_REQUEST_RE.search(prompt_norm):
+        return False
+    raw = str(reply_text or "").strip()
+    if not raw:
+        return True
+    return not bool(_RUNTIME_PATH_ANSWER_RE.search(raw))
+
+
+def _has_direct_answer_deflection(prompt: Any, reply_text: Any) -> bool:
+    """Reject clarification-style deflections when the prompt asks for a direct answer."""
+
+    prompt_norm = _normalize(prompt)
+    if not prompt_norm:
+        return False
+    direct_answer_requested = (
+        "answer directly" in prompt_norm
+        or _CURRENT_REQUEST_RECAP_REQUEST_RE.search(prompt_norm)
+        or _RUNTIME_PATH_REQUEST_RE.search(prompt_norm)
+        or _REQUESTS_DIRECT_RECALL_OR_PROCESS_ANSWER_RE.search(prompt_norm)
+    )
+    if not direct_answer_requested:
+        return False
+    raw = str(reply_text or "").strip()
+    if not raw:
+        return False
+    return bool(_DIRECT_ANSWER_DEFLECTION_RE.search(raw))
+
+
 def _has_unfounded_alarm_derailment(user_message: Any, reply_text: Any) -> bool:
     raw = str(reply_text or "").strip()
     if not raw or not _UNFOUNDED_ALARM_RE.search(raw):
@@ -2505,6 +2623,24 @@ def _has_camelcase_internal_jargon(user_message: Any, reply_text: Any) -> bool:
         or is_operational_status_turn(prompt)
     ):
         return False
+    if any(
+        marker in prompt
+        for marker in (
+            "cognitiveengine",
+            "cognitive engine",
+            "cortex",
+            "mind/cognition path",
+            "cognition path",
+            "cognitive path",
+            "desktop route",
+            "live desktop route",
+            "conversation lane",
+            "model lane",
+            "what path are you using",
+            "path are you using right now",
+        )
+    ):
+        return False
     if any(marker in prompt for marker in ("architecture", "system", "kernel", "runtime", "code", "debug", "log")):
         return False
     allowed = {"OpenAI", "ChatGPT", "YouTube", "GitHub", "JavaScript"}
@@ -2550,7 +2686,9 @@ def _has_truncated_tail(reply_text: Any) -> bool:
         terminal_word = terminal_word_match.group(1).lower()
         if len(terminal_word) <= 2 and terminal_word not in _ALLOWED_SHORT_TAIL_WORDS:
             return True
-    if body.endswith(("...", "…", ".", "!", "?", "\"", "'", "”", "’", ")", "]")):
+    if body.endswith(("...", "…")):
+        return True
+    if body.endswith((".", "!", "?", "\"", "'", "”", "’", ")", "]")):
         return False
     if re.search(r"(?:^|\n)\s*\d+\.\s+\S+", body) or re.search(r"\*\*[^*\n]{2,80}:\*\*", body):
         return True
@@ -2947,6 +3085,7 @@ def assess_user_facing_reply(
         )
 
     reasons: list[str] = []
+    operational_status_turn = is_operational_status_turn(user_message)
 
     reasons.extend(
         _model_text_integrity_reasons(
@@ -2983,6 +3122,9 @@ def assess_user_facing_reply(
             reasons.append("reliability_diagnostic_too_thin")
         elif not _has_reliability_substance(raw):
             reasons.append("too_thin_for_reliability_turn")
+    elif operational_status_turn:
+        if not _has_operational_status_substance(user_message, raw):
+            reasons.append("too_thin_for_operational_status_turn")
     elif is_live_self_reflection_turn(user_message) or is_self_process_question(user_message):
         if _has_social_presence_instead_of_self_reflection(user_message, raw):
             reasons.append("social_presence_instead_of_self_reflection")
@@ -3023,6 +3165,14 @@ def assess_user_facing_reply(
 
     reasons.extend(_instruction_coverage_reasons(user_message, raw))
     reasons.extend(_semantic_coverage_reasons(user_message, raw))
+    if _has_question_back_non_answer(user_message, raw):
+        reasons.append("question_back_non_answer")
+    if _missing_current_request_recap(user_message, raw):
+        reasons.append("missing_current_request_recap")
+    if _missing_runtime_path_answer(user_message, raw):
+        reasons.append("missing_runtime_path_answer")
+    if _has_direct_answer_deflection(user_message, raw):
+        reasons.append("direct_answer_deflection")
 
     hard_reasons = {
         "empty_reply",
@@ -3067,6 +3217,10 @@ def assess_user_facing_reply(
         "unsupported_self_telemetry_claim",
         "format_meta_artifact",
         "low_signal_acknowledgement_placeholder",
+        "question_back_non_answer",
+        "missing_current_request_recap",
+        "missing_runtime_path_answer",
+        "direct_answer_deflection",
         "unsupported_operational_status_overclaim",
         "unsupported_runtime_telemetry_inference",
         "unsupported_tool_readiness_claim",
@@ -3078,6 +3232,7 @@ def assess_user_facing_reply(
         "too_thin_for_reliability_turn",
         "too_thin_for_confusion_repair",
         "too_thin_for_expansion_request",
+        "too_thin_for_operational_status_turn",
         "too_short_for_user_turn",
         "too_thin_for_user_turn",
         "too_thin_for_open_ended_turn",
@@ -3110,6 +3265,13 @@ def conversation_reliability_system_block(user_message: Any = "") -> str:
             "Give a grounded status and continue the thread; never answer with only 'I'm fine', "
             "'Don't worry', or another short reassurance."
         )
+    elif is_operational_status_turn(user_message):
+        extra = (
+            "\n- The user is asking about the live runtime, model lane, or tool availability. "
+            "Answer from bounded operational evidence. Do not claim full capacity, peak efficiency, "
+            "zero delay, zero uncertainty, guaranteed tool execution, or direct OS control unless "
+            "permissions, app state, governance, receipts, and effect verification have actually passed."
+        )
     elif is_live_self_reflection_turn(user_message) or is_self_process_question(user_message):
         extra = (
             "\n- The user is asking for Aura's live inner state or current thought. "
@@ -3121,13 +3283,6 @@ def conversation_reliability_system_block(user_message: Any = "") -> str:
             "\n- The user is checking in on Aura's state. "
             "Give a brief but substantive first-person answer with what feels steady or strained, "
             "then continue the conversation naturally."
-        )
-    elif is_operational_status_turn(user_message):
-        extra = (
-            "\n- The user is asking about the live runtime, model lane, or tool availability. "
-            "Answer from bounded operational evidence. Do not claim full capacity, peak efficiency, "
-            "zero delay, zero uncertainty, guaranteed tool execution, or direct OS control unless "
-            "permissions, app state, governance, receipts, and effect verification have actually passed."
         )
     instruction_notes: list[str] = []
     requested_paragraphs = _requested_count(_PARAGRAPH_REQUEST_RE, user_message)

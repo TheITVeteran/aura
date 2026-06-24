@@ -1800,6 +1800,16 @@ def _desktop_turn_needs_recent_context(user_message: str) -> bool:
     return bool(_RECENT_CONTEXT_NEEDED_RE.search(text))
 
 
+def _is_current_request_recap_request(user_message: str) -> bool:
+    return bool(
+        re.search(
+            r"\bwhat\s+did\s+i\s+(?:just\s+)?ask(?:\s+you)?(?:\s+to\s+do)?\b",
+            str(user_message or ""),
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _clip_conversation_text(text: Any, *, limit: int = 420) -> str:
     clipped = " ".join(str(text or "").strip().split())
     if len(clipped) <= limit:
@@ -2742,6 +2752,7 @@ def _inner_cognitive_cycle_timeout(outer_timeout_s: float) -> float:
 _RUNTIME_FACT_STATUS_RE = re.compile(
     r"\b(?:active model|model lane|foreground lane|conversation lane|"
     r"current lane|which lane|what lane|live desktop chat|live chat path|desktop chat path|"
+    r"mind/cognition path|cognition path|cognitive path|desktop route|live desktop route|route probe|"
     r"short status|still coherent|same thread|able to continue|"
     r"cognitiveengine|cognitive engine|governed tools?|tool governance|"
     r"tool availability|recurrent depth|live desktop path validation)\b",
@@ -3146,7 +3157,13 @@ def _build_runtime_fact_status_fastpath_reply(
     status_prompt = str(user_message or "").lower()
     if "generic assistant" in status_prompt or "fallback" in status_prompt:
         parts.append("generic assistant fallback: blocked on the live desktop path")
-    return ", ".join(parts) + "."
+    reply = ", ".join(parts) + "."
+    if _is_current_request_recap_request(user_message):
+        return (
+            "You asked me to identify the current request and name the live cognition "
+            f"path handling this turn. {reply}"
+        )
+    return reply
 
 
 def _is_bounded_nonexecuting_planning_request(user_message: str) -> bool:
@@ -3368,7 +3385,13 @@ def _ground_runtime_fact_status_reply(
     status_prompt = str(user_message or "").lower()
     if "generic assistant" in status_prompt or "fallback" in status_prompt:
         parts.append("generic assistant fallback: blocked on the live desktop path")
-    return ", ".join(parts) + "."
+    reply = ", ".join(parts) + "."
+    if _is_current_request_recap_request(user_message):
+        return (
+            "You asked me to identify the current request and name the live cognition "
+            f"path handling this turn. {reply}"
+        )
+    return reply
 
 
 def _build_cognitive_engine_reply_repair_directive(
@@ -3486,6 +3509,7 @@ async def _run_cognitive_engine_chat_turn(
     private_cognitive_model_contract = bool(
         require_engine and _is_private_cognitive_model_request(visible)
     )
+    runtime_fact_status_contract = _is_runtime_fact_status_request(visible)
 
     engine = ServiceContainer.get("cognitive_engine", default=None)
     if engine is None or not hasattr(engine, "think"):
@@ -3494,7 +3518,7 @@ async def _run_cognitive_engine_chat_turn(
         return None
     if turn_trace is not None:
         turn_trace["cognitive_engine_available"] = True
-    if require_engine and _is_runtime_fact_status_request(visible):
+    if runtime_fact_status_contract and not require_engine:
         logger.info(
             "Serving bounded desktop runtime-status contract without foreground model allocation."
         )
@@ -3577,6 +3601,7 @@ async def _run_cognitive_engine_chat_turn(
         "bounded_planning_contract": bounded_planning_contract,
         "failure_mode_contract": failure_mode_contract,
         "private_cognitive_model_contract": private_cognitive_model_contract,
+        "runtime_fact_status_contract": runtime_fact_status_contract,
         "conversation_lane": dict(lane or {}),
         "prompt_shape": {
             "question_parts": int(getattr(shape, "question_parts", 0) or 0),
@@ -3734,6 +3759,14 @@ async def _run_cognitive_engine_chat_turn(
                 + " The user is asking about recent conversation context. Answer from "
                 "conversation_recall_evidence exactly enough to be correct; do not guess."
             )
+        if _is_current_request_recap_request(visible):
+            context["current_request_recap_contract"] = True
+            context["response_style_contract"] = (
+                str(context.get("response_style_contract") or "")
+                + " The user is asking you to identify the current request. Start with "
+                "'You asked me to...' or an equivalent direct recap, then answer any "
+                "second part of the prompt."
+            )
         if _normalize_user_message(visible).startswith("you with me") or re.search(
             r"\b(?:you\s+with\s+me|still\s+with\s+me|are\s+you\s+(?:there|with\s+me))\b",
             visible,
@@ -3793,13 +3826,28 @@ async def _run_cognitive_engine_chat_turn(
                 "Context challenge evidence: "
                 f"{context_challenge_context} "
                 "Answer from this evidence in one or two complete sentences under 70 words. "
-                "Do not invent a pitch, project, or prior object that is not in the recent thread."
+                "If the evidence supports a pitch, project, story, or prior object, name it; "
+                "if it does not, say the jump has no supported prior object and answer from "
+                "the actual recent text."
             )
         if conversation_recall_context:
             engine_directives.append(
                 "Conversation recall evidence: "
                 f"{conversation_recall_context} "
                 "Answer the recall question from this evidence exactly enough to be correct."
+            )
+        if _is_current_request_recap_request(visible):
+            engine_directives.append(
+                "Current-request recap contract: explicitly state what the current visible "
+                "request asks, using 'You asked me to...' or equivalent direct wording before "
+                "answering the rest of the prompt."
+            )
+        if runtime_fact_status_contract:
+            engine_directives.append(
+                "Runtime path contract: answer the runtime/path question directly. "
+                "Name the live cognition path handling this turn, including CognitiveEngine "
+                "and the active Cortex/model lane when present, and do not answer with a "
+                "generic assistant identity or a bounded-status substitute."
             )
         if capability_inventory_contract:
             engine_directives.append(
@@ -4206,9 +4254,19 @@ async def _run_cognitive_engine_chat_turn(
         )
 
         recent_user_messages = await _gather_recent_user_messages_for_relevance(visible)
+        assessment_text = (
+            _ground_runtime_fact_status_reply(
+                visible,
+                text,
+                lane,
+                cognitive_engine_handled=True,
+            )
+            if runtime_fact_status_contract
+            else text
+        )
         assessment = assess_user_facing_reply(
             visible,
-            text,
+            assessment_text,
             recent_user_messages=recent_user_messages,
         )
         if (
@@ -4678,7 +4736,9 @@ def _looks_truncated_tail(text: str) -> bool:
             return True
     except _CHAT_RECOVERABLE_ERRORS:
         pass
-    if body.endswith(("...", "…", ".", "!", "?", "\"", "'", "”", "’", ")", "]")):
+    if body.endswith(("...", "…")):
+        return True
+    if body.endswith((".", "!", "?", "\"", "'", "”", "’", ")", "]")):
         return False
     if re.search(r"(?:^|\n)\s*\d+\.\s+\S+", body) or re.search(r"\*\*[^*\n]{2,80}:\*\*", body):
         return True

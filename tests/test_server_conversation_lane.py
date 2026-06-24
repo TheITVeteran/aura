@@ -127,6 +127,32 @@ def test_runtime_fact_status_reply_uses_canonical_lane(monkeypatch):
     assert "UnifiedCognitiveModel" not in reply
 
 
+def test_runtime_fact_status_reply_recaps_current_route_probe(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    reply = chat_routes._ground_runtime_fact_status_reply(
+        (
+            "Live desktop route probe. Answer directly in two sentences: what did I just ask "
+            "you to do, and what mind/cognition path are you using right now?"
+        ),
+        "You asked me to do a route probe. I'm attending to planning. What's your intent?",
+        {
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+            "recurrent_depth": {"active": True},
+        },
+        cognitive_engine_handled=True,
+    )
+
+    assert reply.startswith("You asked me to identify the current request")
+    assert "Cortex (32B) is the active foreground lane" in reply
+    assert "CognitiveEngine handled this turn: yes" in reply
+    assert "governed tools available: yes" in reply
+    assert "recurrent depth: active" in reply
+    assert "What's your intent" not in reply
+
+
 def test_runtime_fact_status_reply_does_not_overwrite_action_objectives(monkeypatch):
     from interface.routes import chat as chat_routes
 
@@ -4210,6 +4236,87 @@ async def test_api_chat_desktop_required_fails_closed_on_final_degraded_reply(mo
 
 
 @pytest.mark.asyncio
+async def test_required_runtime_status_turn_invokes_cognitive_engine(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+    trace = {}
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "mode": getattr(mode, "name", str(mode)),
+                    "origin": origin,
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content=(
+                    "You asked me to identify the current request and name the live cognition "
+                    "path handling this turn. I am using CognitiveEngine on the Cortex 32B "
+                    "foreground lane."
+                )
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    user_message = (
+        "Live desktop route probe. Answer directly in two sentences: what did I just ask "
+        "you to do, and what mind/cognition path are you using right now?"
+    )
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+            "recurrent_depth": {"active": True},
+        },
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert calls
+    assert "Runtime path contract" in calls[0]["objective"]
+    assert calls[0]["context"]["runtime_fact_status_contract"] is True
+    assert calls[0]["context"]["cognitive_engine_required"] is True
+    assert trace["engine_think_invoked"] is True
+    assert trace["cognitive_engine_reply_accepted"] is True
+    assert trace["response_path"] == "cognitive_engine"
+    assert trace.get("bounded_contract_used") is not True
+    assert reply.startswith("You asked me to identify the current request")
+    assert "Cortex (32B) is the active foreground lane" in reply
+    assert "CognitiveEngine handled this turn: yes" in reply
+    assert "governed tools available: yes" in reply
+
+
+@pytest.mark.asyncio
 async def test_desktop_cognitive_engine_repairs_weak_status_reply_before_fail_closed(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
@@ -5520,7 +5627,7 @@ async def test_chat_restart_recovers_completed_exchange_from_ui_session(
 
 
 @pytest.mark.asyncio
-async def test_desktop_required_runtime_status_avoids_foreground_model_allocation(monkeypatch):
+async def test_desktop_required_runtime_status_invokes_engine_then_grounds(monkeypatch):
     from interface.routes import chat as chat_routes
 
     calls = []
@@ -5558,7 +5665,9 @@ async def test_desktop_required_runtime_status_avoids_foreground_model_allocatio
         require_engine=True,
     )
 
-    assert calls == []
+    assert len(calls) == 1
+    assert calls[0]["context"]["runtime_fact_status_contract"] is True
+    assert calls[0]["context"]["cognitive_engine_required"] is True
     assert reply
     assert "Cortex (32B) is the active foreground lane" in reply
     assert "CognitiveEngine handled this turn: yes" in reply
@@ -5566,7 +5675,7 @@ async def test_desktop_required_runtime_status_avoids_foreground_model_allocatio
 
 
 @pytest.mark.asyncio
-async def test_desktop_required_cognitive_fusion_status_avoids_foreground_model_allocation(monkeypatch):
+async def test_desktop_required_cognitive_fusion_status_invokes_engine_then_grounds(monkeypatch):
     from interface.routes import chat as chat_routes
 
     calls = []
@@ -5607,7 +5716,9 @@ async def test_desktop_required_cognitive_fusion_status_avoids_foreground_model_
         require_engine=True,
     )
 
-    assert calls == []
+    assert len(calls) == 1
+    assert calls[0]["context"]["runtime_fact_status_contract"] is True
+    assert calls[0]["context"]["cognitive_engine_required"] is True
     assert reply
     assert "Cortex (32B) is the active foreground lane" in reply
     assert "CognitiveEngine handled this turn: yes" in reply
