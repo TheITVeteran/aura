@@ -68,6 +68,45 @@ class SymbolicBridge:
         except (ImportError, AttributeError, RuntimeError) as exc:
             return SymbolicResult(False, "sympy", repr(exc), "solver_error")
 
+    def evaluate(self, expression: str) -> SymbolicResult:
+        """Exactly evaluate a math expression (sympy) — no LLM guessing.
+
+        Handles arithmetic, fractions, powers, roots, and constants symbolically, then
+        gives a numeric value. The exact engine for tool-augmented reasoning.
+        """
+        try:
+            import sympy as sp
+
+            expr = sp.sympify(expression, evaluate=True)
+            if expr.free_symbols:
+                value: Any = expr               # symbolic — leave it exact
+            else:
+                # Exact value: keep integers/rationals clean; float only if irrational.
+                value = expr if (expr.is_Integer or expr.is_Rational) else sp.N(expr)
+            return SymbolicResult(True, "sympy", value, f"sympy.evaluate({expression!r}) = {value}")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, SyntaxError) as exc:
+            # Fall back to the sandboxed numeric evaluator for pure arithmetic.
+            val = _safe_arith(str(expression))
+            if val is not None:
+                return SymbolicResult(True, "numeric_ast", val, f"numeric({expression!r})")
+            return SymbolicResult(False, "sympy", repr(exc), "solver_error")
+
+    def solve_equation(self, equation: str, symbol: str = "x") -> SymbolicResult:
+        """Solve an equation/expression for a symbol, exactly (sympy)."""
+        try:
+            import sympy as sp
+
+            sym = sp.Symbol(symbol)
+            if "=" in equation:
+                lhs, rhs = equation.split("=", 1)
+                expr = sp.sympify(lhs) - sp.sympify(rhs)
+            else:
+                expr = sp.sympify(equation)
+            roots = sp.solve(expr, sym)
+            return SymbolicResult(True, "sympy", roots, f"sympy.solve({equation!r}, {symbol}) = {roots}")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            return SymbolicResult(False, "sympy", repr(exc), "solver_error")
+
     def check_python_boolean(self, expression: str) -> SymbolicResult:
         try:
             tree = ast.parse(expression, mode="eval")

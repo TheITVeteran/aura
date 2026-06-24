@@ -311,6 +311,25 @@ class ReasoningStrategies:
         Returns:
             StrategyResult with the answer and metadata.
         """
+        # Tool-augmented fast-path — if the question reduces to an EXACT computation
+        # (arithmetic, an equation, a logical entailment), answer it from the prover/CAS
+        # instead of a sampled token sequence. This is the biggest raw-correctness lever:
+        # don't guess at what can be computed.
+        try:
+            from core.brain.tool_augmented_reasoning import tool_augmented_answer
+
+            tool = tool_augmented_answer(query)
+            if tool is not None and tool.ok:
+                return StrategyResult(
+                    content=tool.answer,
+                    strategy_used=StrategyType.DIRECT,
+                    confidence=0.99,
+                    reasoning_steps=[f"Solved exactly via {tool.method}: {tool.expression} → {tool.answer}"],
+                    metadata={"tool_augmented": True, "method": tool.method},
+                )
+        except _REASONING_RECOVERABLE_ERRORS as exc:
+            _record_reasoning_degradation("tool_augmented_fastpath", exc)
+
         if strategy is None:
             strategy = self.classify(query)
 
