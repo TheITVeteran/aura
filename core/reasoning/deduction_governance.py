@@ -26,6 +26,8 @@ class _DeductionGovernance:
         self._last_checked_at = 0.0
         self._non_sequitur_events = 0
         self._last_non_sequiturs: list[dict[str, Any]] = []
+        self._arithmetic_error_events = 0
+        self._last_arithmetic_errors: list[dict[str, Any]] = []
 
     def record(self, report: ConsistencyReport) -> None:
         self._last_report = report
@@ -47,22 +49,40 @@ class _DeductionGovernance:
             except (ImportError, AttributeError, RuntimeError, TypeError) as exc:
                 record_degradation("deduction_governance", exc)
 
-    def record_reasoning_audit(self, non_sequiturs: list[dict[str, Any]]) -> None:
-        """Record non-sequiturs found in active reasoning (her own draft replies)."""
-        if not non_sequiturs:
+    def record_reasoning_audit(
+        self,
+        non_sequiturs: list[dict[str, Any]],
+        arithmetic_errors: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Record findings from the active-reasoning audit (her own draft replies)."""
+        arithmetic_errors = arithmetic_errors or []
+        if non_sequiturs:
+            self._non_sequitur_events += len(non_sequiturs)
+            self._last_non_sequiturs = list(non_sequiturs)
+            for ns in non_sequiturs:
+                logger.warning(
+                    "🧮 [Deduction] non-sequitur in reasoning: \"%s\" does not follow from %s",
+                    ns.get("conclusion"),
+                    ns.get("premises"),
+                )
+        if arithmetic_errors:
+            self._arithmetic_error_events += len(arithmetic_errors)
+            self._last_arithmetic_errors = list(arithmetic_errors)
+            for ae in arithmetic_errors:
+                logger.warning(
+                    "🧮 [Arithmetic] calculation error: \"%s\" (stated %s, correct %s)",
+                    ae.get("claim"), ae.get("stated"), ae.get("correct"),
+                )
+        if not non_sequiturs and not arithmetic_errors:
             return
-        self._non_sequitur_events += len(non_sequiturs)
-        self._last_non_sequiturs = list(non_sequiturs)
-        for ns in non_sequiturs:
-            logger.warning(
-                "🧮 [Deduction] non-sequitur in reasoning: \"%s\" does not follow from %s",
-                ns.get("conclusion"),
-                ns.get("premises"),
-            )
         try:
             from core.observability.metrics import get_metrics
 
-            get_metrics().increment_counter("reasoning_non_sequitur_total")
+            metrics = get_metrics()
+            if non_sequiturs:
+                metrics.increment_counter("reasoning_non_sequitur_total")
+            if arithmetic_errors:
+                metrics.increment_counter("reasoning_arithmetic_error_total")
         except (ImportError, AttributeError, RuntimeError, TypeError) as exc:
             record_degradation("deduction_governance", exc)
 
@@ -76,6 +96,8 @@ class _DeductionGovernance:
             "last_checked_at": self._last_checked_at,
             "non_sequitur_events": self._non_sequitur_events,
             "last_non_sequiturs": list(self._last_non_sequiturs),
+            "arithmetic_error_events": self._arithmetic_error_events,
+            "last_arithmetic_errors": list(self._last_arithmetic_errors),
         }
 
 

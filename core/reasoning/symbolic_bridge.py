@@ -17,6 +17,44 @@ class SymbolicResult:
         return {"ok": self.ok, "engine": self.engine, "result": str(self.result), "proof_trace": self.proof_trace}
 
 
+def _safe_arith(expr: str) -> float | None:
+    """Evaluate a pure-numeric arithmetic expression safely (no names/calls)."""
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except (SyntaxError, ValueError):
+        return None
+
+    def ev(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return ev(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            v = ev(node.operand)
+            return v if isinstance(node.op, ast.UAdd) else -v
+        if isinstance(node, ast.BinOp):
+            a, b = ev(node.left), ev(node.right)
+            if isinstance(node.op, ast.Add):
+                return a + b
+            if isinstance(node.op, ast.Sub):
+                return a - b
+            if isinstance(node.op, ast.Mult):
+                return a * b
+            if isinstance(node.op, ast.Div):
+                return a / b if b != 0 else float("nan")
+            if isinstance(node.op, ast.Pow):
+                return a ** b
+            if isinstance(node.op, ast.Mod):
+                return a % b if b != 0 else float("nan")
+        raise ValueError("unsupported expression")
+
+    try:
+        val = ev(tree)
+        return val if val == val else None  # reject NaN
+    except (ValueError, TypeError, ZeroDivisionError, OverflowError):
+        return None
+
+
 class SymbolicBridge:
     """Routes formalizable work to exact solvers when available."""
 
@@ -37,6 +75,56 @@ class SymbolicBridge:
             return SymbolicResult(True, "python_ast", bool(value), "restricted_ast_eval")
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             return SymbolicResult(False, "python_ast", repr(exc), "solver_error")
+
+    def check_arithmetic_claims(self, text: str) -> list[dict[str, Any]]:
+        """Verify numeric ``expr = value`` claims in text; return the wrong ones.
+
+        Conservative: only evaluates pure-numeric arithmetic (no variables), so it
+        never mis-flags algebra or rhetorical "=" usage. Catches a confidently
+        stated calculation error in Aura's own reasoning.
+        """
+        import re as _re
+
+        errors: list[dict[str, Any]] = []
+        # "<arithmetic> = <number>" with at least one operator on the left.
+        pattern = _re.compile(r"(?<![\w.])((?:\d[\d,]*(?:\.\d+)?\s*[-+*/]\s*)+\d[\d,]*(?:\.\d+)?)\s*=\s*(-?\d[\d,]*(?:\.\d+)?)")
+        for m in pattern.finditer(str(text or "")):
+            lhs_raw, rhs_raw = m.group(1), m.group(2)
+            lhs_val = _safe_arith(lhs_raw.replace(",", ""))
+            if lhs_val is None:
+                continue
+            try:
+                rhs_val = float(rhs_raw.replace(",", ""))
+            except ValueError:
+                continue
+            if abs(lhs_val - rhs_val) > 1e-6 * max(1.0, abs(rhs_val)):
+                errors.append({
+                    "claim": m.group(0).strip(),
+                    "stated": rhs_val,
+                    "correct": lhs_val,
+                })
+        return errors
+
+    def audit_reasoning(self, text: str) -> dict[str, Any]:
+        """Active-reasoning gateway: route logic to the prover, arithmetic to sympy.
+
+        The single live entry point that exercises the bridge on Aura's own output —
+        deductive non-sequiturs via the natural-deduction prover and calculation
+        errors via numeric evaluation. Returns both findings.
+        """
+        non_sequiturs: list[dict[str, Any]] = []
+        try:
+            from core.reasoning.inference_audit import find_non_sequiturs
+
+            non_sequiturs = [v.to_dict() for v in find_non_sequiturs(text)]
+        except (ImportError, ValueError, RuntimeError, TypeError, AttributeError):
+            non_sequiturs = []
+        arithmetic_errors = self.check_arithmetic_claims(text)
+        return {
+            "non_sequiturs": non_sequiturs,
+            "arithmetic_errors": arithmetic_errors,
+            "clean": not non_sequiturs and not arithmetic_errors,
+        }
 
     def prove_logic(self, premises: list[str], goal: str) -> SymbolicResult:
         """Exact propositional deduction via the natural-deduction prover.

@@ -4534,15 +4534,22 @@ def _record_recent_response(text: str, user_message: str = "") -> None:
         response_body = _normalize_response_body(text)[:500]
         if response_body:
             _recent_response_pairs.append((_response_fingerprint(user_message), response_body))
-    # Deductive self-audit (non-blocking): if her own reply makes a confident
-    # logical misstep — a non-sequitur she can actually formalize — surface it to
-    # deduction governance. Conservative: silent on anything it cannot prove wrong,
-    # and never alters the reply.
+    # Reasoning self-audit (non-blocking), routed through the SymbolicBridge so it
+    # exercises the exact solvers live: the natural-deduction prover catches
+    # formalizable non-sequiturs and numeric evaluation catches calculation errors
+    # in her own reply. Conservative — silent on anything it cannot prove wrong, and
+    # it never alters the reply.
     if text and len(str(text)) < 4000:
         try:
-            from core.reasoning.inference_audit import audit_self_reasoning
+            from core.reasoning.symbolic_bridge import SymbolicBridge
+            from core.reasoning.deduction_governance import get_deduction_governance
 
-            audit_self_reasoning(str(text))
+            findings = SymbolicBridge().audit_reasoning(str(text))
+            if not findings.get("clean", True):
+                get_deduction_governance().record_reasoning_audit(
+                    findings.get("non_sequiturs", []),
+                    findings.get("arithmetic_errors", []),
+                )
         except _CHAT_RECOVERABLE_ERRORS as exc:
             record_degradation("chat", exc)
 
@@ -12317,9 +12324,31 @@ async def api_chat(
                         )
                         or "cognitive_engine"
                     )
+                    if desktop_requires_cognitive_engine:
+                        contract_lane = _collect_conversation_lane_status()
+                        candidate_contract = _live_turn_contract(
+                            lane_status=contract_lane,
+                            response_confidence="high",
+                            status=reply_source,
+                            reply_source=reply_source,
+                        )
+                        if not bool(candidate_contract.get("full_mind_path")):
+                            logger.error(
+                                "Desktop CognitiveEngine candidate did not prove full mind path "
+                                "(path=%s, accepted=%s, bounded=%s); failing closed instead of "
+                                "serving repair text as Aura speech.",
+                                candidate_contract.get("response_path"),
+                                candidate_contract.get("cognitive_engine_reply_accepted"),
+                                candidate_contract.get("bounded_contract_used"),
+                            )
+                            reply_text = None
+                            reply_source = ""
+                            lane = contract_lane
+                        else:
+                            lane = contract_lane
                     logger.debug(
                         "REST: CognitiveEngine served desktop chat turn (len=%d).",
-                        len(reply_text),
+                        len(reply_text or ""),
                     )
 
         desktop_engine_failed = desktop_requires_cognitive_engine and not reply_text

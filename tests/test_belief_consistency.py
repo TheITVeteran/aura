@@ -115,3 +115,25 @@ def test_symbolic_bridge_prove_logic_invalid_returns_countermodel():
     res = SymbolicBridge().prove_logic(["A -> B"], "B -> A")
     assert res.ok and res.result is False
     assert "countermodel" in res.proof_trace
+
+
+def test_symbolic_bridge_catches_arithmetic_error():
+    errs = SymbolicBridge().check_arithmetic_claims("The total is 2 + 2 = 5, obviously.")
+    assert len(errs) == 1
+    assert errs[0]["stated"] == 5.0 and errs[0]["correct"] == 4.0
+
+
+def test_symbolic_bridge_accepts_correct_arithmetic():
+    assert SymbolicBridge().check_arithmetic_claims("We have 12 * 3 = 36 widgets.") == []
+    # algebra / non-numeric "=" must not be mis-flagged
+    assert SymbolicBridge().check_arithmetic_claims("Let x = 5 and y = 7.") == []
+
+
+def test_symbolic_bridge_audit_reasoning_gateway():
+    audit = SymbolicBridge().audit_reasoning(
+        "If it rains then the ground is wet, and the ground is wet, therefore it is raining. Also 3 + 4 = 8."
+    )
+    assert not audit["clean"]
+    assert len(audit["non_sequiturs"]) == 1          # affirming the consequent
+    assert len(audit["arithmetic_errors"]) == 1      # 3+4≠8
+    assert SymbolicBridge().audit_reasoning("I'm glad we're talking. What's up?")["clean"]
