@@ -159,6 +159,37 @@ words (e.g. affirming the consequent) is surfaced to governance
 prove wrong, and it never alters the reply — so it catches real fallacies without
 false positives on valid or unformalizable reasoning.
 
+## Substrate↔LLM integration audits (φ, CRSM-LoRA, CAA, integrity)
+
+A set of verifications that turn previously-silent operational gaps into surfaced,
+queryable facts:
+
+- **Grassmann φ on the transformer** (`core/consciousness/grassmann_phi.py`): the
+  residual-stream φ no longer collapses a ~5000-dim hidden vector into 8 chunk-means.
+  A sliding window → its dominant principal *subspace* (a point on the Grassmann
+  manifold); recurring subspaces become geometric anchor *modes*; the current subspace
+  is encoded against them by principal-angle (Grassmann) distance into an 8-node IIT
+  state. `phi_core.compute_grassmann_residual_phi()` reuses the exact-φ machinery and
+  competes in `compute_full_kernel`'s exclusion-postulate winner selection
+  (`residual_stream_grassmann`); exposed as `grassmann_phi_s`.
+- **CRSM→LoRA loop** (`core/consciousness/crsm_loop_monitor.py`): verifies whether
+  captured experience is actually trained into weights — classifies the loop
+  CLOSED/OPEN/IDLE, warns when captures accumulate untrained. `lora_trainer` calls
+  `mark_dataset_consumed` on a successful run. (Real state: OPEN — captures not yet
+  trained in.)
+- **CAA readiness** (`core/consciousness/caa/readiness_report.py`): reads each steering
+  vector's on-disk provenance to verify whether vectors were *extracted* from the fused
+  model or runtime-derived, and reports steering capacity. (Real state: BOOTSTRAP / 30%
+  — vectors are runtime-derived, not extracted, so alpha is damped.)
+- **System integrity audit** (`core/runtime/integrity_audit.py`): consolidates
+  degradation receipts + CRSM loop + CAA readiness into one report, surfaced on
+  `/api/health/heartbeat` (throttled) so silent subsystem failures speak without manual
+  reading; always emits under `AURA_STRICT_RUNTIME=1`.
+
+The SymbolicBridge is now live: `audit_reasoning()` runs on every reply (chat
+`_record_recent_response`), routing logic to the prover and arithmetic to a sandboxed
+evaluator (see the deduction section).
+
 ## Memory Governance
 
 All memory writes are gated:
