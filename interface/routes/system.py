@@ -948,13 +948,32 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
         direct_screen_granted = bool((payload["direct_screen_recording"] or {}).get("granted"))
         direct_accessibility_granted = bool((payload["direct_accessibility"] or {}).get("granted"))
         direct_automation_granted = bool((payload["direct_automation"] or {}).get("granted"))
-        payload["screen_capture_ready"] = screen_granted
-        payload["desktop_control_ready"] = accessibility_granted and bool(payload["pyautogui_ready"])
-        payload["screen_text_ready"] = automation_granted and accessibility_granted
+        direct_probe_available = any(
+            str((payload[key] or {}).get("status") or "").lower() not in {"", "unknown", "deferred"}
+            or bool((payload[key] or {}).get("direct_probe"))
+            for key in ("direct_screen_recording", "direct_accessibility", "direct_automation")
+        )
+        payload["direct_probe_available"] = direct_probe_available
+        payload["reported_screen_capture_ready"] = screen_granted
+        payload["reported_desktop_control_ready"] = accessibility_granted and bool(payload["pyautogui_ready"])
+        payload["reported_screen_text_ready"] = automation_granted and accessibility_granted
         payload["direct_screen_capture_ready"] = direct_screen_granted
         payload["direct_desktop_control_ready"] = direct_accessibility_granted and bool(payload["pyautogui_ready"])
         payload["direct_screen_text_ready"] = direct_automation_granted and direct_accessibility_granted
-        payload["menu_clock_ready"] = automation_granted and accessibility_granted
+        payload["screen_capture_ready"] = direct_screen_granted if direct_probe_available else screen_granted
+        payload["desktop_control_ready"] = (
+            direct_accessibility_granted if direct_probe_available else accessibility_granted
+        ) and bool(payload["pyautogui_ready"])
+        payload["screen_text_ready"] = (
+            direct_automation_granted and direct_accessibility_granted
+            if direct_probe_available
+            else automation_granted and accessibility_granted
+        )
+        payload["menu_clock_ready"] = (
+            direct_automation_granted and direct_accessibility_granted
+            if direct_probe_available
+            else automation_granted and accessibility_granted
+        )
         if payload["menu_clock_ready"]:
             from core.skills.computer_use import ComputerUseSkill
 
@@ -978,6 +997,11 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
             payload["desktop_control_ready"],
             payload["screen_text_ready"],
         ]
+        reported_primary_ready = [
+            payload["reported_screen_capture_ready"],
+            payload["reported_desktop_control_ready"],
+            payload["reported_screen_text_ready"],
+        ]
         direct_primary_ready = [
             payload["direct_screen_capture_ready"],
             payload["direct_desktop_control_ready"],
@@ -991,27 +1015,34 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
             )
             if str((result or {}).get("status") or "") == "asserted_env"
         ]
-        payload["blocking_permissions"] = [
+        reported_blocking_permissions = [
             name for name, granted in (
                 ("screen_recording", screen_granted),
                 ("accessibility", accessibility_granted),
                 ("automation", automation_granted),
             ) if not granted
         ]
-        payload["direct_blocking_permissions"] = [
+        direct_blocking_permissions = [
             name for name, granted in (
                 ("screen_recording", direct_screen_granted),
                 ("accessibility", direct_accessibility_granted),
                 ("automation", direct_automation_granted),
             ) if not granted
         ]
+        payload["reported_blocking_permissions"] = reported_blocking_permissions
+        payload["direct_blocking_permissions"] = direct_blocking_permissions
+        payload["blocking_permissions"] = (
+            direct_blocking_permissions if direct_probe_available else reported_blocking_permissions
+        )
         payload["permission_confidence"] = (
             "direct"
             if all(direct_primary_ready) else
-            "asserted_env"
-            if all(primary_ready) and payload["permission_assumptions"] else
             "partial_direct"
             if any(direct_primary_ready) else
+            "claims_only"
+            if direct_probe_available and all(reported_primary_ready) and payload["permission_assumptions"] else
+            "asserted_env"
+            if all(reported_primary_ready) and payload["permission_assumptions"] else
             "unverified"
             if payload["permission_assumptions"] else
             "blocked"
@@ -1019,10 +1050,14 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
         payload["overall_status"] = (
             "ready"
             if all(direct_primary_ready) else
-            "assumed_ready"
-            if all(primary_ready) and payload["permission_assumptions"] else
             "partial"
-            if any(primary_ready) or any(
+            if any(direct_primary_ready) or (not direct_probe_available and any(primary_ready)) else
+            "claims_only"
+            if direct_probe_available and all(reported_primary_ready) and payload["permission_assumptions"] else
+            "assumed_ready"
+            if all(reported_primary_ready) and payload["permission_assumptions"] else
+            "partial"
+            if any(
                 bool((payload[key] or {}).get("granted"))
                 for key in ("screen_recording", "accessibility", "automation")
             ) else
@@ -2080,6 +2115,9 @@ async def api_health(request: Request):
                 "blockers": health_blockers,
             },
             "runtime_probe_healthy": required_probes_ok,
+            "conversation_ready": conversation_ready,
+            "conversation_busy": conversation_busy,
+            "required_probes": required_probes,
             "blockers": health_blockers,
             "runtime":        rt,
             "scheduler":      scheduler.get_health(),
@@ -2372,6 +2410,20 @@ async def api_heartbeat():
         "conversation_busy": conversation_busy,
         "conversation_lane": conversation_lane,
     }
+    # Throttled system-integrity audit: surface silent subsystem failures (CRSM
+    # loop open, CAA below capacity, degradation pileups) on the heartbeat instead
+    # of requiring someone to read receipts.
+    try:
+        from core.runtime.integrity_audit import maybe_run
+
+        integrity = maybe_run()
+        if integrity is not None:
+            heartbeat_payload["integrity"] = {
+                "healthy": integrity.get("healthy", True),
+                "concerns": integrity.get("concerns", []),
+            }
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation("system", exc)
     return JSONResponse(heartbeat_payload, status_code=status_code)
 
 

@@ -1,0 +1,118 @@
+"""System integrity audit — make silent subsystem failures speak.
+
+The critique's third gap: "the silence of subsystem failures … the degradation
+receipt system is comprehensive but requires active reading." Failures are recorded
+(``record_degradation``), the CRSM loop can quietly stop closing, and CAA steering can
+quietly run below capacity — but nothing pulls these together and says so out loud.
+
+This audit consolidates the three signals — degradation receipts, CRSM→LoRA loop
+closure, and CAA steering readiness — into one report, logs a single loud summary when
+anything is wrong, and is throttled so it can be called from a hot path (health
+heartbeat) without spamming. Under ``AURA_STRICT_RUNTIME=1`` it always emits the
+report even when clean, so production runs surface the activation state every interval
+instead of requiring someone to go read receipts.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import threading
+import time
+from typing import Any
+
+logger = logging.getLogger("Aura.IntegrityAudit")
+
+_last_run = 0.0
+_last_report: dict[str, Any] | None = None
+_lock = threading.Lock()
+
+# Degradations above this for a single subsystem are flagged as a concern.
+_DEGRADATION_CONCERN = 10
+
+
+def strict_mode() -> bool:
+    return os.environ.get("AURA_STRICT_RUNTIME") == "1"
+
+
+def run_integrity_audit(*, log: bool = True) -> dict[str, Any]:
+    """Aggregate degradations + CRSM loop + CAA readiness; log loudly if degraded."""
+    concerns: list[str] = []
+
+    degradations: dict[str, Any] = {}
+    try:
+        from core.runtime.errors import get_degradation_tracker
+
+        degradations = get_degradation_tracker().status()
+        for sub, sevs in (degradations.get("counts_by_subsystem") or {}).items():
+            total = sum(sevs.values())
+            if total >= _DEGRADATION_CONCERN:
+                concerns.append(f"{sub}: {total} degradations")
+    except (ImportError, AttributeError, RuntimeError, TypeError):
+        degradations = {}
+
+    crsm_loop: dict[str, Any] = {}
+    try:
+        from core.consciousness.crsm_loop_monitor import get_crsm_loop_monitor
+
+        crsm_loop = get_crsm_loop_monitor().loop_state()
+        if crsm_loop.get("state") == "open":
+            concerns.append(f"CRSM→LoRA loop OPEN ({crsm_loop.get('unconsumed')} captures untrained)")
+    except (ImportError, AttributeError, RuntimeError, TypeError):
+        crsm_loop = {}
+
+    caa_readiness: dict[str, Any] = {}
+    try:
+        from core.consciousness.caa.readiness_report import verify_readiness
+
+        caa_readiness = verify_readiness()
+        if caa_readiness.get("below_design_capacity"):
+            concerns.append(
+                f"CAA steering at {caa_readiness.get('steering_capacity_pct')}% "
+                f"({caa_readiness.get('level')})"
+            )
+    except (ImportError, AttributeError, RuntimeError, TypeError):
+        caa_readiness = {}
+
+    report = {
+        "healthy": not concerns,
+        "concerns": concerns,
+        "strict_mode": strict_mode(),
+        "degradations": degradations,
+        "crsm_loop": crsm_loop,
+        "caa_readiness": caa_readiness,
+        "at": time.time(),
+    }
+
+    global _last_report
+    _last_report = report
+
+    if log and (concerns or strict_mode()):
+        if concerns:
+            logger.warning(
+                "🩺 [Integrity] %d concern(s): %s",
+                len(concerns), " | ".join(concerns),
+            )
+            try:
+                from core.observability.metrics import get_metrics
+
+                get_metrics().increment_counter("integrity_concern_total")
+            except (ImportError, AttributeError, RuntimeError, TypeError):
+                pass
+        else:
+            logger.info("🩺 [Integrity] all subsystems nominal (strict mode).")
+    return report
+
+
+def maybe_run(*, interval_s: float = 300.0) -> dict[str, Any] | None:
+    """Throttled audit — safe to call from a hot path (e.g. the health heartbeat)."""
+    global _last_run
+    now = time.time()
+    with _lock:
+        if now - _last_run < interval_s:
+            return _last_report
+        _last_run = now
+    return run_integrity_audit()
+
+
+def last_report() -> dict[str, Any] | None:
+    return _last_report

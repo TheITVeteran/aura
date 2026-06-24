@@ -1,0 +1,38 @@
+"""Tests for the consolidated system-integrity audit."""
+from __future__ import annotations
+
+import time
+
+import core.runtime.integrity_audit as ia
+
+
+def test_audit_aggregates_signals_and_reports_structure():
+    report = ia.run_integrity_audit(log=False)
+    assert set(report) >= {"healthy", "concerns", "degradations", "crsm_loop", "caa_readiness"}
+    assert isinstance(report["concerns"], list)
+    # CRSM loop + CAA readiness are real on this repo → expect concerns surfaced
+    assert report["crsm_loop"] and report["caa_readiness"]
+
+
+def test_audit_flags_caa_below_capacity_as_concern():
+    report = ia.run_integrity_audit(log=False)
+    # the real repo has runtime-derived CAA vectors (below capacity) → a concern
+    assert any("CAA steering" in c for c in report["concerns"])
+
+
+def test_maybe_run_is_throttled(monkeypatch):
+    ia._last_run = 0.0
+    first = ia.maybe_run(interval_s=10_000)
+    assert first is not None
+    # immediate second call within the interval returns the cached report, no re-run
+    ran = {"n": 0}
+    orig = ia.run_integrity_audit
+    monkeypatch.setattr(ia, "run_integrity_audit", lambda **k: ran.__setitem__("n", ran["n"] + 1) or orig(**k))
+    ia.maybe_run(interval_s=10_000)
+    assert ran["n"] == 0                      # throttled — did not re-run
+
+
+def test_strict_mode_reflected(monkeypatch):
+    monkeypatch.setenv("AURA_STRICT_RUNTIME", "1")
+    assert ia.strict_mode() is True
+    assert ia.run_integrity_audit(log=False)["strict_mode"] is True
