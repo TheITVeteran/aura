@@ -44,6 +44,8 @@ DATA_DIR = TRAINING_DIR / "data"
 ADAPTER_DIR = TRAINING_DIR / "adapters" / "aura-personality"
 FUSED_BASE_DIR = TRAINING_DIR / "fused-model"
 ACTIVE_MANIFEST = FUSED_BASE_DIR / "active.json"
+CRSM_DATASET = REPO_DIR / "data" / "synthetic_training" / "lora_dataset.jsonl"
+CRSM_INTEGRATION_MANIFEST = DATA_DIR / "crsm_integration_manifest.json"
 
 DEFAULT_BASE_MODEL = REPO_DIR / "models" / "Qwen2.5-32B-Instruct-4bit"
 TRAINING_COMMAND_TIMEOUT_S = float(os.environ.get("AURA_TRAINING_COMMAND_TIMEOUT_S", "86400"))
@@ -195,6 +197,58 @@ def publish_manifest(fused_path: Path, *, tag: str, base_model: Path) -> None:
     )
 
 
+def _read_json(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return {}
+
+
+def mark_crsm_loop_consumed_after_training(fused_path: Path) -> None:
+    """Close the CRSM→LoRA monitor only after real train/fuse evidence exists."""
+    if not CRSM_DATASET.exists():
+        return
+    manifest = _read_json(CRSM_INTEGRATION_MANIFEST)
+    if not manifest:
+        print(
+            "\nCRSM loop not marked consumed: missing "
+            f"{CRSM_INTEGRATION_MANIFEST}. Rebuild the dataset before training."
+        )
+        return
+
+    try:
+        dataset_stat = CRSM_DATASET.stat()
+    except OSError:
+        return
+
+    source_lines = int(manifest.get("source_lines", 0) or 0)
+    source_mtime = float(manifest.get("source_mtime", 0.0) or 0.0)
+    accepted = int(manifest.get("accepted", 0) or 0)
+    rejected = max(0, source_lines - accepted)
+
+    if source_lines <= 0:
+        print("\nCRSM loop not marked consumed: integration manifest saw no source captures.")
+        return
+    if source_mtime + 1.0 < float(dataset_stat.st_mtime):
+        print("\nCRSM loop not marked consumed: capture dataset changed after integration manifest.")
+        return
+
+    from core.consciousness.crsm_loop_monitor import get_crsm_loop_monitor
+
+    get_crsm_loop_monitor().mark_dataset_consumed(
+        model_path=str(fused_path),
+        lines_consumed=source_lines,
+        accepted_lines=accepted,
+        rejected_lines=rejected,
+        manifest_path=str(CRSM_INTEGRATION_MANIFEST),
+        source="training.train_and_fuse",
+    )
+    print(
+        "\nMarked CRSM captures handled after successful train/fuse: "
+        f"{accepted} trained, {rejected} retired."
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-dataset", action="store_true")
@@ -227,6 +281,8 @@ def main() -> None:
     fused_path = fuse_adapter(base_model=base_model, tag=args.tag)
     verify_load(fused_path)
     publish_manifest(fused_path, tag=args.tag, base_model=base_model)
+    if not args.skip_train:
+        mark_crsm_loop_consumed_after_training(fused_path)
 
 
 if __name__ == "__main__":

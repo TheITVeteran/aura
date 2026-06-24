@@ -2164,12 +2164,16 @@ function healthPulseFingerprint(payload) {
     const lane = payload && payload.conversation_lane ? payload.conversation_lane : {};
     const boot = payload && payload.boot ? payload.boot : {};
     const blockers = runtimeHealthBlockers(payload || {}).slice(0, 8).join(',');
+    const integrity = payload && payload.integrity ? payload.integrity : {};
+    const integrityBlockers = Array.isArray(integrity.blockers) ? integrity.blockers.slice(0, 4).join(',') : '';
     const blockerList = blockers ? blockers.split(',') : [];
     const conversationReady = conversationPayloadReady(payload, blockerList);
     const conversationBusy = conversationPayloadBusy(payload, blockerList);
     return [
         payload && payload.status,
         payload && payload.healthy === true ? 'healthy' : 'unhealthy',
+        payload && payload.proof_readiness_healthy === false ? 'proof_degraded' : 'proof_ready',
+        integrityBlockers,
         boot.boot_phase || boot.status || '',
         lane.state || '',
         conversationReady ? 'conversation_ready' : conversationBusy ? 'conversation_busy' : 'conversation_not_ready',
@@ -2195,14 +2199,19 @@ function publishHealthNeuralPulse(payload, source = 'health_poll') {
         ? 'conversation working'
         : `conversation ${String(lane.state || boot.boot_phase || 'not ready').replace(/_/g, ' ')}`;
     const blockerText = blockers.length ? ` | blockers: ${blockers.slice(0, 3).join(', ')}` : '';
+    const integrity = payload.integrity && typeof payload.integrity === 'object' ? payload.integrity : {};
+    const integrityConcerns = Array.isArray(integrity.concerns) ? integrity.concerns : [];
+    const proofText = payload.proof_readiness_healthy === false || integrity.proof_readiness === false
+        ? `; proof integrity degraded${integrityConcerns.length ? `: ${integrityConcerns.slice(0, 2).join(' | ')}` : ''}`
+        : '';
     const strictHealthy = payloadRuntimeHealthy(payload) && blockers.length === 0;
     const statusText = String(
         strictHealthy ? (payload.status || boot.status || 'healthy') : 'not_ready'
     ).replace(/_/g, ' ');
     queueNeuralLivenessCard(
-        `[${source}] health=${statusText}; ${probeText}; ${conversationText}${blockerText}`,
+        `[${source}] health=${statusText}; ${probeText}; ${conversationText}${blockerText}${proofText}`,
         {
-            level: strictHealthy ? 'info' : 'warning',
+            level: strictHealthy && !proofText ? 'info' : 'warning',
             force: changed
         }
     );

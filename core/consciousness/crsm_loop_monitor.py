@@ -100,7 +100,16 @@ class CRSMLoopMonitor:
 
     # ── loop closure ──────────────────────────────────────────────────────
 
-    def mark_dataset_consumed(self, *, model_path: str | None = None, lines_consumed: int | None = None) -> None:
+    def mark_dataset_consumed(
+        self,
+        *,
+        model_path: str | None = None,
+        lines_consumed: int | None = None,
+        accepted_lines: int | None = None,
+        rejected_lines: int | None = None,
+        manifest_path: str | None = None,
+        source: str | None = None,
+    ) -> None:
         """Record that a training run ingested the dataset — call after LoRA training.
 
         Writes how many dataset lines were consumed and which model resulted, so loop
@@ -108,10 +117,16 @@ class CRSMLoopMonitor:
         """
         if lines_consumed is None:
             lines_consumed = int(self.dataset_state().get("lines", 0))
+        accepted = int(accepted_lines if accepted_lines is not None else lines_consumed)
+        rejected = int(rejected_lines if rejected_lines is not None else max(0, lines_consumed - accepted))
         payload = {
             "lines_consumed": int(lines_consumed),
+            "accepted_lines": max(0, accepted),
+            "rejected_lines": max(0, rejected),
             "consumed_at": time.time(),
             "model_path": model_path,
+            "manifest_path": manifest_path,
+            "source": source or "unspecified",
         }
         try:
             self.marker_path.parent.mkdir(parents=True, exist_ok=True)
@@ -132,10 +147,19 @@ class CRSMLoopMonitor:
         last_train = max(float(art.get("newest_mtime", 0.0)), float(art.get("active_fused_at", 0.0)))
         ds_mtime = float(ds.get("mtime", 0.0))
 
+        accepted = int(marker.get("accepted_lines", consumed) or 0)
+        rejected = int(marker.get("rejected_lines", max(0, consumed - accepted)) or 0)
+
         if lines == 0:
             state, reason = "idle", "no captured moments yet"
         elif consumed >= lines and last_train >= ds_mtime:
-            state, reason = "closed", "dataset trained in and weights persisted"
+            if rejected > 0:
+                state, reason = (
+                    "closed",
+                    f"{accepted} eligible captures trained and {rejected} retired by the training gate",
+                )
+            else:
+                state, reason = "closed", "dataset trained in and weights persisted"
         elif last_train >= ds_mtime and unconsumed <= _UNCONSUMED_WARN:
             state, reason = "closed", "latest model is newer than the captured data"
         elif unconsumed > _UNCONSUMED_WARN or (ds_mtime - last_train) > _STALE_AFTER_S:
@@ -148,9 +172,12 @@ class CRSMLoopMonitor:
             "reason": reason,
             "dataset_lines": lines,
             "unconsumed": unconsumed,
+            "accepted_lines": accepted,
+            "rejected_lines": rejected,
             "last_training_at": last_train,
             "active_model": art.get("active_model_path"),
             "dataset_mtime": ds_mtime,
+            "consumption_marker": marker,
         }
 
     def audit(self) -> dict[str, Any]:

@@ -2047,6 +2047,10 @@ async def api_health(request: Request):
             and conversation_ready
             and not health_blockers
         )
+        integrity_report = _collect_runtime_integrity_report()
+        integrity_payload = _runtime_integrity_public_payload(integrity_report)
+        proof_readiness_healthy = bool(integrity_payload.get("proof_readiness", False))
+        certification_ready = bool(healthy_ready and proof_readiness_healthy)
         diagnostics_data = {
             "stability_guardian": _collect_stability_details(),
             "recent_degraded_events": _collect_recent_degraded_events(),
@@ -2103,6 +2107,10 @@ async def api_health(request: Request):
             "consciousness_evidence": consciousness_evidence,
             "executive_authority": executive_authority_data,
             "interaction_signals": interaction_signals_data,
+            "integrity": integrity_payload,
+            "proof_readiness_healthy": proof_readiness_healthy,
+            "certification_ready": certification_ready,
+            "integrity_blockers": integrity_payload.get("blockers", []),
             "conversation_lane": conversation_lane,
             "diagnostics": diagnostics_data,
             "readiness_contract": {
@@ -2111,6 +2119,10 @@ async def api_health(request: Request):
                 "conversation_ready": conversation_ready,
                 "conversation_busy": conversation_busy,
                 "runtime_probe_healthy": required_probes_ok,
+                "proof_readiness_healthy": proof_readiness_healthy,
+                "certification_ready": certification_ready,
+                "integrity": integrity_payload,
+                "integrity_blockers": integrity_payload.get("blockers", []),
                 "required_probes": required_probes,
                 "blockers": health_blockers,
             },
@@ -2366,6 +2378,67 @@ def _normalize_conversation_health_blockers(
     return list(dict.fromkeys(normalized))
 
 
+def _collect_runtime_integrity_report() -> dict[str, Any]:
+    """Return the throttled proof/learning integrity audit.
+
+    This is intentionally separated from launch readiness. CRSM/CAA learning
+    debt should not masquerade as a clean proof state, but it should also not
+    make the desktop shell refuse to open when kernel/inference/memory/tool
+    probes are otherwise safe.
+    """
+    try:
+        from core.runtime.integrity_audit import maybe_run
+
+        report = maybe_run()
+        if isinstance(report, dict):
+            return report
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation("system", exc)
+        logger.debug("Runtime integrity audit unavailable: %s", exc)
+    return {
+        "healthy": False,
+        "concerns": ["integrity_audit_unavailable"],
+        "strict_mode": False,
+        "degradations": {},
+        "crsm_loop": {},
+        "caa_readiness": {},
+        "at": time.time(),
+    }
+
+
+def _runtime_integrity_blockers(report: dict[str, Any] | None) -> list[str]:
+    if not isinstance(report, dict):
+        return ["integrity_audit_unavailable"]
+    concerns = [
+        str(item).strip()
+        for item in (report.get("concerns") or [])
+        if str(item or "").strip()
+    ]
+    if bool(report.get("healthy", False)) and not concerns:
+        return []
+    return [f"integrity:{concern}" for concern in (concerns or ["integrity_unknown"])]
+
+
+def _runtime_integrity_public_payload(report: dict[str, Any] | None) -> dict[str, Any]:
+    report = report if isinstance(report, dict) else {}
+    blockers = _runtime_integrity_blockers(report)
+    return {
+        "healthy": not blockers,
+        "status": "healthy" if not blockers else "degraded",
+        "concerns": [
+            str(item)
+            for item in (report.get("concerns") or [])
+            if str(item or "").strip()
+        ],
+        "blockers": blockers,
+        "proof_readiness": not blockers,
+        "operational_blocking": bool(report.get("strict_mode", False)) and bool(blockers),
+        "crsm_loop": report.get("crsm_loop") or {},
+        "caa_readiness": report.get("caa_readiness") or {},
+        "at": report.get("at"),
+    }
+
+
 @router.get("/health/heartbeat")
 async def api_heartbeat():
     """Readiness heartbeat for GUI/runtime watchdogs.
@@ -2383,6 +2456,9 @@ async def api_heartbeat():
     conversation_busy = conversation_lane_is_busy(conversation_lane)
     required_probes = payload.get("required_probes", {})
     probe_blockers = _heartbeat_probe_blockers(required_probes)
+    integrity_report = _collect_runtime_integrity_report()
+    integrity_payload = _runtime_integrity_public_payload(integrity_report)
+    proof_readiness_healthy = bool(integrity_payload.get("proof_readiness", False))
     blockers = _normalize_conversation_health_blockers(
         list(payload.get("blockers", []) or []) + probe_blockers,
         conversation_ready=conversation_ready,
@@ -2409,21 +2485,11 @@ async def api_heartbeat():
         "conversation_ready": conversation_ready,
         "conversation_busy": conversation_busy,
         "conversation_lane": conversation_lane,
+        "integrity": integrity_payload,
+        "proof_readiness_healthy": proof_readiness_healthy,
+        "certification_ready": bool(healthy and proof_readiness_healthy),
+        "integrity_blockers": integrity_payload.get("blockers", []),
     }
-    # Throttled system-integrity audit: surface silent subsystem failures (CRSM
-    # loop open, CAA below capacity, degradation pileups) on the heartbeat instead
-    # of requiring someone to read receipts.
-    try:
-        from core.runtime.integrity_audit import maybe_run
-
-        integrity = maybe_run()
-        if integrity is not None:
-            heartbeat_payload["integrity"] = {
-                "healthy": integrity.get("healthy", True),
-                "concerns": integrity.get("concerns", []),
-            }
-    except _SYSTEM_RECOVERABLE_ERRORS as exc:
-        record_degradation("system", exc)
     return JSONResponse(heartbeat_payload, status_code=status_code)
 
 

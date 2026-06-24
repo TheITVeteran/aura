@@ -237,39 +237,52 @@ def _extract_hidden_states(
     if tokens.ndim == 1:
         tokens = tokens.reshape(1, -1)
 
-    # Patch target layers
+    # Patch target layers. ``obj(...)`` resolves ``__call__`` on the class, not
+    # the instance, so assigning ``layer.__call__`` is bypassed by Python's
+    # special-method lookup. Use a temporary per-instance subclass instead.
     for layer_idx in target_layers:
         if layer_idx >= len(layers):
             continue
         layer = layers[layer_idx]
-        original_call = layer.__call__
+        original_class = layer.__class__
 
-        def _make_patched(orig, lidx):
-            def patched(*args, **kwargs):
-                result = orig(*args, **kwargs)
-                try:
-                    out_tensor = result[0] if isinstance(result, tuple) else result
-                    # Last token hidden state, cast to float32
-                    last_tok = out_tensor[:, -1, :].astype(mx.float32)
-                    captured[lidx] = np.array(last_tok).flatten()
-                except (AttributeError, IndexError, RuntimeError, TypeError, ValueError) as exc:
-                    logger.debug("Hook capture failed at layer %d: %s", lidx, exc)
-                return result
-            return patched
+        def _make_capturing_class(orig_cls, lidx):
+            class CapturingLayer(orig_cls):  # type: ignore[misc, valid-type]
+                __module__ = orig_cls.__module__
 
-        layer.__call__ = _make_patched(original_call, layer_idx)
-        hooks.append((layer, original_call))
+                def __call__(self, *args, **kwargs):
+                    result = super().__call__(*args, **kwargs)
+                    try:
+                        out_tensor = result[0] if isinstance(result, tuple) else result
+                        # Last token hidden state, cast to float32
+                        last_tok = out_tensor[:, -1, :].astype(mx.float32)
+                        captured[lidx] = np.array(last_tok).flatten()
+                    except (AttributeError, IndexError, RuntimeError, TypeError, ValueError) as exc:
+                        logger.debug("Hook capture failed at layer %d: %s", lidx, exc)
+                    return result
+
+            return CapturingLayer
+
+        try:
+            layer.__class__ = _make_capturing_class(original_class, layer_idx)
+            hooks.append((layer, original_class))
+        except TypeError as exc:
+            logger.warning("Layer %d could not be hooked via subclass swap: %s", layer_idx, exc)
+            continue
 
     # Forward pass
     try:
-        model(tokens)
-        mx.eval()
+        result = model(tokens)
+        mx.eval(result)
     except (RuntimeError, TypeError, ValueError) as exc:
         logger.warning("Forward pass failed: %s", exc)
     finally:
-        # Always restore original methods
-        for layer, original in hooks:
-            layer.__call__ = original
+        # Always restore original classes
+        for layer, original_class in hooks:
+            try:
+                layer.__class__ = original_class
+            except TypeError as exc:
+                logger.warning("Layer class restore failed: %s", exc)
 
     return captured
 
@@ -283,6 +296,8 @@ def extract_steering_vectors(
     adapter_path: Optional[str] = None,
     target_layers: Optional[List[int]] = None,
     output_dir: Optional[Path] = None,
+    dimensions: Optional[List[str]] = None,
+    max_prompts_per_polarity: Optional[int] = None,
 ) -> Dict[str, Dict[int, np.ndarray]]:
     """Extract CAA steering vectors for all affective dimensions.
 
@@ -292,6 +307,9 @@ def extract_steering_vectors(
         target_layers: Explicit layer indices to extract from. If None,
             computed from model depth at 40-65%.
         output_dir: Directory to save vectors. Defaults to training/vectors/.
+        dimensions: Optional subset of affective dimensions to extract.
+        max_prompts_per_polarity: Optional bounded probe mode for low-risk
+            diagnostics. Production extraction should leave this unset.
 
     Returns:
         Nested dict: dimension_key -> {layer_idx: unit_vector}.
@@ -352,10 +370,24 @@ def extract_steering_vectors(
     all_vectors: Dict[str, Dict[int, np.ndarray]] = {}
     meta_dimensions: List[Dict[str, Any]] = []
 
-    for dim_key, dim_spec in AFFECTIVE_DIMENSIONS.items():
+    selected_dimensions = AFFECTIVE_DIMENSIONS
+    if dimensions:
+        unknown = sorted(set(dimensions) - set(AFFECTIVE_DIMENSIONS))
+        if unknown:
+            raise ValueError(f"Unknown CAA dimension(s): {', '.join(unknown)}")
+        selected_dimensions = {
+            key: AFFECTIVE_DIMENSIONS[key]
+            for key in dimensions
+        }
+
+    for dim_key, dim_spec in selected_dimensions.items():
         logger.info("=== Extracting dimension: %s ===", dim_key)
-        pos_prompts = dim_spec["positive"]
-        neg_prompts = dim_spec["negative"]
+        pos_prompts = list(dim_spec["positive"])
+        neg_prompts = list(dim_spec["negative"])
+        if max_prompts_per_polarity is not None:
+            limit = max(1, int(max_prompts_per_polarity))
+            pos_prompts = pos_prompts[:limit]
+            neg_prompts = neg_prompts[:limit]
 
         # Storage: layer -> list of activation vectors
         pos_acts: Dict[int, List[np.ndarray]] = {l: [] for l in target_layers}
@@ -497,11 +529,28 @@ def main():
         default=None,
         help=f"Output directory for vectors. Default: {VECTORS_DIR}",
     )
+    parser.add_argument(
+        "--dimensions",
+        type=str,
+        default=None,
+        help="Comma-separated dimension subset (e.g. 'valence,warmth'). "
+             "Default: all dimensions.",
+    )
+    parser.add_argument(
+        "--max-prompts-per-polarity",
+        type=int,
+        default=None,
+        help="Bounded diagnostic mode: cap positive and negative prompts per "
+             "dimension. Leave unset for production extraction.",
+    )
     args = parser.parse_args()
 
     target_layers = None
     if args.layers:
         target_layers = [int(x.strip()) for x in args.layers.split(",")]
+    dimensions = None
+    if args.dimensions:
+        dimensions = [item.strip() for item in args.dimensions.split(",") if item.strip()]
 
     output_dir = Path(args.output_dir) if args.output_dir else None
 
@@ -518,6 +567,8 @@ def main():
         adapter_path=adapter_path,
         target_layers=target_layers,
         output_dir=output_dir,
+        dimensions=dimensions,
+        max_prompts_per_polarity=args.max_prompts_per_polarity,
     )
 
 
