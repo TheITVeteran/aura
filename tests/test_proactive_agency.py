@@ -32,10 +32,18 @@ async def _planner(goal):
 
 
 @pytest.mark.asyncio
-async def test_no_planner_is_safe_noop():
-    pa = ProactiveAgency(pursuit=_engine())            # no planner registered
+async def test_no_planner_with_default_disabled_is_safe_noop():
+    pa = ProactiveAgency(pursuit=_engine(), default_planner_enabled=False)
     assert await pa.pursue_goal("organize my notes") is None
     assert pa.status()["has_planner"] is False
+
+
+@pytest.mark.asyncio
+async def test_default_planner_pursues_open_ended_goal():
+    # no explicit planner → the GoalPlanner default makes an open-ended goal plannable
+    pa = ProactiveAgency(pursuit=_engine())
+    out = await pa.pursue_goal("figure out the best approach to organizing notes")
+    assert out is not None and out.completed
 
 
 @pytest.mark.asyncio

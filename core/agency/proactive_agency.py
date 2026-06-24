@@ -32,16 +32,32 @@ class ProactiveAgency:
         planner: Planner | None = None,
         background_allowed: Callable[[], bool] | None = None,
         timing_ok: Callable[[], Any] | None = None,
+        default_planner_enabled: bool = True,
     ) -> None:
         self._pursuit = pursuit
         self._planner = planner
         self._background_allowed = background_allowed
         self._timing_ok = timing_ok
+        self._default_planner_enabled = default_planner_enabled
         self._pursued = 0
         self._completed = 0
 
     def register_planner(self, planner: Planner) -> None:
         self._planner = planner
+
+    def _get_planner(self) -> Planner | None:
+        """Resolve a planner — default to the GoalPlanner so open-ended goals are plannable."""
+        if self._planner is not None:
+            return self._planner
+        if self._default_planner_enabled:
+            try:
+                from core.agency.goal_planner import get_goal_planner
+
+                self._planner = get_goal_planner()
+                return self._planner
+            except (ImportError, AttributeError, RuntimeError) as exc:
+                record_degradation("proactive_agency", exc)
+        return None
 
     def _engine(self) -> Any | None:
         if self._pursuit is not None:
@@ -66,10 +82,11 @@ class ProactiveAgency:
                     return None
             except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation("proactive_agency", exc)
-        if self._planner is None:
+        planner = self._get_planner()
+        if planner is None:
             return None
         try:
-            plan = await self._planner(goal)
+            plan = await planner(goal)
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("proactive_agency", exc)
             return None
