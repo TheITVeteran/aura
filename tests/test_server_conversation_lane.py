@@ -8,6 +8,26 @@ from types import SimpleNamespace
 import pytest
 
 
+def _force_full_mind_runtime(monkeypatch, chat_routes):
+    """Mark every runtime subsystem available for a desktop full-mind-path turn.
+
+    The desktop ``full_mind_path`` contract requires all six runtime subsystems
+    (kernel, cognitive_engine, inference, memory, tool_governance, substrate_voice)
+    to be available, or the turn fails closed. Tests that mock only the cognitive
+    engine must also assert the rest of the runtime is present, otherwise they are
+    asserting against a half-booted process that legitimately fails closed.
+    """
+    for name in (
+        "_runtime_kernel_available",
+        "_runtime_cognitive_engine_available",
+        "_runtime_memory_available",
+        "_runtime_tool_governance_available",
+        "_runtime_substrate_voice_available",
+    ):
+        monkeypatch.setattr(chat_routes, name, lambda: True)
+    monkeypatch.setattr(chat_routes, "_runtime_inference_available", lambda *a, **k: True)
+
+
 class AsyncCallFixture:
     def __init__(self, return_value=None, side_effect=None):
         self.return_value = return_value
@@ -940,6 +960,7 @@ async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch
 
     monkeypatch.setattr(chat_routes, "_collect_conversation_lane_status", _lane_status)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+    _force_full_mind_runtime(monkeypatch, chat_routes)
 
     from core.kernel.kernel_interface import KernelInterface
 
@@ -2027,6 +2048,7 @@ async def test_api_chat_desktop_surface_keeps_nontrivial_chat_on_cognitive_engin
 
     monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(message="How are you thinking about this conversation right now?"),
         SimpleNamespace(
@@ -2150,6 +2172,9 @@ async def test_api_chat_desktop_surface_routes_memory_state_through_cognitive_en
     cognitive_calls = []
 
     async def _memory_cognitive_turn(objective, *_args, **_kwargs):
+        _t = _kwargs.get("turn_trace")
+        if isinstance(_t, dict):
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "response_path": "cognitive_engine"})
         cognitive_calls.append(str(objective))
         if "Remember this note" in str(objective):
             return "I've pinned \"the blue lantern is under the desk\" in durable session memory, and I can pull it back later from canonical memory state."
@@ -2197,6 +2222,7 @@ async def test_api_chat_desktop_surface_routes_memory_state_through_cognitive_en
         client=SimpleNamespace(host="test"),
     )
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     stored = await server_module.api_chat(
         server_module.ChatRequest(
             message=(
@@ -2255,6 +2281,9 @@ async def test_api_chat_desktop_owner_name_recall_routes_through_cognitive_engin
     cognitive_calls = []
 
     async def _owner_cognitive_turn(objective, *_args, **_kwargs):
+        _t = _kwargs.get("turn_trace")
+        if isinstance(_t, dict):
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "response_path": "cognitive_engine"})
         cognitive_calls.append(str(objective))
         return "You're Bryan; I know that from the verified owner session, and I will keep that context attached to this conversation."
 
@@ -2289,6 +2318,7 @@ async def test_api_chat_desktop_owner_name_recall_routes_through_cognitive_engin
         },
     )
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(
             message="Do you know my name?",
@@ -2431,6 +2461,7 @@ async def test_api_chat_desktop_surface_plans_with_cognitive_engine_before_execu
 
     monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(
             message=(
@@ -2564,6 +2595,9 @@ async def test_api_chat_desktop_objective_requires_cognitive_planning(monkeypatc
     cognitive_calls = []
 
     async def _slow_or_empty_cognitive_turn(*args, **kwargs):
+        _t = kwargs.get("turn_trace")
+        if isinstance(_t, dict):
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "response_path": "cognitive_engine"})
         cognitive_calls.append((args, kwargs))
         return json.dumps(
             {
@@ -2631,6 +2665,7 @@ async def test_api_chat_desktop_objective_requires_cognitive_planning(monkeypatc
         },
     )
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(
             message=(
@@ -3358,6 +3393,9 @@ async def test_api_chat_desktop_live_proof_executes_after_cognitive_engine(monke
     live_proof_calls = []
 
     async def _fake_cognitive_turn(message, **kwargs):
+        _t = kwargs.get("turn_trace")
+        if isinstance(_t, dict):
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "response_path": "cognitive_engine"})
         cognitive_calls.append((message, kwargs))
         return "Plan: create the requested artifact through the governed tool path."
 
@@ -3421,6 +3459,7 @@ async def test_api_chat_desktop_live_proof_executes_after_cognitive_engine(monke
         _live_proof_lane_status,
     )
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(
             message=(
@@ -3470,6 +3509,9 @@ async def test_api_chat_desktop_explicit_file_objective_runs_after_cognitive_eng
         return {"ok": True, "path": params["path"], "summary": "wrote file"}
 
     async def _fake_cognitive_turn(*args, **kwargs):
+        _t = kwargs.get("turn_trace")
+        if isinstance(_t, dict):
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "response_path": "cognitive_engine"})
         cognitive_calls.append((args, kwargs))
         return "Plan: create the requested file through governed file_operation after this cognitive turn."
 
@@ -3499,6 +3541,7 @@ async def test_api_chat_desktop_explicit_file_objective_runs_after_cognitive_eng
         },
     )
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(
             message=(
@@ -3545,6 +3588,9 @@ async def test_api_chat_desktop_runtime_status_uses_cognitive_engine_when_requir
     cognitive_calls = []
 
     async def _fake_cognitive_turn(*args, **kwargs):
+        _t = kwargs.get("turn_trace")
+        if isinstance(_t, dict):
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "response_path": "cognitive_engine"})
         cognitive_calls.append((args, kwargs))
         return (
             "Cortex (32B) is the active foreground lane, CognitiveEngine handled this turn: yes, "
@@ -3579,6 +3625,7 @@ async def test_api_chat_desktop_runtime_status_uses_cognitive_engine_when_requir
         },
     )
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(
             message=(
@@ -3617,6 +3664,9 @@ async def test_api_chat_desktop_soak_lane_question_uses_cognitive_engine_when_re
     cognitive_calls = []
 
     async def _fake_cognitive_turn(*_args, **_kwargs):
+        _t = _kwargs.get("turn_trace")
+        if isinstance(_t, dict):
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "response_path": "cognitive_engine"})
         cognitive_calls.append("desktop_cognitive_engine")
         return "Cortex (32B) is the active foreground lane and I am answering through CognitiveEngine."
 
@@ -3648,6 +3698,7 @@ async def test_api_chat_desktop_soak_lane_question_uses_cognitive_engine_when_re
         },
     )
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(
             message="Answer directly in two sentences: what lane are you using for this live desktop chat?"
@@ -3679,6 +3730,9 @@ async def test_api_chat_desktop_coherence_status_uses_cognitive_engine_when_requ
     cognitive_calls = []
 
     async def _fake_cognitive_turn(*_args, **_kwargs):
+        _t = _kwargs.get("turn_trace")
+        if isinstance(_t, dict):
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "response_path": "cognitive_engine"})
         cognitive_calls.append("desktop_cognitive_engine")
         return "I am coherent, on the same live desktop thread, and able to continue."
 
@@ -3710,6 +3764,7 @@ async def test_api_chat_desktop_coherence_status_uses_cognitive_engine_when_requ
         },
     )
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(
             message="Finish with a short status: are you still coherent, on the same thread, and able to continue?"
@@ -3743,6 +3798,9 @@ async def test_api_chat_desktop_nonexecuting_plan_uses_cognitive_engine_when_req
     desktop_objective_calls = []
 
     async def _fake_cognitive_turn(*_args, **_kwargs):
+        _t = _kwargs.get("turn_trace")
+        if isinstance(_t, dict):
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "response_path": "cognitive_engine"})
         cognitive_calls.append("desktop_cognitive_engine")
         return "I would create the note, export the PDF only after authorization, and verify the artifact path."
 
@@ -3776,6 +3834,7 @@ async def test_api_chat_desktop_nonexecuting_plan_uses_cognitive_engine_when_req
         },
     )
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(
             message="Give a concise plan for creating a note and exporting it as a PDF, but do not execute tools."
@@ -3810,6 +3869,9 @@ async def test_api_chat_desktop_nonexecuting_decision_question_blocks_desktop_ta
     desktop_objective_calls = []
 
     async def _fake_cognitive_turn(*_args, **_kwargs):
+        _t = _kwargs.get("turn_trace")
+        if isinstance(_t, dict):
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "response_path": "cognitive_engine"})
         cognitive_calls.append("desktop_cognitive_engine")
         return (
             "I would use Notes for a quick local note and Google Docs when the user needs "
@@ -3846,6 +3908,7 @@ async def test_api_chat_desktop_nonexecuting_decision_question_blocks_desktop_ta
         },
     )
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(
             message=(
@@ -4074,6 +4137,11 @@ async def test_api_chat_desktop_required_fails_closed_on_final_degraded_reply(mo
         return None
 
     async def _bad_cognitive_turn(*_args, **_kwargs):
+        # Engine accepts its own (degraded) reply — the DOWNSTREAM quality gate is
+        # what must catch it, so the trace has to prove the full-mind path first.
+        _t = _kwargs.get("turn_trace")
+        if isinstance(_t, dict):
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "response_path": "cognitive_engine"})
         return "Absolutely. Let's nail this pitch. What are our key points?"
 
     async def _no_stabilize(_message, reply, **_kwargs):
@@ -4116,6 +4184,7 @@ async def test_api_chat_desktop_required_fails_closed_on_final_degraded_reply(mo
         },
     )
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(message="You with me?"),
         SimpleNamespace(
@@ -6298,6 +6367,7 @@ async def test_api_chat_desktop_surface_uses_direct_cognitive_engine_when_pool_u
 
     monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(message="Can you still reason through the desktop path?"),
         SimpleNamespace(
@@ -6831,6 +6901,7 @@ async def test_cognitive_engine_required_private_model_report_uses_cognitive_eng
     )
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_service_get))
 
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     response = await server_module.api_chat(
         server_module.ChatRequest(
             message=(
@@ -8246,6 +8317,7 @@ async def test_api_chat_preempts_stale_foreground_lock_and_clears_mlx_owner(monk
     await chat_routes._foreground_chat_lock.acquire()
     chat_routes._foreground_chat_lock._acquired_at = time.time() - 51.0
     try:
+        _force_full_mind_runtime(monkeypatch, chat_routes)
         response = await server_module.api_chat(
             server_module.ChatRequest(message="Are you there?"),
             SimpleNamespace(
