@@ -355,8 +355,8 @@ identity-reset:
 	@echo "✅ Identity reset complete"
 
 longevity-4h:
-	@echo "⏱️  Running 4-hour stability soak..."
-	@$(PYTHON) -m tools.longevity.run_longevity_soak --profile 4h --out artifacts/current/longevity_4h
+	@echo "⏱️  Running 4-hour stability soak (real-time endurance)..."
+	@$(PYTHON) -m tools.longevity.run_longevity_soak --duration-s 14400 --tick-s 30 --out artifacts/current/longevity_4h
 
 # ─── Closeout Rubric ─────────────────────────────────────────────────────
 

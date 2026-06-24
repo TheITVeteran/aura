@@ -85,6 +85,14 @@ async def async_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--profile", default="proof")
     parser.add_argument("--out", default="artifacts/current/longevity_soak")
     parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument(
+        "--duration-s", type=float, default=0.0,
+        help="real-time soak duration in seconds; >0 enables endurance mode (pulse every --tick-s)",
+    )
+    parser.add_argument(
+        "--tick-s", type=float, default=30.0,
+        help="seconds between pulses in endurance mode",
+    )
     args = parser.parse_args(argv)
 
     out_dir = _resolve_output_dir(args.out)
@@ -116,8 +124,16 @@ async def async_main(argv: list[str] | None = None) -> int:
     try:
         will = get_will()
         await will.start()
+        duration_s = max(0.0, float(args.duration_s or 0.0))
+        tick_s = max(1.0, float(args.tick_s or 30.0))
+        soak_started = time.monotonic()
         with receipts_path.open("w", encoding="utf-8") as receipt_file:
-            for index in range(max(1, args.iterations)):
+            index = 0
+            while (
+                (time.monotonic() - soak_started) < duration_s
+                if duration_s > 0.0
+                else index < max(1, args.iterations)
+            ):
                 lag_ms = await _measure_lag_ms()
                 decision = will.decide(
                     content=f"longevity proof pulse {index}",
@@ -129,6 +145,7 @@ async def async_main(argv: list[str] | None = None) -> int:
                 metrics.append(
                     {
                         "iteration": index,
+                        "elapsed_s": round(time.monotonic() - soak_started, 2),
                         "rss_mb": round(_rss_mb(), 3),
                         "lag_ms": round(lag_ms, 3),
                         "queue_len": sum(queue_depths.values()),
@@ -148,6 +165,13 @@ async def async_main(argv: list[str] | None = None) -> int:
                     )
                     + "\n"
                 )
+                index += 1
+                # Endurance mode: pace the pulses across the real-time window.
+                if duration_s > 0.0:
+                    remaining = duration_s - (time.monotonic() - soak_started)
+                    if remaining <= 0.0:
+                        break
+                    await asyncio.sleep(min(tick_s, remaining))
     finally:
         await shutdown_proof_runtime(orch)
 
@@ -156,9 +180,15 @@ async def async_main(argv: list[str] | None = None) -> int:
     max_lag = max((item["lag_ms"] for item in metrics), default=0.0)
     max_queue = max((item["queue_len"] for item in metrics), default=0)
 
+    elapsed_s = round(time.monotonic() - soak_started, 1)
+    endurance = duration_s > 0.0
     report = {
         "generated_at": time.time(),
         "profile": args.profile,
+        "soak_mode": "endurance" if endurance else "proof_iterations",
+        "requested_duration_s": round(duration_s, 1),
+        "elapsed_s": elapsed_s,
+        "tick_s": round(tick_s, 3) if endurance else None,
         "iterations_completed": len(metrics),
         "memory_leakage_detected": rss_growth > 128.0,
         "rss_growth_mb": round(rss_growth, 3),
@@ -170,7 +200,12 @@ async def async_main(argv: list[str] | None = None) -> int:
         "max_lag_ms": round(max_lag, 3),
         "max_queue_len": max_queue,
         "metrics": metrics,
-        "claim_scope": "short proof-profile soak; not indefinite-autonomy evidence",
+        "claim_scope": (
+            f"real-time endurance soak ({elapsed_s:.0f}s / requested {duration_s:.0f}s): "
+            "boot + memory/lag/queue stability over the window"
+            if endurance
+            else "short proof-profile soak; not indefinite-autonomy evidence"
+        ),
     }
 
     write_json(out_dir / "SOAK_METRICS.json", report)
