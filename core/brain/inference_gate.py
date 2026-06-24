@@ -1172,9 +1172,30 @@ class InferenceGate:
                 visible_conversation_anchor > 0.0
                 and (now_wall - visible_conversation_anchor) <= 300.0
             )
+            # The visible-conversation-probe guard catches a zombie chat lane that
+            # reports "ready" without EVER serving a user-facing turn. That signal
+            # is only meaningful when a UI/conversation surface is attached. A
+            # headless proof/longevity run has no user surface, so no turn can ever
+            # refresh the anchor — a warm+alive cortex is the legitimate terminal
+            # ready state there, and applying the guard is a false positive.
+            _proof_headless = False
+            try:
+                from core.runtime.proof_policy import proof_run_active
+
+                _proof_headless = proof_run_active(origin="inference_gate_visible_probe")
+            except (ImportError, RuntimeError, AttributeError) as exc:
+                logger.debug("Visible-probe proof-policy check unavailable: %s", exc)
+            # Fire ONLY when the lane has never served a visible turn
+            # (anchor <= 0) — matching the authoritative mlx_client guard
+            # (mlx_client.py: `visible_conversation_anchor <= 0.0`) and this
+            # guard's own "without ever serving" intent. A lane that already
+            # proved it can serve and is merely IDLE (anchor > 0 but older than
+            # 300s) must NOT be downgraded to not-ready — its liveness is covered
+            # by the worker-progress-staleness probe, not by conversation idleness.
             if (
                 str(lane.get("state", "") or "").lower() == "ready"
-                and not visible_anchor_recent
+                and visible_conversation_anchor <= 0.0
+                and not _proof_headless
                 and "visible_conversation_probe_missing" not in raw_readiness_blockers
             ):
                 raw_readiness_blockers.append("visible_conversation_probe_missing")
