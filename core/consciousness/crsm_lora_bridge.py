@@ -193,7 +193,7 @@ class CRSMLoraBridge:
         self._flush_to_finetune_pipe(force=True)
 
     def get_status(self) -> Dict:
-        return {
+        status = {
             "buffer_size": len(self._buffer),
             "capture_count": self._capture_count,
             "total_flushed": self._total_flushed,
@@ -203,6 +203,15 @@ class CRSMLoraBridge:
             ),
             "last_processing_context": self._buffer[-1].processing_context if self._buffer else {},
         }
+        # Loop-closure verification: is captured experience actually being trained
+        # into weights and persisted, or just accumulating?
+        try:
+            from core.consciousness.crsm_loop_monitor import get_crsm_loop_monitor
+
+            status["loop"] = get_crsm_loop_monitor().loop_state()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            status["loop"] = None
+        return status
 
     def get_context_block(self) -> str:
         """Minimal context block — just signals training activity."""

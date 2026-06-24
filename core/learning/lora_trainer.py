@@ -69,6 +69,15 @@ class LoraTrainer:
                 source="training_tooling:lora_trainer",
             )
             if res.returncode == 0:
+                # Close the CRSM→LoRA loop observably: record that this training run
+                # consumed the captured dataset, so loop closure is a verified fact.
+                try:
+                    if "synthetic_training" in str(dataset_path):
+                        from core.consciousness.crsm_loop_monitor import get_crsm_loop_monitor
+
+                        get_crsm_loop_monitor().mark_dataset_consumed(model_path=output_path)
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    record_degradation("learning.lora_trainer", exc)
                 return {
                     "status": "success",
                     "adapter_path": output_path,
