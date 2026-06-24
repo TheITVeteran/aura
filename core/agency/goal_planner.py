@@ -71,6 +71,15 @@ class GoalPlanner:
                 return "computational"
         except (ImportError, RuntimeError):
             pass
+        # Desktop UI control ("open Notes", "make a folder", "open <url> in Chrome") plans
+        # into verified computer-use steps.
+        try:
+            from core.agency.desktop_planner import is_desktop_goal
+
+            if is_desktop_goal(g):
+                return "desktop"
+        except (ImportError, RuntimeError):
+            pass
         lower = g.lower()
         if self._reach is not None and any(w in lower for w in ("fetch ", "http", "webhook", "api ", "look up at ")):
             return "reach"
@@ -82,6 +91,16 @@ class GoalPlanner:
             return []
         if kind == "computational":
             return [self._compute_step(goal)]
+        if kind == "desktop":
+            try:
+                from core.agency.desktop_planner import get_desktop_planner
+
+                steps = await get_desktop_planner().plan(goal)
+                if steps:
+                    return steps
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("goal_planner", exc)
+            return [self._reason_step(goal)]   # fall back to reasoning if unparseable
         if kind == "reach":
             return [self._reach_step(goal)]
         return [self._reason_step(goal)]
