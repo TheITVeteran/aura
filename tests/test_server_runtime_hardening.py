@@ -487,6 +487,80 @@ async def test_api_health_reports_cold_standby_without_healthy_claim(service_con
 
 
 @pytest.mark.asyncio
+async def test_api_health_exposes_ready_conversation_at_top_level(service_container, monkeypatch):
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+    from interface import server as server_module
+
+    required_probes = {
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = True
+    ready_lane = {"conversation_ready": True, "state": "ready"}
+
+    monkeypatch.setattr(
+        server_module, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        server_module, "_collect_conversation_lane_status", lambda: dict(ready_lane)
+    )
+    monkeypatch.setattr(
+        server_module,
+        "build_boot_health_snapshot",
+        lambda orch, rt, is_gui_proxy=False, conversation_lane=None: (
+            {
+                "status": "ready",
+                "ready": True,
+                "launcher_ready": True,
+                "system_ready": True,
+                "conversation_ready": True,
+                "boot_phase": "kernel_ready",
+                "status_message": "Aura is awake.",
+                "progress": 100,
+                "blockers": [],
+                "required_probes": required_probes,
+                "conversation_lane": conversation_lane or {},
+            },
+            200,
+        ),
+    )
+    monkeypatch.setattr(
+        server_module,
+        "get_runtime_state",
+        lambda: {"state": {"affect": {}}, "sha256": "abc", "signature": "sig"},
+    )
+    monkeypatch.setattr(
+        server_module.psutil,
+        "cpu_percent",
+        lambda interval=None, percpu=False: [10.0, 12.0] if percpu else 11.0,
+    )
+    monkeypatch.setattr(
+        server_module.psutil, "virtual_memory", lambda: SimpleNamespace(percent=33.0)
+    )
+
+    service_container.register_instance(
+        "orchestrator",
+        SimpleNamespace(
+            status=SimpleNamespace(
+                initialized=True, running=True, cycle_count=3, start_time=time.time() - 5
+            )
+        ),
+        required=False,
+    )
+
+    response = await server_module.api_health(SimpleNamespace(headers={}))
+    payload = json.loads(response.body)
+
+    assert payload["status"] == "ok"
+    assert payload["healthy"] is True
+    assert payload["conversation_ready"] is True
+    assert payload["conversation_busy"] is False
+    assert payload["required_probes"]["all_passed"] is True
+    assert payload["readiness_contract"]["conversation_ready"] is True
+    assert payload["blockers"] == []
+
+
+@pytest.mark.asyncio
 async def test_desktop_access_summary_reuses_cached_probe_result(monkeypatch):
     import core.security.permission_guard as permission_guard_module
     from interface.routes import system as system_routes
@@ -550,17 +624,26 @@ async def test_desktop_access_summary_labels_env_assumptions_separately(monkeypa
     finally:
         system_routes._desktop_access_cache.update(original_cache)
 
-    assert payload["desktop_control_ready"] is True
-    assert payload["screen_text_ready"] is True
+    assert payload["reported_desktop_control_ready"] is True
+    assert payload["reported_screen_text_ready"] is True
+    assert payload["desktop_control_ready"] is False
+    assert payload["screen_text_ready"] is False
+    assert payload["direct_probe_available"] is True
     assert payload["direct_desktop_control_ready"] is False
     assert payload["direct_screen_text_ready"] is False
-    assert payload["permission_confidence"] == "asserted_env"
-    assert payload["overall_status"] == "assumed_ready"
+    assert payload["permission_confidence"] == "claims_only"
+    assert payload["overall_status"] == "claims_only"
     assert payload["permission_assumptions"] == [
         "screen_recording",
         "accessibility",
         "automation",
     ]
+    assert payload["blocking_permissions"] == [
+        "screen_recording",
+        "accessibility",
+        "automation",
+    ]
+    assert payload["reported_blocking_permissions"] == []
     assert payload["direct_blocking_permissions"] == [
         "screen_recording",
         "accessibility",

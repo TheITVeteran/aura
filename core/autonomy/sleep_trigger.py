@@ -135,8 +135,17 @@ class AutonomousSleepTrigger:
             dreamer = self._find_dreamer(orch)
             if dreamer:
                 results = await dreamer.engage_sleep_cycle()
-                dreamed = results.get("dream", {}).get("dreamed", False)
-                consolidated = results.get("consolidation", {}).get("merged", 0)
+                dreamed = (results.get("dream") or {}).get("dreamed", False)
+                # consolidation is a ConsolidationReport (success, field
+                # `duplicates_merged`) or a {"error": ...} dict (failure path),
+                # never a {"merged": ...} dict — read both shapes defensively.
+                consolidation = results.get("consolidation")
+                if isinstance(consolidation, dict):
+                    consolidated = consolidation.get(
+                        "duplicates_merged", consolidation.get("merged", 0)
+                    )
+                else:
+                    consolidated = getattr(consolidation, "duplicates_merged", 0)
                 logger.info("🌅 Sleep cycle complete: dreamed=%s consolidated=%s",
                             dreamed, consolidated)
                 try:

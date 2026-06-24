@@ -2733,6 +2733,99 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_discards_bounded_repair_when_full_mind_path_not_proven(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    kernel_calls = []
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            kernel_calls.append("process")
+            raise AssertionError("desktop UI must fail closed instead of using KernelInterface fallback")
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-repair"
+
+    async def _fake_complete_exchange(*_args, **_kwargs):
+        return None
+
+    async def _fake_output_receipt(*_args, **_kwargs):
+        return None
+
+    async def _bounded_repair_candidate(*_args, **kwargs):
+        trace = kwargs.get("turn_trace")
+        if isinstance(trace, dict):
+            trace.update(
+                {
+                    "engine_think_invoked": True,
+                    "cognitive_engine_reply_accepted": False,
+                    "bounded_contract_used": True,
+                    "legacy_fallback_used": False,
+                    "response_path": "conversation_recall_log_repair_after_empty_engine",
+                }
+            )
+        return "This is a bounded repair and must not be served as Aura speech."
+
+    ready_lane = {
+        "conversation_ready": True,
+        "state": "ready",
+        "desired_model": "Cortex (32B)",
+        "desired_endpoint": "Cortex",
+        "foreground_endpoint": "Cortex",
+        "background_endpoint": "Brainstem",
+    }
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _bounded_repair_candidate)
+    monkeypatch.setattr(chat_routes, "_collect_conversation_lane_status", lambda: dict(ready_lane))
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": dict(ready_lane, conversation_ready=False, state=state, reason=reason),
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message=(
+                "Live desktop route probe. Answer directly in two sentences: "
+                "what did I just ask you to do?"
+            )
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 503
+    assert payload["status"] == "desktop_cognitive_engine_unavailable"
+    assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
+    assert payload["live_turn_contract"]["full_mind_path"] is False
+    assert payload["live_turn_contract"]["bounded_contract_used"] is False
+    assert "bounded repair" not in payload["response"]
+    assert kernel_calls == []
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_low_risk_social_no_reply_fails_closed(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes

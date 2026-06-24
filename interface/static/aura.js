@@ -1143,7 +1143,7 @@ function desktopAccessTone(granted, status = '') {
 }
 
 function desktopAccessCapabilityTone(ready) {
-    return ready ? 'ready' : 'partial';
+    return ready ? 'ready' : 'blocked';
 }
 
 function applyDesktopAccessSummary(summary) {
@@ -1169,10 +1169,17 @@ function applyDesktopAccessSummary(summary) {
         ? 'PyAutoGUI runtime loaded for mouse and keyboard actions.'
         : escText(access.pyautogui_error, 'PyAutoGUI runtime is unavailable.');
 
-    banner.className = `desktop-access-banner ${overall === 'ready' ? 'ready' : overall === 'blocked' ? 'blocked' : 'partial'}`;
+    const accessClass = overall === 'ready'
+        ? 'ready'
+        : (overall === 'blocked' || overall === 'claims_only')
+            ? 'blocked'
+            : 'partial';
+    banner.className = `desktop-access-banner ${accessClass}`;
     banner.textContent =
         overall === 'ready'
             ? 'Desktop access ready. Aura can capture the screen, drive the desktop, and read frontmost-app text.'
+            : overall === 'claims_only'
+                ? 'Desktop access blocked. macOS direct permission checks do not confirm the permissions Aura needs for live control.'
             : overall === 'blocked'
                 ? 'Desktop access blocked. macOS permissions still prevent Aura from acting beyond her own window.'
                 : 'Desktop access is partial. Some desktop capabilities are live, but macOS permissions are still gating parts of the stack.';

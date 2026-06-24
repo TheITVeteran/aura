@@ -485,7 +485,7 @@ class RuntimeHygieneManager:
 
         tracked_pids = {
             int(record.pid)
-            for record in self._process_records.values()
+            for record in list(self._process_records.values())
             if record.finished_at is None and getattr(record, "pid", None)
         }
         for child in children:
@@ -586,7 +586,7 @@ class RuntimeHygieneManager:
         """
 
         pid = getattr(proc, "pid", None)
-        for record in self._process_records.values():
+        for record in list(self._process_records.values()):
             if pid is not None and record.finished_at is None and record.pid == pid:
                 record.kind = kind or record.kind
                 record.name = str(name or record.name or getattr(proc, "name", kind))
@@ -674,7 +674,7 @@ class RuntimeHygieneManager:
         active_non_daemon = 0
         stale_non_daemon = 0
         sample: list[dict[str, Any]] = []
-        for record in self._thread_records.values():
+        for record in list(self._thread_records.values()):
             if record.finished_at is not None:
                 continue
             active += 1
@@ -701,7 +701,7 @@ class RuntimeHygieneManager:
         active_subprocesses = 0
         active_multiprocessing = 0
         active_registered_pids = set()
-        for record in self._process_records.values():
+        for record in list(self._process_records.values()):
             if record.finished_at is not None:
                 continue
             active_registered += 1
