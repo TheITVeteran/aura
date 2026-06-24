@@ -303,6 +303,16 @@ class PhiCore:
             bipartitions=self._residual_bipartitions, n_nodes=n_residual_nodes
         )
 
+        # Grassmann-geometry residual complex: encodes the transformer's residual
+        # subspace dynamics into an 8-node state via principal-angle distance to
+        # learned geometric modes — a principled φ over the model's own state
+        # transitions, not 8 contiguous chunk-means. Reuses the same exact-φ
+        # machinery (bipartitions/bit-tables) on its own state history.
+        self._grassmann_complex = None  # lazy (avoids import cost when unused)
+        self._grassmann_state_history: deque = deque(maxlen=2000)
+        self._grassmann_state_visits: np.ndarray = np.ones(n_residual_states, dtype=np.float32)
+        self._grassmann_last_result: PhiResult | None = None
+
     # ── State Recording ────────────────────────────────────────────────────────
 
     def record_state(self, substrate_x: np.ndarray, cognitive_values: dict[str, float] | None = None):
@@ -445,6 +455,46 @@ class PhiCore:
             state_history=self._residual_state_history,
             state_visits=self._residual_state_visits,
         )
+        # Principled geometric path: feed the full residual vector to the Grassmann
+        # complex, which encodes the representation's subspace into a geometric state.
+        self._record_grassmann_residual(vec)
+
+    def _record_grassmann_residual(self, vec: np.ndarray) -> None:
+        try:
+            if self._grassmann_complex is None:
+                from core.consciousness.grassmann_phi import GrassmannResidualComplex
+
+                self._grassmann_complex = GrassmannResidualComplex(n_anchors=8)
+            state = self._grassmann_complex.observe(vec)
+            if state is not None:
+                self._grassmann_state_history.append(int(state))
+                self._grassmann_state_visits[int(state)] += 1.0
+        except (RuntimeError, AttributeError, TypeError, ValueError, ImportError) as exc:
+            record_degradation('phi_core', exc)
+
+    def compute_grassmann_residual_phi(self) -> PhiResult | None:
+        """Exact φ over the transformer's Grassmann-geometry state transitions.
+
+        This is the principled residual-φ: the state is the residual stream's
+        principal subspace encoded by Grassmann distance to learned geometric modes,
+        so φ reflects integration of the model's own representational dynamics rather
+        than a lossy 8-mean projection.
+        """
+        if len(self._grassmann_state_history) < MIN_HISTORY_FOR_TPM:
+            return None
+        result = self._compute_eight_node_phi_from_history(
+            self._grassmann_state_history,
+            self._grassmann_state_visits,
+            self._residual_bipartitions,
+            self._residual_bit_tables,
+        )
+        if result is not None:
+            self._grassmann_last_result = result
+            logger.debug(
+                "PhiCore (grassmann): phi_s=%.5f, complex=%s, n=%d transitions",
+                result.phi_s, result.is_complex, result.tpm_n_samples,
+            )
+        return result
 
     def _record_eight_node_complex(
         self,
@@ -867,7 +917,8 @@ class PhiCore:
         affective_res = self.compute_affective_phi()
         mesh_res = self.compute_mesh_phi()
         residual_res = self.compute_residual_phi()
-        
+        grassmann_res = self.compute_grassmann_residual_phi()
+
         # Winning complex is the one with highest phi
         winner = affective_res
         complex_name = "affective"
@@ -877,6 +928,11 @@ class PhiCore:
         if residual_res and (not winner or residual_res.phi_s > winner.phi_s):
             winner = residual_res
             complex_name = "residual_stream"
+        # The Grassmann residual complex is the principled φ over the transformer's
+        # own geometry; it competes in the exclusion-postulate winner selection.
+        if grassmann_res and (not winner or grassmann_res.phi_s > winner.phi_s):
+            winner = grassmann_res
+            complex_name = "residual_stream_grassmann"
             
         elapsed = time.perf_counter() - start_t
         if winner:
@@ -2035,6 +2091,9 @@ class PhiCore:
             "mesh_history_length": len(self._mesh_state_history),
             "residual_history_length": len(self._residual_state_history),
             "residual_phi_s": round(self._residual_last_result.phi_s, 6) if self._residual_last_result else None,
+            "grassmann_history_length": len(self._grassmann_state_history),
+            "grassmann_phi_s": round(self._grassmann_last_result.phi_s, 6) if self._grassmann_last_result else None,
+            "grassmann_status": self._grassmann_complex.status() if self._grassmann_complex is not None else None,
         }
         # IIT 4.0 Exclusion Postulate fields
         if self._max_phi_complex is not None:
