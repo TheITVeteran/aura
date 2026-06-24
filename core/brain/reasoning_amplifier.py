@@ -136,23 +136,121 @@ class DeliberationEngine:
         self.n_samples = max(1, int(n_samples))
         self.temperatures = temperatures or [0.2, 0.5, 0.7, 0.9, 1.0]
 
+    async def _sample(
+        self,
+        question: str,
+        generate: Callable[[str, float], Awaitable[str]],
+        count: int,
+        offset: int = 0,
+    ) -> list[str]:
+        import asyncio
+
+        async def _one(i: int) -> str:
+            try:
+                return await generate(question, self.temperatures[(offset + i) % len(self.temperatures)])
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("reasoning_amplifier", exc)
+                return ""
+
+        return [s for s in await asyncio.gather(*[_one(i) for i in range(count)]) if s]
+
     async def deliberate(
         self,
         question: str,
         generate: Callable[[str, float], Awaitable[str]],
         **kw: Any,
     ) -> AmplifiedResult:
-        import asyncio
+        samples = await self._sample(question, generate, self.n_samples)
+        return await amplify(samples, **kw)
 
-        async def _one(i: int) -> str:
+    async def adaptive_deliberate(
+        self,
+        question: str,
+        generate: Callable[[str, float], Awaitable[str]],
+        *,
+        min_samples: int = 3,
+        max_samples: int = 9,
+        batch: int = 2,
+        target_agreement: float = 0.67,
+        **kw: Any,
+    ) -> AmplifiedResult:
+        """Spend MORE compute when uncertain — the frontier 'think longer on hard ones'.
+
+        Start with ``min_samples``; if the verifier-clean paths don't yet agree strongly
+        enough (and there is budget), draw another ``batch`` and re-amplify. Stops as soon
+        as a verifier-clean consensus is reached, capping at ``max_samples``.
+        """
+        samples = await self._sample(question, generate, min_samples)
+        result = await amplify(samples, **kw)
+        while (
+            len(samples) < max_samples
+            and not (result.verified and result.agreement >= target_agreement)
+        ):
+            extra = await self._sample(question, generate, batch, offset=len(samples))
+            if not extra:
+                break
+            samples.extend(extra)
+            result = await amplify(samples, **kw)
+            if result.verified and result.agreement >= target_agreement:
+                break
+        logger.info(
+            "🧠 [Adaptive] settled on %d samples (verified=%s, agreement %.0f%%)",
+            result.n, result.verified, result.agreement * 100,
+        )
+        return result
+
+    async def decompose_and_solve(
+        self,
+        question: str,
+        generate: Callable[[str, float], Awaitable[str]],
+        decompose: Callable[[str], Awaitable[list[str]]],
+        *,
+        recombine: Callable[[str, list[tuple[str, str]]], Awaitable[str]] | None = None,
+        **kw: Any,
+    ) -> AmplifiedResult:
+        """Decompose-then-verify: split a hard problem, amplify each part, recombine.
+
+        Each sub-question is solved by verifier-filtered self-consistency, so errors are
+        caught *per step* before they compound — the failure mode that sinks long
+        single-shot chains. The recombined answer is itself verified.
+        """
+        try:
+            subqs = await decompose(question)
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("reasoning_amplifier", exc)
+            subqs = []
+        subqs = [q for q in (subqs or []) if q and str(q).strip()]
+        if not subqs:
+            return await self.adaptive_deliberate(question, generate, **kw)
+
+        solved: list[tuple[str, str]] = []
+        for sub in subqs:
+            sub_result = await self.deliberate(sub, generate, **kw)
+            solved.append((sub, sub_result.answer))
+
+        if recombine is not None:
             try:
-                return await generate(question, self.temperatures[i % len(self.temperatures)])
+                final = await recombine(question, solved)
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("reasoning_amplifier", exc)
-                return ""
+                final = ""
+        else:
+            steps = "\n".join(f"- {q}: {a}" for q, a in solved)
+            final_prompt = f"{question}\n\nSub-results:\n{steps}\n\nFinal answer:"
+            final = await generate(final_prompt, 0.3)
 
-        samples = await asyncio.gather(*[_one(i) for i in range(self.n_samples)])
-        return await amplify([s for s in samples if s], **kw)
+        # Verify the recombined answer; its confidence reflects the sub-step agreement.
+        ok, issues = await (kw.get("verify") or verify_reasoning)(final or "")
+        sub_conf = sum(1 for _q, a in solved if a) / max(1, len(solved))
+        return AmplifiedResult(
+            answer=final or (solved[-1][1] if solved else ""),
+            confidence=round(min(0.98, sub_conf * (1.0 if ok else 0.8)), 4),
+            n=len(subqs),
+            valid_n=len(subqs) if ok else 0,
+            agreement=round(sub_conf, 4),
+            verified=ok,
+            issues=issues,
+        )
 
 
 _instance: DeliberationEngine | None = None

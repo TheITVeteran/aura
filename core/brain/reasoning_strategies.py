@@ -622,6 +622,27 @@ class ReasoningStrategies:
             from core.brain.reasoning_amplifier import amplify
 
             amplified = await amplify(valid_answers)
+            # Adaptive escalation — think LONGER when uncertain: if the verifier-clean
+            # paths haven't converged, spend more compute (up to a cap) drawing fresh
+            # samples until a verified consensus emerges or the budget is exhausted.
+            escalate_cap = int(kwargs.get("max_samples", 7))
+            while (
+                len(valid_answers) < escalate_cap
+                and not (amplified.verified and amplified.agreement >= 0.67)
+            ):
+                extra = await asyncio.gather(*[
+                    self._generate_text(
+                        f"Answer this question concisely and accurately:\n\n{query}",
+                        temperature=0.9,
+                        **{k: v for k, v in kwargs.items() if k not in ('temperature', 'max_samples')},
+                    )
+                    for _ in range(2)
+                ])
+                extra = [a for a in extra if a]
+                if not extra:
+                    break
+                valid_answers.extend(extra)
+                amplified = await amplify(valid_answers)
         except _REASONING_RECOVERABLE_ERRORS as exc:
             _record_reasoning_degradation("consistency_amplify", exc)
 

@@ -90,3 +90,62 @@ async def test_deliberation_engine_samples_then_amplifies():
     eng = DeliberationEngine(n_samples=3)
     r = await eng.deliberate("what color?", _gen, verify=_all_valid)
     assert default_extract_answer(r.answer) == "blue" and r.n == 3
+
+
+# ── adaptive escalation + decompose-then-verify ───────────────────────────
+
+@pytest.mark.asyncio
+async def test_adaptive_stops_early_on_strong_clean_consensus():
+    calls = {"n": 0}
+
+    async def _gen(q, t):
+        calls["n"] += 1
+        return "Answer: blue"          # unanimous + clean → should stop at min_samples
+
+    eng = DeliberationEngine()
+    r = await eng.adaptive_deliberate("color?", _gen, min_samples=3, max_samples=9, verify=_all_valid)
+    assert r.answer.endswith("blue") and r.n == 3 and calls["n"] == 3   # didn't escalate
+
+
+@pytest.mark.asyncio
+async def test_adaptive_escalates_when_uncertain():
+    # split answers → never reaches target_agreement → escalates to max_samples
+    seq = iter(["Answer: A", "Answer: B"] * 20)
+
+    async def _gen(q, t):
+        return next(seq)
+
+    eng = DeliberationEngine()
+    r = await eng.adaptive_deliberate("x?", _gen, min_samples=3, max_samples=7, batch=2,
+                                      target_agreement=0.9, verify=_all_valid)
+    assert r.n >= 7        # spent the budget because it stayed uncertain
+
+
+@pytest.mark.asyncio
+async def test_decompose_then_verify_solves_parts():
+    async def _decompose(q):
+        return ["sub1", "sub2"]
+
+    async def _gen(q, t):
+        if q == "sub1":
+            return "Answer: 10"
+        if q == "sub2":
+            return "Answer: 5"
+        return "Answer: 15"            # recombine prompt
+
+    eng = DeliberationEngine()
+    r = await eng.decompose_and_solve("10+5?", _gen, _decompose, verify=_all_valid)
+    assert r.n == 2 and r.answer.endswith("15")
+
+
+@pytest.mark.asyncio
+async def test_decompose_falls_back_when_no_subquestions():
+    async def _decompose(q):
+        return []
+
+    async def _gen(q, t):
+        return "Answer: direct"
+
+    eng = DeliberationEngine()
+    r = await eng.decompose_and_solve("simple?", _gen, _decompose, verify=_all_valid)
+    assert r.answer.endswith("direct")
