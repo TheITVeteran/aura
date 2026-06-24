@@ -320,6 +320,21 @@ class AutonomousInitiativeLoop:
             )
             if voice_session and voice_session.is_active:
                 await voice_session.narrate_progress(step_label)
+
+            # Proactive execution arm: if a planner is registered, drive this mission
+            # step through the full capability stack (fluid/parallel execution under the
+            # timing gate) instead of only marking it advanced. Safe-by-default — a no-op
+            # until a planner is wired, and itself gated by background policy + timing.
+            try:
+                from core.agency.proactive_agency import get_proactive_agency
+
+                node_goal = node.action or node.description or ""
+                if node_goal:
+                    await get_proactive_agency().pursue_goal(node_goal)
+            except _INITIATIVE_RECOVERABLE_ERRORS as exc:
+                _record_initiative_degradation(
+                    exc, action="continued after proactive pursuit attempt on a mission step"
+                )
         return advanced
 
 
