@@ -158,10 +158,34 @@ class DeliberationEngine:
         self,
         question: str,
         generate: Callable[[str, float], Awaitable[str]],
+        *,
+        cross_tier: Any | None = None,
         **kw: Any,
     ) -> AmplifiedResult:
         samples = await self._sample(question, generate, self.n_samples)
-        return await amplify(samples, **kw)
+        result = await amplify(samples, **kw)
+        return await self._maybe_cross_tier(question, result, cross_tier)
+
+    async def _maybe_cross_tier(self, question: str, result: AmplifiedResult, cross_tier: Any | None) -> AmplifiedResult:
+        """Optionally let a stronger model tier verify/correct the winning answer."""
+        if cross_tier is None or not result.answer:
+            return result
+        try:
+            verdict = await cross_tier.verify(question, result.answer)
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("reasoning_amplifier", exc)
+            return result
+        if verdict.corrected and verdict.answer:
+            result.answer = verdict.answer
+            result.verified = True
+            result.confidence = round(min(0.99, max(result.confidence, 0.9)), 4)
+        elif verdict.ok and "verified by strong tier" in verdict.critique:
+            result.verified = True
+            result.confidence = round(min(0.99, result.confidence + 0.1), 4)
+        elif not verdict.ok:
+            # strong tier flagged doubt → lower confidence, keep the answer
+            result.confidence = round(result.confidence * 0.7, 4)
+        return result
 
     async def adaptive_deliberate(
         self,
