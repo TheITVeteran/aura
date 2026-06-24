@@ -612,8 +612,38 @@ class ReasoningStrategies:
                 confidence=0.6,
                 reasoning_steps=["Only one valid sample generated"]
             )
-        
-        # Find consensus: use the LLM to pick the best/most consistent answer
+
+        # Frontier upgrade — VERIFIER-FILTERED self-consistency: discard sampled paths
+        # that Aura's own deduction engine proves contain a non-sequitur or arithmetic
+        # error, then take the answer the verifier-clean paths converge on. This is what
+        # lifts a base model's accuracy (sample → verify → vote), not a bigger network.
+        amplified = None
+        try:
+            from core.brain.reasoning_amplifier import amplify
+
+            amplified = await amplify(valid_answers)
+        except _REASONING_RECOVERABLE_ERRORS as exc:
+            _record_reasoning_degradation("consistency_amplify", exc)
+
+        if amplified is not None and amplified.answer:
+            return StrategyResult(
+                content=amplified.answer,
+                strategy_used=StrategyType.CONSISTENCY,
+                confidence=amplified.confidence,
+                reasoning_steps=[
+                    f"Sampled {amplified.n} reasoning paths; {amplified.valid_n} were verifier-clean.",
+                    f"Self-consistency agreement: {amplified.agreement:.0%}"
+                    f"{' (verified winner)' if amplified.verified else ''}.",
+                ],
+                metadata={
+                    "samples": amplified.n,
+                    "verifier_clean": amplified.valid_n,
+                    "agreement_ratio": amplified.agreement,
+                    "verified_winner": amplified.verified,
+                },
+            )
+
+        # Fallback (amplifier unavailable): original LLM-consensus path.
         consensus_prompt = (
             f"Question: {query}\n\n"
             f"I generated {len(valid_answers)} different answers:\n\n"
@@ -621,14 +651,10 @@ class ReasoningStrategies:
             + "\n\nWhich answer is most accurate? Provide the best answer, "
             "incorporating the most consistently mentioned facts across all answers."
         )
-        
         best = await self._generate_text(consensus_prompt, **kwargs)
         if not best:
             best = valid_answers[0]
-        
-        # Estimate confidence from agreement
         agreement_ratio = 1.0 if len(set(a.strip()[:50] for a in valid_answers)) == 1 else 0.7
-        
         return StrategyResult(
             content=best,
             strategy_used=StrategyType.CONSISTENCY,
