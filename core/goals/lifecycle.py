@@ -460,10 +460,14 @@ class TaskLifecycleManager:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), timeout=5.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
+        # This manager writes to the same goal_lifecycle.db as GoalEngine. Without a
+        # busy_timeout, a lifecycle write that contends with a GoalEngine write raises
+        # "database is locked" immediately instead of waiting out the brief WAL window.
+        conn.execute("PRAGMA busy_timeout=5000;")
         return conn
 
     def _init_schema(self) -> None:
@@ -668,8 +672,9 @@ def migrate_legacy_status_db(db_path: Path) -> Dict[str, int]:
     valid = {state.value for state in GoalState}
     stats = {"scanned": 0, "rewritten": 0, "skipped": 0, "unrecognized": 0}
 
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=5.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000;")
     try:
         rows = conn.execute(
             "SELECT id, status, metadata_json FROM goals"
