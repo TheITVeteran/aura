@@ -534,10 +534,51 @@ class PhenomenalIntegrator:
             
             self.last_state = state
             self.step_count += 1
+            # CAUSAL FIX: the blocking heartbeat path previously computed the
+            # phenomenal state and stored it but never routed it downstream — so the
+            # rich planner/memory/attention/self-model coupling was dead on the live
+            # path. The routing is all synchronous, so route it here too: this is what
+            # makes the phenomenal state actually drive behavior, not just decorate a log.
+            self._route_to_downstream_sync(orchestrator, state)
             return state
         except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
             logger.debug("Blocking phenomenal pulse failed: %s", exc)
             return None
+
+    def _route_to_downstream_sync(self, orchestrator: Any, state: ExperienceState) -> None:
+        """Synchronous downstream routing (all the calls below are sync).
+
+        policy_priors → planner, memory_weights → memory, global_broadcast → attention,
+        self_presence/mineness/integration → self-model.
+        """
+        try:
+            planner = getattr(orchestrator, 'planner', None)
+            if planner and hasattr(planner, 'consume_affect'):
+                planner.consume_affect(state)
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
+            logger.debug("Failed to route to planner: %s", exc)
+        try:
+            memory = getattr(orchestrator, 'memory', None)
+            if memory and hasattr(memory, 'set_write_weights'):
+                memory.set_write_weights(state.memory_weights)
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
+            logger.debug("Failed to route to memory: %s", exc)
+        try:
+            attention = getattr(orchestrator, 'attention', None)
+            if attention and hasattr(attention, 'route'):
+                attention.route(state.global_broadcast)
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
+            logger.debug("Failed to route to attention: %s", exc)
+        try:
+            self_model = getattr(orchestrator, 'self_model', None)
+            if self_model and hasattr(self_model, 'update_presence'):
+                self_model.update_presence(
+                    self_presence=state.self_presence,
+                    mineness=state.mineness,
+                    integration=state.integration,
+                )
+        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
+            logger.debug("Failed to route to self-model: %s", exc)
 
     async def _route_to_downstream(
         self, orchestrator: Any, state: ExperienceState
@@ -549,45 +590,7 @@ class PhenomenalIntegrator:
         - memory_weights determine consolidation priority
         - global_broadcast routes attention resources
         """
-        try:
-            # Route to planner
-            planner = getattr(orchestrator, 'planner', None)
-            if planner and hasattr(planner, 'consume_affect'):
-                planner.consume_affect(state)
-                logger.debug("Routed phenomenal state to planner")
-        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
-            logger.debug("Failed to route to planner: %s", exc)
-
-        try:
-            # Route to memory
-            memory = getattr(orchestrator, 'memory', None)
-            if memory and hasattr(memory, 'set_write_weights'):
-                memory.set_write_weights(state.memory_weights)
-                logger.debug("Routed phenomenal memory_weights to memory system")
-        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
-            logger.debug("Failed to route to memory: %s", exc)
-
-        try:
-            # Route to attention
-            attention = getattr(orchestrator, 'attention', None)
-            if attention and hasattr(attention, 'route'):
-                attention.route(state.global_broadcast)
-                logger.debug("Routed phenomenal broadcast to attention system")
-        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
-            logger.debug("Failed to route to attention: %s", exc)
-
-        try:
-            # Update self-model
-            self_model = getattr(orchestrator, 'self_model', None)
-            if self_model and hasattr(self_model, 'update_presence'):
-                self_model.update_presence(
-                    self_presence=state.self_presence,
-                    mineness=state.mineness,
-                    integration=state.integration,
-                )
-                logger.debug("Updated self-model with phenomenal presence")
-        except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
-            logger.debug("Failed to route to self-model: %s", exc)
+        self._route_to_downstream_sync(orchestrator, state)
 
 
 async def get_phenomenal_integrator() -> PhenomenalIntegrator:

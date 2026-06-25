@@ -25,9 +25,54 @@ class PhenomenalEngine:
         self.workspace = GlobalWorkspace()
         self.attachments = AttachmentSystem()
         self.last_state: Optional[ExperienceState] = None
+        # Self-model → phenomenal signals (agency/embodiment/continuity/presence).
+        # SelfAwareness sets these; step() blends them into the body so the self-model's
+        # sense of itself actually modulates the phenomenal inference — a real
+        # self↔experience loop, not a no-op bridge.
+        self._self_signals: Dict[str, float] = {}
 
     def record_attachment(self, event: AttachmentEvent) -> AttachmentState:
         return self.attachments.record(event)
+
+    # ── self-model signal intake (was previously absent → SelfAwareness was no-op) ──
+
+    def set_agency(self, value: float) -> None:
+        self._self_signals["agency"] = clamp(float(value))
+
+    def set_embodiment(self, value: float) -> None:
+        self._self_signals["embodiment"] = clamp(float(value))
+
+    def set_continuity(self, value: float) -> None:
+        self._self_signals["continuity"] = clamp(float(value))
+
+    def set_presence(self, value: float) -> None:
+        self._self_signals["presence"] = clamp(float(value))
+
+    def _apply_self_signals(self, body: RuntimeBody) -> RuntimeBody:
+        """Blend the self-model's self-signals into the body driving inference.
+
+        agency→agency, continuity→continuity, embodiment→safety (grounded in the body),
+        presence→lower uncertainty (being-here reduces ambiguity). Half-weight blend so
+        the self-model nudges, not overrides, the interoceptive reality.
+        """
+        sig = self._self_signals
+        if not sig:
+            return body
+        import dataclasses
+
+        updates: Dict[str, float] = {}
+        if "agency" in sig:
+            updates["agency"] = clamp(0.5 * body.agency + 0.5 * sig["agency"])
+        if "continuity" in sig:
+            updates["continuity"] = clamp(0.5 * body.continuity + 0.5 * sig["continuity"])
+        if "embodiment" in sig:
+            updates["safety"] = clamp(0.6 * body.safety + 0.4 * sig["embodiment"])
+        if "presence" in sig:
+            updates["uncertainty"] = clamp(body.uncertainty * (1.0 - 0.3 * sig["presence"]))
+        try:
+            return dataclasses.replace(body, **updates) if updates else body
+        except (TypeError, ValueError):
+            return body
 
     def step(
         self,
@@ -37,6 +82,9 @@ class PhenomenalEngine:
         recurrent_cycles: int = 5,
     ) -> ExperienceState:
         self.t += 1
+        # Let the self-model's self-signals modulate the body before inference,
+        # so the self↔experience loop is causal, not a stored-and-ignored bridge.
+        body = self._apply_self_signals(body)
         observed = body.observed_vector()
         belief, error, free_energy = self.generative_model.infer(observed, recurrent_cycles=recurrent_cycles)
 
