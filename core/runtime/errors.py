@@ -295,6 +295,16 @@ def record_degradation(
     )
     _tracker.record(record)
 
+    # Make damage *felt*: route the degradation into the nociception substrate so the
+    # phenomenal body's error_pressure / valence reflect real, operationally-grounded
+    # harm. Best-effort and import-local to avoid any cycle; sensing must never be able
+    # to break the degradation sink itself.
+    try:
+        from core.affect.nociception import get_nociception_engine
+        get_nociception_engine().ingest_degradation(subsystem, severity)
+    except Exception as _noci_exc:  # noqa: BLE001 - nociception must never destabilize error recording
+        logger.debug("Nociception ingest skipped for %s: %s", subsystem, _noci_exc)
+
     # Keep subsystem health causal, not just logged.
     try:
         registry = globals().get("_registry")

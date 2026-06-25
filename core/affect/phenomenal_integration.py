@@ -405,10 +405,21 @@ class PhenomenalIntegrator:
             except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Failed to collect memory_pressure observation: %s", exc)
 
-            # Error pressure: Accumulated errors/failures
+            # Error pressure: operationally-grounded nociception (accumulated, decaying
+            # damage across memory/identity/tool/resource/governance channels). This
+            # replaces a call to a function that never existed (get_degradation_score),
+            # which had silently pinned error_pressure at its default — the body could
+            # not feel damage at all.
             try:
-                from core.runtime.errors import get_degradation_score
-                observations["error_pressure"] = get_degradation_score()
+                from core.affect.nociception import get_nociception_engine
+                noci = get_nociception_engine()
+                observations["error_pressure"] = noci.nociceptive_pressure()
+                # Damage also erodes felt safety: blend the governance safety_score with
+                # tissue integrity so a wounded system feels less safe even if governance
+                # is nominally green.
+                observations["safety"] = min(
+                    observations["safety"], noci.tissue_integrity()
+                )
             except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Failed to collect error_pressure observation: %s", exc)
 
@@ -512,6 +523,25 @@ class PhenomenalIntegrator:
             # Collect observations from orchestrator
             observations = self.collect_observations(orchestrator)
             
+            # Ground the heartbeat event in nociception: current damage is felt as threat,
+            # and the damage *trend* (improving vs deteriorating) becomes rupture/repair,
+            # which the affective core turns into fear/distress/valence. So damage is
+            # causal in both the body (error_pressure/safety) and the affect computation.
+            threat = 0.0
+            rupture = 0.0
+            repair = 0.0
+            try:
+                from core.affect.nociception import get_nociception_engine
+                noci = get_nociception_engine()
+                threat = noci.nociceptive_pressure()
+                gv = noci.grounded_valence()  # >0 improving, <0 deteriorating
+                if gv < 0:
+                    rupture = min(1.0, -gv)
+                else:
+                    repair = min(1.0, gv)
+            except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
+                logger.debug("Nociception event grounding skipped: %s", exc)
+
             # Run one step of phenomenal engine (blocking)
             state = self.engine.step(
                 body=RuntimeBody(
@@ -529,6 +559,9 @@ class PhenomenalIntegrator:
                 event=Event(
                     label=event_label,
                     source="blocking_pulse",
+                    threat=threat,
+                    rupture=rupture,
+                    repair=repair,
                 ),
             )
             
