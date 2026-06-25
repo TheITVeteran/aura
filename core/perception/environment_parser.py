@@ -148,3 +148,19 @@ class EnvironmentParser(abc.ABC):
     def parse(self, raw_input: Any) -> EnvironmentState:
         """Converts raw input into a structured EnvironmentState."""
         pass
+
+
+def parser_for_domain(domain: str) -> EnvironmentParser:
+    """Pick the structured parser for a perception domain.
+
+    NetHack keeps its game-specific glyph parser; every other terminal-like surface
+    (shell, REPL, build log, SSH session) gets the general terminal parser, which scores
+    danger from terminal *semantics* rather than game glyphs. Unknown domains fall back to
+    the general terminal parser too, since raw text is the common case.
+    """
+    d = (domain or "").lower()
+    if "nethack" in d:
+        from core.perception.nethack_parser import NetHackParser
+        return NetHackParser()
+    from core.perception.general_terminal_parser import GeneralTerminalParser
+    return GeneralTerminalParser()
