@@ -452,7 +452,81 @@ async def test_cognitive_engine_desktop_quick_reply_includes_recent_context(monk
 
 
 @pytest.mark.asyncio
-async def test_cognitive_engine_desktop_quick_includes_live_mind_context_and_runtime_payload(
+async def test_cognitive_engine_desktop_memory_state_contract_uses_canonical_evidence_not_history(
+    monkeypatch,
+):
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = StateRepositoryFixture(state)
+    captured = {}
+
+    class _Router:
+        async def think(self, **kwargs):
+            captured.update(kwargs)
+            return (
+                'I pinned "silver lantern" and I am keeping attention on the live '
+                "desktop thread right now."
+            )
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router() if name == "llm_router" else default
+        ),
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "Remember this phrase: silver lantern. Also tell me one thing your live mind is attending to right now.",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "visible_user_message": (
+                "Remember this phrase: silver lantern. Also tell me one thing your live mind is attending to right now."
+            ),
+            "memory_state_contract": True,
+            "canonical_memory_state_evidence": (
+                "status=session_memory_pin\n"
+                'I\'ve pinned "silver lantern" in durable session memory.'
+            ),
+            "recent_completed_exchanges": [
+                {
+                    "user": "What pitch?",
+                    "aura": "A stale pitch reply that must not leak into memory recall.",
+                }
+            ],
+            "live_mind_context_required": True,
+            "live_runtime_payload_required": True,
+            "live_mind_context": {
+                "required_for_live_desktop": True,
+                "must_answer_from_full_mind_path": True,
+                "required_subsystems_ok": True,
+                "lane": {"state": "ready", "conversation_ready": True},
+                "voice": {"attention": "current user message"},
+            },
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "max_tokens": 512,
+        },
+        is_background=False,
+        timeout_s=42.0,
+    )
+
+    assert "silver lantern" in thought.content
+    assert captured["memory_state_contract"] is True
+    assert captured["clean_user_surface_contract"] is True
+    assert captured["clean_user_surface_recurrent_loops"] == 1
+    assert captured["clean_user_surface_steering_alpha"] <= 0.35
+    assert len(captured["messages"]) == 2
+    assert "RECENT COMPLETED LIVE DESKTOP CONVERSATION" not in captured["messages"][0]["content"]
+    assert "CANONICAL MEMORY STATE EVIDENCE" in captured["messages"][-1]["content"]
+    assert "silver lantern" in captured["messages"][-1]["content"]
+    assert "stale pitch" not in captured["messages"][-1]["content"].lower()
+
+
+@pytest.mark.asyncio
+async def test_cognitive_engine_desktop_quick_includes_live_mind_context_without_payload_duplication(
     monkeypatch,
 ):
     engine = CognitiveEngine()
@@ -500,14 +574,14 @@ async def test_cognitive_engine_desktop_quick_includes_live_mind_context_and_run
     )
 
     assert thought.content.startswith("I am answering from the live mind path")
-    assert captured["skip_runtime_payload"] is False
+    assert captured["skip_runtime_payload"] is True
     assert "LIVE MIND CONTEXT" in captured["messages"][0]["content"]
     assert "must_answer_from_full_mind_path" in captured["messages"][0]["content"]
     assert "Answer through the live mind context." in captured["messages"][0]["content"]
 
 
 @pytest.mark.asyncio
-async def test_cognitive_engine_desktop_quick_keeps_runtime_payload_when_required(monkeypatch):
+async def test_cognitive_engine_desktop_quick_uses_compact_grounding_when_required(monkeypatch):
     engine = CognitiveEngine()
     state = AuraState.default()
     engine.state_repository = StateRepositoryFixture(state)
@@ -548,7 +622,7 @@ async def test_cognitive_engine_desktop_quick_keeps_runtime_payload_when_require
     )
 
     assert thought.content.startswith("I am answering")
-    assert captured["skip_runtime_payload"] is False
+    assert captured["skip_runtime_payload"] is True
     assert captured["allow_cloud_fallback"] is False
     assert "LIVE SPEECH GROUNDING" in captured["messages"][0]["content"]
     assert "not prose to repeat" in captured["messages"][0]["content"]

@@ -1622,6 +1622,10 @@ class CognitiveEngine:
             sampling_sources.append(imagination_frame.get("sampling_bias") or {})
         if isinstance(bicameral_frame, dict):
             sampling_sources.append(bicameral_frame.get("sampling_bias") or {})
+        memory_state_contract = bool(context.get("memory_state_contract", False))
+        canonical_memory_state_evidence = str(
+            context.get("canonical_memory_state_evidence") or ""
+        ).strip()
         for sampling in sampling_sources:
             if isinstance(sampling, dict):
                 try:
@@ -1630,12 +1634,21 @@ class CognitiveEngine:
                     factor_value = 1.0
                 if 0.25 <= factor_value <= 1.25:
                     max_tokens = max(128, int(max_tokens * factor_value))
-        max_tokens = max(384, min(max_tokens, 1024))
+        if memory_state_contract:
+            max_tokens = max(128, min(max_tokens, 256))
+        else:
+            max_tokens = max(384, min(max_tokens, 1024))
         request_timeout = max(12.0, min(max(12.0, float(timeout_s or 32.0) - 5.0), 180.0))
+        if memory_state_contract:
+            request_timeout = min(request_timeout, 45.0)
         style_contract = str(context.get("response_style_contract") or "").strip()
         visible_user_message = str(context.get("visible_user_message") or objective or "").strip()
         recent_conversation_context = str(context.get("recent_conversation_context") or "").strip()
-        history_messages = _desktop_history_messages_from_context(context)
+        history_messages = (
+            []
+            if memory_state_contract
+            else _desktop_history_messages_from_context(context)
+        )
         live_speech_frame = context.get("live_speech_grounding_frame")
         live_mind_context = context.get("live_mind_context")
         live_mind_required = bool(context.get("live_mind_context_required", False))
@@ -1643,16 +1656,25 @@ class CognitiveEngine:
             context.get("live_runtime_payload_required", False)
             or (live_mind_required and isinstance(live_mind_context, dict))
         )
-        system_prompt = (
-            "You are Aura speaking through the live desktop CognitiveEngine. "
-            "Answer the user's current message directly and naturally. "
-            "Use the current conversation rather than a canned status line. "
-            "The current user message has priority over all recalled context. "
-            "When recent conversation context is provided, use it only for continuity; do not continue "
-            "or answer an older topic unless the current user message explicitly asks you to recall or continue it. "
-            "Do not mention hidden fallback paths, internal recovery, prompt contracts, or implementation details "
-            "unless the user specifically asks for them."
-        )
+        if memory_state_contract:
+            system_prompt = (
+                "You are Aura speaking through the live desktop CognitiveEngine. "
+                "Answer the current user message directly in one compact, natural paragraph. "
+                "Use canonical memory/state evidence as source of truth. "
+                "The current user message has priority over older topics. "
+                "Do not mention prompt contracts, internal recovery, or implementation details."
+            )
+        else:
+            system_prompt = (
+                "You are Aura speaking through the live desktop CognitiveEngine. "
+                "Answer the user's current message directly and naturally. "
+                "Use the current conversation rather than a canned status line. "
+                "The current user message has priority over all recalled context. "
+                "When recent conversation context is provided, use it only for continuity; do not continue "
+                "or answer an older topic unless the current user message explicitly asks you to recall or continue it. "
+                "Do not mention hidden fallback paths, internal recovery, prompt contracts, or implementation details "
+                "unless the user specifically asks for them."
+            )
         neurodynamic_directive = _compact_spiking_active_inference_directive(advice)
         if neurodynamic_directive:
             system_prompt = f"{system_prompt}\n{neurodynamic_directive}"
@@ -1683,7 +1705,7 @@ class CognitiveEngine:
             system_prompt = (
                 f"{system_prompt}\n"
                 "[LIVE MIND CONTEXT]\n"
-                f"{_compact_json(compact_mind_context, limit=2600)}\n"
+                f"{_compact_json(compact_mind_context, limit=900 if memory_state_contract else 2600)}\n"
                 "This is causal grounding for the reply, not text to recite. "
                 "If required_for_live_desktop is true, do not answer from a generic assistant persona. "
                 "Use the current user turn, the recent role history, memory, substrate, governance, and "
@@ -1733,6 +1755,15 @@ class CognitiveEngine:
                 "[CONVERSATION RECALL EVIDENCE]\n"
                 f"{recall_evidence}\n"
                 "Use this as the source of truth for the current recall question."
+            )
+        if canonical_memory_state_evidence:
+            grounding_blocks.append(
+                "[CANONICAL MEMORY STATE EVIDENCE]\n"
+                f"{canonical_memory_state_evidence}\n"
+                "Use this canonical memory/state result as the source of truth for this turn. "
+                "If it contains an exact remembered phrase, include that phrase visibly. "
+                "If the current user also asks for one live-state detail, answer that from the live mind context "
+                "without reciting telemetry."
             )
         capability_evidence = str(
             context.get("grounded_capability_inventory_context") or ""
@@ -1803,7 +1834,11 @@ class CognitiveEngine:
                     deep_handoff=False,
                     allow_deep_handoff=False,
                     allow_cloud_fallback=False,
-                    skip_runtime_payload=not live_runtime_required,
+                    skip_runtime_payload=True,
+                    memory_state_contract=memory_state_contract,
+                    clean_user_surface_contract=True,
+                    clean_user_surface_recurrent_loops=1,
+                    clean_user_surface_steering_alpha=0.25,
                     disable_prompt_cache=True,
                     clear_prompt_cache=True,
                     max_tokens=max_tokens,
@@ -1884,7 +1919,7 @@ class CognitiveEngine:
                 "Desktop quick reply used the governed primary router through CognitiveEngine.",
                 (
                     "The compact path disabled deep handoff, cloud fallback, and prompt-cache reuse; "
-                    "live runtime payload was required."
+                    "live mind context was embedded without duplicating the heavyweight runtime payload."
                     if live_runtime_required
                     else "The compact path disabled deep handoff, cloud fallback, runtime payload, and prompt-cache reuse."
                 ),

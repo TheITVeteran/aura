@@ -328,6 +328,29 @@ def test_runtime_hygiene_explicit_process_owner_registration_deduplicates_by_pid
     assert summary["active_multiprocessing"] == 1
 
 
+def test_runtime_hygiene_marks_asyncio_subprocess_finished_from_returncode():
+    proc = SimpleNamespace(pid=43213, returncode=None)
+    hygiene = RuntimeHygieneManager()
+    hygiene.register_process_handle(
+        proc,
+        kind="subprocess",
+        name="asyncio-subprocess-test",
+        source="test.asyncio_subprocess",
+        command="python -c pass",
+    )
+
+    summary = hygiene._process_summary()
+    assert summary["active_registered"] == 1
+    assert summary["active_subprocesses"] == 1
+
+    proc.returncode = 0
+    hygiene._refresh_process_records()
+    summary = hygiene._process_summary()
+
+    assert summary["active_registered"] == 0
+    assert summary["active_subprocesses"] == 0
+
+
 def test_runtime_hygiene_process_iter_system_error_is_nonfatal(monkeypatch):
     hygiene = RuntimeHygieneManager()
     hygiene._proc = SimpleNamespace(children=lambda recursive=True: [])

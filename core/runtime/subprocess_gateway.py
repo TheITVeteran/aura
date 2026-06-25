@@ -48,6 +48,33 @@ _DESKTOP_LONGRUN_COMMAND_MARKERS = (
 logger = logging.getLogger("Aura.SubprocessGateway")
 
 
+def _register_runtime_hygiene_process(
+    proc: Any,
+    *,
+    kind: str,
+    source: str,
+    command: Sequence[str] | str,
+) -> None:
+    """Register gateway-spawned children with runtime hygiene when available."""
+
+    try:
+        from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+        if isinstance(command, str):
+            command_text = command
+        else:
+            command_text = " ".join(str(part) for part in command)
+        get_runtime_hygiene().register_process_handle(
+            proc,
+            kind=kind,
+            name=source or kind,
+            source=f"subprocess_gateway:{source or 'unknown'}",
+            command=command_text,
+        )
+    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        logger.debug("runtime hygiene registration skipped for subprocess gateway child: %s", exc)
+
+
 def governance_runtime_active() -> bool:
     return _governance_context.governance_runtime_active()
 
@@ -326,6 +353,12 @@ class SubprocessGateway:
                 preexec_fn=preexec_fn,
             )
             proc._aura_gateway_streams = tuple(opened_streams)  # type: ignore[attr-defined]
+            _register_runtime_hygiene_process(
+                proc,
+                kind="subprocess",
+                source=source,
+                command=command,
+            )
             return proc
         except (OSError, subprocess.SubprocessError, ValueError):
             for stream in opened_streams:
@@ -360,7 +393,7 @@ class SubprocessGateway:
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn_async:{source}")
         _validate_desktop_safe_subprocess(command, env=env, source=source, operation="spawn_async")
-        return await asyncio.create_subprocess_exec(
+        proc = await asyncio.create_subprocess_exec(
             *command,
             stdin=stdin,
             stdout=stdout,
@@ -369,6 +402,13 @@ class SubprocessGateway:
             env=dict(env) if env is not None else None,
             start_new_session=start_new_session,
         )
+        _register_runtime_hygiene_process(
+            proc,
+            kind="subprocess",
+            source=source,
+            command=command,
+        )
+        return proc
 
     async def spawn_shell_async(
         self,
@@ -395,7 +435,7 @@ class SubprocessGateway:
         if not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn_shell_async:{source}")
         _validate_desktop_safe_subprocess(command, env=env, source=source, operation="spawn_shell_async")
-        return await asyncio.create_subprocess_shell(
+        proc = await asyncio.create_subprocess_shell(
             command,
             stdin=stdin,
             stdout=stdout,
@@ -404,6 +444,13 @@ class SubprocessGateway:
             env=dict(env) if env is not None else None,
             start_new_session=start_new_session,
         )
+        _register_runtime_hygiene_process(
+            proc,
+            kind="subprocess",
+            source=source,
+            command=command,
+        )
+        return proc
 
 
 _gateway: SubprocessGateway | None = None

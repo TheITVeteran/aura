@@ -667,6 +667,19 @@ class RuntimeHygieneManager:
                     status = "error"
                 if not alive or status == "zombie":
                     record.finished_at = record.finished_at or now
+            elif hasattr(proc, "returncode"):
+                try:
+                    return_code = getattr(proc, "returncode", None)
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    record_degradation('runtime_hygiene', exc)
+                    logger.debug("RuntimeHygiene: asyncio subprocess returncode read failed: %s", exc)
+                    return_code = None
+                if return_code is not None:
+                    try:
+                        record.exit_code = int(return_code)
+                    except (RuntimeError, TypeError, ValueError):
+                        record.exit_code = None
+                    record.finished_at = record.finished_at or now
 
     def _thread_summary(self) -> dict[str, Any]:
         now = time.monotonic()

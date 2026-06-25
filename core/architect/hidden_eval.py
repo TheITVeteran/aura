@@ -267,13 +267,19 @@ class HiddenEvalRunner:
 
     def _log_result(self, result: EvalSuiteResult) -> None:
         try:
+            from core.governance_context import local_internal_governed_scope
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().append_text(
-                _RESULTS_PATH,
-                json.dumps(result.to_dict(), default=str) + "\n",
-                source="architect.hidden_eval.result",
-            )
+            with local_internal_governed_scope(
+                "architect.hidden_eval.result",
+                domain="file_write",
+                constraints={"artifact": str(_RESULTS_PATH)},
+            ):
+                get_file_write_gateway().append_text(
+                    _RESULTS_PATH,
+                    json.dumps(result.to_dict(), default=str) + "\n",
+                    source="architect.hidden_eval.result",
+                )
         except (OSError, IOError, TypeError, ValueError):
             return
 

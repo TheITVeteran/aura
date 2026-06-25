@@ -2040,6 +2040,7 @@ async def api_health(request: Request):
         health_blockers = _normalize_conversation_health_blockers(
             health_blockers,
             conversation_ready=conversation_ready,
+            conversation_busy=conversation_busy,
         )
         healthy_ready = bool(
             service_ok
@@ -2110,7 +2111,7 @@ async def api_health(request: Request):
             "integrity": integrity_payload,
             "proof_readiness_healthy": proof_readiness_healthy,
             "certification_ready": certification_ready,
-            "integrity_blockers": integrity_payload.get("blockers", []),
+            "integrity_blockers": integrity_payload.get("proof_blockers", []),
             "conversation_lane": conversation_lane,
             "diagnostics": diagnostics_data,
             "readiness_contract": {
@@ -2122,7 +2123,7 @@ async def api_health(request: Request):
                 "proof_readiness_healthy": proof_readiness_healthy,
                 "certification_ready": certification_ready,
                 "integrity": integrity_payload,
-                "integrity_blockers": integrity_payload.get("blockers", []),
+                "integrity_blockers": integrity_payload.get("proof_blockers", []),
                 "required_probes": required_probes,
                 "blockers": health_blockers,
             },
@@ -2364,6 +2365,7 @@ def _normalize_conversation_health_blockers(
     blockers: list[Any],
     *,
     conversation_ready: bool,
+    conversation_busy: bool = False,
 ) -> list[str]:
     """Merge health blockers without preserving stale conversation failures."""
     normalized = [
@@ -2371,8 +2373,14 @@ def _normalize_conversation_health_blockers(
         for item in (blockers or [])
         if str(item or "").strip()
     ]
-    if conversation_ready:
-        normalized = [item for item in normalized if item != "conversation_ready"]
+    if conversation_ready or conversation_busy:
+        normalized = [
+            item
+            for item in normalized
+            if item != "conversation_ready"
+            and not item.startswith("conversation_lane:")
+            and not item.startswith("conversation_reason:")
+        ]
     elif "conversation_ready" not in normalized:
         normalized.append("conversation_ready")
     return list(dict.fromkeys(normalized))
@@ -2419,9 +2427,23 @@ def _runtime_integrity_blockers(report: dict[str, Any] | None) -> list[str]:
     return [f"integrity:{concern}" for concern in (concerns or ["integrity_unknown"])]
 
 
+def _runtime_integrity_proof_blockers(report: dict[str, Any] | None) -> list[str]:
+    if not isinstance(report, dict):
+        return ["integrity:integrity_audit_unavailable"]
+    blockers = list(_runtime_integrity_blockers(report))
+    advisory = [
+        str(item).strip()
+        for item in (report.get("advisory") or [])
+        if str(item or "").strip()
+    ]
+    blockers.extend(f"integrity:{item}" for item in advisory)
+    return list(dict.fromkeys(blockers))
+
+
 def _runtime_integrity_public_payload(report: dict[str, Any] | None) -> dict[str, Any]:
     report = report if isinstance(report, dict) else {}
     blockers = _runtime_integrity_blockers(report)
+    proof_blockers = _runtime_integrity_proof_blockers(report)
     return {
         "healthy": not blockers,
         "status": "healthy" if not blockers else "degraded",
@@ -2430,8 +2452,14 @@ def _runtime_integrity_public_payload(report: dict[str, Any] | None) -> dict[str
             for item in (report.get("concerns") or [])
             if str(item or "").strip()
         ],
+        "advisory": [
+            str(item)
+            for item in (report.get("advisory") or [])
+            if str(item or "").strip()
+        ],
         "blockers": blockers,
-        "proof_readiness": not blockers,
+        "proof_blockers": proof_blockers,
+        "proof_readiness": not proof_blockers,
         "operational_blocking": bool(report.get("strict_mode", False)) and bool(blockers),
         "crsm_loop": report.get("crsm_loop") or {},
         "caa_readiness": report.get("caa_readiness") or {},
@@ -2462,6 +2490,7 @@ async def api_heartbeat():
     blockers = _normalize_conversation_health_blockers(
         list(payload.get("blockers", []) or []) + probe_blockers,
         conversation_ready=conversation_ready,
+        conversation_busy=conversation_busy,
     )
     runtime_probe_healthy = not probe_blockers
     healthy = (
@@ -2471,7 +2500,7 @@ async def api_heartbeat():
         and conversation_ready
         and not blockers
     )
-    if not healthy:
+    if not healthy and not (runtime_probe_healthy and conversation_busy and not blockers):
         status_code = 503
     status = "healthy" if healthy else "working" if runtime_probe_healthy and conversation_busy else "unhealthy"
     heartbeat_payload = {
@@ -2488,7 +2517,7 @@ async def api_heartbeat():
         "integrity": integrity_payload,
         "proof_readiness_healthy": proof_readiness_healthy,
         "certification_ready": bool(healthy and proof_readiness_healthy),
-        "integrity_blockers": integrity_payload.get("blockers", []),
+        "integrity_blockers": integrity_payload.get("proof_blockers", []),
     }
     return JSONResponse(heartbeat_payload, status_code=status_code)
 

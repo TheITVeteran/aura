@@ -79,7 +79,7 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
         blockers = required_probe_blockers(required)
         if not bool(report.get("healthy", False)):
             blockers.extend(_runtime_report_blockers(report))
-        if not conversation_ready:
+        if not conversation_ready and not conversation_busy:
             blockers.extend(_conversation_lane_blockers(conversation_lane))
         status = "healthy" if healthy else "working" if runtime_probe_healthy and conversation_busy else "unhealthy"
         return {

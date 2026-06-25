@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 
@@ -63,6 +64,146 @@ def test_memory_pressure_generation_controls_use_model_default_when_unspecified(
 
     assert controlled["max_tokens"] == 192
     assert controlled["clean_user_surface_recurrent_loops"] == 1
+
+
+def test_mlx_foreground_first_token_watchdog_aborts_tokenless_wall_clock_stall(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    timers = []
+    degraded = []
+    aborted = []
+
+    class FakeTimer:
+        def __init__(self, delay, callback):
+            self.delay = delay
+            self.callback = callback
+            self.daemon = False
+            self.name = ""
+            self.cancelled = False
+
+        def start(self):
+            timers.append(self)
+
+        def cancel(self):
+            self.cancelled = True
+
+    client = mlx_client.MLXLocalClient("Aura-32B-20260510-151144")
+    monkeypatch.setattr(mlx_client._threading, "Timer", FakeTimer)
+    monkeypatch.setattr(mlx_client, "_runtime_shutdown_requested", lambda: False)
+    monkeypatch.setattr(
+        client,
+        "_first_token_hard_ceiling",
+        lambda *, foreground_request=False: 0.01,
+    )
+    monkeypatch.setattr(
+        client,
+        "_record_degraded_event",
+        lambda *args, **kwargs: degraded.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        client,
+        "force_abort_active_generation",
+        lambda reason: aborted.append(reason) or True,
+    )
+    client._mark_generation_started("req-live", prompt_chars=32, requested_max_tokens=16)
+    client._current_request_started_at = time.time() - 1.0
+
+    timer = client._start_foreground_first_token_watchdog(
+        "req-live",
+        foreground_request=True,
+    )
+
+    assert timer is timers[0]
+    assert timer.delay >= 10.0
+    timer.callback()
+    assert aborted == ["first_token_wall_clock_watchdog"]
+    assert degraded
+    assert degraded[0][0][0] == "first_token_wall_clock_watchdog"
+
+
+def test_mlx_first_token_ceiling_is_bounded_by_request_deadline(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    client = mlx_client.MLXLocalClient("Aura-32B-20260510-151144")
+    monkeypatch.setattr(
+        client,
+        "_first_token_hard_ceiling",
+        lambda *, foreground_request=False: 120.0 if foreground_request else 90.0,
+    )
+
+    assert client._deadline_bound_first_token_hard_ceiling(
+        None,
+        foreground_request=True,
+    ) == 120.0
+    assert client._deadline_bound_first_token_hard_ceiling(
+        45.0,
+        foreground_request=True,
+    ) == 41.0
+    assert client._deadline_bound_first_token_hard_ceiling(
+        8.0,
+        foreground_request=True,
+    ) == 10.0
+    assert client._deadline_bound_first_token_hard_ceiling(
+        0.0,
+        foreground_request=True,
+    ) == 10.0
+
+
+def test_mlx_generation_tracking_carries_deadline_bound_first_token_ceiling():
+    from core.brain.llm import mlx_client
+
+    client = mlx_client.MLXLocalClient("Aura-32B-20260510-151144")
+
+    client._mark_generation_started(
+        "req-live",
+        prompt_chars=32,
+        requested_max_tokens=16,
+        first_token_hard_ceiling_s=41.0,
+    )
+
+    assert client._current_first_token_hard_ceiling_s == 41.0
+
+    client._clear_active_generation_tracking()
+
+    assert client._current_first_token_hard_ceiling_s == 0.0
+
+
+def test_mlx_force_abort_kills_worker_before_lifecycle_lock_cleanup(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    class FakeProcess:
+        def __init__(self):
+            self.killed = False
+            self.joined = False
+
+        def is_alive(self):
+            return not self.killed
+
+        def kill(self):
+            self.killed = True
+
+        def join(self, timeout=None):
+            self.joined = True
+
+    process = FakeProcess()
+    client = mlx_client.MLXLocalClient("Aura-32B-20260510-151144")
+    client._process = process
+    client._active_generations = 1
+    client._current_request_started_at = time.time() - 500.0
+    monkeypatch.setattr(client, "_replace_ipc_queues", lambda *args, **kwargs: None)
+    monkeypatch.setattr(client, "_record_degraded_event", lambda *args, **kwargs: None)
+
+    client._lock.acquire()
+    started = time.time()
+    try:
+        aborted = client.force_abort_active_generation("test_lock_unavailable_abort")
+    finally:
+        client._lock.release()
+
+    assert aborted is True
+    assert process.killed is True
+    assert process.joined is True
+    assert time.time() - started < 1.0
 
 
 def test_mlx_worker_spawn_blocks_32b_when_headroom_is_too_low(monkeypatch):

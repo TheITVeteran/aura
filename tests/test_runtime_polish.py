@@ -570,6 +570,62 @@ async def test_api_heartbeat_surfaces_integrity_as_proof_readiness_not_launch_bl
 
 
 @pytest.mark.asyncio
+async def test_api_heartbeat_treats_integrity_advisory_as_proof_debt(monkeypatch):
+    from interface.routes import system as system_routes
+
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_conversation_lane_status_resilient",
+        lambda: {"conversation_ready": True, "state": "ready"},
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "build_boot_health_snapshot",
+        lambda *_args, **_kwargs: (
+            {
+                "ready": True,
+                "system_ready": True,
+                "required_probes": _complete_required_probe_payload(),
+                "blockers": [],
+                "boot_phase": "kernel_ready",
+                "conversation_ready": True,
+            },
+            200,
+        ),
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_runtime_integrity_report",
+        lambda: {
+            "healthy": True,
+            "concerns": [],
+            "advisory": [
+                "CRSM->LoRA loop OPEN (1000 captures untrained)",
+                "CAA steering at 30.0% (bootstrap)",
+            ],
+            "strict_mode": False,
+            "crsm_loop": {"state": "open", "unconsumed": 1000},
+            "caa_readiness": {"level": "bootstrap", "steering_capacity_pct": 30.0},
+            "at": 123.0,
+        },
+    )
+
+    response = await system_routes.api_heartbeat()
+    payload = json.loads(response.body)
+
+    assert response.status_code == 200
+    assert payload["healthy"] is True
+    assert payload["proof_readiness_healthy"] is False
+    assert payload["certification_ready"] is False
+    assert payload["integrity"]["status"] == "healthy"
+    assert payload["integrity"]["proof_readiness"] is False
+    assert payload["integrity"]["blockers"] == []
+    assert "integrity:CRSM->LoRA loop OPEN (1000 captures untrained)" in payload["integrity"]["proof_blockers"]
+    assert "integrity:CAA steering at 30.0% (bootstrap)" in payload["integrity_blockers"]
+    assert payload["blockers"] == []
+
+
+@pytest.mark.asyncio
 async def test_api_heartbeat_requires_conversation_readiness(monkeypatch):
     from interface.routes import system as system_routes
 
@@ -627,7 +683,8 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
         "memory: ['state_repository', 'memory_facade', 'memory_write_gateway', 'unified_memory_pressure', 'external_memory_sentinel']"
         in aura_js
     )
-    assert "runtimeHealthBlockers(payload).length > 0" in aura_js
+    assert "const blockers = runtimeHealthBlockers(payload);" in aura_js
+    assert "if (blockers.length > 0) return false;" in aura_js
     assert "conversationReady: false" in aura_js
     assert "function conversationPayloadReady" in aura_js
     assert "function conversationPayloadBusy" in aura_js
@@ -635,8 +692,7 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "payload.conversation_ready === true\n        && lane.conversation_ready === true\n        && laneState === 'ready'" in aura_js
     assert "blockers.concat('conversation_ready')" in aura_js
     assert "blockers.filter(blocker => !blockerIsConversationReadiness(blocker))" in aura_js
-    assert "const normalized = conversationReady\n        ? blockers.filter(blocker => !blockerIsConversationReadiness(blocker))" in aura_js
-    assert "conversationReady || conversationBusy" not in aura_js
+    assert "const normalized = conversationReady || conversationBusy\n        ? blockers.filter(blocker => !blockerIsConversationReadiness(blocker))" in aura_js
     assert "lane.conversation_ready === true || payload.conversation_ready === true" not in aura_js
     assert "const strictHealthy = payloadRuntimeHealthy(payload) && blockers.length === 0;" in aura_js
     assert "strictHealthy ? (payload.status || boot.status || 'healthy') : 'not_ready'" in aura_js

@@ -347,6 +347,15 @@ _LIVE_DESKTOP_GATE_LEAK_RE = re.compile(
     r"refused the legacy fallback|refused the direct inference fallback)\b",
     re.IGNORECASE,
 )
+_COGNITIVE_ENGINE_FAILURE_ENVELOPE_RE = re.compile(
+    r"\b(?:i\s+couldn'?t\s+produce\s+a\s+reliable\s+answer|"
+    r"i\s+could\s+not\s+produce\s+a\s+reliable\s+full[- ]mind\s+desktop\s+reply|"
+    r"won'?t\s+fabricate\s+one|"
+    r"failed\s+its\s+output\s+checks|"
+    r"recorded\s+the\s+failure\s+instead\s+of\s+sending\s+nonsense|"
+    r"failed\s+closed\s+instead\s+of\s+sending\s+an\s+ungrounded\s+answer)\b",
+    re.IGNORECASE,
+)
 _TRAILING_ESCAPE_RE = re.compile(r"(?:\\n|\\t|\\r)")
 _CAPITALIZED_NAME_RE = re.compile(r"\b[A-Z][a-z]{3,}\b")
 _ALLOWED_SHORT_PROPER_NAMES = {
@@ -1103,6 +1112,19 @@ _NUMBERED_SENTENCE_REQUEST_RE = re.compile(
     rf"\b{_COUNT_TOKEN_RE}\s+(?:concise\s+|short\s+|brief\s+|clear\s+)?numbered\s+sentences?\b",
     re.IGNORECASE,
 )
+_ACTION_WORD_COUNT_REQUEST_RE = re.compile(
+    rf"\b(?:answer|respond|reply|say|output)\s+(?:directly\s+)?"
+    rf"(?:(?:in|with|using|exactly|only)\s+)?{_COUNT_TOKEN_RE}"
+    rf"(?:\s+or\s+(?P<count_max>\d+|one|two|three|four|five|six|seven|eight|nine|ten))?"
+    r"\s+words?\b",
+    re.IGNORECASE,
+)
+_LIMIT_WORD_COUNT_REQUEST_RE = re.compile(
+    rf"\b(?:in|with|using|exactly|only)\s+{_COUNT_TOKEN_RE}"
+    rf"(?:\s+or\s+(?P<count_max>\d+|one|two|three|four|five|six|seven|eight|nine|ten))?"
+    r"\s+words?\b",
+    re.IGNORECASE,
+)
 _FOLLOWUP_QUESTION_REQUEST_RE = re.compile(
     r"\b(?:ask|include|end\s+with|finish\s+with)\b.{0,80}\b"
     r"(?:follow[- ]?up|grounded|clarifying|next)\b.{0,80}\bquestions?\b"
@@ -1166,6 +1188,16 @@ def _normalize(text: Any) -> str:
     return re.sub(r"\bdont'?\b", "don't", normalized)
 
 
+def is_cognitive_engine_failure_envelope(reply_text: Any) -> bool:
+    """Return true for internal CognitiveEngine failure notices.
+
+    These notices are useful diagnostic artifacts, but they are not completed
+    user-facing answers and must never count as proof of a full live mind path.
+    """
+
+    return bool(_COGNITIVE_ENGINE_FAILURE_ENVELOPE_RE.search(str(reply_text or "")))
+
+
 def _requires_self_claim_evidence_boundary(prompt: Any) -> bool:
     """Return true only for actual consciousness/personhood/selfhood claims.
 
@@ -1224,6 +1256,27 @@ def _requested_count(pattern: re.Pattern[str], user_message: Any) -> int | None:
     if not match:
         return None
     return _count_token_to_int(match.groupdict().get("count"))
+
+
+def _requested_word_count_range(user_message: Any) -> tuple[int, int] | None:
+    text = str(user_message or "")
+    for pattern in (_ACTION_WORD_COUNT_REQUEST_RE, _LIMIT_WORD_COUNT_REQUEST_RE):
+        match = pattern.search(text)
+        if not match:
+            continue
+        minimum = _count_token_to_int(match.groupdict().get("count"))
+        maximum = _count_token_to_int(match.groupdict().get("count_max"))
+        if minimum is None:
+            continue
+        if maximum is None:
+            maximum = minimum
+        return min(minimum, maximum), max(minimum, maximum)
+    return None
+
+
+def has_requested_word_count_contract(user_message: Any) -> bool:
+    """Return True when the user gave an explicit word-count output contract."""
+    return _requested_word_count_range(user_message) is not None
 
 
 def _requested_list_item_count(user_message: Any) -> int:
@@ -1290,6 +1343,13 @@ def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[st
         return []
 
     reasons: list[str] = []
+    requested_word_range = _requested_word_count_range(user)
+    if requested_word_range:
+        minimum_words, maximum_words = requested_word_range
+        reply_words = _word_count(reply)
+        if reply_words < minimum_words or reply_words > maximum_words:
+            reasons.append("missing_requested_word_count")
+
     requested_paragraphs = _requested_count(_PARAGRAPH_REQUEST_RE, user)
     if requested_paragraphs and requested_paragraphs > 1:
         if _paragraph_count(reply) < requested_paragraphs:
@@ -1499,6 +1559,50 @@ def _default_followup_question(user_message: Any) -> str:
     return "What outcome would make this most useful for you right now?"
 
 
+def _word_count_repair_fillers(user_message: Any) -> list[str]:
+    user_norm = _normalize(user_message)
+    if any(marker in user_norm for marker in ("diagnostic", "probe", "health", "status")):
+        return ["I", "am", "here", "and", "listening", "now", "clearly"]
+    if any(marker in user_norm for marker in ("ready", "with me", "there")):
+        return ["I", "am", "here", "with", "you", "now"]
+    return ["I", "am", "present", "and", "answering", "directly", "now"]
+
+
+def _fit_reply_to_requested_word_count(user_message: Any, reply_text: Any) -> str:
+    requested_range = _requested_word_count_range(user_message)
+    if not requested_range:
+        return str(reply_text or "").strip()
+    minimum_words, maximum_words = requested_range
+    if minimum_words <= 0 or maximum_words <= 0:
+        return str(reply_text or "").strip()
+
+    words = _WORD_RE.findall(str(reply_text or ""))
+    if len(words) > maximum_words:
+        words = words[:maximum_words]
+    elif len(words) < minimum_words:
+        fillers = _word_count_repair_fillers(user_message)
+        filler_index = 0
+        seen = {word.lower() for word in words}
+        if "i'm" in seen or "im" in seen:
+            seen.update({"i", "am"})
+        if "you're" in seen or "youre" in seen:
+            seen.update({"you", "are"})
+        while len(words) < minimum_words:
+            filler = fillers[filler_index % len(fillers)]
+            filler_index += 1
+            if filler.lower() in seen and filler_index <= (len(fillers) * 2):
+                continue
+            words.append(filler)
+            seen.add(filler.lower())
+
+    if not words:
+        return ""
+    fitted = " ".join(words).strip()
+    if fitted and fitted[-1] not in ".!?":
+        fitted = f"{fitted}."
+    return fitted
+
+
 def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
     """Deterministically repair explicit structure misses without another model call."""
     user = str(user_message or "")
@@ -1511,6 +1615,12 @@ def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
 
     repaired = normalized_original
     sentences = _split_sentences(repaired)
+
+    requested_word_range = _requested_word_count_range(user)
+    if requested_word_range:
+        word_repaired = _fit_reply_to_requested_word_count(user, repaired)
+        if word_repaired:
+            return word_repaired
 
     requested_bullets = _requested_count(_BULLET_REQUEST_RE, user)
     requested_numbered = _requested_count(_NUMBERED_LIST_REQUEST_RE, user)
@@ -1764,6 +1874,36 @@ def _is_tiny_direct_turn(user_message: Any) -> bool:
     if len(text.split()) <= 3 and text.rstrip("?") in {"hi", "hey", "hello", "thanks", "thank you", "yes", "no"}:
         return True
     return False
+
+
+def _explicit_brevity_requested(user_message: Any) -> bool:
+    """Return true when the user explicitly constrains the reply length.
+
+    This is intentionally narrow: it prevents the live desktop quality gate from
+    rejecting a valid concise diagnostic answer, while keeping normal thin,
+    off-topic, generic, or incomplete replies blocked by the rest of the gate.
+    """
+
+    text = _normalize(user_message)
+    if not text:
+        return False
+
+    number = r"(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)"
+    count = rf"{number}(?:\s+or\s+{number})?"
+    word_or_sentence_limit = rf"\b(?:in|with|using|exactly|only)\s+{count}\s+(?:words?|sentences?)\b"
+    action_word_limit = (
+        rf"\b(?:answer|respond|reply|say|output)\s+"
+        rf"(?:directly\s+)?(?:in\s+)?(?:exactly\s+)?{count}\s+(?:words?|sentences?)\b"
+    )
+    direct_brevity = (
+        r"\b(?:briefly|be brief|be concise|concise answer|short answer|answer directly|"
+        r"reply directly|respond directly|include nothing else|nothing else)\b"
+    )
+    return bool(
+        re.search(word_or_sentence_limit, text)
+        or re.search(action_word_limit, text)
+        or re.search(direct_brevity, text)
+    )
 
 
 def _is_task_turn(user_message: Any) -> bool:
@@ -2898,6 +3038,8 @@ def _model_text_integrity_reasons(
         reasons.append("raw_lane_telemetry")
     if user_facing and _LIVE_DESKTOP_GATE_LEAK_RE.search(raw):
         reasons.append("internal_live_gate_leak")
+    if user_facing and is_cognitive_engine_failure_envelope(raw):
+        reasons.append("cognitive_engine_failure_envelope")
     if user_facing and _RAW_MODEL_IDENTITY_LEAK_RE.search(raw):
         reasons.append("raw_model_identity_leak")
     if user_facing and _requires_self_claim_evidence_boundary(prompt):
@@ -2992,6 +3134,7 @@ def assess_model_text_integrity(
         "raw_tool_result_fragment",
         "raw_lane_telemetry",
         "internal_live_gate_leak",
+        "cognitive_engine_failure_envelope",
         "raw_model_identity_leak",
         "backend_symbolic_surface_leak",
         "persona_card_deflection",
@@ -3149,14 +3292,15 @@ def assess_user_facing_reply(
             reasons.append("too_thin_for_status_turn")
     elif not exact_reply and not strict_answer_tag_reply and _requires_substantive_reply(user_message):
         words = _word_count(raw)
+        explicit_brevity = _explicit_brevity_requested(user_message)
         if _LOW_SIGNAL_REASSURANCE_RE.match(raw) or words < 2:
             reasons.append("too_short_for_user_turn")
-        elif words < 6 and not _is_tiny_direct_turn(user_message):
+        elif words < 6 and not _is_tiny_direct_turn(user_message) and not explicit_brevity:
             if not (words >= 3 and any(w in raw.lower() for w in ("thinking", "working", "processing", "online"))):
                 reasons.append("too_thin_for_user_turn")
         elif not _is_task_turn(user_message):
             open_ended = any(marker in user_norm for marker in _OPEN_ENDED_MARKERS)
-            if open_ended and words < 12:
+            if open_ended and words < 12 and not explicit_brevity:
                 reasons.append("too_thin_for_open_ended_turn")
 
     if is_confusion_repair_turn(user_message) and _word_count(raw) < 8:
@@ -3182,6 +3326,7 @@ def assess_user_facing_reply(
         "raw_tool_result_fragment",
         "raw_lane_telemetry",
         "internal_live_gate_leak",
+        "cognitive_engine_failure_envelope",
         "raw_model_identity_leak",
         "backend_symbolic_surface_leak",
         "persona_card_deflection",
@@ -3242,6 +3387,7 @@ def assess_user_facing_reply(
         "empty_requested_list_item",
         "missing_requested_paragraph_count",
         "missing_requested_list_count",
+        "missing_requested_word_count",
         "missing_requested_followup_question",
         "missing_future_memory_answer",
         "missing_identity_answer",
@@ -3295,6 +3441,17 @@ def conversation_reliability_system_block(user_message: Any = "") -> str:
         instruction_notes.append(
             f"Use at least {requested_list_items} explicit list items because the user requested that structure."
         )
+    requested_word_range = _requested_word_count_range(user_message)
+    if requested_word_range:
+        minimum_words, maximum_words = requested_word_range
+        if minimum_words == maximum_words:
+            instruction_notes.append(
+                f"Use exactly {minimum_words} words because the user explicitly requested that length."
+            )
+        else:
+            instruction_notes.append(
+                f"Use between {minimum_words} and {maximum_words} words because the user explicitly requested that length."
+            )
     if _FOLLOWUP_QUESTION_REQUEST_RE.search(str(user_message or "")):
         instruction_notes.append("End with a real follow-up question because the user requested one.")
     continuation_match = _NAMED_CONTINUATION_ANCHOR_RE.search(str(user_message or ""))

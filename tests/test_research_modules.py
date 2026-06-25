@@ -587,6 +587,33 @@ class TestHiddenEvalRunner(unittest.TestCase):
         json.dumps(result.to_dict())  # Should not raise
 
 
+def test_hidden_eval_result_logging_uses_local_governance(monkeypatch, tmp_path):
+    from core.architect import hidden_eval
+    from core.architect.hidden_eval import EvalScenario, HiddenEvalRunner
+
+    result_path = tmp_path / "hidden_eval_results.jsonl"
+    monkeypatch.setattr(hidden_eval, "_RESULTS_PATH", result_path)
+    monkeypatch.setenv("AURA_REQUIRE_GOVERNANCE", "1")
+
+    runner = HiddenEvalRunner()
+    runner.register_scenario(
+        EvalScenario(
+            scenario_id="governed_log",
+            name="Governed Log",
+            description="Result logging must use local file-write governance.",
+            scenario_type="test",
+            expected_range=(0.0, 10.0),
+            evaluate=lambda: 5.0,
+        )
+    )
+
+    result = runner.run_suite()
+
+    assert result.overall_health == 1.0
+    assert result_path.exists()
+    assert "governed_log" in result_path.read_text(encoding="utf-8")
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # Integration Tests
 # ══════════════════════════════════════════════════════════════════════════

@@ -231,6 +231,11 @@ _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S = _env_float(
     3.0,
     minimum=1.0,
 )
+_DESKTOP_MEMORY_STATE_TURN_TIMEOUT_S = _env_float(
+    "AURA_DESKTOP_MEMORY_STATE_TURN_TIMEOUT_S",
+    55.0,
+    minimum=20.0,
+)
 _DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S = 45.0
 _CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME = "ChatTurnMemoryLogDrain"
 _CHAT_TURN_MEMORY_LOG_QUEUE_MAX = 64
@@ -3342,7 +3347,9 @@ def _build_live_turn_contract_payload(
     legacy_fallback_used = bool(trace.get("legacy_fallback_used"))
     live_mind_context_required = bool(desktop_required)
     live_mind_context_present = bool(trace.get("live_mind_context_present"))
-    live_mind_required_subsystems_ok = bool(trace.get("live_mind_required_subsystems_ok"))
+    preflight_live_mind_required_subsystems_ok = bool(
+        trace.get("live_mind_required_subsystems_ok")
+    )
     architecture_context_bound = bool(
         (not live_mind_context_required)
         or live_mind_context_present
@@ -3369,6 +3376,7 @@ def _build_live_turn_contract_payload(
         generation_proven=accepted_cognitive_path,
     )
     required_subsystems_ok = all(subsystems.values())
+    live_mind_required_subsystems_ok = required_subsystems_ok
     full_mind_path = bool(
         desktop_required
         and accepted_cognitive_path
@@ -3388,6 +3396,7 @@ def _build_live_turn_contract_payload(
         "live_mind_context_required": live_mind_context_required,
         "live_mind_context_present": live_mind_context_present,
         "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
+        "preflight_live_mind_required_subsystems_ok": preflight_live_mind_required_subsystems_ok,
         "architecture_context_bound": architecture_context_bound,
         "full_mind_path": full_mind_path,
         "required_subsystems": subsystems,
@@ -5173,6 +5182,14 @@ def _is_same_answer_different_prompt(user_message: str, text: str) -> bool:
     """Detect when different user prompts are getting the same response."""
     if _is_referential_followup_request(user_message):
         return False
+    try:
+        from core.conversation.response_reliability import is_operational_status_turn
+
+        if is_operational_status_turn(user_message):
+            return False
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Operational-status same-answer bypass unavailable: %s", exc)
     user_fp = _response_fingerprint(user_message)
     response_body = _normalize_response_body(text)
     if not user_fp or not response_body:
@@ -12998,6 +13015,11 @@ async def api_chat(
                 foreground_timeout=foreground_timeout,
                 elapsed_s=time.monotonic() - request_started_at,
             )
+            if desktop_memory_state_evidence:
+                cognitive_budget = min(
+                    cognitive_budget,
+                    _DESKTOP_MEMORY_STATE_TURN_TIMEOUT_S,
+                )
             if cognitive_budget >= _DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S:
                 reply_text = await _run_cognitive_engine_chat_turn(
                     effective_user_message,
@@ -14112,20 +14134,26 @@ async def api_chat(
         )
         if (
             desktop_requires_cognitive_engine
-            and response_confidence == "high"
             and not bool(final_live_turn_contract.get("full_mind_path"))
         ):
-            response_confidence = "degraded"
-            final_live_turn_contract = _live_turn_contract(
-                lane_status=lane_status,
-                response_confidence=response_confidence,
-                status=_final_status,
-                reply_source=reply_source,
-            )
             logger.warning(
-                "⚠️ Response confidence lowered to 'degraded' because the required "
-                "desktop full-mind contract was not proven (path=%s).",
+                "⚠️ Required desktop full-mind contract was not proven; failing "
+                "closed instead of serving partial/raw speech (path=%s).",
                 final_live_turn_contract.get("response_path") or "",
+            )
+            return JSONResponse(
+                {
+                    "response": (
+                        "I could not prove the full live mind path for that turn, "
+                        "so I failed closed instead of sending an ungrounded answer."
+                    ),
+                    "status": "desktop_full_mind_contract_not_proven",
+                    "reason": "desktop_full_mind_contract_not_proven",
+                    "conversation_lane": lane_status,
+                    "response_confidence": "failed_closed",
+                    "live_turn_contract": final_live_turn_contract,
+                },
+                status_code=503,
             )
 
         response_data = {

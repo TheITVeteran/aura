@@ -94,6 +94,75 @@ def test_read_only_spawn_async_allows_named_source(
     assert asyncio.run(_attempt()) == "named-async"
 
 
+def test_spawn_async_registers_gateway_process_with_runtime_hygiene(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    registrations: list[dict[str, object]] = []
+
+    def _register(proc, *, kind, source, command) -> None:
+        registrations.append(
+            {
+                "pid": getattr(proc, "pid", None),
+                "kind": kind,
+                "source": source,
+                "command": tuple(command),
+            }
+        )
+
+    monkeypatch.setattr(subprocess_gateway, "_register_runtime_hygiene_process", _register)
+
+    async def _attempt() -> str:
+        proc = await subprocess_gateway.SubprocessGateway().spawn_async(
+            [sys.executable, "-c", "print('registered-async')"],
+            stdout=asyncio.subprocess.PIPE,
+            read_only=True,
+            source="test.subprocess_gateway.register_async",
+        )
+        stdout, _stderr = await proc.communicate()
+        return stdout.decode("utf-8").strip()
+
+    assert asyncio.run(_attempt()) == "registered-async"
+    assert registrations
+    assert registrations[0]["pid"]
+    assert registrations[0]["kind"] == "subprocess"
+    assert registrations[0]["source"] == "test.subprocess_gateway.register_async"
+
+
+def test_spawn_shell_async_registers_gateway_process_with_runtime_hygiene(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    registrations: list[dict[str, object]] = []
+
+    def _register(proc, *, kind, source, command) -> None:
+        registrations.append(
+            {
+                "pid": getattr(proc, "pid", None),
+                "kind": kind,
+                "source": source,
+                "command": command,
+            }
+        )
+
+    monkeypatch.setattr(subprocess_gateway, "_register_runtime_hygiene_process", _register)
+
+    async def _attempt() -> str:
+        proc = await subprocess_gateway.SubprocessGateway().spawn_shell_async(
+            f"{sys.executable} -c \"print('registered-shell-async')\"",
+            stdout=asyncio.subprocess.PIPE,
+            source="test.subprocess_gateway.register_shell_async",
+        )
+        stdout, _stderr = await proc.communicate()
+        return stdout.decode("utf-8").strip()
+
+    assert asyncio.run(_attempt()) == "registered-shell-async"
+    assert registrations
+    assert registrations[0]["pid"]
+    assert registrations[0]["kind"] == "subprocess"
+    assert registrations[0]["source"] == "test.subprocess_gateway.register_shell_async"
+
+
 def test_read_only_run_async_requires_attributable_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

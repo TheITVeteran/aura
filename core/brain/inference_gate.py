@@ -39,6 +39,7 @@ from core.conversation.response_reliability import (
     assess_model_text_integrity,
     assess_user_facing_reply,
     conversation_reliability_system_block,
+    has_requested_word_count_contract,
     is_live_self_reflection_turn,
     is_self_process_question,
 )
@@ -166,6 +167,7 @@ _DOWNSTREAM_REPAIRABLE_USER_FACING_REASONS = frozenset(
         "missing_requested_self_process_coverage",
         "missing_requested_paragraph_count",
         "missing_requested_list_count",
+        "missing_requested_word_count",
         "missing_requested_followup_question",
     }
 )
@@ -176,13 +178,24 @@ def _should_pass_user_facing_draft_downstream(
     reasons: set[str],
     *,
     user_prompt: str,
+    allow_memory_state_thin_status: bool = False,
 ) -> bool:
     """Keep salvageable chat drafts out of the expensive retry spiral."""
     if not text or not reasons:
         return False
-    if not reasons.issubset(_DOWNSTREAM_REPAIRABLE_USER_FACING_REASONS):
+    repairable_reasons = set(_DOWNSTREAM_REPAIRABLE_USER_FACING_REASONS)
+    if allow_memory_state_thin_status:
+        repairable_reasons.update(
+            {
+                "too_thin_for_operational_status_turn",
+                "too_thin_for_status_turn",
+            }
+        )
+    if not reasons.issubset(repairable_reasons):
         return False
     stripped = str(text or "").strip()
+    if reasons == {"missing_requested_word_count"}:
+        return has_requested_word_count_contract(user_prompt) and bool(stripped)
     if len(stripped) < 48:
         return False
     words = [token for token in stripped.replace("\n", " ").split(" ") if token.strip()]
@@ -2597,6 +2610,10 @@ class InferenceGate:
         if bool(context.get("deep_mind_probe", False)):
             return "deep_probe"
         if bool(context.get("desktop_quick_reply_contract", False)) and bool(
+            context.get("memory_state_contract", False)
+        ):
+            return "simple"
+        if bool(context.get("desktop_quick_reply_contract", False)) and bool(
             context.get("live_runtime_payload_required", False)
             or context.get("live_mind_context_required", False)
             or context.get("desktop_cognitive_engine_required", False)
@@ -2929,6 +2946,7 @@ class InferenceGate:
                 prompt=user_input_for_eval,
                 user_facing=is_user_visible,
             )
+            allow_memory_state_thin_status = bool(kwargs.get("memory_state_contract", False))
             if integrity.retryable:
                 integrity_reasons = set(integrity.reasons or ())
                 benchmark_integrity_context = bool(kwargs.get("benchmark_request", False)) or (
@@ -2958,6 +2976,7 @@ class InferenceGate:
                     cleaned,
                     integrity_reasons,
                     user_prompt=user_input_for_eval,
+                    allow_memory_state_thin_status=allow_memory_state_thin_status,
                 ):
                     logger.warning(
                         "🛡️ %s produced repairable user-facing draft shape (%s, len=%d). "
@@ -2983,6 +3002,7 @@ class InferenceGate:
                         cleaned,
                         reasons,
                         user_prompt=user_input_for_eval,
+                        allow_memory_state_thin_status=allow_memory_state_thin_status,
                     ):
                         logger.warning(
                             "🛡️ %s produced repairable user-facing draft (%s, len=%d). "
@@ -6951,6 +6971,8 @@ class InferenceGate:
             "desktop_quick_reply_contract",
             "capability_inventory_contract",
             "desktop_execution_contract",
+            "memory_state_contract",
+            "canonical_memory_state_evidence",
             "response_style_contract",
             "live_speech_grounding_frame",
             "allow_mesh_cognition",

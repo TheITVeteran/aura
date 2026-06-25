@@ -111,6 +111,23 @@ def test_reliability_gate_rejects_timeout_ignorance_from_live_logs():
     assert "reliability_diagnostic_too_thin" in assessment.reasons
 
 
+def test_reliability_gate_rejects_cognitive_engine_failure_envelope():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "You with me?",
+        (
+            "I couldn't produce a reliable answer to that turn, and I won't "
+            "fabricate one. The live Cortex attempt failed its output checks, "
+            "so I recorded the failure instead of sending nonsense."
+        ),
+    )
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert "cognitive_engine_failure_envelope" in assessment.reasons
+
+
 def test_reliability_gate_rejects_bare_what_echo():
     from core.conversation.response_reliability import assess_user_facing_reply
 
@@ -416,6 +433,27 @@ def test_inference_gate_does_not_pass_thin_reliability_downstream():
     )
 
 
+def test_inference_gate_memory_state_contract_can_pass_thin_status_downstream():
+    from core.brain.inference_gate import _should_pass_user_facing_draft_downstream
+
+    memory_state_text = (
+        "You asked me to remember silver lantern, and I am grounding that from "
+        "canonical session memory rather than older chat context."
+    )
+
+    assert not _should_pass_user_facing_draft_downstream(
+        memory_state_text,
+        {"too_thin_for_operational_status_turn"},
+        user_prompt="What phrase did I ask you to remember?",
+    )
+    assert _should_pass_user_facing_draft_downstream(
+        memory_state_text,
+        {"too_thin_for_operational_status_turn"},
+        user_prompt="What phrase did I ask you to remember?",
+        allow_memory_state_thin_status=True,
+    )
+
+
 def test_inference_gate_passes_instruction_shape_misses_to_final_repair():
     from core.brain.inference_gate import _should_pass_user_facing_draft_downstream
 
@@ -435,6 +473,21 @@ def test_inference_gate_passes_instruction_shape_misses_to_final_repair():
             "In two concise paragraphs, explain what you are currently optimizing "
             "for, and then ask one grounded follow-up question."
         ),
+    )
+
+
+def test_inference_gate_passes_word_count_miss_to_final_shape_repair():
+    from core.brain.inference_gate import _should_pass_user_facing_draft_downstream
+
+    assert _should_pass_user_facing_draft_downstream(
+        "Yes, I am here and listening now.",
+        {"missing_requested_word_count"},
+        user_prompt="For diagnostics only: answer in five words and include nothing else.",
+    )
+    assert not _should_pass_user_facing_draft_downstream(
+        "Yes, I am here and listening now.",
+        {"missing_requested_word_count", "prompt_artifact"},
+        user_prompt="For diagnostics only: answer in five words and include nothing else.",
     )
 
 
@@ -503,6 +556,57 @@ def test_short_exact_reply_leak_is_rejected_for_substantive_prompt():
     assessment = assess_user_facing_reply(
         "A small Python function returns None when the input list is empty. What would you check first before patching it?",
         "live parity holds",
+    )
+
+    assert assessment.retryable
+    assert "too_thin_for_user_turn" in assessment.reasons
+
+
+def test_explicit_brevity_request_allows_short_direct_reply():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "For diagnostics only: answer in five words and include nothing else.",
+        "I am present and aligned.",
+    )
+
+    assert assessment.ok
+    assert not assessment.retryable
+    assert "too_thin_for_user_turn" not in assessment.reasons
+
+
+def test_explicit_word_count_request_rejects_wrong_count():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "For diagnostics only: answer in five words and include nothing else.",
+        "Yes, I'm here.",
+    )
+
+    assert assessment.retryable
+    assert "missing_requested_word_count" in assessment.reasons
+
+
+def test_repair_instruction_shape_fits_explicit_word_count():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        repair_instruction_shape,
+    )
+
+    prompt = "For diagnostics only: answer in five words and include nothing else."
+    repaired = repair_instruction_shape(prompt, "Yes, I'm here.")
+    assessment = assess_user_facing_reply(prompt, repaired)
+
+    assert repaired == "Yes I'm here and listening."
+    assert assessment.ok
+
+
+def test_short_non_brevity_user_turn_still_rejects_thin_reply():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "A small Python function returns None when the input list is empty. What would you check first before patching it?",
+        "Check it.",
     )
 
     assert assessment.retryable

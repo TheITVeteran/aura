@@ -1012,6 +1012,8 @@ class MLXLocalClient:
         self._current_prompt_chars = 0
         self._current_requested_max_tokens = 0
         self._current_request_prompt_chars = 0
+        self._current_first_token_hard_ceiling_s = 0.0
+        self._foreground_generation_watchdog: _threading.Timer | None = None
         self._recurrent_depth_status: dict[str, Any] = {"active": False, "config": None}
 
         # The state repository's SharedMemoryTransport may be backed by mmap on
@@ -1062,6 +1064,7 @@ class MLXLocalClient:
         *,
         prompt_chars: int = 0,
         requested_max_tokens: int = 0,
+        first_token_hard_ceiling_s: float = 0.0,
     ) -> None:
         now = time.time()
         self._current_request_id = str(req_id or "")
@@ -1076,6 +1079,10 @@ class MLXLocalClient:
         self._current_requested_max_tokens = max(0, int(requested_max_tokens or 0))
         self._last_token_progress_at = 0.0
         self._current_request_prompt_chars = max(0, int(prompt_chars or 0))
+        self._current_first_token_hard_ceiling_s = max(
+            0.0,
+            float(first_token_hard_ceiling_s or 0.0),
+        )
         self._mark_progress()
 
     def _mark_token_progress(self, req_id: str | None = None) -> None:
@@ -1101,6 +1108,7 @@ class MLXLocalClient:
         self._current_prompt_chars = 0
         self._current_requested_max_tokens = 0
         self._current_request_prompt_chars = 0
+        self._current_first_token_hard_ceiling_s = 0.0
         self._mark_progress()
 
     def _mark_generation_completed(self, *, user_facing: bool = False) -> None:
@@ -1262,6 +1270,99 @@ class MLXLocalClient:
             return max(10.0, float(configured)) if configured is not None else default
         except (TypeError, ValueError):
             return default
+
+    def _first_token_hard_ceiling(self, *, foreground_request: bool = False) -> float:
+        first_token_sla = self._first_token_sla(foreground_request=foreground_request)
+        try:
+            hard_mult = float(os.environ.get("AURA_FIRST_TOKEN_HARD_MULT", "1.8") or 1.8)
+        except (TypeError, ValueError):
+            hard_mult = 1.8
+        try:
+            hard_pad = float(os.environ.get("AURA_FIRST_TOKEN_HARD_PAD_S", "20") or 20)
+        except (TypeError, ValueError):
+            hard_pad = 20.0
+        return min(
+            first_token_sla * hard_mult + hard_pad,
+            self._first_token_absolute_ceiling(foreground_request=foreground_request),
+        )
+
+    def _deadline_bound_first_token_hard_ceiling(
+        self,
+        deadline_remaining_s: float | None,
+        *,
+        foreground_request: bool = False,
+    ) -> float:
+        hard_ceiling = self._first_token_hard_ceiling(
+            foreground_request=foreground_request,
+        )
+        if deadline_remaining_s is None:
+            return hard_ceiling
+        try:
+            remaining = float(deadline_remaining_s)
+        except (TypeError, ValueError):
+            return hard_ceiling
+        if remaining <= 0.0:
+            return 10.0
+        # Leave enough wall-clock for the caller to fail closed and recycle the
+        # worker. This makes request-specific deadlines dominate the generic
+        # 32B/72B first-token ceiling.
+        return min(hard_ceiling, max(10.0, remaining - 4.0))
+
+    def _start_foreground_first_token_watchdog(
+        self,
+        req_id: str,
+        *,
+        foreground_request: bool = False,
+        hard_ceiling_s: float | None = None,
+    ) -> _threading.Timer | None:
+        """Abort tokenless foreground generations even if the event loop wedges."""
+
+        if not foreground_request or not self._is_primary_or_deep_lane():
+            return None
+        hard_ceiling = (
+            max(10.0, float(hard_ceiling_s))
+            if hard_ceiling_s is not None
+            else self._first_token_hard_ceiling(foreground_request=True)
+        )
+        fire_after = max(10.0, hard_ceiling + 2.0)
+        model_name = os.path.basename(self.model_path)
+
+        def _enforce() -> None:
+            if _runtime_shutdown_requested():
+                return
+            try:
+                if (
+                    str(self._current_request_id or "") != str(req_id or "")
+                    or self._current_request_started_at <= 0.0
+                    or self._current_first_token_at > 0.0
+                ):
+                    return
+                elapsed = max(0.0, time.time() - self._current_request_started_at)
+                if elapsed < hard_ceiling:
+                    return
+                logger.error(
+                    "🛑 [MLX] Out-of-band first-token watchdog aborting %s "
+                    "(%.1fs elapsed, hard=%.1fs).",
+                    model_name,
+                    elapsed,
+                    hard_ceiling,
+                )
+                self._record_degraded_event(
+                    "first_token_wall_clock_watchdog",
+                    detail=f"{model_name}>{hard_ceiling:.1f}s",
+                    severity="critical",
+                    foreground_request=True,
+                )
+                self.force_abort_active_generation("first_token_wall_clock_watchdog")
+            except Exception as exc:  # defensive: this is the last line against a wedged foreground turn
+                logger.error("MLX first-token watchdog failed: %s", exc)
+
+        timer = _threading.Timer(fire_after, _enforce)
+        timer.daemon = True
+        timer.name = f"AuraMLXFirstTokenWatchdog:{model_name[:32]}"
+        timer.start()
+        self._foreground_generation_watchdog = timer
+        return timer
 
     def _token_stall_after(self, *, foreground_request: bool = False) -> float:
         lowered = os.path.basename(self.model_path).lower()
@@ -1807,6 +1908,15 @@ class MLXLocalClient:
         for future in pending_futures.values():
             _set_shared_future_result(future, abort_payload)
 
+        killed_process_before_lock = False
+        if process is not None and process.is_alive():
+            logger.error(
+                "🛑 [MLX] Killing worker immediately for forced abort before lifecycle lock cleanup (%s).",
+                reason,
+            )
+            self._kill_and_join_blocking(process)
+            killed_process_before_lock = True
+
         acquired = self._lock.acquire(timeout=0.25)
         try:
             self._pending_generations.clear()
@@ -1832,7 +1942,11 @@ class MLXLocalClient:
                 _cancel_task_threadsafe(self._listener_task)
                 self._listener_task = None
 
-            if process is not None and process.is_alive():
+            if (
+                process is not None
+                and process.is_alive()
+                and not killed_process_before_lock
+            ):
                 self._kill_and_join_blocking(process)
 
             self._replace_ipc_queues()
@@ -2682,15 +2796,17 @@ class MLXLocalClient:
                 # deadline because runtime progress exempted it forever.
                 # Past the hard ceiling, silence is wedged no matter how
                 # alive the worker claims to be.
-                hard_first_token_ceiling = first_token_sla * float(
-                    os.environ.get("AURA_FIRST_TOKEN_HARD_MULT", "1.8") or 1.8
-                ) + float(os.environ.get("AURA_FIRST_TOKEN_HARD_PAD_S", "20") or 20)
-                hard_first_token_ceiling = min(
-                    hard_first_token_ceiling,
-                    self._first_token_absolute_ceiling(
-                        foreground_request=foreground_request
-                    ),
+                hard_first_token_ceiling = self._first_token_hard_ceiling(
+                    foreground_request=foreground_request
                 )
+                request_hard_ceiling = float(
+                    getattr(self, "_current_first_token_hard_ceiling_s", 0.0) or 0.0
+                )
+                if request_hard_ceiling > 0.0:
+                    hard_first_token_ceiling = min(
+                        hard_first_token_ceiling,
+                        request_hard_ceiling,
+                    )
                 elapsed_without_token = time.time() - request_started_at
                 if (
                     req_id == self._current_request_id
@@ -3299,14 +3415,25 @@ class MLXLocalClient:
             existing_stops.extend(_bridge.extra_stop_sequences)
             req["stop_sequences"] = existing_stops
 
+        foreground_watchdog = None
         fut = _new_shared_future()
         self._pending_generations[req_id] = fut
         self._current_gen_future = fut
         self._active_generations += 1
+        first_token_hard_ceiling = self._deadline_bound_first_token_hard_ceiling(
+            deadline.remaining,
+            foreground_request=foreground_request,
+        )
         self._mark_generation_started(
             req_id,
             prompt_chars=len(prompt or ""),
             requested_max_tokens=req.get("max_tokens", self.max_tokens),
+            first_token_hard_ceiling_s=first_token_hard_ceiling,
+        )
+        foreground_watchdog = self._start_foreground_first_token_watchdog(
+            req_id,
+            foreground_request=foreground_request,
+            hard_ceiling_s=first_token_hard_ceiling,
         )
         enqueue_timeout = max(0.5, min(2.0, deadline.remaining or 2.0))
         try:
@@ -3479,6 +3606,10 @@ class MLXLocalClient:
                 )
             return None
         finally:
+            if foreground_watchdog is not None:
+                foreground_watchdog.cancel()
+            if self._foreground_generation_watchdog is foreground_watchdog:
+                self._foreground_generation_watchdog = None
             self._pending_generations.pop(req_id, None)
             if self._current_gen_future is fut:
                 self._current_gen_future = None

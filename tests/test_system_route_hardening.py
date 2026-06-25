@@ -253,8 +253,8 @@ def test_websocket_runtime_heartbeat_treats_active_generation_as_working_not_hea
     assert payload["status"] == "working"
     assert payload["conversation_ready"] is False
     assert payload["conversation_busy"] is True
-    assert "conversation_ready" in payload["blockers"]
-    assert "conversation_reason:active_generation_in_flight" in payload["blockers"]
+    assert "conversation_ready" not in payload["blockers"]
+    assert "conversation_reason:active_generation_in_flight" not in payload["blockers"]
 
 
 @pytest.mark.asyncio
@@ -518,13 +518,13 @@ async def test_runtime_heartbeat_treats_active_generation_as_working_not_healthy
     response = await system_routes.api_heartbeat()
     payload = json.loads(response.body)
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     assert payload["status"] == "working"
     assert payload["healthy"] is False
     assert payload["conversation_ready"] is False
     assert payload["conversation_busy"] is True
     assert payload["conversation_lane"]["state"] == "ready"
-    assert "conversation_ready" in payload["blockers"]
+    assert "conversation_ready" not in payload["blockers"]
 
 
 @pytest.mark.asyncio

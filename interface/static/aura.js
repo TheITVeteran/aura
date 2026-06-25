@@ -2165,7 +2165,8 @@ function healthPulseFingerprint(payload) {
     const boot = payload && payload.boot ? payload.boot : {};
     const blockers = runtimeHealthBlockers(payload || {}).slice(0, 8).join(',');
     const integrity = payload && payload.integrity ? payload.integrity : {};
-    const integrityBlockers = Array.isArray(integrity.blockers) ? integrity.blockers.slice(0, 4).join(',') : '';
+    const proofBlockers = Array.isArray(integrity.proof_blockers) ? integrity.proof_blockers : integrity.blockers;
+    const integrityBlockers = Array.isArray(proofBlockers) ? proofBlockers.slice(0, 4).join(',') : '';
     const blockerList = blockers ? blockers.split(',') : [];
     const conversationReady = conversationPayloadReady(payload, blockerList);
     const conversationBusy = conversationPayloadBusy(payload, blockerList);
@@ -2201,8 +2202,15 @@ function publishHealthNeuralPulse(payload, source = 'health_poll') {
     const blockerText = blockers.length ? ` | blockers: ${blockers.slice(0, 3).join(', ')}` : '';
     const integrity = payload.integrity && typeof payload.integrity === 'object' ? payload.integrity : {};
     const integrityConcerns = Array.isArray(integrity.concerns) ? integrity.concerns : [];
+    const proofBlockers = Array.isArray(integrity.proof_blockers) ? integrity.proof_blockers : [];
+    const integrityAdvisory = Array.isArray(integrity.advisory) ? integrity.advisory : [];
+    const proofDetails = proofBlockers.length
+        ? proofBlockers.map(item => String(item).replace(/^integrity:/, ''))
+        : integrityConcerns.length
+        ? integrityConcerns
+        : integrityAdvisory;
     const proofText = payload.proof_readiness_healthy === false || integrity.proof_readiness === false
-        ? `; proof integrity degraded${integrityConcerns.length ? `: ${integrityConcerns.slice(0, 2).join(' | ')}` : ''}`
+        ? `; proof integrity degraded${proofDetails.length ? `: ${proofDetails.slice(0, 2).join(' | ')}` : ''}`
         : '';
     const strictHealthy = payloadRuntimeHealthy(payload) && blockers.length === 0;
     const statusText = String(
@@ -3388,11 +3396,13 @@ function payloadRuntimeHealthy(payload) {
     if (payload.runtime_probe_healthy === false) return false;
     const requiredProbes = requiredProbesFromPayload(payload);
     if (!requiredRuntimeProbesPass(requiredProbes)) return false;
-    if (runtimeHealthBlockers(payload).length > 0) return false;
-    if (payload.healthy === false) return false;
     const boot = bootSnapshotFromPayload(payload);
     if (boot.ready === false || boot.system_ready === false) return false;
     const status = String(payload.status || boot.status || '').toLowerCase();
+    const blockers = runtimeHealthBlockers(payload);
+    if (conversationPayloadBusy(payload, blockers) && status === 'working') return true;
+    if (blockers.length > 0) return false;
+    if (payload.healthy === false) return false;
     return !status || ['ok', 'ready', 'healthy'].includes(status);
 }
 
@@ -3466,7 +3476,7 @@ function runtimeHealthBlockers(payload) {
     }
     const conversationReady = conversationPayloadReady(payload, blockers);
     const conversationBusy = conversationPayloadBusy(payload, blockers);
-    const normalized = conversationReady
+    const normalized = conversationReady || conversationBusy
         ? blockers.filter(blocker => !blockerIsConversationReadiness(blocker))
         : blockers.concat('conversation_ready');
     return Array.from(new Set(normalized));
