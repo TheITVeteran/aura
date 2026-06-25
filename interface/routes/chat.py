@@ -12110,6 +12110,58 @@ async def api_chat(
                 )
             return final_text, status
 
+        async def _try_serve_grounded_recovery() -> JSONResponse | None:
+            """Try one clean grounded regeneration; serve it as a competent reply, or None.
+
+            Shared by every desktop fail-closed site so a degraded/contaminated turn is
+            recovered into a real answer instead of surrendered, wherever it would fail.
+            """
+            nonlocal pending_exchange_id
+            try:
+                recovered = await _grounded_competent_recovery(
+                    _semantic_user_message, origin="desktop-ui"
+                )
+            except _CHAT_RECOVERABLE_ERRORS as _rec_exc:
+                record_degradation("chat", _rec_exc)
+                recovered = None
+            if not recovered:
+                return None
+            logger.info("✅ Degraded desktop turn recovered competently via grounded regeneration.")
+            _live_turn_trace.update(
+                {"response_path": "cognitive_engine_grounded_recovery", "grounded_recovery": True}
+            )
+            recovered_lane = _collect_conversation_lane_status()
+            if pending_exchange_id:
+                await _complete_logged_exchange(
+                    pending_exchange_id, _semantic_user_message, recovered, record_experience=True
+                )
+                pending_exchange_id = None
+            else:
+                await _log_exchange(
+                    _semantic_user_message, recovered, record_experience=True, session_id=_chat_session_id
+                )
+            _record_recent_response(recovered, _semantic_user_message)
+            await _emit_chat_output_receipt(
+                recovered,
+                cause="chat_response",
+                metadata={"response_confidence": "high", "path": "grounded_recovery", "status": "cognitive_engine_recovered"},
+            )
+            return JSONResponse(
+                {
+                    "response": recovered,
+                    "status": "cognitive_engine_recovered",
+                    "conversation_lane": recovered_lane,
+                    "response_confidence": "high",
+                    "live_turn_contract": _live_turn_contract(
+                        lane_status=recovered_lane,
+                        response_confidence="high",
+                        status="cognitive_engine_recovered",
+                        reply_source="cognitive_engine_grounded_recovery",
+                    ),
+                },
+                status_code=200,
+            )
+
         async def _fail_closed_degraded_desktop_reply(
             rejected_reply: str,
             *,
@@ -12121,53 +12173,10 @@ async def api_chat(
 
             nonlocal pending_exchange_id
 
-            # COMPETENCE over fail-closed: a degraded reply is usually a context-
-            # contaminated confabulation. Try one clean, grounded, anti-confabulation
-            # regeneration first — if Aura can produce a competent reply to what the user
-            # actually said, serve THAT instead of surrendering.
-            try:
-                recovered = await _grounded_competent_recovery(
-                    _semantic_user_message, origin="desktop-ui"
-                )
-            except _CHAT_RECOVERABLE_ERRORS as _rec_exc:
-                record_degradation("chat", _rec_exc)
-                recovered = None
-            if recovered:
-                logger.info("✅ Degraded desktop turn recovered competently via grounded regeneration.")
-                _live_turn_trace.update(
-                    {"response_path": "cognitive_engine_grounded_recovery", "grounded_recovery": True}
-                )
-                recovered_lane = _collect_conversation_lane_status()
-                if pending_exchange_id:
-                    await _complete_logged_exchange(
-                        pending_exchange_id, _semantic_user_message, recovered, record_experience=True
-                    )
-                    pending_exchange_id = None
-                else:
-                    await _log_exchange(
-                        _semantic_user_message, recovered, record_experience=True, session_id=_chat_session_id
-                    )
-                _record_recent_response(recovered, _semantic_user_message)
-                await _emit_chat_output_receipt(
-                    recovered,
-                    cause="chat_response",
-                    metadata={"response_confidence": "high", "path": "grounded_recovery", "status": "cognitive_engine_recovered"},
-                )
-                return JSONResponse(
-                    {
-                        "response": recovered,
-                        "status": "cognitive_engine_recovered",
-                        "conversation_lane": recovered_lane,
-                        "response_confidence": "high",
-                        "live_turn_contract": _live_turn_contract(
-                            lane_status=recovered_lane,
-                            response_confidence="high",
-                            status="cognitive_engine_recovered",
-                            reply_source="cognitive_engine_grounded_recovery",
-                        ),
-                    },
-                    status_code=200,
-                )
+            # COMPETENCE over fail-closed: try a clean grounded recovery before surrendering.
+            served = await _try_serve_grounded_recovery()
+            if served is not None:
+                return served
 
             lane = _mark_conversation_lane_state(status, state="failed")
             _live_turn_trace.update(
@@ -13040,6 +13049,14 @@ async def api_chat(
 
         desktop_engine_failed = desktop_requires_cognitive_engine and not reply_text
         if desktop_engine_failed:
+            # COMPETENCE first: before the bounded-repair cascade or any fail-closed, try a
+            # clean grounded regeneration. A casual turn whose draft didn't prove the
+            # full-mind path (e.g. "Huh?") should get a real, grounded reply — not a refusal
+            # or an empty 503.
+            _served_recovery = await _try_serve_grounded_recovery()
+            if _served_recovery is not None:
+                return _served_recovery
+
             # Live desktop speech must be the full CognitiveEngine path or an
             # explicitly receipted governed action result. Bounded identity or
             # self-process repair text is useful for API diagnostics, but in
