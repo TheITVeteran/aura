@@ -19,6 +19,7 @@ from typing import Any
 from core.container import ServiceContainer
 from core.event_bus import EventPriority, get_event_bus
 from core.governance_context import local_internal_governed_scope
+from core.perception.frontmost_app import frontmost_app_name_fast
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
@@ -417,6 +418,11 @@ class PerceptionDaemon:
             return None
 
     async def _check_active_window(self) -> str | None:
+        # Fast path: in-process NSWorkspace lookup (no fork). This runs on a ~500ms
+        # cadence, so avoiding an osascript subprocess per poll matters.
+        fast = frontmost_app_name_fast()
+        if fast:
+            return fast
         try:
             with local_internal_governed_scope("perception_daemon.active_window", domain="tool_execution"):
                 cmd = ["osascript", "-e", 'tell application "System Events" to get name of first application process whose frontmost is true']
