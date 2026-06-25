@@ -251,3 +251,15 @@ class CreditAssignmentSystem:
             "worst_domain": self._worst_domain,
             "influence_scores": self.get_influence_scores(),
         }
+
+
+# Module-level singleton so producers of credit (e.g. the OutcomeLedger) share one
+# system rather than each instantiating their own and fragmenting the signal.
+_credit_system: Optional["CreditAssignmentSystem"] = None
+
+
+def get_credit_assignment_system() -> "CreditAssignmentSystem":
+    global _credit_system
+    if _credit_system is None:
+        _credit_system = CreditAssignmentSystem()
+    return _credit_system

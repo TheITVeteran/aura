@@ -1,0 +1,370 @@
+"""Outcome Ledger — long-horizon credit assignment over delayed receipts.
+
+OutcomeLearner already records outcomes, but it records them *at action time*, with the
+result already known. Real credit assignment over a long horizon needs the opposite shape:
+when the agent acts, it commits an *expectation* and notes which policy / memory / tool
+contributed; the true outcome may not be observable until much later (a goal completes, a
+reply lands, a tool's effect is verified). Only then can you compare expected vs observed,
+measure the delay, and push credit back to the sources that earned it.
+
+This ledger models exactly that lifecycle:
+
+    receipt_id = ledger.open(action, expected, sources=[...])     # commit an expectation
+    ...                                                            # (seconds → sessions later)
+    ledger.resolve(receipt_id, observed=0.9)                      # the real outcome arrives
+
+On resolve it computes ``delay``, ``prediction_error = observed - expected`` and a
+success flag, then distributes credit to each contributing source (weighted by its share)
+into the shared CreditAssignmentSystem, and records the outcome in the OutcomeLearner.
+Receipts persist in SQLite (WAL), so an action opened in one session can be resolved — or
+swept as an expired failure past its horizon — in another. That persistence is what makes
+the horizon genuinely long instead of in-process-only.
+
+Sources are the seam the critique asked for: credit flows back to *policy*, *memory*, and
+*tool* references, so the systems that produced a good (or bad) action are the ones whose
+standing moves.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+import threading
+import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from core.config import config
+from core.runtime.errors import record_degradation
+
+logger = logging.getLogger("Cognition.OutcomeLedger")
+
+
+def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    return lo if x < lo else hi if x > hi else x
+
+
+@dataclass
+class CreditSource:
+    """A contributor to an action, to receive credit when the outcome lands."""
+
+    kind: str          # "policy" | "memory" | "tool" | "plan" | "strategy" | ...
+    ref: str           # identifier: policy name, memory id, tool name, ...
+    weight: float = 1.0  # relative contribution share (normalized at resolve time)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {"kind": self.kind, "ref": self.ref, "weight": self.weight}
+
+
+@dataclass
+class OutcomeReceipt:
+    receipt_id: str
+    action: str
+    category: str
+    expected: float
+    sources: List[CreditSource]
+    opened_at: float
+    horizon_s: float
+    context: Dict[str, Any] = field(default_factory=dict)
+    observed: Optional[float] = None
+    resolved_at: Optional[float] = None
+    status: str = "pending"          # pending | resolved | expired
+    prediction_error: Optional[float] = None
+
+    @property
+    def delay(self) -> Optional[float]:
+        return None if self.resolved_at is None else self.resolved_at - self.opened_at
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "receipt_id": self.receipt_id,
+            "action": self.action,
+            "category": self.category,
+            "expected": self.expected,
+            "sources": [s.as_dict() for s in self.sources],
+            "opened_at": self.opened_at,
+            "horizon_s": self.horizon_s,
+            "context": self.context,
+            "observed": self.observed,
+            "resolved_at": self.resolved_at,
+            "status": self.status,
+            "prediction_error": self.prediction_error,
+            "delay": self.delay,
+        }
+
+
+class OutcomeLedger:
+    """Delayed-receipt credit assignment with persistence and expectation calibration."""
+
+    def __init__(self, db_path: Optional[str] = None, default_horizon_s: float = 3600.0) -> None:
+        self._db_path = db_path or str(config.paths.home_dir / "data/outcome_ledger.db")
+        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._default_horizon = default_horizon_s
+        self._pending: Dict[str, OutcomeReceipt] = {}
+        self._calib_err_sum = 0.0
+        self._calib_n = 0
+        self._init_schema()
+        self._load_pending()
+
+    # ── persistence ──────────────────────────────────────────────────────
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path, timeout=5.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+        return conn
+
+    def _init_schema(self) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """CREATE TABLE IF NOT EXISTS outcome_receipts (
+                        receipt_id TEXT PRIMARY KEY,
+                        action TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        expected REAL NOT NULL,
+                        sources_json TEXT NOT NULL,
+                        opened_at REAL NOT NULL,
+                        horizon_s REAL NOT NULL,
+                        context_json TEXT,
+                        observed REAL,
+                        resolved_at REAL,
+                        status TEXT NOT NULL,
+                        prediction_error REAL
+                    )"""
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_receipts_status ON outcome_receipts(status)"
+                )
+                conn.commit()
+        except (sqlite3.Error, OSError) as e:
+            record_degradation("outcome_ledger", e)
+
+    def _persist(self, r: OutcomeReceipt) -> None:
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO outcome_receipts
+                       (receipt_id, action, category, expected, sources_json, opened_at,
+                        horizon_s, context_json, observed, resolved_at, status, prediction_error)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        r.receipt_id, r.action, r.category, r.expected,
+                        json.dumps([s.as_dict() for s in r.sources]),
+                        r.opened_at, r.horizon_s, json.dumps(r.context or {}),
+                        r.observed, r.resolved_at, r.status, r.prediction_error,
+                    ),
+                )
+                conn.commit()
+        except (sqlite3.Error, OSError) as e:
+            record_degradation("outcome_ledger", e)
+
+    def _load_pending(self) -> None:
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT receipt_id, action, category, expected, sources_json, opened_at, "
+                    "horizon_s, context_json FROM outcome_receipts WHERE status = 'pending'"
+                ).fetchall()
+            for rid, action, cat, exp, sj, opened, horizon, cj in rows:
+                sources = [CreditSource(**s) for s in json.loads(sj or "[]")]
+                self._pending[rid] = OutcomeReceipt(
+                    receipt_id=rid, action=action, category=cat, expected=exp,
+                    sources=sources, opened_at=opened, horizon_s=horizon,
+                    context=json.loads(cj or "{}"),
+                )
+            if self._pending:
+                logger.info("📒 [OutcomeLedger] recovered %d pending receipts", len(self._pending))
+        except (sqlite3.Error, OSError, ValueError) as e:
+            record_degradation("outcome_ledger", e)
+
+    # ── lifecycle ────────────────────────────────────────────────────────
+
+    def open(
+        self,
+        action: str,
+        expected: float,
+        *,
+        sources: Optional[List[CreditSource]] = None,
+        category: str = "action",
+        horizon_s: Optional[float] = None,
+        context: Optional[Dict[str, Any]] = None,
+        now: Optional[float] = None,
+    ) -> str:
+        """Commit an action with its *expected* outcome; returns a receipt_id to resolve later."""
+        now = time.time() if now is None else now
+        receipt = OutcomeReceipt(
+            receipt_id=f"rcpt-{uuid.uuid4().hex[:12]}",
+            action=action,
+            category=category,
+            expected=_clamp(float(expected)),
+            sources=list(sources or []),
+            opened_at=now,
+            horizon_s=float(horizon_s if horizon_s is not None else self._default_horizon),
+            context=dict(context or {}),
+        )
+        with self._lock:
+            self._pending[receipt.receipt_id] = receipt
+            self._persist(receipt)
+        return receipt.receipt_id
+
+    def resolve(
+        self,
+        receipt_id: str,
+        observed: float,
+        *,
+        note: str = "",
+        now: Optional[float] = None,
+    ) -> Optional[OutcomeReceipt]:
+        """Close a receipt with the observed outcome; assign credit to its sources.
+
+        Returns the resolved receipt, or None if the id is unknown/already closed.
+        """
+        now = time.time() if now is None else now
+        with self._lock:
+            receipt = self._pending.pop(receipt_id, None)
+            if receipt is None:
+                return None
+            receipt.observed = _clamp(float(observed))
+            receipt.resolved_at = now
+            receipt.prediction_error = receipt.observed - receipt.expected
+            receipt.status = "resolved"
+            if note:
+                receipt.context.setdefault("notes", []).append(note)
+            self._persist(receipt)
+            self._calib_err_sum += abs(receipt.prediction_error)
+            self._calib_n += 1
+        # Credit distribution happens outside the lock (it calls into other subsystems).
+        self._distribute_credit(receipt)
+        return receipt
+
+    def sweep(self, *, now: Optional[float] = None) -> List[OutcomeReceipt]:
+        """Expire pending receipts past their horizon, resolving them as failures.
+
+        This bounds the horizon: an action whose outcome was never observed is treated as
+        an unmet expectation (observed=0), so the sources that promised it lose standing
+        rather than the receipt lingering forever.
+        """
+        now = time.time() if now is None else now
+        expired: List[OutcomeReceipt] = []
+        with self._lock:
+            for rid, r in list(self._pending.items()):
+                if now - r.opened_at >= r.horizon_s:
+                    r.observed = 0.0
+                    r.resolved_at = now
+                    r.prediction_error = 0.0 - r.expected
+                    r.status = "expired"
+                    self._persist(r)
+                    self._pending.pop(rid, None)
+                    self._calib_err_sum += abs(r.prediction_error)
+                    self._calib_n += 1
+                    expired.append(r)
+        for r in expired:
+            self._distribute_credit(r)
+        return expired
+
+    # ── credit ───────────────────────────────────────────────────────────
+
+    def _distribute_credit(self, receipt: OutcomeReceipt) -> None:
+        """Push credit to each contributing source, weighted by its share.
+
+        Credit maps observed∈[0,1] to a reward∈[-1,1] (0.5 is neutral), scaled by each
+        source's normalized weight. Feeds the shared CreditAssignmentSystem (per-source
+        kind as the domain) and the OutcomeLearner.
+        """
+        observed = receipt.observed if receipt.observed is not None else 0.0
+        reward = 2.0 * observed - 1.0  # [0,1] → [-1,1]
+
+        total_w = sum(max(0.0, s.weight) for s in receipt.sources) or 1.0
+        try:
+            from core.consciousness.credit_assignment import get_credit_assignment_system
+            credit_system = get_credit_assignment_system()
+            for s in receipt.sources:
+                share = max(0.0, s.weight) / total_w
+                action_id = f"{s.kind}:{s.ref}"
+                credit_system.assign_credit(action_id, reward * share, domain=s.kind)
+        except Exception as e:  # noqa: BLE001 - credit feedback must never break resolution
+            record_degradation("outcome_ledger", e, severity="debug",
+                               action="skipped credit-assignment feed")
+
+        try:
+            from core.cognition.outcome_learner import get_outcome_learner
+            duration_ms = (receipt.delay or 0.0) * 1000.0
+            get_outcome_learner().record_outcome(
+                category=receipt.category,
+                action=receipt.action,
+                success=observed >= 0.5,
+                confidence_before=receipt.expected,
+                duration_ms=duration_ms,
+                context={
+                    "expected": receipt.expected,
+                    "observed": observed,
+                    "prediction_error": receipt.prediction_error,
+                    "status": receipt.status,
+                    "sources": [s.as_dict() for s in receipt.sources],
+                },
+            )
+        except Exception as e:  # noqa: BLE001
+            record_degradation("outcome_ledger", e, severity="debug",
+                               action="skipped outcome-learner feed")
+
+    # ── readout ──────────────────────────────────────────────────────────
+
+    def expectation_calibration(self) -> float:
+        """Mean absolute prediction error across resolved receipts (lower = better calibrated)."""
+        with self._lock:
+            if self._calib_n == 0:
+                return 0.0
+            return self._calib_err_sum / self._calib_n
+
+    def pending(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            return [r.as_dict() for r in self._pending.values()]
+
+    def credit_by_source(self, *, hours: int = 24, now: Optional[float] = None) -> Dict[str, float]:
+        """Net reward by source ref over resolved receipts in the window (from the db)."""
+        cutoff = (time.time() if now is None else now) - hours * 3600
+        out: Dict[str, float] = {}
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT sources_json, observed FROM outcome_receipts "
+                    "WHERE status != 'pending' AND resolved_at > ?",
+                    (cutoff,),
+                ).fetchall()
+            for sj, observed in rows:
+                reward = 2.0 * (observed or 0.0) - 1.0
+                sources = json.loads(sj or "[]")
+                total_w = sum(max(0.0, s.get("weight", 1.0)) for s in sources) or 1.0
+                for s in sources:
+                    share = max(0.0, s.get("weight", 1.0)) / total_w
+                    out[s["ref"]] = out.get(s["ref"], 0.0) + reward * share
+        except (sqlite3.Error, OSError, ValueError) as e:
+            record_degradation("outcome_ledger", e, severity="debug")
+        return {k: round(v, 4) for k, v in out.items()}
+
+    def stats(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "pending": len(self._pending),
+                "resolved_count": self._calib_n,
+                "expectation_calibration": round(self.expectation_calibration(), 4),
+                "db_path": self._db_path,
+            }
+
+
+_ledger: Optional[OutcomeLedger] = None
+_ledger_lock = threading.Lock()
+
+
+def get_outcome_ledger() -> OutcomeLedger:
+    global _ledger
+    if _ledger is None:
+        with _ledger_lock:
+            if _ledger is None:
+                _ledger = OutcomeLedger()
+    return _ledger
