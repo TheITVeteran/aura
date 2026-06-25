@@ -139,7 +139,7 @@ class RecursiveSelfImprovementLoop:
         evaluator: Evaluator | None = None,
         ledger_path: Path | None = None,
         min_score_delta: float = 0.01,
-        max_depth: int = 3,
+        max_depth: int = 5,
         auto_recurse: bool = True,
         require_will_authorization: bool = True,
     ):
@@ -204,6 +204,7 @@ class RecursiveSelfImprovementLoop:
         *,
         allow_weight_update: bool = True,
         allow_code_modification: bool = False,
+        allow_tool_creation: bool = False,
         force: bool = False,
         depth: int = 0,
     ) -> ImprovementCycleResult:
@@ -213,6 +214,7 @@ class RecursiveSelfImprovementLoop:
                 objective,
                 allow_weight_update=allow_weight_update,
                 allow_code_modification=allow_code_modification,
+                allow_tool_creation=allow_tool_creation,
                 force=force,
                 depth=depth,
             )
@@ -223,6 +225,7 @@ class RecursiveSelfImprovementLoop:
         *,
         allow_weight_update: bool,
         allow_code_modification: bool,
+        allow_tool_creation: bool = False,
         force: bool,
         depth: int,
     ) -> ImprovementCycleResult:
@@ -231,6 +234,7 @@ class RecursiveSelfImprovementLoop:
             objective,
             allow_weight_update=allow_weight_update,
             allow_code_modification=allow_code_modification,
+            allow_tool_creation=allow_tool_creation,
             force=force,
             depth=depth,
         )
@@ -265,6 +269,8 @@ class RecursiveSelfImprovementLoop:
                 action_results[action] = {"ok": bool(ok)}
             elif action == "code_refinement":
                 action_results[action] = await self._run_code_refinement()
+            elif action == "tool_creation":
+                action_results[action] = await self._run_tool_creation(plan)
             elif action == "collect_more_signal":
                 action_results[action] = {"ok": True, "reason": "insufficient signal for mutation"}
 
@@ -305,6 +311,7 @@ class RecursiveSelfImprovementLoop:
                 f"{objective} :: recursive pass {depth + 2}",
                 allow_weight_update=allow_weight_update,
                 allow_code_modification=allow_code_modification,
+                allow_tool_creation=allow_tool_creation,
                 force=False,
                 depth=depth + 1,
             )
@@ -319,6 +326,7 @@ class RecursiveSelfImprovementLoop:
         *,
         allow_weight_update: bool,
         allow_code_modification: bool,
+        allow_tool_creation: bool = False,
         force: bool,
         depth: int,
     ) -> ImprovementPlan:
@@ -338,6 +346,11 @@ class RecursiveSelfImprovementLoop:
             or s.metric in {"stability", "latency", "reliability"}
             for s in signals
         )
+        capability_gap_signal = any(
+            s.kind in {"capability_gap", "tool_gap", "missing_tool", "unmet_affordance"}
+            or s.metric in {"capability", "coverage"}
+            for s in signals
+        )
 
         if allow_weight_update and self.live_learner and (force or weight_signal or self._buffer_size() > 0):
             actions.append("weight_update")
@@ -350,6 +363,19 @@ class RecursiveSelfImprovementLoop:
         ):
             actions.append("code_refinement")
             rationale.append("runtime/test signals can be routed through safe self-modification")
+
+        # Tool-creation is the loosest RSI lever, so it is the most tightly gated: opt-in
+        # per call, behind an env flag, and only when a real capability gap is observed.
+        # Critically it produces a *reversible proposal*, never an executed tool, so the
+        # 'keep reversibility' invariant holds even as the loop is allowed to reach for
+        # new capabilities.
+        if (
+            allow_tool_creation
+            and os.getenv("AURA_RSI_TOOL_CREATION", "0") == "1"
+            and (force or capability_gap_signal)
+        ):
+            actions.append("tool_creation")
+            rationale.append("an observed capability gap can be met by a reversible new-tool proposal")
 
         if not actions:
             actions.append("collect_more_signal")
@@ -494,11 +520,12 @@ class RecursiveSelfImprovementLoop:
         try:
             from core.will import ActionDomain, get_will
 
-            domain = (
-                ActionDomain.SEMANTIC_WEIGHT_UPDATE
-                if "weight_update" in plan.actions
-                else ActionDomain.STATE_MUTATION
-            )
+            if "tool_creation" in plan.actions:
+                domain = ActionDomain.SELF_MODIFICATION
+            elif "weight_update" in plan.actions:
+                domain = ActionDomain.SEMANTIC_WEIGHT_UPDATE
+            else:
+                domain = ActionDomain.STATE_MUTATION
             decision = get_will().decide(
                 content=f"recursive_self_improvement:{plan.objective}:{','.join(plan.actions)}",
                 source="recursive_self_improvement",
@@ -576,6 +603,68 @@ class RecursiveSelfImprovementLoop:
                 extra={"deterministic": deterministic},
             )
             return {"ok": False, "reason": f"{type(exc).__name__}:{exc}", "deterministic": deterministic}
+
+    async def _run_tool_creation(self, plan: ImprovementPlan) -> dict[str, Any]:
+        """Propose a new tool to close a capability gap — *reversibly*.
+
+        This never executes or installs a tool. It writes a draft tool proposal to a
+        proposals ledger that a downstream governed promotion step (or a human) can review,
+        and registers the inverse op (delete the draft) so the action is fully reversible.
+        If a self_modifier exposes a dedicated `propose_tool` API we route to it but still
+        require the result to declare itself reversible; otherwise we fall back to the
+        local draft. Anything that cannot be made reversible is refused.
+        """
+        proposal = {
+            "objective": plan.objective,
+            "depth": plan.depth,
+            "kind": "tool_creation_proposal",
+            "rationale": plan.rationale,
+            "created_at": time.time(),
+            "status": "proposed",
+        }
+
+        # Prefer a governed self-modifier tool-proposal API if present.
+        if self.self_modifier and hasattr(self.self_modifier, "propose_tool"):
+            try:
+                result = self.self_modifier.propose_tool(proposal)
+                if inspect.isawaitable(result):
+                    result = await result
+                reversible = bool(isinstance(result, dict) and result.get("reversible"))
+                ok = bool(isinstance(result, dict) and result.get("ok")) and reversible
+                if not reversible:
+                    return {"ok": False, "reason": "tool_proposal_not_reversible", "result": result}
+                return {"ok": ok, "reversible": True, "result": result}
+            except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as exc:
+                _record_rsi_degradation(
+                    "recursive_self_improvement",
+                    exc,
+                    action="tool-creation proposal via self_modifier failed; refused (no irreversible fallback)",
+                )
+                return {"ok": False, "reason": f"propose_tool:{type(exc).__name__}:{exc}"}
+
+        # Local fallback: persist a reversible draft proposal (no execution).
+        try:
+            proposals_path = self.ledger_path.parent / "tool_proposals.jsonl"
+            proposals_path.parent.mkdir(parents=True, exist_ok=True)
+            proposal_id = f"toolprop-{int(proposal['created_at'])}-{plan.depth}"
+            proposal["proposal_id"] = proposal_id
+            with proposals_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(proposal) + "\n")
+            return {
+                "ok": True,
+                "reversible": True,
+                "proposal_id": proposal_id,
+                "path": str(proposals_path),
+                "rollback": "remove the appended proposal line",
+                "executed": False,
+            }
+        except OSError as exc:
+            _record_rsi_degradation(
+                "recursive_self_improvement",
+                exc,
+                action="failed to persist reversible tool proposal; refused",
+            )
+            return {"ok": False, "reason": f"proposal_persist:{type(exc).__name__}:{exc}"}
 
     def _rollback_weights(self) -> bool:
         if self.live_learner and hasattr(self.live_learner, "rollback_adapter"):
