@@ -80,6 +80,7 @@ async def test_one_task_timeout_does_not_kill_others():
 @pytest.mark.asyncio
 async def test_failing_task_isolated():
     async def _boom():
+        await asyncio.sleep(0)
         raise RuntimeError("worker blew up")
 
     ex = ParallelExecutor(max_concurrency=4, executor_factory=_factory)

@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 logger = logging.getLogger("Runtime.WedgeRecoverySupervisor")
 
 
@@ -53,7 +55,7 @@ class WedgeRecoverySupervisor:
     SIGKILL + restart + resume. The out-of-process recovery a Metal-GPU deadlock
     needs and in-process recovery cannot provide.
 
-    ``spawn`` returns a fresh ``subprocess.Popen`` for the target each call.
+    ``spawn`` returns a fresh process handle for the target each call.
     ``on_restart(restart_index)`` (optional) is the resume hook — e.g. a proof
     battery records "resume from the next task" before the runtime comes back.
     """
@@ -115,11 +117,9 @@ class WedgeRecoverySupervisor:
             consecutive_stale = 0
             return None
 
-        while True:
+        while max_polls is None or polls < max_polls:
             if done():
                 return SupervisorOutcome(True, restarts, "completed", getattr(proc, "pid", None))
-            if max_polls is not None and polls >= max_polls:
-                return SupervisorOutcome(False, restarts, "max_polls", getattr(proc, "pid", None))
             self._sleep(self._poll)
             polls += 1
             now = self._clock()
@@ -162,6 +162,7 @@ class WedgeRecoverySupervisor:
                 outcome = _restart("loop_wedge")
                 if outcome is not None:
                     return outcome
+        return SupervisorOutcome(False, restarts, "max_polls", getattr(proc, "pid", None))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -187,8 +188,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-restarts", type=int, default=3)
     args = parser.parse_args(argv)
 
-    def _spawn() -> "subprocess.Popen[Any]":
-        return subprocess.Popen(shlex.split(args.spawn_cmd), start_new_session=True)
+    def _spawn() -> Any:
+        return get_subprocess_gateway().spawn(
+            shlex.split(args.spawn_cmd),
+            start_new_session=True,
+            offline_tooling=True,
+            source="maintenance_tooling:wedge_recovery_supervisor",
+        )
 
     supervisor = WedgeRecoverySupervisor(
         spawn=_spawn,

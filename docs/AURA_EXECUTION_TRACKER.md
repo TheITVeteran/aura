@@ -436,6 +436,22 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
 - release channels + runbooks slice: 4 passed
 - fuzz/SLI/gateway/turn-taking/computer-use/memory-guard slice: 13 passed
 - broad regression sweep: 304 passed
+- 2026-06-25 enterprise ratchet cleanup: 212 focused tests passed;
+  `make enterprise-gate` passed; enterprise high/critical count is 0 and
+  baseline regressions are 0.
+
+## Current Closeout Progress Gauge
+
+- Latest checkpoint: enterprise static ratchet cleanup.
+- Evidence added: subprocess ownership routed through `SubprocessGateway` for
+  DNU/wedge supervisor paths, hardcoded local test paths removed, one broad
+  watchdog exception narrowed, and enterprise baseline regressions cleared.
+- Current operator estimate: about 81% through the ultimate closeout standard.
+- Estimated remaining checkpoints: 8 to 10 total, depending on how many live
+  desktop/demo-path defects surface during real 32B/72B runtime validation.
+- Still not closed: final proof, DNU/Aletheia clean reruns, live desktop
+  multi-app proof, CRSM-to-LoRA closure, CAA extraction validation, longer soak,
+  proof artifact replay, and remaining whole-code semantic review.
 
 ## Unresolved Failures / Known Backlog
 

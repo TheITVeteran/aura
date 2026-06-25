@@ -28,9 +28,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
+import shlex
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -55,13 +56,22 @@ def main(argv: list[str] | None = None) -> int:
     from tools.wedge_recovery_supervisor import WedgeRecoverySupervisor
 
     passthrough = [a for a in args.battery_args if a != "--"]
-    base_cmd = args.battery_cmd.split() if args.battery_cmd else DEFAULT_BATTERY
+    base_cmd = shlex.split(args.battery_cmd) if args.battery_cmd else DEFAULT_BATTERY
 
-    def _spawn() -> "subprocess.Popen":
+    def _spawn() -> Any:
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
         env = dict(os.environ)
         env.setdefault("AURA_LIVENESS_HEARTBEAT_FILE", args.heartbeat)
         env.setdefault("AURA_LIVENESS_SENTINEL", "1")  # ensure the runtime writes the beacon
-        return subprocess.Popen([*base_cmd, *passthrough], env=env, start_new_session=True, cwd=str(ROOT))
+        return get_subprocess_gateway().spawn(
+            [*base_cmd, *passthrough],
+            env=env,
+            start_new_session=True,
+            cwd=str(ROOT),
+            offline_tooling=True,
+            source="certification_tooling:dnu_supervised",
+        )
 
     supervisor = WedgeRecoverySupervisor(
         spawn=_spawn,

@@ -39,6 +39,7 @@ def test_open_when_captures_accumulate_without_training(tmp_path):
 def test_closed_after_training_consumes_dataset(tmp_path):
     m = _monitor(tmp_path)
     _write_lines(m.dataset_path, 100)
+    manifest = tmp_path / "crsm_manifest.json"
     # a newer fused model appears + training marks consumption
     (m.fused_model_dir / "Aura-32B-new").mkdir()
     m.mark_dataset_consumed(
@@ -46,7 +47,7 @@ def test_closed_after_training_consumes_dataset(tmp_path):
         lines_consumed=100,
         accepted_lines=80,
         rejected_lines=20,
-        manifest_path="/tmp/crsm_manifest.json",
+        manifest_path=str(manifest),
         source="test",
     )
     state = m.loop_state()
@@ -73,17 +74,19 @@ def test_open_again_when_new_captures_arrive_after_training(tmp_path):
 def test_marker_round_trip(tmp_path):
     m = _monitor(tmp_path)
     _write_lines(m.dataset_path, 30)
+    model = tmp_path / "models" / "x"
+    manifest = tmp_path / "manifest.json"
     m.mark_dataset_consumed(
-        model_path="/models/x",
+        model_path=str(model),
         lines_consumed=30,
         accepted_lines=25,
         rejected_lines=5,
-        manifest_path="/tmp/manifest.json",
+        manifest_path=str(manifest),
         source="unit",
     )
     data = json.loads(m.marker_path.read_text())
-    assert data["lines_consumed"] == 30 and data["model_path"] == "/models/x"
+    assert data["lines_consumed"] == 30 and data["model_path"] == str(model)
     assert data["accepted_lines"] == 25
     assert data["rejected_lines"] == 5
-    assert data["manifest_path"] == "/tmp/manifest.json"
+    assert data["manifest_path"] == str(manifest)
     assert data["source"] == "unit"

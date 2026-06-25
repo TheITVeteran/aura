@@ -7,12 +7,12 @@ and that the should_kill refactor is behavior-preserving.
 """
 
 import os
-import subprocess
 import sys
 import time
 
 import pytest
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from tools.liveness_sentinel import is_stale_sample, should_kill
 from tools.wedge_recovery_supervisor import WedgeRecoverySupervisor
 
@@ -44,9 +44,11 @@ def _pid_alive(pid: int) -> bool:
 
 def _make_spawn(victim_path, beacon_path, beat_s, mode, spawned):
     def _spawn():
-        proc = subprocess.Popen(
+        proc = get_subprocess_gateway().spawn(
             [sys.executable, str(victim_path), str(beacon_path), str(beat_s), mode],
             start_new_session=True,
+            offline_tooling=True,
+            source="proof_tooling:wedge_recovery_supervisor_test",
         )
         spawned.append(proc)
         return proc

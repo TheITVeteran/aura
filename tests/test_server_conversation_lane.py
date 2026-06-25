@@ -13,7 +13,7 @@ def _force_full_mind_runtime(monkeypatch, chat_routes):
 
     The desktop ``full_mind_path`` contract requires all six runtime subsystems
     (kernel, cognitive_engine, inference, memory, tool_governance, substrate_voice)
-    to be available, or the turn fails closed. Tests that mock only the cognitive
+    to be available, or the turn fails closed. Tests that replace only the cognitive
     engine must also assert the rest of the runtime is present, otherwise they are
     asserting against a half-booted process that legitimately fails closed.
     """

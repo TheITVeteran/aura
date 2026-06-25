@@ -1354,7 +1354,7 @@ class MLXLocalClient:
                     foreground_request=True,
                 )
                 self.force_abort_active_generation("first_token_wall_clock_watchdog")
-            except Exception as exc:  # defensive: this is the last line against a wedged foreground turn
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 logger.error("MLX first-token watchdog failed: %s", exc)
 
         timer = _threading.Timer(fire_after, _enforce)
