@@ -300,36 +300,65 @@ class GlobalWorkspace:
                 # Fix Issue 68: Don't mutate candidate.priority; use focus_bias instead
                 candidate.focus_bias = min(1.0, candidate.focus_bias + phi_boost)
             
-            # --- Seizure Guard (Phase 23.5) ---
-            if len(self._candidates) >= self._MAX_CANDIDATES:
-                # If we're at the limit, additional submissions are dropped
-                # AND we trigger a system-wide tension event.
-                logger.warning("🧠 [SEIZURE GUARD] GlobalWorkspace is FLOODED (%d candidates). Dropping bid from %s.", 
-                               len(self._candidates), candidate.source)
-                
-                # Use Mycelium to broadcast a tension reflex if possible
-                try:
-                    mycelium = ServiceContainer.get("mycelial_network", default=None)
-                    if mycelium:
-                        # Establish a 'tension' state via mycelium
-                        h = mycelium.get_hypha("consciousness", "workspace")
-                        if h:
-                            h.strength = 10.0 # Thicken the visual noise
-                        get_task_tracker().create_task(mycelium.emit_reflex("NEURAL_FLOOD", {"source": candidate.source}))
-                except _WORKSPACE_RECOVERABLE_ERRORS as _e:
-                    self._record_degradation(
-                        _e,
-                        phase="seizure_guard_reflex",
-                        action="Dropped flooded workspace bid and skipped mycelial flood reflex",
-                        severity="warning",
-                    )
-                    logger.debug("GW seizure guard reflex failed after dropping bid: %s", _e)
-                return False
-
-            # Replace any existing candidate from same source (only one bid per source)
+            # Replace any existing candidate from same source (only one bid per source).
+            # Done BEFORE the flood check so a source updating its own bid never counts
+            # as new pressure and never gets spuriously dropped.
             self._candidates = [c for c in self._candidates if c.source != candidate.source]
+
+            # --- Seizure Guard (Phase 23.5) + salience-ranked backpressure ---
+            if len(self._candidates) >= self._MAX_CANDIDATES:
+                # The workspace is full. Rather than blanket-drop every new bid (which
+                # let a flood of low-salience submissions lock out a genuinely urgent
+                # one that arrives later), keep the N *most salient* bids: evict the
+                # weakest queued candidate iff the incoming one outranks it. A valid,
+                # high-priority candidate is never dropped just for arriving late.
+                weakest = min(self._candidates, key=lambda c: c.effective_priority)
+                incoming = candidate.effective_priority
+
+                if incoming <= weakest.effective_priority:
+                    # Incoming really is the least important — drop it and signal flood.
+                    logger.warning(
+                        "🧠 [SEIZURE GUARD] GlobalWorkspace FLOODED (%d); dropping lowest bid %s (%.3f ≤ weakest %.3f).",
+                        len(self._candidates), candidate.source, incoming, weakest.effective_priority,
+                    )
+                    self._signal_neural_flood(candidate.source)
+                    return False
+
+                # Incoming outranks the weakest → evict the weakest, admit the incoming.
+                logger.warning(
+                    "🧠 [SEIZURE GUARD] GlobalWorkspace FLOODED (%d); evicting weakest %s (%.3f) for %s (%.3f).",
+                    len(self._candidates), weakest.source, weakest.effective_priority,
+                    candidate.source, incoming,
+                )
+                self._candidates = [c for c in self._candidates if c is not weakest]
+                self._signal_neural_flood(weakest.source)
+
             self._candidates.append(candidate)
             return True
+
+    def _signal_neural_flood(self, dropped_source: str) -> None:
+        """Broadcast a workspace-flood tension reflex via the mycelial network.
+
+        Fired whenever backpressure has to drop a bid (the incoming one or an evicted
+        weakest one). Best-effort: a missing/erroring mycelium never blocks competition.
+        """
+        try:
+            mycelium = ServiceContainer.get("mycelial_network", default=None)
+            if mycelium:
+                h = mycelium.get_hypha("consciousness", "workspace")
+                if h:
+                    h.strength = 10.0  # Thicken the visual noise — the system *feels* flooded.
+                get_task_tracker().create_task(
+                    mycelium.emit_reflex("NEURAL_FLOOD", {"source": dropped_source})
+                )
+        except _WORKSPACE_RECOVERABLE_ERRORS as _e:
+            self._record_degradation(
+                _e,
+                phase="seizure_guard_reflex",
+                action="Dropped flooded workspace bid and skipped mycelial flood reflex",
+                severity="warning",
+            )
+            logger.debug("GW seizure guard reflex failed after dropping bid: %s", _e)
 
     # ------------------------------------------------------------------
     # Processor registration — subsystems register to receive broadcasts

@@ -136,14 +136,25 @@ async def test_workspace_flood_guard_drops_bid_and_records_reflex_failure(monkey
 
     _install_services(monkeypatch, mycelium=BrokenMycelium())
     workspace = GlobalWorkspace()
+    # Flood with STRONG bids so an incoming weak bid is genuinely least important.
     workspace._candidates = [
-        CognitiveCandidate(f"content-{index}", f"source-{index}", 0.1)
+        CognitiveCandidate(f"content-{index}", f"source-{index}", 0.8)
         for index in range(workspace._MAX_CANDIDATES)
     ]
 
-    accepted = await workspace.submit(CognitiveCandidate("extra", "overflow", 0.8))
+    # A weak bid into a strong, full field is dropped — and the (broken) flood reflex
+    # fires, recording the degradation.
+    accepted = await workspace.submit(CognitiveCandidate("extra", "overflow", 0.1))
 
     snapshot = workspace.get_snapshot()
     assert accepted is False
     assert "seizure_guard_reflex" in snapshot["degraded_channels"]
     assert len(workspace._candidates) == workspace._MAX_CANDIDATES
+    assert "overflow" not in {c.source for c in workspace._candidates}
+
+    # Backpressure (not blanket-drop): a strong bid into the same full field is
+    # admitted by evicting the weakest queued candidate, still respecting the cap.
+    admitted = await workspace.submit(CognitiveCandidate("urgent", "affect_distress", 0.99))
+    assert admitted is True
+    assert len(workspace._candidates) == workspace._MAX_CANDIDATES
+    assert "affect_distress" in {c.source for c in workspace._candidates}
