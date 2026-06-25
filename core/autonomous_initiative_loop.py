@@ -321,19 +321,29 @@ class AutonomousInitiativeLoop:
             if voice_session and voice_session.is_active:
                 await voice_session.narrate_progress(step_label)
 
-            # Proactive execution arm: if a planner is registered, drive this mission
-            # step through the full capability stack (fluid/parallel execution under the
-            # timing gate) instead of only marking it advanced. Safe-by-default — a no-op
-            # until a planner is wired, and itself gated by background policy + timing.
+            # Proactive execution arm: drive this mission step through the full capability
+            # stack (fluid/parallel execution under the timing gate). CRITICAL: this is
+            # FIRE-AND-FORGET with a hard timeout — never awaited inline, so background
+            # deliberation (model inference) can never stall the watcher cycle or the event
+            # loop. The single-flight guard in ProactiveAgency stops tasks piling up.
             try:
                 from core.agency.proactive_agency import get_proactive_agency
 
-                node_goal = node.action or node.description or ""
+                pa = get_proactive_agency()
+                node_goal = (node.action or node.description or "") if pa.enabled else ""
                 if node_goal:
-                    await get_proactive_agency().pursue_goal(node_goal)
+                    async def _pursue_bg(goal: str = node_goal) -> None:
+                        try:
+                            await asyncio.wait_for(pa.pursue_goal(goal), timeout=90.0)
+                        except (asyncio.TimeoutError, *_INITIATIVE_RECOVERABLE_ERRORS) as bg_exc:
+                            _record_initiative_degradation(
+                                bg_exc, action="bounded background proactive pursuit ended"
+                            )
+
+                    task_tracker.create_task(_pursue_bg(), name="proactive-mission-pursuit")
             except _INITIATIVE_RECOVERABLE_ERRORS as exc:
                 _record_initiative_degradation(
-                    exc, action="continued after proactive pursuit attempt on a mission step"
+                    exc, action="continued after scheduling proactive pursuit on a mission step"
                 )
         return advanced
 

@@ -134,8 +134,15 @@ class GoalPlanner:
             gate = ServiceContainer.get("inference_gate", default=None)
             if gate is None or not hasattr(gate, "generate_response"):
                 return ""
+            # Background proactive thinking runs on the cheap background lane, NOT the
+            # foreground Cortex — so it never competes with the user's live conversation
+            # or saturate the 32B worker.
             return await gate.generate_response(
-                prompt, origin="proactive_reasoning", temperature=temperature, max_tokens=512
+                prompt,
+                origin="proactive_reasoning",
+                temperature=temperature,
+                max_tokens=384,
+                is_background=True,
             )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation("goal_planner", exc)

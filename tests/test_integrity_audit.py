@@ -8,16 +8,19 @@ import core.runtime.integrity_audit as ia
 
 def test_audit_aggregates_signals_and_reports_structure():
     report = ia.run_integrity_audit(log=False)
-    assert set(report) >= {"healthy", "concerns", "degradations", "crsm_loop", "caa_readiness"}
+    assert set(report) >= {"healthy", "concerns", "advisory", "degradations", "crsm_loop", "caa_readiness"}
     assert isinstance(report["concerns"], list)
-    # CRSM loop + CAA readiness are real on this repo → expect concerns surfaced
+    # CRSM loop + CAA readiness are real on this repo → expect them surfaced
     assert report["crsm_loop"] and report["caa_readiness"]
 
 
-def test_audit_flags_caa_below_capacity_as_concern():
+def test_caa_and_crsm_are_advisory_not_health_blocking():
     report = ia.run_integrity_audit(log=False)
-    # the real repo has runtime-derived CAA vectors (below capacity) → a concern
-    assert any("CAA steering" in c for c in report["concerns"])
+    # operational facts (CAA below capacity, CRSM open) surface as ADVISORY — never as
+    # runtime-health concerns, so they cannot make the runtime report "degraded".
+    assert any("CAA steering" in c for c in report["advisory"])
+    assert not any("CAA steering" in c for c in report["concerns"])
+    assert not any("CRSM" in c for c in report["concerns"])
 
 
 def test_maybe_run_is_throttled(monkeypatch):

@@ -36,7 +36,13 @@ def strict_mode() -> bool:
 
 def run_integrity_audit(*, log: bool = True) -> dict[str, Any]:
     """Aggregate degradations + CRSM loop + CAA readiness; log loudly if degraded."""
+    # RUNTIME-HEALTH concerns (can the process actually serve?) vs ADVISORY concerns
+    # (operational facts like "training hasn't run yet"). Only the former may gate
+    # health — an open CRSM loop or runtime-derived CAA vectors are real and worth
+    # surfacing, but they do NOT mean Aura can't converse, so they must never make the
+    # runtime report "degraded"/not-ready.
     concerns: list[str] = []
+    advisory: list[str] = []
 
     degradations: dict[str, Any] = {}
     try:
@@ -56,7 +62,7 @@ def run_integrity_audit(*, log: bool = True) -> dict[str, Any]:
 
         crsm_loop = get_crsm_loop_monitor().loop_state()
         if crsm_loop.get("state") == "open":
-            concerns.append(f"CRSM→LoRA loop OPEN ({crsm_loop.get('unconsumed')} captures untrained)")
+            advisory.append(f"CRSM→LoRA loop OPEN ({crsm_loop.get('unconsumed')} captures untrained)")
     except (ImportError, AttributeError, RuntimeError, TypeError):
         crsm_loop = {}
 
@@ -66,7 +72,7 @@ def run_integrity_audit(*, log: bool = True) -> dict[str, Any]:
 
         caa_readiness = verify_readiness()
         if caa_readiness.get("below_design_capacity"):
-            concerns.append(
+            advisory.append(
                 f"CAA steering at {caa_readiness.get('steering_capacity_pct')}% "
                 f"({caa_readiness.get('level')})"
             )
@@ -74,8 +80,12 @@ def run_integrity_audit(*, log: bool = True) -> dict[str, Any]:
         caa_readiness = {}
 
     report = {
+        # 'healthy' reflects RUNTIME health only — advisory operational facts never make
+        # the runtime unhealthy. 'concerns' (the health-blocking list) holds runtime
+        # concerns; 'advisory' holds the surfaced-but-non-blocking operational notes.
         "healthy": not concerns,
         "concerns": concerns,
+        "advisory": advisory,
         "strict_mode": strict_mode(),
         "degradations": degradations,
         "crsm_loop": crsm_loop,
@@ -86,19 +96,18 @@ def run_integrity_audit(*, log: bool = True) -> dict[str, Any]:
     global _last_report
     _last_report = report
 
-    if log and (concerns or strict_mode()):
+    if log:
         if concerns:
-            logger.warning(
-                "🩺 [Integrity] %d concern(s): %s",
-                len(concerns), " | ".join(concerns),
-            )
+            logger.warning("🩺 [Integrity] %d runtime concern(s): %s", len(concerns), " | ".join(concerns))
             try:
                 from core.observability.metrics import get_metrics
 
                 get_metrics().increment_counter("integrity_concern_total")
             except (ImportError, AttributeError, RuntimeError, TypeError):
                 pass
-        else:
+        if advisory:
+            logger.info("🩺 [Integrity] advisory (non-blocking): %s", " | ".join(advisory))
+        if not concerns and not advisory and strict_mode():
             logger.info("🩺 [Integrity] all subsystems nominal (strict mode).")
     return report
 

@@ -15,6 +15,7 @@ step, a desktop goal to verified UI steps, etc.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Awaitable, Callable
 
 from core.runtime.errors import record_degradation
@@ -32,15 +33,30 @@ class ProactiveAgency:
         planner: Planner | None = None,
         background_allowed: Callable[[], bool] | None = None,
         timing_ok: Callable[[], Any] | None = None,
-        default_planner_enabled: bool = True,
+        default_planner_enabled: bool | None = None,
     ) -> None:
         self._pursuit = pursuit
         self._planner = planner
         self._background_allowed = background_allowed
         self._timing_ok = timing_ok
-        self._default_planner_enabled = default_planner_enabled
+        # Proactive autonomy is ON by default — Aura is always self-directed. It is made
+        # safe not by disabling it but by being non-blocking (fire-and-forget),
+        # single-flight (one pursuit at a time), and running on the cheap BACKGROUND lane,
+        # so it never stalls the event loop or competes with the foreground conversation.
+        # AURA_PROACTIVE_AUTONOMY=0 is a kill-switch.
+        self._default_planner_enabled = (
+            default_planner_enabled
+            if default_planner_enabled is not None
+            else os.getenv("AURA_PROACTIVE_AUTONOMY", "1") != "0"
+        )
         self._pursued = 0
         self._completed = 0
+        self._running = False   # single-flight guard
+
+    @property
+    def enabled(self) -> bool:
+        """True if proactive pursuit can run (an explicit planner, or env opt-in)."""
+        return self._planner is not None or self._default_planner_enabled
 
     def register_planner(self, planner: Planner) -> None:
         self._planner = planner
@@ -51,9 +67,11 @@ class ProactiveAgency:
             return self._planner
         if self._default_planner_enabled:
             try:
-                from core.agency.goal_planner import get_goal_planner
+                from core.agency.goal_planner import GoalPlanner
 
-                self._planner = get_goal_planner()
+                # Cheap background planner: a single deliberation sample (not 3-5) so
+                # proactive autonomous thinking is light on the background lane.
+                self._planner = GoalPlanner(deliberate_samples=1)
                 return self._planner
             except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation("proactive_agency", exc)
@@ -72,9 +90,15 @@ class ProactiveAgency:
             return None
 
     async def pursue_goal(self, goal: str, *, parallel: bool = False) -> Any | None:
-        """Plan and pursue ``goal`` to completion — or ``None`` if not allowed/plannable."""
+        """Plan and pursue ``goal`` to completion — or ``None`` if not allowed/plannable.
+
+        Single-flight: only one proactive pursuit runs at a time, so background
+        deliberation can never pile up and saturate the model lane.
+        """
         if not goal or not str(goal).strip():
             return None
+        if self._running:
+            return None   # a pursuit is already in flight — don't stack another
         if self._background_allowed is not None:
             try:
                 if not self._background_allowed():
@@ -85,24 +109,28 @@ class ProactiveAgency:
         planner = self._get_planner()
         if planner is None:
             return None
+        self._running = True
         try:
-            plan = await planner(goal)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation("proactive_agency", exc)
-            return None
-        if not plan:
-            return None
-        engine = self._engine()
-        if engine is None:
-            return None
-        self._pursued += 1
-        outcome = await engine.pursue(goal, plan, parallel=parallel, timing_ok=self._timing_ok)
-        if getattr(outcome, "completed", False):
-            self._completed += 1
-            logger.info("✅ [Proactive] autonomously completed goal: %s", goal[:60])
-        elif getattr(outcome, "deferred", False):
-            logger.debug("⏸️ [Proactive] goal deferred (timing): %s", goal[:50])
-        return outcome
+            try:
+                plan = await planner(goal)
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("proactive_agency", exc)
+                return None
+            if not plan:
+                return None
+            engine = self._engine()
+            if engine is None:
+                return None
+            self._pursued += 1
+            outcome = await engine.pursue(goal, plan, parallel=parallel, timing_ok=self._timing_ok)
+            if getattr(outcome, "completed", False):
+                self._completed += 1
+                logger.info("✅ [Proactive] autonomously completed goal: %s", goal[:60])
+            elif getattr(outcome, "deferred", False):
+                logger.debug("⏸️ [Proactive] goal deferred (timing): %s", goal[:50])
+            return outcome
+        finally:
+            self._running = False
 
     def status(self) -> dict[str, Any]:
         return {"pursued": self._pursued, "completed": self._completed, "has_planner": self._planner is not None}
