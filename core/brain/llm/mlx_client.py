@@ -1454,7 +1454,23 @@ class MLXLocalClient:
             readiness_blockers.append("no_worker_progress")
         elif progress_age_s is not None and progress_age_s > self._stale_after():
             readiness_blockers.append("worker_progress_stale")
-        if self._is_primary_or_deep_lane() and visible_conversation_anchor <= 0.0:
+        # The visible-conversation probe verifies the primary lane has served a
+        # real user-facing turn. It is only meaningful when a UI surface is
+        # attached; a headless proof/longevity run has no user surface, so a
+        # warm+alive worker is the legitimate ready state and this probe would be
+        # a permanent false positive there. (Mirrors the inference_gate guard.)
+        _proof_headless = False
+        try:
+            from core.runtime.proof_policy import proof_headless_run
+
+            _proof_headless = proof_headless_run()
+        except (ImportError, RuntimeError, AttributeError):
+            _proof_headless = False
+        if (
+            self._is_primary_or_deep_lane()
+            and visible_conversation_anchor <= 0.0
+            and not _proof_headless
+        ):
             readiness_blockers.append("visible_conversation_probe_missing")
         if lane_state == "ready" and not worker_alive:
             lane_state = "cold"

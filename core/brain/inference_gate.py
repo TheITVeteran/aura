@@ -1193,9 +1193,9 @@ class InferenceGate:
             # ready state there, and applying the guard is a false positive.
             _proof_headless = False
             try:
-                from core.runtime.proof_policy import proof_run_active
+                from core.runtime.proof_policy import proof_headless_run
 
-                _proof_headless = proof_run_active(origin="inference_gate_visible_probe")
+                _proof_headless = proof_headless_run()
             except (ImportError, RuntimeError, AttributeError) as exc:
                 logger.debug("Visible-probe proof-policy check unavailable: %s", exc)
             # Fire ONLY when the lane has never served a visible turn

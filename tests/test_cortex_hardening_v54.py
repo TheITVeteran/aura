@@ -250,12 +250,31 @@ class TestConversationLaneStatus(unittest.TestCase):
         lane = gate.get_conversation_status()
         self.assertTrue(lane["conversation_ready"])
 
-    def test_ready_cortex_without_recent_visible_anchor_is_not_conversation_ready(self):
+    def test_ready_cortex_idle_after_serving_stays_conversation_ready(self):
+        # Served a visible turn 10 min ago, idle since (anchor > 0 but stale).
+        # The visible-probe guard fires ONLY on a never-served lane (anchor <= 0);
+        # idle liveness is covered by the worker-progress-staleness probe, so a
+        # warm lane that already proved it can serve must NOT be downgraded.
         client = LaneClientDouble(alive=True, state="ready")
         now = time.time()
         client._last_ready_at = now
         client._last_progress_at = now
         client._last_visible_readiness_at = now - 600.0
+        gate = _make_gate(client)
+
+        lane = gate.get_conversation_status()
+
+        self.assertTrue(lane["conversation_ready"])
+        self.assertNotIn("visible_conversation_probe_missing", lane["readiness_blockers"])
+
+    def test_ready_cortex_never_served_is_flagged_zombie(self):
+        # Claims "ready" but never served a visible turn (anchor <= 0) → a cold
+        # lane masquerading as ready. This is the true zombie the guard catches.
+        client = LaneClientDouble(alive=True, state="ready")
+        now = time.time()
+        client._last_ready_at = now
+        client._last_progress_at = now
+        client._last_visible_readiness_at = 0.0
         gate = _make_gate(client)
 
         lane = gate.get_conversation_status()

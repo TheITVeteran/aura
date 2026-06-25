@@ -530,7 +530,10 @@ def test_health_pulse_reports_active_generation_as_working_not_failure(monkeypat
     assert "Required probes: PASS" in pulse
     assert "Subsystem audit: PASS" in pulse
     assert "Conversation: WORKING" in pulse
-    assert "Runtime: HEALTHY" in pulse
+    # A lane with a generation in flight is busy → "WORKING", not "HEALTHY"
+    # (commit: prevent a busy chat lane from reporting healthy) — but it is NOT a
+    # failure, which the DEGRADED/FAIL assertions below pin down.
+    assert "Runtime: WORKING" in pulse
     assert "Runtime: DEGRADED" not in pulse
     assert "Conversation: FAIL" not in pulse
     assert "❌ conversation_lane" not in pulse

@@ -95,6 +95,28 @@ def proof_run_active(origin: Any = None) -> bool:
     return any(os.environ.get(name) for name in _PROOF_ACTIVE_ENV)
 
 
+_HEADLESS_PROOF_ENV = ("AURA_PROOF_RUN", "AURA_AGI_MAX_TASKS")
+_TRUTHY_ENV = frozenset({"1", "true", "yes", "on"})
+
+
+def proof_headless_run() -> bool:
+    """Return True for headless proof/longevity/battery runs that have no
+    user-facing UI surface attached.
+
+    Distinct from :func:`proof_run_active`: this intentionally EXCLUDES
+    ``AURA_TESTING`` so unit tests still exercise the live, UI-attached contracts
+    (e.g. the visible-conversation zombie-lane guard, which is only meaningful
+    when a conversation surface actually exists). Use this strictly to relax
+    checks that would be permanent false positives when no UI is attached — never
+    to weaken a live-path safety invariant.
+    """
+
+    return any(
+        str(os.environ.get(name, "") or "").strip().lower() in _TRUTHY_ENV
+        for name in _HEADLESS_PROOF_ENV
+    )
+
+
 def active_proof_ablation_services(*, origin: Any = None) -> tuple[str, ...]:
     """Return intentional service lesions that make a proof turn non-proving."""
 
