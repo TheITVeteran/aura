@@ -131,12 +131,25 @@ class EngramAssociationField:
         try:
             payload = io.BytesIO()
             np.save(payload, self.engine.W)
-            get_file_write_gateway().write_bytes(
-                self._path,
-                payload.getvalue(),
-                source="memory:engram_association",
-            )
-        except (OSError, ValueError) as exc:
+            # Persisting learned weights mutates a governed file; it can be driven
+            # from background recall/hydration paths that hold no governance
+            # token. Open a local maintenance scope so the file_write_gateway has
+            # a valid receipt instead of raising GovernanceViolationError.
+            from core.governance_context import local_internal_governed_scope
+
+            with local_internal_governed_scope(
+                "memory.engram_association.save",
+                domain="file_write",
+            ):
+                get_file_write_gateway().write_bytes(
+                    self._path,
+                    payload.getvalue(),
+                    source="memory:engram_association",
+                )
+        except (OSError, ValueError, RuntimeError) as exc:
+            # Best-effort persistence — a save failure (incl. a
+            # GovernanceViolationError, which subclasses RuntimeError) must never
+            # cascade into the caller's memory/recall path.
             record_degradation("engram_association", exc)
 
     def flush(self) -> None:

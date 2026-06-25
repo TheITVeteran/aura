@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import time
+import tracemalloc
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +94,11 @@ async def async_main(argv: list[str] | None = None) -> int:
         "--tick-s", type=float, default=30.0,
         help="seconds between pulses in endurance mode",
     )
+    parser.add_argument(
+        "--trace-malloc", action="store_true",
+        default=bool(os.environ.get("AURA_SOAK_TRACEMALLOC")),
+        help="capture tracemalloc top-growth snapshots to localize leaks",
+    )
     args = parser.parse_args(argv)
 
     out_dir = _resolve_output_dir(args.out)
@@ -121,9 +127,15 @@ async def async_main(argv: list[str] | None = None) -> int:
         timeout_s=float(os.getenv("AURA_LONGEVITY_LOOP_STABILIZE_TIMEOUT_S", "20") or 20),
         interval_s=0.05,
     )
+    leak_baseline = None
+    leak_top: list[dict[str, Any]] = []
     try:
         will = get_will()
         await will.start()
+        if args.trace_malloc:
+            tracemalloc.start(25)
+            leak_baseline = tracemalloc.take_snapshot()
+            print("🔬 [tracemalloc] leak baseline captured after boot+warmup", flush=True)
         duration_s = max(0.0, float(args.duration_s or 0.0))
         tick_s = max(1.0, float(args.tick_s or 30.0))
         soak_started = time.monotonic()
@@ -166,6 +178,22 @@ async def async_main(argv: list[str] | None = None) -> int:
                     + "\n"
                 )
                 index += 1
+                if leak_baseline is not None and index % 20 == 0:
+                    snap = tracemalloc.take_snapshot()
+                    top = snap.compare_to(leak_baseline, "lineno")[:12]
+                    elapsed = time.monotonic() - soak_started
+                    print(
+                        f"🔬 [tracemalloc] top growth @ iter {index} "
+                        f"(elapsed {elapsed:.0f}s, rss {_rss_mb():.0f}MB):",
+                        flush=True,
+                    )
+                    for stat in top:
+                        where = stat.traceback.format()[-1].strip()
+                        print(
+                            f"     {stat.size_diff / 1024 / 1024:+7.1f}MB "
+                            f"{stat.count_diff:+8d}  {where}",
+                            flush=True,
+                        )
                 # Endurance mode: pace the pulses across the real-time window.
                 if duration_s > 0.0:
                     remaining = duration_s - (time.monotonic() - soak_started)
@@ -173,6 +201,21 @@ async def async_main(argv: list[str] | None = None) -> int:
                         break
                     await asyncio.sleep(min(tick_s, remaining))
     finally:
+        if leak_baseline is not None:
+            try:
+                snap = tracemalloc.take_snapshot()
+                for stat in snap.compare_to(leak_baseline, "lineno")[:25]:
+                    leak_top.append(
+                        {
+                            "size_diff_mb": round(stat.size_diff / 1024 / 1024, 3),
+                            "count_diff": stat.count_diff,
+                            "where": stat.traceback.format()[-1].strip(),
+                        }
+                    )
+            except (RuntimeError, ValueError, OSError):
+                pass
+            finally:
+                tracemalloc.stop()
         await shutdown_proof_runtime(orch)
 
     rss_values = [item["rss_mb"] for item in metrics if item["rss_mb"] > 0.0]
@@ -199,6 +242,7 @@ async def async_main(argv: list[str] | None = None) -> int:
         "event_loop_lag_normal": bool(boot_loop_report.stable and max_lag <= lag_threshold_ms),
         "max_lag_ms": round(max_lag, 3),
         "max_queue_len": max_queue,
+        "leak_top_growth": leak_top,
         "metrics": metrics,
         "claim_scope": (
             f"real-time endurance soak ({elapsed_s:.0f}s / requested {duration_s:.0f}s): "
