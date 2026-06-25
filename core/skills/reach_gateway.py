@@ -21,6 +21,7 @@ this gate.
 """
 from __future__ import annotations
 
+import json as json_module
 import logging
 import os
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from core.runtime.errors import record_degradation
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Aura.Reach")
 
@@ -95,18 +97,6 @@ class ReachGateway:
         except (ValueError, TypeError):
             return ""
 
-    async def _client(self) -> Any | None:
-        if self._http is not None:
-            return self._http
-        try:
-            import httpx
-
-            self._http = httpx.AsyncClient(timeout=self.policy.timeout_s, follow_redirects=True)
-            return self._http
-        except ImportError as exc:
-            record_degradation("reach_gateway", exc)
-            return None
-
     async def request(
         self,
         method: str,
@@ -125,13 +115,32 @@ class ReachGateway:
         if method in _MUTATE_METHODS and not reason.strip():
             return ReachResult(ok=False, method=method, host=host, url=url, blocked=True,
                                reason="mutating reach requires a stated reason")
-        client = await self._client()
-        if client is None:
-            return ReachResult(ok=False, method=method, host=host, url=url, reason="no http client available")
         try:
-            resp = await client.request(method, url, json=json, headers=headers)
-            status = int(getattr(resp, "status_code", 0))
-            text = getattr(resp, "text", "") or ""
+            if self._http is not None:
+                resp = await self._http.request(method, url, json=json, headers=headers)
+                status = int(getattr(resp, "status_code", 0))
+                text = getattr(resp, "text", "") or ""
+            else:
+                request_headers = dict(headers or {})
+                data = None
+                if json is not None:
+                    request_headers.setdefault("content-type", "application/json")
+                    data = json_module.dumps(json)
+                response = await get_network_gateway().request_async(
+                    method,
+                    url,
+                    headers=request_headers,
+                    data=data,
+                    timeout=self.policy.timeout_s,
+                    source="core.skills.reach_gateway",
+                    read_only=method in _READ_METHODS,
+                )
+                status = int(response.get("status_code", 0) or 0)
+                content = response.get("content", b"")
+                if isinstance(content, bytes):
+                    text = content.decode("utf-8", errors="replace")
+                else:
+                    text = str(content or "")
             preview = text[: self.policy.max_response_bytes]
             ok = 200 <= status < 400
             logger.info("🌐 [Reach] %s %s → %d%s", method, host, status, "" if ok else " (non-2xx)")

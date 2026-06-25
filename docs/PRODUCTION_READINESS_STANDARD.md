@@ -36,10 +36,13 @@ these repeatable controls from a clean clone.
 
 ## Current Readiness Note
 
-Aura should not be described as production-grade until the enterprise gate
-ratchet is below the accepted threshold. A completed gate run reported 961
-high-or-critical findings; the fixes in this closure pass address named
-architectural blockers but do not erase that broader hardening debt.
+Aura should not be described as production-ready until all required gates above
+pass on the current commit and the live desktop path has fresh runtime evidence.
+The enterprise ratchet is currently green on the dev machine
+(`make enterprise-gate`, 2026-06-25: 0 high/critical findings and 0 baseline
+regressions), but clean-clone install proof, full production gate evidence,
+final-proof artifacts, and longevity/external reproduction remain separate
+closure requirements.
 
 ## Security Controls
 

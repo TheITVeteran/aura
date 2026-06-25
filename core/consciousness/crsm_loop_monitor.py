@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.CRSMLoop")
 
@@ -129,10 +130,12 @@ class CRSMLoopMonitor:
             "source": source or "unspecified",
         }
         try:
-            self.marker_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.marker_path.with_name(self.marker_path.name + ".tmp")
-            tmp.write_text(json.dumps(payload), encoding="utf-8")
-            tmp.replace(self.marker_path)
+            get_file_write_gateway().write_text(
+                self.marker_path,
+                json.dumps(payload),
+                encoding="utf-8",
+                source="training:crsm_loop_monitor",
+            )
             logger.info("🔁 [CRSMLoop] dataset consumed: %d lines → %s", lines_consumed, model_path)
         except OSError as exc:
             record_degradation("crsm_loop_monitor", exc)

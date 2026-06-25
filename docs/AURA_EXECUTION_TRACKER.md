@@ -439,15 +439,22 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
 - 2026-06-25 enterprise ratchet cleanup: 212 focused tests passed;
   `make enterprise-gate` passed; enterprise high/critical count is 0 and
   baseline regressions are 0.
+- 2026-06-25 production surface gateway cleanup: 28 focused persistence/reach
+  tests passed; `make enterprise-gate` passed; `make production-gate` passed;
+  `tools/production_surface_lint.py --scope production` passed with 0 findings;
+  `tools/proof_integrity_lint.py --scope production` passed with 0 findings;
+  architecture map regenerated.
 
 ## Current Closeout Progress Gauge
 
-- Latest checkpoint: enterprise static ratchet cleanup.
+- Latest checkpoint: production surface gateway cleanup.
 - Evidence added: subprocess ownership routed through `SubprocessGateway` for
   DNU/wedge supervisor paths, hardcoded local test paths removed, one broad
-  watchdog exception narrowed, and enterprise baseline regressions cleared.
-- Current operator estimate: about 81% through the ultimate closeout standard.
-- Estimated remaining checkpoints: 8 to 10 total, depending on how many live
+  watchdog exception narrowed, enterprise baseline regressions cleared, direct
+  production file writes routed through `FileWriteGateway`, reach network calls
+  routed through `NetworkGateway`, and architecture-map artifacts refreshed.
+- Current operator estimate: about 82% through the ultimate closeout standard.
+- Estimated remaining checkpoints: 7 to 9 total, depending on how many live
   desktop/demo-path defects surface during real 32B/72B runtime validation.
 - Still not closed: final proof, DNU/Aletheia clean reruns, live desktop
   multi-app proof, CRSM-to-LoRA closure, CAA extraction validation, longer soak,

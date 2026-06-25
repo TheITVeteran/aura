@@ -19,6 +19,7 @@ causal and durable instead of tested-but-dormant.
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 import os
 import threading
@@ -32,6 +33,7 @@ from core.consciousness.voltage_plasticity import (
     VoltagePlasticityConfig,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.Memory.EngramAssociation")
 
@@ -127,11 +129,13 @@ class EngramAssociationField:
 
     def _save(self) -> None:
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._path.with_name(self._path.name + ".tmp")
-            with open(tmp, "wb") as fh:          # file handle → no .npy suffix games
-                np.save(fh, self.engine.W)
-            os.replace(tmp, self._path)
+            payload = io.BytesIO()
+            np.save(payload, self.engine.W)
+            get_file_write_gateway().write_bytes(
+                self._path,
+                payload.getvalue(),
+                source="memory:engram_association",
+            )
         except (OSError, ValueError) as exc:
             record_degradation("engram_association", exc)
 
