@@ -258,6 +258,29 @@ class _RecordingClient:
         return self.text
 
 
+class _ReceiptRecordingClient(_RecordingClient):
+    def __init__(self, text: str):
+        super().__init__(text)
+        self.receipt = {
+            "enabled": True,
+            "live_mind_controls_bound": True,
+            "clean_user_surface_contract": True,
+            "surface_validation_prompt_present": True,
+            "surface_alpha_applied": 0.31,
+            "surface_alpha_applied_ok": True,
+            "recurrent_runtime_loops_applied": 2,
+            "recurrent_runtime_loops_applied_ok": True,
+            "surface_quality_gate_enabled": True,
+            "surface_quality_gate_passed": True,
+            "surface_quality_gate_attempts": 1,
+            "surface_quality_gate_reasons": [],
+            "applied": True,
+        }
+
+    def get_last_surface_control_receipt(self):
+        return dict(self.receipt)
+
+
 class _SequenceRecordingClient(_RecordingClient):
     def __init__(self, texts: list[str]):
         super().__init__(texts[-1] if texts else "")
@@ -1051,6 +1074,11 @@ def test_live_desktop_contract_metadata_is_prompt_visible():
         {
             "mind_context_contract": "Use live_mind_context as causal grounding.",
             "response_style_contract": "Do not invent a pitch. Do not answer as a generic assistant.",
+            "live_mind_context": {
+                "derived_runtime_context": {
+                    "prompt_block": "## DERIVED RUNTIME SIGNALS\n- ICE: high inbound; recommended_action=block"
+                }
+            },
             "live_speech_grounding_frame": {
                 "tone": "grounded",
                 "continuity": "stay on the current user turn",
@@ -1062,6 +1090,8 @@ def test_live_desktop_contract_metadata_is_prompt_visible():
     assert "Use live_mind_context as causal grounding" in block
     assert "Do not invent a pitch" in block
     assert "Do not answer as a generic assistant" in block
+    assert "DERIVED RUNTIME SIGNALS" in block
+    assert "recommended_action=block" in block
     assert "tone=grounded" in block
     assert "continuity=stay on the current user turn" in block
 
@@ -2015,6 +2045,60 @@ async def test_think_forwards_explicit_timeout_to_generate():
     assert result == "hello"
     gate.generate.assert_awaited_once()
     assert gate.generate.await_args.kwargs["timeout"] == 67.0
+
+
+@pytest.mark.asyncio
+async def test_think_forwards_user_surface_validation_prompt_to_generate():
+    gate = InferenceGate()
+    gate.generate = AsyncCallProbe(return_value="hello")
+
+    await gate.think(
+        "With me?",
+        system_prompt="Speak as Aura.",
+        origin="desktop_quick_user",
+        prefer_tier="primary",
+        clean_user_surface_contract=True,
+        user_surface_validation_prompt="With me?",
+    )
+
+    context = gate.generate.await_args.kwargs["context"]
+    assert context["clean_user_surface_contract"] is True
+    assert context["user_surface_validation_prompt"] == "With me?"
+
+
+@pytest.mark.asyncio
+async def test_inference_gate_exposes_local_surface_control_receipt():
+    gate = InferenceGate()
+    client = _ReceiptRecordingClient(
+        "I am tracking this live desktop turn through the governed Cortex lane."
+    )
+    gate._mlx_client = client
+
+    result = await gate.generate(
+        "What are you tracking?",
+        context={
+            "origin": "desktop_quick_user",
+            "prefer_tier": "primary",
+            "foreground_request": True,
+            "protected_foreground_lane": True,
+            "allow_mesh_cognition": False,
+            "clean_user_surface_contract": True,
+            "user_surface_validation_prompt": "What are you tracking?",
+            "clean_user_surface_recurrent_loops": 2,
+            "clean_user_surface_steering_alpha": 0.31,
+            "live_mind_controls_bound": True,
+            "allow_cloud_fallback": False,
+            "max_tokens": 160,
+        },
+        timeout=20.0,
+    )
+
+    assert result
+    metadata = gate.get_last_generation_metadata()
+    receipt = gate.get_last_surface_control_receipt()
+    assert metadata["surface_control_receipt"]["applied"] is True
+    assert receipt["surface_validation_prompt_present"] is True
+    assert client.kwargs[0]["user_surface_validation_prompt"] == "What are you tracking?"
 
 
 @pytest.mark.asyncio

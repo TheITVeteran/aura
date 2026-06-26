@@ -3441,6 +3441,7 @@ def _build_live_turn_contract_payload(
                 "enabled",
                 "live_mind_controls_bound",
                 "clean_user_surface_contract",
+                "surface_validation_prompt_present",
                 "surface_alpha_applied",
                 "surface_alpha_applied_ok",
                 "recurrent_runtime_loops_applied",
@@ -3610,6 +3611,14 @@ def _build_live_mind_context_payload(
         record_degradation("chat", exc)
         logger.debug("Live mind context runtime snapshot unavailable: %s", exc)
     mind_snapshot_quality = _assess_live_mind_snapshot(mind_snapshot)
+    derived_runtime_context: dict[str, Any] = {}
+    try:
+        from core.runtime.derived_runtime_context import collect_derived_runtime_context
+
+        derived_runtime_context = collect_derived_runtime_context(user_message)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Live mind context derived-organ bridge unavailable: %s", exc)
 
     return {
         "schema": "aura.live_mind_context.v1",
@@ -3631,6 +3640,7 @@ def _build_live_mind_context_payload(
         "substrate": substrate_summary,
         "mind_snapshot": mind_snapshot,
         "mind_snapshot_quality": mind_snapshot_quality,
+        "derived_runtime_context": derived_runtime_context,
         "governance": {
             "tool_governance_available": bool(required.get("tool_governance")),
             "legacy_fallback_allowed": False,
@@ -7038,6 +7048,14 @@ def _apply_aura_voice_shaping(text: str, user_message: str = "") -> str:
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         logger.debug("Aura voice shaping personality pass skipped: %s", exc)
+
+    try:
+        from core.runtime.derived_runtime_context import guard_user_facing_output
+
+        shaped = guard_user_facing_output(shaped)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Aura voice shaping derived output guard skipped: %s", exc)
 
     try:
         from core.synthesis import stabilize_user_facing_response

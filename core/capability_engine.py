@@ -3173,14 +3173,14 @@ class CapabilityEngine(AuraBaseModule):
                     "CapabilityEngine: metabolic self-preservation check skipped: %s", e
                 )
 
+            effect_scope = self._effect_scope_for_execution(skill_name, meta, params, ctx)
+            risk = self._edi_risk_for(skill_name, meta, params, effect_scope)
+            governed_execution = self._context_governed_execution(ctx, skill_name)
+            user_authorized = self._context_user_authorized(ctx, exec_source)
+
             # 2. EDI Autonomy & Security Check (Phase 23.4)
             edi = resolve_edi(default=None)
             if edi and hasattr(edi, "can_do"):
-                effect_scope = self._effect_scope_for_execution(skill_name, meta, params, ctx)
-                risk = self._edi_risk_for(skill_name, meta, params, effect_scope)
-                governed_execution = self._context_governed_execution(ctx, skill_name)
-                user_authorized = self._context_user_authorized(ctx, exec_source)
-
                 allowed, reason = edi.can_do(
                     skill_name,
                     risk_level=risk,
@@ -3196,14 +3196,15 @@ class CapabilityEngine(AuraBaseModule):
                         "status": "blocked_by_edi",
                     }
 
-            # 2.5 Derived conscience + outcome restraint (Kokoro blocks; Minds/Tron advise).
-            # Same gate as the tool path, extended to skill execution. All synchronous
-            # heuristics — no latency. Kokoro is the only hard blocker here.
+            # 2.5 Derived conscience + outcome restraint.
+            # Same gate as the tool path, extended to skill execution. Kokoro blocks
+            # indefensible actions, the Minds hold severe worst cases, Tron protects
+            # the user, and the Machine enforces least-privilege external scope.
             try:
                 from core.container import ServiceContainer as _SC
 
                 _action_desc = f"{skill_name} {str(params)[:200]}"
-                _risk_hint = locals().get("risk", "medium")
+                _risk_hint = risk
                 _kokoro = _SC.get("kokoro", default=None)
                 _escalate = False
                 if _kokoro is not None:
@@ -3237,25 +3238,57 @@ class CapabilityEngine(AuraBaseModule):
                     else:
                         _sim = None
                     if _sim is not None and _sim.recommendation == "hold":
-                        self.logger.warning(
-                            "🌀 Outcome simulation advises HOLD on skill '%s' (worst-case harm %.2f)",
-                            skill_name, _sim.worst_case_harm,
+                        reason = (
+                            "Outcome simulator held skill; worst-case harm "
+                            f"{float(getattr(_sim, 'worst_case_harm', 0.0) or 0.0):.2f}"
                         )
+                        self.logger.warning(
+                            "🌀 Outcome simulation BLOCKED skill '%s' (%s)",
+                            skill_name, reason,
+                        )
+                        return {
+                            "ok": False,
+                            "error": reason,
+                            "status": "blocked_by_outcome_simulator",
+                        }
                 _tron = _SC.get("tron", default=None)
                 if _tron is not None:
+                    confirmed = bool(
+                        params.get("confirmed")
+                        or params.get("user_confirmed")
+                        or ctx.get("confirmed")
+                        or ctx.get("user_confirmed")
+                        or (exec_source in _USER_FACING_CONTEXT_ORIGINS and _risk_hint not in ("high", "critical"))
+                    )
+                    user_benefit = (
+                        str(params.get("user_benefit") or ctx.get("user_benefit") or "").strip()
+                        or str(ctx.get("objective") or ctx.get("user_objective") or "").strip()
+                        or (
+                            "requested through the user-facing skill lane"
+                            if exec_source in _USER_FACING_CONTEXT_ORIGINS
+                            else ""
+                        )
+                    )
                     _review = _tron.review_action({
                         "description": _action_desc,
                         "irreversible": _risk_hint in ("high", "critical"),
-                        "confirmed": True,
+                        "confirmed": confirmed,
+                        "user_benefit": user_benefit,
                         "explanation": f"skill {skill_name}",
                     })
                     if _review.verdict == "against_user":
-                        self.logger.info(
-                            "🟦 User-advocate flags skill '%s': %s",
-                            skill_name, _review.on_behalf_of_user,
+                        reason = _review.on_behalf_of_user
+                        self.logger.warning(
+                            "🟦 User-advocate BLOCKED skill '%s': %s",
+                            skill_name, reason,
                         )
+                        return {
+                            "ok": False,
+                            "error": f"User advocate blocked: {reason}",
+                            "status": "blocked_by_user_advocate",
+                        }
                 _machine = _SC.get("the_machine", default=None)
-                _scope = str(locals().get("effect_scope", "")).lower()
+                _scope = str(effect_scope or "").lower()
                 if _machine is not None and _scope in ("external", "network", "online", "public"):
                     _disc = _machine.minimize(
                         purpose=skill_name,
@@ -3263,10 +3296,19 @@ class CapabilityEngine(AuraBaseModule):
                         requested_capabilities=[_scope],
                     )
                     if _disc.withheld_capabilities:
-                        self.logger.debug(
-                            "🔢 The Machine: need-to-know review on external skill '%s' (scope %s)",
-                            skill_name, _scope,
+                        reason = (
+                            "Need-to-know withheld external capability "
+                            f"{', '.join(_disc.withheld_capabilities)} for purpose {skill_name!r}"
                         )
+                        self.logger.warning(
+                            "🔢 The Machine BLOCKED external skill '%s': %s",
+                            skill_name, reason,
+                        )
+                        return {
+                            "ok": False,
+                            "error": reason,
+                            "status": "blocked_by_need_to_know",
+                        }
             except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError) as _gate_exc:
                 self.logger.debug("Derived conscience/outcome gate degraded: %s", _gate_exc)
 

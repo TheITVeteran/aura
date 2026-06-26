@@ -1956,6 +1956,7 @@ class CognitiveEngine:
                 "deep_handoff": False,
                 "allow_deep_handoff": False,
                 "allow_cloud_fallback": False,
+                "allow_mesh_cognition": False,
                 "skip_runtime_payload": True,
                 "memory_state_contract": memory_state_contract,
                 "clean_user_surface_contract": True,

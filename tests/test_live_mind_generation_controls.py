@@ -77,6 +77,7 @@ async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypat
                     "enabled": True,
                     "live_mind_controls_bound": True,
                     "clean_user_surface_contract": True,
+                    "surface_validation_prompt_present": True,
                     "surface_alpha_applied": 0.30,
                     "surface_alpha_applied_ok": True,
                     "recurrent_runtime_loops_applied": 2,
@@ -122,6 +123,8 @@ async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypat
     assert router_kwargs["clean_user_surface_recurrent_loops"] == 2
     assert router_kwargs["clean_user_surface_steering_alpha"] > 0.25
     assert router_kwargs["clean_user_surface_contract"] is True
+    assert router_kwargs["user_surface_validation_prompt"] == "What are you attending to?"
+    assert router_kwargs["allow_mesh_cognition"] is False
     assert router_kwargs["live_mind_controls_bound"] is True
     assert router_kwargs["live_mind_snapshot_ready"] is True
     assert router_kwargs["live_mind_required_subsystems_ok"] is False

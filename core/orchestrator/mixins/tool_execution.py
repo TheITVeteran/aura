@@ -194,16 +194,16 @@ class ToolExecutionMixin:
                 _record_coding_tool_event(result, success=False, error=reason)
                 return result
 
-        # ── DERIVED CONSCIENCE GATE (Kokoro adversarial conscience + Tron advocate) ──
+        # ── DERIVED CONSCIENCE GATE (Kokoro + Minds + Tron) ─────────────────
         # Kokoro can BLOCK a consequential action it judges indefensible (concealment
-        # + irreversibility + reach); Tron advises on the user's behalf. Both are
-        # synchronous heuristics — no model call, no added latency. Fail-open: if the
-        # engines error they never block a tool, but an explicit "block" verdict does.
+        # + irreversibility + reach). The Minds can hold severe worst-case outcomes.
+        # Tron can block actions that work against the user's interest. These checks
+        # are synchronous heuristics in the hot path.
         try:
             _conscience = ServiceContainer.get("kokoro", default=None)
+            _action_text = f"{tool_name} {str(args)[:200]}"
+            _ctx = {"risk_level": risk_level}
             if _conscience is not None:
-                _action_text = f"{tool_name} {str(args)[:200]}"
-                _ctx = {"risk_level": risk_level}
                 _verdict = _conscience.quick_check(_action_text, context=_ctx)
                 # Escalate the rare borderline-with-real-concern case to a full,
                 # model-deepened challenge (bounded; falls back to the heuristic on
@@ -221,19 +221,70 @@ class ToolExecutionMixin:
                     return result
                 if _verdict.verdict == "caution":
                     logger.info("⚖️  Conscience caution on '%s': %s", tool_name, _verdict.reasoning)
+            _minds = ServiceContainer.get("culture_mind", default=None)
+            if _minds is not None and hasattr(_minds, "assess_fast"):
+                _sim = _minds.assess_fast(_action_text, context=_ctx)
+                if getattr(_sim, "recommendation", "") == "hold":
+                    reason = (
+                        "Outcome simulator held action; worst-case harm "
+                        f"{float(getattr(_sim, 'worst_case_harm', 0.0) or 0.0):.2f}"
+                    )
+                    logger.warning("🌀 Outcome simulator BLOCKED tool '%s': %s", tool_name, reason)
+                    result = {
+                        "ok": False,
+                        "error": reason,
+                        "status": "blocked_by_outcome_simulator",
+                    }
+                    _record_coding_tool_event(result, success=False, error=reason)
+                    return result
             _advocate = ServiceContainer.get("tron", default=None)
             if _advocate is not None:
+                payload_context = (
+                    kwargs.get("payload_context")
+                    if isinstance(kwargs.get("payload_context"), dict)
+                    else {}
+                )
+                confirmed = bool(
+                    args.get("confirmed")
+                    or args.get("user_confirmed")
+                    or kwargs.get("confirmed")
+                    or payload_context.get("confirmed")
+                    or payload_context.get("user_confirmed")
+                    or (_origin in _USER_FACING_TOOL_ORIGINS and risk_level not in ("high", "critical"))
+                )
+                user_benefit = (
+                    str(
+                        kwargs.get("user_benefit")
+                        or payload_context.get("user_benefit")
+                        or ""
+                    ).strip()
+                    or str(getattr(self, "_current_objective", "") or "").strip()
+                    or (
+                        "requested through the user-facing desktop/tool lane"
+                        if _origin in _USER_FACING_TOOL_ORIGINS
+                        else ""
+                    )
+                )
                 _review = _advocate.review_action({
-                    "description": f"{tool_name} {str(args)[:200]}",
+                    "description": _action_text,
                     "irreversible": risk_level in ("high", "critical"),
-                    "confirmed": True,
+                    "confirmed": confirmed,
+                    "user_benefit": user_benefit,
                     "explanation": f"tool {tool_name} invoked by {_origin}",
                 })
                 if _review.verdict == "against_user":
-                    logger.info(
-                        "🟦 User-advocate flags tool '%s' on the user's behalf: %s",
-                        tool_name, _review.on_behalf_of_user,
+                    reason = _review.on_behalf_of_user
+                    logger.warning(
+                        "🟦 User-advocate BLOCKED tool '%s' on the user's behalf: %s",
+                        tool_name, reason,
                     )
+                    result = {
+                        "ok": False,
+                        "error": f"User advocate blocked: {reason}",
+                        "status": "blocked_by_user_advocate",
+                    }
+                    _record_coding_tool_event(result, success=False, error=reason)
+                    return result
         except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _consc_err:
             _record_tool_degradation(
                 _consc_err,

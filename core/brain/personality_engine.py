@@ -697,15 +697,29 @@ class PersonalityEngine:
     def filter_response(self, text: str) -> str:
         """Final output filter for personality integrity.
         
-        Uses synthesis layer to scrub robotic leaks and enforce Aura's voice.
+        Uses synthesis layer to scrub robotic leaks and enforce Aura's voice, then
+        applies the Data honesty floor so personality shaping cannot preserve
+        deceptive overclaiming.
         """
+        shaped = text
         try:
             from core.synthesis import cure_personality_leak
         except (ImportError, AttributeError, RuntimeError):
             # Basic fallback if the synthesis layer is unavailable.
-            return text.replace("AI assistant", "autonomous intelligence").replace("as an assistant", "as your equal partner")
+            shaped = text.replace("AI assistant", "autonomous intelligence").replace("as an assistant", "as your equal partner")
+        else:
+            shaped = cure_personality_leak(text)
 
-        return cure_personality_leak(text)
+        try:
+            from core.runtime.derived_runtime_context import guard_user_facing_output
+
+            guarded = guard_user_facing_output(shaped)
+            if isinstance(guarded, str) and guarded.strip():
+                shaped = guarded
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return shaped
+
+        return shaped
 
     def _apply_random_fluctuations(self):
         """Small random emotional fluctuations (natural variability)"""

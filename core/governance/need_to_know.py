@@ -33,6 +33,17 @@ _PURPOSE_POLICY: dict[str, set[str]] = {
     "billing": {"amount", "invoice_id"},
 }
 
+_PURPOSE_CAPABILITY_POLICY: dict[str, set[str]] = {
+    "browser": {"external", "network", "online", "public"},
+    "free_search": {"external", "network", "online", "public"},
+    "grounded_search": {"external", "network", "online", "public"},
+    "research": {"external", "network", "online", "public"},
+    "search": {"external", "network", "online", "public"},
+    "search_web": {"external", "network", "online", "public"},
+    "sovereign_browser": {"external", "network", "online", "public"},
+    "web_search": {"external", "network", "online", "public"},
+}
+
 _SENSITIVE_FIELDS = {
     "ssn", "password", "full_address", "location_precise", "contacts",
     "messages", "browsing_history", "biometrics", "card_number", "medical",
@@ -86,8 +97,16 @@ class NeedToKnowPolicy:
                 withheld.append(f)
 
         req_caps = requested_capabilities or []
-        # Capabilities are need-to-know too: grant only those whose name matches the purpose.
-        granted_caps = [c for c in req_caps if purpose.lower() in c.lower() or c.lower() in allowed]
+        purpose_key = purpose.lower()
+        allowed_caps = set(_PURPOSE_CAPABILITY_POLICY.get(purpose_key, set()))
+        # Capabilities are need-to-know too: grant only those whose name matches
+        # the purpose or is explicitly allowed for that purpose.
+        granted_caps = [
+            c for c in req_caps
+            if purpose_key in c.lower()
+            or c.lower() in allowed
+            or c.lower() in allowed_caps
+        ]
         withheld_caps = [c for c in req_caps if c not in granted_caps]
 
         self._decisions += 1

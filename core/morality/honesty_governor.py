@@ -19,11 +19,18 @@ world, so outward statements are truthful and appropriately hedged.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from core.morality.deception_guard import DeceptionGuard
 
 logger = logging.getLogger("Morality.HonestyGovernor")
+
+
+def deep_honesty_enabled() -> bool:
+    """Opt-in gate for inline model fact-checking on the primary output path.
+    Off by default so it never taxes a response unless explicitly enabled."""
+    return os.getenv("AURA_DEEP_HONESTY", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class HonestyGovernor:
@@ -51,14 +58,16 @@ class HonestyGovernor:
         return vetted
 
     async def vet_output_deep(
-        self, text: str, *, confidence: float | None = None, timeout: float = 8.0
+        self, text: str, *, confidence: float | None = None, timeout: float = 8.0, force: bool = False
     ) -> str:
-        """Model-deepened honesty pass for low-confidence factual claims: asks the model
-        to flag anything it cannot stand behind, and notes it. Callable on demand — kept
-        off the synchronous output hot path so it never taxes every response. Falls back
-        to the static pass on any failure or when confidence is fine."""
+        """Model-deepened honesty pass: asks the model to flag any factual claim it
+        cannot stand behind, and notes it. Runs when confidence is low, or when `force`
+        is set (the opt-in inline output-path mode). Falls back to the static pass on any
+        failure or when there is nothing worth a model call."""
         vetted = self.vet_output(text, confidence=confidence)
-        if confidence is None or confidence >= self.LOW_CONFIDENCE or len(text.split()) < 4:
+        if not force and (confidence is None or confidence >= self.LOW_CONFIDENCE or len(text.split()) < 4):
+            return vetted
+        if force and len(text.split()) < 4:
             return vetted
         from core.utils.engine_support import coerce_text, record_engine_degradation, resolve_brain
 

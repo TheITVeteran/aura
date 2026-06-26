@@ -427,6 +427,7 @@ def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
         "enabled",
         "live_mind_controls_bound",
         "clean_user_surface_contract",
+        "surface_validation_prompt_present",
         "strict_answer_contract",
         "strict_value_contract",
         "proof_evaluation_contract",
@@ -3510,6 +3511,9 @@ class MLXLocalClient:
             "clean_user_surface_contract": bool(
                 kwargs.get("clean_user_surface_contract", False)
                 or kwargs.get("health_probe", False)
+            ),
+            "user_surface_validation_prompt": str(
+                kwargs.get("user_surface_validation_prompt") or ""
             ),
             "clean_user_surface_steering_alpha": kwargs.get("clean_user_surface_steering_alpha"),
             "clean_user_surface_recurrent_loops": (

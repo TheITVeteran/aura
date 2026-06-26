@@ -55,6 +55,28 @@ class ReceiptGenerateClient:
         }
 
 
+class ReceiptThinkClient:
+    async def think(self, prompt, **kwargs):
+        return "receipt-bound think response"
+
+    def get_last_surface_control_receipt(self):
+        return {
+            "enabled": True,
+            "live_mind_controls_bound": True,
+            "clean_user_surface_contract": True,
+            "surface_validation_prompt_present": True,
+            "surface_alpha_applied": 0.28,
+            "surface_alpha_applied_ok": True,
+            "recurrent_runtime_loops_applied": 2,
+            "recurrent_runtime_loops_applied_ok": True,
+            "surface_quality_gate_enabled": True,
+            "surface_quality_gate_passed": True,
+            "surface_quality_gate_attempts": 1,
+            "surface_quality_gate_reasons": [],
+            "applied": True,
+        }
+
+
 @pytest.fixture
 def router_clients():
     router = HealthAwareLLMRouter()
@@ -192,6 +214,34 @@ async def test_router_surfaces_mlx_surface_control_receipt():
 
     assert text == "receipt-bound response"
     assert router.get_last_generation_metadata()["surface_control_receipt"]["applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_router_surfaces_inference_gate_surface_control_receipt_from_think_client():
+    router = HealthAwareLLMRouter()
+    client = ReceiptThinkClient()
+    router.register(
+        name="Cortex",
+        url="internal",
+        model="cortex-32b",
+        is_local=True,
+        tier="local",
+        client=client,
+    )
+
+    result = await router.generate_with_metadata(
+        "Hello",
+        prefer_tier="primary",
+        origin="desktop_quick_user",
+        skip_runtime_payload=True,
+        clean_user_surface_contract=True,
+        user_surface_validation_prompt="Hello",
+        live_mind_controls_bound=True,
+    )
+
+    assert result["text"] == "receipt-bound think response"
+    assert result["surface_control_receipt"]["applied"] is True
+    assert result["surface_control_receipt"]["surface_validation_prompt_present"] is True
 
 
 @pytest.mark.asyncio

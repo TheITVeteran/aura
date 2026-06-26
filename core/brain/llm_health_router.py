@@ -2720,6 +2720,7 @@ class HealthAwareLLMRouter:
                                 "proof_evaluation_contract",
                                 "operator_evidence_contract",
                                 "clean_user_surface_contract",
+                                "user_surface_validation_prompt",
                                 "clean_user_surface_steering_alpha",
                                 "clean_user_surface_recurrent_loops",
                                 "disable_prompt_cache",

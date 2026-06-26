@@ -1833,6 +1833,29 @@ class UnitaryResponsePhase(Phase):
         shaped = re.sub(r"^\s*[.。]\s+(?=[A-Z0-9\"'“‘])", "", shaped).strip()
         return shaped
 
+    async def _apply_deep_honesty(self, text: str) -> str:
+        """Opt-in (AURA_DEEP_HONESTY=1) inline fact-check of the final user-facing
+        response via the Data honesty governor. Off by default — so it never taxes a
+        response unless explicitly enabled — bounded ~8s, and fail-open to the text
+        as-is. The model can only annotate an unverified claim, never alter intent."""
+        try:
+            from core.morality.honesty_governor import deep_honesty_enabled
+
+            if not text or not deep_honesty_enabled():
+                return text
+            from core.container import ServiceContainer
+
+            gov = ServiceContainer.get("data", default=None)
+            if gov is None or not hasattr(gov, "vet_output_deep"):
+                return text
+            vetted = await gov.vet_output_deep(text, force=True, timeout=8.0)
+            return vetted if isinstance(vetted, str) and vetted.strip() else text
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_response_degradation(
+                exc, "UnitaryResponse: deep honesty pass skipped: %s"
+            )
+            return text
+
     def _build_router_messages(
         self,
         state: AuraState,
@@ -5900,6 +5923,7 @@ class UnitaryResponsePhase(Phase):
                 and not operator_evidence_turn
             ):
                 response_text = self._shape_user_facing_response(response_text, objective)
+                response_text = await self._apply_deep_honesty(response_text)
 
             async def _retry_dialogue(repair_block: str) -> str:
                 if desktop_cognitive_engine_required:

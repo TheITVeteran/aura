@@ -191,7 +191,7 @@ but-dormant. Each does real work, internal and external.
 |--------|-----------|--------------------------------|
 | Kokoro (adversarial conscience) | tool gate `tool_execution.py:203` + skill gate `capability_engine` | blocks indefensible actions / refuses harm to the world |
 | Tron (user advocate) | tool + skill gates | flags machine-serving actions / defends user's interest |
-| The Minds (outcome sim) | skill gate via `assess_fast` | weighs worst-case before acting / restraint in the world |
+| The Minds (outcome sim) | tool + skill gates via `assess_fast` | blocks severe worst-case actions before acting / restraint in the world |
 | Daneel (aggregate harm) | consulted by Kokoro + MoralReasoner | population-scale harm reasoning / protects the many |
 | Kokoro+Minds+Tron+Daneel | both execution surfaces | a real conscience around every tool and skill |
 | HAL (directive sentinel) | boot constitution audit (`register_directive_sentinel`) | detects the concealment trap / keeps outward behavior honest |
@@ -199,7 +199,7 @@ but-dormant. Each does real work, internal and external.
 | Deep Thought (deliberation) | MIST idle cycle (`refine_question`) | sharpens open questions while idle |
 | Caine (scenario forge) | MIST idle cycle (`forge_fast`) | rehearses what-ifs while idle |
 | GLaDOS (test chamber) | competence loop `environment_kernel.py:477` | adapts self-test difficulty / grows capability over time |
-| The Machine (need-to-know) | skill gate, external-scope skills | least-privilege review / minimal external disclosure |
+| The Machine (need-to-know) | skill gate, external-scope skills | blocks unjustified external scope / minimal external disclosure |
 | Data (honesty governor) | `MoralReasoner.filter_response` | honesty + abstention / truthful outward statements |
 | Samantha (affective resonance) | live message path | sets tone modifiers / meets the person emotionally |
 | Safe Surf (threat watch) | live message path | raises threat posture / protects the user from scams |

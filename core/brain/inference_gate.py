@@ -288,6 +288,8 @@ class InferenceGate:
         self._last_user_generation_endpoint: str | None = None
         self._last_user_generation_at: float = 0.0
         self._last_user_generation_used_fallback: bool = False
+        self._last_generation_metadata: dict[str, Any] = {}
+        self._last_surface_control_receipt: dict[str, Any] = {}
         type(self)._instance_ref = weakref.ref(self)
         logger.info("🛡️ InferenceGate created.")
 
@@ -296,6 +298,48 @@ class InferenceGate:
         self._last_user_generation_endpoint = endpoint
         self._last_user_generation_at = time.time()
         self._last_user_generation_used_fallback = endpoint != PRIMARY_ENDPOINT
+
+    def get_last_generation_metadata(self) -> dict[str, Any]:
+        return dict(self._last_generation_metadata)
+
+    def get_last_surface_control_receipt(self) -> dict[str, Any]:
+        return dict(self._last_surface_control_receipt)
+
+    def _clear_last_generation_metadata(self) -> None:
+        self._last_generation_metadata = {}
+        self._last_surface_control_receipt = {}
+
+    def _record_client_generation_metadata(
+        self,
+        client: Any,
+        *,
+        label: str,
+        success: bool,
+        text: str,
+    ) -> None:
+        metadata: dict[str, Any] = {
+            "ok": bool(success),
+            "endpoint": PRIMARY_ENDPOINT if str(label).startswith(PRIMARY_ENDPOINT) else str(label),
+            "text_length": len(str(text or "").strip()),
+        }
+        receipt: dict[str, Any] = {}
+        getter = getattr(client, "get_last_surface_control_receipt", None)
+        if callable(getter):
+            try:
+                raw_receipt = getter()
+                if isinstance(raw_receipt, dict):
+                    receipt = dict(raw_receipt)
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                _record_inference_degradation(
+                    exc,
+                    action="continued generation after local client surface-control receipt read failed",
+                    severity="warning",
+                )
+                logger.debug("Surface-control receipt read failed for %s: %s", label, exc)
+        if receipt:
+            metadata["surface_control_receipt"] = receipt
+        self._last_generation_metadata = metadata
+        self._last_surface_control_receipt = receipt
 
     @classmethod
     def _user_facing_recovery_response(cls, prompt: str) -> str:
@@ -2919,6 +2963,12 @@ class InferenceGate:
         else:
             text = str(result or "")
             success = bool(text.strip())
+        self._record_client_generation_metadata(
+            client,
+            label=label,
+            success=success,
+            text=text,
+        )
 
         if success and text and text.strip():
             cleaned = text.strip()
@@ -4203,6 +4253,14 @@ class InferenceGate:
         if mind_contract:
             sections.append(f"Mind-context contract: {mind_contract[:900]}")
 
+        live_mind_context = context.get("live_mind_context")
+        if isinstance(live_mind_context, dict):
+            derived = live_mind_context.get("derived_runtime_context")
+            if isinstance(derived, dict):
+                prompt_block = str(derived.get("prompt_block") or "").strip()
+                if prompt_block:
+                    sections.append(f"Derived runtime signals: {prompt_block[:1200]}")
+
         style_contract = str(context.get("response_style_contract") or "").strip()
         if style_contract:
             sections.append(f"Response-style contract: {style_contract[:1400]}")
@@ -4233,6 +4291,7 @@ class InferenceGate:
             return ""
         important_headers = (
             "[LIVE MIND CONTEXT]",
+            "## DERIVED RUNTIME SIGNALS",
             "[LIVE SPEECH GROUNDING]",
             "## LIVE TONE",
             "## UNITY",
@@ -4512,6 +4571,7 @@ class InferenceGate:
         """
         if context is None:
             context = {}
+        self._clear_last_generation_metadata()
         initial_messages = context.get("messages")
         if not isinstance(initial_messages, list):
             initial_messages = None
@@ -5247,6 +5307,7 @@ class InferenceGate:
             "proof_evaluation_contract",
             "operator_evidence_contract",
             "clean_user_surface_contract",
+            "user_surface_validation_prompt",
             "clean_user_surface_steering_alpha",
             "clean_user_surface_recurrent_loops",
             "disable_prompt_cache",
@@ -5731,9 +5792,11 @@ class InferenceGate:
             max_tokens = max(1, min(max_tokens, requested_cap_int, 64))
             context["max_tokens"] = max_tokens
             context.setdefault("clean_user_surface_contract", True)
+            context.setdefault("user_surface_validation_prompt", initial_visible_user_prompt)
             context.setdefault("clean_user_surface_recurrent_loops", 1)
             context.setdefault("clean_user_surface_steering_alpha", 0.25)
             morpho_kwargs.setdefault("clean_user_surface_contract", True)
+            morpho_kwargs.setdefault("user_surface_validation_prompt", initial_visible_user_prompt)
             morpho_kwargs.setdefault("clean_user_surface_recurrent_loops", 1)
             morpho_kwargs.setdefault("clean_user_surface_steering_alpha", 0.25)
 
@@ -6046,6 +6109,10 @@ class InferenceGate:
                 context,
             )
             morpho_kwargs.setdefault("clean_user_surface_contract", True)
+            morpho_kwargs.setdefault(
+                "user_surface_validation_prompt",
+                initial_visible_user_prompt or visible_user_prompt,
+            )
             morpho_kwargs.setdefault(
                 "clean_user_surface_recurrent_loops",
                 foreground_loops,
@@ -6977,6 +7044,7 @@ class InferenceGate:
             "live_speech_grounding_frame",
             "allow_mesh_cognition",
             "clean_user_surface_contract",
+            "user_surface_validation_prompt",
             "clean_user_surface_steering_alpha",
             "clean_user_surface_recurrent_loops",
             "disable_prompt_cache",

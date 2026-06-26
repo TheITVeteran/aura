@@ -244,6 +244,9 @@ def _surface_generation_control_receipt(
         "enabled": enabled,
         "live_mind_controls_bound": bool(job.get("live_mind_controls_bound", False)),
         "clean_user_surface_contract": bool(job.get("clean_user_surface_contract", False)),
+        "surface_validation_prompt_present": bool(
+            str(job.get("user_surface_validation_prompt") or "").strip()
+        ),
         "strict_answer_contract": bool(job.get("strict_answer_contract", False)),
         "strict_value_contract": bool(job.get("strict_value_contract", False)),
         "proof_evaluation_contract": bool(job.get("proof_evaluation_contract", False)),

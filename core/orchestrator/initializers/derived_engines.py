@@ -6,8 +6,8 @@ only the enumeration that boot needs, exactly like service_registration.py. It
 intentionally replaces the old core/fictional_ai_expansion.py silo: nothing here
 defines behavior, it only registers each organ's component.
 
-All six are callable/pure — none run a background loop — so registration is always
-safe and never spawns a task.
+All registered engines are callable/pure — none run a background loop — so
+registration is always safe and never spawns a task.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ logger = logging.getLogger("Aura.DerivedEngines")
 
 
 def register_derived_engines(orchestrator: Any = None) -> dict[str, Any]:
-    """Register the six character-derived engines from their home organs."""
+    """Register the character-derived engines from their home organs."""
     from core.affect.affective_resonance import register_affective_resonance
     from core.brain.deep_deliberation import register_deep_deliberation
     from core.ethics.adversarial_conscience import register_adversarial_conscience
