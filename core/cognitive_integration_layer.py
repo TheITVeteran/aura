@@ -503,6 +503,10 @@ class CognitiveIntegrationLayer:
         if samantha is not None:
             try:
                 _res = samantha.attune(message)
+                # Deepen only on clear distress (negative + activated) — rare, and exactly
+                # where reading the emotion right matters most. Bounded, fail-open.
+                if _res.valence < -0.3 and _res.arousal > 0.5 and hasattr(samantha, "deep_attune"):
+                    _res = await samantha.deep_attune(message, timeout=8.0)
                 ki = ServiceContainer.get("kernel_interface", default=None)
                 if ki is not None and getattr(ki, "is_ready", lambda: False)() and getattr(ki, "kernel", None):
                     st = getattr(ki.kernel, "state", None)

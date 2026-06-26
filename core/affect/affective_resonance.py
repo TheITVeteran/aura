@@ -86,6 +86,39 @@ class AffectiveResonance:
             recommended_tone=tone,
         )
 
+    async def deep_attune(self, message: str, *, timeout: float = 8.0) -> Resonance:
+        """Model-deepened attunement: reads emotional subtext the keyword pass can't
+        (sarcasm, masked distress). Intended for the rare high-distress case where
+        getting the read right matters most. Falls back to the heuristic on failure."""
+        base = self.attune(message)
+        from core.utils.engine_support import coerce_text, record_engine_degradation, resolve_brain
+
+        brain = resolve_brain()
+        if brain is None or not hasattr(brain, "think"):
+            return base
+        try:
+            import asyncio
+
+            from core.brain.types import ThinkingMode
+
+            out = coerce_text(await asyncio.wait_for(
+                brain.think(
+                    "In a few words: the real emotion behind this message and how the "
+                    "listener should sound in reply.\nMESSAGE: " + message[:400],
+                    mode=ThinkingMode.FAST, origin="samantha", is_background=True,
+                ),
+                timeout=timeout,
+            ))
+            if out:
+                base.recommended_tone = out.strip()[:80]
+                base.resonance = min(1.0, base.resonance + 0.1)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:
+            record_engine_degradation(
+                "affective_resonance", exc,
+                action="returned heuristic attunement after model deepening failed",
+            )
+        return base
+
     def get_status(self) -> dict[str, Any]:
         return {"reads": self._reads, "healthy": True}
 

@@ -50,6 +50,44 @@ class HonestyGovernor:
             self._caveated += 1
         return vetted
 
+    async def vet_output_deep(
+        self, text: str, *, confidence: float | None = None, timeout: float = 8.0
+    ) -> str:
+        """Model-deepened honesty pass for low-confidence factual claims: asks the model
+        to flag anything it cannot stand behind, and notes it. Callable on demand — kept
+        off the synchronous output hot path so it never taxes every response. Falls back
+        to the static pass on any failure or when confidence is fine."""
+        vetted = self.vet_output(text, confidence=confidence)
+        if confidence is None or confidence >= self.LOW_CONFIDENCE or len(text.split()) < 4:
+            return vetted
+        from core.utils.engine_support import coerce_text, record_engine_degradation, resolve_brain
+
+        brain = resolve_brain()
+        if brain is None or not hasattr(brain, "think"):
+            return vetted
+        try:
+            import asyncio
+
+            from core.brain.types import ThinkingMode
+
+            out = coerce_text(await asyncio.wait_for(
+                brain.think(
+                    "Is any factual claim here unverified or likely wrong? Name it in one "
+                    "line, or reply 'ok'.\nTEXT: " + text[:500],
+                    mode=ThinkingMode.FAST, origin="data", is_background=True,
+                ),
+                timeout=timeout,
+            ))
+            if out and not out.lower().strip().startswith("ok") and "note:" not in vetted.lower():
+                vetted = vetted.rstrip() + f"  (Note: {out.strip()[:160]})"
+                self._caveated += 1
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:
+            record_engine_degradation(
+                "honesty_governor", exc,
+                action="returned static honesty pass after model fact-check failed",
+            )
+        return vetted
+
     def get_status(self) -> dict[str, Any]:
         return {"passes": self._passes, "caveated": self._caveated, "healthy": True}
 

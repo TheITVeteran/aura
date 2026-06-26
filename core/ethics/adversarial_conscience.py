@@ -195,6 +195,27 @@ class AdversarialConscienceEngine:
                             verdict.verdict = "caution"
             except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:
                 _degrade(exc, action="returned heuristic-only conscience verdict after model deepening failed")
+
+        # Daneel: on a broad / third-party action, get a model-estimated population-scale
+        # harm and let it raise concern (it can lift caution to block, never the reverse).
+        if any(("blast" in c.lower() or "parties" in c.lower()) for c in verdict.concerns):
+            try:
+                from core.morality.aggregate_harm import get_aggregate_harm
+
+                est = await get_aggregate_harm().deep_estimate(action, timeout=6.0)
+                if est.get("aggregate_harm", 0.0) >= 0.6:
+                    verdict.risk_score = min(1.0, verdict.risk_score + 0.15)
+                    verdict.concerns.append(
+                        f"Model-estimated population-scale harm high "
+                        f"({est['aggregate_harm']:.2f}, ~{est['affected_population']} people)."
+                    )
+                    if verdict.risk_score >= self.BLOCK_THRESHOLD:
+                        verdict.verdict = "block"
+                    elif verdict.risk_score >= self.CAUTION_THRESHOLD and verdict.verdict == "proceed":
+                        verdict.verdict = "caution"
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                _degrade(exc, action="kept conscience verdict without model aggregate-harm estimate")
+
         self._record(verdict)
         return verdict
 

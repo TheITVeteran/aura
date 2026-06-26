@@ -109,6 +109,59 @@ class NeedToKnowPolicy:
             rationale=rationale,
         )
 
+    async def minimize_deep(
+        self,
+        *,
+        purpose: str,
+        requested_fields: list[str],
+        requested_capabilities: list[str] | None = None,
+        retention: str = "short",
+        timeout: float = 8.0,
+    ) -> Disclosure:
+        """Model-reasoned minimization for a purpose not in the static policy: asks the
+        model which fields are strictly necessary, default-denying the rest. Falls back
+        to the static default-deny for known purposes or on any failure."""
+        base = self.minimize(
+            purpose=purpose,
+            requested_fields=requested_fields,
+            requested_capabilities=requested_capabilities,
+            retention=retention,
+        )
+        if purpose.lower() in _PURPOSE_POLICY or not requested_fields:
+            return base
+        from core.utils.engine_support import coerce_text, record_engine_degradation, resolve_brain
+
+        brain = resolve_brain()
+        if brain is None or not hasattr(brain, "think"):
+            return base
+        try:
+            import asyncio
+
+            from core.brain.types import ThinkingMode
+
+            out = coerce_text(await asyncio.wait_for(
+                brain.think(
+                    f"For the purpose '{purpose}', which of these fields are strictly "
+                    f"necessary? List only the necessary names.\nFIELDS: {', '.join(requested_fields)}",
+                    mode=ThinkingMode.FAST, origin="the_machine", is_background=True,
+                ),
+                timeout=timeout,
+            ))
+            if out:
+                low = out.lower()
+                granted = [f for f in requested_fields if f.lower() in low and f.lower() not in _SENSITIVE_FIELDS]
+                withheld = [f for f in requested_fields if f not in granted]
+                self._fields_withheld += len(withheld)
+                base.granted_fields = granted
+                base.withheld_fields = withheld
+                base.rationale += " | model-minimized for unknown purpose"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:
+            record_engine_degradation(
+                "need_to_know", exc,
+                action="kept static minimization after model reasoning failed",
+            )
+        return base
+
     def get_status(self) -> dict[str, Any]:
         return {"decisions": self._decisions, "fields_withheld": self._fields_withheld, "healthy": True}
 

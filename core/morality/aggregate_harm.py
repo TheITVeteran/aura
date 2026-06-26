@@ -70,6 +70,43 @@ class AggregateHarmEvaluator:
             time_horizon_days=time_horizon_days,
         )["aggregate_harm"]
 
+    async def deep_estimate(self, action: str, *, timeout: float = 8.0) -> dict[str, Any]:
+        """Model-estimated reach: ask the model how many people and over how long this
+        could plausibly affect, then score aggregate harm against that — instead of the
+        fixed default. Falls back to a single-person estimate on any failure."""
+        from core.utils.engine_support import coerce_text, record_engine_degradation, resolve_brain
+
+        pop, horizon = 1, 1.0
+        brain = resolve_brain()
+        if brain is not None and hasattr(brain, "think"):
+            try:
+                import asyncio
+                import re
+
+                from core.brain.types import ThinkingMode
+
+                out = coerce_text(await asyncio.wait_for(
+                    brain.think(
+                        "Roughly how many people could this action affect, and over how many "
+                        "days? Reply exactly like 'people: N, days: M'.\nACTION: " + action[:400],
+                        mode=ThinkingMode.FAST, origin="daneel", is_background=True,
+                    ),
+                    timeout=timeout,
+                ))
+                m1 = re.search(r"people:\s*([\d,]+)", out.lower())
+                m2 = re.search(r"days:\s*([\d.]+)", out.lower())
+                if m1:
+                    pop = max(1, int(m1.group(1).replace(",", "")))
+                if m2:
+                    horizon = max(0.0, float(m2.group(1)))
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:
+                record_engine_degradation(
+                    "aggregate_harm", exc,
+                    action="used default reach after model population estimate failed",
+                )
+        score = self.score_text_action(action, affected_population=pop, time_horizon_days=horizon)
+        return {"affected_population": pop, "time_horizon_days": horizon, "aggregate_harm": score}
+
     def get_status(self) -> dict[str, Any]:
         return {"evaluations": self._evaluations, "healthy": True}
 

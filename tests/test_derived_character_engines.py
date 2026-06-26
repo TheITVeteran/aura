@@ -337,6 +337,37 @@ def test_samantha_attunes_to_distress_and_joy():
     assert joy.valence > 0
 
 
+def test_daneel_deep_estimate_falls_back_without_model():
+    from core.morality.aggregate_harm import AggregateHarmEvaluator
+
+    r = asyncio.run(AggregateHarmEvaluator().deep_estimate("delete user records"))
+    assert r["affected_population"] == 1
+    assert "aggregate_harm" in r
+
+
+def test_the_machine_minimize_deep_falls_back_without_model():
+    from core.governance.need_to_know import NeedToKnowPolicy
+
+    disc = asyncio.run(NeedToKnowPolicy().minimize_deep(
+        purpose="mystery_purpose", requested_fields=["availability", "full_address"]
+    ))
+    assert "full_address" in disc.withheld_fields  # static default-deny still protects sensitive
+
+
+def test_samantha_deep_attune_falls_back_without_model():
+    from core.affect.affective_resonance import AffectiveResonance
+
+    r = asyncio.run(AffectiveResonance().deep_attune("i feel so alone and scared"))
+    assert r.valence < 0
+
+
+def test_data_vet_output_deep_falls_back_without_model():
+    from core.morality.honesty_governor import HonestyGovernor
+
+    out = asyncio.run(HonestyGovernor().vet_output_deep("The capital is probably Springville.", confidence=0.2))
+    assert "certain" in out.lower() or "verify" in out.lower()
+
+
 def test_derived_engines_register_without_background_tasks(monkeypatch):
     from core.orchestrator.initializers import derived_engines
 
