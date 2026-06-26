@@ -127,11 +127,25 @@ async def test_memory_guard_applied_second_time(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_deep_mode_uses_courtroom(tmp_path):
-    # A generate fn that always answers correctly so the courtroom + verifier pass.
+async def test_deep_mode_math_uses_answer_preserving_path(tmp_path):
+    # Math DEEP must NOT go through the courtroom (its single-line judge/simplifier
+    # extraction mangles worked arithmetic); it takes the answer-preserving
+    # self-consistency + sandbox path instead.
     amp = _amp(_gen("Answer: 12 * 12 = 144"), tmp_path)
     req = AmplificationRequest(objective="what is 12 times 12", task_type="math", mode=ReasoningMode.DEEP,
                                time_budget_s=20.0)
+    out = await amp.amplify(req)
+    assert out.receipt.mode == "deep"
+    assert "courtroom" not in out.receipt.strategy_used
+    assert "sandbox" in out.receipt.strategy_used or "self_consistency" in out.receipt.strategy_used
+
+
+@pytest.mark.asyncio
+async def test_deep_mode_prose_uses_courtroom(tmp_path):
+    # A prose/architecture DEEP turn does engage the courtroom.
+    amp = _amp(_gen("Answer: the gateway routes through effect governance."), tmp_path)
+    req = AmplificationRequest(objective="explain how the subsystem coordinates governance",
+                               task_type="architecture", mode=ReasoningMode.DEEP, time_budget_s=20.0)
     out = await amp.amplify(req)
     assert out.receipt.mode == "deep"
     assert out.receipt.strategy_used in {"courtroom", "self_consistency", "direct"}

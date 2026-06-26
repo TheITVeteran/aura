@@ -484,7 +484,25 @@ class ReasoningAmplifierV2:
         return winner, result.agreement, verdict, len(candidates), "self_consistency"
 
     async def _deep_path(self, problem, guard_text, sample_budget, deadline, mode, context, fallbacks):
-        """DEEP/EXTREME/PROOF: adversarial courtroom, then optional sandbox repair."""
+        """DEEP/EXTREME/PROOF: adversarial courtroom, then optional sandbox repair.
+
+        Code/math answers are *structured* (multi-line code, worked arithmetic), which
+        the courtroom's single-line judge/simplifier extraction would mangle — and for
+        these domains the real verifier is execution, not debate. So they take the
+        answer-preserving self-consistency path plus sandbox repair instead.
+        """
+        if problem.task_type in {"code", "math"}:
+            answer, agreement, verdict, n_cand, strategy = await self._shallow_path(
+                problem, guard_text, max(3, sample_budget), deadline, ReasoningMode.NORMAL, context, fallbacks
+            )
+            if answer and time.monotonic() < deadline:
+                repaired = await self._sandbox_repair(answer, problem)
+                if repaired:
+                    answer = repaired
+                    fallbacks.append("sandbox_repaired")
+                    verdict = await self._verify(answer, problem, context)
+            return answer, agreement, verdict, n_cand, f"{strategy}+sandbox"
+
         evidence = list(problem.required_evidence) + list(context.get("evidence", []) or [])
         try:
             court = self._make_courtroom()
