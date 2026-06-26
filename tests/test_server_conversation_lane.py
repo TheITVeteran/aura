@@ -54,6 +54,21 @@ class AsyncCallFixture:
         assert self.calls == []
 
 
+def _verified_desktop_receipts(count: int) -> list[dict[str, object]]:
+    return [
+        {
+            "index": index,
+            "action": "verified_desktop_step",
+            "critical": True,
+            "ok": True,
+            "effect_verified": True,
+            "effect_evidence": f"step={index};observable_effect=verified",
+            "result": {"ok": True, "effect_verified": True},
+        }
+        for index in range(1, count + 1)
+    ]
+
+
 @pytest.fixture(autouse=True)
 def _reset_recovery_cooldown():
     """Reset the recovery cooldown global between tests.
@@ -2941,6 +2956,7 @@ async def test_api_chat_desktop_surface_plans_with_cognitive_engine_before_execu
             "summary": "Desktop task completed 5/5 governed computer-use steps.",
             "steps_requested": 5,
             "steps_completed": 5,
+            "receipts": _verified_desktop_receipts(5),
         }
 
     def _fake_get(name, default=None):
@@ -3066,6 +3082,7 @@ async def test_chat_desktop_objective_uses_capability_engine_without_agency_wrap
                 "summary": "Desktop task completed 2/2 governed computer-use steps.",
                 "steps_requested": 2,
                 "steps_completed": 2,
+                "receipts": _verified_desktop_receipts(2),
             }
 
     class _ForbiddenAgency:
@@ -3112,6 +3129,45 @@ async def test_chat_desktop_objective_uses_capability_engine_without_agency_wrap
     assert calls[0]["context"]["foreground_request"] is True
     assert calls[0]["context"]["user_explicitly_authorized"] is True
     assert calls[0]["context"]["allow_heuristic_desktop_plan"] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_desktop_objective_rejects_success_without_effect_receipts(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _ReceiptlessCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            assert skill_name == "desktop_task"
+            return {
+                "ok": True,
+                "status": "completed",
+                "summary": "Desktop task completed 2/2 governed computer-use steps.",
+                "steps_requested": 2,
+                "steps_completed": 2,
+            }
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                _ReceiptlessCapabilityEngine() if name == "capability_engine" else default
+            )
+        ),
+    )
+
+    result = await chat_routes._execute_desktop_objective_from_chat(
+        "Open Notes and write a paragraph about dinosaurs.",
+        cognitive_reply="Dinosaurs were diverse animals with a long fossil record.",
+    )
+
+    assert result is not None
+    assert result["ok"] is False
+    assert result["status"] == "desktop_objective_failed"
+    assert result["result"]["status"] == "desktop_task_effect_evidence_missing"
+    assert result["result"]["error"] == "missing_step_receipts"
+    assert "did not complete" in result["response"]
+    assert "not claiming" in result["response"]
 
 
 @pytest.mark.asyncio
@@ -3166,6 +3222,7 @@ async def test_api_chat_desktop_objective_requires_cognitive_planning(monkeypatc
             "summary": "Desktop task completed 2/2 governed computer-use steps.",
             "steps_requested": 2,
             "steps_completed": 2,
+            "receipts": _verified_desktop_receipts(2),
         }
 
     async def _fake_log_exchange(*_args, **_kwargs):
@@ -3845,6 +3902,7 @@ async def test_api_chat_desktop_no_reply_executes_self_sufficient_objective(monk
             "summary": "Desktop task completed 2/2 governed computer-use steps.",
             "steps_requested": 2,
             "steps_completed": 2,
+            "receipts": _verified_desktop_receipts(2),
         }
 
     async def _fake_begin_exchange(*_args, **_kwargs):

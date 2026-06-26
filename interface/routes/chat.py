@@ -11074,6 +11074,45 @@ def _looks_like_desktop_objective(user_message: str) -> bool:
     return _shared_looks_like_desktop_objective(user_message)
 
 
+def _verified_desktop_task_result(result: dict[str, Any]) -> tuple[bool, str]:
+    """Require step-level effect proof before a desktop result can be claimed.
+
+    A chat bridge must not accept a bare ``ok=True`` from any executor. The
+    desktop task may involve Notes, Docs, browser tabs, files, PDFs, settings,
+    or future OS actions, but the invariant is the same: every requested step
+    needs a verified receipt with observable effect evidence.
+    """
+    if not bool(result.get("ok")):
+        return False, "desktop_task_result_not_ok"
+
+    requested = result.get("steps_requested")
+    completed = result.get("steps_completed")
+    if not isinstance(requested, int) or requested <= 0:
+        return False, "missing_positive_steps_requested"
+    if not isinstance(completed, int):
+        return False, "missing_steps_completed"
+    if completed != requested:
+        return False, f"incomplete_steps:{completed}/{requested}"
+
+    receipts = result.get("receipts")
+    if not isinstance(receipts, list) or len(receipts) < requested:
+        return False, "missing_step_receipts"
+
+    for index, receipt in enumerate(receipts[:requested], start=1):
+        if not isinstance(receipt, dict):
+            return False, f"step_{index}_receipt_not_structured"
+        if not bool(receipt.get("ok")):
+            return False, f"step_{index}_not_ok"
+        if receipt.get("effect_verified") is not True:
+            return False, f"step_{index}_effect_unverified"
+        evidence = str(receipt.get("effect_evidence") or "").strip()
+        if not evidence:
+            return False, f"step_{index}_missing_effect_evidence"
+        if evidence.startswith("receipt_id="):
+            return False, f"step_{index}_audit_receipt_without_effect"
+    return True, "verified"
+
+
 def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str) -> bool:
     """Whether desktop_task can honestly complete without a model-composed body.
 
@@ -11216,6 +11255,14 @@ async def _execute_desktop_objective_from_chat(
     )
     if not isinstance(result, dict):
         return {"ok": bool(result), "result": result, "status": "desktop_objective_unknown"}
+
+    if result.get("ok"):
+        verified, verification_reason = _verified_desktop_task_result(result)
+        if not verified:
+            result = dict(result)
+            result["ok"] = False
+            result["status"] = "desktop_task_effect_evidence_missing"
+            result["error"] = verification_reason
 
     status = "desktop_objective_completed" if result.get("ok") else "desktop_objective_failed"
     completed = int(result.get("steps_completed") or 0)

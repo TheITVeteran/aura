@@ -573,10 +573,18 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   Focused validation: 121 deep-mind/perception/world/agency/retrieval tests
   passed, 8 provider/boot checks passed, `make enterprise-gate` passed, and
   `make production-gate` passed.
+- 2026-06-25 verified desktop-effect bridge: tightened the live chat to
+  `desktop_task` bridge so a desktop objective cannot be reported as completed
+  from a bare `ok=True` or step count. The bridge now requires one verified
+  effect receipt per requested desktop step, with observable effect evidence
+  that is stronger than a receipt id. This is a general guard for Notes, Docs,
+  browser, files, PDFs, settings, wallpaper, and future foreground desktop
+  actions. Focused validation: 271 desktop/chat/mind-path tests passed,
+  `make enterprise-gate` passed, and `make production-gate` passed.
 
 ## Current Closeout Progress Gauge
 
-- Latest checkpoint: deep mind runtime integration.
+- Latest checkpoint: verified desktop-effect bridge.
 - Evidence added: subprocess ownership routed through `SubprocessGateway` for
   DNU/wedge supervisor paths, hardcoded local test paths removed, one broad
   watchdog exception narrowed, enterprise baseline regressions cleared, direct
@@ -585,9 +593,10 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   deep mind support services made first-class canonical boot services:
   `global_workspace`, `nociception`, `outcome_ledger`, `scientific_engine`,
   `unified_world_model`, `screen_perception`, `perceptual_pump`, and
-  `terminal_parser`.
-- Current operator estimate: about 83% through the ultimate closeout standard.
-- Estimated remaining checkpoints: 6 to 8 total, depending on how many live
+  `terminal_parser`. Live desktop chat now also requires verified desktop-task
+  effect receipts before completion claims can reach the user.
+- Current operator estimate: about 88% through the ultimate closeout standard.
+- Estimated remaining checkpoints: 4 to 6 total, depending on how many live
   desktop/demo-path defects surface during real 32B/72B runtime validation.
 - Still not closed: final proof, DNU/Aletheia clean reruns, live desktop
   multi-app proof, CRSM-to-LoRA closure, CAA extraction validation, longer soak,
