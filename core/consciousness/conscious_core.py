@@ -46,12 +46,32 @@ class AttractorVolitionEngine:
         }
 
     async def check_for_impulse(self) -> Optional[str]:
-        """Check if current state warrants an action"""
-        if time.time() - self.last_action_time < self.refractory_period:
-            return None
+        """Check if current state warrants an action.
 
+        Prefers the drive-integration engine (temporal accumulation + competition + hysteresis)
+        over the legacy instantaneous-VAD-threshold + flat-refractory path. The legacy path
+        remains as a fallback if the engine is unavailable.
+        """
         state = await self.substrate.get_state_summary()
         v, a, d = state['valence'], state['arousal'], state['dominance']
+
+        try:
+            from core.consciousness.drive_integration import get_drive_integration_engine
+            engine = get_drive_integration_engine()
+            signals = engine.gather_signals({
+                "valence": v, "arousal": a, "dominance": d,
+                "novelty": float(state.get("novelty", 0.0) or 0.0),
+            })
+            decision = engine.step(signals)
+            if decision.action:
+                self.last_action_time = time.time()
+            return decision.action
+        except Exception:  # noqa: BLE001 - fall back to the legacy VAD-threshold path
+            pass
+
+        # ── legacy fallback: flat refractory + instantaneous VAD thresholds ──
+        if time.time() - self.last_action_time < self.refractory_period:
+            return None
 
         # Check Curiosity Basin
         if a > self.attractors['curiosity']['arousal_min'] and v > self.attractors['curiosity']['valence_min']:

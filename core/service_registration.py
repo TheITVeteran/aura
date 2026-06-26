@@ -187,6 +187,14 @@ def register_all_services(is_proxy: bool = False):
         lifetime=ServiceLifetime.SINGLETON,
         required=False,
     )
+    # Drive-integration volition — temporal accumulation + competition + hysteresis, replacing
+    # the legacy instantaneous-VAD-threshold + flat-refractory volition path.
+    container.register(
+        'drive_integration',
+        lambda: __import__('core.consciousness.drive_integration', fromlist=['get_drive_integration_engine']).get_drive_integration_engine(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
     container.register('emergent_goal_engine', create_emergent_goal_engine, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('structural_mutator', create_structural_mutator, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('lineage_manager', create_lineage_manager, lifetime=ServiceLifetime.SINGLETON, required=False)
