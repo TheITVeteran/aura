@@ -227,9 +227,23 @@ genuinely net-new, ~5 are bounded extensions of existing organs, and ~7 traits w
 refuse and instead build the safeguard. Almost nothing on the list is pure fiction
 once you reduce the character to its mechanism.
 
-**Depth — heuristic floor, model ceiling.** Every hot-path organ runs a zero-latency
-synchronous heuristic on every call. The conscience (Kokoro) and outcome sim (Minds)
-then *escalate to a full model-deepened pass* on the rare borderline-with-real-concern
-action — bounded (~8s, `should_escalate` predicate), fail-open to the heuristic on
-timeout, and the model may only raise concern, never clear a flag. Full-depth reasoning
-is therefore spent exactly where the decision is hard, not on every call.
+**Depth — heuristic floor, model ceiling (every engine).** Each organ runs a
+zero-latency heuristic on every call and *escalates to a bounded (~8s) model pass*
+only at a rare, well-chosen trigger — fail-open to the heuristic on timeout. So
+full-depth reasoning is spent exactly where it matters, never on the common case.
+
+| Engine | Heuristic floor | Model ceiling — fires when |
+|--------|-----------------|----------------------------|
+| Kokoro | marker scan → verdict | `should_escalate`: borderline + real concern (tool/skill gate) |
+| The Minds | scaffold trajectories | the same escalation, full `simulate()` |
+| Daneel | reach × persistence | inside Kokoro's escalation: model-estimated population |
+| Safe Surf | scam/phishing lexicon | heuristic reads **high** (live message path) |
+| ICE | injection/exfil lexicon | heuristic reads **high** (live message path) |
+| Samantha | affect keywords | clear distress: negative + activated (live message path) |
+| HAL | keyword conflict scan | idle loop: semantic conflict scan |
+| Deep Thought | sync question refine | idle loop: full bounded `deliberate()` |
+| The Machine | static purpose policy | unknown purpose: model strict-necessity (`minimize_deep`) |
+| Data | deception filter + caveat | low-confidence claim: model fact-check (`vet_output_deep`, on-demand) |
+
+In every case the model may only *raise* concern (or sharpen advice), never silently
+clear a heuristic flag, and a timeout falls back to the floor.
