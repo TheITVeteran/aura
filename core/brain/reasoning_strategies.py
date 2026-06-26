@@ -310,19 +310,18 @@ class ReasoningStrategies:
         q = str(query or "")
         if len(q) < 6 or self._looks_like_instructional_prompt(q.lower()):
             return None
-        try:
-            from core.brain.reasoning_amplifier_v2 import classify_task_type
-
-            task_type = classify_task_type(q)
-        except _REASONING_RECOVERABLE_ERRORS:
-            return None
         # Don't hijack the multi-perspective debate path — it is for open value
         # questions, not verifiable hard tasks.
         if strategy is StrategyType.DEBATE:
             return None
-        if task_type in self._V2_TASK_TYPES:
-            return task_type
-        return None
+        try:
+            # The canonical gate excludes imperative actions/tool commands ("open 3
+            # tabs") and only admits verifiable reasoning questions.
+            from core.brain.reasoning_amplifier_v2 import is_amplifiable
+
+            return is_amplifiable(q)
+        except _REASONING_RECOVERABLE_ERRORS:
+            return None
 
     async def _try_amplify_v2(self, query: str, strategy: StrategyType, **kwargs) -> StrategyResult | None:
         task_type = self._should_amplify_v2(query, strategy, kwargs)

@@ -608,15 +608,52 @@ def build_amplifier_v2(generate: GenerateFn, **kw: Any) -> ReasoningAmplifierV2:
     return ReasoningAmplifierV2(generate, **kw)
 
 
+# Imperative environment/desktop/tool actions. These are things to *do*, not
+# questions to *answer* — the amplifier (which re-derives and verifies an answer)
+# must never hijack them away from the tool/action path. Deliberately excludes
+# reasoning verbs (write/compute/explain/solve/where/how/what) so "write a function"
+# and "compute the total" still amplify.
+_ACTION_VERB = (
+    r"open|close|click|tap|press|send|email|e-?mail|text|call|dial|message|dm|"
+    r"navigate|browse|launch|quit|switch|type|paste|scroll|swipe|drag|drop|"
+    r"download|upload|install|uninstall|delete|remove|move|rename|copy|save|"
+    r"screenshot|capture|play|pause|skip|mute|unmute|turn|enable|disable|toggle|"
+    r"schedule|remind|book|order|buy|purchase|pay|post|tweet|share|like|follow|"
+    r"subscribe|unsubscribe|reply|forward|attach|print|scan|record|stream|cast|"
+    r"set up|set a|set an|set the|start|stop|restart|reboot|shutdown|lock|unlock"
+)
+_ACTION_RE = re.compile(rf"^\s*(?:please\s+|can you\s+|could you\s+|go\s+|now\s+|hey,?\s+)*(?:{_ACTION_VERB})\b", re.IGNORECASE)
+_GO_TO_RE = re.compile(r"^\s*(?:please\s+)?go to\b", re.IGNORECASE)
+
+
+def is_action_request(objective: str) -> bool:
+    """True if the turn is an imperative action/tool command rather than a question.
+
+    Applied generally: 'open 3 tabs', 'send the email', 'click the button', 'play
+    the next song' are actions to dispatch, not problems to reason about — they must
+    bypass the reasoning amplifier entirely so the tool/desktop path owns them.
+    """
+    q = str(objective or "").strip()
+    if not q:
+        return False
+    if _GO_TO_RE.match(q) or _ACTION_RE.match(q):
+        return True
+    return False
+
+
 def is_amplifiable(objective: str) -> str | None:
-    """Return the task_type to amplify for a turn, or None for ordinary chat.
+    """Return the task_type to amplify for a turn, or None for ordinary chat/actions.
 
     Used by the live response lanes to decide whether a turn earns the
-    verifier-backed amplifier. Conservative: only verifiable hard tasks qualify,
-    so casual conversation is never slowed down.
+    verifier-backed amplifier. Conservative: only verifiable hard *reasoning*
+    questions qualify. Imperative actions and casual conversation are excluded so
+    the tool path owns commands and chat is never slowed down.
     """
     q = str(objective or "").strip()
     if len(q) < 8:
+        return None
+    # Actions are dispatched, not answered — never amplify them.
+    if is_action_request(q):
         return None
     task_type = classify_task_type(q)
     if task_type in {"code", "math", "repo_audit", "architecture"}:
