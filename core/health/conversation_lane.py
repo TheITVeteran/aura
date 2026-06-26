@@ -14,10 +14,6 @@ def conversation_lane_is_busy(lane: dict[str, Any] | None) -> bool:
     if not isinstance(lane, dict):
         return False
     state = str(lane.get("state", "") or "").strip().lower()
-    if state != "ready":
-        return False
-    if bool(lane.get("warmup_in_flight", False)):
-        return False
     blockers = {
         str(item or "").strip()
         for item in (lane.get("readiness_blockers") or [])
@@ -28,11 +24,26 @@ def conversation_lane_is_busy(lane: dict[str, Any] | None) -> bool:
         active_generations = int(lane.get("active_generations", 0) or 0)
     except (TypeError, ValueError, OverflowError):
         active_generations = 0
-    return (
+    active_work = (
         active_generations > 0
         or "active_generation_in_flight" in blockers
         or reason == "active_generation_in_flight"
     )
+    if active_work:
+        return True
+    if state in {"spawning", "handshaking"}:
+        return True
+    if state == "warming" and (
+        bool(lane.get("warmup_attempted", False))
+        or bool(lane.get("warmup_in_flight", False))
+        or any("warmup" in item or item == "visible_conversation_probe_missing" for item in blockers)
+        or "warmup" in reason
+        or reason == "visible_conversation_probe_missing"
+    ):
+        return True
+    if state == "recovering" and bool(lane.get("warmup_in_flight", False)):
+        return True
+    return False
 
 
 def conversation_lane_is_available(lane: dict[str, Any] | None) -> bool:

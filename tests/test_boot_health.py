@@ -186,6 +186,45 @@ def test_boot_health_treats_active_foreground_generation_as_working_not_unhealth
     assert "conversation_ready" not in payload["blockers"]
 
 
+def test_boot_health_treats_handshaking_warmup_as_working():
+    _register_runtime_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+    status = SimpleNamespace(
+        initialized=True,
+        running=True,
+        healthy=True,
+        last_error="",
+        cycle_count=12,
+        start_time=time.time() - 5,
+    )
+    orchestrator = SimpleNamespace(status=status, health_check=lambda: True)
+    runtime = {"state": {"process_id": 1234}, "sha256": "abc123", "signature": "sig"}
+
+    payload, status_code = build_boot_health_snapshot(
+        orchestrator,
+        runtime,
+        is_gui_proxy=False,
+        conversation_lane={
+            "conversation_ready": False,
+            "state": "handshaking",
+            "warmup_attempted": True,
+            "warmup_in_flight": True,
+            "readiness_blockers": ["visible_conversation_probe_missing", "warmup_in_flight"],
+            "last_failure_reason": "visible_conversation_probe_missing",
+        },
+    )
+
+    assert status_code == 200
+    assert payload["status"] == "working"
+    assert payload["system_ready"] is True
+    assert payload["ready"] is False
+    assert payload["launcher_ready"] is True
+    assert payload["conversation_ready"] is False
+    assert payload["conversation_busy"] is True
+    assert payload["boot_phase"] == "conversation_working"
+    assert payload["status_message"] == "Aura is answering through the live conversation lane."
+    assert "conversation_ready" not in payload["blockers"]
+
+
 def test_boot_health_treats_cold_standby_lane_as_not_conversation_ready():
     _register_runtime_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
     status = SimpleNamespace(

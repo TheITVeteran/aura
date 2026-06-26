@@ -581,10 +581,18 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   browser, files, PDFs, settings, wallpaper, and future foreground desktop
   actions. Focused validation: 271 desktop/chat/mind-path tests passed,
   `make enterprise-gate` passed, and `make production-gate` passed.
+- 2026-06-25 conversation readiness semantics: fixed the shared
+  conversation-lane health rule so active `spawning`, `handshaking`, and
+  evidence-backed `warming` states are reported as working rather than
+  unhealthy conversation failures. Cold and failed lanes still block
+  readiness, while active warmup/generation no longer floods the neural
+  stream with stale `conversation_ready` blockers. Focused validation:
+  708 runtime/system/live-route tests passed, `make enterprise-gate` passed,
+  and `make production-gate` passed.
 
 ## Current Closeout Progress Gauge
 
-- Latest checkpoint: verified desktop-effect bridge.
+- Latest checkpoint: conversation readiness semantics.
 - Evidence added: subprocess ownership routed through `SubprocessGateway` for
   DNU/wedge supervisor paths, hardcoded local test paths removed, one broad
   watchdog exception narrowed, enterprise baseline regressions cleared, direct
@@ -594,9 +602,11 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   `global_workspace`, `nociception`, `outcome_ledger`, `scientific_engine`,
   `unified_world_model`, `screen_perception`, `perceptual_pump`, and
   `terminal_parser`. Live desktop chat now also requires verified desktop-task
-  effect receipts before completion claims can reach the user.
-- Current operator estimate: about 88% through the ultimate closeout standard.
-- Estimated remaining checkpoints: 4 to 6 total, depending on how many live
+  effect receipts before completion claims can reach the user, and health
+  pulses distinguish active conversation warmup from actual conversation
+  failure.
+- Current operator estimate: about 89% through the ultimate closeout standard.
+- Estimated remaining checkpoints: 4 to 5 total, depending on how many live
   desktop/demo-path defects surface during real 32B/72B runtime validation.
 - Still not closed: final proof, DNU/Aletheia clean reruns, live desktop
   multi-app proof, CRSM-to-LoRA closure, CAA extraction validation, longer soak,

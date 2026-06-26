@@ -423,6 +423,50 @@ def test_websocket_runtime_heartbeat_requires_conversation_readiness(monkeypatch
     assert "conversation_lane:cold" in payload["blockers"]
 
 
+def test_websocket_runtime_heartbeat_treats_warmup_as_working(monkeypatch):
+    from core.runtime import health_contract as health_contract_module
+    from interface.websocket_manager import runtime_heartbeat_payload
+
+    monkeypatch.setattr(
+        health_contract_module,
+        "runtime_health_report",
+        lambda: {"healthy": True, "status": "healthy"},
+    )
+    monkeypatch.setattr(
+        health_contract_module,
+        "required_probe_status",
+        lambda _report: _complete_required_probe_payload(),
+    )
+    monkeypatch.setattr(
+        websocket_module,
+        "_conversation_lane_readiness",
+        lambda: (
+            {
+                "conversation_ready": False,
+                "state": "handshaking",
+                "warmup_attempted": True,
+                "warmup_in_flight": True,
+                "readiness_blockers": [
+                    "visible_conversation_probe_missing",
+                    "warmup_in_flight",
+                ],
+                "last_failure_reason": "visible_conversation_probe_missing",
+            },
+            False,
+        ),
+    )
+
+    payload = runtime_heartbeat_payload("heartbeat")
+
+    assert payload["healthy"] is False
+    assert payload["runtime_probe_healthy"] is True
+    assert payload["conversation_ready"] is False
+    assert payload["conversation_busy"] is True
+    assert payload["status"] == "working"
+    assert "conversation_ready" not in payload["blockers"]
+    assert "conversation_lane:handshaking" not in payload["blockers"]
+
+
 def _complete_required_probe_payload() -> dict[str, object]:
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 
