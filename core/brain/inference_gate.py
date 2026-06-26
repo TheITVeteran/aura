@@ -285,6 +285,7 @@ class InferenceGate:
         self._last_spare_maintenance_at: float = 0.0
         self._last_cortex_warmup_deferral_log_at: float = 0.0
         self._last_cortex_policy_deferred_log_at: float = 0.0
+        self._last_status_recovery_schedule_at: float = 0.0
         self._last_user_generation_endpoint: str | None = None
         self._last_user_generation_at: float = 0.0
         self._last_user_generation_used_fallback: bool = False
@@ -1293,7 +1294,10 @@ class InferenceGate:
                                     warmup_deferral, context="background"
                                 )
                             else:
-                                self._schedule_background_cortex_prewarm(delay=2.0)
+                                self._schedule_background_cortex_prewarm_from_status(
+                                    delay=2.0,
+                                    reason="failed_prewarm_observed",
+                                )
                                 logger.info(
                                     "🔄 [STABILITY v53] Auto-scheduling cortex recovery after failed prewarm: %s",
                                     exc,
@@ -1390,7 +1394,10 @@ class InferenceGate:
                     # loading anything; scheduling the runner here keeps recovery
                     # alive without forcing an unsafe immediate model load.
                     try:
-                        self._schedule_background_cortex_prewarm(delay=3.0)
+                        self._schedule_background_cortex_prewarm_from_status(
+                            delay=3.0,
+                            reason="stale_lane_observed",
+                        )
                     except _INFERENCE_RECOVERABLE_ERRORS as exc:
                         _record_inference_degradation(
                             exc,
@@ -1454,6 +1461,30 @@ class InferenceGate:
                     action="continued without extending foreground quiet window",
                 )
                 logger.debug("Failed to extend foreground quiet window: %s", exc)
+
+    def _schedule_background_cortex_prewarm_from_status(
+        self,
+        *,
+        delay: float,
+        reason: str,
+        min_interval_s: float = 30.0,
+    ) -> None:
+        """Cooldowned recovery scheduling for status-observation paths.
+
+        ``get_conversation_status()`` is polled by health endpoints and the
+        neural stream. It may notice a completed failed warmup, but observation
+        must not become an unbounded work generator.
+        """
+
+        now = time.monotonic()
+        if (now - self._last_status_recovery_schedule_at) < max(1.0, min_interval_s):
+            logger.debug(
+                "Skipping status-triggered Cortex prewarm (%s); cooldown active.",
+                reason,
+            )
+            return
+        self._last_status_recovery_schedule_at = now
+        self._schedule_background_cortex_prewarm(delay=delay)
 
     def _schedule_background_cortex_prewarm(self, delay: float = 12.0) -> None:
         if self._deferred_prewarm_task and not self._deferred_prewarm_task.done():

@@ -3072,6 +3072,59 @@ def test_safe_boot_status_does_not_advertise_cold_cortex_as_active(monkeypatch):
     assert lane["foreground_endpoint"] is None
 
 
+def test_conversation_status_recovery_schedule_is_cooldowned(monkeypatch):
+    gate = InferenceGate()
+    scheduled: list[float] = []
+
+    class _CompletedFailedPrewarm:
+        def done(self):
+            return True
+
+        def exception(self):
+            return RuntimeError("warmup_readiness_no_text")
+
+    class _Client:
+        _warmup_in_flight = False
+
+        def __init__(self):
+            self.state_updates: list[tuple[str, str]] = []
+
+        def is_alive(self):
+            return True
+
+        def get_lane_status(self):
+            now = time.time()
+            return {
+                "state": "warming",
+                "conversation_ready": False,
+                "readiness_blockers": [],
+                "last_error": "warmup_readiness_no_text",
+                "last_transition_at": now,
+                "last_progress_at": now,
+                "warmup_attempted": True,
+                "warmup_in_flight": False,
+            }
+
+        def _set_lane_state(self, state, error=""):
+            self.state_updates.append((state, error))
+
+    gate._initialized = True
+    gate._mlx_client = _Client()
+    gate._prewarm_task = _CompletedFailedPrewarm()
+    monkeypatch.setattr(gate, "_schedule_background_cortex_prewarm", lambda delay=12.0: scheduled.append(delay))
+
+    first = gate.get_conversation_status()
+    second = gate.get_conversation_status()
+
+    assert first["conversation_ready"] is False
+    assert second["conversation_ready"] is False
+    assert scheduled == [2.0]
+
+    gate._last_status_recovery_schedule_at -= 31.0
+    gate.get_conversation_status()
+    assert scheduled == [2.0, 2.0]
+
+
 def test_background_local_deferral_protects_cold_cortex_during_safe_boot(monkeypatch):
     gate = InferenceGate()
     gate._created_at = time.monotonic()
