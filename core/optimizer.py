@@ -11,17 +11,14 @@ try:
 except ImportError:
     CognitivePatchStrategy = None  # type: ignore
 
-try:
-    from core.patch_library import AVAILABLE_PATCHES, PipInstallPatch
-except ImportError:
-    AVAILABLE_PATCHES = []  # type: ignore
-    PipInstallPatch = None  # type: ignore
+from core.patch_library import PatchStrategy, get_patches
 
 logger = logging.getLogger("Kernel.Optimizer")
 
 class Optimizer:
-    def __init__(self, data_file="autonomy_engine/data/hard_examples.json"):
+    def __init__(self, data_file="autonomy_engine/data/hard_examples.json", *, patches: List[PatchStrategy] | None = None):
         self.data_file = data_file
+        self.patches = list(patches) if patches is not None else get_patches()
 
     async def run(self):
         """Main optimization loop:
@@ -52,15 +49,11 @@ class Optimizer:
 
         for signature in unique_reasons:
             handled = False
-            for patch in AVAILABLE_PATCHES:
+            for patch in self.patches:
                 if patch.match(signature):
                     logger.info("Strategy Match: %s for failure '%s...'", patch.name, signature[:50])
 
-                    # Special handling for patches that need the signature (like pip install)
-                    if isinstance(patch, PipInstallPatch):
-                        success = await patch.apply(signature)
-                    else:
-                        success = await patch.apply()
+                    success = await patch.apply(signature)
 
                     if success:
                         fixed_count += 1
