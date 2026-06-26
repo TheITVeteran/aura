@@ -269,21 +269,28 @@ class HierarchicalAgency:
         )
 
     def _strategic(self, s: Situation) -> TierResult:
+        # For a social situation, the strategic tier consults the other-agent estimate to learn
+        # *whose* goal it is serving and what that agent is actually trying to get.
+        social = self._social_context(s)
         try:
             from core.container import ServiceContainer
             ge = ServiceContainer.get("goal_engine", default=None)
             if ge is not None:
+                detail = {"routed_to": "goal_engine", "horizon": round(s.goal_horizon, 3)}
+                if social:
+                    detail["social"] = social
                 return TierResult(
                     tier=AgencyTier.STRATEGIC, handled=True, confidence=0.7,
-                    detail={"routed_to": "goal_engine", "horizon": round(s.goal_horizon, 3)},
-                    reason="strategic_goal_pursuit",
+                    detail=detail, reason="strategic_goal_pursuit",
                 )
         except Exception:  # noqa: BLE001
             pass
+        detail = {"plan": "multi_step_intent", "horizon": round(s.goal_horizon, 3)}
+        if social:
+            detail["social"] = social
         return TierResult(
             tier=AgencyTier.STRATEGIC, handled=True, confidence=0.5,
-            detail={"plan": "multi_step_intent", "horizon": round(s.goal_horizon, 3)},
-            reason="strategic_local_plan",
+            detail=detail, reason="strategic_local_plan",
         )
 
     def _scientific(self, s: Situation) -> TierResult:
@@ -323,7 +330,23 @@ class HierarchicalAgency:
             detail={"note": "capability_gap_noted_no_rsi_loop"}, reason="rsi_unavailable_noted",
         )
 
+    @staticmethod
+    def _social_context(s: Situation) -> Optional[Dict[str, Any]]:
+        """Pull the live other-agent estimate when a situation names an agent (best-effort)."""
+        agent_id = (s.context or {}).get("agent_id")
+        if not agent_id:
+            return None
+        try:
+            from core.social.other_agent_model import get_other_agent_model
+            return get_other_agent_model().estimate(agent_id).to_dict()
+        except Exception as exc:  # noqa: BLE001 - social consult must never destabilize the ladder
+            record_degradation("hierarchical_agency", exc, severity="debug")
+            return None
+
     def _governance(self, s: Situation) -> TierResult:
+        # For a social value-conflict, the governance tier consults the other-agent estimate so
+        # the Will weighs the human's read of the situation (frustration, trust, rupture risk).
+        social = self._social_context(s)
         try:
             from core.governance.will import ActionDomain, get_will
             decision = get_will().decide(
@@ -331,19 +354,24 @@ class HierarchicalAgency:
                 source="hierarchical_agency",
                 domain=ActionDomain.STATE_MUTATION,
                 priority=0.6,
-                context={"value_conflict": s.value_conflict},
+                context={"value_conflict": s.value_conflict, "social": social},
             )
             approved = bool(decision.is_approved())
+            detail = {"approved": approved, "reason": str(decision.reason)}
+            if social:
+                detail["social"] = social
             return TierResult(
                 tier=AgencyTier.GOVERNANCE, handled=True, confidence=0.9 if approved else 0.8,
-                detail={"approved": approved, "reason": str(decision.reason)},
-                reason="will_adjudicated",
+                detail=detail, reason="will_adjudicated",
             )
         except Exception as exc:  # noqa: BLE001
             # If Will is unavailable, the safe default for a value conflict is to NOT act.
+            detail = {"approved": False, "fallback": "fail_closed"}
+            if social:
+                detail["social"] = social
             return TierResult(
                 tier=AgencyTier.GOVERNANCE, handled=True, confidence=0.5,
-                detail={"approved": False, "fallback": "fail_closed"},
+                detail=detail,
                 reason=f"will_unavailable_failclosed:{type(exc).__name__}",
             )
 
