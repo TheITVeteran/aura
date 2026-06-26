@@ -178,6 +178,29 @@ The guiding rule for "where it belongs": a capability lives in the organ it
 
 ---
 
+## Live-path wiring status (the honest part)
+
+Being *registered and callable* is not the same as *acting on a live turn*. This
+tracks which derived engines are actually invoked on the live path vs. built-and-
+callable-only, and the seam each remaining one wires into.
+
+| Engine | State | Live seam |
+|--------|-------|-----------|
+| Kokoro (adversarial conscience) | **WIRED** — blocks indefensible tool calls | `tool_execution.py` tool gate, beside `edi.can_do` |
+| Tron (user advocate) | **WIRED** — advises on every tool call | `tool_execution.py` tool gate |
+| HAL (directive sentinel) | callable — *to wire* | goal/directive registration (`goals/goal_governance.py`) |
+| The Minds (outcome simulator) | callable — *to wire* | planning, before consequential actions (async, off hot path) |
+| Deep Thought (deliberation) | callable — *to wire* | brain reasoning when a question is flagged hard |
+| Brainiac (knowledge bottling) | callable — *to wire* | memory consolidation / knowledge ingestion |
+| Caine (scenario forge) | callable — *to wire* | imagination / planning |
+| GLaDOS (test chamber) | callable — *to wire* | eval/curriculum loop |
+| The Machine (need-to-know) | callable — *to wire* | disclosure / capability-grant path |
+
+For comparison, the original six are all live-wired: EDI gates tools
+(`tool_execution.py:190`), Cortana injects cognitive state into the prompt
+(`context_streaming.py:123`), JARVIS records every turn (`context_streaming.py:417`),
+Ava analyzes every message (`cognitive_integration_layer.py:442`).
+
 ## Summary
 
 | Bucket | Characters |

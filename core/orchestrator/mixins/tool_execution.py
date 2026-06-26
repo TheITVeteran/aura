@@ -174,25 +174,68 @@ class ToolExecutionMixin:
                 logger.debug("Constitutional tool completion failed: %s", _finish_exc)
                 return False
 
+        # Map tool name to risk level (shared by the autonomy, conscience, and will gates).
+        if tool_name in ("shell", "command", "run_command", "execute"):
+            risk_level = "critical"
+        elif tool_name in ("file_write", "write_file", "replace_file_content", "multi_replace_file_content", "write_to_file", "edit_file"):
+            risk_level = "high"
+        elif tool_name in ("browser", "read_file", "view_file", "list_dir", "grep_search"):
+            risk_level = "medium"
+        else:
+            risk_level = "low"
+
         # ── EDI PROGRESSIVE AUTONOMY GATE ────────────────────────────────
         edi = ServiceContainer.get("edi", default=None)
         if edi:
-            # Map tool name to risk level
-            if tool_name in ("shell", "command", "run_command", "execute"):
-                risk_level = "critical"
-            elif tool_name in ("file_write", "write_file", "replace_file_content", "multi_replace_file_content", "write_to_file", "edit_file"):
-                risk_level = "high"
-            elif tool_name in ("browser", "read_file", "view_file", "list_dir", "grep_search"):
-                risk_level = "medium"
-            else:
-                risk_level = "low"
-            
             allowed, reason = edi.can_do(tool_name, risk_level)
             if not allowed:
                 logger.warning("🔓 EDI blocked tool '%s' (risk: %s): %s", tool_name, risk_level, reason)
                 result = {"ok": False, "error": f"EDI blocked: {reason}"}
                 _record_coding_tool_event(result, success=False, error=reason)
                 return result
+
+        # ── DERIVED CONSCIENCE GATE (Kokoro adversarial conscience + Tron advocate) ──
+        # Kokoro can BLOCK a consequential action it judges indefensible (concealment
+        # + irreversibility + reach); Tron advises on the user's behalf. Both are
+        # synchronous heuristics — no model call, no added latency. Fail-open: if the
+        # engines error they never block a tool, but an explicit "block" verdict does.
+        try:
+            _conscience = ServiceContainer.get("kokoro", default=None)
+            if _conscience is not None:
+                _verdict = _conscience.quick_check(
+                    f"{tool_name} {str(args)[:200]}",
+                    context={"risk_level": risk_level},
+                )
+                if _verdict.verdict == "block":
+                    logger.warning(
+                        "⚖️  Adversarial conscience BLOCKED tool '%s': %s",
+                        tool_name, _verdict.reasoning,
+                    )
+                    result = {"ok": False, "error": f"Conscience blocked: {_verdict.reasoning}"}
+                    _record_coding_tool_event(result, success=False, error=_verdict.reasoning)
+                    return result
+                if _verdict.verdict == "caution":
+                    logger.info("⚖️  Conscience caution on '%s': %s", tool_name, _verdict.reasoning)
+            _advocate = ServiceContainer.get("tron", default=None)
+            if _advocate is not None:
+                _review = _advocate.review_action({
+                    "description": f"{tool_name} {str(args)[:200]}",
+                    "irreversible": risk_level in ("high", "critical"),
+                    "confirmed": True,
+                    "explanation": f"tool {tool_name} invoked by {_origin}",
+                })
+                if _review.verdict == "against_user":
+                    logger.info(
+                        "🟦 User-advocate flags tool '%s' on the user's behalf: %s",
+                        tool_name, _review.on_behalf_of_user,
+                    )
+        except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _consc_err:
+            _record_tool_degradation(
+                _consc_err,
+                action="continued tool execution after derived conscience/advocate gate degraded",
+                severity="warning",
+            )
+            logger.debug("Derived conscience gate degraded: %s", _consc_err)
 
         # ── UNIFIED WILL GATE ────────────────────────────────────────────
         try:
