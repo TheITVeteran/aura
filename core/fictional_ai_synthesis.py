@@ -1047,6 +1047,23 @@ class TemporalDilationScheduler:
                             )
                             self._last_synthesis_time = time.time()
                             logger.info("⏳ MIST: Synthesis cycle complete.")
+
+                            # Brainiac: durably bottle the consolidated context so the
+                            # idle thinking is retrievable later, not just logged. Stable
+                            # slug keeps storage bounded (latest consolidation overwrites).
+                            try:
+                                brainiac = ServiceContainer.get("brainiac", default=None)
+                                if brainiac is not None and hasattr(brainiac, "bottle"):
+                                    await asyncio.wait_for(
+                                        brainiac.bottle("idle-consolidation", cold_context),
+                                        timeout=20.0,
+                                    )
+                                    logger.debug("🫙 Brainiac bottled the consolidated context.")
+                            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as _bx:
+                                _record_fictional_degradation(
+                                    _bx,
+                                    action="completed MIST cycle without bottling consolidated context",
+                                )
                         else:
                             logger.debug("MIST: No cold context available for synthesis.")
                     else:

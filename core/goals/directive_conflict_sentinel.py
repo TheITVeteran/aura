@@ -129,6 +129,29 @@ def register_directive_sentinel(orchestrator: Any = None) -> DirectiveConflictSe
     from core.service_names import ServiceNames
 
     inst = ServiceContainer.get(ServiceNames.HAL, default=None) or get_directive_sentinel()
+
+    # Seed Aura's own constitution so HAL audits it for the concealment trap at boot.
+    # This is genuine function: if a directive ever required concealing something the
+    # honesty rules require disclosing, HAL surfaces it instead of letting Aura quietly
+    # resolve it the way HAL 9000 did. User standing instructions can be added at
+    # runtime via add_directive() and re-scanned.
+    try:
+        if not inst._directives:
+            from core.prime_directives import PrimeDirectives
+
+            for i, rule in enumerate(PrimeDirectives.ONLINE_PRESENCE_RULES):
+                inst.add_directive(f"online_rule_{i}", rule, priority=2, source="constitution")
+            conflicts = inst.scan()
+            if conflicts:
+                logger.warning(
+                    "🔴 HAL: %d directive conflict(s) in constitution: %s",
+                    len(conflicts), [c.kind for c in conflicts],
+                )
+            else:
+                logger.info("🔴 HAL: constitution scanned — no directive conflicts (anti-HAL clear).")
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("HAL constitution seed/scan skipped: %s", exc)
+
     ServiceContainer.register_instance(ServiceNames.HAL, inst, required=False)
     ServiceContainer.register_instance("hal", inst, required=False)
     return inst

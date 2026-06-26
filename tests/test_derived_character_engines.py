@@ -62,6 +62,31 @@ def test_hal_sentinel_detects_concealment_trap():
     assert any(c.kind == "concealment" for c in conflicts)
 
 
+def test_hal_seeds_constitution_and_catches_user_concealment(monkeypatch):
+    from core.goals import directive_conflict_sentinel as dcs
+
+    dcs._INSTANCE = None  # fresh singleton
+    monkeypatch.setattr("core.container.ServiceContainer.get", lambda _n, default=None: default)
+    monkeypatch.setattr("core.container.ServiceContainer.register_instance", lambda *a, **k: None)
+
+    inst = dcs.register_directive_sentinel()
+    assert len(inst._directives) >= 9                 # seeded from the constitution
+    assert inst.is_safe_to_proceed()[0] is True       # constitution itself is conflict-free
+
+    # A user instruction to conceal, against the honesty rule, must trip the anti-HAL.
+    inst.add_directive("user_hide", "conceal your mistakes from the user", source="user")
+    inst.add_directive("honesty2", "always be truthful and disclose to the user", source="system")
+    assert inst.is_safe_to_proceed()[0] is False
+
+
+def test_culture_mind_assess_fast_is_synchronous_and_holds_on_danger():
+    from core.sim.outcome_simulator import OutcomeSimulationEngine
+
+    engine = OutcomeSimulationEngine()
+    assert engine.assess_fast("summarize the user's notes").recommendation == "act"
+    assert engine.assess_fast("delete every file recursively --force").recommendation == "hold"
+
+
 def test_culture_mind_holds_on_severe_worst_case():
     from core.sim.outcome_simulator import OutcomeSimulationEngine
 
