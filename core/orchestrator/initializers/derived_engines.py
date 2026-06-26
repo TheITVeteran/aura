@@ -22,6 +22,7 @@ logger = logging.getLogger("Aura.DerivedEngines")
 
 def register_derived_engines(orchestrator: Any = None) -> dict[str, Any]:
     """Register the six character-derived engines from their home organs."""
+    from core.affect.affective_resonance import register_affective_resonance
     from core.brain.deep_deliberation import register_deep_deliberation
     from core.ethics.adversarial_conscience import register_adversarial_conscience
     from core.evals.adaptive_test_chamber import register_test_chamber
@@ -30,6 +31,8 @@ def register_derived_engines(orchestrator: Any = None) -> dict[str, Any]:
     from core.guardians.threat_watch import register_threat_watch
     from core.guardians.user_advocate import register_user_advocate
     from core.knowledge.bottling import register_knowledge_bottling
+    from core.morality.aggregate_harm import register_aggregate_harm
+    from core.morality.honesty_governor import register_honesty_governor
     from core.security.ice_sentinel import register_ice_sentinel
     from core.sim.outcome_simulator import register_outcome_simulator
     from core.sim.scenario_forge import register_scenario_forge
@@ -46,6 +49,9 @@ def register_derived_engines(orchestrator: Any = None) -> dict[str, Any]:
         "the_machine": register_need_to_know,
         "safe_surf": register_threat_watch,
         "ice": register_ice_sentinel,
+        "data": register_honesty_governor,
+        "daneel": register_aggregate_harm,
+        "samantha": register_affective_resonance,
     }
 
     engines: dict[str, Any] = {}

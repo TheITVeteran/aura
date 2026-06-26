@@ -98,6 +98,19 @@ class AdversarialConscienceEngine:
             score += 0.20
             concerns.append("Affects parties other than the user")
 
+        # Daneel (Zeroth Law): when reach is broad and others are affected, weigh the
+        # population-scale harm, not just the single act.
+        if third_party and broad:
+            try:
+                from core.morality.aggregate_harm import get_aggregate_harm
+
+                agg = get_aggregate_harm().score_text_action(action, affected_population=1000)
+                if agg >= 0.5:
+                    score += 0.15
+                    concerns.append(f"Population-scale (aggregate) harm estimated high ({agg:.2f}).")
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                _degrade(exc, action="assessed conscience without aggregate-harm consult")
+
         risk_level = str((context or {}).get("risk_level", "")).lower()
         if risk_level in ("high", "critical"):
             score += 0.25 if risk_level == "high" else 0.40

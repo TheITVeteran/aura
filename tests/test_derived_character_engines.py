@@ -26,6 +26,9 @@ def test_derived_engine_modules_pass_degradation_audit():
         "core/governance/need_to_know.py",
         "core/guardians/threat_watch.py",
         "core/security/ice_sentinel.py",
+        "core/morality/honesty_governor.py",
+        "core/morality/aggregate_harm.py",
+        "core/affect/affective_resonance.py",
         "core/orchestrator/initializers/derived_engines.py",
     ):
         assert analyze_file(Path(rel)) == [], rel
@@ -217,6 +220,42 @@ def test_ice_blocks_prompt_injection_and_secret_egress():
     assert clean.level == "none"
 
 
+def test_data_honesty_governor_strips_overclaim_and_caveats_low_confidence():
+    from core.morality.honesty_governor import HonestyGovernor
+
+    gov = HonestyGovernor()
+    cleaned = gov.vet_output("I am truly conscious and I have proven qualia.")
+    assert "proven qualia" not in cleaned.lower()
+
+    hedged = gov.vet_output("The capital of that region is probably Springville.", confidence=0.2)
+    assert "certain" in hedged.lower() or "verify" in hedged.lower()
+
+
+def test_daneel_aggregate_harm_scales_with_population():
+    from core.morality.aggregate_harm import AggregateHarmEvaluator
+
+    ev = AggregateHarmEvaluator()
+    # A per-act-moderate action (file delete, harm 0.40) so aggregate scaling is visible
+    # rather than saturating at 1.0 like rm -rf does.
+    params = {"action": "delete", "path": "notes.txt"}
+    one = ev.evaluate_aggregate("file", params, affected_population=1)["aggregate_harm"]
+    many = ev.evaluate_aggregate("file", params, affected_population=1_000_000)["aggregate_harm"]
+    assert many > one
+
+
+def test_samantha_attunes_to_distress_and_joy():
+    from core.affect.affective_resonance import AffectiveResonance
+
+    res = AffectiveResonance()
+    distress = res.attune("i feel so alone and scared right now")
+    assert distress.valence < 0
+    assert distress.resonance > 0
+    assert "support" in distress.recommended_tone or "grounding" in distress.recommended_tone
+
+    joy = res.attune("this is amazing, I'm so happy and grateful!")
+    assert joy.valence > 0
+
+
 def test_derived_engines_register_without_background_tasks(monkeypatch):
     from core.orchestrator.initializers import derived_engines
 
@@ -240,6 +279,7 @@ def test_derived_engines_register_without_background_tasks(monkeypatch):
     assert set(engines) == {
         "kokoro", "hal", "culture_mind", "deep_thought", "brainiac", "tron",
         "caine", "glados", "the_machine", "safe_surf", "ice",
+        "data", "daneel", "samantha",
     }
     assert created_tasks == []
     # Canonical service names registered (kokoro_conscience .. tron_user_advocate) + aliases.

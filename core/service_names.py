@@ -33,6 +33,10 @@ class ServiceNames:
     # AI Engines (Fictional Origins) — outward defense
     SAFE_SURF = "safe_surf_threat_watch"    # core/guardians/threat_watch.py
     ICE = "ice_intrusion_sentinel"          # core/security/ice_sentinel.py
+    # AI Engines (Fictional Origins) — extensions of existing organs
+    DATA = "data_honesty_governor"          # core/morality/honesty_governor.py
+    DANEEL = "daneel_aggregate_harm"        # core/morality/aggregate_harm.py
+    SAMANTHA = "samantha_affective_resonance"  # core/affect/affective_resonance.py
 
     # Functional Subsystems
     CAPABILITY = "capability_engine"

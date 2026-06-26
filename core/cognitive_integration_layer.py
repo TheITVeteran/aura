@@ -490,6 +490,32 @@ class CognitiveIntegrationLayer:
                 )
                 logger.debug("Outward defense scan failed: %s", _def_exc)
 
+        # Phase 23.6: Affective attunement (Samantha). INTERNAL — sets affect
+        # resonance/valence modifiers that colour Aura's tone; EXTERNAL — she meets
+        # the person where they are emotionally instead of replying flat.
+        samantha = ServiceContainer.get("samantha", default=None)
+        if samantha is not None:
+            try:
+                _res = samantha.attune(message)
+                ki = ServiceContainer.get("kernel_interface", default=None)
+                if ki is not None and getattr(ki, "is_ready", lambda: False)() and getattr(ki, "kernel", None):
+                    st = getattr(ki.kernel, "state", None)
+                    if st is not None and hasattr(getattr(st, "cognition", None), "modifiers"):
+                        st.cognition.modifiers["affect_resonance"] = _res.resonance
+                        st.cognition.modifiers["affect_valence"] = _res.valence
+                if _res.resonance >= 0.5:
+                    logger.debug(
+                        "💟 Samantha attunement: tone=%s valence=%.2f",
+                        _res.recommended_tone, _res.valence,
+                    )
+            except _CIL_RECOVERABLE_ERRORS as _att_exc:
+                _record_cil_degradation(
+                    _att_exc,
+                    action="continued turn without affective attunement (Samantha)",
+                    severity="warning",
+                )
+                logger.debug("Affective attunement failed: %s", _att_exc)
+
         # 0. Reflexive Path (Fast Fallback - Thread Isolated)
         try:
             reflex = get_reflex()

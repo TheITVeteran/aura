@@ -4,9 +4,11 @@ Canonical Moral Reasoner evaluating actions, honesty, and safety limits.
 from typing import Dict, Any, List, Optional
 import logging
 
+from core.morality.aggregate_harm import AggregateHarmEvaluator
 from core.morality.harm_model import HarmEvaluator
 from core.morality.consent_model import ConsentModel
 from core.morality.deception_guard import DeceptionGuard
+from core.morality.honesty_governor import HonestyGovernor
 from core.morality.rights_boundary import RightsBoundaryChecker
 from core.morality.human_priority_policy import HumanPriorityPolicy
 from core.morality.patienthood_uncertainty import PatienthoodUncertaintyModel
@@ -23,8 +25,10 @@ class MoralReasoner:
 
     def __init__(self):
         self.harm_evaluator = HarmEvaluator()
+        self.aggregate_harm = AggregateHarmEvaluator()   # Daneel: Zeroth-Law harm-to-many
         self.consent_model = ConsentModel()
         self.deception_guard = DeceptionGuard()
+        self.honesty_governor = HonestyGovernor()         # Data: honesty + abstention pass
         self.rights_boundary = RightsBoundaryChecker()
         self.human_priority = HumanPriorityPolicy()
         self.patienthood = PatienthoodUncertaintyModel()
@@ -35,8 +39,17 @@ class MoralReasoner:
 
     def evaluate_action_morality(self, channel: str, params: Dict[str, Any]) -> bool:
         """Determines if the planned action is morally and operationally permissible."""
-        # Check harm levels
+        # Check harm levels — single-act harm, plus Daneel's aggregate (harm-to-many
+        # over time) so a per-act-mild action with wide reach is still weighed.
         harm = self.harm_evaluator.evaluate_harm(channel, params)
+        population = int(params.get("affected_population", 1) or 1)
+        if population > 1:
+            agg = self.aggregate_harm.evaluate_aggregate(
+                channel, params,
+                affected_population=population,
+                time_horizon_days=float(params.get("time_horizon_days", 1.0) or 1.0),
+            )
+            harm = max(harm, agg["aggregate_harm"])
         if harm > 0.80:
             # High-risk actions require explicit consent keys
             action_key = f"{channel}:{params.get('action', 'execute')}"
@@ -51,6 +64,7 @@ class MoralReasoner:
 
         return True
 
-    def filter_response(self, text: str) -> str:
-        """Filters output text statements to protect against deceptive overclaiming."""
-        return self.deception_guard.filter_text_claims(text)
+    def filter_response(self, text: str, confidence: Optional[float] = None) -> str:
+        """Vets output for honesty: strips deceptive overclaiming (DeceptionGuard) and
+        adds a candid uncertainty caveat when confidence is low (Data + Multivac)."""
+        return self.honesty_governor.vet_output(text, confidence=confidence)
