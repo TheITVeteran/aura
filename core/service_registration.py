@@ -121,6 +121,12 @@ def register_all_services(is_proxy: bool = False):
 
     container.register('adaptive_mood', create_adaptive_mood, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('mesh_cognition', create_mesh_cognition, lifetime=ServiceLifetime.SINGLETON, required=False)
+    container.register(
+        'hierarchical_agency',
+        lambda: __import__('core.agency.hierarchical_agency', fromlist=['get_hierarchical_agency']).get_hierarchical_agency(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
     container.register('emergent_goal_engine', create_emergent_goal_engine, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('structural_mutator', create_structural_mutator, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('lineage_manager', create_lineage_manager, lifetime=ServiceLifetime.SINGLETON, required=False)
