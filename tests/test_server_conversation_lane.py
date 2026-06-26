@@ -37,6 +37,21 @@ def _bound_live_mind_controls_trace():
             "clean_user_surface_recurrent_loops": 2,
             "clean_user_surface_steering_alpha": 0.30,
         },
+        "live_mind_surface_control_receipt": _bound_live_mind_surface_control_receipt(),
+        "live_mind_controls_worker_applied": True,
+    }
+
+
+def _bound_live_mind_surface_control_receipt():
+    return {
+        "enabled": True,
+        "live_mind_controls_bound": True,
+        "clean_user_surface_contract": True,
+        "surface_alpha_applied": 0.30,
+        "surface_alpha_applied_ok": True,
+        "recurrent_runtime_loops_applied": 2,
+        "recurrent_runtime_loops_applied_ok": True,
+        "applied": True,
     }
 
 
@@ -51,6 +66,8 @@ def _bound_live_mind_controls_metadata():
         },
         "live_mind_snapshot_ready": True,
         "live_mind_required_subsystems_ok": True,
+        "live_mind_surface_control_receipt": _bound_live_mind_surface_control_receipt(),
+        "live_mind_controls_worker_applied": True,
     }
 
 

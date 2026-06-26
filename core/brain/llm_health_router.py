@@ -744,8 +744,12 @@ class HealthAwareLLMRouter:
         self.last_background_tier: str | None = None
         self.last_user_error: str = ""
         self.last_background_error: str = ""
+        self._last_generation_metadata: dict[str, Any] = {}
         self._last_fallback_warning_at: float = 0.0
         logger.info("HealthAwareLLMRouter initialized (Legacy-Compatible mode)")
+
+    def get_last_generation_metadata(self) -> dict[str, Any]:
+        return dict(self._last_generation_metadata)
 
     def get_stats(self) -> dict[str, Any]:
         """Aggregate endpoint statistics for proprioceptive telemetry."""
@@ -1189,6 +1193,8 @@ class HealthAwareLLMRouter:
                 _non_chat_inference=True,
                 **kwargs,
             )
+            if isinstance(result, dict):
+                self._last_generation_metadata = dict(result)
             text = result.get("text", "") if isinstance(result, dict) else str(result)
             strict_answer_request = "<answer>" in str(prompt or "").lower() or "<answer>" in str(
                 system_prompt or ""
@@ -2753,18 +2759,33 @@ class HealthAwareLLMRouter:
                     if raw_text:
                         token_count = len(str(raw_text).split())
                         latency_ms = (time.monotonic() - start) * 1000
+                        surface_control_receipt = {}
+                        if hasattr(client, "get_last_surface_control_receipt"):
+                            try:
+                                raw_receipt = client.get_last_surface_control_receipt()
+                                if isinstance(raw_receipt, dict):
+                                    surface_control_receipt = dict(raw_receipt)
+                            except (AttributeError, RuntimeError, TypeError, ValueError) as receipt_exc:
+                                _record_router_degradation(
+                                    receipt_exc,
+                                    action="continued generation without MLX surface-control receipt metadata",
+                                    severity="warning",
+                                )
                         
                         is_valid, reason = validate_response(raw_text)
                         if not is_valid:
+                            payload = {
+                                "ok": True,
+                                "text": str(raw_text).strip(),
+                                "endpoint": ep.name,
+                                "tokens": token_count,
+                                "latency_ms": latency_ms,
+                                "error": f"benchmark_invalid_response:{reason}",
+                            }
+                            if surface_control_receipt:
+                                payload["surface_control_receipt"] = surface_control_receipt
                             if benchmark_request:
-                                return {
-                                    "ok": True,
-                                    "text": str(raw_text).strip(),
-                                    "endpoint": ep.name,
-                                    "tokens": token_count,
-                                    "latency_ms": latency_ms,
-                                    "error": f"benchmark_invalid_response:{reason}",
-                                }
+                                return payload
                             ep.record_empty()
                             return {"ok": False, "error": f"invalid_response:{reason}"}
                             
@@ -2780,13 +2801,16 @@ class HealthAwareLLMRouter:
                                     name="llm_router.restore_primary_after_deep_handoff",
                                 )
                             )
-                        return {
+                        payload = {
                             "ok": True,
                             "text": str(raw_text).strip(),
                             "endpoint": ep.name,
                             "tokens": token_count,
                             "latency_ms": latency_ms,
                         }
+                        if surface_control_receipt:
+                            payload["surface_control_receipt"] = surface_control_receipt
+                        return payload
                     else:
                         # [BOOT RESILIENCE] Preserve hard local-lane failures so the
                         # UI and router stop reporting an endless warmup loop.

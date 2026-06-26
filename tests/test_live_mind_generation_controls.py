@@ -71,6 +71,20 @@ async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypat
             calls.append(dict(kwargs))
             return "I am tracking the current turn through the live desktop mind path."
 
+        def get_last_generation_metadata(self):
+            return {
+                "surface_control_receipt": {
+                    "enabled": True,
+                    "live_mind_controls_bound": True,
+                    "clean_user_surface_contract": True,
+                    "surface_alpha_applied": 0.30,
+                    "surface_alpha_applied_ok": True,
+                    "recurrent_runtime_loops_applied": 2,
+                    "recurrent_runtime_loops_applied_ok": True,
+                    "applied": True,
+                }
+            }
+
     class Container:
         def get(self, name, default=None):
             if name == "llm_router":
@@ -109,5 +123,6 @@ async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypat
     assert router_kwargs["live_mind_required_subsystems_ok"] is False
     assert router_kwargs["live_mind_generation_controls"]["temperature"] > 0.58
     assert thought.metadata["live_mind_controls_bound"] is True
+    assert thought.metadata["live_mind_controls_worker_applied"] is True
     assert thought.metadata["live_mind_snapshot_ready"] is True
     assert thought.metadata["live_mind_generation_controls"]["top_p"] <= 0.94

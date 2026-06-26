@@ -1922,6 +1922,7 @@ class CognitiveEngine:
                 "[END RECENT COMPLETED CONVERSATION]"
             )
 
+        router_generation_metadata: dict[str, Any] = {}
         try:
             messages = [{"role": "system", "content": system_prompt}]
             if history_messages:
@@ -1996,6 +1997,10 @@ class CognitiveEngine:
                 router.think(**router_kwargs),
                 timeout=request_timeout + 3.0,
             )
+            if hasattr(router, "get_last_generation_metadata"):
+                raw_metadata = router.get_last_generation_metadata()
+                if isinstance(raw_metadata, dict):
+                    router_generation_metadata = dict(raw_metadata)
         except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
             record_degradation(
                 "cognitive_engine",
@@ -2047,6 +2052,13 @@ class CognitiveEngine:
             outcome="desktop_quick_reply",
             reward=0.8,
         )
+        surface_control_receipt = (
+            router_generation_metadata.get("surface_control_receipt")
+            if isinstance(router_generation_metadata, dict)
+            else None
+        )
+        if not isinstance(surface_control_receipt, dict):
+            surface_control_receipt = {}
 
         return Thought(
             id=str(uuid.uuid4()),
@@ -2079,6 +2091,11 @@ class CognitiveEngine:
                 "live_mind_snapshot_ready": live_mind_snapshot_ready,
                 "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
                 "live_mind_context_required": live_mind_required,
+                "live_mind_surface_control_receipt": surface_control_receipt,
+                "live_mind_controls_worker_applied": bool(
+                    surface_control_receipt.get("live_mind_controls_bound")
+                    and surface_control_receipt.get("applied")
+                ),
             },
         )
 

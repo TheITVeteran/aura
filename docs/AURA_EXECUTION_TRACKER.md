@@ -687,10 +687,18 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   the parent client retains the latest receipt for diagnostics/tests. Focused
   validation: 27 MLX/live-mind control tests passed, 58 MLX client resilience
   tests passed, and 6 live desktop contract tests passed.
+- 2026-06-25 server-visible MLX control receipt: tightened the live desktop
+  full-mind contract again so `full_mind_path=true` requires not only
+  CognitiveEngine/router-bound live-mind controls, but a worker-applied MLX
+  surface-control receipt. The router now exposes last-generation metadata,
+  CognitiveEngine carries the worker receipt in Thought metadata, and the chat
+  live-turn contract refuses to certify full-mind desktop success without that
+  receipt. Focused validation: 16 live-mind/router/contract tests passed and
+  the full desktop conversation-lane suite passed (201 tests).
 
 ## Current Closeout Progress Gauge
 
-- Latest checkpoint: downstream MLX live-mind control consumption.
+- Latest checkpoint: server-visible MLX live-mind control receipt.
 - Evidence added: subprocess ownership routed through `SubprocessGateway` for
   DNU/wedge supervisor paths, hardcoded local test paths removed, one broad
   watchdog exception narrowed, enterprise baseline regressions cleared, direct
@@ -705,8 +713,9 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   failure. The live desktop turn contract now additionally requires proof that
   generation controls derived from the live mind snapshot were bound into the
   model call before a reply can count as a full-mind desktop response, and the
-  MLX worker/client path now records a downstream receipt proving those controls
-  were consumed by user-visible generation.
+  MLX worker/client/router/CognitiveEngine/chat path now records and exposes a
+  downstream receipt proving those controls were consumed by user-visible
+  generation.
 - Current operator estimate: about 90% through the ultimate closeout standard.
 - Estimated remaining checkpoints: 4 total, depending on how many live
   desktop/demo-path defects surface during real 32B/72B runtime validation.

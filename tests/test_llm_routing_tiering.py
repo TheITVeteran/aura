@@ -38,6 +38,23 @@ class ContextGenerateClient:
         return self.response
 
 
+class ReceiptGenerateClient:
+    async def generate(self, prompt, **kwargs):
+        return "receipt-bound response"
+
+    def get_last_surface_control_receipt(self):
+        return {
+            "enabled": True,
+            "live_mind_controls_bound": True,
+            "clean_user_surface_contract": True,
+            "surface_alpha_applied": 0.28,
+            "surface_alpha_applied_ok": True,
+            "recurrent_runtime_loops_applied": 2,
+            "recurrent_runtime_loops_applied_ok": True,
+            "applied": True,
+        }
+
+
 @pytest.fixture
 def router_clients():
     router = HealthAwareLLMRouter()
@@ -137,6 +154,44 @@ async def test_live_benchmark_requests_stay_on_cortex_lane(router_clients):
     assert result["endpoint"] == "Cortex"
     assert result["text"] == "32B response"
     assert clients["solver"].calls == []
+
+
+@pytest.mark.asyncio
+async def test_router_surfaces_mlx_surface_control_receipt():
+    router = HealthAwareLLMRouter()
+    client = ReceiptGenerateClient()
+    router.register(
+        name="Cortex",
+        url="internal",
+        model="cortex-32b",
+        is_local=True,
+        tier="local",
+        client=client,
+    )
+
+    result = await router.generate_with_metadata(
+        "Hello",
+        prefer_tier="primary",
+        origin="user",
+        skip_runtime_payload=True,
+        clean_user_surface_contract=True,
+        live_mind_controls_bound=True,
+    )
+
+    assert result["surface_control_receipt"]["live_mind_controls_bound"] is True
+    assert result["surface_control_receipt"]["applied"] is True
+
+    text = await router.think(
+        "Hello again",
+        prefer_tier="primary",
+        origin="user",
+        skip_runtime_payload=True,
+        clean_user_surface_contract=True,
+        live_mind_controls_bound=True,
+    )
+
+    assert text == "receipt-bound response"
+    assert router.get_last_generation_metadata()["surface_control_receipt"]["applied"] is True
 
 
 @pytest.mark.asyncio

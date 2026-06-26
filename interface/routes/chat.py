@@ -3433,9 +3433,32 @@ def _build_live_turn_contract_payload(
         trace.get("live_mind_controls_bound")
         and live_mind_generation_controls_present
     )
+    raw_surface_control_receipt = trace.get("live_mind_surface_control_receipt")
+    live_mind_surface_control_receipt = (
+        {
+            key: raw_surface_control_receipt.get(key)
+            for key in (
+                "enabled",
+                "live_mind_controls_bound",
+                "clean_user_surface_contract",
+                "surface_alpha_applied",
+                "surface_alpha_applied_ok",
+                "recurrent_runtime_loops_applied",
+                "recurrent_runtime_loops_applied_ok",
+                "applied",
+            )
+            if key in raw_surface_control_receipt
+        }
+        if isinstance(raw_surface_control_receipt, dict)
+        else {}
+    )
+    live_mind_controls_worker_applied = bool(
+        live_mind_surface_control_receipt.get("live_mind_controls_bound")
+        and live_mind_surface_control_receipt.get("applied")
+    )
     live_mind_controls_structurally_bound = bool(
         (not live_mind_context_required)
-        or live_mind_controls_bound
+        or (live_mind_controls_bound and live_mind_controls_worker_applied)
     )
     confidence = str(response_confidence or "").strip().lower()
     accepted_full_mind_response_paths = {
@@ -3487,6 +3510,8 @@ def _build_live_turn_contract_payload(
         "live_mind_controls_bound": live_mind_controls_bound,
         "live_mind_generation_controls_present": live_mind_generation_controls_present,
         "live_mind_generation_controls": live_mind_generation_controls,
+        "live_mind_surface_control_receipt": live_mind_surface_control_receipt,
+        "live_mind_controls_worker_applied": live_mind_controls_worker_applied,
         "live_mind_controls_structurally_bound": live_mind_controls_structurally_bound,
         "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
         "preflight_live_mind_required_subsystems_ok": preflight_live_mind_required_subsystems_ok,
@@ -3951,6 +3976,8 @@ async def _run_cognitive_engine_chat_turn(
                 "legacy_fallback_used": False,
                 "live_mind_controls_bound": False,
                 "live_mind_generation_controls": {},
+                "live_mind_surface_control_receipt": {},
+                "live_mind_controls_worker_applied": False,
                 "response_path": "",
             }
         )
@@ -4741,6 +4768,12 @@ async def _run_cognitive_engine_chat_turn(
         if isinstance(raw_generation_controls, dict)
         else {}
     )
+    raw_surface_control_receipt = thought_metadata.get("live_mind_surface_control_receipt")
+    surface_control_receipt = (
+        dict(raw_surface_control_receipt)
+        if isinstance(raw_surface_control_receipt, dict)
+        else {}
+    )
     if turn_trace is not None:
         turn_trace.update(
             {
@@ -4749,6 +4782,10 @@ async def _run_cognitive_engine_chat_turn(
                     and generation_controls
                 ),
                 "live_mind_generation_controls": generation_controls,
+                "live_mind_surface_control_receipt": surface_control_receipt,
+                "live_mind_controls_worker_applied": bool(
+                    thought_metadata.get("live_mind_controls_worker_applied")
+                ),
                 "live_mind_snapshot_ready_from_thought": bool(
                     thought_metadata.get("live_mind_snapshot_ready")
                 ),
