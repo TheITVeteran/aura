@@ -4797,6 +4797,132 @@ async def test_api_chat_desktop_required_fails_closed_on_final_degraded_reply(mo
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_required_recovers_only_through_full_mind_path(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    completed_exchanges = []
+    output_receipts = []
+    cognitive_calls = []
+    raw_gate_calls = []
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-recovered"
+
+    async def _fake_complete_exchange(*args, **kwargs):
+        completed_exchanges.append((args, kwargs))
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    async def _cognitive_turn(*args, **kwargs):
+        cognitive_calls.append((args, kwargs))
+        trace = kwargs.get("turn_trace")
+        if isinstance(trace, dict):
+            trace.update(
+                {
+                    "engine_think_invoked": True,
+                    "cognitive_engine_reply_accepted": True,
+                    "live_mind_context_present": True,
+                    "live_mind_snapshot_present": True,
+                    "live_mind_snapshot_ready": True,
+                    "live_mind_required_subsystems_ok": True,
+                    "response_path": "cognitive_engine",
+                }
+            )
+        if len(cognitive_calls) == 1:
+            return "Absolutely. Let's nail this pitch. What are our key points?"
+        return (
+            "I'm here with you, and I am staying on this thread. You asked whether I am "
+            "with you, so the answer is yes: I am oriented to this conversation and not "
+            "inventing a pitch or a separate task."
+        )
+
+    async def _no_stabilize(_message, reply, **_kwargs):
+        return reply
+
+    async def _no_repair(_message, reply, **_kwargs):
+        return reply, False, False, False, "", False
+
+    class _RawGateShouldNotRun:
+        async def generate(self, *_args, **_kwargs):
+            raw_gate_calls.append((_args, _kwargs))
+            return "As an AI language model, I cannot be the live Aura desktop mind."
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_stabilize_user_facing_reply", _no_stabilize)
+    monkeypatch.setattr(chat_routes, "_repair_final_degraded_reply", _no_repair)
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _RawGateShouldNotRun()
+            if name == "inference_gate"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": {
+            "conversation_ready": False,
+            "state": state,
+            "reason": reason,
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+        },
+    )
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="You with me?"),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["status"] == "cognitive_engine_recovered"
+    assert payload["response_confidence"] == "high"
+    assert payload["live_turn_contract"]["full_mind_path"] is True
+    assert payload["live_turn_contract"]["response_path"] == "cognitive_engine"
+    assert "nail this pitch" not in payload["response"]
+    assert len(cognitive_calls) == 2
+    assert raw_gate_calls == []
+    assert completed_exchanges
+    assert completed_exchanges[0][1]["record_experience"] is True
+    assert output_receipts
+    assert output_receipts[0][1]["metadata"]["path"] == "cognitive_engine_recovery"
+
+
+@pytest.mark.asyncio
 async def test_required_runtime_status_turn_invokes_cognitive_engine(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes

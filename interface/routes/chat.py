@@ -12256,27 +12256,130 @@ async def api_chat(
                 )
             return final_text, status
 
-        async def _try_serve_grounded_recovery() -> JSONResponse | None:
-            """Try one clean grounded regeneration; serve it as a competent reply, or None.
+        async def _try_serve_grounded_recovery(
+            rejected_reply: str = "",
+            *,
+            reasons: tuple[str, ...] | list[str] | None = None,
+            response_path: str = "desktop_grounded_recovery",
+        ) -> JSONResponse | None:
+            """Recover only through the same required CognitiveEngine/full-mind path.
 
-            Shared by every desktop fail-closed site so a degraded/contaminated turn is
-            recovered into a real answer instead of surrendered, wherever it would fail.
+            The older recovery helper called ``inference_gate.generate`` directly and
+            returned HTTP 200/high confidence. That was safer than serving the bad
+            draft, but it was still a raw-model side door on the launched desktop
+            lane. A recovery that reaches the user must now prove the same live
+            mind contract as an ordinary desktop turn.
             """
             nonlocal pending_exchange_id
+            if not desktop_requires_cognitive_engine:
+                return None
+            if bool(_live_turn_trace.get("cognitive_engine_grounded_recovery_attempted")):
+                return None
+            _live_turn_trace["cognitive_engine_grounded_recovery_attempted"] = True
+
             try:
-                recovered = await _grounded_competent_recovery(
-                    _semantic_user_message, origin="desktop-ui"
+                from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+                pressure = get_memory_pressure_snapshot()
+                if bool(getattr(pressure, "refuse_heavy_local_generation", False)):
+                    logger.warning(
+                        "Skipping desktop CognitiveEngine recovery under memory pressure: %s",
+                        getattr(pressure, "reason", ""),
+                    )
+                    return None
+            except _CHAT_RECOVERABLE_ERRORS as pressure_exc:
+                record_degradation("chat", pressure_exc)
+                logger.debug("Desktop recovery memory-pressure check skipped: %s", pressure_exc)
+
+            recovery_budget = _desktop_required_cognitive_budget(
+                foreground_timeout=foreground_timeout,
+                elapsed_s=time.monotonic() - request_started_at,
+            )
+            if recovery_budget < _DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S:
+                logger.warning(
+                    "Skipping desktop CognitiveEngine recovery; remaining budget %.1fs is below %.1fs.",
+                    recovery_budget,
+                    _DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S,
                 )
-            except _CHAT_RECOVERABLE_ERRORS as _rec_exc:
-                record_degradation("chat", _rec_exc)
+                return None
+
+            reason_tuple = tuple(str(reason) for reason in (reasons or ()) if str(reason or "").strip())
+            if not reason_tuple:
+                reason_tuple = (str(response_path or "desktop_reply_not_proven"),)
+            recovery_message = _build_cognitive_engine_reply_repair_directive(
+                _semantic_user_message,
+                rejected_reply,
+                reason_tuple,
+            )
+            recovery_trace: dict[str, Any] = {}
+            try:
+                recovered = await _run_cognitive_engine_chat_turn(
+                    recovery_message,
+                    visible_user_message=_semantic_user_message,
+                    preflight_context_message=preflight_context_message,
+                    session_id=_chat_session_id,
+                    origin=chat_origin,
+                    timeout_s=recovery_budget,
+                    lane=dict(lane or {}),
+                    source="desktop_ui_recovery",
+                    require_engine=True,
+                    turn_trace=recovery_trace,
+                )
+            except _CHAT_RECOVERABLE_ERRORS as rec_exc:
+                record_degradation("chat", rec_exc)
                 recovered = None
             if not recovered:
                 return None
-            logger.info("✅ Degraded desktop turn recovered competently via grounded regeneration.")
-            _live_turn_trace.update(
-                {"response_path": "cognitive_engine_grounded_recovery", "grounded_recovery": True}
-            )
+
+            try:
+                from core.conversation.response_reliability import assess_user_facing_reply
+
+                recovered_recent_user_messages = await _gather_recent_user_messages_for_relevance(
+                    _semantic_user_message
+                )
+                recovered_assessment = assess_user_facing_reply(
+                    _semantic_user_message,
+                    recovered,
+                    recent_user_messages=recovered_recent_user_messages,
+                )
+            except _CHAT_RECOVERABLE_ERRORS as assess_exc:
+                record_degradation("chat", assess_exc)
+                recovered_assessment = None
+            if _reply_assessment_requires_repair_with_memory_evidence(
+                recovered_assessment,
+                _semantic_user_message,
+                recovered,
+                memory_state_evidence=desktop_memory_state_evidence,
+            ):
+                logger.warning(
+                    "Desktop CognitiveEngine recovery still failed reliability gate (%s).",
+                    ",".join(getattr(recovered_assessment, "reasons", ()) or ()),
+                )
+                return None
+
             recovered_lane = _collect_conversation_lane_status()
+            recovery_contract = _build_live_turn_contract_payload(
+                desktop_required=True,
+                request_surface=request_surface,
+                lane_status=recovered_lane,
+                response_confidence="high",
+                status="cognitive_engine_recovered",
+                reply_source=str(recovery_trace.get("response_path") or "cognitive_engine"),
+                turn_trace=recovery_trace,
+            )
+            if not bool(recovery_contract.get("full_mind_path")):
+                logger.warning(
+                    "Desktop CognitiveEngine recovery produced text but did not prove full-mind path "
+                    "(path=%s, accepted=%s, bounded=%s).",
+                    recovery_contract.get("response_path"),
+                    recovery_contract.get("cognitive_engine_reply_accepted"),
+                    recovery_contract.get("bounded_contract_used"),
+                )
+                return None
+
+            logger.info("✅ Degraded desktop turn recovered through CognitiveEngine full-mind path.")
+            _live_turn_trace.update(recovery_trace)
+            _live_turn_trace["cognitive_engine_grounded_recovery"] = True
             if pending_exchange_id:
                 await _complete_logged_exchange(
                     pending_exchange_id, _semantic_user_message, recovered, record_experience=True
@@ -12290,7 +12393,12 @@ async def api_chat(
             await _emit_chat_output_receipt(
                 recovered,
                 cause="chat_response",
-                metadata={"response_confidence": "high", "path": "grounded_recovery", "status": "cognitive_engine_recovered"},
+                metadata={
+                    "response_confidence": "high",
+                    "path": "cognitive_engine_recovery",
+                    "status": "cognitive_engine_recovered",
+                    "recovery_from": str(response_path or ""),
+                },
             )
             return JSONResponse(
                 {
@@ -12298,12 +12406,7 @@ async def api_chat(
                     "status": "cognitive_engine_recovered",
                     "conversation_lane": recovered_lane,
                     "response_confidence": "high",
-                    "live_turn_contract": _live_turn_contract(
-                        lane_status=recovered_lane,
-                        response_confidence="high",
-                        status="cognitive_engine_recovered",
-                        reply_source="cognitive_engine_grounded_recovery",
-                    ),
+                    "live_turn_contract": recovery_contract,
                 },
                 status_code=200,
             )
@@ -12320,7 +12423,11 @@ async def api_chat(
             nonlocal pending_exchange_id
 
             # COMPETENCE over fail-closed: try a clean grounded recovery before surrendering.
-            served = await _try_serve_grounded_recovery()
+            served = await _try_serve_grounded_recovery(
+                rejected_reply,
+                reasons=(response_path, reason),
+                response_path=response_path,
+            )
             if served is not None:
                 return served
 

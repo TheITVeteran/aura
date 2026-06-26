@@ -17,6 +17,53 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Desktop Recovery Full-Mind Checkpoint (2026-06-25)
+
+### Gaps Addressed
+
+- **Raw recovery could masquerade as successful Aura speech**:
+  `interface/routes/chat.py` no longer lets the desktop-required recovery path
+  call `inference_gate.generate()` directly and return HTTP 200/high confidence.
+  Recovery must now re-enter `_run_cognitive_engine_chat_turn()` with the same
+  live desktop CognitiveEngine requirement.
+- **Recovered replies must prove the same contract as normal replies**:
+  the recovery response is served only when the recovery trace proves
+  CognitiveEngine was invoked, the reply was accepted, no bounded repair or
+  legacy fallback was used, the live mind snapshot is present and ready, and
+  `_build_live_turn_contract_payload()` marks `full_mind_path=true`.
+- **Bad recovery text still fails**: the outer desktop API re-runs the shared
+  `assess_user_facing_reply()` gate before serving recovered text, so a future
+  bypass cannot mark an off-topic/prompt-shaped/raw assistant draft as
+  recovered.
+- **Regression coverage**:
+  `test_api_chat_desktop_required_recovers_only_through_full_mind_path`
+  proves a degraded first CognitiveEngine draft can recover only through a
+  second full-mind CognitiveEngine trace, and that raw
+  `inference_gate.generate()` is not used for launched desktop recovery.
+
+### Latest Commands Run
+
+```bash
+python -m py_compile interface/routes/chat.py tests/test_server_conversation_lane.py
+python -m pytest tests/test_server_conversation_lane.py::test_api_chat_desktop_required_fails_closed_on_final_degraded_reply tests/test_server_conversation_lane.py::test_api_chat_desktop_required_recovers_only_through_full_mind_path tests/test_server_conversation_lane.py::test_api_chat_desktop_discards_bounded_repair_when_full_mind_path_not_proven -q
+python -m pytest tests/test_grounded_competent_recovery.py -q
+python -m pytest tests/test_server_conversation_lane.py tests/test_runtime_polish.py tests/test_system_route_hardening.py tests/test_server_runtime_hardening.py tests/test_boot_health.py tests/test_live_runtime_surface_regressions.py -q
+python -m pytest tests/test_live_mind_generation_controls.py tests/test_live_mind_snapshot.py tests/test_deep_mind_service_registration.py tests/test_grounded_competent_recovery.py -q
+make enterprise-gate
+make production-gate
+```
+
+Latest focused/broad result: **3 focused desktop-recovery tests passed, 6
+grounded-recovery helper tests passed, 709 desktop/runtime lane tests passed,
+12 live-mind/deep-registration tests passed, `make enterprise-gate` passed,
+and `make production-gate` passed**.
+
+Current closeout estimate after this checkpoint: **~90%**. Remaining work is
+estimated at **4-5 total checkpoints**: real launched GUI/voice demo proof,
+memory/tool continuity proof on the same path, CRSM/CAA closure, DNU/Aletheia
+and final-proof artifact reruns, and a longer soak/replay/claims purification
+checkpoint.
+
 ## Latest Live Desktop Mind-Path Checkpoint (2026-06-25)
 
 ### Gaps Addressed
