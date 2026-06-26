@@ -203,6 +203,14 @@ def register_all_services(is_proxy: bool = False):
         lifetime=ServiceLifetime.SINGLETON,
         required=False,
     )
+    # Affect grounding — affect labels from sustained multi-signal conditions with explicit factor
+    # attribution, replacing single-float-threshold labels ("x < -0.2 → boredom").
+    container.register(
+        'affect_grounding',
+        lambda: __import__('core.affect.affect_grounding', fromlist=['get_affect_grounding_engine']).get_affect_grounding_engine(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
     container.register('emergent_goal_engine', create_emergent_goal_engine, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('structural_mutator', create_structural_mutator, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('lineage_manager', create_lineage_manager, lifetime=ServiceLifetime.SINGLETON, required=False)
