@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 import math
-import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -71,6 +70,8 @@ class LearnedMCTSPlanner:
         num_simulations: int = 100,
     ):
         self.world_model = world_model
+        if not action_space:
+            raise ValueError("LearnedMCTSPlanner requires at least one action")
         self.action_space = action_space
         self.value_scorer = value_scorer  # Must score a latent/observation state
         self.c_puct = exploration_constant
@@ -89,13 +90,12 @@ class LearnedMCTSPlanner:
             ablate_learned_model: If True, uses random heuristic rollout instead
                                   of the learned VRNN transition model (for proof).
         """
-        # Initialize root node with current VRNN hidden state
-        # First encode the observation to get the latent
-        # For simplicity, we just use the current VRNN hidden state `h`
+        root_latent, root_hidden = self._encode_root(current_observation)
         root = MCTSNode(
-            latent_state=np.zeros(self.world_model.config.latent_dim),
-            hidden_state=self.world_model.h.copy()
+            latent_state=root_latent,
+            hidden_state=root_hidden,
         )
+        max_path_len = 1
 
         for _ in range(self.num_simulations):
             node = root
@@ -107,14 +107,15 @@ class LearnedMCTSPlanner:
                 action_idx, node = self._select_child(node)
                 search_path.append(node)
                 depth += 1
+            max_path_len = max(max_path_len, len(search_path))
 
             # 2. Expansion & Evaluation
             value = 0.0
             if depth < self.max_depth:
                 self._expand(node, ablate_learned_model)
-                value = self.value_scorer(node.hidden_state) if not ablate_learned_model else np.random.uniform(-1.0, 1.0)
+                value = float(self.value_scorer(node.hidden_state))
             else:
-                value = self.value_scorer(node.hidden_state) if not ablate_learned_model else 0.0
+                value = float(self.value_scorer(node.hidden_state))
 
             # 3. Backpropagation
             self._backpropagate(search_path, value)
@@ -133,10 +134,30 @@ class LearnedMCTSPlanner:
         info = {
             "root_visits": root.visit_count,
             "best_q": best_q,
-            "max_depth_reached": max((len(search_path) for _ in range(10))) if 'search_path' in locals() else 0,
+            "max_depth_reached": max_path_len,
+            "ablated_learned_model": ablate_learned_model,
+            "child_visits": {
+                str(idx): child.visit_count for idx, child in root.children.items()
+            },
         }
 
         return self.action_space[best_action_idx], info
+
+    def _encode_root(self, current_observation: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Encode the current observation without mutating the learned model."""
+
+        obs = self.world_model._pad_or_truncate(
+            current_observation,
+            self.world_model.config.observation_dim,
+        )
+        hidden = self.world_model.h.copy()
+        enc_input = np.concatenate([obs, hidden])
+        post_params = self.world_model.W_enc @ enc_input + self.world_model.b_enc
+        post_mean, _post_logvar = np.split(post_params, 2)
+        latent = np.asarray(post_mean, dtype=np.float32)
+        zero_action = np.zeros(self.world_model.config.action_dim, dtype=np.float32)
+        next_hidden = self.world_model._gru_step(np.concatenate([latent, zero_action]), hidden)
+        return latent, next_hidden
 
     def _select_child(self, node: MCTSNode) -> Tuple[int, MCTSNode]:
         """Select child using PUCT algorithm (combines Q, Prior, and Uncertainty)."""
@@ -168,15 +189,15 @@ class LearnedMCTSPlanner:
         
         for action_idx, action in enumerate(self.action_space):
             if ablate_learned_model:
-                # Dummy expansion without learned dynamics
+                child_latent, child_hidden = self._ablation_transition(node, action)
                 child = MCTSNode(
-                    latent_state=np.zeros_like(node.latent_state),
-                    hidden_state=np.zeros_like(node.hidden_state),
+                    latent_state=child_latent,
+                    hidden_state=child_hidden,
                     parent=node,
                     action_from_parent=action,
                     prior_prob=1.0 / len(self.action_space)
                 )
-                child.uncertainty = 0.0
+                child.uncertainty = 1.0
                 node.children[action_idx] = child
                 continue
 
@@ -188,8 +209,9 @@ class LearnedMCTSPlanner:
             prior_mean, prior_logvar = np.split(prior_params, 2)
             prior_logvar = np.clip(prior_logvar, -5.0, 2.0)
             
-            # Sample z
-            z = self.world_model._reparameterize(prior_mean, prior_logvar)
+            # Use the deterministic prior mean for planning stability. The
+            # variance still contributes to uncertainty-driven exploration.
+            z = prior_mean.astype(np.float32)
             
             # Transition: h' = GRU(z, a, h)
             gru_input = np.concatenate([z, act_pad])
@@ -208,6 +230,25 @@ class LearnedMCTSPlanner:
             child.uncertainty = float(np.mean(np.exp(prior_logvar)))
             
             node.children[action_idx] = child
+
+    def _ablation_transition(
+        self,
+        node: MCTSNode,
+        action: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Deterministic non-learned transition used only for ablation probes."""
+
+        act_pad = self.world_model._pad_or_truncate(action, self.world_model.config.action_dim)
+        latent = np.zeros_like(node.latent_state)
+        latent_width = min(latent.shape[0], act_pad.shape[0])
+        if latent_width:
+            latent[:latent_width] = act_pad[:latent_width]
+
+        hidden = node.hidden_state.copy()
+        hidden_width = min(hidden.shape[0], act_pad.shape[0])
+        if hidden_width:
+            hidden[:hidden_width] = np.tanh(hidden[:hidden_width] + 0.05 * act_pad[:hidden_width])
+        return latent, hidden
 
     def _backpropagate(self, search_path: List[MCTSNode], value: float):
         """Propagate value up the tree."""

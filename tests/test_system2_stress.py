@@ -77,6 +77,23 @@ class TestMCTSPlannerEdgeCases(unittest.TestCase):
         self.assertIn(action.tolist(), [a.tolist() for a in self.action_space])
         self.assertEqual(info["root_visits"], 0)
 
+    def test_empty_action_space_fails_closed(self):
+        with self.assertRaises(ValueError):
+            LearnedMCTSPlanner(self.world_model, [], self.scorer)
+
+    def test_ablation_rollout_is_deterministic(self):
+        planner = LearnedMCTSPlanner(
+            self.world_model, self.action_space, self.scorer, num_simulations=12, max_depth=2
+        )
+        obs = np.zeros(4)
+
+        action_1, info_1 = planner.plan(obs, ablate_learned_model=True)
+        action_2, info_2 = planner.plan(obs, ablate_learned_model=True)
+
+        self.assertEqual(action_1.tolist(), action_2.tolist())
+        self.assertEqual(info_1["best_q"], info_2["best_q"])
+        self.assertTrue(info_1["ablated_learned_model"])
+
     def test_max_depth_zero(self):
         """MCTS should return immediate heuristic values if max depth is 0."""
         planner = LearnedMCTSPlanner(

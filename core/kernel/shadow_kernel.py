@@ -5,9 +5,10 @@ import builtins
 import json
 import logging
 import multiprocessing
+import queue
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
 from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
@@ -83,6 +84,21 @@ class StateBoundsConfig:
     MAX_PENDING_INTENTS: int = 100
     MAX_NESTED_DEPTH: int = 20
 
+
+@dataclass(frozen=True)
+class ShadowValidationReceipt:
+    """Structured evidence for a shadow mutation validation attempt."""
+
+    success: bool
+    behavioral_ok: bool
+    structural_ok: bool
+    validator_info: object = ""
+    failure_reason: str = ""
+    elapsed_ms: float = 0.0
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
 def _sandbox_worker(mutated_code: str, serialized_state: str, result_queue: multiprocessing.Queue):
     """Worker executed in a separate process with a hardened namespace."""
     try:
@@ -143,30 +159,68 @@ class ShadowExecutionPhase(Phase):
         return state
 
     async def apply_mutation_safely(self, mutated_code: str, validator_code: str) -> bool:
+        receipt = await self.evaluate_mutation_safely(mutated_code, validator_code)
+        return receipt.success
+
+    async def evaluate_mutation_safely(
+        self,
+        mutated_code: str,
+        validator_code: str,
+    ) -> ShadowValidationReceipt:
         """
         Orchestrates the dual-phase validation of a proposed mutation.
         1. Behavioral: Sandbox execution.
         2. Structural: Post-apply bounds check on a test copy.
         """
+        start = time.monotonic()
         # 1. Behavioral Sandbox Check
-        if not await self._validate_mutation(mutated_code, validator_code):
-            return False
+        behavioral_ok, validator_info = await self._validate_mutation_detailed(
+            mutated_code,
+            validator_code,
+        )
+        if not behavioral_ok:
+            return ShadowValidationReceipt(
+                success=False,
+                behavioral_ok=False,
+                structural_ok=False,
+                validator_info=validator_info,
+                failure_reason=str(validator_info or "behavioral_validation_failed"),
+                elapsed_ms=(time.monotonic() - start) * 1000.0,
+            )
             
         # 2. Structural Integrity Check (State Bounds)
         # We apply it to a test copy first to ensure it doesn't 'explode' the state graph.
         try:
             test_copy = await self.kernel.state.derive_async("sandbox_structural_test")
-            # In a real scenario, the mutation would be applied to test_copy here via exec
-            # For this patch, we run the validator on the current state to demonstrate protection
             if not self._validate_state_bounds(test_copy):
                 logger.error("Sandbox: Structural integrity check failed (State Bounds violation)")
-                return False
+                return ShadowValidationReceipt(
+                    success=False,
+                    behavioral_ok=True,
+                    structural_ok=False,
+                    validator_info=validator_info,
+                    failure_reason="state_bounds_violation",
+                    elapsed_ms=(time.monotonic() - start) * 1000.0,
+                )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('shadow_kernel', e)
             logger.error("Sandbox: Critical failure during structural validation: %s", e)
-            return False
+            return ShadowValidationReceipt(
+                success=False,
+                behavioral_ok=True,
+                structural_ok=False,
+                validator_info=validator_info,
+                failure_reason=f"structural_validation_error:{type(e).__name__}",
+                elapsed_ms=(time.monotonic() - start) * 1000.0,
+            )
             
-        return True
+        return ShadowValidationReceipt(
+            success=True,
+            behavioral_ok=True,
+            structural_ok=True,
+            validator_info=validator_info,
+            elapsed_ms=(time.monotonic() - start) * 1000.0,
+        )
 
     def _validate_state_bounds(self, state: AuraState) -> bool:
         """
@@ -194,6 +248,14 @@ class ShadowExecutionPhase(Phase):
             return False
 
     async def _validate_mutation(self, mutated_code: str, validator_code: str) -> bool:
+        ok, _info = await self._validate_mutation_detailed(mutated_code, validator_code)
+        return ok
+
+    async def _validate_mutation_detailed(
+        self,
+        mutated_code: str,
+        validator_code: str,
+    ) -> tuple[bool, object]:
         """Runs the existing behavioral sandbox check."""
         result_queue = multiprocessing.Queue()
         test_state = self.kernel.state
@@ -222,7 +284,7 @@ class ShadowExecutionPhase(Phase):
             logger.warning("Sandbox: Mutation validation timed out. Terminating Process.")
             p.terminate()
             p.join(timeout=2.0) # [CF] Reap zombie on macOS
-            return False
+            return False, "timeout"
             
         p.join(timeout=2.0) # Always reap
         
@@ -230,12 +292,14 @@ class ShadowExecutionPhase(Phase):
             # Non-blocking get from queue
             result = result_queue.get_nowait()
             if not result.get("ok"):
-                logger.error("Sandbox: Mutation failed: %s", result.get('trace') or result.get('info'))
-                return False
+                info = result.get("trace") or result.get("info") or "validator_returned_false"
+                logger.error("Sandbox: Mutation failed: %s", info)
+                return False, info
                 
-            logger.info("Sandbox: Mutation validated successfully: %s", result.get('info'))
-            return True
-        except (OSError, ConnectionError, TimeoutError) as e:
+            info = result.get("info")
+            logger.info("Sandbox: Mutation validated successfully: %s", info)
+            return True, info
+        except (OSError, ConnectionError, TimeoutError, queue.Empty) as e:
             record_degradation('shadow_kernel', e)
             logger.error("Sandbox: Failed to retrieve result from worker: %s", e)
-            return False
+            return False, f"result_queue_error:{type(e).__name__}"

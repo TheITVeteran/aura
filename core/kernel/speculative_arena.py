@@ -3,10 +3,10 @@ import asyncio
 import logging
 import uuid
 import time
-from typing import List, Dict, Optional, Callable, TYPE_CHECKING
+from typing import Any, List, Dict, TYPE_CHECKING
 from dataclasses import dataclass, field
 from core.state.aura_state import AuraState
-from .shadow_kernel import ShadowExecutionPhase
+from .shadow_kernel import ShadowExecutionPhase, ShadowValidationReceipt
 
 if TYPE_CHECKING:
     from core.kernel.aura_kernel import AuraKernel
@@ -17,9 +17,9 @@ logger = logging.getLogger("Aura.Arena")
 class SpeculativeBranch:
     """A single hypothesis branch in the Arena."""
     branch_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    state: AuraState = None
+    state: AuraState | None = None
     score: float = 0.0
-    info: dict = field(default_factory=dict)
+    info: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
 
 class SpeculativeArena:
@@ -55,15 +55,45 @@ class SpeculativeArena:
             
         branch = self.branches[branch_id]
         
-        # This is where parallel process scaling happens
-        # We use the apply_mutation_safely logic but directed at the branch state
-        success = await self._sandbox.apply_mutation_safely(mutated_code, validator_code)
+        receipt = await self._sandbox.evaluate_mutation_safely(mutated_code, validator_code)
+        branch.info["last_shadow_receipt"] = receipt.to_dict()
         
-        if success:
-            # In a real implementation, we'd apply the result to branch.state
-            branch.score += 1.0 # Placeholder scoring
+        if receipt.success:
+            score_delta = self._score_receipt(receipt)
+            branch.score += score_delta
+            branch.info["last_score_delta"] = score_delta
             
-        return success
+        return receipt.success
+
+    @staticmethod
+    def _score_receipt(receipt: ShadowValidationReceipt) -> float:
+        """Convert validation evidence into a bounded branch score."""
+
+        score = 0.0
+        if receipt.behavioral_ok:
+            score += 0.45
+        if receipt.structural_ok:
+            score += 0.35
+
+        info_score = SpeculativeArena._extract_validator_score(receipt.validator_info)
+        if info_score is not None:
+            score += 0.20 * info_score
+        elif receipt.success:
+            score += 0.10
+
+        elapsed_penalty = min(max(receipt.elapsed_ms, 0.0) / 10_000.0, 0.10)
+        return max(0.0, min(1.0, score - elapsed_penalty))
+
+    @staticmethod
+    def _extract_validator_score(info: object) -> float | None:
+        if isinstance(info, dict):
+            for key in ("score", "fitness", "reward", "confidence"):
+                value = info.get(key)
+                if isinstance(value, (int, float)):
+                    return max(0.0, min(1.0, float(value)))
+        if isinstance(info, (int, float)):
+            return max(0.0, min(1.0, float(info)))
+        return None
 
     async def promote_branch(self, branch_id: str) -> AuraState:
         """Promotes a branch to become the canonical kernel state."""
@@ -73,8 +103,15 @@ class SpeculativeArena:
         winner = self.branches[branch_id]
         logger.info("Arena: Promoting branch %s (Score: %s) to Canonical.", branch_id, winner.score)
         
-        # Lineage update
+        if winner.state is None:
+            raise ValueError(f"Branch {branch_id} has no state")
+
         winner.state.transition_cause = f"arena_promotion: {branch_id}"
+        winner.state.response_modifiers["arena_promotion"] = {
+            "branch_id": branch_id,
+            "score": winner.score,
+            "receipt": winner.info.get("last_shadow_receipt", {}),
+        }
         return winner.state
 
     def close_arena(self):
