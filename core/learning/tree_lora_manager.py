@@ -81,12 +81,47 @@ class TreeLoRAManager:
             self.root_nodes[l] = root_id
 
     def compute_gradient_signature(self, task_id: str, sample_gradients: np.ndarray) -> TaskGradientSignature:
-        """Hash/compress full model gradients into a compact signature."""
-        # Stub: random projection or pooling would happen here. We mock it for the framework.
-        np.random.seed(hash(task_id) % (2**32))
-        sig = np.random.randn(self.signature_dim)
-        sig /= (np.linalg.norm(sig) + 1e-8)
-        return TaskGradientSignature(task_id, sig, loss_magnitude=0.5)
+        """Compress observed gradients into a compact, deterministic routing signature.
+
+        This deliberately uses the supplied gradient values. Earlier versions
+        seeded a fabricated vector from ``task_id``, which made routing look
+        alive while ignoring the actual plasticity signal. The current sketch
+        preserves direction for short vectors and uses deterministic feature
+        hashing for larger tensors.
+        """
+        flat = np.asarray(sample_gradients, dtype=np.float64).reshape(-1)
+        if flat.size == 0:
+            return TaskGradientSignature(
+                task_id,
+                np.zeros(self.signature_dim, dtype=np.float64),
+                loss_magnitude=0.0,
+            )
+        flat = np.nan_to_num(flat, nan=0.0, posinf=0.0, neginf=0.0)
+        loss_magnitude = float(np.linalg.norm(flat) / math.sqrt(max(1, flat.size)))
+        if not np.any(flat):
+            return TaskGradientSignature(
+                task_id,
+                np.zeros(self.signature_dim, dtype=np.float64),
+                loss_magnitude=loss_magnitude,
+            )
+
+        if flat.size <= self.signature_dim:
+            sig = np.zeros(self.signature_dim, dtype=np.float64)
+            sig[: flat.size] = flat
+        else:
+            sig = np.zeros(self.signature_dim, dtype=np.float64)
+            for idx, value in enumerate(flat):
+                bucket = idx % self.signature_dim
+                block = idx // self.signature_dim
+                sign = 1.0 if (block % 2 == 0) else -1.0
+                sig[bucket] += sign * float(value)
+
+        norm = np.linalg.norm(sig)
+        if not np.isfinite(norm) or norm <= 1e-12:
+            sig = np.zeros(self.signature_dim, dtype=np.float64)
+        else:
+            sig = sig / norm
+        return TaskGradientSignature(task_id, sig, loss_magnitude=loss_magnitude)
 
     def route_and_adapt(self, signature: TaskGradientSignature, layer_idx: int) -> str:
         """Route a task through the tree to find the best adapter, or branch."""
@@ -128,10 +163,10 @@ class TreeLoRAManager:
         """Create a new adapter branch to prevent catastrophic forgetting."""
         new_id = f"{parent.node_id}_branch_{len(parent.children)}"
         
-        # Initialize new adapter (e.g. zeros for A, random for B)
+        # Initialize the branch as a deterministic signature-conditioned delta.
         new_adapter = {
             "A": np.zeros_like(parent.adapter_weights["A"]),
-            "B": np.random.randn(*parent.adapter_weights["B"].shape) * 0.01
+            "B": self._adapter_delta_from_signature(parent.adapter_weights["B"].shape, signature.gradient_vector)
         }
         
         new_node = LoRANode(
@@ -187,8 +222,25 @@ class TreeLoRAManager:
 
     @staticmethod
     def _cosine_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
+        v1 = np.nan_to_num(np.asarray(v1, dtype=np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+        v2 = np.nan_to_num(np.asarray(v2, dtype=np.float64), nan=0.0, posinf=0.0, neginf=0.0)
         v1_norm = np.linalg.norm(v1)
         v2_norm = np.linalg.norm(v2)
-        if v1_norm == 0 or v2_norm == 0:
+        if not np.isfinite(v1_norm) or not np.isfinite(v2_norm) or v1_norm == 0 or v2_norm == 0:
             return 0.0
         return float(np.dot(v1, v2) / (v1_norm * v2_norm))
+
+    @staticmethod
+    def _adapter_delta_from_signature(shape: Tuple[int, ...], signature: np.ndarray) -> np.ndarray:
+        flat_sig = np.asarray(signature, dtype=np.float64).reshape(-1)
+        flat_sig = np.nan_to_num(flat_sig, nan=0.0, posinf=0.0, neginf=0.0)
+        total = int(np.prod(shape))
+        if total <= 0:
+            return np.zeros(shape, dtype=np.float64)
+        if flat_sig.size == 0 or not np.any(flat_sig):
+            return np.zeros(shape, dtype=np.float64)
+        tiled = np.resize(flat_sig, total)
+        norm = np.linalg.norm(tiled)
+        if not np.isfinite(norm) or norm <= 1e-12:
+            return np.zeros(shape, dtype=np.float64)
+        return (tiled / norm * 0.01).reshape(shape)
