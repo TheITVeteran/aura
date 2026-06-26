@@ -37,14 +37,13 @@ import json
 import logging
 import os
 import shutil
-import tempfile
 import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import List, Optional
 
 from core.runtime.archive_gateway import get_archive_gateway
 from core.runtime.file_write_gateway import get_file_write_gateway
@@ -52,11 +51,10 @@ from core.runtime.file_write_gateway import get_file_write_gateway
 logger = logging.getLogger("Aura.UpdateManager")
 
 
-_BACKUP_DIR = Path.home() / ".aura" / "data" / "backups"
-_RELEASE_DIR = Path.home() / ".aura" / "data" / "releases"
-_LIVE_LINK = Path.home() / ".aura" / "live-source"
-_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-_RELEASE_DIR.mkdir(parents=True, exist_ok=True)
+_DEFAULT_BACKUP_DIR = Path.home() / ".aura" / "data" / "backups"
+_DEFAULT_RELEASE_DIR = Path.home() / ".aura" / "data" / "releases"
+_DEFAULT_LIVE_LINK = Path.home() / ".aura" / "live-source"
+_HMAC_CHUNK_SIZE = 1024 * 1024
 
 
 class Channel(str, Enum):
@@ -84,6 +82,9 @@ class UpdateAttempt:
     staged_at: Optional[str] = None
     continuity_hash_before: Optional[str] = None
     continuity_hash_after: Optional[str] = None
+    previous_live_target: Optional[str] = None
+    moved_aside_to: Optional[str] = None
+    candidate_root: Optional[str] = None
     completed_at: Optional[float] = None
     failed_reason: Optional[str] = None
 
@@ -102,15 +103,18 @@ class UpdateTransport(ABC):
 class LocalFileTransport(UpdateTransport):
     name = "local"
 
+    def __init__(self, release_dir: str | Path | None = None) -> None:
+        self.release_dir = Path(release_dir).expanduser() if release_dir else _DEFAULT_RELEASE_DIR
+
     async def list_available(self, channel: Channel) -> List[Release]:
         out: List[Release] = []
-        path = _RELEASE_DIR / channel.value
+        path = self.release_dir / channel.value
         if not path.exists():
             return out
         for archive in sorted(path.glob("aura-*.tar.gz")):
             sig = archive.with_suffix(archive.suffix + ".sig")
-            changelog = archive.with_suffix(".changelog.md")
-            version = archive.stem.split("-", 1)[1] if "-" in archive.stem else "unknown"
+            changelog = archive.with_name(archive.name.removesuffix(".tar.gz") + ".changelog.md")
+            version = archive.name.removeprefix("aura-").removesuffix(".tar.gz")
             out.append(Release(
                 version=version,
                 channel=channel.value,
@@ -126,9 +130,23 @@ class LocalFileTransport(UpdateTransport):
 
 
 class UpdateManager:
-    def __init__(self, *, transport: Optional[UpdateTransport] = None) -> None:
-        self.transport = transport or LocalFileTransport()
-        self._key_path = _BACKUP_DIR / "update_key"
+    def __init__(
+        self,
+        *,
+        transport: Optional[UpdateTransport] = None,
+        backup_dir: str | Path | None = None,
+        release_dir: str | Path | None = None,
+        live_link: str | Path | None = None,
+        require_signatures: bool = True,
+    ) -> None:
+        self.backup_dir = Path(backup_dir).expanduser() if backup_dir else _DEFAULT_BACKUP_DIR
+        self.release_dir = Path(release_dir).expanduser() if release_dir else _DEFAULT_RELEASE_DIR
+        self.live_link = Path(live_link).expanduser() if live_link else _DEFAULT_LIVE_LINK
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        self.release_dir.mkdir(parents=True, exist_ok=True)
+        self.transport = transport or LocalFileTransport(self.release_dir)
+        self.require_signatures = bool(require_signatures)
+        self._key_path = self.backup_dir / "update_key"
 
     def _key(self) -> bytes:
         if self._key_path.exists():
@@ -151,10 +169,13 @@ class UpdateManager:
             return False
         try:
             sig = signature.read_bytes()
-            data = archive.read_bytes()
-            mac = hmac.new(self._key(), data, hashlib.sha256).digest()
+            mac_ctx = hmac.new(self._key(), digestmod=hashlib.sha256)
+            with archive.open("rb") as fh:
+                while chunk := fh.read(_HMAC_CHUNK_SIZE):
+                    mac_ctx.update(chunk)
+            mac = mac_ctx.digest()
             return hmac.compare_digest(mac, sig)
-        except (RuntimeError, AttributeError, TypeError, ValueError):
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
             return False
 
     async def list_available(self, channel: Channel) -> List[Release]:
@@ -168,29 +189,33 @@ class UpdateManager:
 
         # 0. signature verify
         archive_path = Path(release.archive_path)
-        if release.signature_path:
-            ok = self._verify_signature(archive_path, Path(release.signature_path))
-            if not ok:
-                attempt.failed_reason = "signature_invalid"
-                self._record(attempt, "signature_invalid")
-                return attempt
+        if self.require_signatures and not release.signature_path:
+            attempt.failed_reason = "signature_missing"
+            self._record(attempt, "signature_missing")
+            return attempt
+        if release.signature_path and not self._verify_signature(archive_path, Path(release.signature_path)):
+            attempt.failed_reason = "signature_invalid"
+            self._record(attempt, "signature_invalid")
+            return attempt
 
         # 1. backup
-        backup = _BACKUP_DIR / f"aura-pre-{release.version}-{int(time.time())}.tar.gz"
-        if _LIVE_LINK.exists():
+        backup = self.backup_dir / f"aura-pre-{release.version}-{int(time.time())}.tar.gz"
+        if self.live_link.exists():
             get_archive_gateway().create_tar_gz(
                 backup,
-                _LIVE_LINK.resolve(),
+                self.live_link.resolve(),
                 arcname="live-source",
                 source_label="runtime.update_manager.backup",
             )
             attempt.backed_up_to = str(backup)
+            if self.live_link.is_symlink():
+                attempt.previous_live_target = str(self.live_link.resolve())
 
         # 2. capture pre-hash
         attempt.continuity_hash_before = self._continuity_hash()
 
         # 3. stage
-        staged = _RELEASE_DIR / f"_staged-{release.version}"
+        staged = self.release_dir / f"_staged-{release.version}-{attempt.attempt_id}"
         if staged.exists():
             shutil.rmtree(staged)
         staged.mkdir(parents=True)
@@ -206,17 +231,30 @@ class UpdateManager:
             self._record(attempt, "unpack_failed")
             return attempt
         attempt.staged_at = str(staged)
+        try:
+            candidate_root = self._candidate_root(staged)
+        except ValueError as exc:
+            attempt.failed_reason = f"invalid_release:{exc}"
+            self._record(attempt, "invalid_release")
+            return attempt
+        attempt.candidate_root = str(candidate_root)
 
         # 4. cutover (atomic symlink swap if live source is a symlink)
         try:
-            if _LIVE_LINK.is_symlink() or not _LIVE_LINK.exists():
-                tmplink = _LIVE_LINK.with_suffix(".swap")
-                tmplink.symlink_to(staged.resolve(), target_is_directory=True)
-                os.replace(tmplink, _LIVE_LINK)
+            if self.live_link.is_symlink() or not self.live_link.exists():
+                tmplink = self.live_link.with_name(f".{self.live_link.name}.{attempt.attempt_id}.swap")
+                if tmplink.exists() or tmplink.is_symlink():
+                    tmplink.unlink()
+                tmplink.symlink_to(candidate_root.resolve(), target_is_directory=True)
+                os.replace(tmplink, self.live_link)
             else:
                 # Non-symlink layout: move the directory aside, then swap
-                shutil.move(str(_LIVE_LINK), str(_LIVE_LINK) + f".pre-{release.version}")
-                shutil.move(str(staged), str(_LIVE_LINK))
+                aside = self.live_link.with_name(f"{self.live_link.name}.pre-{release.version}-{attempt.attempt_id}")
+                if aside.exists():
+                    shutil.rmtree(aside)
+                shutil.move(str(self.live_link), str(aside))
+                attempt.moved_aside_to = str(aside)
+                shutil.move(str(candidate_root), str(self.live_link))
         except (OSError, IOError) as exc:
             record_degradation('update_manager', exc)
             attempt.failed_reason = f"cutover_failed:{exc}"
@@ -238,18 +276,64 @@ class UpdateManager:
         return attempt
 
     async def _rollback(self, attempt: UpdateAttempt) -> None:
-        if not attempt.backed_up_to:
-            return
         try:
-            get_archive_gateway().extract_tar_gz(
-                attempt.backed_up_to,
-                _LIVE_LINK.parent,
-                source_label="runtime.update_manager.rollback_extract",
-            )
+            if attempt.previous_live_target:
+                self._restore_symlink(Path(attempt.previous_live_target), attempt)
+            elif attempt.moved_aside_to:
+                self._restore_directory(Path(attempt.moved_aside_to), attempt)
+            elif attempt.backed_up_to:
+                self._restore_backup_archive(Path(attempt.backed_up_to), attempt)
+            else:
+                return
             self._record(attempt, "rolled_back")
         except (OSError, IOError) as exc:
             record_degradation('update_manager', exc)
             self._record(attempt, f"rollback_failed:{exc}")
+
+    def _restore_symlink(self, target: Path, attempt: UpdateAttempt) -> None:
+        tmplink = self.live_link.with_name(f".{self.live_link.name}.{attempt.attempt_id}.rollback")
+        if tmplink.exists() or tmplink.is_symlink():
+            tmplink.unlink()
+        tmplink.symlink_to(target, target_is_directory=True)
+        os.replace(tmplink, self.live_link)
+
+    def _restore_directory(self, aside: Path, attempt: UpdateAttempt) -> None:
+        self._remove_live_path()
+        shutil.move(str(aside), str(self.live_link))
+
+    def _restore_backup_archive(self, backup: Path, attempt: UpdateAttempt) -> None:
+        self._remove_live_path()
+        restore_parent = self.live_link.parent
+        get_archive_gateway().extract_tar_gz(
+            backup,
+            restore_parent,
+            source_label="runtime.update_manager.rollback_extract",
+        )
+        restored = restore_parent / "live-source"
+        if restored != self.live_link and restored.exists():
+            shutil.move(str(restored), str(self.live_link))
+
+    def _remove_live_path(self) -> None:
+        if self.live_link.is_symlink() or self.live_link.is_file():
+            self.live_link.unlink()
+        elif self.live_link.exists():
+            shutil.rmtree(self.live_link)
+
+    @staticmethod
+    def _candidate_root(staged: Path) -> Path:
+        direct_markers = ("aura_main.py", "pyproject.toml", "requirements.txt")
+        if any((staged / marker).exists() for marker in direct_markers):
+            return staged
+        nested_live = staged / "live-source"
+        if nested_live.is_dir() and any((nested_live / marker).exists() for marker in direct_markers):
+            return nested_live
+        dirs = [child for child in staged.iterdir() if child.is_dir()]
+        files = [child for child in staged.iterdir() if child.is_file()]
+        if len(dirs) == 1 and not files:
+            only = dirs[0]
+            if any((only / marker).exists() for marker in direct_markers):
+                return only
+        raise ValueError("release archive does not contain a recognizable Aura source root")
 
     @staticmethod
     def _continuity_hash() -> Optional[str]:
@@ -266,15 +350,14 @@ class UpdateManager:
         # those fields fails verification.
         return before == after
 
-    @staticmethod
-    def _record(attempt: UpdateAttempt, event: str) -> None:
+    def _record(self, attempt: UpdateAttempt, event: str) -> None:
         try:
             get_file_write_gateway().append_text(
-                _BACKUP_DIR / "updates.jsonl",
+                self.backup_dir / "updates.jsonl",
                 json.dumps({"when": time.time(), "event": event, "attempt": asdict(attempt)}, default=str) + "\n",
                 source="runtime.update_manager.record",
             )
-        except (json.JSONDecodeError, TypeError, ValueError):
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
             pass  # no-op: intentional
 
 
