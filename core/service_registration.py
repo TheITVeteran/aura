@@ -147,6 +147,22 @@ def register_all_services(is_proxy: bool = False):
         lifetime=ServiceLifetime.SINGLETON,
         required=False,
     )
+    # Task-driven retrieval router over the typed memory taxonomy (intentional, not blind
+    # similarity). Stores plug in as adapters; default sync stores wired best-effort.
+    def _create_intentional_retriever():
+        mod = __import__('core.memory.intentional_retrieval', fromlist=['get_intentional_retriever'])
+        retriever = mod.get_intentional_retriever()
+        try:
+            retriever.wire_default_stores()
+        except Exception:  # noqa: BLE001 - default wiring is best-effort, never blocks boot
+            pass
+        return retriever
+    container.register(
+        'intentional_retriever',
+        _create_intentional_retriever,
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
     container.register('emergent_goal_engine', create_emergent_goal_engine, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('structural_mutator', create_structural_mutator, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('lineage_manager', create_lineage_manager, lifetime=ServiceLifetime.SINGLETON, required=False)
