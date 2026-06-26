@@ -353,10 +353,19 @@ class TestSemanticDedup:
         assert gate.should_store("Completely different content about quantum mechanics")
 
     def test_high_importance_bypasses(self):
+        # High importance bypasses FUZZY near-duplicate detection (so nuanced-but-
+        # similar important facts are never lost) but NOT exact-duplicate rejection
+        # — re-storing the identical canonical fact is the memory-pollution bug.
         from core.memory.semantic_dedup import SemanticDedupGate
         gate = SemanticDedupGate()
-        gate.should_store("Important memory about identity")
-        assert gate.should_store("Important memory about identity", importance=0.9)
+        gate.should_store("Important memory about identity and the self")
+        # A near-duplicate (shares most content) still passes at high importance.
+        assert gate.should_store(
+            "Important memory about identity, the self, and continuity over time",
+            importance=0.9,
+        )
+        # The exact same canonical fact does not get re-stored, even at high importance.
+        assert not gate.should_store("Important memory about identity and the self", importance=0.9)
 
     def test_trivial_text_rejected(self):
         from core.memory.semantic_dedup import SemanticDedupGate

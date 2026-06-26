@@ -66,6 +66,11 @@ class SQLiteMemory:
             await self._conn.execute("PRAGMA journal_mode=WAL;")
             await self._conn.execute("PRAGMA synchronous=NORMAL;")
             await self._conn.execute("PRAGMA cache_size=-64000;")
+            # Block (up to 15s) instead of raising on a busy lock — the MindTick loop
+            # has many concurrent async writers (DriveEngine, GoalEngine, UnifiedWill
+            # receipts) contending on this connection; without this an execution
+            # receipt write blocked by a homeostatic tick raises database-is-locked.
+            await self._conn.execute("PRAGMA busy_timeout=15000;")
             await self._ensure_schema()
             self._initialized = True
             logger.info("aiosqlite Memory initialized at %s", self.storage_file)

@@ -24,7 +24,7 @@ import hashlib
 import logging
 import re
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Optional, Set
 
@@ -59,9 +59,15 @@ class SemanticDedupGate:
     MAX_RECENT_WRITES = working_history_retention_policy("AURA_SEMANTIC_DEDUP_RECENT_WRITES_MAX").max_items
     WRITE_WINDOW_S = 3600.0  # Only compare against writes in the last hour
 
+    # Durable exact-duplicate memory: bounded LRU of content hashes that is NOT
+    # time-pruned, so the same canonical fact ("Bryan prefers Python") written hours
+    # or sessions apart is still caught. This is the actual pollution fix.
+    DURABLE_EXACT_MAX = 20000
+
     def __init__(self) -> None:
         self._recent: Deque[RecentWrite] = deque(maxlen=self.MAX_RECENT_WRITES)
         self._exact_hashes: Set[str] = set()
+        self._durable_exact: "OrderedDict[str, None]" = OrderedDict()
         self._total_checked: int = 0
         self._total_rejected: int = 0
         self._total_passed: int = 0
@@ -133,12 +139,6 @@ class SemanticDedupGate:
         """
         self._total_checked += 1
 
-        # High importance always passes
-        if importance >= 0.8:
-            self._record_write(text, tags)
-            self._total_passed += 1
-            return True
-
         # Empty/trivial text always rejected
         clean = text.strip()
         if len(clean) < 10:
@@ -148,11 +148,28 @@ class SemanticDedupGate:
         normalized = self._normalize(clean)
         text_hash = hashlib.md5(normalized.encode()).hexdigest()
 
-        # Exact match check (O(1))
-        if self.EXACT_MATCH_REJECT and text_hash in self._exact_hashes:
+        # Exact-duplicate rejection applies to EVERY write, including high-importance
+        # ones. Re-storing the identical canonical fact is never useful — it is the
+        # exact memory-pollution vector ("Bryan prefers Python" x N). Checked against
+        # both the recent window and the durable (non-time-pruned) LRU.
+        if self.EXACT_MATCH_REJECT and (
+            text_hash in self._exact_hashes or text_hash in self._durable_exact
+        ):
+            self._durable_exact.move_to_end(text_hash) if text_hash in self._durable_exact else None
             self._total_rejected += 1
             logger.debug("SemanticDedup: Exact duplicate rejected (hash=%s)", text_hash[:8])
             return False
+
+        # High importance bypasses only the FUZZY near-duplicate check below, so a
+        # nuanced-but-similar important fact is never lost — but it is still recorded
+        # for future exact-duplicate detection.
+        if importance >= 0.8:
+            self._record_write(
+                text, tags, text_hash=text_hash, normalized=normalized,
+                trigrams=self._trigrams(normalized),
+            )
+            self._total_passed += 1
+            return True
 
         # Prune stale entries
         self._prune_stale()
@@ -208,6 +225,11 @@ class SemanticDedupGate:
         )
         self._recent.append(entry)
         self._exact_hashes.add(text_hash)
+        # Durable LRU: remember this exact content beyond the 1-hour window.
+        self._durable_exact[text_hash] = None
+        self._durable_exact.move_to_end(text_hash)
+        while len(self._durable_exact) > self.DURABLE_EXACT_MAX:
+            self._durable_exact.popitem(last=False)
 
     def get_status(self) -> Dict[str, Any]:
         return {
