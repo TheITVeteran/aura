@@ -244,7 +244,7 @@ class IntentionalRetriever:
                 store_hits = self._normalize(raw, store, weight)
                 hits.extend(store_hits)
                 queried.append(store)
-            except Exception as exc:  # noqa: BLE001 - one store failing never sinks retrieval
+            except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
                 record_degradation("intentional_retrieval", exc, severity="debug",
                                    action=f"store '{store}' query failed")
                 missing.append(store)
@@ -321,7 +321,7 @@ class IntentionalRetriever:
             syn = get_memory_synthesizer()
             self.register_store(_T.SEMANTIC, lambda q, n: syn.get_relevant(q, limit=n))
             wired.append(_T.SEMANTIC.value)
-        except Exception as exc:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("intentional_retrieval", exc, severity="debug",
                                action="semantic store not wired")
 
@@ -331,7 +331,7 @@ class IntentionalRetriever:
             vm = get_value_model()
             self.register_store(_T.VALUE, lambda q, n: vm.retrieve(q, n))
             wired.append(_T.VALUE.value)
-        except Exception as exc:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("intentional_retrieval", exc, severity="debug",
                                action="value store not wired")
 
@@ -353,7 +353,7 @@ class IntentionalRetriever:
 
             self.register_store(_T.SOCIAL, _social)
             wired.append(_T.SOCIAL.value)
-        except Exception as exc:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("intentional_retrieval", exc, severity="debug",
                                action="social store not wired")
 

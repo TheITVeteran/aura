@@ -7,6 +7,8 @@ returns a JSON-serializable dict with the documented shape and an `ok` boolean.
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -17,11 +19,12 @@ from core.runtime import operator_cli
 
 def test_all_documented_commands_parse():
     parser = operator_cli.build_parser()
+    tmp_root = Path(tempfile.gettempdir())
     for argv in (
         ["doctor"], ["doctor", "--bundle"], ["conformance"],
-        ["backup"], ["restore", "--snapshot", "/tmp/x"], ["migrate", "--dry-run"],
+        ["backup"], ["restore", "--snapshot", str(tmp_root / "x")], ["migrate", "--dry-run"],
         ["verify-state"], ["verify-memory"], ["rebuild-index"], ["chaos"],
-        ["plugin", "list"], ["plugin", "approve", "/tmp/p.py"], ["plugin", "scan"],
+        ["plugin", "list"], ["plugin", "approve", str(tmp_root / "p.py")], ["plugin", "scan"],
     ):
         ns = parser.parse_args(argv)
         assert ns.command == argv[0]

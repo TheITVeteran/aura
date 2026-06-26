@@ -53,7 +53,7 @@ class UnifiedWorldModel:
             try:
                 from core.world_model.learned_world_model import get_learned_world_model
                 self._learned = get_learned_world_model()
-            except Exception as exc:  # noqa: BLE001 - one facet failing must not sink the facade
+            except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
                 record_degradation("unified_world_model", exc, severity="debug",
                                    action="learned (forward-dynamics) facet unavailable")
                 self._failed["learned"] = True
@@ -66,7 +66,7 @@ class UnifiedWorldModel:
             try:
                 from core.brain.causal_world_model import CausalWorldModel
                 self._causal = CausalWorldModel()
-            except Exception as exc:  # noqa: BLE001
+            except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
                 record_degradation("unified_world_model", exc, severity="debug",
                                    action="causal facet unavailable")
                 self._failed["causal"] = True
@@ -79,7 +79,7 @@ class UnifiedWorldModel:
             try:
                 from core.advanced_cognition.world_model import MultiDomainWorldModel
                 self._outcome = MultiDomainWorldModel()
-            except Exception as exc:  # noqa: BLE001
+            except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
                 record_degradation("unified_world_model", exc, severity="debug",
                                    action="outcome facet unavailable")
                 self._failed["outcome"] = True
@@ -95,7 +95,7 @@ class UnifiedWorldModel:
         try:
             pred = m.observe(observation, action, learn=learn)
             return pred.to_dict() if hasattr(pred, "to_dict") else {"prediction": pred}
-        except Exception as exc:  # noqa: BLE001
+        except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("unified_world_model", exc, severity="debug", action="observe failed")
             return None
 
@@ -106,7 +106,7 @@ class UnifiedWorldModel:
             return None
         try:
             return float(m.get_surprise())
-        except Exception as exc:  # noqa: BLE001
+        except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("unified_world_model", exc, severity="debug")
             return None
 
@@ -118,7 +118,7 @@ class UnifiedWorldModel:
         try:
             traj = m.imagine(observation, list(action_sequence))
             return [p.to_dict() if hasattr(p, "to_dict") else {"prediction": p} for p in traj]
-        except Exception as exc:  # noqa: BLE001
+        except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("unified_world_model", exc, severity="debug", action="imagine failed")
             return None
 
@@ -150,7 +150,7 @@ class UnifiedWorldModel:
             )
             pred = m.predict(obs, act)
             return pred.to_dict() if hasattr(pred, "to_dict") else {"prediction": pred}
-        except Exception as exc:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("unified_world_model", exc, severity="debug",
                                action="predict_outcome failed")
             return None
@@ -163,7 +163,7 @@ class UnifiedWorldModel:
         try:
             pred = m.observe_episode(episode)
             return pred.to_dict() if hasattr(pred, "to_dict") else None
-        except Exception as exc:  # noqa: BLE001
+        except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("unified_world_model", exc, severity="debug")
             return None
 
@@ -177,7 +177,7 @@ class UnifiedWorldModel:
         try:
             m.add_observation(source, target, correlation)
             return True
-        except Exception as exc:  # noqa: BLE001
+        except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("unified_world_model", exc, severity="debug")
             return False
 
@@ -188,7 +188,7 @@ class UnifiedWorldModel:
             return None
         try:
             return m.predict_effects(source)
-        except Exception as exc:  # noqa: BLE001
+        except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("unified_world_model", exc, severity="debug")
             return None
 
@@ -199,7 +199,7 @@ class UnifiedWorldModel:
             return None
         try:
             return m.simulate_counterfactual(do_interventions, steps=steps)
-        except Exception as exc:  # noqa: BLE001
+        except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("unified_world_model", exc, severity="debug",
                                action="counterfactual failed")
             return None
@@ -211,7 +211,7 @@ class UnifiedWorldModel:
             return None
         try:
             return m.analyze_preventative_actions(undesirable_node)
-        except Exception as exc:  # noqa: BLE001
+        except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("unified_world_model", exc, severity="debug")
             return None
 
@@ -238,7 +238,7 @@ class UnifiedWorldModel:
             )
             best_action, info = planner.plan(current_observation)
             return {"best_action": best_action, "info": info}
-        except Exception as exc:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("unified_world_model", exc, severity="debug", action="plan failed")
             return None
 
@@ -293,8 +293,8 @@ class UnifiedWorldModel:
                     if hasattr(facet, status_attr):
                         try:
                             entry["detail"] = getattr(facet, status_attr)()
-                        except Exception:  # noqa: BLE001 - status is best-effort
-                            pass
+                        except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+                            record_degradation("unified_world_model", exc, severity="debug")
                         break
             out["facets"][name] = entry
         return out

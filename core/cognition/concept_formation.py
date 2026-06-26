@@ -226,7 +226,7 @@ class ConceptFormationEngine:
                 predicted_observable="recognizes_future_instances",
                 expected=concept.confidence, prior_confidence=concept.confidence,
             )
-        except Exception as exc:  # noqa: BLE001 - best-effort
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("concept_formation", exc, severity="debug")
         try:
             from core.container import ServiceContainer
@@ -235,7 +235,7 @@ class ConceptFormationEngine:
                 ws.set_belief(f"concept:{concept.name}",
                               {"defining_features": concept.defining_features},
                               confidence=concept.confidence, source="concept_formation")
-        except Exception as exc:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("concept_formation", exc, severity="debug")
 
     # ── recognition (the closed loop) ─────────────────────────────────────

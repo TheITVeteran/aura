@@ -53,7 +53,7 @@ def frontmost_app_name_fast() -> Optional[str]:
             return None
         name = app.localizedName()
         return str(name) if name else None
-    except Exception as exc:  # noqa: BLE001 - never let sensing crash the caller
+    except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
         logger.debug("NSWorkspace frontmostApplication failed: %s", exc)
         return None
 

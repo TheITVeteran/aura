@@ -80,7 +80,8 @@ def test_blocking_pulse_survives_a_broken_downstream_sink():
 
             class _BoomPlanner:
                 def consume_affect(self, state):
-                    raise RuntimeError("planner exploded")
+                    error = RuntimeError("planner exploded")
+                    raise error
 
             self.planner = _BoomPlanner()
 

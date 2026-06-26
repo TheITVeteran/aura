@@ -60,6 +60,18 @@ def register_consciousness_services(container):
         return get_free_energy_engine()
     container.register('free_energy_engine', create_free_energy, lifetime=ServiceLifetime.SINGLETON, required=True)
 
+    # Global Workspace (live broadcast bottleneck)
+    def create_global_workspace():
+        from core.consciousness.global_workspace import GlobalWorkspace
+        return GlobalWorkspace()
+    container.register('global_workspace', create_global_workspace, lifetime=ServiceLifetime.SINGLETON, required=True)
+
+    # Nociception (grounded damage/repair valence)
+    def create_nociception():
+        from core.affect.nociception import get_nociception_engine
+        return get_nociception_engine()
+    container.register('nociception', create_nociception, lifetime=ServiceLifetime.SINGLETON, required=True)
+
     # Self-Report Engine (Grounded Voice)
     def create_self_report():
         from core.consciousness.self_report import SelfReportEngine
@@ -150,11 +162,27 @@ def register_consciousness_services(container):
         return CreditAssignmentSystem()
     container.register('credit_assignment', create_credit_assignment, lifetime=ServiceLifetime.SINGLETON, required=False)
 
+    # Delayed outcome receipts and scientific hypothesis loop.
+    def create_outcome_ledger():
+        from core.cognition.outcome_ledger import get_outcome_ledger
+        return get_outcome_ledger()
+    container.register('outcome_ledger', create_outcome_ledger, lifetime=ServiceLifetime.SINGLETON, required=False)
+
+    def create_scientific_engine():
+        from core.cognition.scientific_engine import get_scientific_engine
+        return get_scientific_engine()
+    container.register('scientific_engine', create_scientific_engine, lifetime=ServiceLifetime.SINGLETON, required=False)
+
     # 52. Epistemic State (World Model)
     def create_epistemic_state():
         from core.consciousness.world_model import EpistemicState
         return EpistemicState()
     container.register('epistemic_state', create_epistemic_state, lifetime=ServiceLifetime.SINGLETON, required=False)
+
+    def create_unified_world_model():
+        from core.world_model.unified_world_model import get_unified_world_model
+        return get_unified_world_model()
+    container.register('unified_world_model', create_unified_world_model, lifetime=ServiceLifetime.SINGLETON, required=False)
 
     # 53. Theory of Mind
     def create_theory_of_mind():

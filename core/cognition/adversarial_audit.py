@@ -241,7 +241,7 @@ class AdversarialAuditor:
             from core.governance.will import get_will
             if get_will().verify_receipt(receipt_id):
                 return True
-        except Exception as exc:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("adversarial_audit", exc, severity="debug")
         try:
             from core.cognition.outcome_ledger import get_outcome_ledger
@@ -251,7 +251,7 @@ class AdversarialAuditor:
                 return True
             if hasattr(ledger, "get") and ledger.get(receipt_id) is not None:  # type: ignore[attr-defined]
                 return True
-        except Exception as exc:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("adversarial_audit", exc, severity="debug")
         return False
 
@@ -263,7 +263,8 @@ class AdversarialAuditor:
             from core.social.other_agent_model import get_other_agent_model
             est = get_other_agent_model().estimate(agent_id, now)
             return est.overall_confidence >= 0.4
-        except Exception:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            record_degradation("adversarial_audit", exc, severity="debug")
             return False
 
     @staticmethod

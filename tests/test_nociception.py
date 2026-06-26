@@ -97,7 +97,7 @@ def test_nociception_drives_phenomenal_body_error_pressure():
     integ = PhenomenalIntegrator()
     baseline = integ.collect_observations(orchestrator=None)
     # collect_observations(None) returns static defaults; exercise the real path via a
-    # tiny orchestrator stub so the nociception branch runs.
+    # tiny orchestrator double so the nociception branch runs.
 
     class _Orch:
         pass

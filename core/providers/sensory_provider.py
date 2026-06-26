@@ -39,6 +39,23 @@ def register_sensory_services(container):
             return None
     container.register('vision', create_vision, lifetime=ServiceLifetime.SINGLETON, required=False)
 
+    # 56.1 Grounded screen and terminal perception surfaces.
+    def create_screen_perception():
+        from core.perception.screen_perception import ScreenPerception
+        return ScreenPerception()
+    container.register('screen_perception', create_screen_perception, lifetime=ServiceLifetime.SINGLETON, required=False)
+
+    def create_perceptual_pump():
+        from core.perception.perceptual_pump import PerceptualPump
+        return PerceptualPump()
+    container.register('perceptual_pump', create_perceptual_pump, lifetime=ServiceLifetime.SINGLETON, required=False)
+
+    def create_general_terminal_parser():
+        from core.perception.general_terminal_parser import GeneralTerminalParser
+        return GeneralTerminalParser()
+    container.register('general_terminal_parser', create_general_terminal_parser, lifetime=ServiceLifetime.SINGLETON, required=False)
+    container.register('terminal_parser', lambda: container.get("general_terminal_parser"), lifetime=ServiceLifetime.SINGLETON, required=False)
+
     # 57. Hearing System
     def create_hearing():
         try:

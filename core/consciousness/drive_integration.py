@@ -195,7 +195,7 @@ class DriveIntegrationEngine:
         try:
             from core.affect.nociception import get_nociception_engine
             signals["pain"] = _clamp(get_nociception_engine().nociceptive_pressure())
-        except Exception as exc:  # noqa: BLE001 - grounding is best-effort
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("drive_integration", exc, severity="debug")
             signals.setdefault("pain", 0.0)
         return signals

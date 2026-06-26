@@ -154,8 +154,9 @@ def register_all_services(is_proxy: bool = False):
         retriever = mod.get_intentional_retriever()
         try:
             retriever.wire_default_stores()
-        except Exception:  # noqa: BLE001 - default wiring is best-effort, never blocks boot
-            pass
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            from core.runtime.errors import record_degradation
+            record_degradation("service_registration.intentional_retriever", exc, severity="debug")
         return retriever
     container.register(
         'intentional_retriever',

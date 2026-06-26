@@ -158,8 +158,7 @@ class HierarchicalAgency:
         path: list = []
         last: Optional[TierResult] = None
 
-        steps = 0
-        while True:
+        for steps in range(max_escalations + 1):
             path.append(tier)
             last = self._run_handler(tier, s)
             if last.handled and not last.escalate:
@@ -170,7 +169,6 @@ class HierarchicalAgency:
             if steps >= max_escalations:
                 break
             tier = AgencyTier(tier + 1)
-            steps += 1
 
         receipt_id = self._open_receipt(s, last) if self._ledger_enabled else None
         return DispatchResult(
@@ -194,7 +192,7 @@ class HierarchicalAgency:
             return TierResult(tier=tier, handled=False, escalate=True, reason="no_handler")
         try:
             return handler(s)
-        except Exception as exc:  # noqa: BLE001 - a broken tier escalates, never crashes the ladder
+        except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
             record_degradation("hierarchical_agency", exc, severity="debug",
                                action=f"tier {tier.name} handler failed; escalating")
             return TierResult(tier=tier, handled=False, escalate=True, reason=f"error:{type(exc).__name__}")
@@ -211,7 +209,7 @@ class HierarchicalAgency:
                 category="agency_dispatch",
                 context={"handled": result.handled, "reason": result.reason},
             )
-        except Exception as exc:  # noqa: BLE001 - ledgering is best-effort
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("hierarchical_agency", exc, severity="debug",
                                action="dispatched without ledger receipt")
             return None
@@ -236,8 +234,9 @@ class HierarchicalAgency:
         try:
             from core.affect.nociception import get_nociception_engine
             felt = max(felt, get_nociception_engine().nociceptive_pressure())
-        except Exception:  # noqa: BLE001
-            pass
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            record_degradation("hierarchical_agency", exc, severity="debug",
+                               action="nociception unavailable for reflex tier")
         if felt >= self._threat_t:
             return TierResult(
                 tier=AgencyTier.REFLEX, handled=True, confidence=_clamp(felt),
@@ -283,8 +282,9 @@ class HierarchicalAgency:
                     tier=AgencyTier.STRATEGIC, handled=True, confidence=0.7,
                     detail=detail, reason="strategic_goal_pursuit",
                 )
-        except Exception:  # noqa: BLE001
-            pass
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            record_degradation("hierarchical_agency", exc, severity="debug",
+                               action="goal engine unavailable for strategic tier")
         detail = {"plan": "multi_step_intent", "horizon": round(s.goal_horizon, 3)}
         if social:
             detail["social"] = social
@@ -304,7 +304,7 @@ class HierarchicalAgency:
                 tier=AgencyTier.SCIENTIFIC, handled=True, confidence=_clamp(1.0 - s.uncertainty),
                 detail={"hypothesis_id": hid}, reason="formed_hypothesis",
             )
-        except Exception as exc:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             return TierResult(tier=AgencyTier.SCIENTIFIC, handled=False, escalate=True,
                               reason=f"science_unavailable:{type(exc).__name__}")
 
@@ -323,8 +323,9 @@ class HierarchicalAgency:
                     confidence=_clamp(s.capability_gap),
                     detail={"recorded": "capability_gap_signal"}, reason="rsi_signal_recorded",
                 )
-        except Exception:  # noqa: BLE001
-            pass
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            record_degradation("hierarchical_agency", exc, severity="debug",
+                               action="self-improvement signal unavailable")
         return TierResult(
             tier=AgencyTier.SELF_IMPROVEMENT, handled=True, confidence=0.4,
             detail={"note": "capability_gap_noted_no_rsi_loop"}, reason="rsi_unavailable_noted",
@@ -339,7 +340,7 @@ class HierarchicalAgency:
         try:
             from core.social.other_agent_model import get_other_agent_model
             return get_other_agent_model().estimate(agent_id).to_dict()
-        except Exception as exc:  # noqa: BLE001 - social consult must never destabilize the ladder
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("hierarchical_agency", exc, severity="debug")
             return None
 
@@ -364,7 +365,7 @@ class HierarchicalAgency:
                 tier=AgencyTier.GOVERNANCE, handled=True, confidence=0.9 if approved else 0.8,
                 detail=detail, reason="will_adjudicated",
             )
-        except Exception as exc:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             # If Will is unavailable, the safe default for a value conflict is to NOT act.
             detail = {"approved": False, "fallback": "fail_closed"}
             if social:

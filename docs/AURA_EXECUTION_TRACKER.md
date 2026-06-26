@@ -444,17 +444,29 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   `tools/production_surface_lint.py --scope production` passed with 0 findings;
   `tools/proof_integrity_lint.py --scope production` passed with 0 findings;
   architecture map regenerated.
+- 2026-06-25 deep mind runtime integration: verified the prior phenomenal
+  routing, self-signal, GWT backpressure, nociception, perceptual pump,
+  generalized terminal parser, outcome ledger, scientific engine, and unified
+  world-model implementations; added provider registrations so these systems
+  resolve through canonical `ServiceContainer` boot instead of ad hoc imports.
+  Focused validation: 121 deep-mind/perception/world/agency/retrieval tests
+  passed, 8 provider/boot checks passed, `make enterprise-gate` passed, and
+  `make production-gate` passed.
 
 ## Current Closeout Progress Gauge
 
-- Latest checkpoint: production surface gateway cleanup.
+- Latest checkpoint: deep mind runtime integration.
 - Evidence added: subprocess ownership routed through `SubprocessGateway` for
   DNU/wedge supervisor paths, hardcoded local test paths removed, one broad
   watchdog exception narrowed, enterprise baseline regressions cleared, direct
   production file writes routed through `FileWriteGateway`, reach network calls
-  routed through `NetworkGateway`, and architecture-map artifacts refreshed.
-- Current operator estimate: about 82% through the ultimate closeout standard.
-- Estimated remaining checkpoints: 7 to 9 total, depending on how many live
+  routed through `NetworkGateway`, architecture-map artifacts refreshed, and
+  deep mind support services made first-class canonical boot services:
+  `global_workspace`, `nociception`, `outcome_ledger`, `scientific_engine`,
+  `unified_world_model`, `screen_perception`, `perceptual_pump`, and
+  `terminal_parser`.
+- Current operator estimate: about 83% through the ultimate closeout standard.
+- Estimated remaining checkpoints: 6 to 8 total, depending on how many live
   desktop/demo-path defects surface during real 32B/72B runtime validation.
 - Still not closed: final proof, DNU/Aletheia clean reruns, live desktop
   multi-app proof, CRSM-to-LoRA closure, CAA extraction validation, longer soak,

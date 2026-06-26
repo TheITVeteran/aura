@@ -66,8 +66,9 @@ class AttractorVolitionEngine:
             if decision.action:
                 self.last_action_time = time.time()
             return decision.action
-        except Exception:  # noqa: BLE001 - fall back to the legacy VAD-threshold path
-            pass
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            from core.runtime.errors import record_degradation
+            record_degradation("conscious_core", exc, severity="debug")
 
         # ── legacy fallback: flat refractory + instantaneous VAD thresholds ──
         if time.time() - self.last_action_time < self.refractory_period:

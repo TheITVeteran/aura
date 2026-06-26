@@ -145,7 +145,7 @@ class BoundedValueModel:
             try:
                 from core.values.heuristic_imperatives import HeuristicImperatives
                 self._principles = HeuristicImperatives()
-            except Exception as exc:  # noqa: BLE001
+            except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
                 record_degradation("value_model", exc, severity="debug")
                 self._principles = False
         return self._principles or None
@@ -156,7 +156,7 @@ class BoundedValueModel:
             try:
                 from core.values.repeated_choice_tracker import RepeatedChoiceTracker
                 self._choices = RepeatedChoiceTracker()
-            except Exception as exc:  # noqa: BLE001
+            except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
                 record_degradation("value_model", exc, severity="debug")
                 self._choices = False
         return self._choices or None
@@ -248,7 +248,7 @@ class BoundedValueModel:
                 ch.record_choice(key)
                 freq = ch.get_choice_frequency(key)
                 self.set_preference(key, _clamp(0.2 * freq, 0, 1), strength=0.2)
-            except Exception as exc:  # noqa: BLE001
+            except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
                 record_degradation("value_model", exc, severity="debug")
 
     # ── readout ───────────────────────────────────────────────────────────
@@ -341,7 +341,7 @@ class BoundedValueModel:
                 if principle_aggregate <= -0.4:
                     requires_confirmation = True
                     reasons.append(f"principle layer flags this (aggregate {principle_aggregate:.2f})")
-            except Exception as exc:  # noqa: BLE001
+            except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
                 record_degradation("value_model", exc, severity="debug")
 
         # 4) Protect future self from present impulse — consult the live agent estimate.
@@ -383,7 +383,7 @@ class BoundedValueModel:
                 judgment.permitted = False
                 judgment.recommendation = "refuse"
                 judgment.reasons.append(f"Will declined: {decision.reason}")
-        except Exception as exc:  # noqa: BLE001 - Will optional; value model already fail-closed
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("value_model", exc, severity="debug")
         return judgment
 
@@ -396,7 +396,8 @@ class BoundedValueModel:
             return est.overall_confidence >= 0.3 and (
                 a["fatigue"] > 0.6 or a["urgency"] > 0.7 or a["frustration"] > 0.6
             )
-        except Exception:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            record_degradation("value_model", exc, severity="debug")
             return False
 
     # ── VALUE store adapter for intentional retrieval ─────────────────────

@@ -89,7 +89,8 @@ def test_higher_weight_store_outranks_lower_for_equal_raw_score(retriever):
 
 def test_a_broken_store_does_not_sink_retrieval(retriever):
     def _boom(q, n):
-        raise RuntimeError("store on fire")
+        error = RuntimeError("store on fire")
+        raise error
 
     retriever.register_store(_T.SOCIAL, _boom)
     retriever.register_store(_T.EPISODIC, lambda q, n: ["still here"])

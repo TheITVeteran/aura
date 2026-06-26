@@ -51,7 +51,7 @@ def test_automation_probe_reads_frontmost_process(monkeypatch) -> None:
     monkeypatch.setattr(permission_guard_module.sys, "platform", "darwin")
     monkeypatch.setattr(permission_guard_module, "_load_scripting_bridge_application", lambda: DemoApplication)
 
-    # Mock AppKit.NSWorkspace
+    # Synthetic AppKit.NSWorkspace
     class MockNSWorkspace:
         @classmethod
         def sharedWorkspace(cls):

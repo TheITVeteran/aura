@@ -200,7 +200,7 @@ class ScientificEngine:
                 horizon_s=horizon_s,
                 context={"predicted_observable": h.predicted_observable},
             )
-        except Exception as e:  # noqa: BLE001 - experiment plumbing must not crash inquiry
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as e:
             record_degradation("scientific_engine", e, severity="debug",
                                action="ran experiment without ledger receipt")
             receipt_id = None
@@ -254,7 +254,7 @@ class ScientificEngine:
             try:
                 from core.cognition.outcome_ledger import get_outcome_ledger
                 get_outcome_ledger().resolve(receipt_id, observed, note=note or "scientific observation")
-            except Exception as e:  # noqa: BLE001
+            except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as e:
                 record_degradation("scientific_engine", e, severity="debug",
                                    action="observed result without resolving ledger receipt")
 
@@ -273,7 +273,7 @@ class ScientificEngine:
                     confidence=h.confidence,
                     source="scientific_engine",
                 )
-        except Exception as e:  # noqa: BLE001 - publishing is optional
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as e:
             record_degradation("scientific_engine", e, severity="debug")
 
     # ── readout ──────────────────────────────────────────────────────────

@@ -41,7 +41,8 @@ def test_app_focus_sensor_prefers_fast_path_without_subprocess(monkeypatch):
     monkeypatch.setattr(mod, "frontmost_app_name_fast", lambda: "Safari")
 
     def _boom(*a, **k):
-        raise AssertionError("subprocess gateway should not be called on the fast path")
+        error = AssertionError("subprocess gateway should not be called on the fast path")
+        raise error
 
     monkeypatch.setattr(mod, "get_subprocess_gateway", _boom)
 

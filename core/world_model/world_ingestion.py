@@ -112,7 +112,7 @@ class WorldIngestionEngine:
         await self._throttle()
         try:
             status, raw = await self._invoke_fetcher(url)
-        except Exception as exc:  # noqa: BLE001 - a bad fetch is a degraded read, not a crash
+        except (RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("world_ingestion", exc, severity="debug",
                                action=f"fetch failed: {url}")
             return IngestDocument(url=url, status=0, text="")
@@ -127,7 +127,7 @@ class WorldIngestionEngine:
         await self._throttle()
         try:
             _status, raw = await self._invoke_fetcher(url)
-        except Exception as exc:  # noqa: BLE001
+        except (RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("world_ingestion", exc, severity="debug", action="search failed")
             return []
         results: List[SearchResult] = []
@@ -196,7 +196,7 @@ class WorldIngestionEngine:
         try:
             status, text = await self._invoke_fetcher_method(method, url, **kwargs)
             return {"allowed": True, "status": int(status), "text": text}
-        except Exception as exc:  # noqa: BLE001
+        except (RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("world_ingestion", exc, severity="debug",
                                action=f"{method} {url} failed")
             return {"allowed": True, "status": 0, "error": str(exc)}
@@ -211,7 +211,7 @@ class WorldIngestionEngine:
             ))
             # Permitted and not awaiting confirmation → proceed.
             return judgment.permitted and not judgment.requires_confirmation
-        except Exception as exc:  # noqa: BLE001 - if governance is unavailable, fail closed on writes
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("world_ingestion", exc, severity="debug",
                                action="write authorization unavailable; failing closed")
             return False
@@ -226,14 +226,14 @@ class WorldIngestionEngine:
                 ws = ServiceContainer.get("world_state", default=None)
                 if ws is not None and hasattr(ws, "set_belief"):
                     sink = lambda k, v, c: ws.set_belief(k, v, confidence=c, source="world_ingestion")
-            except Exception as exc:  # noqa: BLE001
+            except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
                 record_degradation("world_ingestion", exc, severity="debug")
         if sink is None:
             return False
         try:
             sink(key, value, confidence)
             return True
-        except Exception as exc:  # noqa: BLE001
+        except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("world_ingestion", exc, severity="debug")
             return False
 
@@ -244,7 +244,7 @@ class WorldIngestionEngine:
         try:
             sink(content, meta)
             return True
-        except Exception as exc:  # noqa: BLE001
+        except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("world_ingestion", exc, severity="debug")
             return False
 
@@ -256,8 +256,8 @@ class WorldIngestionEngine:
                 prior = ws.get_belief(f"world_fact:{self._key(fact)}")
                 if prior and isinstance(prior, str) and prior.strip() and prior.strip() != fact.strip():
                     return True
-        except Exception:  # noqa: BLE001
-            pass
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            record_degradation("world_ingestion", exc, severity="debug")
         return False
 
     def _raise_hypothesis(self, fact: str, source: str) -> None:
@@ -268,7 +268,7 @@ class WorldIngestionEngine:
                 predicted_observable="corroborated_by_independent_source",
                 expected=0.5, prior_confidence=0.4,
             )
-        except Exception as exc:  # noqa: BLE001 - hypothesis raising is best-effort
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("world_ingestion", exc, severity="debug")
 
     # ── extraction / distillation ─────────────────────────────────────────

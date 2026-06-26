@@ -595,7 +595,7 @@ class OtherAgentStateEstimator:
         sig = self.social_signals(agent_id, now)
         try:
             from core.agency.hierarchical_agency import Situation
-        except Exception as exc:  # noqa: BLE001 - never let estimation depend on the ladder loading
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("other_agent_model", exc, severity="debug")
             return base
         s = base or Situation(description)

@@ -287,7 +287,7 @@ class OutcomeLedger:
                 share = max(0.0, s.weight) / total_w
                 action_id = f"{s.kind}:{s.ref}"
                 credit_system.assign_credit(action_id, reward * share, domain=s.kind)
-        except Exception as e:  # noqa: BLE001 - credit feedback must never break resolution
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as e:
             record_degradation("outcome_ledger", e, severity="debug",
                                action="skipped credit-assignment feed")
 
@@ -308,7 +308,7 @@ class OutcomeLedger:
                     "sources": [s.as_dict() for s in receipt.sources],
                 },
             )
-        except Exception as e:  # noqa: BLE001
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as e:
             record_degradation("outcome_ledger", e, severity="debug",
                                action="skipped outcome-learner feed")
 

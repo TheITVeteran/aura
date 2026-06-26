@@ -86,7 +86,8 @@ def test_failed_fetch_reports_error_not_crash():
 
 def test_fetcher_exception_is_degraded_not_raised():
     def _boom(url):
-        raise RuntimeError("dns blew up")
+        error = RuntimeError("dns blew up")
+        raise error
 
     eng = WorldIngestionEngine(fetcher=_boom, min_requests_interval_s=0.0)
     doc = asyncio.run(eng.fetch("https://x"))
@@ -142,7 +143,8 @@ def test_governance_unavailable_fails_closed_on_writes(monkeypatch):
     import core.values.value_model as vmod
 
     def _raise():
-        raise RuntimeError("no value model")
+        error = RuntimeError("no value model")
+        raise error
 
     monkeypatch.setattr(vmod, "get_value_model", _raise)
     eng = _engine()

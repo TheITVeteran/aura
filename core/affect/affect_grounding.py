@@ -90,8 +90,9 @@ class AffectGroundingEngine:
         try:
             from core.affect.nociception import get_nociception_engine
             sample["pain"] = _clamp(get_nociception_engine().nociceptive_pressure())
-        except Exception:  # noqa: BLE001 - grounding is best-effort
-            pass
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            from core.runtime.errors import record_degradation
+            record_degradation("affect_grounding", exc, severity="debug")
         try:
             from core.container import ServiceContainer
             wm = ServiceContainer.get("world_model", default=None)
@@ -99,8 +100,9 @@ class AffectGroundingEngine:
                 s = wm.surprise()
                 if s is not None:
                     sample["prediction_error"] = _clamp(float(s))
-        except Exception:  # noqa: BLE001
-            pass
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            from core.runtime.errors import record_degradation
+            record_degradation("affect_grounding", exc, severity="debug")
         if sample:
             self.observe(**sample)
         return self

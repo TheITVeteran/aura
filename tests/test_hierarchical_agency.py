@@ -91,7 +91,8 @@ def test_escalation_climbs_until_handled(agency):
 
 def test_broken_handler_escalates_not_crashes(agency):
     def _boom(sit):
-        raise RuntimeError("tier exploded")
+        error = RuntimeError("tier exploded")
+        raise error
 
     agency.register_handler(AgencyTier.DELIBERATIVE, _boom)
     result = agency.dispatch(Situation("novel", novelty=0.6))
@@ -102,7 +103,7 @@ def test_broken_handler_escalates_not_crashes(agency):
 
 def test_scientific_tier_forms_a_real_hypothesis(tmp_path, monkeypatch):
     # Point the scientific engine singleton at a temp db, then confirm the scientific tier
-    # actually forms a hypothesis (real engine integration, not a stub).
+    # actually forms a hypothesis through the real engine integration.
     import core.cognition.scientific_engine as se
     monkeypatch.setattr(se, "_engine", se.ScientificEngine(db_path=str(tmp_path / "sci.db")))
 

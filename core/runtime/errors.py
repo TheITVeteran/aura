@@ -302,7 +302,7 @@ def record_degradation(
     try:
         from core.affect.nociception import get_nociception_engine
         get_nociception_engine().ingest_degradation(subsystem, severity)
-    except Exception as _noci_exc:  # noqa: BLE001 - nociception must never destabilize error recording
+    except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as _noci_exc:
         logger.debug("Nociception ingest skipped for %s: %s", subsystem, _noci_exc)
 
     # Keep subsystem health causal, not just logged.
