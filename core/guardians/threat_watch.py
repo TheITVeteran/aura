@@ -127,6 +127,45 @@ class ThreatWatch:
 
         return ThreatAssessment(level=level, categories=categories, indicators=indicators[:6], advice=advice)
 
+    async def deep_scan(self, message: str, *, timeout: float = 8.0) -> ThreatAssessment:
+        """Model-deepened scan. Heuristic first; only when it already reads elevated/high
+        does it spend a bounded model pass to confirm and sharpen the advice (catching
+        novel scams the lexicon misses). Falls back to the heuristic on any failure."""
+        base = self.scan(message)
+        if base.level not in ("elevated", "high"):
+            return base
+        from core.utils.engine_support import coerce_text, record_engine_degradation, resolve_brain
+
+        brain = resolve_brain()
+        if brain is None or not hasattr(brain, "think"):
+            return base
+        try:
+            import asyncio
+
+            from core.brain.types import ThinkingMode
+
+            prompt = (
+                "Is this message a scam, phishing, or manipulation attempt aimed at the "
+                "recipient? Reply 'yes' or 'no' then one short reason.\nMESSAGE: " + message[:500]
+            )
+            out = coerce_text(await asyncio.wait_for(
+                brain.think(prompt, mode=ThinkingMode.FAST, origin="safe_surf", is_background=True),
+                timeout=timeout,
+            ))
+            if out:
+                low = out.lower()
+                base.indicators.append(f"model: {out[:160]}")
+                if low.startswith("yes") or any(k in low for k in ("scam", "phish", "fraud", "manipulat")):
+                    base.level = "high"
+                    if not base.advice:
+                        base.advice = "A deeper check flags this as a likely scam — do not act on it; verify independently."
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:
+            record_engine_degradation(
+                "threat_watch", exc,
+                action="returned heuristic threat assessment after model deepening failed",
+            )
+        return base
+
     def get_status(self) -> dict[str, Any]:
         return {"scans": self._scans, "elevated_or_high": self._elevated, "healthy": True}
 

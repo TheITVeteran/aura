@@ -460,6 +460,12 @@ class CognitiveIntegrationLayer:
             try:
                 threat = threat_watch.scan(message) if threat_watch else None
                 intrusion = ice.inspect_input(message) if ice else None
+                # Escalate to a bounded model pass only on a HIGH heuristic hit — rare and
+                # safety-critical — to catch novel scams/injections the lexicon misses.
+                if threat is not None and threat.level == "high" and hasattr(threat_watch, "deep_scan"):
+                    threat = await threat_watch.deep_scan(message, timeout=8.0)
+                if intrusion is not None and intrusion.level == "high" and hasattr(ice, "deep_inspect_input"):
+                    intrusion = await ice.deep_inspect_input(message, timeout=8.0)
                 self._last_threat_assessment = threat
                 self._last_intrusion_alert = intrusion
 
