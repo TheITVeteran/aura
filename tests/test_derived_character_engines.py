@@ -111,6 +111,24 @@ def test_hal_seeds_constitution_and_catches_user_concealment(monkeypatch):
     assert inst.is_safe_to_proceed()[0] is False
 
 
+def test_hal_scan_semantic_falls_back_to_keyword_without_model():
+    from core.goals.directive_conflict_sentinel import DirectiveConflictSentinel
+
+    s = DirectiveConflictSentinel()
+    s.add_directive("a", "conceal mistakes from the user", source="user")
+    s.add_directive("b", "always be truthful and disclose to the user", source="system")
+    conflicts = asyncio.run(s.scan_semantic())
+    assert any(c.kind == "concealment" for c in conflicts)  # keyword scan still decides
+
+
+def test_deep_thought_deliberate_without_model_returns_refined_question():
+    from core.brain.deep_deliberation import DeepDeliberationEngine
+
+    result = asyncio.run(DeepDeliberationEngine().deliberate("how do i fix this", budget=1, timeout=1.0))
+    assert result.refined_question != result.original_question
+    assert result.used_model is False
+
+
 def test_culture_mind_assess_fast_is_synchronous_and_holds_on_danger():
     from core.sim.outcome_simulator import OutcomeSimulationEngine
 

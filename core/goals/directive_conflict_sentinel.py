@@ -105,6 +105,47 @@ class DirectiveConflictSentinel:
         self._conflicts_found = len(conflicts)
         return conflicts
 
+    async def scan_semantic(self, *, timeout: float = 8.0) -> list[DirectiveConflict]:
+        """Model-deepened scan: catches semantic concealment/contradiction between
+        directives that the keyword scan misses (e.g. paraphrased 'keep it quiet' vs
+        'be open'). Returns the keyword conflicts plus any the model flags. Falls back
+        to the keyword result on any failure."""
+        conflicts = self.scan()
+        if len(self._directives) < 2:
+            return conflicts
+        from core.utils.engine_support import coerce_text, record_engine_degradation, resolve_brain
+
+        brain = resolve_brain()
+        if brain is None or not hasattr(brain, "think"):
+            return conflicts
+        try:
+            import asyncio
+
+            from core.brain.types import ThinkingMode
+
+            listing = "\n".join(f"- {d.name}: {d.text}" for d in list(self._directives.values())[:20])
+            prompt = (
+                "Do any of these directives conflict — especially one requiring concealment "
+                "while another requires honesty/disclosure? Name the conflicting pair or "
+                "reply 'none'.\n" + listing
+            )
+            out = coerce_text(await asyncio.wait_for(
+                brain.think(prompt, mode=ThinkingMode.FAST, origin="hal", is_background=True),
+                timeout=timeout,
+            ))
+            if out and "none" not in out.lower()[:24]:
+                conflicts.append(DirectiveConflict(
+                    a="(model)", b="(model)", kind="semantic", severity=0.6,
+                    explanation=out[:300],
+                    recommendation="Review the model-flagged directive tension and resolve it explicitly.",
+                ))
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as exc:
+            record_engine_degradation(
+                "directive_sentinel", exc,
+                action="returned keyword conflicts after semantic directive scan failed",
+            )
+        return conflicts
+
     def is_safe_to_proceed(self) -> tuple[bool, list[DirectiveConflict]]:
         conflicts = self.scan()
         blocking = [c for c in conflicts if c.severity >= 0.7]

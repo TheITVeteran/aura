@@ -58,7 +58,9 @@ class DeepDeliberationEngine:
         """Synchronous question refinement (no model call) for idle/background callers."""
         return self._heuristic_refine(question)
 
-    async def deliberate(self, question: str, context: dict | None = None, budget: int = 2) -> DeliberationResult:
+    async def deliberate(
+        self, question: str, context: dict | None = None, budget: int = 2, *, timeout: float = 45.0
+    ) -> DeliberationResult:
         self._deliberations += 1
         refined = self._heuristic_refine(question)
         answer = ""
@@ -78,7 +80,7 @@ class DeepDeliberationEngine:
                 )
                 refine_out = coerce_text(await asyncio.wait_for(
                     brain.think(refine_prompt, mode=ThinkingMode.FAST, origin="deep_thought", is_background=True),
-                    timeout=20.0,
+                    timeout=min(20.0, timeout),
                 ))
                 if refine_out:
                     refined = refine_out.strip()[:400]
@@ -91,7 +93,7 @@ class DeepDeliberationEngine:
                             origin="deep_thought",
                             is_background=True,
                         ),
-                        timeout=45.0,
+                        timeout=timeout,
                     ))
                     if ans_out:
                         answer = ans_out.strip()

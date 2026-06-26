@@ -1065,20 +1065,30 @@ class TemporalDilationScheduler:
                                     action="completed MIST cycle without bottling consolidated context",
                                 )
 
-                            # Deep Thought sharpens the open question; Caine rehearses a
-                            # quick what-if from it. Synchronous/heuristic — idle work,
-                            # no extra model calls — turning idle time into real thinking.
+                            # Idle = the model is free, so go deep. Deep Thought *deliberates*
+                            # on the open thread (refine + answer, bounded), Caine rehearses a
+                            # what-if from the refined question, and HAL runs a semantic
+                            # conflict scan over the directive set the keyword scan can't catch.
                             try:
                                 dt = ServiceContainer.get("deep_thought", default=None)
-                                refined = dt.refine_question(query) if dt is not None else query
+                                refined = query
+                                if dt is not None and hasattr(dt, "deliberate"):
+                                    _delib = await dt.deliberate(query, budget=1, timeout=12.0)
+                                    refined = _delib.refined_question
+                                    logger.debug("🪐 Deep Thought deliberated an idle thread.")
                                 caine = ServiceContainer.get("caine", default=None)
                                 if caine is not None and hasattr(caine, "forge_fast"):
                                     caine.forge_fast(refined[:120])
                                     logger.debug("🎪 Caine rehearsed an idle what-if scenario.")
-                            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _idle_exc:
+                                hal = ServiceContainer.get("hal", default=None)
+                                if hal is not None and hasattr(hal, "scan_semantic"):
+                                    _sem = await hal.scan_semantic(timeout=8.0)
+                                    if any(getattr(c, "kind", "") == "semantic" for c in _sem):
+                                        logger.info("🔴 HAL semantic scan flagged a directive tension.")
+                            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, TimeoutError) as _idle_exc:
                                 _record_fictional_degradation(
                                     _idle_exc,
-                                    action="completed MIST cycle without deliberation/scenario rehearsal",
+                                    action="completed MIST cycle without deep deliberation / semantic scan",
                                 )
                         else:
                             logger.debug("MIST: No cold context available for synthesis.")
