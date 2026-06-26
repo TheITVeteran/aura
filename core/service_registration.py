@@ -195,6 +195,14 @@ def register_all_services(is_proxy: bool = False):
         lifetime=ServiceLifetime.SINGLETON,
         required=False,
     )
+    # Concept formation — abstracts new conceptual primitives from repeated prediction errors
+    # (complements AbstractionEngine, which distills from successes).
+    container.register(
+        'concept_formation',
+        lambda: __import__('core.cognition.concept_formation', fromlist=['get_concept_formation_engine']).get_concept_formation_engine(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
     container.register('emergent_goal_engine', create_emergent_goal_engine, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('structural_mutator', create_structural_mutator, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('lineage_manager', create_lineage_manager, lifetime=ServiceLifetime.SINGLETON, required=False)
