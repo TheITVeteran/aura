@@ -184,7 +184,7 @@ The guiding rule for "where it belongs": a capability lives in the organ it
 |--------|-----------|
 | **Already LIVE in Aura** | EDI, JARVIS, Skynet(resilience), MIST, Cortana, Legion, the UIs(forking), TARS |
 | **BUILT this session — now in their organs** | Kokoro→`core/ethics/adversarial_conscience.py`, HAL→`core/goals/directive_conflict_sentinel.py`, Minds→`core/sim/outcome_simulator.py`, Deep Thought→`core/brain/deep_deliberation.py`, Brainiac→`core/knowledge/bottling.py`, Tron→`core/guardians/user_advocate.py` |
-| **Net-new BUILD** | Caine→ScenarioForge, GLaDOS→AdaptiveTestChamber, The Machine→need-to-know self-limit |
+| **Net-new — now BUILT** | Caine→`core/sim/scenario_forge.py`, GLaDOS→`core/evals/adaptive_test_chamber.py`, The Machine→`core/governance/need_to_know.py` |
 | **EXTEND existing** | Safe Surf(guardian mode), Data(honesty governor on output), Samantha(affective resonance), SARA(ambient presence), Multivac(abstention gate), Daneel(aggregate-harm) |
 | **REFUSE (build safeguard instead)** | Skynet self-preservation, MCP domination, Netrunner offense, Agent Smith, Colossus, Ultron, Wintermute manipulation |
 | **FICTION (nothing to build)** | time travel, positronic brains, synthezoid bodies, true mind-upload |

@@ -19,13 +19,17 @@ class ServiceNames:
     AVA = "ava_social"
     SKYNET = "skynet_resilience"
     MIST = "mist_scheduler"
-    # AI Engines (Fictional Origins) — expansion wave
-    KOKORO = "kokoro_conscience"
-    HAL = "hal_directive_sentinel"
-    CULTURE_MIND = "culture_mind_simulation"
-    DEEP_THOUGHT = "deep_thought_deliberation"
-    BRAINIAC = "brainiac_knowledge"
-    TRON = "tron_user_advocate"
+    # AI Engines (Fictional Origins) — expansion wave, homed in their organs
+    KOKORO = "kokoro_conscience"            # core/ethics/adversarial_conscience.py
+    HAL = "hal_directive_sentinel"          # core/goals/directive_conflict_sentinel.py
+    CULTURE_MIND = "culture_mind_simulation"  # core/sim/outcome_simulator.py
+    DEEP_THOUGHT = "deep_thought_deliberation"  # core/brain/deep_deliberation.py
+    BRAINIAC = "brainiac_knowledge"         # core/knowledge/bottling.py
+    TRON = "tron_user_advocate"             # core/guardians/user_advocate.py
+    # AI Engines (Fictional Origins) — net-new organs
+    CAINE = "caine_scenario_forge"          # core/sim/scenario_forge.py
+    GLADOS = "glados_test_chamber"          # core/evals/adaptive_test_chamber.py
+    THE_MACHINE = "the_machine_need_to_know"  # core/governance/need_to_know.py
 
     # Functional Subsystems
     CAPABILITY = "capability_engine"

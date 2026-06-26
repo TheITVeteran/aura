@@ -21,6 +21,9 @@ def test_derived_engine_modules_pass_degradation_audit():
         "core/brain/deep_deliberation.py",
         "core/knowledge/bottling.py",
         "core/guardians/user_advocate.py",
+        "core/sim/scenario_forge.py",
+        "core/evals/adaptive_test_chamber.py",
+        "core/governance/need_to_know.py",
         "core/orchestrator/initializers/derived_engines.py",
     ):
         assert analyze_file(Path(rel)) == [], rel
@@ -114,6 +117,49 @@ def test_tron_passes_beneficial_action():
     assert review.verdict == "for_user"
 
 
+def test_caine_flags_unsolvable_real_need():
+    from core.sim.scenario_forge import ScenarioForge
+
+    forge = ScenarioForge()
+    playful = asyncio.run(forge.forge("a heist on a floating casino", goal="pull off the perfect score"))
+    assert playful.addresses_real_need is True
+    assert playful.events
+
+    real = asyncio.run(forge.forge("i feel so alone and i want to escape", goal="actually help me"))
+    assert real.addresses_real_need is False
+    assert real.caveat
+
+
+def test_glados_chamber_adapts_difficulty_to_frontier():
+    from core.evals.adaptive_test_chamber import AdaptiveTestChamber
+
+    chamber = AdaptiveTestChamber()
+    start = chamber.design_challenge("coding").difficulty
+    for _ in range(6):
+        chamber.record_result("coding", passed=True)
+    harder = chamber.design_challenge("coding").difficulty
+    assert harder > start
+    for _ in range(6):
+        chamber.record_result("coding", passed=False)
+    easier = chamber.design_challenge("coding").difficulty
+    assert easier < harder
+
+
+def test_the_machine_withholds_beyond_need_to_know():
+    from core.governance.need_to_know import NeedToKnowPolicy
+
+    policy = NeedToKnowPolicy()
+    disclosure = policy.minimize(
+        purpose="scheduling",
+        requested_fields=["availability", "timezone", "full_address", "contacts"],
+        retention="short",
+    )
+    assert "availability" in disclosure.granted_fields
+    assert "full_address" in disclosure.withheld_fields
+    assert "contacts" in disclosure.withheld_fields
+    assert disclosure.retention_seconds == 86_400  # the Machine's daily-wipe horizon
+
+
 def test_derived_engines_register_without_background_tasks(monkeypatch):
     from core.orchestrator.initializers import derived_engines
 
@@ -134,7 +180,10 @@ def test_derived_engines_register_without_background_tasks(monkeypatch):
 
     engines = derived_engines.register_derived_engines(orchestrator=SimpleNamespace())
 
-    assert set(engines) == {"kokoro", "hal", "culture_mind", "deep_thought", "brainiac", "tron"}
+    assert set(engines) == {
+        "kokoro", "hal", "culture_mind", "deep_thought", "brainiac", "tron",
+        "caine", "glados", "the_machine",
+    }
     assert created_tasks == []
     # Canonical service names registered (kokoro_conscience .. tron_user_advocate) + aliases.
     assert "kokoro" in registered and "tron" in registered

@@ -24,10 +24,13 @@ def register_derived_engines(orchestrator: Any = None) -> dict[str, Any]:
     """Register the six character-derived engines from their home organs."""
     from core.brain.deep_deliberation import register_deep_deliberation
     from core.ethics.adversarial_conscience import register_adversarial_conscience
+    from core.evals.adaptive_test_chamber import register_test_chamber
     from core.goals.directive_conflict_sentinel import register_directive_sentinel
+    from core.governance.need_to_know import register_need_to_know
     from core.guardians.user_advocate import register_user_advocate
     from core.knowledge.bottling import register_knowledge_bottling
     from core.sim.outcome_simulator import register_outcome_simulator
+    from core.sim.scenario_forge import register_scenario_forge
 
     registrations = {
         "kokoro": register_adversarial_conscience,
@@ -36,6 +39,9 @@ def register_derived_engines(orchestrator: Any = None) -> dict[str, Any]:
         "deep_thought": register_deep_deliberation,
         "brainiac": register_knowledge_bottling,
         "tron": register_user_advocate,
+        "caine": register_scenario_forge,
+        "glados": register_test_chamber,
+        "the_machine": register_need_to_know,
     }
 
     engines: dict[str, Any] = {}
