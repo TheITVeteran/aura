@@ -179,6 +179,14 @@ def register_all_services(is_proxy: bool = False):
         lifetime=ServiceLifetime.SINGLETON,
         required=False,
     )
+    # World-scale ingestion — unrestricted web reach (owner-authorized) that updates the world
+    # model + memory; state-changing writes route through the value model + Will.
+    container.register(
+        'world_ingestion',
+        lambda: __import__('core.world_model.world_ingestion', fromlist=['get_world_ingestion_engine']).get_world_ingestion_engine(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
     container.register('emergent_goal_engine', create_emergent_goal_engine, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('structural_mutator', create_structural_mutator, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('lineage_manager', create_lineage_manager, lifetime=ServiceLifetime.SINGLETON, required=False)
