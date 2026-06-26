@@ -295,6 +295,93 @@ class ReasoningStrategies:
                 logger.debug("TreeOfThoughts not available — using legacy strategies.")
         return self._tree_of_thoughts
 
+    # Task types where the verifier-backed amplifier earns its extra samples.
+    _V2_TASK_TYPES = frozenset({"code", "math", "repo_audit", "architecture"})
+
+    def _v2_enabled(self) -> bool:
+        import os
+
+        return str(os.getenv("AURA_REASONING_AMPLIFIER_V2", "1")).strip().lower() not in {"0", "false", "off", "no"}
+
+    def _should_amplify_v2(self, query: str, strategy: StrategyType, kwargs: dict[str, Any]) -> str | None:
+        """Return the task_type to amplify, or None to use legacy strategies."""
+        if not self._v2_enabled() or kwargs.get("bypass_amplifier") or kwargs.get("bypass_critique"):
+            return None
+        q = str(query or "")
+        if len(q) < 6 or self._looks_like_instructional_prompt(q.lower()):
+            return None
+        try:
+            from core.brain.reasoning_amplifier_v2 import classify_task_type
+
+            task_type = classify_task_type(q)
+        except _REASONING_RECOVERABLE_ERRORS:
+            return None
+        if task_type in self._V2_TASK_TYPES:
+            return task_type
+        # Also amplify explicit logical/math checks even when phrased generically.
+        if self._is_logical_check(q):
+            return "math"
+        return None
+
+    async def _try_amplify_v2(self, query: str, strategy: StrategyType, **kwargs) -> StrategyResult | None:
+        task_type = self._should_amplify_v2(query, strategy, kwargs)
+        if task_type is None:
+            return None
+        try:
+            from core.brain.reasoning_amplifier_v2 import (
+                AmplificationRequest,
+                ReasoningAmplifierV2,
+            )
+
+            async def _gen(prompt: str, temperature: float) -> str:
+                return await self._generate_text(prompt, temperature=temperature)
+
+            amplifier = ReasoningAmplifierV2(_gen)
+            context = kwargs.get("context", [])
+            evidence = [str(c) for c in context] if isinstance(context, list) else []
+            risk = "high" if kwargs.get("high_stakes") else "normal"
+            time_budget = min(45.0, max(8.0, self._timeout_from_kwargs(kwargs) * 1.5))
+            request = AmplificationRequest(
+                objective=query,
+                task_type=task_type,
+                risk_level=risk,
+                time_budget_s=time_budget,
+                required_evidence=evidence[:6],
+                context={"evidence": evidence[:6]},
+            )
+            result = await amplifier.amplify(request)
+        except _REASONING_RECOVERABLE_ERRORS as exc:
+            _record_reasoning_degradation(
+                exc,
+                action="fell back from reasoning amplifier v2 to legacy strategies",
+                severity="warning",
+                extra={"query_preview": query[:160]},
+            )
+            return None
+        if not result.answer:
+            return None
+        logger.info(
+            "🧠 [AmplifyV2-live] task=%s mode=%s verified=%s conf=%.2f",
+            task_type, result.receipt.mode, result.verified, result.confidence,
+        )
+        return StrategyResult(
+            content=result.answer,
+            strategy_used=StrategyType.CONSISTENCY,
+            confidence=result.confidence,
+            reasoning_steps=[
+                f"Amplifier v2 ({result.receipt.mode}): {result.receipt.num_candidates} candidates, "
+                f"verifiers {result.receipt.verifiers_run or ['—']}, "
+                f"{'verified' if result.verified else 'unverified'}.",
+            ]
+            + ([f"Known issues: {'; '.join(result.receipt.known_failures[:2])}"] if result.receipt.known_failures else []),
+            metadata={
+                "amplifier_v2": True,
+                "verified": result.verified,
+                "calibrated": result.calibrated,
+                "reasoning_receipt": result.receipt.to_dict(),
+            },
+        )
+
     async def execute(self, query: str, strategy: StrategyType | None = None, **kwargs) -> StrategyResult:
         """Execute a reasoning strategy on the given query.
 
@@ -334,6 +421,16 @@ class ReasoningStrategies:
             strategy = self.classify(query)
 
         logger.info("🧠 Reasoning strategy: %s for query: %s...", strategy.name, query[:60])
+
+        # Reasoning Amplifier v2 — the canonical hard-task path. For verifiable hard
+        # tasks (code / math / repo-audit / architecture / logical checks) route through
+        # the full normalize→verify→search→calibrate→receipt pipeline rather than a
+        # single sampled answer. Bounded + cancellable; falls through to legacy
+        # strategies on any failure so behaviour never regresses.
+        amplified = await self._try_amplify_v2(query, strategy, **kwargs)
+        if amplified is not None:
+            self._track_stats(amplified)
+            return amplified
 
         try:
             # Tree of Thoughts upgrade: for complex questions, use multi-draft

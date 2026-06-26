@@ -1856,6 +1856,70 @@ class UnitaryResponsePhase(Phase):
             )
             return text
 
+    async def _maybe_amplify_response(
+        self,
+        *,
+        objective: str,
+        draft: str,
+        llm: Any,
+        state: AuraState,
+        request_timeout: float,
+        is_user_facing: bool,
+        is_background: bool,
+        proof_or_benchmark: bool,
+    ) -> str:
+        """Re-derive a verifiable hard-turn answer through the reasoning amplifier.
+
+        Runs only on the foreground lane for code/math/repo/architecture turns, is
+        bounded by the turn's own timeout, and fails open to ``draft``. When the
+        amplifier produces a verifier-clean answer it replaces the first draft; the
+        reasoning receipt is stashed on ``self`` and the state for telemetry.
+        """
+        if not is_user_facing or is_background or proof_or_benchmark or not draft:
+            return draft
+        if str(os.getenv("AURA_REASONING_AMPLIFIER_V2", "1")).strip().lower() in {"0", "false", "off", "no"}:
+            return draft
+        try:
+            from core.brain.reasoning_amplifier_v2 import amplify_turn, is_amplifiable
+        except ImportError:
+            return draft
+        task_type = is_amplifiable(objective)
+        if task_type is None:
+            return draft
+
+        async def _gen(prompt: str, temperature: float) -> str:
+            try:
+                out = await llm.think(
+                    prompt,
+                    temperature=temperature,
+                    prefer_tier="primary",
+                    allow_cloud_fallback=False,
+                )
+            except _RESPONSE_RECOVERABLE_ERRORS as exc:
+                _record_response_degradation(exc, "UnitaryResponse: amplifier generate failed: %s")
+                return ""
+            if isinstance(out, dict):
+                out = out.get("content") or out.get("response") or ""
+            return str(out or "").strip()
+
+        budget = float(min(30.0, max(8.0, (request_timeout or 20.0) * 0.8)))
+        result = await amplify_turn(objective, _gen, task_type=task_type, time_budget_s=budget)
+        receipt = result.receipt.to_dict()
+        self._last_reasoning_receipt = receipt
+        try:
+            if hasattr(state, "metadata") and isinstance(state.metadata, dict):
+                state.metadata["reasoning_receipt"] = receipt
+        except (AttributeError, TypeError):
+            pass
+        logger.info(
+            "🧠 [AmplifyV2-live/phase] task=%s mode=%s verified=%s conf=%.2f → %s",
+            task_type, receipt.get("mode"), result.verified, result.confidence,
+            "adopted" if (result.verified and result.answer) else "kept draft",
+        )
+        if result.verified and result.answer and len(result.answer.strip()) >= 3:
+            return result.answer.strip()
+        return draft
+
     def _build_router_messages(
         self,
         state: AuraState,
@@ -5325,6 +5389,28 @@ class UnitaryResponsePhase(Phase):
                     return new_state
 
             response_text = raw.strip()
+
+            # ── Reasoning Amplifier v2 (live, evidence-grounded) ──────────────
+            # For verifiable hard turns (code / math / repo / architecture) on the
+            # foreground lane, don't ship the first draft. Re-derive the answer through
+            # the amplifier: gather real evidence (read repo source spans / recall
+            # memory), generate candidates, run the domain truth engines, repair in the
+            # symbolic sandbox, calibrate, and attach a reasoning receipt. Bounded,
+            # governed, and fail-open to the original draft so behaviour never regresses.
+            try:
+                response_text = await self._maybe_amplify_response(
+                    objective=objective,
+                    draft=response_text,
+                    llm=llm,
+                    state=new_state,
+                    request_timeout=request_timeout,
+                    is_user_facing=is_user_facing,
+                    is_background=is_background,
+                    proof_or_benchmark=bool(proof_evaluation_turn or benchmark_turn or strict_proof_answer_request),
+                )
+            except _RESPONSE_RECOVERABLE_ERRORS as amp_exc:
+                logger.debug("Reasoning amplifier v2 skipped (fail-open): %s", amp_exc)
+
             if benchmark_turn:
                 try:
                     from core.reasoning.artifact_synthesis import (

@@ -232,6 +232,8 @@ class ReasoningAmplifierV2:
         sandbox: Any | None = None,
         calibration: Any | None = None,
         memory: Any | None = None,
+        evidence_provider: Any | None = None,
+        substrate: Any | None = None,
         courtroom_factory: Callable[[GenerateFn, Any], Any] | None = None,
     ) -> None:
         self._generate = generate
@@ -239,6 +241,8 @@ class ReasoningAmplifierV2:
         self._sandbox = sandbox
         self._calibration = calibration
         self._memory = memory
+        self._evidence_provider = evidence_provider
+        self._substrate = substrate
         self._courtroom_factory = courtroom_factory
 
     # --- lazy default wiring (so callers can pass just a generate fn) -------
@@ -270,12 +274,69 @@ class ReasoningAmplifierV2:
             self._sandbox = get_symbolic_sandbox()
         return self._sandbox
 
+    def _ensure_evidence(self) -> Any:
+        if self._evidence_provider is None:
+            from core.brain.evidence_provider import get_evidence_provider
+
+            self._evidence_provider = get_evidence_provider()
+        return self._evidence_provider
+
     def _make_courtroom(self) -> Any:
         if self._courtroom_factory is not None:
             return self._courtroom_factory(self._generate, self._ensure_verifier())
         from core.brain.courtroom import Courtroom
 
         return Courtroom(self._generate, verifier=self._ensure_verifier())
+
+    def _read_substrate(self) -> dict[str, float]:
+        """Best-effort live read of valence/arousal/uncertainty from the substrate.
+
+        Negative valence (repeated failure) or high uncertainty are the substrate
+        telling the reasoner "you're stuck — think harder". We honour that by
+        deepening the mode. Read-only and fail-open to neutral.
+        """
+        sub = self._substrate
+        if sub is None:
+            try:
+                from core.container import ServiceContainer
+
+                sub = (
+                    ServiceContainer.get("soma", default=None)
+                    or ServiceContainer.get("affect_engine", default=None)
+                )
+                self._substrate = sub
+            except (ImportError, RuntimeError, AttributeError):
+                sub = None
+        if sub is None:
+            return {}
+        for attr in ("get_substrate_affect", "get_affect", "affect_snapshot"):
+            fn = getattr(sub, attr, None)
+            if callable(fn):
+                try:
+                    data = fn()
+                    if isinstance(data, dict):
+                        return {k: float(v) for k, v in data.items() if isinstance(v, (int, float))}
+                except (RuntimeError, AttributeError, TypeError, ValueError):
+                    continue
+        return {}
+
+    @staticmethod
+    def _should_deepen(affect: dict[str, float]) -> bool:
+        if not affect:
+            return False
+        uncertainty = affect.get("uncertainty", affect.get("entropy", 0.0))
+        valence = affect.get("valence", 0.0)
+        frustration = affect.get("frustration", 0.0)
+        return uncertainty >= 0.75 or valence <= -0.4 or frustration >= 0.6
+
+    @staticmethod
+    def _deepen(mode: ReasoningMode) -> ReasoningMode:
+        ladder = {
+            ReasoningMode.FAST: ReasoningMode.NORMAL,
+            ReasoningMode.NORMAL: ReasoningMode.DEEP,
+            ReasoningMode.DEEP: ReasoningMode.EXTREME,
+        }
+        return ladder.get(mode, mode)
 
     async def amplify(self, request: AmplificationRequest) -> AmplifiedAnswer:
         start = time.monotonic()
@@ -291,6 +352,11 @@ class ReasoningAmplifierV2:
         mode = ReasoningBudgetPolicy.choose_mode(
             problem.task_type, risk_level=request.risk_level, explicit=request.mode
         )
+        # Couple to the live substrate: a stuck/uncertain mind reasons deeper.
+        affect = self._read_substrate()
+        if request.mode is None and self._should_deepen(affect):
+            mode = self._deepen(mode)
+            fallbacks.append("substrate_deepened")
         sample_budget = request.sample_budget or _MODE_BUDGET[mode]
 
         # 2. retrieve failure-mode guards from prior reasoning.
@@ -302,6 +368,23 @@ class ReasoningAmplifierV2:
                 guards = [ln[2:] for ln in guard_text.splitlines() if ln.startswith("- ")]
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("amplifier_v2_recall", exc)
+
+        # 2b. ReAct grounding — gather REAL evidence (read repo source spans / recall
+        # memory) so generation is conditioned on fact and the verifier has something
+        # concrete to check. Merged with any caller-supplied evidence.
+        if not request.context.get("skip_evidence"):
+            try:
+                gathered = await self._with_deadline(
+                    self._ensure_evidence().render_pack(
+                        problem.objective, task_type=problem.task_type, limit=6
+                    ),
+                    min(deadline, start + 10.0),
+                )
+                for span in gathered or []:
+                    if span and span not in problem.required_evidence:
+                        problem.required_evidence.append(span)
+            except (RuntimeError, AttributeError, TypeError, ValueError, asyncio.TimeoutError) as exc:
+                record_degradation("amplifier_v2_evidence", exc)
 
         # 3-8. produce a synthesized, verified answer per mode.
         if mode in (ReasoningMode.DEEP, ReasoningMode.EXTREME, ReasoningMode.PROOF):
@@ -317,8 +400,9 @@ class ReasoningAmplifierV2:
         verifier_issues = list(getattr(verdict, "issues", []) or []) if verdict is not None else []
         verifiers_run = (getattr(verdict, "engine", "") or "").split("+") if verdict is not None else []
 
-        # 9. final critique — calibrate confidence to epistemic status.
-        evidence = list(request.required_evidence) + list(request.context.get("evidence", []) or [])
+        # 9. final critique — calibrate confidence to epistemic status. Uses the
+        # full evidence pack (caller-supplied + ReAct-gathered source spans/memories).
+        evidence = list(problem.required_evidence) + list(request.context.get("evidence", []) or [])
         calibrated_answer, calibration = self._calibrate(answer, verdict, evidence, verifier_ok)
 
         # PROOF mode refuses to answer if nothing survived verification.
@@ -504,3 +588,47 @@ class ReasoningAmplifierV2:
 def build_amplifier_v2(generate: GenerateFn, **kw: Any) -> ReasoningAmplifierV2:
     """Factory used by the live wiring in reasoning_strategies/cognitive_engine."""
     return ReasoningAmplifierV2(generate, **kw)
+
+
+def is_amplifiable(objective: str) -> str | None:
+    """Return the task_type to amplify for a turn, or None for ordinary chat.
+
+    Used by the live response lanes to decide whether a turn earns the
+    verifier-backed amplifier. Conservative: only verifiable hard tasks qualify,
+    so casual conversation is never slowed down.
+    """
+    q = str(objective or "").strip()
+    if len(q) < 8:
+        return None
+    task_type = classify_task_type(q)
+    if task_type in {"code", "math", "repo_audit", "architecture"}:
+        return task_type
+    return None
+
+
+async def amplify_turn(
+    objective: str,
+    generate: GenerateFn,
+    *,
+    task_type: str | None = None,
+    evidence: list[str] | None = None,
+    risk_level: str = "normal",
+    time_budget_s: float = 30.0,
+    **kw: Any,
+) -> AmplifiedAnswer:
+    """One-call entrypoint for the live response path.
+
+    Builds an amplifier wired to the real organs (verifiers, sandbox, calibration,
+    memory, evidence provider, substrate) and runs the full pipeline for a turn.
+    """
+    tt = task_type or classify_task_type(objective)
+    amplifier = ReasoningAmplifierV2(generate, **kw)
+    request = AmplificationRequest(
+        objective=objective,
+        task_type=tt,
+        risk_level=risk_level,
+        time_budget_s=time_budget_s,
+        required_evidence=list(evidence or []),
+        context={"evidence": list(evidence or [])},
+    )
+    return await amplifier.amplify(request)
