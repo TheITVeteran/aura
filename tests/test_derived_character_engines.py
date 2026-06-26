@@ -160,6 +160,20 @@ def test_caine_flags_unsolvable_real_need():
     assert real.caveat
 
 
+def test_caine_forge_fast_is_synchronous():
+    from core.sim.scenario_forge import ScenarioForge
+
+    scenario = ScenarioForge().forge_fast("a heist on a floating casino")
+    assert scenario.events and scenario.title
+
+
+def test_deep_thought_refine_question_is_synchronous():
+    from core.brain.deep_deliberation import DeepDeliberationEngine
+
+    refined = DeepDeliberationEngine().refine_question("fix this")
+    assert len(refined) > len("fix this")
+
+
 def test_glados_chamber_adapts_difficulty_to_frontier():
     from core.evals.adaptive_test_chamber import AdaptiveTestChamber
 

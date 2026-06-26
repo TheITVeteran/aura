@@ -477,6 +477,17 @@ class EnvironmentKernel:
         next_curriculum = self.curriculum.propose_next_task(environment_family=self.environment_id.split(":")[0])
         if next_curriculum is not None:
             frame.metadata["curriculum_next"] = next_curriculum.to_dict()
+
+        # GLaDOS: adapt a self-test difficulty toward this capability's frontier, so
+        # Aura is continually challenged just past its current ability as it improves.
+        try:
+            from core.container import ServiceContainer as _SC
+
+            _chamber = _SC.get("glados", default=None)
+            if _chamber is not None:
+                _chamber.record_result(intent.name, passed=outcome.success_score > 0.5)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass  # advisory difficulty tracking; never affects the environment step
         self._record_action_budget(
             frame,
             intent,

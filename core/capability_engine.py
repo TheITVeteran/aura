@@ -3238,6 +3238,19 @@ class CapabilityEngine(AuraBaseModule):
                             "🟦 User-advocate flags skill '%s': %s",
                             skill_name, _review.on_behalf_of_user,
                         )
+                _machine = _SC.get("the_machine", default=None)
+                _scope = str(locals().get("effect_scope", "")).lower()
+                if _machine is not None and _scope in ("external", "network", "online", "public"):
+                    _disc = _machine.minimize(
+                        purpose=skill_name,
+                        requested_fields=[],
+                        requested_capabilities=[_scope],
+                    )
+                    if _disc.withheld_capabilities:
+                        self.logger.debug(
+                            "🔢 The Machine: need-to-know review on external skill '%s' (scope %s)",
+                            skill_name, _scope,
+                        )
             except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError) as _gate_exc:
                 self.logger.debug("Derived conscience/outcome gate degraded: %s", _gate_exc)
 

@@ -54,6 +54,10 @@ class DeepDeliberationEngine:
             )
         return q
 
+    def refine_question(self, question: str) -> str:
+        """Synchronous question refinement (no model call) for idle/background callers."""
+        return self._heuristic_refine(question)
+
     async def deliberate(self, question: str, context: dict | None = None, budget: int = 2) -> DeliberationResult:
         self._deliberations += 1
         refined = self._heuristic_refine(question)

@@ -115,6 +115,18 @@ class ScenarioForge:
             )
         return True, ""
 
+    def forge_fast(
+        self,
+        theme: str,
+        *,
+        agents: int = 2,
+        complexity: str = "low",
+        goal: str | None = None,
+    ) -> Scenario:
+        """Synchronous heuristic-only scenario (no model call) for idle/background rehearsal."""
+        self._forged += 1
+        return self._heuristic_scenario(theme, agents, complexity, goal)
+
     async def forge(
         self,
         theme: str,

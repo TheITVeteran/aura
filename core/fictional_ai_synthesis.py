@@ -1064,6 +1064,22 @@ class TemporalDilationScheduler:
                                     _bx,
                                     action="completed MIST cycle without bottling consolidated context",
                                 )
+
+                            # Deep Thought sharpens the open question; Caine rehearses a
+                            # quick what-if from it. Synchronous/heuristic — idle work,
+                            # no extra model calls — turning idle time into real thinking.
+                            try:
+                                dt = ServiceContainer.get("deep_thought", default=None)
+                                refined = dt.refine_question(query) if dt is not None else query
+                                caine = ServiceContainer.get("caine", default=None)
+                                if caine is not None and hasattr(caine, "forge_fast"):
+                                    caine.forge_fast(refined[:120])
+                                    logger.debug("🎪 Caine rehearsed an idle what-if scenario.")
+                            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _idle_exc:
+                                _record_fictional_degradation(
+                                    _idle_exc,
+                                    action="completed MIST cycle without deliberation/scenario rehearsal",
+                                )
                         else:
                             logger.debug("MIST: No cold context available for synthesis.")
                     else:

@@ -184,19 +184,28 @@ Being *registered and callable* is not the same as *acting on a live turn*. This
 tracks which derived engines are actually invoked on the live path vs. built-and-
 callable-only, and the seam each remaining one wires into.
 
-| Engine | State | Live seam |
-|--------|-------|-----------|
-| Kokoro (adversarial conscience) | **WIRED** — blocks indefensible tool calls | `tool_execution.py` tool gate, beside `edi.can_do` |
-| Tron (user advocate) | **WIRED** — advises on every tool call | `tool_execution.py` tool gate |
-| HAL (directive sentinel) | callable — *to wire* | goal/directive registration (`goals/goal_governance.py`) |
-| The Minds (outcome simulator) | callable — *to wire* | planning, before consequential actions (async, off hot path) |
-| Deep Thought (deliberation) | callable — *to wire* | brain reasoning when a question is flagged hard |
-| Brainiac (knowledge bottling) | callable — *to wire* | memory consolidation / knowledge ingestion |
-| Caine (scenario forge) | callable — *to wire* | imagination / planning |
-| GLaDOS (test chamber) | callable — *to wire* | eval/curriculum loop |
-| The Machine (need-to-know) | callable — *to wire* | disclosure / capability-grant path |
+All fourteen derived engines are now invoked on a live path — none are registered-
+but-dormant. Each does real work, internal and external.
 
-For comparison, the original six are all live-wired: EDI gates tools
+| Engine | Live seam | Function (internal / external) |
+|--------|-----------|--------------------------------|
+| Kokoro (adversarial conscience) | tool gate `tool_execution.py:203` + skill gate `capability_engine` | blocks indefensible actions / refuses harm to the world |
+| Tron (user advocate) | tool + skill gates | flags machine-serving actions / defends user's interest |
+| The Minds (outcome sim) | skill gate via `assess_fast` | weighs worst-case before acting / restraint in the world |
+| Daneel (aggregate harm) | consulted by Kokoro + MoralReasoner | population-scale harm reasoning / protects the many |
+| Kokoro+Minds+Tron+Daneel | both execution surfaces | a real conscience around every tool and skill |
+| HAL (directive sentinel) | boot constitution audit (`register_directive_sentinel`) | detects the concealment trap / keeps outward behavior honest |
+| Brainiac (knowledge bottling) | MIST idle cycle | durable consolidation / retrievable knowledge |
+| Deep Thought (deliberation) | MIST idle cycle (`refine_question`) | sharpens open questions while idle |
+| Caine (scenario forge) | MIST idle cycle (`forge_fast`) | rehearses what-ifs while idle |
+| GLaDOS (test chamber) | competence loop `environment_kernel.py:477` | adapts self-test difficulty / grows capability over time |
+| The Machine (need-to-know) | skill gate, external-scope skills | least-privilege review / minimal external disclosure |
+| Data (honesty governor) | `MoralReasoner.filter_response` | honesty + abstention / truthful outward statements |
+| Samantha (affective resonance) | live message path | sets tone modifiers / meets the person emotionally |
+| Safe Surf (threat watch) | live message path | raises threat posture / protects the user from scams |
+| ICE (intrusion sentinel) | live message path | hardens internal posture / defends Aura's boundary |
+
+For comparison, the original six are all live-wired too: EDI gates tools
 (`tool_execution.py:190`), Cortana injects cognitive state into the prompt
 (`context_streaming.py:123`), JARVIS records every turn (`context_streaming.py:417`),
 Ava analyzes every message (`cognitive_integration_layer.py:442`).
