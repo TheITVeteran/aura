@@ -363,6 +363,11 @@ def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
         "recurrent_depth_present",
         "recurrent_runtime_loops_applied",
         "recurrent_runtime_loops_applied_ok",
+        "surface_quality_gate_enabled",
+        "surface_quality_gate_passed",
+        "surface_quality_gate_attempts",
+        "surface_quality_gate_reasons",
+        "surface_quality_gate_error",
         "applied",
     }
     return {key: value[key] for key in allowed if key in value}

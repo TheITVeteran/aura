@@ -51,6 +51,10 @@ def _bound_live_mind_surface_control_receipt():
         "surface_alpha_applied_ok": True,
         "recurrent_runtime_loops_applied": 2,
         "recurrent_runtime_loops_applied_ok": True,
+        "surface_quality_gate_enabled": True,
+        "surface_quality_gate_passed": True,
+        "surface_quality_gate_attempts": 1,
+        "surface_quality_gate_reasons": [],
         "applied": True,
     }
 
@@ -1316,6 +1320,52 @@ def test_live_turn_contract_does_not_treat_warming_lane_as_full_mind(monkeypatch
 
     assert payload["required_subsystems"]["inference"] is False
     assert payload["required_subsystems_ok"] is False
+    assert payload["full_mind_path"] is False
+
+
+def test_live_turn_contract_requires_worker_surface_quality_gate_to_pass(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    trace = _bound_live_mind_controls_trace()
+    trace["live_mind_surface_control_receipt"] = {
+        **trace["live_mind_surface_control_receipt"],
+        "surface_quality_gate_enabled": True,
+        "surface_quality_gate_passed": False,
+        "surface_quality_gate_attempts": 3,
+        "surface_quality_gate_reasons": ["generic_assistant_language"],
+    }
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "architecture_context_bound": True,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine",
+            **trace,
+        },
+    )
+
+    assert payload["live_mind_surface_quality_gate_enabled"] is True
+    assert payload["live_mind_surface_quality_gate_passed"] is False
+    assert payload["live_mind_controls_structurally_bound"] is False
     assert payload["full_mind_path"] is False
 
 

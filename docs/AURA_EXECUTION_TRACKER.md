@@ -695,10 +695,21 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   live-turn contract refuses to certify full-mind desktop success without that
   receipt. Focused validation: 16 live-mind/router/contract tests passed and
   the full desktop conversation-lane suite passed (201 tests).
+- 2026-06-25 MLX worker user-surface quality gate: live desktop
+  CognitiveEngine turns now pass the visible current user message into the
+  MLX worker as a validation prompt. The worker validates each user-visible
+  draft against the shared conversation reliability contract before returning
+  IPC success, retries from the original live mind context when a draft is
+  rejected, and emits a surface-quality receipt. The live-turn contract now
+  refuses `full_mind_path=true` when that worker quality gate ran and failed,
+  even if every other runtime probe is green. Focused validation: 32
+  worker/client/live-mind control tests passed, 175 chat reliability tests
+  passed, 3 route regressions passed, 384 live/router/MLX/runtime tests
+  passed, `make enterprise-gate` passed, and `make production-gate` passed.
 
 ## Current Closeout Progress Gauge
 
-- Latest checkpoint: server-visible MLX live-mind control receipt.
+- Latest checkpoint: MLX worker user-surface quality gate.
 - Evidence added: subprocess ownership routed through `SubprocessGateway` for
   DNU/wedge supervisor paths, hardcoded local test paths removed, one broad
   watchdog exception narrowed, enterprise baseline regressions cleared, direct
@@ -715,10 +726,15 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   model call before a reply can count as a full-mind desktop response, and the
   MLX worker/client/router/CognitiveEngine/chat path now records and exposes a
   downstream receipt proving those controls were consumed by user-visible
-  generation.
-- Current operator estimate: about 90% through the ultimate closeout standard.
-- Estimated remaining checkpoints: 4 total, depending on how many live
-  desktop/demo-path defects surface during real 32B/72B runtime validation.
+  generation. The MLX worker now also validates user-visible drafts against
+  the shared response reliability contract before reporting generation success,
+  and the desktop full-mind contract requires a passing worker surface-quality
+  receipt whenever that gate runs.
+- Current operator estimate: about 91% through the ultimate closeout standard.
+- Estimated remaining checkpoints: 4 major checkpoints plus any small
+  bug-fix checkpoints exposed during live 32B/72B runtime validation:
+  launched GUI/voice demo proof, DNU/Aletheia clean reruns, CRSM/CAA +
+  longevity/replay closure, and final whole-code semantic review/final-proof.
 - Still not closed: final proof, DNU/Aletheia clean reruns, live desktop
   multi-app proof, CRSM-to-LoRA closure, CAA extraction validation, longer soak,
   proof artifact replay, and remaining whole-code semantic review.

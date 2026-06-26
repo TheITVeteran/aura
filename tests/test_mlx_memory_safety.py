@@ -82,6 +82,10 @@ def test_mlx_client_retains_surface_control_receipt_from_worker_response():
                 "surface_alpha_applied_ok": True,
                 "recurrent_runtime_loops_applied": 2,
                 "recurrent_runtime_loops_applied_ok": True,
+                "surface_quality_gate_enabled": True,
+                "surface_quality_gate_passed": True,
+                "surface_quality_gate_attempts": 1,
+                "surface_quality_gate_reasons": ["retryable_draft"],
                 "applied": True,
                 "untrusted_extra": "drop-me",
             },
@@ -94,6 +98,10 @@ def test_mlx_client_retains_surface_control_receipt_from_worker_response():
     assert receipt["clean_user_surface_contract"] is True
     assert receipt["surface_alpha_applied"] == 0.22
     assert receipt["recurrent_runtime_loops_applied"] == 2
+    assert receipt["surface_quality_gate_enabled"] is True
+    assert receipt["surface_quality_gate_passed"] is True
+    assert receipt["surface_quality_gate_attempts"] == 1
+    assert receipt["surface_quality_gate_reasons"] == ["retryable_draft"]
     assert receipt["applied"] is True
     assert "untrusted_extra" not in receipt
 

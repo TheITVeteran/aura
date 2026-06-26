@@ -3445,6 +3445,11 @@ def _build_live_turn_contract_payload(
                 "surface_alpha_applied_ok",
                 "recurrent_runtime_loops_applied",
                 "recurrent_runtime_loops_applied_ok",
+                "surface_quality_gate_enabled",
+                "surface_quality_gate_passed",
+                "surface_quality_gate_attempts",
+                "surface_quality_gate_reasons",
+                "surface_quality_gate_error",
                 "applied",
             )
             if key in raw_surface_control_receipt
@@ -3456,9 +3461,20 @@ def _build_live_turn_contract_payload(
         live_mind_surface_control_receipt.get("live_mind_controls_bound")
         and live_mind_surface_control_receipt.get("applied")
     )
+    live_mind_surface_quality_gate_enabled = bool(
+        live_mind_surface_control_receipt.get("surface_quality_gate_enabled")
+    )
+    live_mind_surface_quality_gate_passed = bool(
+        (not live_mind_surface_quality_gate_enabled)
+        or live_mind_surface_control_receipt.get("surface_quality_gate_passed")
+    )
     live_mind_controls_structurally_bound = bool(
         (not live_mind_context_required)
-        or (live_mind_controls_bound and live_mind_controls_worker_applied)
+        or (
+            live_mind_controls_bound
+            and live_mind_controls_worker_applied
+            and live_mind_surface_quality_gate_passed
+        )
     )
     confidence = str(response_confidence or "").strip().lower()
     accepted_full_mind_response_paths = {
@@ -3512,6 +3528,8 @@ def _build_live_turn_contract_payload(
         "live_mind_generation_controls": live_mind_generation_controls,
         "live_mind_surface_control_receipt": live_mind_surface_control_receipt,
         "live_mind_controls_worker_applied": live_mind_controls_worker_applied,
+        "live_mind_surface_quality_gate_enabled": live_mind_surface_quality_gate_enabled,
+        "live_mind_surface_quality_gate_passed": live_mind_surface_quality_gate_passed,
         "live_mind_controls_structurally_bound": live_mind_controls_structurally_bound,
         "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
         "preflight_live_mind_required_subsystems_ok": preflight_live_mind_required_subsystems_ok,

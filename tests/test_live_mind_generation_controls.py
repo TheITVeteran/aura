@@ -81,6 +81,10 @@ async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypat
                     "surface_alpha_applied_ok": True,
                     "recurrent_runtime_loops_applied": 2,
                     "recurrent_runtime_loops_applied_ok": True,
+                    "surface_quality_gate_enabled": True,
+                    "surface_quality_gate_passed": True,
+                    "surface_quality_gate_attempts": 1,
+                    "surface_quality_gate_reasons": [],
                     "applied": True,
                 }
             }

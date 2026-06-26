@@ -2339,6 +2339,7 @@ def grounded_operational_status_reply(user_message: Any, reply_text: Any = "") -
         for marker in (
             "cognitiveengine",
             "cognitive engine",
+            "cognitive path",
             "conversation lane",
             "desktop path",
             "live path",
@@ -2388,7 +2389,7 @@ def grounded_operational_status_reply(user_message: Any, reply_text: Any = "") -
     pieces: list[str] = []
     if mentions_cognitive_path:
         pieces.append(
-            "I am on the live desktop cognitive path when the inference gate and conversation probes are green; "
+            "I should treat the CognitiveEngine live desktop cognitive path as bounded readiness when the inference gate and conversation probes are green; "
             "I should describe that as bounded readiness, not an absolute performance claim."
         )
     else:

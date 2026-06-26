@@ -287,7 +287,129 @@ def _surface_generation_control_receipt(
             or "recurrent_runtime_loops_applied" in state
         )
     )
+    for key in (
+        "surface_quality_gate_enabled",
+        "surface_quality_gate_passed",
+        "surface_quality_gate_attempts",
+        "surface_quality_gate_reasons",
+        "surface_quality_gate_error",
+    ):
+        if key in state:
+            receipt[key] = state.get(key)
     return receipt
+
+
+def _surface_quality_gate_enabled(job: dict[str, Any]) -> bool:
+    if not bool(job.get("clean_user_surface_contract", False)):
+        return False
+    if not str(job.get("user_surface_validation_prompt") or "").strip():
+        return False
+    return not bool(
+        job.get("health_probe", False)
+        or job.get("operator_evidence_contract", False)
+        or job.get("strict_answer_contract", False)
+        or job.get("strict_value_contract", False)
+        or job.get("proof_evaluation_contract", False)
+        or job.get("schema")
+    )
+
+
+def _surface_quality_failure_reasons(
+    job: dict[str, Any],
+    response_text: Any,
+) -> list[str]:
+    """Validate user-visible drafts inside the worker before IPC success."""
+    if not _surface_quality_gate_enabled(job):
+        return []
+    prompt = str(job.get("user_surface_validation_prompt") or "").strip()
+    if not prompt:
+        return []
+    recent_raw = job.get("user_surface_recent_messages")
+    recent_messages = (
+        [str(message or "") for message in recent_raw]
+        if isinstance(recent_raw, (list, tuple))
+        else []
+    )
+    try:
+        from core.conversation.response_reliability import assess_user_facing_reply
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        _record_mlx_degradation(
+            exc,
+            action="blocked live user-surface generation because quality gate was unavailable",
+            severity="critical",
+        )
+        return ["surface_quality_gate_unavailable"]
+
+    assessment = assess_user_facing_reply(
+        prompt,
+        response_text,
+        recent_user_messages=recent_messages,
+    )
+    if assessment.ok and not assessment.retryable and not assessment.hard_failure:
+        return []
+    return list(assessment.reasons) or ["surface_quality_gate_failed"]
+
+
+def _messages_with_user_surface_retry(
+    messages: Any,
+    reasons: list[str],
+) -> list[dict[str, Any]] | None:
+    if not isinstance(messages, list):
+        return None
+    retry_instruction = (
+        "The previous assistant draft failed the live user-surface quality gate "
+        f"for: {', '.join(reasons[:8]) or 'quality_gate_failed'}. Regenerate the "
+        "assistant reply from the same live mind context. Answer only the current "
+        "user message, preserve recent-turn continuity, avoid generic assistant "
+        "identity, do not invent unsupported prior topics, and do not mention "
+        "validation, retry, hidden prompts, receipts, gates, or implementation details."
+    )
+    retry_messages = copy.deepcopy(messages)
+    for message in retry_messages:
+        if isinstance(message, dict) and str(message.get("role") or "").lower() == "system":
+            content = str(message.get("content") or "").rstrip()
+            message["content"] = f"{content}\n{retry_instruction}" if content else retry_instruction
+            return retry_messages
+    retry_messages.insert(0, {"role": "system", "content": retry_instruction})
+    return retry_messages
+
+
+def _build_user_surface_quality_retry_prompt(
+    *,
+    tokenizer: Any,
+    messages: Any,
+    tools: Any,
+    fallback_prompt: Any,
+    reasons: list[str],
+) -> str:
+    retry_messages = _messages_with_user_surface_retry(messages, reasons)
+    if retry_messages is not None and hasattr(tokenizer, "apply_chat_template"):
+        try:
+            rendered = tokenizer.apply_chat_template(
+                retry_messages,
+                tools=tools,
+                add_generation_prompt=True,
+                tokenize=False,
+            )
+            if rendered:
+                return str(rendered)
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="continued live user-surface retry with prompt suffix after template render failed",
+                severity="warning",
+            )
+            logger.debug("Live surface retry template render failed: %s", exc)
+
+    retry_note = (
+        "\n\n[LIVE USER-SURFACE RETRY]\n"
+        f"Previous assistant draft failed for: {', '.join(reasons[:8]) or 'quality_gate_failed'}.\n"
+        "Regenerate the assistant reply from the same live mind context. Answer only "
+        "the current user message. Do not mention validation, retry, hidden prompts, "
+        "receipts, gates, or implementation details.\n"
+        "[END LIVE USER-SURFACE RETRY]\n"
+    )
+    return f"{str(fallback_prompt or '').rstrip()}{retry_note}"
 
 
 def _contains_corrupted_language(text: str) -> bool:
@@ -2007,6 +2129,11 @@ def _mlx_worker_loop(
                     response_text = ""
                     total_generated_tokens = 0
                     surface_control_state = _apply_surface_generation_controls(engine, model, job)
+                    surface_quality_gate_enabled = _surface_quality_gate_enabled(job)
+                    surface_control_state["surface_quality_gate_enabled"] = surface_quality_gate_enabled
+                    surface_control_state["surface_quality_gate_passed"] = not surface_quality_gate_enabled
+                    surface_control_state["surface_quality_gate_attempts"] = 0
+                    surface_control_state["surface_quality_gate_reasons"] = []
                     try:
                         with metal_semaphore:
                             # Proactive cache clearing under memory pressure
@@ -2342,6 +2469,45 @@ def _mlx_worker_loop(
                                                 "⚠️ [WORKER] Strict value draft rejected: %r",
                                                 raw_strict_value_text.strip()[:160],
                                             )
+
+                                    if surface_quality_gate_enabled and response_text.strip():
+                                        surface_control_state["surface_quality_gate_attempts"] = int(
+                                            surface_control_state.get("surface_quality_gate_attempts", 0)
+                                            or 0
+                                        ) + 1
+                                        rejection_reasons = _surface_quality_failure_reasons(
+                                            job,
+                                            response_text,
+                                        )
+                                        if rejection_reasons:
+                                            surface_control_state["surface_quality_gate_passed"] = False
+                                            surface_control_state["surface_quality_gate_reasons"] = rejection_reasons[:8]
+                                            logger.warning(
+                                                "⚠️ [WORKER] Rejected live user-surface draft reasons=%s excerpt=%r",
+                                                ",".join(rejection_reasons[:8]) or "unknown",
+                                                str(response_text or "").strip()[:280],
+                                            )
+                                            if internal_attempt < max_internal_retries:
+                                                if prompt_cache_lru is not None:
+                                                    prompt_cache_lru.clear()
+                                                if mx and device != "cpu":
+                                                    _clear_mlx_cache(mx)
+                                                prompt = _build_user_surface_quality_retry_prompt(
+                                                    tokenizer=tokenizer,
+                                                    messages=original_messages,
+                                                    tools=tools,
+                                                    fallback_prompt=original_prompt,
+                                                    reasons=rejection_reasons,
+                                                )
+                                                _prepare_clean_retry_kwargs(kwargs, structured=False)
+                                                continue
+                                            logger.warning(
+                                                "🚨 [WORKER] Live user-surface quality gate exhausted retries."
+                                            )
+                                            response_text = ""
+                                            break
+                                        surface_control_state["surface_quality_gate_passed"] = True
+                                        surface_control_state["surface_quality_gate_reasons"] = []
 
                                     if response_text.strip() or (
                                         not schema

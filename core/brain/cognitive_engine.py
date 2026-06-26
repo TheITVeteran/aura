@@ -1959,6 +1959,7 @@ class CognitiveEngine:
                 "skip_runtime_payload": True,
                 "memory_state_contract": memory_state_contract,
                 "clean_user_surface_contract": True,
+                "user_surface_validation_prompt": visible_user_message or objective,
                 "clean_user_surface_recurrent_loops": live_mind_generation_controls.get(
                     "clean_user_surface_recurrent_loops",
                     1,

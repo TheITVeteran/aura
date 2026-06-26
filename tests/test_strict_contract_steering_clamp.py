@@ -12,10 +12,14 @@ from __future__ import annotations
 
 from core.brain.llm.mlx_worker import (
     _apply_surface_generation_controls,
+    _build_user_surface_quality_retry_prompt,
+    _messages_with_user_surface_retry,
     _restore_surface_generation_controls,
     _surface_generation_control_receipt,
     _surface_control_alpha,
     _surface_generation_contract_enabled,
+    _surface_quality_failure_reasons,
+    _surface_quality_gate_enabled,
 )
 
 
@@ -94,3 +98,77 @@ def test_live_mind_surface_controls_apply_restore_and_emit_receipt():
 
     assert engine._surface_alpha_override is None
     assert model.model._recurrent_depth_runtime_loops == 4
+
+
+def test_live_user_surface_quality_gate_rejects_template_affect_status():
+    job = {
+        "clean_user_surface_contract": True,
+        "user_surface_validation_prompt": "Hi",
+    }
+
+    reasons = _surface_quality_failure_reasons(
+        job,
+        "Hi. I am feeling joyous right now.",
+    )
+
+    assert _surface_quality_gate_enabled(job) is True
+    assert "template_telemetry_greeting" in reasons
+
+
+def test_live_user_surface_quality_gate_rejects_unfounded_voice_intrusion():
+    reasons = _surface_quality_failure_reasons(
+        {
+            "clean_user_surface_contract": True,
+            "user_surface_validation_prompt": "What are you talking about?",
+            "user_surface_recent_messages": ["You with me?", "What pitch?"],
+        },
+        "The voices. The small ones. They're whispering in my ear. Telling me things.",
+    )
+
+    assert "unfounded_voice_intrusion" in reasons
+
+
+def test_live_user_surface_quality_gate_does_not_run_for_strict_contracts():
+    assert _surface_quality_gate_enabled(
+        {
+            "clean_user_surface_contract": True,
+            "strict_answer_contract": True,
+            "user_surface_validation_prompt": "Return <answer>yes</answer>",
+        }
+    ) is False
+
+
+def test_live_user_surface_retry_preserves_original_live_context_messages():
+    messages = [
+        {"role": "system", "content": "live mind context stays here"},
+        {"role": "user", "content": "You with me?"},
+    ]
+
+    retried = _messages_with_user_surface_retry(messages, ["template_telemetry_greeting"])
+
+    assert retried is not None
+    assert retried[0]["role"] == "system"
+    assert "live mind context stays here" in retried[0]["content"]
+    assert "template_telemetry_greeting" in retried[0]["content"]
+    assert retried[1] == messages[1]
+    assert messages[0]["content"] == "live mind context stays here"
+
+
+def test_live_user_surface_retry_prompt_uses_native_template_when_available():
+    class Tokenizer:
+        def apply_chat_template(self, messages, tools=None, add_generation_prompt=True, tokenize=False):
+            assert add_generation_prompt is True
+            assert tokenize is False
+            return "\n".join(message["content"] for message in messages)
+
+    prompt = _build_user_surface_quality_retry_prompt(
+        tokenizer=Tokenizer(),
+        messages=[{"role": "system", "content": "live context"}, {"role": "user", "content": "Hi"}],
+        tools=None,
+        fallback_prompt="fallback",
+        reasons=["generic_assistant_language"],
+    )
+
+    assert "live context" in prompt
+    assert "generic_assistant_language" in prompt
+    assert "fallback" not in prompt
