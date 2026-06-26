@@ -1,0 +1,232 @@
+"""Contrastive decoding + plausibility-constrained reasoning steering.
+
+Two Tier-1 "free / forward-pass" reasoning levers that live where the MLX worker
+already has a hook — the ``logits_processors`` list applied each decode step:
+
+1. **Contrastive decoding** (O'Brien & Lewis 2023): subtract a weak "amateur"
+   distribution from the strong model's, ``L = L_smart + α·(L_smart − L_amateur)``,
+   *but only among tokens the strong model already finds plausible* (the adaptive
+   plausibility constraint: keep tokens with ``p_smart ≥ β·max p_smart``, mask the
+   rest). This suppresses lazy/generic continuations the amateur also likes without
+   ever promoting an implausible token. The amateur is a small model or the same
+   model under a deliberately dull prompt.
+
+2. **Plausibility-constrained steering**: a bounded per-token logit bias (suppress
+   degenerate filler / hedging-collapse tokens, nudge toward informative ones)
+   applied *only* to plausible tokens, so it re-ranks within the safe set and can
+   never force the model off a cliff. This is the cheap, near-zero-cost reasoning
+   nudge — the SEAL/thinking-speed family expressed in vocab space.
+
+The decision math is written backend-agnostically and unit-tested on numpy; the MLX
+processor mirrors it with ``mx`` ops. Both are opt-in (off by default) and gated so
+they only run when explicitly enabled — correctness here is load-bearing, so it
+fails open to the unmodified logits on any error.
+"""
+from __future__ import annotations
+
+import logging
+import math
+from collections.abc import Callable, Sequence
+from typing import Any
+
+import numpy as np
+
+logger = logging.getLogger("Aura.ContrastiveDecoding")
+
+
+def _log_softmax_np(logits: np.ndarray) -> np.ndarray:
+    m = np.max(logits)
+    shifted = logits - m
+    return shifted - np.log(np.sum(np.exp(shifted)))
+
+
+def plausible_mask_np(logits: np.ndarray, beta: float) -> np.ndarray:
+    """Adaptive plausibility set: tokens with prob ≥ beta * max prob.
+
+    Computed in log space: ``log p ≥ log beta + max log p``. Returns a boolean mask.
+    """
+    logp = _log_softmax_np(logits)
+    threshold = math.log(max(beta, 1e-9)) + float(np.max(logp))
+    return logp >= threshold
+
+
+def contrastive_combine_np(
+    smart: np.ndarray,
+    amateur: np.ndarray,
+    *,
+    alpha: float = 0.5,
+    beta: float = 0.1,
+) -> np.ndarray:
+    """Return contrastive-decoding logits with the adaptive plausibility constraint.
+
+    Implausible tokens (outside the strong model's beta-top set) are forced to
+    ``-inf`` so they can never be sampled; among plausible tokens the amateur's
+    preference is subtracted. ``alpha`` is the contrast strength.
+    """
+    smart = np.asarray(smart, dtype=np.float64).reshape(-1)
+    amateur = np.asarray(amateur, dtype=np.float64).reshape(-1)
+    if smart.shape != amateur.shape:
+        # Shape mismatch ⇒ cannot contrast; fail open to the strong logits.
+        return smart
+    mask = plausible_mask_np(smart, beta)
+    smart_lp = _log_softmax_np(smart)
+    amateur_lp = _log_softmax_np(amateur)
+    combined = (1.0 + alpha) * smart_lp - alpha * amateur_lp
+    out = np.where(mask, combined, -np.inf)
+    if not np.any(np.isfinite(out)):  # safety: never return all -inf
+        return smart
+    return out
+
+
+def steering_combine_np(
+    logits: np.ndarray,
+    bias: dict[int, float],
+    *,
+    beta: float = 0.1,
+    scale: float = 1.0,
+) -> np.ndarray:
+    """Apply a bounded logit bias only to plausible tokens (re-rank within the safe set)."""
+    logits = np.asarray(logits, dtype=np.float64).reshape(-1)
+    if not bias:
+        return logits
+    mask = plausible_mask_np(logits, beta)
+    out = logits.copy()
+    for token_id, delta in bias.items():
+        if 0 <= token_id < out.shape[0] and mask[token_id]:
+            out[token_id] += scale * float(delta)
+    return out
+
+
+class ContrastiveLogitsProcessor:
+    """MLX ``logits_processors`` entry: contrast against an amateur logits source.
+
+    ``amateur_logits_fn(tokens) -> mx.array`` supplies the weak distribution for the
+    current prefix (a small model, or the same model under a dull prompt). When the
+    amateur source is unavailable it is a transparent no-op.
+    """
+
+    def __init__(
+        self,
+        amateur_logits_fn: Callable[[Sequence[int]], Any] | None,
+        *,
+        alpha: float = 0.5,
+        beta: float = 0.1,
+    ) -> None:
+        self._amateur_fn = amateur_logits_fn
+        self.alpha = float(alpha)
+        self.beta = float(beta)
+
+    def __call__(self, tokens: Any, logits: Any) -> Any:
+        if self._amateur_fn is None:
+            return logits
+        try:
+            import mlx.core as mx
+
+            amateur = self._amateur_fn(tokens)
+            if amateur is None:
+                return logits
+            smart = logits
+            mask = self._plausible_mask_mx(mx, smart, self.beta)
+            smart_lp = smart - mx.logsumexp(smart, axis=-1, keepdims=True)
+            amateur_lp = amateur - mx.logsumexp(amateur, axis=-1, keepdims=True)
+            combined = (1.0 + self.alpha) * smart_lp - self.alpha * amateur_lp
+            neg_inf = mx.full(smart.shape, -float("inf"))
+            return mx.where(mask, combined, neg_inf)
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            logger.debug("contrastive processor fell open: %s", exc)
+            return logits
+
+    @staticmethod
+    def _plausible_mask_mx(mx: Any, logits: Any, beta: float) -> Any:
+        logp = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+        threshold = math.log(max(beta, 1e-9)) + mx.max(logp, axis=-1, keepdims=True)
+        return logp >= threshold
+
+
+class ReasoningSteeringProcessor:
+    """MLX ``logits_processors`` entry: plausibility-gated reasoning bias.
+
+    ``bias`` maps token-id → additive logit delta (negative suppresses, positive
+    promotes), applied only to tokens in the model's plausible set this step.
+    Standalone — needs no second model.
+    """
+
+    def __init__(self, bias: dict[int, float], *, beta: float = 0.1, scale: float = 1.0) -> None:
+        self._bias = {int(k): float(v) for k, v in (bias or {}).items()}
+        self.beta = float(beta)
+        self.scale = float(scale)
+        self._bias_vec: Any | None = None
+
+    def __call__(self, tokens: Any, logits: Any) -> Any:
+        if not self._bias:
+            return logits
+        try:
+            import mlx.core as mx
+
+            if self._bias_vec is None or self._bias_vec.shape[-1] != logits.shape[-1]:
+                vec = np.zeros((logits.shape[-1],), dtype=np.float32)
+                for tid, delta in self._bias.items():
+                    if 0 <= tid < vec.shape[0]:
+                        vec[tid] = self.scale * delta
+                self._bias_vec = mx.array(vec)
+            logp = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+            threshold = math.log(max(self.beta, 1e-9)) + mx.max(logp, axis=-1, keepdims=True)
+            mask = logp >= threshold
+            return mx.where(mask, logits + self._bias_vec, logits)
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            logger.debug("steering processor fell open: %s", exc)
+            return logits
+
+
+# Degenerate "mode-collapse" filler the worker already fights with repetition
+# penalties — the reasoning steering layer suppresses these tokens directly when
+# they are merely plausible, freeing probability mass for informative continuations.
+_FILLER_WORDS = (
+    " something", " shifting", " moving", " somehow", " just", " really",
+    " basically", " actually", " maybe", " kind", " sort",
+)
+
+
+def build_reasoning_bias(tokenizer: Any, *, suppress: float = -2.0) -> dict[int, float]:
+    """Build a small token-bias map that suppresses low-information filler.
+
+    Best-effort: encodes a handful of filler tokens with the tokenizer and assigns
+    a mild negative bias. Returns ``{}`` if the tokenizer cannot encode them.
+    """
+    bias: dict[int, float] = {}
+    encode = getattr(tokenizer, "encode", None)
+    if not callable(encode):
+        return bias
+    for word in _FILLER_WORDS:
+        try:
+            ids = encode(word, add_special_tokens=False)
+        except (TypeError, ValueError, RuntimeError):
+            continue
+        if isinstance(ids, (list, tuple)) and len(ids) == 1:
+            bias[int(ids[0])] = suppress
+    return bias
+
+
+def build_reasoning_logits_processors(
+    tokenizer: Any,
+    *,
+    enable_steering: bool = False,
+    amateur_logits_fn: Callable[[Sequence[int]], Any] | None = None,
+    alpha: float = 0.5,
+    beta: float = 0.1,
+    steering_scale: float = 1.0,
+) -> list[Callable[[Any, Any], Any]]:
+    """Factory the MLX worker uses to assemble reasoning logits processors.
+
+    Returns an (possibly empty) list ready to extend the worker's
+    ``logits_processors``. Contrastive decoding is included only when an amateur
+    source is supplied; steering only when ``enable_steering``.
+    """
+    procs: list[Callable[[Any, Any], Any]] = []
+    if amateur_logits_fn is not None:
+        procs.append(ContrastiveLogitsProcessor(amateur_logits_fn, alpha=alpha, beta=beta))
+    if enable_steering:
+        bias = build_reasoning_bias(tokenizer)
+        if bias:
+            procs.append(ReasoningSteeringProcessor(bias, beta=beta, scale=steering_scale))
+    return procs

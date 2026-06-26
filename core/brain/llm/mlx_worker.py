@@ -2079,6 +2079,28 @@ def _mlx_worker_loop(
                 except (AttributeError, RuntimeError, TypeError) as e:
                     logger.warning("Could not apply penalty logits processors: %s", e)
 
+                # Reasoning steering (Tier-1, near-zero cost): a plausibility-gated
+                # logit bias that suppresses low-information mode-collapse filler so
+                # probability mass goes to informative continuations. Opt-in and
+                # fail-open. The dual-model contrastive-decoding path lives in the
+                # same module and activates when an amateur logits source is wired.
+                if os.environ.get("AURA_REASONING_STEERING", "").strip().lower() in {"1", "true", "on", "yes"}:
+                    try:
+                        from core.brain.llm.contrastive_decoding import (
+                            build_reasoning_logits_processors,
+                        )
+
+                        reasoning_procs = build_reasoning_logits_processors(
+                            tokenizer,
+                            enable_steering=True,
+                            steering_scale=_safe_float(os.environ.get("AURA_REASONING_STEERING_SCALE"), 1.0),
+                        )
+                        if reasoning_procs:
+                            logits_processors.extend(reasoning_procs)
+                            logger.info("🧠 [WORKER] Reasoning steering ACTIVE (%d proc).", len(reasoning_procs))
+                    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+                        logger.warning("Could not apply reasoning steering processors: %s", e)
+
                 if schema:
                     try:
                         brace_id = tokenizer.encode("{", add_special_tokens=False)[0]
