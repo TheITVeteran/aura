@@ -11682,6 +11682,33 @@ async def api_chat_regenerate(
         ki = KernelInterface.get_instance()
         reply_text = None
         lane = _collect_conversation_lane_status()
+        _regen_turn_trace: dict[str, Any] = {
+            "desktop_cognitive_engine_required": bool(desktop_requires_cognitive_engine),
+            "request_surface": request_surface or "",
+            "engine_think_invoked": False,
+            "cognitive_engine_reply_accepted": False,
+            "cognitive_engine_reply_failed": False,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "response_path": "",
+        }
+
+        def _regen_live_turn_contract(
+            *,
+            lane_status: dict[str, Any] | None = None,
+            response_confidence: str = "",
+            status: str = "",
+            reply_source: str = "",
+        ) -> dict[str, Any]:
+            return _build_live_turn_contract_payload(
+                desktop_required=bool(desktop_requires_cognitive_engine),
+                request_surface=request_surface or "",
+                lane_status=lane_status or _collect_conversation_lane_status(),
+                response_confidence=response_confidence,
+                status=status,
+                reply_source=reply_source,
+                turn_trace=_regen_turn_trace,
+            )
 
         cognitive_budget = _desktop_required_cognitive_budget(
             foreground_timeout=foreground_timeout,
@@ -11699,46 +11726,39 @@ async def api_chat_regenerate(
                 lane=dict(lane or {}),
                 source="desktop_ui_regenerate" if desktop_requires_cognitive_engine else "chat_regenerate",
                 require_engine=desktop_requires_cognitive_engine,
+                turn_trace=_regen_turn_trace,
             )
+            if reply_text:
+                regen_lane = _collect_conversation_lane_status()
+                reply_source = str(_regen_turn_trace.get("response_path") or "cognitive_engine")
+                regen_contract = _regen_live_turn_contract(
+                    lane_status=regen_lane,
+                    response_confidence="high",
+                    status=reply_source,
+                    reply_source=reply_source,
+                )
+                if not bool(regen_contract.get("full_mind_path")):
+                    logger.error(
+                        "Desktop regenerate CognitiveEngine candidate did not prove full mind path "
+                        "(path=%s, accepted=%s, bounded=%s); failing closed.",
+                        regen_contract.get("response_path"),
+                        regen_contract.get("cognitive_engine_reply_accepted"),
+                        regen_contract.get("bounded_contract_used"),
+                    )
+                    reply_text = None
+                    lane = regen_lane
 
         if desktop_requires_cognitive_engine and not reply_text:
-            identity_repair = _build_bounded_identity_repair_reply(user_msg)
-            if identity_repair:
-                identity_repair = _apply_aura_voice_shaping(identity_repair)
-                lane = _mark_conversation_lane_state(
-                    "desktop_cognitive_engine_identity_repair",
-                    state="recovering",
-                )
-                return JSONResponse(
-                    {
-                        "response": identity_repair,
-                        "status": "desktop_cognitive_engine_identity_repair",
-                        "reason": "desktop_cognitive_engine_required_no_reply",
-                        "conversation_lane": lane,
-                        "response_confidence": "bounded",
-                        "regenerated": False,
-                    }
-                )
-            bounded_repair = _build_bounded_cognitive_process_reply(user_msg)
-            if bounded_repair:
-                bounded_repair = _apply_aura_voice_shaping(bounded_repair)
-                lane = _mark_conversation_lane_state(
-                    "desktop_cognitive_engine_bounded_repair",
-                    state="recovering",
-                )
-                return JSONResponse(
-                    {
-                        "response": bounded_repair,
-                        "status": "desktop_cognitive_engine_bounded_repair",
-                        "reason": "desktop_cognitive_engine_required_no_reply",
-                        "conversation_lane": lane,
-                        "response_confidence": "bounded",
-                        "regenerated": False,
-                    }
-                )
             lane = _mark_conversation_lane_state(
                 "desktop_cognitive_engine_required_no_reply",
                 state="failed",
+            )
+            _regen_turn_trace.update(
+                {
+                    "bounded_contract_used": False,
+                    "legacy_fallback_used": False,
+                    "response_path": "desktop_cognitive_engine_required_no_reply",
+                }
             )
             logger.error(
                 "Desktop regenerate required CognitiveEngine but no acceptable reply was produced. Surface=%s",
@@ -11754,6 +11774,12 @@ async def api_chat_regenerate(
                     "reason": "desktop_cognitive_engine_required_no_reply",
                     "conversation_lane": lane,
                     "response_confidence": "failed",
+                    "live_turn_contract": _regen_live_turn_contract(
+                        lane_status=lane,
+                        response_confidence="failed",
+                        status="desktop_cognitive_engine_unavailable",
+                        reply_source="desktop_cognitive_engine_required_no_reply",
+                    ),
                     "regenerated": False,
                 },
                 status_code=503,
@@ -11784,6 +11810,12 @@ async def api_chat_regenerate(
             protected_foreground_lane=desktop_requires_cognitive_engine,
         )
         response_data = {"response": reply_text or "…", "regenerated": True}
+        if desktop_requires_cognitive_engine:
+            response_data["live_turn_contract"] = _regen_live_turn_contract(
+                response_confidence="high",
+                status=str(_regen_turn_trace.get("response_path") or "cognitive_engine"),
+                reply_source=str(_regen_turn_trace.get("response_path") or "cognitive_engine"),
+            )
 
         async with _get_convo_lock():
             if _conversation_log:

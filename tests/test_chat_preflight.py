@@ -223,7 +223,12 @@ class TestPendingQueue(unittest.TestCase):
             async def retry(message, **kwargs):
                 self.assertEqual(message, "finish this later")
                 self.assertGreater(kwargs["timeout"], 1.0)
-                return {"content": "late answer"}
+                return {
+                    "content": (
+                        "I finished the delayed turn and kept it grounded in the original "
+                        "request instead of inventing a new topic."
+                    )
+                }
 
             schedule_background_retry(
                 "s6",
@@ -243,7 +248,36 @@ class TestPendingQueue(unittest.TestCase):
 
         delivered = consume_for_session("s6", path=self.path)
         self.assertEqual(len(delivered), 1)
-        self.assertEqual(delivered[0].answer_text, "late answer")
+        self.assertIn("finished the delayed turn", delivered[0].answer_text)
+
+    def test_background_retry_rejects_generic_assistant_text(self):
+        async def scenario():
+            enqueue("s7", "What happened to the desktop conversation lane?", path=self.path)
+
+            async def retry(message, **kwargs):
+                self.assertEqual(message, "What happened to the desktop conversation lane?")
+                self.assertGreater(kwargs["timeout"], 1.0)
+                return {"content": "Of course, how can I help you today?"}
+
+            schedule_background_retry(
+                "s7",
+                "What happened to the desktop conversation lane?",
+                2.0,
+                retry,
+                path=self.path,
+                proactive_emit=False,
+            )
+            task = cp._RETRY_TASKS.get("s7")
+            self.assertIsNotNone(task)
+            await asyncio.wait_for(task, timeout=2.0)
+
+        import asyncio
+
+        asyncio.run(scenario())
+
+        delivered = consume_for_session("s7", path=self.path)
+        self.assertEqual(delivered, [])
+        self.assertTrue(has_unanswered_for_session("s7", path=self.path))
 
 
 class TestDirectiveInjection(unittest.TestCase):

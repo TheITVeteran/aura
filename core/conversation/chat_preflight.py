@@ -1131,6 +1131,44 @@ def schedule_background_retry(
                 )
             text = (text or "").strip()
             if text:
+                try:
+                    from core.conversation.response_reliability import assess_user_facing_reply
+
+                    assessment = assess_user_facing_reply(user_message, text)
+                except _CHAT_PREFLIGHT_RECOVERABLE_ERRORS as assess_exc:
+                    _emit_chat_fault(
+                        assess_exc,
+                        action="left pending chat unanswered because retry output could not be validated",
+                        severity="warning",
+                        stage="background_retry.validate",
+                        extra={"session_id": session_id},
+                    )
+                    logger.warning(
+                        "Background retry result validation failed for session %s: %s",
+                        session_id,
+                        assess_exc,
+                    )
+                    return
+                if not bool(getattr(assessment, "ok", False)) or bool(
+                    getattr(assessment, "retryable", False)
+                ):
+                    reasons = tuple(getattr(assessment, "reasons", ()) or ())
+                    _emit_chat_fault(
+                        ValueError(
+                            "background retry returned unsafe user-facing text: "
+                            + ",".join(str(reason) for reason in reasons[:6])
+                        ),
+                        action="left pending chat unanswered after retry output failed reliability validation",
+                        severity="warning",
+                        stage="background_retry.validate",
+                        extra={"session_id": session_id, "reasons": list(reasons[:10])},
+                    )
+                    logger.warning(
+                        "Background retry result rejected for session %s (%s).",
+                        session_id,
+                        ",".join(str(reason) for reason in reasons) or "unknown",
+                    )
+                    return
                 answered = answer_pending(session_id, text, path=path)
                 logger.info(
                     "Background retry succeeded for session %s (len=%d)", session_id, len(text)

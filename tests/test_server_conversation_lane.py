@@ -7865,7 +7865,24 @@ async def test_api_chat_regenerate_desktop_stabilizer_keeps_protected_flags(monk
 
     stabilize_calls = []
 
-    async def _fake_cognitive_turn(*_args, **_kwargs):
+    async def _fake_cognitive_turn(*_args, **kwargs):
+        trace = kwargs.get("turn_trace")
+        if isinstance(trace, dict):
+            trace.update(
+                {
+                    "engine_think_invoked": True,
+                    "cognitive_engine_reply_accepted": True,
+                    "cognitive_engine_reply_failed": False,
+                    "bounded_contract_used": False,
+                    "legacy_fallback_used": False,
+                    "live_mind_context_present": True,
+                    "live_mind_snapshot_present": True,
+                    "live_mind_snapshot_ready": True,
+                    "live_mind_required_subsystems_ok": True,
+                    "response_path": "cognitive_engine",
+                    **_bound_live_mind_controls_trace(),
+                }
+            )
         return "Regenerated through the protected desktop CognitiveEngine path."
 
     async def _fake_stabilize(_message, reply, **kwargs):
@@ -7875,6 +7892,7 @@ async def test_api_chat_regenerate_desktop_stabilizer_keeps_protected_flags(monk
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
     monkeypatch.setattr(chat_routes, "_stabilize_user_facing_reply", _fake_stabilize)
+    _force_full_mind_runtime(monkeypatch, chat_routes)
     monkeypatch.setattr(
         chat_routes,
         "_collect_conversation_lane_status",
@@ -7915,6 +7933,109 @@ async def test_api_chat_regenerate_desktop_stabilizer_keeps_protected_flags(monk
     assert stabilize_calls
     assert stabilize_calls[-1]["desktop_cognitive_engine_required"] is True
     assert stabilize_calls[-1]["protected_foreground_lane"] is True
+    payload = json.loads(response.body)
+    assert payload["live_turn_contract"]["full_mind_path"] is True
+
+
+@pytest.mark.asyncio
+async def test_api_chat_regenerate_desktop_rejects_bounded_repair_without_full_mind(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    kernel_calls: list[str] = []
+    orchestrator_calls: list[str] = []
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            kernel_calls.append("process")
+            raise AssertionError("desktop regenerate must not use KernelInterface fallback")
+
+    class _FakeOrchestrator:
+        async def process_user_input_priority(self, *_args, **_kwargs):
+            orchestrator_calls.append("process")
+            raise AssertionError("desktop regenerate must not use legacy orchestrator fallback")
+
+    async def _bounded_cognitive_turn(*_args, **kwargs):
+        trace = kwargs.get("turn_trace")
+        if isinstance(trace, dict):
+            trace.update(
+                {
+                    "engine_think_invoked": True,
+                    "cognitive_engine_reply_accepted": False,
+                    "cognitive_engine_reply_failed": False,
+                    "bounded_contract_used": True,
+                    "legacy_fallback_used": False,
+                    "live_mind_context_present": True,
+                    "live_mind_snapshot_present": True,
+                    "live_mind_snapshot_ready": True,
+                    "live_mind_required_subsystems_ok": True,
+                    "response_path": "conversation_recall_log_repair_after_empty_engine",
+                    **_bound_live_mind_controls_trace(),
+                }
+            )
+        return "This bounded repair must not appear as regenerated Aura speech."
+
+    ready_lane = {
+        "conversation_ready": True,
+        "state": "ready",
+        "desired_model": "Cortex (32B)",
+        "desired_endpoint": "Cortex",
+        "foreground_endpoint": "Cortex",
+        "background_endpoint": "Brainstem",
+    }
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _bounded_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_collect_conversation_lane_status", lambda: dict(ready_lane))
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": dict(ready_lane, conversation_ready=False, state=state, reason=reason),
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: _FakeOrchestrator() if name == "orchestrator" else default),
+    )
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.append(
+            {
+                "id": "regen-bounded",
+                "user": "Please regenerate what you said about your external tool use.",
+                "aura": "Previous answer.",
+                "status": "complete",
+            }
+        )
+
+    response = await chat_routes.api_chat_regenerate(
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+            url=SimpleNamespace(scheme="http"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 503
+    assert payload["status"] == "desktop_cognitive_engine_unavailable"
+    assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
+    assert payload["live_turn_contract"]["full_mind_path"] is False
+    assert payload["live_turn_contract"]["bounded_contract_used"] is False
+    assert "bounded repair" not in payload["response"]
+    assert kernel_calls == []
+    assert orchestrator_calls == []
 
 
 @pytest.mark.asyncio
