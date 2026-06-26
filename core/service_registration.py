@@ -171,6 +171,14 @@ def register_all_services(is_proxy: bool = False):
         lifetime=ServiceLifetime.SINGLETON,
         required=False,
     )
+    # Permanent epistemic critic — audits a claim/response (overclaiming, action-actually-done,
+    # receipt-exists, stale memory, persona leak, ungrounded user projection) before it's trusted.
+    container.register(
+        'adversarial_auditor',
+        lambda: __import__('core.cognition.adversarial_audit', fromlist=['get_adversarial_auditor']).get_adversarial_auditor(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
     container.register('emergent_goal_engine', create_emergent_goal_engine, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('structural_mutator', create_structural_mutator, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('lineage_manager', create_lineage_manager, lifetime=ServiceLifetime.SINGLETON, required=False)

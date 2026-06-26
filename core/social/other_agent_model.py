@@ -484,7 +484,10 @@ class OtherAgentStateEstimator:
                 if act >= 0.15:
                     goals.append({"goal": text, "activation": round(act, 3)})
             goals.sort(key=lambda g: g["activation"], reverse=True)
-            overall_conf = sum(affect_conf.values()) / max(1, len(affect_conf))
+            # Confidence reflects the channels we actually have evidence on — averaging in
+            # never-observed channels would structurally cap a strong, focused read too low.
+            observed = [c for c in affect_conf.values() if c > 0.0]
+            overall_conf = sum(observed) / len(observed) if observed else 0.0
             rupture = self._rupture_risk(affect, beliefs)
             return AgentStateEstimate(
                 agent_id=agent_id,
