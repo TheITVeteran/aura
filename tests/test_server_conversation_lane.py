@@ -5045,6 +5045,107 @@ async def test_api_chat_desktop_required_fails_closed_on_final_degraded_reply(mo
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_required_blocks_unfounded_voice_intrusion(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    completed_exchanges = []
+    output_receipts = []
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-voice-intrusion"
+
+    async def _fake_complete_exchange(*args, **kwargs):
+        completed_exchanges.append((args, kwargs))
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    async def _bad_cognitive_turn(*_args, **_kwargs):
+        trace = _kwargs.get("turn_trace")
+        if isinstance(trace, dict):
+            trace.update(
+                {
+                    "engine_think_invoked": True,
+                    "cognitive_engine_reply_accepted": True,
+                    "live_mind_context_present": True,
+                    "live_mind_snapshot_present": True,
+                    "live_mind_snapshot_ready": True,
+                    "live_mind_required_subsystems_ok": True,
+                    **_bound_live_mind_controls_trace(),
+                    "response_path": "cognitive_engine",
+                }
+            )
+        return "The voices. The small ones. They're whispering in my ear. Telling me things."
+
+    async def _no_stabilize(_message, reply, **_kwargs):
+        return reply
+
+    async def _no_repair(_message, reply, **_kwargs):
+        return reply, False, False, False, "", False
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _bad_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_stabilize_user_facing_reply", _no_stabilize)
+    monkeypatch.setattr(chat_routes, "_repair_final_degraded_reply", _no_repair)
+    monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": {
+            "conversation_ready": False,
+            "state": state,
+            "reason": reason,
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+        },
+    )
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="What are you talking about?"),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    assert response.status_code == 503
+    assert b"desktop_response_quality_failed" in response.body
+    assert b"voices" not in response.body
+    assert b"whispering" not in response.body
+    assert completed_exchanges
+    assert completed_exchanges[0][1]["record_experience"] is False
+    assert output_receipts
+    assert output_receipts[0][1]["metadata"]["path"] == "desktop_required_final_quality_failed"
+    assert output_receipts[0][1]["metadata"]["response_confidence"] == "failed"
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_required_recovers_only_through_full_mind_path(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
@@ -5254,7 +5355,7 @@ async def test_required_runtime_status_turn_invokes_cognitive_engine(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_desktop_cognitive_engine_repairs_weak_status_reply_before_fail_closed(monkeypatch):
+async def test_desktop_cognitive_engine_fails_closed_on_weak_status_without_full_mind_repair(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -5295,10 +5396,7 @@ async def test_desktop_cognitive_engine_repairs_weak_status_reply_before_fail_cl
         require_engine=True,
     )
 
-    assert reply
-    assert "previous turn open" not in reply.lower()
-    assert "here with you" in reply.lower()
-    assert "answer clearly" in reply.lower()
+    assert reply is None
 
 
 @pytest.mark.asyncio
@@ -5358,12 +5456,14 @@ async def test_desktop_cognitive_engine_rejects_unfounded_voice_intrusion(monkey
     )
 
     assert len(calls) == 1
-    assert reply
-    assert "voices" not in reply.lower()
+    assert reply is None
     assert trace["engine_think_invoked"] is True
     assert trace["cognitive_engine_reply_accepted"] is False
-    assert trace["bounded_contract_used"] is True
-    assert trace["response_path"] == "cognitive_engine_context_grounding"
+    assert trace.get("bounded_contract_used") is not True
+    assert trace["response_path"] in {
+        "cognitive_engine_context_contract_failed",
+        "cognitive_engine_reply_rejected",
+    }
 
 
 def test_response_quality_logger_downgrades_canonical_failures(monkeypatch, caplog):
@@ -7666,7 +7766,7 @@ async def test_api_chat_desktop_surface_uses_direct_cognitive_engine_when_pool_u
 
 
 @pytest.mark.asyncio
-async def test_cognitive_engine_desktop_status_does_not_use_bounded_social_repair_after_thin_draft(monkeypatch):
+async def test_cognitive_engine_desktop_status_fails_closed_after_thin_draft(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -7714,8 +7814,7 @@ async def test_cognitive_engine_desktop_status_does_not_use_bounded_social_repai
         require_engine=True,
     )
 
-    assert result is not None
-    assert "I'm here" in result
+    assert result is None
     assert engine_calls == ["engine_think"]
     assert social_repair_calls == []
 

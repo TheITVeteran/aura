@@ -4863,41 +4863,11 @@ async def _run_cognitive_engine_chat_turn(
                         }
                     )
                 return retry_reply
-            conversation_recall_reply = await _build_conversation_recall_reply(
-                visible,
-                session_id=session_id,
+            logger.warning(
+                "CognitiveEngine desktop chat produced no usable text; required live "
+                "desktop turns will fail closed instead of substituting bounded "
+                "recall or identity repairs."
             )
-            if conversation_recall_reply:
-                logger.warning(
-                    "CognitiveEngine desktop chat produced no usable text for conversation recall; "
-                    "repairing from canonical conversation log."
-                )
-                _mark_turn_trace(
-                    bounded_contract_used=True,
-                    response_path="conversation_recall_log_repair_after_empty_engine",
-                )
-                return _ground_runtime_fact_status_reply(
-                    visible,
-                    conversation_recall_reply,
-                    lane,
-                    cognitive_engine_handled=True,
-                )
-            owner_name_reply = _build_owner_name_recall_reply(visible)
-            if owner_name_reply:
-                logger.warning(
-                    "CognitiveEngine desktop chat produced no usable text for owner identity recall; "
-                    "repairing from verified runtime identity contract."
-                )
-                _mark_turn_trace(
-                    bounded_contract_used=True,
-                    response_path="owner_identity_repair_after_empty_engine",
-                )
-                return _ground_runtime_fact_status_reply(
-                    visible,
-                    owner_name_reply,
-                    lane,
-                    cognitive_engine_handled=True,
-                )
         _mark_turn_trace(response_path="cognitive_engine_empty_reply")
         return None
     if desktop_execution_contract:
@@ -4968,20 +4938,15 @@ async def _run_cognitive_engine_chat_turn(
             ):
                 logger.warning(
                     "CognitiveEngine desktop chat missed the required capability inventory "
-                    "contract; repairing from live capability/governance evidence after "
-                    "engine invocation."
+                    "contract; refusing to replace a required full-mind turn with a "
+                    "bounded capability catalog reply."
                 )
                 _mark_turn_trace(
                     cognitive_engine_reply_accepted=False,
-                    bounded_contract_used=True,
-                    response_path="cognitive_engine_capability_grounding",
+                    bounded_contract_used=False,
+                    response_path="cognitive_engine_capability_contract_failed",
                 )
-                return _ground_runtime_fact_status_reply(
-                    visible,
-                    grounded_inventory,
-                    lane,
-                    cognitive_engine_handled=True,
-                )
+                return None
             _mark_turn_trace(response_path="cognitive_engine_capability_contract_failed")
             return None
         if _reply_assessment_requires_repair_with_memory_evidence(
@@ -4991,7 +4956,7 @@ async def _run_cognitive_engine_chat_turn(
             canonical_memory_state_evidence=canonical_memory_state_evidence,
         ):
             logger.warning(
-                "CognitiveEngine desktop chat reply failed reliability gate (%s); attempting general repair.",
+                "CognitiveEngine desktop chat reply failed reliability gate (%s); evaluating governed repair path.",
                 ",".join(assessment.reasons),
             )
             if require_engine and memory_state_contract:
@@ -5016,6 +4981,51 @@ async def _run_cognitive_engine_chat_turn(
                     "CognitiveEngine desktop chat status reply was too thin; "
                     "not replacing a required full-mind turn with a bounded status repair."
                 )
+            if require_engine:
+                retry_reply = await _attempt_repair_retry(text, assessment.reasons)
+                if retry_reply:
+                    if turn_trace is not None:
+                        turn_trace.update(
+                            {
+                                "cognitive_engine_reply_accepted": True,
+                                "response_path": "cognitive_engine_repair_retry",
+                            }
+                        )
+                    return retry_reply
+                expected_recall_reply = await _build_conversation_recall_reply(
+                    visible,
+                    session_id=session_id,
+                )
+                if expected_recall_reply:
+                    logger.warning(
+                        "CognitiveEngine desktop chat missed the required "
+                        "conversation recall contract; refusing bounded recall "
+                        "substitution on a required live full-mind turn."
+                    )
+                    _mark_turn_trace(
+                        cognitive_engine_reply_accepted=False,
+                        bounded_contract_used=False,
+                        response_path="cognitive_engine_recall_contract_failed",
+                    )
+                    return None
+                if context_challenge_context:
+                    logger.warning(
+                        "CognitiveEngine desktop chat missed the required "
+                        "context-relevance contract; refusing bounded context "
+                        "substitution on a required live full-mind turn."
+                    )
+                    _mark_turn_trace(
+                        cognitive_engine_reply_accepted=False,
+                        bounded_contract_used=False,
+                        response_path="cognitive_engine_context_contract_failed",
+                    )
+                    return None
+                _mark_turn_trace(
+                    cognitive_engine_reply_accepted=False,
+                    bounded_contract_used=False,
+                    response_path="cognitive_engine_reply_rejected",
+                )
+                return None
             repaired, stale, same_diff, off_topic, off_topic_reason, did_repair = (
                 await _repair_final_degraded_reply(
                     visible,
@@ -5071,45 +5081,6 @@ async def _run_cognitive_engine_chat_turn(
                 off_topic_reason,
                 ",".join(repaired_assessment.reasons),
             )
-            if require_engine:
-                expected_recall_reply = await _build_conversation_recall_reply(
-                    visible,
-                    session_id=session_id,
-                )
-                if expected_recall_reply:
-                    logger.warning(
-                        "CognitiveEngine desktop chat repair missed the required "
-                        "conversation recall contract; repairing from canonical "
-                        "completed-conversation evidence after engine invocation."
-                    )
-                    _mark_turn_trace(
-                        cognitive_engine_reply_accepted=False,
-                        bounded_contract_used=True,
-                        response_path="cognitive_engine_recall_grounding",
-                    )
-                    return _ground_runtime_fact_status_reply(
-                        visible,
-                        expected_recall_reply,
-                        lane,
-                        cognitive_engine_handled=True,
-                    )
-                if context_challenge_context:
-                    logger.warning(
-                        "CognitiveEngine desktop chat repair missed the required "
-                        "context-relevance contract; repairing from canonical "
-                        "completed-conversation evidence after engine invocation."
-                    )
-                    _mark_turn_trace(
-                        cognitive_engine_reply_accepted=False,
-                        bounded_contract_used=True,
-                        response_path="cognitive_engine_context_grounding",
-                    )
-                    return _ground_runtime_fact_status_reply(
-                        visible,
-                        context_challenge_context,
-                        lane,
-                        cognitive_engine_handled=True,
-                    )
             if not require_engine:
                 conversation_recall_reply = await _build_conversation_recall_reply(
                     visible,
@@ -5173,36 +5144,26 @@ async def _run_cognitive_engine_chat_turn(
         ):
             logger.warning(
                 "CognitiveEngine desktop chat missed the required conversation recall contract; "
-                "repairing from canonical completed-conversation evidence after engine invocation."
+                "refusing bounded recall substitution on a required live full-mind turn."
             )
             _mark_turn_trace(
                 cognitive_engine_reply_accepted=False,
-                bounded_contract_used=True,
-                response_path="cognitive_engine_recall_grounding",
+                bounded_contract_used=False,
+                response_path="cognitive_engine_recall_contract_failed",
             )
-            return _ground_runtime_fact_status_reply(
-                visible,
-                expected_recall_reply,
-                lane,
-                cognitive_engine_handled=True,
-            )
+            return None
         if _context_challenge_reply_is_inadequate(visible, text):
             if context_challenge_context:
                 logger.warning(
                     "CognitiveEngine desktop chat missed the required context-relevance contract; "
-                    "repairing from canonical completed-conversation evidence after engine invocation."
+                    "refusing bounded context substitution on a required live full-mind turn."
                 )
                 _mark_turn_trace(
                     cognitive_engine_reply_accepted=False,
-                    bounded_contract_used=True,
-                    response_path="cognitive_engine_context_grounding",
+                    bounded_contract_used=False,
+                    response_path="cognitive_engine_context_contract_failed",
                 )
-                return _ground_runtime_fact_status_reply(
-                    visible,
-                    context_challenge_context,
-                    lane,
-                    cognitive_engine_handled=True,
-                )
+                return None
             logger.warning(
                 "CognitiveEngine desktop chat missed the required context-relevance contract; "
                 "refusing degraded visible reply."
