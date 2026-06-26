@@ -316,11 +316,12 @@ class ReasoningStrategies:
             task_type = classify_task_type(q)
         except _REASONING_RECOVERABLE_ERRORS:
             return None
+        # Don't hijack the multi-perspective debate path — it is for open value
+        # questions, not verifiable hard tasks.
+        if strategy is StrategyType.DEBATE:
+            return None
         if task_type in self._V2_TASK_TYPES:
             return task_type
-        # Also amplify explicit logical/math checks even when phrased generically.
-        if self._is_logical_check(q):
-            return "math"
         return None
 
     async def _try_amplify_v2(self, query: str, strategy: StrategyType, **kwargs) -> StrategyResult | None:
