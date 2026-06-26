@@ -67,6 +67,19 @@ class BootIdentityMixin:
             else:
                 self.fictional_engines = register_all_fictional_engines(orchestrator=self)
 
+            from core.fictional_ai_expansion import (
+                register_all_fictional_expansion_engines,
+            )
+
+            existing_expansion = getattr(self, "fictional_expansion_engines", None)
+            if existing_expansion:
+                self.fictional_expansion_engines = existing_expansion
+                logger.info("🎬 Fictional expansion engines already registered; reusing instances.")
+            else:
+                self.fictional_expansion_engines = register_all_fictional_expansion_engines(
+                    orchestrator=self
+                )
+
             from core.agency.latent_distiller import LatentSpaceDistiller
             from core.memory.snap_kv_evictor import SnapKVEvictor
             from core.self_modification.shadow_ast_healer import ShadowASTHealer

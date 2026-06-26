@@ -19,7 +19,14 @@ class ServiceNames:
     AVA = "ava_social"
     SKYNET = "skynet_resilience"
     MIST = "mist_scheduler"
-    
+    # AI Engines (Fictional Origins) — expansion wave
+    KOKORO = "kokoro_conscience"
+    HAL = "hal_directive_sentinel"
+    CULTURE_MIND = "culture_mind_simulation"
+    DEEP_THOUGHT = "deep_thought_deliberation"
+    BRAINIAC = "brainiac_knowledge"
+    TRON = "tron_user_advocate"
+
     # Functional Subsystems
     CAPABILITY = "capability_engine"
     COGNITIVE = "cognitive_engine"
