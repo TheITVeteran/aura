@@ -106,6 +106,38 @@ estimated at **5 total checkpoints**: live GUI/voice demo proof, memory/tool
 receipt hardening, CRSM/CAA closure, longevity/final-proof validation, and
 final claims purification.
 
+## Latest Bounded Desktop Sensory Grounding Checkpoint (2026-06-25)
+
+### Gaps Addressed
+
+- **Live mind snapshots lacked desktop-surface awareness**:
+  `core/runtime/live_mind_snapshot.py` now includes bounded readouts from
+  `screen_perception`, `perceptual_pump`, and native fast frontmost-app
+  metadata when available.
+- **No screenshot loop was introduced**: the checkpoint only carries service
+  status/latest-frame/frontmost-app readouts. Screenshot and OCR remain
+  governed explicit actions, not ambient chat work.
+- **Regression coverage**: `tests/test_live_mind_snapshot.py` now proves the
+  live snapshot carries screen status, perceptual-pump latest frame, and
+  fast frontmost-app state.
+
+### Latest Commands Run
+
+```bash
+python -m pytest tests/test_live_mind_snapshot.py tests/test_live_mind_generation_controls.py tests/test_server_conversation_lane.py tests/test_deep_mind_service_registration.py -q
+make enterprise-gate
+make production-gate
+```
+
+Latest focused result: **204 passed**. `make enterprise-gate` and `make
+production-gate` passed. This improves the live desktop path’s ability to know
+what visible surface it is operating against without adding new memory pressure.
+
+Current closeout estimate after this checkpoint: **~87%**. Remaining work is
+estimated at **4-5 total checkpoints**: live GUI/voice demo proof,
+memory/tool receipt hardening, CRSM/CAA closure, longevity/final-proof
+validation, and final claims purification.
+
 ## Latest Closeout Proof Pass (2026-06-02)
 
 ### Gaps Addressed

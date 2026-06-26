@@ -33,6 +33,8 @@ _SERVICE_NAMES = (
     "scientific_engine",
     "unified_world_model",
     "phenomenal_engine",
+    "screen_perception",
+    "perceptual_pump",
 )
 
 
@@ -137,6 +139,16 @@ def _phenomenal_state(service: Any) -> dict[str, Any]:
     return out
 
 
+def _frontmost_app_fast() -> str:
+    try:
+        from core.perception.frontmost_app import frontmost_app_name_fast
+
+        return str(frontmost_app_name_fast() or "")
+    except _SNAPSHOT_RECOVERABLE_ERRORS as exc:
+        record_degradation("live_mind_snapshot", exc, severity="debug")
+        return ""
+
+
 def collect_live_mind_snapshot(*, lane: dict[str, Any] | None = None) -> dict[str, Any]:
     """Collect compact runtime state for one live desktop conversation turn."""
     services = {name: _service(name) for name in _SERVICE_NAMES}
@@ -153,4 +165,7 @@ def collect_live_mind_snapshot(*, lane: dict[str, Any] | None = None) -> dict[st
     snapshot["scientific_engine"] = _compact(_call(services["scientific_engine"], "stats"))
     snapshot["world_model"] = _compact(_call(services["unified_world_model"], "status"))
     snapshot["phenomenal_engine"] = _compact(_phenomenal_state(services["phenomenal_engine"]))
+    snapshot["screen_perception"] = _compact(_call(services["screen_perception"], "get_status"))
+    snapshot["perceptual_pump"] = _compact(_call(services["perceptual_pump"], "get_status"))
+    snapshot["frontmost_app_fast"] = _frontmost_app_fast()
     return snapshot

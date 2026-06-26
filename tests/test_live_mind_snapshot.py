@@ -69,6 +69,20 @@ class PhenomenalEngineReadout:
     )
 
 
+class ScreenPerceptionReadout:
+    def get_status(self) -> dict[str, object]:
+        return {"captures": 4, "last_hash": "screen-hash"}
+
+
+class PerceptualPumpReadout:
+    def get_status(self) -> dict[str, object]:
+        return {
+            "running": True,
+            "frames_produced": 12,
+            "latest_frame": {"active_app": "Notes", "window_title": "Aura note"},
+        }
+
+
 class LiquidSubstrateReadout:
     def get_substrate_affect(self) -> dict[str, object]:
         return {"valence": 0.21, "arousal": 0.18}
@@ -87,6 +101,8 @@ class RuntimeServices:
         "scientific_engine": ScientificEngineReadout(),
         "unified_world_model": UnifiedWorldModelReadout(),
         "phenomenal_engine": PhenomenalEngineReadout(),
+        "screen_perception": ScreenPerceptionReadout(),
+        "perceptual_pump": PerceptualPumpReadout(),
         "liquid_substrate": LiquidSubstrateReadout(),
         "liquid_state": LiquidSubstrateReadout(),
     }
@@ -100,6 +116,7 @@ def test_live_mind_snapshot_collects_deep_runtime_state(monkeypatch):
     from core.runtime import live_mind_snapshot
 
     monkeypatch.setattr(live_mind_snapshot, "ServiceContainer", RuntimeServices)
+    monkeypatch.setattr(live_mind_snapshot, "_frontmost_app_fast", lambda: "Notes")
 
     snapshot = live_mind_snapshot.collect_live_mind_snapshot(
         lane={"desired_model": "Cortex (32B)", "conversation_ready": True}
@@ -115,6 +132,9 @@ def test_live_mind_snapshot_collects_deep_runtime_state(monkeypatch):
     assert snapshot["scientific_engine"]["by_status"]["testing"] == 2
     assert snapshot["world_model"]["facets"]["learned"]["available"] is True
     assert snapshot["phenomenal_engine"]["intentional_object"] == "desktop conversation"
+    assert snapshot["screen_perception"]["last_hash"] == "screen-hash"
+    assert snapshot["perceptual_pump"]["latest_frame"]["active_app"] == "Notes"
+    assert snapshot["frontmost_app_fast"] == "Notes"
 
 
 def test_live_desktop_context_payload_carries_mind_snapshot(monkeypatch):
