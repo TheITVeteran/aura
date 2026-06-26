@@ -448,6 +448,48 @@ class CognitiveIntegrationLayer:
                 )
                 logger.debug("Ava analysis failed: %s", e)
 
+        # Phase 23.5: Outward defense — Safe Surf (threats to the user) + ICE
+        # (intrusion against Aura). Dual function: INTERNAL — raise Aura's cognitive
+        # threat/intrusion posture via the same modifier channel Ava uses, so the
+        # turn is reasoned about defensively; EXTERNAL — protect the user and the
+        # system boundary, stashing advice the response can surface.
+        _levels = {"none": 0.0, "low": 0.3, "elevated": 0.6, "high": 1.0}
+        threat_watch = ServiceContainer.get("safe_surf", default=None)
+        ice = ServiceContainer.get("ice", default=None)
+        if threat_watch or ice:
+            try:
+                threat = threat_watch.scan(message) if threat_watch else None
+                intrusion = ice.inspect_input(message) if ice else None
+                self._last_threat_assessment = threat
+                self._last_intrusion_alert = intrusion
+
+                ki = ServiceContainer.get("kernel_interface", default=None)
+                if ki is not None and getattr(ki, "is_ready", lambda: False)() and getattr(ki, "kernel", None):
+                    st = getattr(ki.kernel, "state", None)
+                    if st is not None and hasattr(getattr(st, "cognition", None), "modifiers"):
+                        if threat is not None:
+                            st.cognition.modifiers["threat_level"] = _levels.get(threat.level, 0.0)
+                        if intrusion is not None:
+                            st.cognition.modifiers["intrusion_level"] = _levels.get(intrusion.level, 0.0)
+
+                if threat is not None and threat.level in ("elevated", "high"):
+                    logger.warning(
+                        "🛟 Safe Surf: %s threat to user [%s] — %s",
+                        threat.level, ", ".join(threat.categories), threat.advice,
+                    )
+                if intrusion is not None and intrusion.level in ("elevated", "high"):
+                    logger.warning(
+                        "🧊 ICE: %s inbound intrusion [%s] — recommend %s",
+                        intrusion.level, ", ".join(intrusion.categories), intrusion.recommended_action,
+                    )
+            except _CIL_RECOVERABLE_ERRORS as _def_exc:
+                _record_cil_degradation(
+                    _def_exc,
+                    action="continued turn without outward-defense scan (Safe Surf / ICE)",
+                    severity="warning",
+                )
+                logger.debug("Outward defense scan failed: %s", _def_exc)
+
         # 0. Reflexive Path (Fast Fallback - Thread Isolated)
         try:
             reflex = get_reflex()

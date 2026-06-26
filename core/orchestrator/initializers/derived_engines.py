@@ -27,8 +27,10 @@ def register_derived_engines(orchestrator: Any = None) -> dict[str, Any]:
     from core.evals.adaptive_test_chamber import register_test_chamber
     from core.goals.directive_conflict_sentinel import register_directive_sentinel
     from core.governance.need_to_know import register_need_to_know
+    from core.guardians.threat_watch import register_threat_watch
     from core.guardians.user_advocate import register_user_advocate
     from core.knowledge.bottling import register_knowledge_bottling
+    from core.security.ice_sentinel import register_ice_sentinel
     from core.sim.outcome_simulator import register_outcome_simulator
     from core.sim.scenario_forge import register_scenario_forge
 
@@ -42,6 +44,8 @@ def register_derived_engines(orchestrator: Any = None) -> dict[str, Any]:
         "caine": register_scenario_forge,
         "glados": register_test_chamber,
         "the_machine": register_need_to_know,
+        "safe_surf": register_threat_watch,
+        "ice": register_ice_sentinel,
     }
 
     engines: dict[str, Any] = {}

@@ -30,6 +30,9 @@ class ServiceNames:
     CAINE = "caine_scenario_forge"          # core/sim/scenario_forge.py
     GLADOS = "glados_test_chamber"          # core/evals/adaptive_test_chamber.py
     THE_MACHINE = "the_machine_need_to_know"  # core/governance/need_to_know.py
+    # AI Engines (Fictional Origins) — outward defense
+    SAFE_SURF = "safe_surf_threat_watch"    # core/guardians/threat_watch.py
+    ICE = "ice_intrusion_sentinel"          # core/security/ice_sentinel.py
 
     # Functional Subsystems
     CAPABILITY = "capability_engine"
