@@ -112,10 +112,10 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
     async def _identity_and_personality() -> None:
         from core.brain.identity import IdentityService
         from core.brain.personality_engine import PersonalityEngine
-        from core.fictional_ai_expansion import (
-            register_all_fictional_expansion_engines,
-        )
         from core.fictional_ai_synthesis import register_all_fictional_engines
+        from core.orchestrator.initializers.derived_engines import (
+            register_derived_engines,
+        )
         from core.self_model import SelfModel
         from core.soul import Soul
 
@@ -133,9 +133,7 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         _register(report, "soul", orchestrator.soul)
 
         orchestrator.fictional_engines = register_all_fictional_engines(orchestrator)
-        orchestrator.fictional_expansion_engines = (
-            register_all_fictional_expansion_engines(orchestrator)
-        )
+        orchestrator.derived_engines = register_derived_engines(orchestrator)
 
         orchestrator.personality_engine = PersonalityEngine()
         orchestrator.personality_engine.setup_hooks(orchestrator)

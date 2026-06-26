@@ -17,7 +17,7 @@ safeguard instead.
 | **LIVE** | Already real in Aura today — cited module |
 | **BUILD** | Net-new, genuinely buildable, not yet built |
 | **EXTEND** | Partially exists; a bounded delta makes it real |
-| **BUILT** | Built this session (currently mis-homed in `core/fictional_ai_*`; to be relocated into the organ named here) |
+| **BUILT** | Built this session and now living in its home organ (relocated out of the old `core/fictional_ai_*` silo) |
 | **REFUSE** | We will not build the character's defining trait (control-failure / attack); we build the safeguard form instead |
 | **FICTION** | Not physically/scientifically real; nothing to build |
 
@@ -183,7 +183,7 @@ The guiding rule for "where it belongs": a capability lives in the organ it
 | Bucket | Characters |
 |--------|-----------|
 | **Already LIVE in Aura** | EDI, JARVIS, Skynet(resilience), MIST, Cortana, Legion, the UIs(forking), TARS |
-| **BUILT this session — relocate into the named organ** | Kokoro→`ethics`, HAL→`goals/governance`, Minds→`sim`, Deep Thought→`brain/deliberation`, Brainiac→`knowledge`, Tron→`guardians` |
+| **BUILT this session — now in their organs** | Kokoro→`core/ethics/adversarial_conscience.py`, HAL→`core/goals/directive_conflict_sentinel.py`, Minds→`core/sim/outcome_simulator.py`, Deep Thought→`core/brain/deep_deliberation.py`, Brainiac→`core/knowledge/bottling.py`, Tron→`core/guardians/user_advocate.py` |
 | **Net-new BUILD** | Caine→ScenarioForge, GLaDOS→AdaptiveTestChamber, The Machine→need-to-know self-limit |
 | **EXTEND existing** | Safe Surf(guardian mode), Data(honesty governor on output), Samantha(affective resonance), SARA(ambient presence), Multivac(abstention gate), Daneel(aggregate-harm) |
 | **REFUSE (build safeguard instead)** | Skynet self-preservation, MCP domination, Netrunner offense, Agent Smith, Colossus, Ultron, Wintermute manipulation |

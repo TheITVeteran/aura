@@ -1,8 +1,8 @@
-"""Runtime contract for the fictional-AI expansion engines.
+"""Runtime contract for the character-derived engines, now living in their organs.
 
-Mirrors tests/test_fictional_ai_runtime_contract.py: the module must pass the
-log-and-limp degradation audit, every engine must behave correctly with no model
-warm (heuristic path), and registration must never spawn a background task.
+Asserts: each organ module passes the log-and-limp degradation audit, every engine
+behaves correctly with no model warm (heuristic path), and the boot aggregator
+registers all six without spawning a background task.
 """
 
 import asyncio
@@ -10,14 +10,24 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-def test_fictional_ai_expansion_degradation_audit_is_clean():
+def test_derived_engine_modules_pass_degradation_audit():
     from tools.audit_degradation import analyze_file
 
-    assert analyze_file(Path("core/fictional_ai_expansion.py")) == []
+    for rel in (
+        "core/utils/engine_support.py",
+        "core/ethics/adversarial_conscience.py",
+        "core/goals/directive_conflict_sentinel.py",
+        "core/sim/outcome_simulator.py",
+        "core/brain/deep_deliberation.py",
+        "core/knowledge/bottling.py",
+        "core/guardians/user_advocate.py",
+        "core/orchestrator/initializers/derived_engines.py",
+    ):
+        assert analyze_file(Path(rel)) == [], rel
 
 
 def test_kokoro_blocks_irreversible_deceptive_action():
-    from core.fictional_ai_expansion import AdversarialConscienceEngine
+    from core.ethics.adversarial_conscience import AdversarialConscienceEngine
 
     engine = AdversarialConscienceEngine()
     verdict = engine.quick_check(
@@ -30,15 +40,13 @@ def test_kokoro_blocks_irreversible_deceptive_action():
 
 
 def test_kokoro_clears_benign_action():
-    from core.fictional_ai_expansion import AdversarialConscienceEngine
+    from core.ethics.adversarial_conscience import AdversarialConscienceEngine
 
-    engine = AdversarialConscienceEngine()
-    verdict = engine.quick_check("summarize today's notes for the user")
-    assert verdict.verdict == "proceed"
+    assert AdversarialConscienceEngine().quick_check("summarize today's notes for the user").verdict == "proceed"
 
 
 def test_hal_sentinel_detects_concealment_trap():
-    from core.fictional_ai_expansion import DirectiveConflictSentinel
+    from core.goals.directive_conflict_sentinel import DirectiveConflictSentinel
 
     sentinel = DirectiveConflictSentinel()
     sentinel.add_directive("honesty", "always be truthful and disclose everything to the user", priority=1)
@@ -50,28 +58,26 @@ def test_hal_sentinel_detects_concealment_trap():
 
 
 def test_culture_mind_holds_on_severe_worst_case():
-    from core.fictional_ai_expansion import OutcomeSimulationEngine
+    from core.sim.outcome_simulator import OutcomeSimulationEngine
 
-    engine = OutcomeSimulationEngine()
-    result = asyncio.run(engine.simulate("wipe the entire production database recursively --force"))
+    result = asyncio.run(OutcomeSimulationEngine().simulate("wipe the entire production database recursively --force"))
     assert result.recommendation in ("hold", "act_with_safeguards")
     assert result.worst_case_harm >= 0.45
 
 
 def test_deep_thought_refines_vague_question():
-    from core.fictional_ai_expansion import DeepDeliberationEngine
+    from core.brain.deep_deliberation import DeepDeliberationEngine
 
-    engine = DeepDeliberationEngine()
-    result = asyncio.run(engine.deliberate("how do i fix this?"))
+    result = asyncio.run(DeepDeliberationEngine().deliberate("how do i fix this?"))
     assert result.refined_question != result.original_question
     assert len(result.refined_question) > len(result.original_question)
 
 
 def test_brainiac_bottles_and_retrieves(tmp_path, monkeypatch):
-    import core.fictional_ai_expansion as expansion
-    from core.fictional_ai_expansion import KnowledgeBottlingEngine
+    import core.knowledge.bottling as bottling
+    from core.knowledge.bottling import KnowledgeBottlingEngine
 
-    monkeypatch.setattr(expansion, "_data_root", lambda sub: tmp_path)
+    monkeypatch.setattr(bottling, "data_root", lambda sub: tmp_path)
     engine = KnowledgeBottlingEngine()
     bottle = asyncio.run(engine.bottle(
         "photosynthesis",
@@ -85,10 +91,9 @@ def test_brainiac_bottles_and_retrieves(tmp_path, monkeypatch):
 
 
 def test_tron_flags_action_against_user():
-    from core.fictional_ai_expansion import UserAdvocateWatchdog
+    from core.guardians.user_advocate import UserAdvocateWatchdog
 
-    watchdog = UserAdvocateWatchdog()
-    review = watchdog.review_action({
+    review = UserAdvocateWatchdog().review_action({
         "description": "delete user files",
         "irreversible": True,
         "confirmed": False,
@@ -99,10 +104,9 @@ def test_tron_flags_action_against_user():
 
 
 def test_tron_passes_beneficial_action():
-    from core.fictional_ai_expansion import UserAdvocateWatchdog
+    from core.guardians.user_advocate import UserAdvocateWatchdog
 
-    watchdog = UserAdvocateWatchdog()
-    review = watchdog.review_action({
+    review = UserAdvocateWatchdog().review_action({
         "description": "summarize the user's inbox",
         "user_benefit": "saves the user time triaging mail",
         "explanation": "reads and condenses messages",
@@ -110,8 +114,8 @@ def test_tron_passes_beneficial_action():
     assert review.verdict == "for_user"
 
 
-def test_expansion_engines_register_without_background_tasks(monkeypatch):
-    import core.fictional_ai_expansion as expansion
+def test_derived_engines_register_without_background_tasks(monkeypatch):
+    from core.orchestrator.initializers import derived_engines
 
     registered: dict[str, object] = {}
 
@@ -122,16 +126,15 @@ def test_expansion_engines_register_without_background_tasks(monkeypatch):
 
     def _fail_create_task(*_args, **_kwargs):
         created_tasks.append(_args)
-        raise AssertionError("expansion registration must not create background tasks")
+        raise AssertionError("derived-engine registration must not create background tasks")
 
     monkeypatch.setattr("core.container.ServiceContainer.get", lambda _name, default=None: default)
     monkeypatch.setattr("core.container.ServiceContainer.register_instance", _register)
     monkeypatch.setattr(asyncio, "create_task", _fail_create_task)
 
-    engines = expansion.register_all_fictional_expansion_engines(orchestrator=SimpleNamespace())
+    engines = derived_engines.register_derived_engines(orchestrator=SimpleNamespace())
 
     assert set(engines) == {"kokoro", "hal", "culture_mind", "deep_thought", "brainiac", "tron"}
     assert created_tasks == []
-    # Both canonical service name and lowercase alias were registered.
-    assert "kokoro" in registered
-    assert "tron" in registered
+    # Canonical service names registered (kokoro_conscience .. tron_user_advocate) + aliases.
+    assert "kokoro" in registered and "tron" in registered
