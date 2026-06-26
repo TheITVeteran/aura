@@ -136,6 +136,60 @@ def _model_load_min_available_gb(model_path: str) -> float:
     return _env_float("AURA_MLX_LOAD_MIN_AVAILABLE_GB", 8.0)
 
 
+def _env_projected_footprint_gb(name: str) -> float | None:
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    text = str(raw).strip().lower()
+    if text in {"", "auto", "detect", "detected"}:
+        return None
+    try:
+        return max(0.0, float(text))
+    except (TypeError, ValueError):
+        return None
+
+
+def _path_size_gb(model_path: str) -> float:
+    path = Path(str(model_path or "")).expanduser()
+    try:
+        if path.is_file():
+            return float(path.stat().st_size) / float(1024**3)
+        if not path.is_dir():
+            return 0.0
+        total = 0
+        for child in path.rglob("*"):
+            try:
+                if child.is_file():
+                    total += child.stat().st_size
+            except OSError:
+                continue
+        return float(total) / float(1024**3)
+    except OSError:
+        return 0.0
+
+
+def _projected_footprint_from_artifact_gb(model_path: str, *, fallback_gb: float) -> float:
+    """Estimate live model footprint from the local artifact when possible.
+
+    The launcher previously used one static 32B projection for every artifact.
+    That is too blunt for Aura: the active fused 4-bit model is materially
+    smaller than the old 8-bit base artifact, while a genuine 8-bit path should
+    still be treated as too expensive for a tight desktop process cap.
+    """
+
+    size_gb = _path_size_gb(model_path)
+    if size_gb <= 0.0:
+        return fallback_gb
+    lowered = str(model_path or "").lower()
+    if any(token in lowered for token in ("72b", "solver")):
+        overhead = max(4.0, size_gb * 0.14)
+    elif any(token in lowered for token in ("32b", "cortex", "zenith", "aura-32b")):
+        overhead = max(3.0, size_gb * 0.30)
+    else:
+        overhead = max(1.0, size_gb * 0.20)
+    return max(1.0, size_gb + overhead)
+
+
 def _projected_model_footprint_gb(model_path: str) -> float:
     def _env_float(name: str, default: float) -> float:
         try:
@@ -145,18 +199,38 @@ def _projected_model_footprint_gb(model_path: str) -> float:
 
     lowered = str(model_path or "").lower()
     if any(token in lowered for token in ("72b", "solver")):
-        return _env_float("AURA_MLX_72B_PROJECTED_FOOTPRINT_GB", 41.0)
+        override = _env_projected_footprint_gb("AURA_MLX_72B_PROJECTED_FOOTPRINT_GB")
+        if override is not None:
+            return override
+        return _projected_footprint_from_artifact_gb(model_path, fallback_gb=41.0)
     if any(token in lowered for token in ("32b", "cortex", "zenith")):
-        if any(token in lowered for token in ("4bit", "q4", "fused-model", "20260510")):
-            default = 20.0
-        else:
-            default = 35.0
-        return _env_float("AURA_MLX_32B_PROJECTED_FOOTPRINT_GB", default)
+        override = _env_projected_footprint_gb("AURA_MLX_32B_PROJECTED_FOOTPRINT_GB")
+        if override is not None:
+            return override
+        default = 20.0 if any(token in lowered for token in ("4bit", "q4", "fused-model", "20260510")) else 35.0
+        return _projected_footprint_from_artifact_gb(model_path, fallback_gb=default)
     if "14b" in lowered:
         return _env_float("AURA_MLX_14B_PROJECTED_FOOTPRINT_GB", 10.0)
     if "7b" in lowered:
         return _env_float("AURA_MLX_7B_PROJECTED_FOOTPRINT_GB", 5.0)
     return _env_float("AURA_MLX_PROJECTED_FOOTPRINT_GB", 4.0)
+
+
+def _model_process_reserve_gb(model_path: str) -> float:
+    def _env_float(name: str, default: float) -> float:
+        try:
+            return max(0.0, float(os.environ.get(name, str(default))))
+        except (TypeError, ValueError):
+            return default
+
+    lowered = str(model_path or "").lower()
+    if any(token in lowered for token in ("72b", "solver")):
+        lane_default = _env_float("AURA_MLX_72B_PROCESS_RESERVE_GB", 5.0)
+    elif any(token in lowered for token in ("32b", "cortex", "zenith")):
+        lane_default = _env_float("AURA_MLX_32B_PROCESS_RESERVE_GB", 3.0)
+    else:
+        lane_default = _env_float("AURA_MLX_PROCESS_RESERVE_GB", 1.0)
+    return _env_float("AURA_MLX_MODEL_LOAD_PROCESS_RESERVE_GB", lane_default)
 
 
 def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
@@ -184,7 +258,8 @@ def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
     process_rss_gb = float(getattr(snapshot, "process_rss_gb", 0.0) or 0.0)
     process_rss_limit_gb = float(getattr(snapshot, "process_rss_limit_gb", 0.0) or 0.0)
     projected_footprint_gb = _projected_model_footprint_gb(model_path)
-    projected_process_rss_gb = process_rss_gb + projected_footprint_gb
+    process_reserve_gb = _model_process_reserve_gb(model_path)
+    projected_process_rss_gb = process_rss_gb + projected_footprint_gb + process_reserve_gb
     if (
         process_rss_limit_gb > 0.0
         and projected_footprint_gb > 0.0
@@ -192,7 +267,8 @@ def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
     ):
         return (
             f"projected_process_tree_rss:{process_rss_gb:.1f}GB"
-            f"+{projected_footprint_gb:.1f}GB={projected_process_rss_gb:.1f}GB "
+            f"+{projected_footprint_gb:.1f}GB"
+            f"+reserve{process_reserve_gb:.1f}GB={projected_process_rss_gb:.1f}GB "
             f"> limit {process_rss_limit_gb:.1f}GB"
         )
     return None

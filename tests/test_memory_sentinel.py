@@ -12,9 +12,19 @@ from tools.memory_sentinel import should_kill_for_memory
 
 @pytest.fixture(autouse=True)
 def isolated_container():
+    env_keys = (
+        "AURA_MLX_MEMORY_LIMIT_GB",
+        "AURA_PROCESS_RSS_LIMIT_GB",
+    )
+    previous_env = {key: os.environ.get(key) for key in env_keys}
     ServiceContainer.clear()
     yield
     ServiceContainer.clear()
+    for key, value in previous_env.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 def test_memory_sentinel_waits_for_normal_lethal_confirmation():

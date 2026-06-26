@@ -173,6 +173,52 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_projected_footprint_gb(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    text = str(raw).strip().lower()
+    if text in {"", "auto", "detect", "detected"}:
+        return None
+    try:
+        return max(0.0, float(text))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _path_size_gb(model_path: str) -> float:
+    path = Path(str(model_path or "")).expanduser()
+    try:
+        if path.is_file():
+            return float(path.stat().st_size) / float(1024**3)
+        if not path.is_dir():
+            return 0.0
+        total = 0
+        for child in path.rglob("*"):
+            try:
+                if child.is_file():
+                    total += child.stat().st_size
+            except OSError:
+                continue
+        return float(total) / float(1024**3)
+    except OSError:
+        return 0.0
+
+
+def _projected_footprint_from_artifact_gb(model_path: str, *, fallback_gb: float) -> float:
+    size_gb = _path_size_gb(model_path)
+    if size_gb <= 0.0:
+        return fallback_gb
+    lane = _readable_lane_name(model_path)
+    if lane == DEEP_ENDPOINT:
+        overhead = max(4.0, size_gb * 0.14)
+    elif lane == PRIMARY_ENDPOINT:
+        overhead = max(3.0, size_gb * 0.30)
+    else:
+        overhead = max(1.0, size_gb * 0.20)
+    return max(1.0, size_gb + overhead)
+
+
 def _local_server_load_min_available_gb(model_path: str) -> float:
     lane = _readable_lane_name(model_path)
     try:
@@ -193,12 +239,29 @@ def _local_server_load_min_available_gb(model_path: str) -> float:
 def _local_server_projected_footprint_gb(model_path: str) -> float:
     lane = _readable_lane_name(model_path)
     if lane == DEEP_ENDPOINT:
-        return _env_float("AURA_LOCAL_SERVER_72B_PROJECTED_FOOTPRINT_GB", 41.0)
+        override = _env_projected_footprint_gb("AURA_LOCAL_SERVER_72B_PROJECTED_FOOTPRINT_GB")
+        if override is not None:
+            return override
+        return _projected_footprint_from_artifact_gb(model_path, fallback_gb=41.0)
     if lane == PRIMARY_ENDPOINT:
-        return _env_float("AURA_LOCAL_SERVER_32B_PROJECTED_FOOTPRINT_GB", 35.0)
+        override = _env_projected_footprint_gb("AURA_LOCAL_SERVER_32B_PROJECTED_FOOTPRINT_GB")
+        if override is not None:
+            return override
+        return _projected_footprint_from_artifact_gb(model_path, fallback_gb=35.0)
     if lane == BRAINSTEM_ENDPOINT:
         return _env_float("AURA_LOCAL_SERVER_7B_PROJECTED_FOOTPRINT_GB", 5.0)
     return _env_float("AURA_LOCAL_SERVER_PROJECTED_FOOTPRINT_GB", 2.0)
+
+
+def _local_server_process_reserve_gb(model_path: str) -> float:
+    lane = _readable_lane_name(model_path)
+    if lane == DEEP_ENDPOINT:
+        lane_default = _env_float("AURA_LOCAL_SERVER_72B_PROCESS_RESERVE_GB", 5.0)
+    elif lane == PRIMARY_ENDPOINT:
+        lane_default = _env_float("AURA_LOCAL_SERVER_32B_PROCESS_RESERVE_GB", 3.0)
+    else:
+        lane_default = _env_float("AURA_LOCAL_SERVER_PROCESS_RESERVE_GB", 1.0)
+    return _env_float("AURA_LOCAL_SERVER_MODEL_LOAD_PROCESS_RESERVE_GB", lane_default)
 
 
 def _memory_pressure_blocks_server_spawn(model_path: str) -> str | None:
@@ -227,13 +290,15 @@ def _memory_pressure_blocks_server_spawn(model_path: str) -> str | None:
         )
 
     projected_footprint_gb = _local_server_projected_footprint_gb(model_path)
+    process_reserve_gb = _local_server_process_reserve_gb(model_path)
     process_rss_gb = float(getattr(snapshot, "process_rss_gb", 0.0) or 0.0)
     process_limit_gb = float(getattr(snapshot, "process_rss_limit_gb", 0.0) or 0.0)
-    projected_process_rss_gb = process_rss_gb + projected_footprint_gb
+    projected_process_rss_gb = process_rss_gb + projected_footprint_gb + process_reserve_gb
     if process_limit_gb > 0.0 and projected_process_rss_gb > process_limit_gb:
         return (
             f"projected_process_tree_rss:{process_rss_gb:.1f}GB+"
-            f"{projected_footprint_gb:.1f}GB={projected_process_rss_gb:.1f}GB "
+            f"{projected_footprint_gb:.1f}GB+"
+            f"reserve{process_reserve_gb:.1f}GB={projected_process_rss_gb:.1f}GB "
             f"> limit {process_limit_gb:.1f}GB"
         )
 

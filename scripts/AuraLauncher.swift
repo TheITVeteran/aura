@@ -1122,9 +1122,11 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         env["AURA_LOCAL_RUNTIME_SINGLETON"] = "1"
         env["AURA_LOCAL_PARALLEL_SLOTS"] = "1"
         env["AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB"] = "24"
-        env["AURA_MLX_32B_PROJECTED_FOOTPRINT_GB"] = "35"
+        env["AURA_MLX_32B_PROJECTED_FOOTPRINT_GB"] = "auto"
+        env["AURA_MLX_32B_PROCESS_RESERVE_GB"] = "3"
         env["AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB"] = "52"
-        env["AURA_MLX_72B_PROJECTED_FOOTPRINT_GB"] = "41"
+        env["AURA_MLX_72B_PROJECTED_FOOTPRINT_GB"] = "auto"
+        env["AURA_MLX_72B_PROCESS_RESERVE_GB"] = "5"
         env["AURA_FOREGROUND_CHAT_MAX_TOKENS"] = "2048"
         env["AURA_EXTERNAL_GUI_OWNER"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
@@ -1197,9 +1199,11 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         export AURA_LOCAL_RUNTIME_SINGLETON=1
         export AURA_LOCAL_PARALLEL_SLOTS=1
         export AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB=24
-        export AURA_MLX_32B_PROJECTED_FOOTPRINT_GB=35
+        export AURA_MLX_32B_PROJECTED_FOOTPRINT_GB=auto
+        export AURA_MLX_32B_PROCESS_RESERVE_GB=3
         export AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB=52
-        export AURA_MLX_72B_PROJECTED_FOOTPRINT_GB=41
+        export AURA_MLX_72B_PROJECTED_FOOTPRINT_GB=auto
+        export AURA_MLX_72B_PROCESS_RESERVE_GB=5
         export AURA_FOREGROUND_CHAT_MAX_TOKENS=2048
         \(pieces.joined(separator: " "))
         """

@@ -309,6 +309,10 @@ def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
     assert env["AURA_GOVERNOR_PRUNE_MB"] == "37888"
     assert env["AURA_GOVERNOR_UNLOAD_MB"] == "39936"
     assert env["AURA_GOVERNOR_CRITICAL_MB"] == "41984"
+    assert env["AURA_MLX_32B_PROJECTED_FOOTPRINT_GB"] == "auto"
+    assert env["AURA_MLX_32B_PROCESS_RESERVE_GB"] == "3"
+    assert env["AURA_MLX_72B_PROJECTED_FOOTPRINT_GB"] == "auto"
+    assert env["AURA_MLX_72B_PROCESS_RESERVE_GB"] == "5"
     assert live_proof_rss_abort_mb(env) == 42_000.0
 
 

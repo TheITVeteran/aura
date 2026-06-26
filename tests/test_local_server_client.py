@@ -165,7 +165,7 @@ def test_local_server_spawn_blocks_32b_projected_process_overcommit(monkeypatch)
     reason = _memory_pressure_blocks_server_spawn(QWEN32_GGUF)
 
     assert reason is not None
-    assert "projected_process_tree_rss:8.0GB+35.0GB=43.0GB" in reason
+    assert "projected_process_tree_rss:8.0GB+35.0GB+reserve3.0GB=46.0GB" in reason
 
 
 def test_local_server_spawn_blocks_72b_without_safe_headroom(monkeypatch):

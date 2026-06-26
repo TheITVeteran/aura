@@ -317,7 +317,7 @@ def test_mlx_worker_spawn_blocks_projected_32b_overcommit(monkeypatch):
     )
 
     assert reason is not None
-    assert "projected_process_tree_rss:8.0GB+35.0GB=43.0GB" in reason
+    assert "projected_process_tree_rss:8.0GB+35.0GB+reserve3.0GB=46.0GB" in reason
 
 
 def test_mlx_worker_spawn_blocks_when_unified_guard_refuses(monkeypatch):
@@ -387,7 +387,44 @@ def test_mlx_worker_spawn_blocks_72b_projected_process_overcommit(monkeypatch):
     )
 
     assert reason is not None
-    assert "projected_process_tree_rss:12.0GB+41.0GB=53.0GB" in reason
+    assert "projected_process_tree_rss:12.0GB+41.0GB+reserve5.0GB=58.0GB" in reason
+
+
+def test_mlx_worker_spawn_uses_auto_projection_from_local_artifact(monkeypatch, tmp_path):
+    from core.brain.llm import mlx_client
+
+    gib = 1024**3
+    model_dir = tmp_path / "Aura-32B-20260510-151144"
+    model_dir.mkdir()
+    weights = model_dir / "weights.safetensors"
+    with weights.open("wb") as handle:
+        handle.truncate(int(17.0 * gib))
+
+    snapshot = SimpleNamespace(
+        refuse_heavy_local_generation=False,
+        available_gb=30.0,
+        process_rss_gb=8.0,
+        process_rss_limit_gb=40.0,
+        reason="",
+    )
+    monkeypatch.setattr(mlx_client, "get_memory_pressure_snapshot", lambda: snapshot)
+    monkeypatch.setenv("AURA_MLX_32B_PROJECTED_FOOTPRINT_GB", "auto")
+
+    assert mlx_client._memory_pressure_blocks_worker_spawn(str(model_dir)) is None
+
+    snapshot_tight = SimpleNamespace(
+        refuse_heavy_local_generation=False,
+        available_gb=30.0,
+        process_rss_gb=15.0,
+        process_rss_limit_gb=40.0,
+        reason="",
+    )
+    monkeypatch.setattr(mlx_client, "get_memory_pressure_snapshot", lambda: snapshot_tight)
+
+    reason = mlx_client._memory_pressure_blocks_worker_spawn(str(model_dir))
+
+    assert reason is not None
+    assert "projected_process_tree_rss" in reason
 
 
 def test_worker_memory_sentinel_uses_bounded_heavy_lane_limits(monkeypatch):
@@ -402,6 +439,19 @@ def test_worker_memory_sentinel_uses_bounded_heavy_lane_limits(monkeypatch):
 
     monkeypatch.setenv("AURA_MLX_WORKER_RSS_LIMIT_GB", "44")
     assert sentinel_32b._worker_rss_limit_gb(64.0) == 44.0
+
+
+def test_worker_memory_sentinel_clamps_override_in_desktop_safe_boot(monkeypatch):
+    from core.brain.llm.mlx_worker import WorkerMemorySentinel
+
+    writer = SimpleNamespace(put=lambda _payload: None)
+    sentinel_32b = WorkerMemorySentinel(writer, "/models/Qwen2.5-32B-Instruct-8bit")
+
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    monkeypatch.delenv("AURA_ALLOW_UNSAFE_MEMORY_LIMITS", raising=False)
+    monkeypatch.setenv("AURA_MLX_WORKER_RSS_LIMIT_GB", "44")
+
+    assert sentinel_32b._worker_rss_limit_gb(64.0) <= 36.0
 
 
 def test_desktop_safe_boot_disables_primary_prompt_cache_retention(monkeypatch):

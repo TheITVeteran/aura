@@ -2008,7 +2008,7 @@ def test_conversation_lane_degraded_messages_do_not_ask_user_to_repeat():
                 "state": "failed",
                 "last_failure_reason": (
                     "memory_pressure_refused_worker_spawn:"
-                    "projected_process_tree_rss:8.0GB+35.0GB=43.0GB > limit 38.0GB"
+                    "projected_process_tree_rss:8.0GB+35.0GB+reserve3.0GB=46.0GB > limit 38.0GB"
                 ),
             }
         ),

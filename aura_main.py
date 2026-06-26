@@ -3086,6 +3086,10 @@ def main():
             os.environ.setdefault("AURA_GOVERNOR_PRUNE_MB", "37888")
             os.environ.setdefault("AURA_GOVERNOR_UNLOAD_MB", "39936")
             os.environ.setdefault("AURA_GOVERNOR_CRITICAL_MB", "41984")
+            os.environ.setdefault("AURA_MLX_32B_PROJECTED_FOOTPRINT_GB", "auto")
+            os.environ.setdefault("AURA_MLX_32B_PROCESS_RESERVE_GB", "3")
+            os.environ.setdefault("AURA_MLX_72B_PROJECTED_FOOTPRINT_GB", "auto")
+            os.environ.setdefault("AURA_MLX_72B_PROCESS_RESERVE_GB", "5")
             # Let the substrate be a touch more present in her voice than the
             # conservative 0.35 clamp (the worker notes ~5.0 corrupts the voice;
             # 0.5 is well within the safe range).

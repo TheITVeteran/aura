@@ -730,7 +730,7 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   the shared response reliability contract before reporting generation success,
   and the desktop full-mind contract requires a passing worker surface-quality
   receipt whenever that gate runs.
-- Current operator estimate: about 91% through the ultimate closeout standard.
+- Current operator estimate: about 92% through the ultimate closeout standard.
 - Estimated remaining checkpoints: 4 major checkpoints plus any small
   bug-fix checkpoints exposed during live 32B/72B runtime validation:
   launched GUI/voice demo proof, DNU/Aletheia clean reruns, CRSM/CAA +
@@ -738,6 +738,29 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
 - Still not closed: final proof, DNU/Aletheia clean reruns, live desktop
   multi-app proof, CRSM-to-LoRA closure, CAA extraction validation, longer soak,
   proof artifact replay, and remaining whole-code semantic review.
+
+## Checkpoint: 2026-06-25 Live Desktop Heavy-Lane Memory Admission
+
+- Scope: live desktop 32B/72B launch safety and local-model admission, not a
+  task-specific demo script.
+- Root issue addressed: the launcher forced a stale static 35GB 32B projection
+  and the worker allowed unsafe RSS override values during desktop safe boot.
+  That made the conversation lane alternate between false cold-lane refusal and
+  dangerous near-cap admission, leaving no reserve for KV/cache growth, browser
+  automation, or UI overhead.
+- Fixes landed: MLX and local-server admission now support `auto` projected
+  footprint detection from the actual model artifact, add explicit per-lane
+  process reserves, and include those reserves in projected process-tree RSS
+  refusal reasons. The native launcher, shell launcher, `aura_main.py`, and the
+  live boot proof harness now share the same `auto` projection + reserve policy.
+  MLX worker RSS overrides are clamped during desktop safe boot unless the
+  operator explicitly opts into unsafe memory limits.
+- Evidence: focused memory/launcher/local-server suite passed 116 tests; broader
+  live-chat/MLX/local-runtime slices passed 334 and 140 tests; `make
+  enterprise-gate` passed; `make production-gate` passed.
+- Next exact task: launch/probe the real desktop path under this safer admission
+  policy, verify `conversation_ready` reaches ready without assistant-mode
+  leakage, and monitor terminal/neural-stream memory and route receipts.
 
 ## Unresolved Failures / Known Backlog
 
@@ -764,29 +787,27 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
 
 ## Next Exact Task
 
-After this checkpoint, the next high-leverage move is to run the strict-real
-NetHack stress loop, inspect `EnvironmentKernel.run_manager.records` and
-the black-box trace every 15 minutes, and fix only general architecture
-failures: policy loops, modal failures, belief/spatial merge errors, action
-gateway gaps, semantic diff blind spots, or outcome-learning regressions.
+After this checkpoint, the next high-leverage move is the live launched desktop
+path proof: boot Aura through the same desktop lane Bryan uses, keep memory
+below the safe admission ceiling, verify full-mind chat receipts instead of
+bounded assistant repairs, and only then exercise the visible multi-app demo
+through general computer-use planning and effect verification.
 
 ## Next Exact Continuation Prompt
 
-> Continue Aura general environment autonomy from
-> `docs/AURA_EXECUTION_TRACKER.md`. The canonical EnvironmentKernel is wired
-> to NetHack as a stress adapter. Run
-> `python challenges/nethack_challenge.py --mode strict_real --steps 5000`,
-> inspect the trace and run-manager records, and patch only general
-> infrastructure causes of stalls or loops.
+> Continue Aura closeout from `docs/AURA_EXECUTION_TRACKER.md`. The next target
+> is the real launched desktop path: boot Aura through the user-facing launcher,
+> verify the 32B live mind path is conversation-ready without raw assistant
+> leakage, monitor neural stream/terminal memory and route receipts, and patch
+> only general runtime/OS-control causes of stalls, incoherent replies, or unsafe
+> memory admission.
 
 ## Exact Stopping Point
 
-Stopped this pass after final hardening tests were green (271 passed,
-1 subtests passed), the simulated stress canary emitted 40 trace rows, and
-strict-real smoke reached a live level and stayed alive through 40 steps.
+Current pass has a green memory-admission checkpoint and is proceeding into the
+real launched desktop path proof.
 
 ## Current Git Diff Summary
 
-- This document records the final hardening diff for the checkpoint commit.
-- Root-level repair artifacts were moved to `archive/repair_scripts/`.
-- No successful strict-real ascension receipt is present.
+- This document records the live desktop heavy-lane memory-admission checkpoint.
+- No successful launched multi-app desktop demo receipt is present yet.

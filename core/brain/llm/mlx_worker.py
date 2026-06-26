@@ -1197,21 +1197,40 @@ class WorkerMemorySentinel(threading.Thread):
         self._stop_event.set()
 
     def _worker_rss_limit_gb(self, total_gb: float) -> float:
+        def _default_limit() -> float:
+            if any(token in self.model_path.lower() for token in ("72b", "solver")):
+                if total_gb < 80.0:
+                    return min(40.0, max(34.0, total_gb * 0.60))
+                return min(64.0, max(48.0, total_gb * 0.55))
+            if any(token in self.model_path.lower() for token in ("32b", "cortex", "zenith")):
+                if total_gb < 80.0:
+                    return min(36.0, max(28.0, total_gb * 0.56))
+                return min(56.0, max(42.0, total_gb * 0.48))
+            return min(24.0, max(10.0, total_gb * 0.45))
+
+        default_limit = _default_limit()
         configured = os.environ.get("AURA_MLX_WORKER_RSS_LIMIT_GB")
         if configured:
             try:
-                return max(4.0, float(configured))
+                configured_limit = max(4.0, float(configured))
+                safe_boot = str(os.environ.get("AURA_SAFE_BOOT_DESKTOP", "")).strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }
+                unsafe_allowed = str(os.environ.get("AURA_ALLOW_UNSAFE_MEMORY_LIMITS", "")).strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }
+                if safe_boot and not unsafe_allowed:
+                    return min(configured_limit, default_limit)
+                return configured_limit
             except (TypeError, ValueError):
                 pass
-        if any(token in self.model_path.lower() for token in ("72b", "solver")):
-            if total_gb < 80.0:
-                return min(40.0, max(34.0, total_gb * 0.60))
-            return min(64.0, max(48.0, total_gb * 0.55))
-        if any(token in self.model_path.lower() for token in ("32b", "cortex", "zenith")):
-            if total_gb < 80.0:
-                return min(36.0, max(28.0, total_gb * 0.56))
-            return min(56.0, max(42.0, total_gb * 0.48))
-        return min(24.0, max(10.0, total_gb * 0.45))
+        return default_limit
 
     def _sample_rss_gb(self) -> float:
         try:

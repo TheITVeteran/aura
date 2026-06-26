@@ -45,7 +45,9 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "AURA_LOCAL_RUNTIME_SINGLETON" in swift
     assert "AURA_LOCAL_PARALLEL_SLOTS" in swift
     assert "AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB" in swift
+    assert "AURA_MLX_32B_PROCESS_RESERVE_GB" in swift
     assert "AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB" in swift
+    assert "AURA_MLX_72B_PROCESS_RESERVE_GB" in swift
     assert "AURA_FOREGROUND_CHAT_MAX_TOKENS" in swift
     assert 'env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] = "0.16"' in swift
     assert 'env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] = "10"' in swift
@@ -64,9 +66,11 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert 'env["AURA_LOCAL_RUNTIME_SINGLETON"] = "1"' in swift
     assert 'env["AURA_LOCAL_PARALLEL_SLOTS"] = "1"' in swift
     assert 'env["AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB"] = "24"' in swift
-    assert 'env["AURA_MLX_32B_PROJECTED_FOOTPRINT_GB"] = "35"' in swift
+    assert 'env["AURA_MLX_32B_PROJECTED_FOOTPRINT_GB"] = "auto"' in swift
+    assert 'env["AURA_MLX_32B_PROCESS_RESERVE_GB"] = "3"' in swift
     assert 'env["AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB"] = "52"' in swift
-    assert 'env["AURA_MLX_72B_PROJECTED_FOOTPRINT_GB"] = "41"' in swift
+    assert 'env["AURA_MLX_72B_PROJECTED_FOOTPRINT_GB"] = "auto"' in swift
+    assert 'env["AURA_MLX_72B_PROCESS_RESERVE_GB"] = "5"' in swift
     assert "AURA_EXTERNAL_GUI_OWNER" in swift
     assert "export AURA_EXTERNAL_GUI_OWNER=1" in swift
     assert "spawnDetachedViaShell" in swift
@@ -106,9 +110,11 @@ def test_launch_script_supports_gui_window_mode():
     assert "AURA_LOCAL_RUNTIME_SINGLETON:=1" in shell
     assert "AURA_LOCAL_PARALLEL_SLOTS:=1" in shell
     assert "AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB:=24" in shell
-    assert "AURA_MLX_32B_PROJECTED_FOOTPRINT_GB:=35" in shell
+    assert "AURA_MLX_32B_PROJECTED_FOOTPRINT_GB:=auto" in shell
+    assert "AURA_MLX_32B_PROCESS_RESERVE_GB:=3" in shell
     assert "AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB:=52" in shell
-    assert "AURA_MLX_72B_PROJECTED_FOOTPRINT_GB:=41" in shell
+    assert "AURA_MLX_72B_PROJECTED_FOOTPRINT_GB:=auto" in shell
+    assert "AURA_MLX_72B_PROCESS_RESERVE_GB:=5" in shell
     assert "AURA_FOREGROUND_CHAT_MAX_TOKENS:=2048" in shell
     assert "resolve_launch_log()" in shell
     assert "ACTIVE_LAUNCH_LOG" in shell
