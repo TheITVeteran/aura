@@ -17,6 +17,48 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Mind-Control Binding Checkpoint (2026-06-25)
+
+### Gaps Addressed
+
+- **Prompt-only live mind context is no longer enough**:
+  `core/brain/cognitive_engine.py` now computes a
+  `live_mind_controls_bound` proof bit from a ready live mind snapshot and the
+  generation controls derived from that snapshot. The compact desktop path
+  passes those controls to the primary router as actual model parameters
+  (`temperature`, `top_p`, recurrent clean-surface loops, and steering alpha),
+  and returns the same proof in the `Thought.metadata`.
+- **The live desktop contract now checks structural binding**:
+  `interface/routes/chat.py` propagates CognitiveEngine Thought metadata into
+  the live turn trace, exposes the bounded control values in
+  `live_turn_contract`, and refuses to certify `full_mind_path=true` unless
+  the live mind controls were actually bound. A ready snapshot plus acceptable
+  text is no longer sufficient.
+- **Tests now distinguish good text from full Aura routing**:
+  `tests/test_server_conversation_lane.py` includes a negative contract test
+  where CognitiveEngine text and a ready mind snapshot still fail
+  `full_mind_path` when generation controls are missing. API-level tests now
+  assert `live_mind_controls_bound=true` for successful desktop full-mind
+  responses.
+
+### Latest Commands Run
+
+```bash
+python -m py_compile core/brain/cognitive_engine.py interface/routes/chat.py tests/test_live_mind_generation_controls.py tests/test_server_conversation_lane.py
+python -m pytest tests/test_live_mind_generation_controls.py -q
+python -m pytest tests/test_server_conversation_lane.py::test_live_turn_contract_allows_proven_generation_to_satisfy_inference tests/test_server_conversation_lane.py::test_live_turn_contract_refuses_engine_text_without_bound_mind_controls tests/test_server_conversation_lane.py::test_api_chat_desktop_required_recovers_only_through_full_mind_path tests/test_server_conversation_lane.py::test_desktop_required_capability_turn_uses_cognitive_engine_before_catalog_repair tests/test_server_conversation_lane.py::test_desktop_required_status_turn_uses_cognitive_engine_when_lane_ready -q
+python -m pytest tests/test_server_conversation_lane.py -q
+python -m pytest tests/test_server_conversation_lane.py tests/test_runtime_polish.py tests/test_system_route_hardening.py tests/test_server_runtime_hardening.py tests/test_boot_health.py tests/test_live_runtime_surface_regressions.py -q
+python -m pytest tests/test_live_mind_generation_controls.py tests/test_live_mind_snapshot.py tests/test_deep_mind_service_registration.py tests/test_grounded_competent_recovery.py -q
+make enterprise-gate
+make production-gate
+```
+
+Latest focused/broad result so far: **3 live-mind control tests passed, 5
+focused live desktop contract tests passed, 201 server conversation lane tests
+passed, 710 desktop/runtime lane tests passed, and 12 live-mind/deep-service
+tests passed. `make enterprise-gate` passed and `make production-gate` passed**.
+
 ## Latest Desktop Recovery Full-Mind Checkpoint (2026-06-25)
 
 ### Gaps Addressed
@@ -639,7 +681,7 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
 
 ## Current Closeout Progress Gauge
 
-- Latest checkpoint: conversation readiness semantics.
+- Latest checkpoint: live mind generation-control binding.
 - Evidence added: subprocess ownership routed through `SubprocessGateway` for
   DNU/wedge supervisor paths, hardcoded local test paths removed, one broad
   watchdog exception narrowed, enterprise baseline regressions cleared, direct
@@ -651,9 +693,11 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   `terminal_parser`. Live desktop chat now also requires verified desktop-task
   effect receipts before completion claims can reach the user, and health
   pulses distinguish active conversation warmup from actual conversation
-  failure.
-- Current operator estimate: about 89% through the ultimate closeout standard.
-- Estimated remaining checkpoints: 4 to 5 total, depending on how many live
+  failure. The live desktop turn contract now additionally requires proof that
+  generation controls derived from the live mind snapshot were bound into the
+  model call before a reply can count as a full-mind desktop response.
+- Current operator estimate: about 90% through the ultimate closeout standard.
+- Estimated remaining checkpoints: 4 total, depending on how many live
   desktop/demo-path defects surface during real 32B/72B runtime validation.
 - Still not closed: final proof, DNU/Aletheia clean reruns, live desktop
   multi-app proof, CRSM-to-LoRA closure, CAA extraction validation, longer soak,

@@ -175,6 +175,27 @@ def _live_mind_generation_controls(live_mind_context: Any) -> dict[str, Any]:
     }
 
 
+def _live_mind_controls_bound(
+    live_mind_context: Any,
+    generation_controls: Any,
+) -> bool:
+    if not isinstance(live_mind_context, dict) or not isinstance(generation_controls, dict):
+        return False
+    quality = live_mind_context.get("mind_snapshot_quality")
+    snapshot = live_mind_context.get("mind_snapshot")
+    if not isinstance(quality, dict) or not bool(quality.get("ready")):
+        return False
+    if not isinstance(snapshot, dict):
+        return False
+    required_control_keys = {
+        "temperature",
+        "top_p",
+        "clean_user_surface_recurrent_loops",
+        "clean_user_surface_steering_alpha",
+    }
+    return required_control_keys.issubset(generation_controls.keys())
+
+
 def _desktop_history_messages_from_context(
     context: dict[str, Any],
     *,
@@ -1736,6 +1757,19 @@ class CognitiveEngine:
         live_mind_context = context.get("live_mind_context")
         live_mind_required = bool(context.get("live_mind_context_required", False))
         live_mind_generation_controls = _live_mind_generation_controls(live_mind_context)
+        live_mind_controls_bound = _live_mind_controls_bound(
+            live_mind_context,
+            live_mind_generation_controls,
+        )
+        live_mind_snapshot_ready = bool(
+            isinstance(live_mind_context, dict)
+            and isinstance(live_mind_context.get("mind_snapshot_quality"), dict)
+            and live_mind_context["mind_snapshot_quality"].get("ready")
+        )
+        live_mind_required_subsystems_ok = bool(
+            isinstance(live_mind_context, dict)
+            and live_mind_context.get("required_subsystems_ok")
+        )
         live_runtime_required = bool(
             context.get("live_runtime_payload_required", False)
             or (live_mind_required and isinstance(live_mind_context, dict))
@@ -1932,6 +1966,10 @@ class CognitiveEngine:
                     "clean_user_surface_steering_alpha",
                     0.25,
                 ),
+                "live_mind_controls_bound": live_mind_controls_bound,
+                "live_mind_generation_controls": dict(live_mind_generation_controls),
+                "live_mind_snapshot_ready": live_mind_snapshot_ready,
+                "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
                 "disable_prompt_cache": True,
                 "clear_prompt_cache": True,
                 "max_tokens": max_tokens,
@@ -2036,6 +2074,11 @@ class CognitiveEngine:
                 if isinstance(bicameral_frame, dict)
                 else None,
                 "bicameral_advisory_feedback": bicameral_feedback,
+                "live_mind_controls_bound": live_mind_controls_bound,
+                "live_mind_generation_controls": dict(live_mind_generation_controls),
+                "live_mind_snapshot_ready": live_mind_snapshot_ready,
+                "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
+                "live_mind_context_required": live_mind_required,
             },
         )
 

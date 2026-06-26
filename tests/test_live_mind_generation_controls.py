@@ -104,3 +104,10 @@ async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypat
     assert router_kwargs["clean_user_surface_recurrent_loops"] == 2
     assert router_kwargs["clean_user_surface_steering_alpha"] > 0.25
     assert router_kwargs["clean_user_surface_contract"] is True
+    assert router_kwargs["live_mind_controls_bound"] is True
+    assert router_kwargs["live_mind_snapshot_ready"] is True
+    assert router_kwargs["live_mind_required_subsystems_ok"] is False
+    assert router_kwargs["live_mind_generation_controls"]["temperature"] > 0.58
+    assert thought.metadata["live_mind_controls_bound"] is True
+    assert thought.metadata["live_mind_snapshot_ready"] is True
+    assert thought.metadata["live_mind_generation_controls"]["top_p"] <= 0.94

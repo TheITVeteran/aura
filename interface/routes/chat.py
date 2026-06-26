@@ -3413,6 +3413,30 @@ def _build_live_turn_contract_payload(
         (not live_mind_context_required)
         or (live_mind_snapshot_present and live_mind_snapshot_ready)
     )
+    raw_live_mind_generation_controls = trace.get("live_mind_generation_controls")
+    live_mind_generation_controls = (
+        {
+            key: raw_live_mind_generation_controls.get(key)
+            for key in (
+                "temperature",
+                "top_p",
+                "clean_user_surface_recurrent_loops",
+                "clean_user_surface_steering_alpha",
+            )
+            if key in raw_live_mind_generation_controls
+        }
+        if isinstance(raw_live_mind_generation_controls, dict)
+        else {}
+    )
+    live_mind_generation_controls_present = bool(live_mind_generation_controls)
+    live_mind_controls_bound = bool(
+        trace.get("live_mind_controls_bound")
+        and live_mind_generation_controls_present
+    )
+    live_mind_controls_structurally_bound = bool(
+        (not live_mind_context_required)
+        or live_mind_controls_bound
+    )
     confidence = str(response_confidence or "").strip().lower()
     accepted_full_mind_response_paths = {
         "cognitive_engine",
@@ -3428,6 +3452,7 @@ def _build_live_turn_contract_payload(
         and not legacy_fallback_used
         and architecture_context_bound
         and live_mind_snapshot_bound
+        and live_mind_controls_structurally_bound
         and confidence == "high"
         and response_path in accepted_full_mind_response_paths
     )
@@ -3459,6 +3484,10 @@ def _build_live_turn_contract_payload(
         "live_mind_snapshot_ready": live_mind_snapshot_ready,
         "live_mind_snapshot_bound": live_mind_snapshot_bound,
         "live_mind_snapshot_missing_services": live_mind_snapshot_missing_services,
+        "live_mind_controls_bound": live_mind_controls_bound,
+        "live_mind_generation_controls_present": live_mind_generation_controls_present,
+        "live_mind_generation_controls": live_mind_generation_controls,
+        "live_mind_controls_structurally_bound": live_mind_controls_structurally_bound,
         "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
         "preflight_live_mind_required_subsystems_ok": preflight_live_mind_required_subsystems_ok,
         "architecture_context_bound": architecture_context_bound,
@@ -3920,6 +3949,8 @@ async def _run_cognitive_engine_chat_turn(
                 "cognitive_engine_reply_failed": False,
                 "bounded_contract_used": False,
                 "legacy_fallback_used": False,
+                "live_mind_controls_bound": False,
+                "live_mind_generation_controls": {},
                 "response_path": "",
             }
         )
@@ -4704,6 +4735,28 @@ async def _run_cognitive_engine_chat_turn(
     if not isinstance(thought_metadata, dict) and isinstance(thought, dict):
         thought_metadata = thought.get("metadata")
     thought_metadata = thought_metadata if isinstance(thought_metadata, dict) else {}
+    raw_generation_controls = thought_metadata.get("live_mind_generation_controls")
+    generation_controls = (
+        dict(raw_generation_controls)
+        if isinstance(raw_generation_controls, dict)
+        else {}
+    )
+    if turn_trace is not None:
+        turn_trace.update(
+            {
+                "live_mind_controls_bound": bool(
+                    thought_metadata.get("live_mind_controls_bound")
+                    and generation_controls
+                ),
+                "live_mind_generation_controls": generation_controls,
+                "live_mind_snapshot_ready_from_thought": bool(
+                    thought_metadata.get("live_mind_snapshot_ready")
+                ),
+                "live_mind_required_subsystems_ok_from_thought": bool(
+                    thought_metadata.get("live_mind_required_subsystems_ok")
+                ),
+            }
+        )
     try:
         from core.conversation.response_reliability import is_cognitive_engine_failure_envelope
     except _CHAT_RECOVERABLE_ERRORS as exc:
