@@ -133,6 +133,20 @@ def register_all_services(is_proxy: bool = False):
         lifetime=ServiceLifetime.SINGLETON,
         required=False,
     )
+    # Canonical single world-model surface — composes the four complementary facets
+    # (forward dynamics, causal graph, outcome prediction, MCTS planning).
+    container.register(
+        'unified_world_model',
+        lambda: __import__('core.world_model.unified_world_model', fromlist=['get_unified_world_model']).get_unified_world_model(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
+    container.register(
+        'world_model',
+        lambda: container.get('unified_world_model'),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
     container.register('emergent_goal_engine', create_emergent_goal_engine, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('structural_mutator', create_structural_mutator, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('lineage_manager', create_lineage_manager, lifetime=ServiceLifetime.SINGLETON, required=False)
