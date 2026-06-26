@@ -1,8 +1,8 @@
 """core/self_improvement/candidate_builder.py — Code generation from spec.
 
-Constructs a replacement implementation from a ModuleSpec. Uses an injectable
-CodeGenerator callable so tests can use deterministic generators while
-production routes through core/llm/.
+Constructs a replacement implementation from a ModuleSpec. Tests may inject
+deterministic generators explicitly; production defaults to Aura's LLM-backed
+code generator and fails closed if that generator cannot be constructed.
 
 This is the paper's "agent reimplementation" step.
 """
@@ -112,7 +112,7 @@ class PromptBuilder:
 
 
 class InterfaceEchoGenerator:
-    """Deterministic code generator for tests — returns the interface file as-is."""
+    """Deterministic test generator — returns the interface file as-is."""
 
     def generate(self, prompt: str, context: dict[str, Any]) -> str:
         return context.get("stub_code", "# No implementation generated\npass\n")
@@ -125,8 +125,19 @@ class CandidateBuilder:
     """Generates candidate modules from specs using a pluggable code generator."""
 
     def __init__(self, generator: CodeGenerator | None = None):
-        self.generator = generator or InterfaceEchoGenerator()
+        self.generator = generator or self._default_generator()
         self.prompt_builder = PromptBuilder()
+
+    @staticmethod
+    def _default_generator() -> CodeGenerator:
+        try:
+            from core.llm.code_generator import LLMCodeGenerator
+        except ImportError as exc:
+            raise RuntimeError(
+                "production candidate generation requires core.llm.code_generator; "
+                "tests must inject InterfaceEchoGenerator explicitly"
+            ) from exc
+        return LLMCodeGenerator(prefer_tier="primary")
 
     async def build(
         self,

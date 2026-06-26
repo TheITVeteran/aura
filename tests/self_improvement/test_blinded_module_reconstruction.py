@@ -180,6 +180,11 @@ class TestBlindedWorkspace:
 # ── Candidate Builder Tests ──────────────────────────────────────────────
 
 class TestCandidateBuilder:
+    def test_default_generator_is_production_llm_generator(self):
+        builder = CandidateBuilder()
+
+        assert type(builder.generator).__name__ == "LLMCodeGenerator"
+
     @pytest.mark.asyncio
     async def test_interface_echo_generator(self, sample_spec, project_root):
         factory = BlindedWorkspaceFactory(project_root=project_root)
@@ -498,6 +503,11 @@ class TestDeterministicComparator:
 # ── Full Pipeline Integration Test ───────────────────────────────────────
 
 class TestReimplementationLabIntegration:
+    def test_default_lab_does_not_use_interface_echo_generator(self, project_root):
+        lab = ReimplementationLab(project_root=project_root)
+
+        assert type(lab.candidate_builder.generator).__name__ == "LLMCodeGenerator"
+
     @pytest.mark.asyncio
     async def test_full_pipeline_with_interface_echo_generator(self, project_root):
         """End-to-end: spec→blind→build→audit→compare→attribute→decide."""
