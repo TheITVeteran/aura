@@ -33,6 +33,8 @@ from core.brain.llm.runtime_wiring import (
     prepare_runtime_payload,
     should_force_tool_handoff,
 )
+from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.utils.task_tracker import get_task_tracker
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.network_gateway import get_network_gateway
 
@@ -200,6 +202,8 @@ class LLMHealthMonitor:
 
             publish = getattr(self.event_bus, "publish", None)
             if callable(publish):
+                if is_shutdown_requested():
+                    return
                 try:
                     loop = asyncio.get_running_loop()
                 except RuntimeError:
@@ -209,7 +213,10 @@ class LLMHealthMonitor:
                         state,
                     )
                     return
-                loop.create_task(publish("llm.endpoint_health", payload, priority=3))
+                get_task_tracker().create_task(
+                    publish("llm.endpoint_health", payload, priority=3),
+                    name="llm_router.endpoint_health",
+                )
         except ROUTER_RECOVERABLE_ERRORS as exc:
             _record_router_degradation(
                 exc,

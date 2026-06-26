@@ -130,12 +130,13 @@ class SemanticDefragmenter:
                 name="semantic_defrag.scheduler",
             )
         except _SEMANTIC_DEFRAG_ERRORS as exc:
+            self._running = False
             _record_semantic_defrag_degradation(
                 exc,
-                action="started semantic defrag scheduler with raw asyncio task after task tracker failed",
+                action="semantic defrag scheduler not started because task tracker ownership failed",
                 severity="warning",
             )
-            self._task = loop.create_task(self._run_scheduler(), name="semantic_defrag.scheduler")
+            return False
         logger.info("Semantic Defrag scheduler started for '%s'", self.collection_name)
         return True
 

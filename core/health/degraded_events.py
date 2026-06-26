@@ -12,6 +12,8 @@ from typing import Any, Iterator
 
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.DegradedEvents")
 
@@ -48,6 +50,10 @@ def _record_degraded_events_degradation(
 
 
 def _schedule_awaitable(awaitable: Any, *, label: str) -> None:
+    if is_shutdown_requested():
+        if inspect.iscoroutine(awaitable):
+            awaitable.close()
+        return
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -65,7 +71,17 @@ def _schedule_awaitable(awaitable: Any, *, label: str) -> None:
         threading.Thread(target=_runner, name=f"aura_{label}", daemon=True).start()
         return
 
-    task = loop.create_task(awaitable)
+    try:
+        task = get_task_tracker().create_task(awaitable, name=f"degraded_events.{label}")
+    except RuntimeError as exc:
+        if inspect.iscoroutine(awaitable):
+            awaitable.close()
+        _record_degraded_events_degradation(
+            exc,
+            action="retained degraded event locally after async forward scheduling failed",
+            extra={"label": label},
+        )
+        return
 
     def _consume_result(done: asyncio.Task) -> None:
         try:

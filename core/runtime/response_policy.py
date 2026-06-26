@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from core.runtime import background_policy
+from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.utils.task_tracker import get_task_tracker
 
 _LOW_VALUE_BACKGROUND_PREFIXES = (
     "[identity refresh:",
@@ -80,12 +82,18 @@ def clear_background_generation(state: Any, objective: Any) -> None:
             from core.container import ServiceContainer
             drive = ServiceContainer.get("drive_engine", default=None)
             if drive:
-                import asyncio
                 # Satisfy competence (completed a task) and curiosity (learned something)
                 try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(drive.satisfy("competence", 10.0))
-                    loop.create_task(drive.satisfy("curiosity", 5.0))
+                    if is_shutdown_requested():
+                        return
+                    get_task_tracker().create_task(
+                        drive.satisfy("competence", 10.0),
+                        name="response_policy.drive_competence",
+                    )
+                    get_task_tracker().create_task(
+                        drive.satisfy("curiosity", 5.0),
+                        name="response_policy.drive_curiosity",
+                    )
                 except RuntimeError:
                     pass  # no event loop — skip
         except (ImportError, AttributeError, RuntimeError):

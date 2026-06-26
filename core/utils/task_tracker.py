@@ -8,11 +8,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.runtime.errors import record_degradation
-from core.runtime.task_ownership import create_owned_asyncio_task
+from core.runtime.task_ownership import close_awaitable, create_owned_asyncio_task
 
 logger = logging.getLogger(__name__)
 
 _SKIP_FACTORY_TRACK = contextvars.ContextVar("aura_skip_factory_track", default=False)
+
+
+def _runtime_shutdown_requested() -> bool:
+    try:
+        from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+        return bool(is_shutdown_requested())
+    except (ImportError, AttributeError, RuntimeError):
+        return False
 
 
 def mark_task_protected(task: asyncio.Task[Any], *, owner: str = "task_tracker") -> asyncio.Task[Any]:
@@ -86,6 +95,7 @@ class TaskTracker:
         self._completed_total = 0
         self._cancelled_total = 0
         self._failed_total = 0
+        self._shutdown_suppressed_total = 0
         self._records: dict[int, TaskRecord] = {}
         self._recently_completed: deque[dict[str, Any]] = deque(maxlen=128)
         self._installed_loop_factories: dict[int, Any] = {}
@@ -97,12 +107,24 @@ class TaskTracker:
             self._semaphore = asyncio.Semaphore(self._max_concurrent)
         return self._semaphore
 
-    def track(self, coro_or_task, name: str | None = None) -> asyncio.Task:
+    def track(
+        self,
+        coro_or_task,
+        name: str | None = None,
+        *,
+        allow_during_shutdown: bool = False,
+    ) -> asyncio.Task:
         """Track a new task or coroutine (no concurrency limit)."""
         if isinstance(coro_or_task, asyncio.Task):
             task = coro_or_task
         else:
-            task = create_owned_asyncio_task(coro_or_task, name=name)
+            if _runtime_shutdown_requested() and not allow_during_shutdown:
+                return self._suppress_shutdown_start(coro_or_task, name=name, source="track")
+            try:
+                task = create_owned_asyncio_task(coro_or_task, name=name)
+            except RuntimeError:
+                close_awaitable(coro_or_task)
+                raise
         self._total_tracked += 1
         self._attach(task, name=name, supervision="explicit", source="track")
         return task
@@ -116,12 +138,20 @@ class TaskTracker:
         self._attach(task, name=name, supervision="implicit", source=source)
         return task
 
-    def bounded_track(self, coro, name: str | None = None) -> asyncio.Task:
+    def bounded_track(
+        self,
+        coro,
+        name: str | None = None,
+        *,
+        allow_during_shutdown: bool = False,
+    ) -> asyncio.Task:
         """Track a task WITH concurrency limiting via semaphore.
 
         Use this for short-lived tasks (maintenance, learning, reflection).
         Long-running loops should use track() directly.
         """
+        if _runtime_shutdown_requested() and not allow_during_shutdown:
+            return self._suppress_shutdown_start(coro, name=name, source="bounded_track")
 
         async def _bounded():
             sem = self._get_semaphore()
@@ -132,9 +162,55 @@ class TaskTracker:
                     return await coro()
                 return await coro
 
-        task = create_owned_asyncio_task(_bounded(), name=name)
+        bounded_coro = _bounded()
+        try:
+            task = create_owned_asyncio_task(bounded_coro, name=name)
+        except RuntimeError:
+            close_awaitable(coro)
+            close_awaitable(bounded_coro)
+            raise
         self._total_tracked += 1
         self._attach(task, name=name, supervision="explicit", source="bounded_track")
+        return task
+
+    def _suppress_shutdown_start(self, awaitable: Any, *, name: str | None, source: str) -> asyncio.Task:
+        """Close late runtime work after shutdown starts and return a completed owned task.
+
+        Shutdown is not a valid time for ordinary subsystems to spawn new
+        inference, recovery, telemetry, or repair work. Returning a tiny
+        completed task preserves call-site compatibility while preventing the
+        original coroutine from running after executors and event loops begin
+        teardown.
+        """
+        close_awaitable(awaitable)
+        self._shutdown_suppressed_total += 1
+
+        async def _shutdown_suppressed() -> None:
+            return None
+
+        suppressed_coro = _shutdown_suppressed()
+        try:
+            task = create_owned_asyncio_task(
+                suppressed_coro,
+                name=name or f"{self.name}.shutdown_suppressed",
+            )
+        except RuntimeError:
+            close_awaitable(suppressed_coro)
+            raise
+        try:
+            task._aura_shutdown_suppressed = True
+            task._aura_shutdown_suppressed_source = source
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("task_tracker", exc)
+            logger.debug("TaskTracker[%s]: failed to annotate suppressed task: %s", self.name, exc)
+        self._total_tracked += 1
+        self._attach(task, name=name, supervision="explicit", source=f"{source}:shutdown_suppressed")
+        logger.debug(
+            "TaskTracker[%s]: suppressed late task start during runtime shutdown (name=%s source=%s).",
+            self.name,
+            name or "",
+            source,
+        )
         return task
 
     def install_loop_hygiene(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
@@ -453,6 +529,7 @@ class TaskTracker:
             "completed_total": self._completed_total,
             "cancelled_total": self._cancelled_total,
             "failed_total": self._failed_total,
+            "shutdown_suppressed_total": self._shutdown_suppressed_total,
             "max_concurrent": self._max_concurrent,
             "stale_tasks": stale_tasks[:5],
             "recently_completed": list(self._recently_completed)[-5:],

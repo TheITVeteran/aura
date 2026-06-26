@@ -132,7 +132,11 @@ class ShutdownCoordinator:
                 coros: List[asyncio.Future] = []
                 for record in handlers:
                     coros.append(
-                        get_task_tracker().track(self._invoke(record))
+                        get_task_tracker().track(
+                            self._invoke(record),
+                            name=f"shutdown:{phase}:{record.name}",
+                            allow_during_shutdown=True,
+                        )
                     )
                 effective_timeout = timeout_per_phase or max(
                     (h.timeout for h in handlers), default=15.0

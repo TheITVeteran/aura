@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from core.runtime.boot_safety import main_process_camera_policy
+from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,9 @@ class ContinuousSensoryBuffer:
 
     def start(self):
         """Starts the background rolling capture loop."""
+        if is_shutdown_requested():
+            logger.info("👁️ Continuous Sensory Buffer not started: runtime shutdown requested.")
+            return
         if os.getenv("AURA_HEADLESS", "0").strip().lower() in {"1", "true", "yes", "on"} or os.getenv("AURA_ENABLE_PROACTIVE_VISION", "1").strip().lower() in {"0", "false", "no", "off"}:
             logger.info("👁️ Continuous Sensory Buffer disabled by headless/foreground configuration.")
             return
@@ -68,10 +73,16 @@ class ContinuousSensoryBuffer:
                 logger.warning("👁️ Continuous Sensory Buffer not started: no capture backends are available.")
                 return
             self._is_active = True
-            loop = asyncio.get_running_loop()
-            self._capture_task = loop.create_task(
-                self._capture_loop(), name="ContinuousSensoryCapture"
-            )
+            try:
+                self._capture_task = get_task_tracker().create_task(
+                    self._capture_loop(),
+                    name="ContinuousSensoryCapture",
+                )
+            except RuntimeError as exc:
+                self._is_active = False
+                record_degradation("continuous_vision", exc)
+                logger.warning("👁️ Continuous Sensory Buffer not started: no running event loop.")
+                return
             logger.info("👁️ Continuous Sensory Buffer Online.")
 
     def stop(self):

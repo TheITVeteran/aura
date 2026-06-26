@@ -123,28 +123,17 @@ Respond with only a float."""
         # CROSSWIRE-03: Feed surprise signal to AffectStateManager
         affect = ServiceContainer.get("affect_engine", default=None)
         if affect and surprise_signal > 0.0:
-            import asyncio
             stimulus = "intrigue" if surprise_signal > 0.5 else "calm"
             intensity = surprise_signal * 10.0
-            
-            # Audit Fix: Loop-safe task creation
+
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(affect.apply_stimulus(stimulus, intensity))
-            except RuntimeError:
-                # Fallback for sync threads or non-running loops
-                try:
-                    try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:
-                        loop = None
-                    if loop and loop.is_running():
-                        loop.call_soon_threadsafe(
-                            lambda: get_task_tracker().create_task(affect.apply_stimulus(stimulus, intensity))
-                        )
-                except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
-                    record_degradation('predictive_engine', _exc)
-                    logger.debug("Suppressed Exception: %s", _exc)
+                get_task_tracker().create_task(
+                    affect.apply_stimulus(stimulus, intensity),
+                    name="predictive_engine.affect_surprise",
+                )
+            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
+                record_degradation("predictive_engine", _exc)
+                logger.debug("Suppressed Exception: %s", _exc)
 
         return PredictionError(
             prediction=prediction,

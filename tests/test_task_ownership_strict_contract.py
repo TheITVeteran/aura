@@ -6,6 +6,62 @@ import pytest
 
 
 @pytest.mark.asyncio
+async def test_task_tracker_suppresses_late_runtime_work_after_shutdown_request():
+    from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
+    from core.utils.task_tracker import TaskTracker
+
+    tracker = TaskTracker(name="shutdown-suppression-test")
+    ran = False
+
+    async def _late_runtime_work():
+        nonlocal ran
+        ran = True
+
+    request_shutdown("unit-test")
+    try:
+        task = tracker.create_task(_late_runtime_work(), name="late-runtime-work")
+        assert isinstance(task, asyncio.Task)
+        assert await task is None
+        assert ran is False
+        assert getattr(task, "_aura_shutdown_suppressed", False) is True
+        assert tracker.get_stats()["shutdown_suppressed_total"] == 1
+    finally:
+        clear_shutdown_request()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_coordinator_handlers_are_allowed_after_shutdown_request():
+    from core.runtime.shutdown_coordinator import (
+        clear_shutdown_request,
+        get_shutdown_coordinator,
+        reset_shutdown_coordinator,
+    )
+
+    reset_shutdown_coordinator()
+    coordinator = get_shutdown_coordinator()
+    calls: list[str] = []
+
+    async def _flush_handler():
+        await asyncio.sleep(0)
+        calls.append("flushed")
+
+    coordinator.register(
+        _flush_handler,
+        phase="output_flush",
+        name="test_flush_handler",
+        timeout=1.0,
+    )
+
+    try:
+        report = await coordinator.shutdown(timeout_per_phase=1.0)
+        assert report.clean is True
+        assert calls == ["flushed"]
+    finally:
+        reset_shutdown_coordinator()
+        clear_shutdown_request()
+
+
+@pytest.mark.asyncio
 async def test_task_ownership_fallback_is_allowed_in_strict_runtime(monkeypatch):
     from core.runtime import strict_task_owner
     from core.runtime import task_ownership

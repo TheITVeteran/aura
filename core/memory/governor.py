@@ -1,4 +1,6 @@
 from core.runtime.errors import record_degradation
+from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.utils.task_tracker import get_task_tracker
 import mlx.core as mx
 from dataclasses import dataclass, field
 import psutil
@@ -51,9 +53,14 @@ class MemoryBudget:
                     # For synchronous enforcement, we might need a sync wrapper or just trigger it
                     # ISSUE 33 fix: Safe task creation from sync context
                     try:
+                        if is_shutdown_requested():
+                            return
                         try:
                             loop = asyncio.get_running_loop()
-                            loop.create_task(dual_memory.episodic.evict_oldest(0.3))
+                            get_task_tracker().create_task(
+                                dual_memory.episodic.evict_oldest(0.3),
+                                name="memory_governor.evict_oldest",
+                            )
                         except RuntimeError:
                             asyncio.run(dual_memory.episodic.evict_oldest(0.3))
                     except RuntimeError:

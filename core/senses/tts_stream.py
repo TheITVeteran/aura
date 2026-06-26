@@ -1,7 +1,8 @@
 import logging
-import asyncio
 
 # Issue 30: Unused dead imports removed
+from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Senses.Mouth")
 
@@ -14,25 +15,31 @@ class FastMouth:
         self._stream_task = None
     
     def speak(self, text: str):
-        import asyncio
         if self.engine:
+            if is_shutdown_requested():
+                return
             try:
-                loop = asyncio.get_running_loop()
                 # Cancel previous task to prevent pile-up
                 if self._speak_task and not self._speak_task.done():
                     self._speak_task.cancel()
-                self._speak_task = loop.create_task(self.engine.speak(text))
+                self._speak_task = get_task_tracker().create_task(
+                    self.engine.speak(text),
+                    name="tts_stream.speak",
+                )
             except RuntimeError as _e:
                 logger.debug('Ignored RuntimeError in tts_stream.py: %s', _e)
 
     def speak_stream(self, text_generator):
-        import asyncio
         if self.engine:
+            if is_shutdown_requested():
+                return
             try:
-                loop = asyncio.get_running_loop()
                 if self._stream_task and not self._stream_task.done():
                     self._stream_task.cancel()
-                self._stream_task = loop.create_task(self.engine.speak_stream(text_generator))
+                self._stream_task = get_task_tracker().create_task(
+                    self.engine.speak_stream(text_generator),
+                    name="tts_stream.speak_stream",
+                )
             except RuntimeError as _e:
                 logger.debug('Ignored RuntimeError in tts_stream.py: %s', _e)
 

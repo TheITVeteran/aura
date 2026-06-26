@@ -1487,6 +1487,9 @@ class InferenceGate:
         self._schedule_background_cortex_prewarm(delay=delay)
 
     def _schedule_background_cortex_prewarm(self, delay: float = 12.0) -> None:
+        if is_shutdown_requested():
+            logger.debug("Deferred cortex prewarm skipped: runtime shutdown requested.")
+            return
         if self._deferred_prewarm_task and not self._deferred_prewarm_task.done():
             return
 
@@ -1494,6 +1497,9 @@ class InferenceGate:
             next_delay = max(1.0, float(delay))
             for attempt in range(1, 7):
                 await asyncio.sleep(next_delay)
+                if is_shutdown_requested():
+                    logger.debug("Deferred cortex prewarm stopped: runtime shutdown requested.")
+                    return
                 lane = self.get_conversation_status()
                 lane_state = str(lane.get("state", "") or "").lower()
                 if lane.get("conversation_ready") or lane.get("warmup_in_flight"):
@@ -1505,6 +1511,8 @@ class InferenceGate:
                     next_delay = min(20.0, max(6.0, next_delay))
                     continue
                 if lane_state == "failed":
+                    if is_shutdown_requested():
+                        return
                     if await asyncio.to_thread(self._rearm_runtime_failed_lane, force_probe=False):
                         lane = self.get_conversation_status()
                         lane_state = str(lane.get("state", "") or "").lower()
@@ -1556,6 +1564,8 @@ class InferenceGate:
                     logger.debug("Deferred prewarm memory probe failed: %s", exc)
 
                 try:
+                    if is_shutdown_requested():
+                        return
                     self._extend_startup_quiet_window(20.0)
                     # Background prewarm needs the same generous load budget
                     # as foreground chat so it does not half-warm then strand
@@ -1587,16 +1597,23 @@ class InferenceGate:
 
         runner_coro = _runner()
         try:
-            loop = asyncio.get_running_loop()
+            task = get_task_tracker().create_task(
+                runner_coro,
+                name="InferenceGate.deferred_cortex_prewarm",
+            )
         except RuntimeError:
             runner_coro.close()
             logger.debug("Deferred cortex prewarm skipped: no running event loop.")
             return
 
-        self._deferred_prewarm_task = loop.create_task(
-            runner_coro,
-            name="InferenceGate.deferred_cortex_prewarm",
-        )
+        if not isinstance(task, asyncio.Task):
+            runner_coro.close()
+            logger.debug(
+                "Deferred cortex prewarm scheduling returned non-Task %s; skipping callback wiring.",
+                type(task).__name__,
+            )
+            return
+        self._deferred_prewarm_task = task
         # [STABILITY v53] Log exceptions from background tasks
         self._deferred_prewarm_task.add_done_callback(self._log_task_exception)
 

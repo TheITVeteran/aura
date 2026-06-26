@@ -13,6 +13,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.ConversationPersistence")
 
@@ -427,7 +428,10 @@ class ConversationPersistence:
             if loop.is_running():
                 if self._save_task is not None and not self._save_task.done():
                     return
-                self._save_task = loop.create_task(self.save_async())
+                self._save_task = get_task_tracker().create_task(
+                    self.save_async(),
+                    name="conversation_persistence.save_async",
+                )
                 return
         except RuntimeError as _exc:
             logger.debug("Suppressed %s in core.memory.conversation_persistence: %s", type(_exc).__name__, _exc)

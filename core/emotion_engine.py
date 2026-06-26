@@ -5,6 +5,8 @@ from enum import Enum, auto
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.utils.task_tracker import get_task_tracker
 
 from .affect import AffectEngine, AffectState
 
@@ -69,6 +71,8 @@ class EmotionEngine:
 
     def react(self, trigger: str, context: dict[str, Any] | None = None) -> None:
         """Forward react call."""
+        if is_shutdown_requested():
+            return
         try:
             try:
                 loop = asyncio.get_running_loop()
@@ -77,7 +81,10 @@ class EmotionEngine:
                 return
 
             if loop.is_running():
-                loop.create_task(self.engine.react(trigger, context))
+                get_task_tracker().create_task(
+                    self.engine.react(trigger, context),
+                    name="emotion_engine.react",
+                )
 
         except _RECOVERABLE_EMOTION_ERRORS as exc:
             record_degradation("emotion_engine", exc)
