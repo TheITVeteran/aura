@@ -9,6 +9,8 @@ import asyncio
 import logging
 from typing import Callable
 
+from core.utils.task_tracker import get_task_tracker
+
 from .sensory_registry import get_capabilities
 
 logger = logging.getLogger("Aura.Senses.Ears")
@@ -103,7 +105,10 @@ class SovereignEars:
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
-                loop.create_task(self._engine._on_transcript(text))
+                get_task_tracker().create_task(
+                    self._engine._on_transcript(text),
+                    name="ears.mock_hear_transcript",
+                )
         except RuntimeError:
             # No loop running, but we should not use asyncio.run inside this library
             # as it often collides with the larger service lifecycle.

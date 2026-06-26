@@ -14,6 +14,7 @@ from core.predictive.predictive_self_model import PredictiveSelfModel
 from core.runtime.errors import record_degradation
 from core.runtime.proposal_governance import propose_governed_initiative_to_state
 from core.state.aura_state import _origin_is_user_anchored
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.ExecutiveClosure")
 
@@ -547,10 +548,12 @@ class ExecutiveClosureEngine:
                 and (time.time() - self._last_volition_seed) >= self._VOLITION_SEED_INTERVAL_S
             ):
                 try:
-                    loop = asyncio.get_running_loop()
                     # Volition is meaningful but non-authoritative. Use a short task so it
                     # can seed future continuity without parking the current tick.
-                    loop.create_task(self._seed_from_volition(volition, current_objective))
+                    get_task_tracker().create_task(
+                        self._seed_from_volition(volition, current_objective),
+                        name="executive_closure.seed_from_volition",
+                    )
                     self._last_volition_seed = time.time()
                 except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('executive_closure', exc)
@@ -708,9 +711,9 @@ class ExecutiveClosureEngine:
 
         try:
             self._last_self_model_sync = now
-            loop = asyncio.get_running_loop()
-            self._self_model_sync_task = loop.create_task(
-                self._sync_self_model_payload(self_model, payload)
+            self._self_model_sync_task = get_task_tracker().create_task(
+                self._sync_self_model_payload(self_model, payload),
+                name="executive_closure.self_model_sync",
             )
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation('executive_closure', exc)

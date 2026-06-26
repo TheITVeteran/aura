@@ -12,6 +12,7 @@ from core.mind_tick import MindTick
 from core.runtime.errors import record_degradation
 from core.state.state_repository import StateRepository
 from core.utils.concurrency import LOCK_SENTINEL, RobustLock
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -537,8 +538,10 @@ class BootResilienceMixin:
 
                     if embodiment and hasattr(embodiment, "connect_unity"):
                         try:
-                            loop = asyncio.get_running_loop()
-                            loop.create_task(embodiment.connect_unity())
+                            get_task_tracker().create_task(
+                                embodiment.connect_unity(),
+                                name="boot_resilience.connect_unity",
+                            )
                             logger.info("🎨 Unity Embodiment connection initiated")
                         except RuntimeError:
                             logger.debug("No running loop; Unity Embodiment deferred.")

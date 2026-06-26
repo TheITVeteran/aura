@@ -12,6 +12,7 @@ import sys
 import logging
 from typing import Dict, Any
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.SandboxOperator")
 
@@ -105,12 +106,11 @@ class SandboxOperator:
             substrate = ServiceContainer.get("liquid_substrate", default=None)
             if substrate:
                 try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(substrate.update(
+                    get_task_tracker().create_task(substrate.update(
                         delta_curiosity=delta_curiosity,
                         delta_frustration=delta_frustration,
                         _caller="sandbox_operator"
-                    ))
+                    ), name="sandbox_operator.substrate_update")
                 except RuntimeError:
                     asyncio.run(substrate.update(
                         delta_curiosity=delta_curiosity,

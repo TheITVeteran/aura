@@ -18,6 +18,7 @@ The loop provides:
 """
 from __future__ import annotations
 from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 
 import hashlib
@@ -464,23 +465,20 @@ class IntentionLoop:
                 try:
                     import asyncio
                     loop = asyncio.get_event_loop()
+                    claim_coro = belief_engine.process_new_claim(
+                        claim=bu.belief,
+                        domain="self",
+                        source="intention_loop",
+                        confidence=bu.new_confidence,
+                    )
                     if loop.is_running():
-                        loop.create_task(
-                            belief_engine.process_new_claim(
-                                claim=bu.belief,
-                                domain="self",
-                                source="intention_loop",
-                                confidence=bu.new_confidence,
-                            )
+                        get_task_tracker().create_task(
+                            claim_coro,
+                            name="intention_loop.belief_revision",
                         )
                     else:
                         asyncio.run_coroutine_threadsafe(
-                            belief_engine.process_new_claim(
-                                claim=bu.belief,
-                                domain="self",
-                                source="intention_loop",
-                                confidence=bu.new_confidence,
-                            ),
+                            claim_coro,
                             loop,
                         )
                 except (ImportError, AttributeError, RuntimeError) as e:

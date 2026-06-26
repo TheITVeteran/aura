@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 from core.runtime.network_gateway import get_network_gateway
 from core.thought_stream import get_emitter
+from core.utils.task_tracker import get_task_tracker
 
 
 logger = logging.getLogger("Aura.SearchPipeline")
@@ -1437,10 +1438,11 @@ class ResearchSearchPipeline:
             from core.container import ServiceContainer
             drive = ServiceContainer.get("drive_engine", default=None)
             if drive:
-                import asyncio
                 try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(drive.satisfy("curiosity", 20.0))
+                    get_task_tracker().create_task(
+                        drive.satisfy("curiosity", 20.0),
+                        name="research_pipeline.drive_curiosity",
+                    )
                 except RuntimeError:
                     pass  # no-op: intentional
         except (ImportError, AttributeError, RuntimeError):

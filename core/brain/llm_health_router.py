@@ -1891,8 +1891,10 @@ class HealthAwareLLMRouter:
     def clear_cache(self) -> None:
         """Sync-friendly cache purge hook used by guards/governors."""
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.unload_models())
+            get_task_tracker().create_task(
+                self.unload_models(),
+                name="llm_health_router.unload_models",
+            )
         except RuntimeError:
             asyncio.run(self.unload_models())
 
@@ -3010,9 +3012,8 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
             warm_method = getattr(local_client, "warmup", None) or getattr(local_client, "warm_up", None)
             if callable(warm_method):
                 try:
-                    loop = asyncio.get_running_loop()
-                    get_task_tracker().track_task(
-                        loop.create_task(warm_method()),
+                    get_task_tracker().create_task(
+                        warm_method(),
                         name="llm_router.prewarm_primary_local_runtime",
                     )
                     logger.info("✅ Scheduled background pre-warming of 72B Cortex model.")

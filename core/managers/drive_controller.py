@@ -1,5 +1,4 @@
 from core.runtime.errors import record_degradation
-import asyncio
 import logging
 import random
 import time
@@ -7,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from core.events import Event, EventPriority
 from core.runtime.impulse_governance import run_governed_impulse
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +47,10 @@ class DriveController:
             
         # liquid_state.update() is async — schedule properly
         try:
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(self.orchestrator.liquid_state.update())
+            task = get_task_tracker().create_task(
+                self.orchestrator.liquid_state.update(),
+                name="drive_controller.liquid_state_update",
+            )
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
         except RuntimeError as _e:
@@ -95,8 +97,7 @@ class DriveController:
         idx = int(entropy_val * len(topics)) % len(topics)
         topic = topics[idx]
         try:
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(
+            task = get_task_tracker().create_task(
                 run_governed_impulse(
                     self.orchestrator,
                     source="drive_controller",
@@ -109,7 +110,8 @@ class DriveController:
                     state_cause="drive_controller_boredom_shift",
                     state_update={"delta_curiosity": boost},
                     enqueue_priority=20,
-                )
+                ),
+                name="drive_controller.boredom_impulse",
             )
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
@@ -134,8 +136,7 @@ class DriveController:
         logger.info("😤 FRUSTRATION TRIGGERED: Generating reflection impulse.")
         self._last_reflection_impulse = time.time()
         try:
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(
+            task = get_task_tracker().create_task(
                 run_governed_impulse(
                     self.orchestrator,
                     source="drive_controller",
@@ -148,7 +149,8 @@ class DriveController:
                     state_cause="drive_controller_reflection_shift",
                     state_update={"delta_frustration": -0.3},
                     enqueue_priority=20,
-                )
+                ),
+                name="drive_controller.reflection_impulse",
             )
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)

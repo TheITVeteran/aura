@@ -27,6 +27,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from urllib.parse import quote_plus, urlparse
 
 from core.runtime.errors import record_degradation
+from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("WorldModel.Ingestion")
 
@@ -342,12 +343,22 @@ class WorldIngestionEngine:
         return await self._default_request("GET", url)
 
     async def _default_request(self, method: str, url: str, **kwargs: Any) -> Tuple[int, str]:
-        # Direct, unrestricted httpx — owner-authorized full outbound (no allowlist).
-        import httpx
         headers = kwargs.pop("headers", {"User-Agent": "Mozilla/5.0 (compatible; Aura/1.0)"})
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            resp = await client.request(method, url, headers=headers, **kwargs)
-            return resp.status_code, resp.text
+        result = await get_network_gateway().request_async(
+            method,
+            url,
+            headers=headers,
+            timeout=30.0,
+            source="world_ingestion",
+            read_only=method.upper() in {"GET", "HEAD", "OPTIONS"},
+            **kwargs,
+        )
+        content = result.get("content", b"")
+        if isinstance(content, bytes):
+            text = content.decode("utf-8", errors="replace")
+        else:
+            text = str(content or "")
+        return int(result.get("status_code") or 0), text
 
     def get_health(self) -> Dict[str, Any]:
         return {"module": "WorldIngestionEngine", "stats": dict(self._stats), "status": "online"}

@@ -13,6 +13,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 from .boot_validator import GhostBootValidator
 from .code_repair import AutonomousCodeRepair
@@ -105,7 +106,7 @@ def _schedule_background_coro(coro: Any, *, label: str) -> None:
         threading.Thread(target=_runner, name=f"aura_{label}", daemon=True).start()
         return
 
-    task = loop.create_task(coro)
+    task = get_task_tracker().create_task(coro, name=f"self_modification.{label}")
 
     def _consume_result(done: asyncio.Task) -> None:
         try:
@@ -1014,10 +1015,10 @@ class AutonomousSelfModificationEngine:
                 self.monitoring_enabled = False
                 return
 
-            self.monitor_thread = loop.create_task(
+            self.monitor_thread = get_task_tracker().create_task(
                 self._monitoring_loop(), name="SelfModificationMonitor"
             )
-            self.health_thread = loop.create_task(
+            self.health_thread = get_task_tracker().create_task(
                 self._health_watcher_loop(), name="SelfModificationHealthWatcher"
             )
         except RuntimeError:

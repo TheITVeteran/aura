@@ -286,6 +286,7 @@ import sqlite3
 import threading
 
 from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.FlagshipDoctor")
 
@@ -463,7 +464,10 @@ class FlagshipDoctorDaemon:
         
         # Schedule the heartbeat task on the event loop
         if self._loop and self._loop.is_running():
-            self._heartbeat_task = self._loop.create_task(self._heartbeat_updater())
+            self._heartbeat_task = get_task_tracker().create_task(
+                self._heartbeat_updater(),
+                name="flagship_doctor.heartbeat",
+            )
             
         self._monitor_thread = threading.Thread(
             target=self._monitor_loop,

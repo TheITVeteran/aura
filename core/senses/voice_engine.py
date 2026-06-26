@@ -42,6 +42,7 @@ from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.concurrency import RobustLock
 from core.utils.exceptions import capture_and_log
+from core.utils.task_tracker import get_task_tracker
 
 
 def _user_voice_output_enabled() -> bool:
@@ -311,7 +312,10 @@ class SovereignVoiceEngine:
         
         # Start presence pulse in background (BUG-035)
         if self.loop and self.loop.is_running():
-            self.loop.create_task(self._pulse_presence())
+            get_task_tracker().create_task(
+                self._pulse_presence(),
+                name="voice_engine.pulse_presence",
+            )
             logger.debug("VoiceEngine: presence pulse started on active loop")
         else:
             logger.debug("VoiceEngine: presence pulse deferred (no running loop)")
@@ -1040,7 +1044,7 @@ class SovereignVoiceEngine:
         if has_direct_callback and loop and loop.is_running():
             try:
                 loop.call_soon_threadsafe(
-                    lambda t=text: loop.create_task(
+                    lambda t=text: get_task_tracker().create_task(
                         self._handle_transcript(t),
                         name=f"transcript_{hash(t) & 0xFFFF}"
                     )
@@ -1344,7 +1348,10 @@ class SovereignVoiceEngine:
         loop = None
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self.start_listening())
+            get_task_tracker().create_task(
+                self.start_listening(),
+                name="voice_engine.start_listening",
+            )
         except RuntimeError as _e:
             # Fallback if unmuted from non-async context
             logger.debug('Ignored RuntimeError in voice_engine.py: %s', _e)

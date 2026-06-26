@@ -2745,8 +2745,10 @@ class RobustOrchestrator(
             bus = ServiceContainer.get("actor_bus", default=None)
             if bus:
                 try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(bus.publish("telemetry_update", data))
+                    get_task_tracker().create_task(
+                        bus.publish("telemetry_update", data),
+                        name="orchestrator.telemetry_update",
+                    )
                 except RuntimeError as exc:
                     # Generic fallback if no loop is running
                     logger.debug(

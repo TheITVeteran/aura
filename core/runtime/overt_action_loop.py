@@ -26,6 +26,7 @@ from core.container import ServiceContainer
 from core.health.degraded_events import record_degraded_event
 from core.runtime.background_policy import background_activity_reason
 from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 
 SAFE_AUTONOMOUS_SKILLS = (
@@ -590,8 +591,10 @@ class OvertActionLoop:
                 record_degradation("overt_action_loop", exc)
 
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_update(), name="overt_action_loop.goal_update")
+            get_task_tracker().create_task(
+                _update(),
+                name="overt_action_loop.goal_update",
+            )
         except RuntimeError:
             asyncio.run(_update())
 

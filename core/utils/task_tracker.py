@@ -129,9 +129,15 @@ class TaskTracker:
         self._attach(task, name=name, supervision="explicit", source="track")
         return task
 
-    # Alias for compatibility with components calling track_task or create_task
-    track_task = track
-    create_task = track
+    # Compatibility methods for components calling track_task or create_task.
+    # Keep these as forwarding methods instead of class-level aliases so future
+    # keyword-only lifecycle controls cannot stale-bind to an older track
+    # implementation during import-heavy tests or warm reloads.
+    def track_task(self, coro_or_task, name: str | None = None, **kwargs: Any) -> asyncio.Task:
+        return self.track(coro_or_task, name=name, **kwargs)
+
+    def create_task(self, coro_or_task, name: str | None = None, **kwargs: Any) -> asyncio.Task:
+        return self.track(coro_or_task, name=name, **kwargs)
 
     def observe(self, task: asyncio.Task, name: str | None = None, source: str = "loop_factory") -> asyncio.Task:
         """Observe a task created outside the tracker so it still gets cleaned up and audited."""

@@ -8,6 +8,7 @@ Managed Task Supervisor.
 """
 
 from core.runtime.errors import record_degradation
+from core.runtime.task_ownership import close_awaitable, create_owned_asyncio_task
 import asyncio
 import logging
 import time
@@ -94,11 +95,21 @@ class Supervisor:
                 raise RuntimeError("Supervisor: No event loop available for task creation")
 
         if asyncio.iscoroutine(coro):
-            task = self.loop.create_task(coro)
+            awaitable = coro
         elif callable(coro):
-            task = self.loop.create_task(coro())
+            awaitable = coro()
         else:
             raise TypeError("create_managed_task expects a coroutine or callable returning one")
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            close_awaitable(awaitable)
+            raise RuntimeError("Supervisor: No running event loop available for task creation")
+        if self.loop is not None and self.loop is not running_loop:
+            close_awaitable(awaitable)
+            raise RuntimeError("Supervisor: task creation requested from a different event loop")
+        self.loop = running_loop
+        task = create_owned_asyncio_task(awaitable, name=name)
 
         created_at = time.time()
         managed = ManagedTask(task, created_at, name, meta)

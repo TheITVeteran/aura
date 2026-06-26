@@ -17,6 +17,18 @@ from core.runtime.errors import record_degradation
 logger = logging.getLogger("Aura.Runtime.TaskOwnership")
 
 
+def _raw_asyncio_create_task(awaitable: Awaitable[Any], *, name: str | None, context: Any = None) -> asyncio.Task:
+    create_task = getattr(asyncio.create_task, "__wrapped__", asyncio.create_task)
+    try:
+        if context is not None:
+            return create_task(awaitable, name=name, context=context)
+    except TypeError:
+        pass
+    if name is not None:
+        return create_task(awaitable, name=name)
+    return create_task(awaitable)
+
+
 def _get_tracker() -> Any:
     try:
         from core.utils.task_tracker import get_task_tracker
@@ -41,16 +53,16 @@ def _create_owned_asyncio_task(awaitable: Awaitable[Any], *, name: str | None) -
     try:
         from core.utils.task_tracker import _SKIP_FACTORY_TRACK
     except (ImportError, AttributeError, RuntimeError):
-        return asyncio.create_task(awaitable, name=name)
+        return _raw_asyncio_create_task(awaitable, name=name)
 
     child_context = contextvars.copy_context()
     child_context.run(_SKIP_FACTORY_TRACK.set, False)
     token = _SKIP_FACTORY_TRACK.set(True)
     try:
         try:
-            return asyncio.create_task(awaitable, name=name, context=child_context)
+            return _raw_asyncio_create_task(awaitable, name=name, context=child_context)
         except TypeError:
-            return asyncio.create_task(awaitable, name=name)
+            return _raw_asyncio_create_task(awaitable, name=name)
     finally:
         _SKIP_FACTORY_TRACK.reset(token)
 

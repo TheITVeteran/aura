@@ -2,6 +2,7 @@ from core.runtime.errors import record_degradation
 import asyncio
 import gc
 import logging
+from core.utils.task_tracker import get_task_tracker
 
 try:
     import mlx.core as mx
@@ -48,14 +49,10 @@ class VRAMManager:
 
         try:
             if loop and loop.is_running():
-                task = loop.create_task(self._pre_purge_hook(), name="vram_manager.pre_purge")
-                try:
-                    from core.utils.task_tracker import get_task_tracker
-
-                    get_task_tracker().track_task(task)
-                except (ImportError, AttributeError, RuntimeError) as _exc:
-                    record_degradation('vram_manager', _exc)
-                    logger.debug("Suppressed Exception: %s", _exc)
+                get_task_tracker().create_task(
+                    self._pre_purge_hook(),
+                    name="vram_manager.pre_purge",
+                )
                 logger.info("🗜️ VRAMManager: pre-purge context summarization hook fired.")
             else:
                 asyncio.run(self._pre_purge_hook())

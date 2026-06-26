@@ -7,6 +7,7 @@ to prevent desynchronization and runtime contradictions.
 
 import inspect
 from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
 import time
@@ -83,8 +84,10 @@ class UnifiedStateRegistry:
         """Lazy start the dispatcher in the active event loop."""
         if self._dispatcher_task is None or self._dispatcher_task.done():
             try:
-                loop = asyncio.get_running_loop()
-                self._dispatcher_task = loop.create_task(self._notification_dispatcher())
+                self._dispatcher_task = get_task_tracker().create_task(
+                    self._notification_dispatcher(),
+                    name="state_registry.notification_dispatcher",
+                )
                 logger.info("🚀 StateRegistry: Notification Dispatcher started.")
             except RuntimeError as _e:
                 logger.debug('Ignored RuntimeError in state_registry.py: %s', _e)

@@ -345,9 +345,8 @@ class ContinuousPerceptionEngine:
                 logger.error("Failed to dispatch spontaneous intent: %s", e)
                 
         try:
-            loop = asyncio.get_running_loop()
-            get_task_tracker().track_task(
-                loop.create_task(_inject(), name=f"intent_{source}"),
+            get_task_tracker().create_task(
+                _inject(),
                 name=f"continuous_perception.intent.{source}",
             )
         except RuntimeError:

@@ -120,11 +120,13 @@ class ConsciousnessCore:
         # Start the Volition Monitor (The "Will" task)
         if not self.monitor_task or self.monitor_task.done():
             try:
-                loop = asyncio.get_running_loop()
-                self.monitor_task = loop.create_task(self._volition_loop())
-            except RuntimeError:
-                # Fallback if start() is called outside a loop
-                self.monitor_task = get_task_tracker().create_task(self._volition_loop())
+                self.monitor_task = get_task_tracker().create_task(
+                    self._volition_loop(),
+                    name="conscious_core.volition_loop",
+                )
+            except RuntimeError as exc:
+                record_degradation("conscious_core", exc)
+                logger.debug("ConsciousCore: volition loop not started: %s", exc)
 
     def stop(self):
         """Sleep"""

@@ -257,11 +257,13 @@ rm -f "$PIPE_IN" "$PIPE_OUT" "$INITIAL_MESSAGE_FILE"
     def _start_message_handler(self) -> None:
         """Start background task to handle messages."""
         try:
-            loop = asyncio.get_running_loop()
-            self.handler_task = loop.create_task(self._message_handler_loop())
-        except RuntimeError:
-            # No running loop — use ensure_future to schedule for when one starts
-            self.handler_task = get_task_tracker().track(self._message_handler_loop())
+            self.handler_task = get_task_tracker().create_task(
+                self._message_handler_loop(),
+                name="external_chat.message_handler",
+            )
+        except RuntimeError as exc:
+            record_degradation("external_chat", exc)
+            logger.debug("ExternalChat: message handler not started: %s", exc)
 
     async def _message_handler_loop(self):
         """Handle bidirectional communication"""
