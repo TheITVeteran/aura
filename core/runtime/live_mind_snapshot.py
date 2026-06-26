@@ -1,0 +1,156 @@
+"""Bounded live-mind readout for desktop conversation.
+
+This module is the structural bridge between Aura's runtime state and her live
+speech path. It collects compact readouts from first-class mind services so the
+desktop CognitiveEngine turn can be grounded in current workspace, affect,
+drive, outcome, world-model, nociceptive, and phenomenal state.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, is_dataclass
+from typing import Any
+
+from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
+
+_SNAPSHOT_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+_SERVICE_NAMES = (
+    "global_workspace",
+    "nociception",
+    "affect_grounding",
+    "drive_integration",
+    "outcome_ledger",
+    "scientific_engine",
+    "unified_world_model",
+    "phenomenal_engine",
+)
+
+
+def _compact(value: Any, *, depth: int = 3, items: int = 16, text: int = 420) -> Any:
+    if depth <= 0:
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return type(value).__name__
+    if is_dataclass(value):
+        try:
+            value = asdict(value)
+        except _SNAPSHOT_RECOVERABLE_ERRORS as exc:
+            record_degradation("live_mind_snapshot", exc, severity="debug")
+            return type(value).__name__
+    if hasattr(value, "to_dict") and callable(getattr(value, "to_dict")):
+        try:
+            value = value.to_dict()
+        except _SNAPSHOT_RECOVERABLE_ERRORS as exc:
+            record_degradation("live_mind_snapshot", exc, severity="debug")
+            return type(value).__name__
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for index, (key, child) in enumerate(value.items()):
+            if index >= items:
+                out["_truncated"] = True
+                break
+            out[str(key)] = _compact(child, depth=depth - 1, items=items, text=text)
+        return out
+    if isinstance(value, (list, tuple, set, frozenset)):
+        values = list(value)
+        out = [_compact(child, depth=depth - 1, items=items, text=text) for child in values[:items]]
+        if len(values) > items:
+            out.append({"_truncated": True})
+        return out
+    if isinstance(value, str):
+        value = " ".join(value.split())
+        return value if len(value) <= text else value[:text].rsplit(" ", 1)[0].strip() + "..."
+    if isinstance(value, (int, bool)) or value is None:
+        return value
+    if isinstance(value, float):
+        return round(value, 6)
+    return str(value)[:text]
+
+
+def _service(name: str) -> Any:
+    try:
+        return ServiceContainer.get(name, default=None)
+    except _SNAPSHOT_RECOVERABLE_ERRORS as exc:
+        record_degradation("live_mind_snapshot", exc, severity="debug")
+        return None
+
+
+def _call(service: Any, method: str, **kwargs: Any) -> Any:
+    if service is None:
+        return None
+    fn = getattr(service, method, None)
+    if not callable(fn):
+        return None
+    try:
+        return fn(**kwargs)
+    except _SNAPSHOT_RECOVERABLE_ERRORS as exc:
+        record_degradation("live_mind_snapshot", exc, severity="debug")
+        return None
+
+
+def _affect_grounding_snapshot(service: Any) -> dict[str, Any]:
+    if service is None:
+        return {}
+    gathered = _call(service, "gather")
+    engine = gathered if gathered is not None else service
+    assessments = _call(engine, "assess")
+    dominant = _call(engine, "dominant")
+    return {
+        "dominant": _compact(dominant),
+        "assessments": _compact(assessments, items=8),
+    }
+
+
+def _phenomenal_state(service: Any) -> dict[str, Any]:
+    if service is None:
+        return {}
+    state = getattr(service, "last_state", None)
+    if state is None:
+        return {"available": True, "last_state": None}
+    keys = (
+        "t",
+        "valence",
+        "arousal",
+        "free_energy",
+        "integration",
+        "self_presence",
+        "mineness",
+        "curiosity",
+        "intentional_object",
+        "policy_priors",
+        "memory_weights",
+    )
+    out: dict[str, Any] = {"available": True}
+    for key in keys:
+        if hasattr(state, key):
+            out[key] = _compact(getattr(state, key))
+    return out
+
+
+def collect_live_mind_snapshot(*, lane: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Collect compact runtime state for one live desktop conversation turn."""
+    services = {name: _service(name) for name in _SERVICE_NAMES}
+    snapshot: dict[str, Any] = {
+        "schema": "aura.live_mind_snapshot.v1",
+        "lane": _compact(lane or {}, depth=2, items=12),
+        "services_present": {name: services[name] is not None for name in _SERVICE_NAMES},
+    }
+    snapshot["global_workspace"] = _compact(_call(services["global_workspace"], "get_snapshot"))
+    snapshot["nociception"] = _compact(_call(services["nociception"], "snapshot"))
+    snapshot["affect_grounding"] = _compact(_affect_grounding_snapshot(services["affect_grounding"]))
+    snapshot["drive_integration"] = _compact(_call(services["drive_integration"], "state"))
+    snapshot["outcome_ledger"] = _compact(_call(services["outcome_ledger"], "stats"))
+    snapshot["scientific_engine"] = _compact(_call(services["scientific_engine"], "stats"))
+    snapshot["world_model"] = _compact(_call(services["unified_world_model"], "status"))
+    snapshot["phenomenal_engine"] = _compact(_phenomenal_state(services["phenomenal_engine"]))
+    return snapshot

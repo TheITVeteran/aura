@@ -1700,6 +1700,7 @@ class CognitiveEngine:
                 "lane": live_mind_context.get("lane"),
                 "voice": live_mind_context.get("voice"),
                 "substrate": live_mind_context.get("substrate"),
+                "mind_snapshot": live_mind_context.get("mind_snapshot"),
                 "governance": live_mind_context.get("governance"),
             }
             system_prompt = (

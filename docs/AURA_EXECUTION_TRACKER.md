@@ -17,6 +17,51 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Live Desktop Mind-Path Checkpoint (2026-06-25)
+
+### Gaps Addressed
+
+- **Desktop chat still depended too much on prompt framing**:
+  `core/runtime/live_mind_snapshot.py` now collects bounded runtime readouts
+  from canonical mind services before a live desktop reply is generated.
+- **Backend mind services were not part of the live speech context**:
+  `interface/routes/chat.py` now includes a `mind_snapshot` in the live mind
+  context payload sent through the desktop CognitiveEngine path.
+- **The CognitiveEngine did not compact the deeper live state into its
+  desktop prompt contract**: `core/brain/cognitive_engine.py` now carries the
+  `mind_snapshot` into the live-user generation context alongside lane, voice,
+  substrate, and governance state.
+- **Affect grounding and drive integration were available but not registered
+  with the consciousness provider**: `core/providers/consciousness_provider.py`
+  now registers `affect_grounding` and `drive_integration` as canonical
+  optional services.
+- **Regression coverage**: `tests/test_live_mind_snapshot.py` proves the
+  snapshot gathers global workspace, nociception, affect grounding, drive
+  integration, outcome/science ledgers, unified world model, and phenomenal
+  state, and proves the live desktop payload carries that state.
+
+### Latest Commands Run
+
+```bash
+python -m pytest tests/test_live_mind_snapshot.py tests/test_deep_mind_service_registration.py tests/test_server_conversation_lane.py::test_live_turn_contract_refuses_engine_text_without_live_mind_context tests/test_server_conversation_lane.py::test_api_chat_desktop_discards_bounded_repair_when_full_mind_path_not_proven -q
+python -m pytest tests/test_server_conversation_lane.py tests/test_live_mind_snapshot.py tests/test_deep_mind_service_registration.py -q
+make enterprise-gate
+make production-gate
+```
+
+Latest focused result: **200 passed** for the live conversation-lane,
+live-mind snapshot, and deep service-registration suites. `make
+enterprise-gate` and `make production-gate` passed. This checkpoint moves the
+desktop speech path from prompt-only grounding toward structural runtime
+grounding. It does **not** yet claim the 32B/70B live GUI demo has been run,
+that CRSM/CAA are closed, or that final-proof is complete.
+
+Current closeout estimate after this checkpoint: **~84%**. Remaining work is
+estimated at **5-7 total checkpoints**: full-path enforcement, live GUI/voice
+demo proof, memory continuity and tool receipts, CRSM/CAA closure, long-run
+runtime reliability, final-proof/DNU/Aletheia validation, and final claims
+purification.
+
 ## Latest Closeout Proof Pass (2026-06-02)
 
 ### Gaps Addressed

@@ -72,6 +72,16 @@ def register_consciousness_services(container):
         return get_nociception_engine()
     container.register('nociception', create_nociception, lifetime=ServiceLifetime.SINGLETON, required=True)
 
+    def create_affect_grounding():
+        from core.affect.affect_grounding import get_affect_grounding_engine
+        return get_affect_grounding_engine()
+    container.register('affect_grounding', create_affect_grounding, lifetime=ServiceLifetime.SINGLETON, required=False)
+
+    def create_drive_integration():
+        from core.consciousness.drive_integration import get_drive_integration_engine
+        return get_drive_integration_engine()
+    container.register('drive_integration', create_drive_integration, lifetime=ServiceLifetime.SINGLETON, required=False)
+
     # Self-Report Engine (Grounded Voice)
     def create_self_report():
         from core.consciousness.self_report import SelfReportEngine

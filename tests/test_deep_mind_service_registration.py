@@ -30,6 +30,8 @@ def test_deep_mind_services_resolve_from_canonical_providers(tmp_path):
         expected = {
             "global_workspace",
             "nociception",
+            "affect_grounding",
+            "drive_integration",
             "outcome_ledger",
             "scientific_engine",
             "unified_world_model",
@@ -43,6 +45,8 @@ def test_deep_mind_services_resolve_from_canonical_providers(tmp_path):
 
         assert ServiceContainer.get("global_workspace").__class__.__name__ == "GlobalWorkspace"
         assert ServiceContainer.get("nociception").__class__.__name__ == "NociceptionEngine"
+        assert ServiceContainer.get("affect_grounding").__class__.__name__ == "AffectGroundingEngine"
+        assert ServiceContainer.get("drive_integration").__class__.__name__ == "DriveIntegrationEngine"
         assert ServiceContainer.get("outcome_ledger") is outcome_ledger.get_outcome_ledger()
         assert ServiceContainer.get("scientific_engine") is scientific_engine.get_scientific_engine()
         assert ServiceContainer.get("unified_world_model").__class__.__name__ == "UnifiedWorldModel"

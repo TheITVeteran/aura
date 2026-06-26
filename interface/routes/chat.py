@@ -3465,6 +3465,15 @@ def _build_live_mind_context_payload(
         record_degradation("chat", exc)
         logger.debug("Live mind context substrate snapshot unavailable: %s", exc)
 
+    mind_snapshot: dict[str, Any] = {}
+    try:
+        from core.runtime.live_mind_snapshot import collect_live_mind_snapshot
+
+        mind_snapshot = collect_live_mind_snapshot(lane=lane_snapshot)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Live mind context runtime snapshot unavailable: %s", exc)
+
     return {
         "schema": "aura.live_mind_context.v1",
         "required_for_live_desktop": bool(require_engine),
@@ -3483,6 +3492,7 @@ def _build_live_mind_context_payload(
         "recent_conversation_context": _bounded_text(recent_conversation_context, 2200),
         "voice": voice_snapshot,
         "substrate": substrate_summary,
+        "mind_snapshot": mind_snapshot,
         "governance": {
             "tool_governance_available": bool(required.get("tool_governance")),
             "legacy_fallback_allowed": False,
