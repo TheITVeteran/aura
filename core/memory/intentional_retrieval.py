@@ -325,6 +325,16 @@ class IntentionalRetriever:
             record_degradation("intentional_retrieval", exc, severity="debug",
                                action="semantic store not wired")
 
+        # VALUE — learned preferences / regrets from the bounded value model.
+        try:
+            from core.values.value_model import get_value_model
+            vm = get_value_model()
+            self.register_store(_T.VALUE, lambda q, n: vm.retrieve(q, n))
+            wired.append(_T.VALUE.value)
+        except Exception as exc:  # noqa: BLE001
+            record_degradation("intentional_retrieval", exc, severity="debug",
+                               action="value store not wired")
+
         # SOCIAL — relationship milestones matched on token overlap with the query.
         try:
             from core.memory.social_memory import SocialMemory

@@ -163,6 +163,14 @@ def register_all_services(is_proxy: bool = False):
         lifetime=ServiceLifetime.SINGLETON,
         required=False,
     )
+    # Learned-but-bounded value model — preferences fenced by an immutable constitution,
+    # anchored in Will; also backs the intentional retriever's VALUE store.
+    container.register(
+        'value_model',
+        lambda: __import__('core.values.value_model', fromlist=['get_value_model']).get_value_model(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
     container.register('emergent_goal_engine', create_emergent_goal_engine, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('structural_mutator', create_structural_mutator, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('lineage_manager', create_lineage_manager, lifetime=ServiceLifetime.SINGLETON, required=False)
