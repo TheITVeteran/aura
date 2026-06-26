@@ -93,7 +93,9 @@ class OutcomeSimulationEngine:
             worst_case_harm=round(worst, 3),
         )
 
-    async def simulate(self, action: str, context: dict | None = None, n: int = 3) -> SimulationResult:
+    async def simulate(
+        self, action: str, context: dict | None = None, n: int = 3, *, timeout: float = 25.0
+    ) -> SimulationResult:
         self._sims += 1
         trajectories = self._heuristic_trajectories(action, context)
 
@@ -110,7 +112,7 @@ class OutcomeSimulationEngine:
                 )
                 result = await asyncio.wait_for(
                     brain.think(prompt, mode=ThinkingMode.FAST, origin="culture_mind", is_background=True),
-                    timeout=25.0,
+                    timeout=timeout,
                 )
                 text = coerce_text(result)
                 if text:

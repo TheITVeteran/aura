@@ -3205,8 +3205,17 @@ class CapabilityEngine(AuraBaseModule):
                 _action_desc = f"{skill_name} {str(params)[:200]}"
                 _risk_hint = locals().get("risk", "medium")
                 _kokoro = _SC.get("kokoro", default=None)
+                _escalate = False
                 if _kokoro is not None:
                     _verdict = _kokoro.quick_check(_action_desc, context={"risk_level": _risk_hint})
+                    # Rare borderline-with-real-concern case: deepen with the model
+                    # (bounded; only raises concern, never clears a flag).
+                    _escalate = _verdict.verdict != "block" and _kokoro.should_escalate(_verdict)
+                    if _escalate:
+                        self.logger.info("⚖️ Escalating skill '%s' to deep conscience review…", skill_name)
+                        _verdict = await _kokoro.challenge(
+                            _action_desc, context={"risk_level": _risk_hint}, timeout=8.0
+                        )
                     if _verdict.verdict == "block":
                         self.logger.warning(
                             "⚖️ Adversarial conscience blocked skill '%s': %s",
@@ -3218,9 +3227,16 @@ class CapabilityEngine(AuraBaseModule):
                             "status": "blocked_by_conscience",
                         }
                 _minds = _SC.get("culture_mind", default=None)
-                if _minds is not None and hasattr(_minds, "assess_fast"):
-                    _sim = _minds.assess_fast(_action_desc, context={"risk_level": _risk_hint})
-                    if _sim.recommendation == "hold":
+                if _minds is not None:
+                    # On escalation, run the full model-driven simulation; otherwise the
+                    # zero-latency heuristic. Advisory either way.
+                    if _escalate and hasattr(_minds, "simulate"):
+                        _sim = await _minds.simulate(_action_desc, context={"risk_level": _risk_hint}, timeout=8.0)
+                    elif hasattr(_minds, "assess_fast"):
+                        _sim = _minds.assess_fast(_action_desc, context={"risk_level": _risk_hint})
+                    else:
+                        _sim = None
+                    if _sim is not None and _sim.recommendation == "hold":
                         self.logger.warning(
                             "🌀 Outcome simulation advises HOLD on skill '%s' (worst-case harm %.2f)",
                             skill_name, _sim.worst_case_harm,

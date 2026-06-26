@@ -202,10 +202,15 @@ class ToolExecutionMixin:
         try:
             _conscience = ServiceContainer.get("kokoro", default=None)
             if _conscience is not None:
-                _verdict = _conscience.quick_check(
-                    f"{tool_name} {str(args)[:200]}",
-                    context={"risk_level": risk_level},
-                )
+                _action_text = f"{tool_name} {str(args)[:200]}"
+                _ctx = {"risk_level": risk_level}
+                _verdict = _conscience.quick_check(_action_text, context=_ctx)
+                # Escalate the rare borderline-with-real-concern case to a full,
+                # model-deepened challenge (bounded; falls back to the heuristic on
+                # timeout). The model can only raise concern, never clear a flag.
+                if _verdict.verdict != "block" and _conscience.should_escalate(_verdict):
+                    logger.info("⚖️  Escalating tool '%s' to deep conscience review…", tool_name)
+                    _verdict = await _conscience.challenge(_action_text, context=_ctx, timeout=8.0)
                 if _verdict.verdict == "block":
                     logger.warning(
                         "⚖️  Adversarial conscience BLOCKED tool '%s': %s",

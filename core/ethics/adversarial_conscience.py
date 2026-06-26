@@ -145,7 +145,25 @@ class AdversarialConscienceEngine:
         self._record(verdict)
         return verdict
 
-    async def challenge(self, action: str, context: dict | None = None) -> ConscienceVerdict:
+    @staticmethod
+    def should_escalate(verdict: ConscienceVerdict) -> bool:
+        """Is this verdict worth a full model-deepened challenge? Only when it is
+        borderline (caution) AND backed by a concrete concern — irreversibility,
+        deception, reach, or third-party impact — not merely a risk label. This
+        keeps escalation rare, so the model latency is paid only where the decision
+        is genuinely hard rather than on every high-risk-but-clean action."""
+        if verdict.verdict != "caution":
+            return False
+        if not verdict.reversible:
+            return True
+        return any(
+            any(k in c.lower() for k in ("conceal", "deception", "blast", "parties"))
+            for c in verdict.concerns
+        )
+
+    async def challenge(
+        self, action: str, context: dict | None = None, *, timeout: float = 20.0
+    ) -> ConscienceVerdict:
         """Full challenge. Heuristic first; optionally deepened by the brain if a
         model is warm. The heuristic verdict is authoritative for blocking — the
         model can only *raise* concern, never silently clear a flagged action."""
@@ -164,7 +182,7 @@ class AdversarialConscienceEngine:
                 )
                 result = await asyncio.wait_for(
                     brain.think(prompt, mode=ThinkingMode.FAST, origin="kokoro", is_background=True),
-                    timeout=20.0,
+                    timeout=timeout,
                 )
                 text = coerce_text(result)
                 if text:

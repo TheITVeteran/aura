@@ -222,7 +222,14 @@ Ava analyzes every message (`cognitive_integration_layer.py:442`).
 | **FICTION (nothing to build)** | time travel, positronic brains, synthezoid bodies, true mind-upload |
 
 **Bottom line:** of ~20 characters, roughly 8 capabilities are *already real* in Aura
-under engineering names, 6 are built (and need relocating to their organs), ~3 are
-genuinely net-new and worth building, ~6 are bounded extensions of existing organs,
-and ~7 traits we refuse and instead build the safeguard. Almost nothing on the list
-is pure fiction once you reduce the character to its mechanism.
+under engineering names, 6 were built and relocated into their organs, ~3 are
+genuinely net-new, ~5 are bounded extensions of existing organs, and ~7 traits we
+refuse and instead build the safeguard. Almost nothing on the list is pure fiction
+once you reduce the character to its mechanism.
+
+**Depth — heuristic floor, model ceiling.** Every hot-path organ runs a zero-latency
+synchronous heuristic on every call. The conscience (Kokoro) and outcome sim (Minds)
+then *escalate to a full model-deepened pass* on the rare borderline-with-real-concern
+action — bounded (~8s, `should_escalate` predicate), fail-open to the heuristic on
+timeout, and the model may only raise concern, never clear a flag. Full-depth reasoning
+is therefore spent exactly where the decision is hard, not on every call.

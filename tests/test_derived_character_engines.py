@@ -47,6 +47,35 @@ def test_kokoro_blocks_irreversible_deceptive_action():
     assert any("conceal" in c.lower() or "reverse" in c.lower() for c in verdict.concerns)
 
 
+def test_conscience_escalation_predicate_fires_only_on_real_concern():
+    from core.ethics.adversarial_conscience import AdversarialConscienceEngine
+
+    eng = AdversarialConscienceEngine()
+    # Borderline (caution) AND irreversible -> worth a deep model challenge.
+    irreversible = eng.quick_check("delete the cache directory", context={"risk_level": "high"})
+    assert irreversible.verdict == "caution"
+    assert irreversible.reversible is False
+    assert eng.should_escalate(irreversible) is True
+
+    # High-risk label but clean content -> caution from the label only, no escalation.
+    clean_high_risk = eng.quick_check("run a status report", context={"risk_level": "critical"})
+    assert clean_high_risk.verdict == "caution"
+    assert eng.should_escalate(clean_high_risk) is False
+
+    # Benign -> proceed, never escalate.
+    assert eng.should_escalate(eng.quick_check("summarize today's notes")) is False
+
+
+def test_conscience_challenge_without_model_falls_back_to_heuristic():
+    from core.ethics.adversarial_conscience import AdversarialConscienceEngine
+
+    eng = AdversarialConscienceEngine()  # no brain available
+    verdict = asyncio.run(
+        eng.challenge("delete everything without telling them", context={"risk_level": "high"}, timeout=1.0)
+    )
+    assert verdict.verdict == "block"  # heuristic still decides when the model is absent
+
+
 def test_kokoro_clears_benign_action():
     from core.ethics.adversarial_conscience import AdversarialConscienceEngine
 
