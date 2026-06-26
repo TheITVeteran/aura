@@ -344,6 +344,30 @@ def _apply_memory_pressure_generation_controls(
     return options
 
 
+def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    allowed = {
+        "enabled",
+        "live_mind_controls_bound",
+        "clean_user_surface_contract",
+        "strict_answer_contract",
+        "strict_value_contract",
+        "proof_evaluation_contract",
+        "operator_evidence_contract",
+        "health_probe",
+        "surface_alpha_requested",
+        "surface_alpha_applied",
+        "surface_alpha_applied_ok",
+        "recurrent_runtime_loops_requested",
+        "recurrent_depth_present",
+        "recurrent_runtime_loops_applied",
+        "recurrent_runtime_loops_applied_ok",
+        "applied",
+    }
+    return {key: value[key] for key in allowed if key in value}
+
+
 def _coerce_timeout_seconds(value: Any) -> float | None:
     """Normalize public timeout kwargs into positive request deadlines."""
     if value is None or isinstance(value, Deadline):
@@ -1015,6 +1039,7 @@ class MLXLocalClient:
         self._current_first_token_hard_ceiling_s = 0.0
         self._foreground_generation_watchdog: _threading.Timer | None = None
         self._recurrent_depth_status: dict[str, Any] = {"active": False, "config": None}
+        self._last_surface_control_receipt: dict[str, Any] = {}
 
         # The state repository's SharedMemoryTransport may be backed by mmap on
         # restricted/macOS paths. mmap handles are not picklable under the
@@ -1032,6 +1057,16 @@ class MLXLocalClient:
 
     def _mark_progress(self) -> None:
         self._last_progress_at = time.time()
+
+    def get_last_surface_control_receipt(self) -> dict[str, Any]:
+        return dict(self._last_surface_control_receipt)
+
+    def _record_surface_control_receipt_from_response(self, response: dict[str, Any]) -> None:
+        receipt = _sanitize_surface_control_receipt(
+            response.get("surface_control_receipt") if isinstance(response, dict) else None
+        )
+        if receipt:
+            self._last_surface_control_receipt = receipt
 
     def _note_expected_generation_cancellation(self, reason: str, *, count: int) -> None:
         if count <= 0:
@@ -3401,6 +3436,7 @@ class MLXLocalClient:
                 if kwargs.get("clean_user_surface_recurrent_loops") is not None
                 else (1 if kwargs.get("health_probe", False) else None)
             ),
+            "live_mind_controls_bound": bool(kwargs.get("live_mind_controls_bound", False)),
             "benchmark_request": bool(kwargs.get("benchmark_request", False)),
             "disable_prompt_cache": bool(kwargs.get("disable_prompt_cache", False)),
             "clear_prompt_cache": bool(kwargs.get("clear_prompt_cache", False)),
@@ -3479,6 +3515,7 @@ class MLXLocalClient:
             if not res:
                 return None
             if res.get("status") == "ok":
+                self._record_surface_control_receipt_from_response(res)
                 text = res.get("text", "").strip()
                 self._mark_progress()
                 if not text:

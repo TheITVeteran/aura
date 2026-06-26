@@ -66,6 +66,38 @@ def test_memory_pressure_generation_controls_use_model_default_when_unspecified(
     assert controlled["clean_user_surface_recurrent_loops"] == 1
 
 
+def test_mlx_client_retains_surface_control_receipt_from_worker_response():
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = MLXLocalClient("Aura-32B-20260510-151144")
+
+    client._record_surface_control_receipt_from_response(
+        {
+            "status": "ok",
+            "surface_control_receipt": {
+                "enabled": True,
+                "live_mind_controls_bound": True,
+                "clean_user_surface_contract": True,
+                "surface_alpha_applied": 0.22,
+                "surface_alpha_applied_ok": True,
+                "recurrent_runtime_loops_applied": 2,
+                "recurrent_runtime_loops_applied_ok": True,
+                "applied": True,
+                "untrusted_extra": "drop-me",
+            },
+        }
+    )
+
+    receipt = client.get_last_surface_control_receipt()
+    assert receipt["enabled"] is True
+    assert receipt["live_mind_controls_bound"] is True
+    assert receipt["clean_user_surface_contract"] is True
+    assert receipt["surface_alpha_applied"] == 0.22
+    assert receipt["recurrent_runtime_loops_applied"] == 2
+    assert receipt["applied"] is True
+    assert "untrusted_extra" not in receipt
+
+
 def test_mlx_foreground_first_token_watchdog_aborts_tokenless_wall_clock_stall(monkeypatch):
     from core.brain.llm import mlx_client
 

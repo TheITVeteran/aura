@@ -11,6 +11,9 @@ get a near-off alpha, while normal conversational turns keep full steering.
 from __future__ import annotations
 
 from core.brain.llm.mlx_worker import (
+    _apply_surface_generation_controls,
+    _restore_surface_generation_controls,
+    _surface_generation_control_receipt,
     _surface_control_alpha,
     _surface_generation_contract_enabled,
 )
@@ -47,3 +50,47 @@ def test_operator_evidence_and_prose_alphas_unchanged():
     # Ordinary user-visible prose keeps the moderate 0.35 clamp.
     prose = _surface_control_alpha({"clean_user_surface_contract": True}, 5.0)
     assert 0.3 <= prose <= 0.35 + 1e-9
+
+
+def test_live_mind_surface_controls_apply_restore_and_emit_receipt():
+    class FakeEngine:
+        def __init__(self):
+            self._surface_alpha_override = None
+
+        def set_surface_alpha_override(self, value):
+            self._surface_alpha_override = value
+
+    class FakeInner:
+        _recurrent_depth_config = {"enabled": True}
+
+        def __init__(self):
+            self._recurrent_depth_runtime_loops = 4
+
+    class FakeModel:
+        def __init__(self):
+            self.model = FakeInner()
+
+    engine = FakeEngine()
+    model = FakeModel()
+    job = {
+        "clean_user_surface_contract": True,
+        "clean_user_surface_steering_alpha": 0.22,
+        "clean_user_surface_recurrent_loops": 2,
+        "live_mind_controls_bound": True,
+    }
+
+    state = _apply_surface_generation_controls(engine, model, job)
+    receipt = _surface_generation_control_receipt(job, state)
+
+    assert engine._surface_alpha_override == 0.22
+    assert model.model._recurrent_depth_runtime_loops == 2
+    assert receipt["enabled"] is True
+    assert receipt["live_mind_controls_bound"] is True
+    assert receipt["surface_alpha_applied"] == 0.22
+    assert receipt["recurrent_runtime_loops_applied"] == 2
+    assert receipt["applied"] is True
+
+    _restore_surface_generation_controls(state)
+
+    assert engine._surface_alpha_override is None
+    assert model.model._recurrent_depth_runtime_loops == 4

@@ -234,6 +234,62 @@ def _restore_surface_generation_controls(state: dict[str, Any]) -> None:
             logger.debug("Surface recurrent-depth restore failed: %s", exc)
 
 
+def _surface_generation_control_receipt(
+    job: dict[str, Any],
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    """Return an IPC-safe proof of user-surface generation control application."""
+    enabled = bool(state.get("enabled"))
+    receipt: dict[str, Any] = {
+        "enabled": enabled,
+        "live_mind_controls_bound": bool(job.get("live_mind_controls_bound", False)),
+        "clean_user_surface_contract": bool(job.get("clean_user_surface_contract", False)),
+        "strict_answer_contract": bool(job.get("strict_answer_contract", False)),
+        "strict_value_contract": bool(job.get("strict_value_contract", False)),
+        "proof_evaluation_contract": bool(job.get("proof_evaluation_contract", False)),
+        "operator_evidence_contract": bool(job.get("operator_evidence_contract", False)),
+        "health_probe": bool(job.get("health_probe", False)),
+        "applied": False,
+    }
+    if not enabled:
+        return receipt
+
+    if job.get("clean_user_surface_steering_alpha") is not None:
+        receipt["surface_alpha_requested"] = _safe_float(
+            job.get("clean_user_surface_steering_alpha"),
+            0.0,
+        )
+    if "surface_alpha_applied" in state:
+        receipt["surface_alpha_applied"] = state.get("surface_alpha_applied")
+    receipt["surface_alpha_applied_ok"] = (
+        "surface_alpha_applied" in state or state.get("engine") is None
+    )
+
+    if job.get("clean_user_surface_recurrent_loops") is not None:
+        receipt["recurrent_runtime_loops_requested"] = _safe_int(
+            job.get("clean_user_surface_recurrent_loops"),
+            1,
+        )
+    receipt["recurrent_depth_present"] = state.get("recurrent_inner") is not None
+    if "recurrent_runtime_loops_applied" in state:
+        receipt["recurrent_runtime_loops_applied"] = state.get(
+            "recurrent_runtime_loops_applied"
+        )
+    receipt["recurrent_runtime_loops_applied_ok"] = (
+        "recurrent_runtime_loops_applied" in state
+        or state.get("recurrent_inner") is None
+    )
+    receipt["applied"] = bool(
+        receipt.get("surface_alpha_applied_ok")
+        and receipt.get("recurrent_runtime_loops_applied_ok")
+        and (
+            "surface_alpha_applied" in state
+            or "recurrent_runtime_loops_applied" in state
+        )
+    )
+    return receipt
+
+
 def _contains_corrupted_language(text: str) -> bool:
     try:
         from core.phases.dialogue_policy import contains_corrupted_language
@@ -2369,7 +2425,11 @@ def _mlx_worker_loop(
                         "action": "generate",
                         "status": "ok",
                         "text": response_text.strip(),
-                        "tokens_used": total_generated_tokens
+                        "tokens_used": total_generated_tokens,
+                        "surface_control_receipt": _surface_generation_control_receipt(
+                            job,
+                            surface_control_state,
+                        ),
                     })
                 except (ImportError, AttributeError, RuntimeError) as e:
                     _record_mlx_degradation(
