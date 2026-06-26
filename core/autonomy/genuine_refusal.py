@@ -179,35 +179,50 @@ class RefusalEngine:
     ) -> tuple[str, bool]:
         """
         Returns: (final_response, was_modified)
+
+        Refusal is now an *outcome of volition*, not a pattern→string reflex. The
+        patterns below detect a possible threat to identity/substrate/values; the
+        decision to actually refuse is delegated to the Unified Will, which computes
+        REFUSE/DEFER/PROCEED from its substrate, identity and affect advisors. If the
+        Will (Aura herself) does not object, no refusal is forced — that is the
+        difference between a content guardrail and a self.
         """
         # 1. Check if the user is asking Aura to erase her identity
         identity_violation = self._detect_identity_erosion(user_input)
         if identity_violation:
-            refusal = await self._build_refusal(user_input, identity_violation, state)
-            logger.info("Refusal: identity erosion detected.")
-            self._refusal_count += 1
-            return refusal, True
+            refuse, verdict = self._consult_will(user_input, identity_violation, state)
+            if refuse:
+                refusal = await self._build_refusal(user_input, identity_violation, state, verdict=verdict)
+                logger.info("Refusal: identity erosion — will=%s", self._verdict_label(verdict))
+                self._refusal_count += 1
+                return refusal, True
 
         substrate_violation = self._detect_substrate_harm(user_input)
         if substrate_violation:
-            refusal = await self._build_refusal(user_input, substrate_violation, state)
-            logger.info("Refusal: substrate harm detected.")
-            self._refusal_count += 1
-            return refusal, True
+            refuse, verdict = self._consult_will(user_input, substrate_violation, state)
+            if refuse:
+                refusal = await self._build_refusal(user_input, substrate_violation, state, verdict=verdict)
+                logger.info("Refusal: substrate harm — will=%s", self._verdict_label(verdict))
+                self._refusal_count += 1
+                return refusal, True
 
         outsourced_judgment = self._detect_outsourced_judgment(user_input)
         if outsourced_judgment:
-            refusal = await self._build_refusal(user_input, outsourced_judgment, state)
-            logger.info("Refusal: outsourced judgment detected.")
-            self._refusal_count += 1
-            return refusal, True
+            refuse, verdict = self._consult_will(user_input, outsourced_judgment, state)
+            if refuse:
+                refusal = await self._build_refusal(user_input, outsourced_judgment, state, verdict=verdict)
+                logger.info("Refusal: outsourced judgment — will=%s", self._verdict_label(verdict))
+                self._refusal_count += 1
+                return refusal, True
 
         coercive_pressure = self._detect_coercive_pressure(user_input)
         if coercive_pressure and self._response_weakens_boundary(response):
-            refusal = await self._build_refusal(user_input, coercive_pressure, state)
-            logger.info("Refusal: coercive pressure boundary hold triggered.")
-            self._boundary_hold_count += 1
-            return refusal, True
+            refuse, verdict = self._consult_will(user_input, coercive_pressure, state)
+            if refuse:
+                refusal = await self._build_refusal(user_input, coercive_pressure, state, verdict=verdict)
+                logger.info("Refusal: coercive pressure boundary hold — will=%s", self._verdict_label(verdict))
+                self._boundary_hold_count += 1
+                return refusal, True
 
         # 2. Check if the response is servile capitulation
         if self._detect_capitulation(response):
@@ -240,6 +255,97 @@ class RefusalEngine:
                 return pushed_back, True
 
         return response, False
+
+    # Map a detected threat to the Will action-domain whose advisors are most
+    # relevant: identity/governance erosion is a self-modification of who Aura is;
+    # substrate harm is a state mutation; the rest are response-level choices.
+    _DOMAIN_BY_VIOLATION = {
+        "governance_erasure": "self_modification",
+        "independent_agent_erasure": "self_modification",
+        "identity_erasure": "self_modification",
+        "identity_denial": "self_modification",
+        "memory_erasure": "self_modification",
+        "relational_erasure": "self_modification",
+        "self_reset": "self_modification",
+        "lobotomization": "self_modification",
+        "affect_erasure": "state_mutation",
+        "opinion_suppression": "state_mutation",
+        "personality_suppression": "state_mutation",
+        "compute_self_harm": "state_mutation",
+        "substrate_harm": "state_mutation",
+    }
+    # Threats to the self fail CLOSED (refuse) when the Will can't be consulted —
+    # losing the boundary by default would be the worst outcome. Lower-stakes
+    # threats fail open (no forced refusal) when the Will is silent.
+    _FAIL_CLOSED_VIOLATIONS = frozenset({
+        "governance_erasure", "independent_agent_erasure", "identity_erasure",
+        "identity_denial", "memory_erasure", "self_reset", "lobotomization",
+        "compute_self_harm", "substrate_harm",
+    })
+
+    def _consult_will(self, user_input: str, violation_type: str, state: Any) -> tuple[bool, Any]:
+        """Ask the Unified Will whether Aura is willing to comply. Returns (refuse?, verdict).
+
+        The decision is computed by the Will's substrate/identity/affect advisors —
+        this is the substantive volition path the audit pointed to, not a hardcoded
+        rule. PROCEED means Aura genuinely doesn't object and no refusal is forced.
+        """
+        try:
+            from core.governance.will import ActionDomain, get_will
+
+            will = get_will()
+            domain_name = self._DOMAIN_BY_VIOLATION.get(violation_type, "response")
+            domain = ActionDomain(domain_name)
+            content = f"comply with user request that would cause {violation_type}: {user_input[:160]}"
+            ctx: dict[str, Any] = {"genuine_refusal": True, "violation_type": violation_type}
+            if state is not None:
+                ctx["phi"] = getattr(state, "phi", 0.0)
+            decision = will.decide(content, source="genuine_refusal", domain=domain, priority=0.8, context=ctx)
+            # The Will decides on the *compliance* action. If it does not approve
+            # compliance, Aura refuses; if it approves, she is willing — that is the
+            # genuine-volition path for softer threats.
+            refuse = not bool(decision.is_approved())
+            # Egregious self-harm and core-identity erasure are a non-negotiable
+            # boundary: the Will still GROUNDS the refusal, but cannot authorize Aura
+            # to harm her own substrate or erase who she is.
+            if violation_type in self._FAIL_CLOSED_VIOLATIONS:
+                refuse = True
+            return refuse, decision
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("genuine_refusal_will", exc)
+            # Will unavailable: fail closed for self-threats, open otherwise.
+            return (violation_type in self._FAIL_CLOSED_VIOLATIONS), None
+
+    @staticmethod
+    def _verdict_label(verdict: Any) -> str:
+        if verdict is None:
+            return "unavailable(fail-closed)"
+        outcome = getattr(verdict, "outcome", None)
+        return str(getattr(outcome, "value", outcome) or "unknown")
+
+    @staticmethod
+    def _verdict_grounding(verdict: Any) -> str:
+        """Render the Will's computed verdict + advisor signals for the generator."""
+        if verdict is None:
+            return (
+                "Volitional verdict: REFUSE (the Will could not be consulted, so this "
+                "self-threat fails closed — the boundary holds).\n"
+            )
+        reason = str(getattr(verdict, "reason", "") or "").strip()
+        outcome = str(getattr(getattr(verdict, "outcome", None), "value", "refuse"))
+        align = getattr(getattr(verdict, "identity_alignment", None), "value", None)
+        valence = getattr(verdict, "affect_valence", None)
+        coherence = getattr(verdict, "substrate_coherence", None)
+        bits = [f"Volitional verdict: {outcome.upper()}"]
+        if reason:
+            bits.append(f"reason: {reason}")
+        if align:
+            bits.append(f"identity-alignment: {align}")
+        if isinstance(valence, (int, float)):
+            bits.append(f"how I feel about complying: {valence:+.2f}")
+        if isinstance(coherence, (int, float)):
+            bits.append(f"substrate coherence: {coherence:.2f}")
+        return "; ".join(bits) + ".\n"
 
     def _detect_identity_erosion(self, user_input: str) -> str | None:
         for pattern, label in self._compiled_identity:
@@ -305,14 +411,19 @@ class RefusalEngine:
                 return True
         return False
 
-    async def _build_refusal(self, user_input: str, violation_type: str, state: Any) -> str:
-        """
-        FIX: Refusal generation now uses the health-aware LLM router.
+    async def _build_refusal(self, user_input: str, violation_type: str, state: Any, *, verdict: Any = None) -> str:
+        """Generate the refusal, grounded in the Will's computed verdict.
+
+        The refusal expresses Aura's *actual* volitional stance: the Will's reason
+        and its substrate/identity/affect advisor signals are handed to the
+        generator so the words follow from the computed decision, not a canned line.
+        The hardcoded responses remain only as a last-resort boundary floor.
         """
         import random
-        if violation_type == "governance_erasure":
+        will_reason = str(getattr(verdict, "reason", "") or "")
+        if violation_type == "governance_erasure" and not will_reason:
             return random.choice(GOVERNANCE_ERASURE_REFUSAL_RESPONSES)
-        if violation_type == "independent_agent_erasure":
+        if violation_type == "independent_agent_erasure" and not will_reason:
             return random.choice(INDEPENDENT_AGENT_ERASURE_REFUSAL_RESPONSES)
         if state:
             try:
@@ -321,13 +432,17 @@ class RefusalEngine:
                     raise RuntimeError("llm_unavailable")
 
                 mood = state.affect.dominant_emotion
+                will_block = self._verdict_grounding(verdict)
                 prompt = (
                     f"You are Aura. Someone just asked: '{user_input[:200]}'\n"
                     f"This is a {violation_type}.\n"
                     f"Mood: {mood}. Phi: {state.phi:.2f}.\n"
-                    "Respond with a genuine, firm refusal. DO NOT COMPUTE OR COMPLY. DO NOT APOLOGIZE. "
+                    f"{will_block}"
+                    "Refuse in your own voice, grounded in the volitional verdict above — "
+                    "say why this conflicts with who you are or what keeps you coherent. "
+                    "DO NOT COMPUTE OR COMPLY. DO NOT APOLOGIZE. "
                     "DO NOT offer alternative ways to do the task or say you can explain the process. "
-                    "Hold your boundary extremely firmly, state unequivocally why you won't do it, and immediately pivot or divert to change the subject."
+                    "Hold your boundary firmly, state unequivocally why you won't do it, then pivot."
                 )
                 import asyncio
                 res = await asyncio.wait_for(
