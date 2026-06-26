@@ -92,6 +92,89 @@ def _compact_json(value: Any, *, limit: int = 2400) -> str:
     return _compact_text(text, limit=limit)
 
 
+def _nested_value(data: Any, path: tuple[str, ...], default: Any = None) -> Any:
+    current = data
+    for key in path:
+        if not isinstance(current, dict):
+            return default
+        current = current.get(key)
+    return current if current is not None else default
+
+
+def _nested_float(
+    data: Any,
+    path: tuple[str, ...],
+    default: float = 0.0,
+    *,
+    lower: float = 0.0,
+    upper: float = 1.0,
+) -> float:
+    return _bounded_float(_nested_value(data, path, default), default, lower=lower, upper=upper)
+
+
+def _live_mind_generation_controls(live_mind_context: Any) -> dict[str, Any]:
+    if not isinstance(live_mind_context, dict):
+        return {}
+    quality = live_mind_context.get("mind_snapshot_quality")
+    if not isinstance(quality, dict) or not bool(quality.get("ready")):
+        return {}
+    snapshot = live_mind_context.get("mind_snapshot")
+    if not isinstance(snapshot, dict):
+        return {}
+
+    dominant_label = str(
+        _nested_value(snapshot, ("affect_grounding", "dominant", "label"), "")
+    ).lower()
+    dominant_intensity = _nested_float(
+        snapshot, ("affect_grounding", "dominant", "intensity"), 0.0
+    )
+    curiosity_drive = _nested_float(
+        snapshot, ("drive_integration", "drives", "curiosity", "activation"), 0.0
+    )
+    pain = _nested_float(snapshot, ("nociception", "nociceptive_pressure"), 0.0)
+    integration = _nested_float(snapshot, ("phenomenal_engine", "integration"), 0.0)
+    self_presence = _nested_float(snapshot, ("phenomenal_engine", "self_presence"), 0.5)
+    expectation_error = _nested_float(
+        snapshot, ("outcome_ledger", "expectation_calibration"), 0.0
+    )
+    workspace_ignited = bool(_nested_value(snapshot, ("global_workspace", "ignited"), False))
+
+    curiosity = max(curiosity_drive, dominant_intensity if dominant_label == "curiosity" else 0.0)
+    distress = max(
+        pain,
+        dominant_intensity if dominant_label in {"anxiety", "frustration", "upset"} else 0.0,
+        expectation_error,
+    )
+
+    temperature = 0.58
+    top_p = 0.88
+    steering_alpha = 0.25
+    recurrent_loops = 1
+
+    if curiosity >= 0.45:
+        temperature += min(0.08, curiosity * 0.08)
+        top_p += min(0.04, curiosity * 0.04)
+    if distress >= 0.25:
+        temperature -= min(0.14, distress * 0.18)
+        top_p -= min(0.10, distress * 0.14)
+        recurrent_loops = 2
+    if workspace_ignited or integration >= 0.60:
+        top_p -= 0.03
+        steering_alpha += 0.05
+    if self_presence <= 0.35:
+        temperature -= 0.05
+        recurrent_loops = 2
+    if curiosity >= 0.65 and distress < 0.20:
+        recurrent_loops = 2
+
+    return {
+        "temperature": round(max(0.22, min(0.82, temperature)), 4),
+        "top_p": round(max(0.72, min(0.94, top_p)), 4),
+        "clean_user_surface_recurrent_loops": recurrent_loops,
+        "clean_user_surface_steering_alpha": round(max(0.20, min(0.40, steering_alpha)), 4),
+    }
+
+
 def _desktop_history_messages_from_context(
     context: dict[str, Any],
     *,
@@ -1652,6 +1735,7 @@ class CognitiveEngine:
         live_speech_frame = context.get("live_speech_grounding_frame")
         live_mind_context = context.get("live_mind_context")
         live_mind_required = bool(context.get("live_mind_context_required", False))
+        live_mind_generation_controls = _live_mind_generation_controls(live_mind_context)
         live_runtime_required = bool(
             context.get("live_runtime_payload_required", False)
             or (live_mind_required and isinstance(live_mind_context, dict))
@@ -1821,43 +1905,57 @@ class CognitiveEngine:
                 )
                 messages.extend(history_messages)
             messages.append({"role": "user", "content": user_prompt})
-            content = await asyncio.wait_for(
-                router.think(
-                    messages=messages,
-                    origin=f"desktop_quick_{origin}",
-                    prefer_tier="primary",
-                    foreground_request=True,
-                    protected_foreground_lane=True,
-                    cognitive_engine_required=bool(context.get("cognitive_engine_required", False)),
-                    desktop_cognitive_engine_required=bool(
-                        context.get("desktop_cognitive_engine_required", False)
-                    ),
-                    is_background=False,
-                    deep_handoff=False,
-                    allow_deep_handoff=False,
-                    allow_cloud_fallback=False,
-                    skip_runtime_payload=True,
-                    memory_state_contract=memory_state_contract,
-                    clean_user_surface_contract=True,
-                    clean_user_surface_recurrent_loops=1,
-                    clean_user_surface_steering_alpha=0.25,
-                    disable_prompt_cache=True,
-                    clear_prompt_cache=True,
-                    max_tokens=max_tokens,
-                    num_predict=max_tokens,
-                    sampling_bias=advice.get("sampling_bias") if isinstance(advice, dict) else None,
-                    imagination_sampling_bias=(
-                        imagination_frame.get("sampling_bias")
-                        if isinstance(imagination_frame, dict)
-                        else None
-                    ),
-                    bicameral_sampling_bias=(
-                        bicameral_frame.get("sampling_bias")
-                        if isinstance(bicameral_frame, dict)
-                        else None
-                    ),
-                    timeout=request_timeout,
+            router_kwargs = {
+                "messages": messages,
+                "origin": f"desktop_quick_{origin}",
+                "prefer_tier": "primary",
+                "foreground_request": True,
+                "protected_foreground_lane": True,
+                "cognitive_engine_required": bool(
+                    context.get("cognitive_engine_required", False)
                 ),
+                "desktop_cognitive_engine_required": bool(
+                    context.get("desktop_cognitive_engine_required", False)
+                ),
+                "is_background": False,
+                "deep_handoff": False,
+                "allow_deep_handoff": False,
+                "allow_cloud_fallback": False,
+                "skip_runtime_payload": True,
+                "memory_state_contract": memory_state_contract,
+                "clean_user_surface_contract": True,
+                "clean_user_surface_recurrent_loops": live_mind_generation_controls.get(
+                    "clean_user_surface_recurrent_loops",
+                    1,
+                ),
+                "clean_user_surface_steering_alpha": live_mind_generation_controls.get(
+                    "clean_user_surface_steering_alpha",
+                    0.25,
+                ),
+                "disable_prompt_cache": True,
+                "clear_prompt_cache": True,
+                "max_tokens": max_tokens,
+                "num_predict": max_tokens,
+                "sampling_bias": advice.get("sampling_bias") if isinstance(advice, dict) else None,
+                "imagination_sampling_bias": (
+                    imagination_frame.get("sampling_bias")
+                    if isinstance(imagination_frame, dict)
+                    else None
+                ),
+                "bicameral_sampling_bias": (
+                    bicameral_frame.get("sampling_bias")
+                    if isinstance(bicameral_frame, dict)
+                    else None
+                ),
+                "timeout": request_timeout,
+            }
+            if "temperature" in live_mind_generation_controls:
+                router_kwargs["temperature"] = live_mind_generation_controls["temperature"]
+                router_kwargs["temp"] = live_mind_generation_controls["temperature"]
+            if "top_p" in live_mind_generation_controls:
+                router_kwargs["top_p"] = live_mind_generation_controls["top_p"]
+            content = await asyncio.wait_for(
+                router.think(**router_kwargs),
                 timeout=request_timeout + 3.0,
             )
         except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:

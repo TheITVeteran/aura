@@ -67,6 +67,45 @@ estimated at **5-6 total checkpoints**: live GUI/voice demo proof, memory
 continuity and tool receipts, CRSM/CAA closure, long-run runtime reliability,
 final-proof/DNU/Aletheia validation, and final claims purification.
 
+## Latest Live Mind Generation-Control Checkpoint (2026-06-25)
+
+### Gaps Addressed
+
+- **Live mind state only influenced words in the prompt**:
+  `core/brain/cognitive_engine.py` now converts ready `mind_snapshot` state
+  into bounded generation controls before the local model call: temperature,
+  `top_p`, clean-user recurrent loops, and steering alpha.
+- **The adapter is general, not task-specific**: curiosity/drive activation,
+  nociception/distress, outcome calibration, global workspace ignition,
+  phenomenal integration, and self-presence alter generation controls within
+  hard clamps. No demo path or app sequence is encoded.
+- **Conversation continuity regression fixed while touching the path**:
+  recent completed conversation context is again applied even when no other
+  grounding-evidence block is present.
+- **Regression coverage**:
+  `tests/test_live_mind_generation_controls.py` proves snapshot state changes
+  sampling/recurrent controls and proves the desktop CognitiveEngine router
+  call receives those controls.
+
+### Latest Commands Run
+
+```bash
+python -m pytest tests/test_live_mind_generation_controls.py tests/test_server_conversation_lane.py tests/test_live_mind_snapshot.py tests/test_deep_mind_service_registration.py -q
+make enterprise-gate
+make production-gate
+```
+
+Latest focused result: **204 passed**. `make enterprise-gate` and `make
+production-gate` passed. This moves Aura beyond clever prompting for the live
+desktop path: runtime mind state now directly changes local model generation
+parameters. It does **not** yet claim live 32B GUI demo success, long-run soak,
+or final-proof completion.
+
+Current closeout estimate after this checkpoint: **~86%**. Remaining work is
+estimated at **5 total checkpoints**: live GUI/voice demo proof, memory/tool
+receipt hardening, CRSM/CAA closure, longevity/final-proof validation, and
+final claims purification.
+
 ## Latest Closeout Proof Pass (2026-06-02)
 
 ### Gaps Addressed
