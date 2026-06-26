@@ -92,6 +92,37 @@ def _reset_conversation_log():
         pass
 
 
+@pytest.fixture(autouse=True)
+def _desktop_live_mind_snapshot(monkeypatch):
+    from core.runtime import live_mind_snapshot
+
+    def _ready_snapshot(*, lane=None):
+        return {
+            "schema": "aura.live_mind_snapshot.v1",
+            "lane": dict(lane or {}),
+            "services_present": {
+                "global_workspace": True,
+                "nociception": True,
+                "affect_grounding": True,
+                "drive_integration": True,
+                "outcome_ledger": True,
+                "scientific_engine": True,
+                "unified_world_model": True,
+                "phenomenal_engine": True,
+            },
+            "global_workspace": {"last_winner": "desktop_conversation", "ignited": True},
+            "nociception": {"nociceptive_pressure": 0.0},
+            "affect_grounding": {"dominant": {"label": "engaged", "intensity": 0.5}},
+            "drive_integration": {"drives": {"curiosity": {"activation": 0.5}}},
+            "outcome_ledger": {"pending": 0, "resolved_count": 1},
+            "scientific_engine": {"total": 1, "by_status": {"supported": 1}},
+            "world_model": {"facets": {"learned": {"available": True}}},
+            "phenomenal_engine": {"available": True, "self_presence": 0.8},
+        }
+
+    monkeypatch.setattr(live_mind_snapshot, "collect_live_mind_snapshot", _ready_snapshot)
+
+
 def _mock_orch(**kwargs):
     """Build a SimpleNamespace orchestrator with the minimum interface api_chat expects."""
     ns = SimpleNamespace(**kwargs)
@@ -1275,6 +1306,8 @@ def test_live_turn_contract_allows_proven_generation_to_satisfy_inference(monkey
             "bounded_contract_used": False,
             "legacy_fallback_used": False,
             "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
             "live_mind_required_subsystems_ok": True,
             "response_path": "cognitive_engine",
         },
@@ -1314,6 +1347,8 @@ def test_live_turn_contract_preserves_stale_preflight_subsystem_state(monkeypatc
             "bounded_contract_used": False,
             "legacy_fallback_used": False,
             "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
             "live_mind_required_subsystems_ok": False,
             "response_path": "cognitive_engine",
         },
@@ -1455,6 +1490,8 @@ def test_live_turn_contract_accepts_memory_state_grounding_after_engine(monkeypa
             "bounded_contract_used": False,
             "legacy_fallback_used": False,
             "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
             "live_mind_required_subsystems_ok": True,
             "response_path": "cognitive_engine_memory_state_grounding",
         },
@@ -1467,6 +1504,41 @@ def test_live_turn_contract_accepts_memory_state_grounding_after_engine(monkeypa
     assert payload["required_subsystems_ok"] is True
     assert payload["architecture_context_bound"] is True
     assert payload["full_mind_path"] is True
+
+
+def test_live_turn_contract_refuses_engine_text_without_mind_snapshot(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "cognitive_engine_reply_failed": False,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine",
+        },
+    )
+
+    assert payload["live_mind_context_present"] is True
+    assert payload["live_mind_snapshot_present"] is False
+    assert payload["live_mind_snapshot_bound"] is False
+    assert payload["full_mind_path"] is False
 
 
 def test_memory_state_evidence_requires_visible_pinned_content():
@@ -2537,7 +2609,7 @@ async def test_api_chat_desktop_surface_routes_memory_state_through_cognitive_en
     async def _memory_cognitive_turn(objective, *_args, **_kwargs):
         _t = _kwargs.get("turn_trace")
         if isinstance(_t, dict):
-            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_snapshot_present": True, "live_mind_snapshot_ready": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
         cognitive_calls.append(str(objective))
         if "Remember this note" in str(objective):
             return "I've pinned \"the blue lantern is under the desk\" in durable session memory, and I can pull it back later from canonical memory state."
@@ -2653,14 +2725,16 @@ async def test_api_chat_desktop_memory_state_drift_rebounds_to_canonical_evidenc
                 {
                     "engine_think_invoked": True,
                     "cognitive_engine_reply_accepted": True,
-                        "cognitive_engine_reply_failed": False,
-                        "bounded_contract_used": False,
-                        "legacy_fallback_used": False,
-                        "live_mind_context_present": True,
-                        "live_mind_required_subsystems_ok": True,
-                        "response_path": "cognitive_engine",
-                    }
-                )
+                    "cognitive_engine_reply_failed": False,
+                    "bounded_contract_used": False,
+                    "legacy_fallback_used": False,
+                    "live_mind_context_present": True,
+                    "live_mind_snapshot_present": True,
+                    "live_mind_snapshot_ready": True,
+                    "live_mind_required_subsystems_ok": True,
+                    "response_path": "cognitive_engine",
+                }
+            )
         cognitive_calls.append(str(objective))
         return "I am attending to the live desktop thread through CognitiveEngine."
 
@@ -2738,7 +2812,7 @@ async def test_api_chat_desktop_owner_name_recall_routes_through_cognitive_engin
     async def _owner_cognitive_turn(objective, *_args, **_kwargs):
         _t = _kwargs.get("turn_trace")
         if isinstance(_t, dict):
-            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_snapshot_present": True, "live_mind_snapshot_ready": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
         cognitive_calls.append(str(objective))
         return "You're Bryan; I know that from the verified owner session, and I will keep that context attached to this conversation."
 
@@ -3052,7 +3126,7 @@ async def test_api_chat_desktop_objective_requires_cognitive_planning(monkeypatc
     async def _slow_or_empty_cognitive_turn(*args, **kwargs):
         _t = kwargs.get("turn_trace")
         if isinstance(_t, dict):
-            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_snapshot_present": True, "live_mind_snapshot_ready": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
         cognitive_calls.append((args, kwargs))
         return json.dumps(
             {
@@ -3850,7 +3924,7 @@ async def test_api_chat_desktop_live_proof_executes_after_cognitive_engine(monke
     async def _fake_cognitive_turn(message, **kwargs):
         _t = kwargs.get("turn_trace")
         if isinstance(_t, dict):
-            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_snapshot_present": True, "live_mind_snapshot_ready": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
         cognitive_calls.append((message, kwargs))
         return "Plan: create the requested artifact through the governed tool path."
 
@@ -3966,7 +4040,7 @@ async def test_api_chat_desktop_explicit_file_objective_runs_after_cognitive_eng
     async def _fake_cognitive_turn(*args, **kwargs):
         _t = kwargs.get("turn_trace")
         if isinstance(_t, dict):
-            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_snapshot_present": True, "live_mind_snapshot_ready": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
         cognitive_calls.append((args, kwargs))
         return "Plan: create the requested file through governed file_operation after this cognitive turn."
 
@@ -4045,7 +4119,7 @@ async def test_api_chat_desktop_runtime_status_uses_cognitive_engine_when_requir
     async def _fake_cognitive_turn(*args, **kwargs):
         _t = kwargs.get("turn_trace")
         if isinstance(_t, dict):
-            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_snapshot_present": True, "live_mind_snapshot_ready": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
         cognitive_calls.append((args, kwargs))
         return (
             "Cortex (32B) is the active foreground lane, CognitiveEngine handled this turn: yes, "
@@ -4121,7 +4195,7 @@ async def test_api_chat_desktop_soak_lane_question_uses_cognitive_engine_when_re
     async def _fake_cognitive_turn(*_args, **_kwargs):
         _t = _kwargs.get("turn_trace")
         if isinstance(_t, dict):
-            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_snapshot_present": True, "live_mind_snapshot_ready": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
         cognitive_calls.append("desktop_cognitive_engine")
         return "Cortex (32B) is the active foreground lane and I am answering through CognitiveEngine."
 
@@ -4187,7 +4261,7 @@ async def test_api_chat_desktop_coherence_status_uses_cognitive_engine_when_requ
     async def _fake_cognitive_turn(*_args, **_kwargs):
         _t = _kwargs.get("turn_trace")
         if isinstance(_t, dict):
-            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_snapshot_present": True, "live_mind_snapshot_ready": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
         cognitive_calls.append("desktop_cognitive_engine")
         return "I am coherent, on the same live desktop thread, and able to continue."
 
@@ -4255,7 +4329,7 @@ async def test_api_chat_desktop_nonexecuting_plan_uses_cognitive_engine_when_req
     async def _fake_cognitive_turn(*_args, **_kwargs):
         _t = _kwargs.get("turn_trace")
         if isinstance(_t, dict):
-            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_snapshot_present": True, "live_mind_snapshot_ready": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
         cognitive_calls.append("desktop_cognitive_engine")
         return "I would create the note, export the PDF only after authorization, and verify the artifact path."
 
@@ -4326,7 +4400,7 @@ async def test_api_chat_desktop_nonexecuting_decision_question_blocks_desktop_ta
     async def _fake_cognitive_turn(*_args, **_kwargs):
         _t = _kwargs.get("turn_trace")
         if isinstance(_t, dict):
-            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_snapshot_present": True, "live_mind_snapshot_ready": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
         cognitive_calls.append("desktop_cognitive_engine")
         return (
             "I would use Notes for a quick local note and Google Docs when the user needs "
@@ -4596,7 +4670,7 @@ async def test_api_chat_desktop_required_fails_closed_on_final_degraded_reply(mo
         # what must catch it, so the trace has to prove the full-mind path first.
         _t = _kwargs.get("turn_trace")
         if isinstance(_t, dict):
-            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
+            _t.update({"engine_think_invoked": True, "cognitive_engine_reply_accepted": True, "live_mind_context_present": True, "live_mind_snapshot_present": True, "live_mind_snapshot_ready": True, "live_mind_required_subsystems_ok": True, "response_path": "cognitive_engine"})
         return "Absolutely. Let's nail this pitch. What are our key points?"
 
     async def _no_stabilize(_message, reply, **_kwargs):

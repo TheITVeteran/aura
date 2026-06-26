@@ -153,6 +153,7 @@ def test_live_desktop_context_payload_carries_mind_snapshot(monkeypatch):
 
     assert payload["must_answer_from_full_mind_path"] is True
     assert payload["required_subsystems_ok"] is True
+    assert payload["mind_snapshot_quality"]["ready"] is True
     assert payload["voice"]["mood"] == "engaged"
     assert payload["substrate"]["affect"]["valence"] == 0.21
     assert payload["mind_snapshot"]["global_workspace"]["last_winner"] == "curiosity"

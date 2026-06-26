@@ -39,6 +39,11 @@ NetHack strategy in shared code.
   snapshot gathers global workspace, nociception, affect grounding, drive
   integration, outcome/science ledgers, unified world model, and phenomenal
   state, and proves the live desktop payload carries that state.
+- **False full-mind health is now harder to report**:
+  `_build_live_turn_contract_payload()` requires a present and ready deep
+  runtime snapshot before a desktop turn can be marked `full_mind_path=true`.
+  Missing snapshot state keeps the route failed-closed instead of serving
+  raw or prompt-only speech as a healthy Aura answer.
 
 ### Latest Commands Run
 
@@ -49,18 +54,18 @@ make enterprise-gate
 make production-gate
 ```
 
-Latest focused result: **200 passed** for the live conversation-lane,
+Latest focused result: **201 passed** for the live conversation-lane,
 live-mind snapshot, and deep service-registration suites. `make
 enterprise-gate` and `make production-gate` passed. This checkpoint moves the
 desktop speech path from prompt-only grounding toward structural runtime
-grounding. It does **not** yet claim the 32B/70B live GUI demo has been run,
-that CRSM/CAA are closed, or that final-proof is complete.
+grounding and makes successful full-mind desktop status depend on a ready deep
+runtime snapshot. It does **not** yet claim the 32B/70B live GUI demo has been
+run, that CRSM/CAA are closed, or that final-proof is complete.
 
-Current closeout estimate after this checkpoint: **~84%**. Remaining work is
-estimated at **5-7 total checkpoints**: full-path enforcement, live GUI/voice
-demo proof, memory continuity and tool receipts, CRSM/CAA closure, long-run
-runtime reliability, final-proof/DNU/Aletheia validation, and final claims
-purification.
+Current closeout estimate after this checkpoint: **~85%**. Remaining work is
+estimated at **5-6 total checkpoints**: live GUI/voice demo proof, memory
+continuity and tool receipts, CRSM/CAA closure, long-run runtime reliability,
+final-proof/DNU/Aletheia validation, and final claims purification.
 
 ## Latest Closeout Proof Pass (2026-06-02)
 

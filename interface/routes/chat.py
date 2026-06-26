@@ -3326,6 +3326,56 @@ def _collect_live_chat_required_subsystems(
     }
 
 
+_LIVE_MIND_SNAPSHOT_REQUIRED_SERVICES = (
+    "global_workspace",
+    "nociception",
+    "affect_grounding",
+    "drive_integration",
+    "outcome_ledger",
+    "scientific_engine",
+    "unified_world_model",
+    "phenomenal_engine",
+)
+
+
+def _assess_live_mind_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(snapshot, dict) or not snapshot:
+        return {
+            "present": False,
+            "ready": False,
+            "missing_services": list(_LIVE_MIND_SNAPSHOT_REQUIRED_SERVICES),
+            "populated_sections": [],
+        }
+    services = snapshot.get("services_present")
+    if not isinstance(services, dict):
+        services = {}
+    missing = [
+        name
+        for name in _LIVE_MIND_SNAPSHOT_REQUIRED_SERVICES
+        if not bool(services.get(name))
+    ]
+    populated_sections = [
+        name
+        for name in (
+            "global_workspace",
+            "nociception",
+            "affect_grounding",
+            "drive_integration",
+            "outcome_ledger",
+            "scientific_engine",
+            "world_model",
+            "phenomenal_engine",
+        )
+        if bool(snapshot.get(name))
+    ]
+    return {
+        "present": True,
+        "ready": not missing and len(populated_sections) >= 6,
+        "missing_services": missing,
+        "populated_sections": populated_sections,
+    }
+
+
 def _build_live_turn_contract_payload(
     *,
     desktop_required: bool,
@@ -3347,12 +3397,21 @@ def _build_live_turn_contract_payload(
     legacy_fallback_used = bool(trace.get("legacy_fallback_used"))
     live_mind_context_required = bool(desktop_required)
     live_mind_context_present = bool(trace.get("live_mind_context_present"))
+    live_mind_snapshot_present = bool(trace.get("live_mind_snapshot_present"))
+    live_mind_snapshot_ready = bool(trace.get("live_mind_snapshot_ready"))
+    live_mind_snapshot_missing_services = list(
+        trace.get("live_mind_snapshot_missing_services") or []
+    )
     preflight_live_mind_required_subsystems_ok = bool(
         trace.get("live_mind_required_subsystems_ok")
     )
     architecture_context_bound = bool(
         (not live_mind_context_required)
         or live_mind_context_present
+    )
+    live_mind_snapshot_bound = bool(
+        (not live_mind_context_required)
+        or (live_mind_snapshot_present and live_mind_snapshot_ready)
     )
     confidence = str(response_confidence or "").strip().lower()
     accepted_full_mind_response_paths = {
@@ -3368,6 +3427,7 @@ def _build_live_turn_contract_payload(
         and not bounded_contract_used
         and not legacy_fallback_used
         and architecture_context_bound
+        and live_mind_snapshot_bound
         and confidence == "high"
         and response_path in accepted_full_mind_response_paths
     )
@@ -3395,6 +3455,10 @@ def _build_live_turn_contract_payload(
         "legacy_fallback_used": legacy_fallback_used,
         "live_mind_context_required": live_mind_context_required,
         "live_mind_context_present": live_mind_context_present,
+        "live_mind_snapshot_present": live_mind_snapshot_present,
+        "live_mind_snapshot_ready": live_mind_snapshot_ready,
+        "live_mind_snapshot_bound": live_mind_snapshot_bound,
+        "live_mind_snapshot_missing_services": live_mind_snapshot_missing_services,
         "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
         "preflight_live_mind_required_subsystems_ok": preflight_live_mind_required_subsystems_ok,
         "architecture_context_bound": architecture_context_bound,
@@ -3473,6 +3537,7 @@ def _build_live_mind_context_payload(
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Live mind context runtime snapshot unavailable: %s", exc)
+    mind_snapshot_quality = _assess_live_mind_snapshot(mind_snapshot)
 
     return {
         "schema": "aura.live_mind_context.v1",
@@ -3493,6 +3558,7 @@ def _build_live_mind_context_payload(
         "voice": voice_snapshot,
         "substrate": substrate_summary,
         "mind_snapshot": mind_snapshot,
+        "mind_snapshot_quality": mind_snapshot_quality,
         "governance": {
             "tool_governance_available": bool(required.get("tool_governance")),
             "legacy_fallback_allowed": False,
@@ -4053,12 +4119,18 @@ async def _run_cognitive_engine_chat_turn(
     if context_challenge_context:
         context["contextual_relevance_evidence"] = context_challenge_context[:2500]
     if turn_trace is not None:
+        mind_snapshot_quality = dict(live_mind_context.get("mind_snapshot_quality") or {})
         turn_trace.update(
             {
                 "recent_context_needed": recent_context_needed,
                 "recent_context_exchanges": len(recent_exchanges),
                 "live_mind_context_present": True,
                 "live_mind_context_required": bool(require_engine),
+                "live_mind_snapshot_present": bool(mind_snapshot_quality.get("present")),
+                "live_mind_snapshot_ready": bool(mind_snapshot_quality.get("ready")),
+                "live_mind_snapshot_missing_services": list(
+                    mind_snapshot_quality.get("missing_services") or []
+                ),
                 "live_mind_required_subsystems_ok": bool(
                     live_mind_context.get("required_subsystems_ok")
                 ),
