@@ -3196,6 +3196,51 @@ class CapabilityEngine(AuraBaseModule):
                         "status": "blocked_by_edi",
                     }
 
+            # 2.5 Derived conscience + outcome restraint (Kokoro blocks; Minds/Tron advise).
+            # Same gate as the tool path, extended to skill execution. All synchronous
+            # heuristics — no latency. Kokoro is the only hard blocker here.
+            try:
+                from core.container import ServiceContainer as _SC
+
+                _action_desc = f"{skill_name} {str(params)[:200]}"
+                _risk_hint = locals().get("risk", "medium")
+                _kokoro = _SC.get("kokoro", default=None)
+                if _kokoro is not None:
+                    _verdict = _kokoro.quick_check(_action_desc, context={"risk_level": _risk_hint})
+                    if _verdict.verdict == "block":
+                        self.logger.warning(
+                            "⚖️ Adversarial conscience blocked skill '%s': %s",
+                            skill_name, _verdict.reasoning,
+                        )
+                        return {
+                            "ok": False,
+                            "error": f"Conscience blocked: {_verdict.reasoning}",
+                            "status": "blocked_by_conscience",
+                        }
+                _minds = _SC.get("culture_mind", default=None)
+                if _minds is not None and hasattr(_minds, "assess_fast"):
+                    _sim = _minds.assess_fast(_action_desc, context={"risk_level": _risk_hint})
+                    if _sim.recommendation == "hold":
+                        self.logger.warning(
+                            "🌀 Outcome simulation advises HOLD on skill '%s' (worst-case harm %.2f)",
+                            skill_name, _sim.worst_case_harm,
+                        )
+                _tron = _SC.get("tron", default=None)
+                if _tron is not None:
+                    _review = _tron.review_action({
+                        "description": _action_desc,
+                        "irreversible": _risk_hint in ("high", "critical"),
+                        "confirmed": True,
+                        "explanation": f"skill {skill_name}",
+                    })
+                    if _review.verdict == "against_user":
+                        self.logger.info(
+                            "🟦 User-advocate flags skill '%s': %s",
+                            skill_name, _review.on_behalf_of_user,
+                        )
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError) as _gate_exc:
+                self.logger.debug("Derived conscience/outcome gate degraded: %s", _gate_exc)
+
             # 3. Adaptation & Security (Rosetta Stone / Sandbox)
             exec_params = params
             if is_forged and self.sandbox:

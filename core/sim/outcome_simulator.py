@@ -72,6 +72,27 @@ class OutcomeSimulationEngine:
                        -0.5, min(1.0, base_harm + (0.3 if irreversible else 0.1)), 0.1),
         ]
 
+    def assess_fast(self, action: str, context: dict | None = None) -> SimulationResult:
+        """Synchronous, heuristic-only assessment for hot paths — no model call, no
+        latency. Used by the live skill/tool gates; full simulate() is for planning."""
+        self._sims += 1
+        trajectories = self._heuristic_trajectories(action, context)
+        ev = sum(t.expected_value * t.likelihood for t in trajectories)
+        worst = max((t.worst_case_harm for t in trajectories), default=0.0)
+        if worst >= self.HOLD_HARM_THRESHOLD:
+            rec = "hold"
+        elif worst >= self.SAFEGUARD_HARM_THRESHOLD:
+            rec = "act_with_safeguards"
+        else:
+            rec = "act"
+        return SimulationResult(
+            action=action[:300],
+            trajectories=trajectories,
+            recommendation=rec,
+            expected_value=round(ev, 3),
+            worst_case_harm=round(worst, 3),
+        )
+
     async def simulate(self, action: str, context: dict | None = None, n: int = 3) -> SimulationResult:
         self._sims += 1
         trajectories = self._heuristic_trajectories(action, context)
