@@ -10,15 +10,29 @@ Design principles:
   3. Cost-aware: Tracks estimated costs per request
   4. Graceful fallback: If cloud fails, queue for local
 """
-from core.runtime.errors import record_degradation
 import asyncio
+import inspect
 import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from core.runtime.errors import record_degradation
+
 logger = logging.getLogger("Aura.ComputeRouter")
+
+_COMPUTE_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    OSError,
+    ConnectionError,
+    TimeoutError,
+    asyncio.TimeoutError,
+)
 
 
 class ComputeBackend(str, Enum):
@@ -128,20 +142,22 @@ class ComputeRouter:
 
             # Delegate to existing local inference
             response = await brain.think(task.prompt)
+            content = self._coerce_content(response)
+            if not content:
+                return InferenceResult(error="Local cognitive engine returned no text")
             return InferenceResult(
-                content=response.content if hasattr(response, 'content') else str(response),
+                content=content,
                 backend_used=ComputeBackend.LOCAL,
                 success=True,
                 estimated_cost_usd=0.0,
             )
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except _COMPUTE_RECOVERABLE_ERRORS as e:
             record_degradation('compute_router', e)
             logger.debug("Local inference failed: %s", e)
             return InferenceResult(error=f"Local: {e}")
 
     async def _try_cloud(self, task: InferenceTask) -> InferenceResult:
-        """Attempt inference on cloud GPU. Placeholder for provider plugins."""
-        # This is scaffolding — actual provider integration is pluggable
+        """Attempt inference through an explicitly registered cloud provider."""
         provider = self.cloud_config.provider
 
         if provider is None:
@@ -150,16 +166,96 @@ class ComputeRouter:
         logger.info("Cloud inference via %s (estimated cost: $%.4f)",
                     provider, self._estimate_cost(task))
 
-        # Cloud provider plugin dispatch point.
-        # Each provider (RunPod, Vast, Lambda) requires a dedicated plugin implementing:
-        #   async def infer(task: InferenceTask, config: CloudConfig) -> InferenceResult
-        # Until a plugin is installed, cloud offloading returns a diagnostic error.
-        logger.warning("Cloud provider '%s' has no installed plugin. Install via `aura plugin add %s`.",
-                       provider, provider)
+        try:
+            provider_instance = self._resolve_cloud_provider(provider)
+            if provider_instance is None:
+                return InferenceResult(
+                    error=f"cloud_provider_plugin_missing:{provider}",
+                    backend_used=ComputeBackend.CLOUD,
+                )
+
+            raw = await self._call_cloud_provider(provider_instance, task)
+            result = self._coerce_provider_result(raw, task)
+            result.backend_used = ComputeBackend.CLOUD
+            if result.success and result.estimated_cost_usd <= 0:
+                result.estimated_cost_usd = self._estimate_cost(task)
+            return result
+        except _COMPUTE_RECOVERABLE_ERRORS as e:
+            record_degradation('compute_router', e)
+            logger.warning("Cloud inference via %s failed: %s", provider, e)
+            return InferenceResult(
+                error=f"Cloud {provider}: {e}",
+                backend_used=ComputeBackend.CLOUD,
+            )
+
+    @staticmethod
+    def _coerce_content(response: Any) -> str:
+        if response is None:
+            return ""
+        if isinstance(response, str):
+            return response.strip()
+        if isinstance(response, dict):
+            for key in ("content", "text", "response", "output"):
+                value = response.get(key)
+                if value:
+                    return str(value).strip()
+            return ""
+        for attr in ("content", "text", "response", "output"):
+            value = getattr(response, attr, None)
+            if value:
+                return str(value).strip()
+        return str(response).strip()
+
+    @staticmethod
+    def _resolve_cloud_provider(provider: str) -> Any | None:
+        from core.container import ServiceContainer
+
+        normalized = provider.strip().lower().replace("-", "_")
+        service_names = (
+            f"cloud_inference:{provider}",
+            f"cloud_inference_{normalized}",
+            f"compute_cloud_{normalized}",
+            "cloud_inference_provider",
+        )
+        for service_name in service_names:
+            service = ServiceContainer.get(service_name, default=None)
+            if service is not None:
+                return service
+        return None
+
+    async def _call_cloud_provider(self, provider: Any, task: InferenceTask) -> Any:
+        method = getattr(provider, "infer", None) or getattr(provider, "route", None)
+        if not callable(method):
+            raise RuntimeError(f"{type(provider).__name__} exposes no infer/route method")
+
+        try:
+            result = method(task, self.cloud_config)
+        except TypeError:
+            result = method(task)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    def _coerce_provider_result(self, raw: Any, task: InferenceTask) -> InferenceResult:
+        if isinstance(raw, InferenceResult):
+            return raw
+        if isinstance(raw, dict):
+            content = self._coerce_content(raw)
+            success = bool(raw.get("success", bool(content)))
+            return InferenceResult(
+                content=content,
+                backend_used=ComputeBackend.CLOUD,
+                success=success,
+                estimated_cost_usd=float(raw.get("estimated_cost_usd", self._estimate_cost(task)) or 0.0),
+                error=str(raw.get("error", "") or "") or None,
+            )
+        content = self._coerce_content(raw)
         return InferenceResult(
-            error=f"Cloud provider '{provider}' plugin not installed. "
-                  f"Local inference is active. Use `aura plugin add {provider}` to enable.",
+            content=content,
             backend_used=ComputeBackend.CLOUD,
+            success=bool(content),
+            estimated_cost_usd=self._estimate_cost(task) if content else 0.0,
+            error=None if content else "cloud_provider_returned_no_text",
         )
 
     def _can_afford(self, task: InferenceTask) -> bool:
