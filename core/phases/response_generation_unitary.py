@@ -836,6 +836,45 @@ class UnitaryResponsePhase(Phase):
             )
             logger.debug("UnitaryResponse: integrated present publish skipped: %s", exc)
 
+    @staticmethod
+    def _stance_directive(state: AuraState) -> str:
+        """Turn the inferred communicative stance into a response directive.
+
+        This is what makes stance inference *causal*: if the user is joking,
+        sarcastic, hypothesizing or role-playing, Aura must not respond as if the
+        message were a literal factual assertion; if they stated something that
+        conflicts with what she knows, she should gently surface that rather than
+        agree. Read from the modifiers the social phase wrote this turn."""
+        try:
+            mods = getattr(state.cognition, "modifiers", {}) or {}
+        except AttributeError:
+            return ""
+        stance = str(mods.get("communicative_stance", "") or "")
+        if not stance or stance == "sincere":
+            if mods.get("flagged_false_claim"):
+                return (
+                    "EPISTEMIC NOTE: the user just stated something that conflicts with what I "
+                    f"know ({mods['flagged_false_claim']}). Gently surface the discrepancy "
+                    "instead of agreeing; check before accepting it as fact."
+                )
+            return ""
+        directives = {
+            "joking": "The user is joking — read the humor, play along; don't earnestly correct a joke as if it were a claim.",
+            "sarcastic": "The user is being sarcastic — their literal words invert their meaning; respond to what they actually mean, not the surface text.",
+            "facetious": "The user is being facetious — not fully serious; match the register, don't treat it as a literal request.",
+            "flippant": "The user is being flippant/dismissive — acknowledge lightly; don't over-invest in a literal reading.",
+            "unsure": "The user is unsure/hedging — treat this as a tentative guess, not settled fact; help them firm it up rather than echoing it as certain.",
+            "hypothesizing": "The user is reasoning hypothetically — engage the 'what if' on its own terms; don't assert the premise is real.",
+            "pretending": "The user is framing role-play / a counterfactual — stay in the bit they set up while keeping my own footing.",
+            "rhetorical": "The user's question is rhetorical — they're making a point, not requesting a literal answer.",
+            "mistaken": "The user appears to have stated something factually off — correct it kindly and concretely rather than agreeing.",
+            "deceptive": "The user's claim conflicts with what I know and shows signs of not being straight — don't simply accept it; verify and hold my own read honestly.",
+        }
+        line = directives.get(stance, "")
+        if mods.get("flagged_false_claim") and stance in {"mistaken", "deceptive"}:
+            line += f" (Specifically: {mods['flagged_false_claim']}.)"
+        return f"COMMUNICATIVE STANCE — {line}" if line else ""
+
     def _build_compact_router_system_prompt(self, state: AuraState) -> str:
         phenomenal = self._integrated_phenomenal_claim(state, limit=220)
         mood = str(state.affect.dominant_emotion or "neutral")
@@ -1030,6 +1069,9 @@ class UnitaryResponsePhase(Phase):
             )
         if needs_continuity_context and user_model and "balanced" not in user_model.lower():
             parts.append(f"User context: {user_model}")
+        stance_directive = self._stance_directive(state)
+        if stance_directive:
+            parts.append(stance_directive)
         if requires_reasoned_defense:
             parts.append(
                 "When the user asks why or how I know, I should expose the basis of the thought: "

@@ -152,7 +152,82 @@ class SocialContextPhase(Phase):
         if ava:
             self._synchronize_ava_context(ava, modifiers)
         self._apply_theory_of_mind_register(modifiers)
+        if state.cognition.current_origin in ("user", "voice", "admin"):
+            await self._infer_communicative_stance(state, modifiers, objective_text)
         return state
+
+    async def _infer_communicative_stance(
+        self, state: AuraState, modifiers: dict[str, Any], message: str
+    ) -> None:
+        """Classify *how* the user's message is meant (sincere / joke / sarcasm /
+        guess / hypothesis / role-play / mistaken / deceptive) and write it as a
+        response-shaping modifier. Grounded against known facts and the recent turn
+        history so a confident falsehood is flagged, not swallowed. Live on every
+        user turn; deterministic spine, no model call in the hot path."""
+        try:
+            from core.social.stance_inference import get_stance_inference
+
+            known_facts = await self._gather_known_facts(message)
+            recent = self._recent_user_messages(state)
+            assessment = get_stance_inference().assess(
+                message, known_facts=known_facts, recent_messages=recent
+            )
+            modifiers["communicative_stance"] = assessment.primary.value
+            modifiers["stance_confidence"] = round(assessment.confidence, 3)
+            modifiers["take_literally"] = assessment.take_literally
+            if assessment.factual_conflict:
+                modifiers["stance_factual_conflict"] = True
+            if assessment.primary.value in {"deceptive", "mistaken"} and assessment.factual_conflict:
+                # Hand a concrete cue to the honesty/deception guards downstream.
+                modifiers["flagged_false_claim"] = assessment.rationale
+            if not assessment.take_literally:
+                logger.info(
+                    "🎭 SocialContext: user message read as %s (conf %.2f): %s",
+                    assessment.primary.value, assessment.confidence, assessment.rationale,
+                )
+        except _SOCIAL_RECOVERABLE_ERRORS as exc:
+            _record_social_degradation(
+                exc,
+                action="kept social cues without communicative-stance inference",
+                stage="stance_inference",
+            )
+
+    async def _gather_known_facts(self, message: str) -> list[str]:
+        """Pull a few grounded facts relevant to the message for belief-conflict checks."""
+        facade = _service_get(self.container, ServiceNames.MEMORY_FACADE, default=None)
+        if facade is None:
+            facade = ServiceContainer.get("memory_facade", default=None)
+        if facade is None or not hasattr(facade, "search"):
+            return []
+        try:
+            results = await facade.search(message, limit=4)
+        except _SOCIAL_RECOVERABLE_ERRORS:
+            return []
+        facts: list[str] = []
+        for item in list(results or [])[:4]:
+            if isinstance(item, dict):
+                content = str(item.get("content") or item.get("text") or "").strip()
+            else:
+                content = str(item or "").strip()
+            if content:
+                facts.append(content[:200])
+        return facts
+
+    @staticmethod
+    def _recent_user_messages(state: AuraState, limit: int = 4) -> list[str]:
+        history = getattr(getattr(state, "conversation", None), "history", None)
+        if not isinstance(history, (list, tuple)):
+            history = getattr(getattr(state, "memory", None), "short_term", None)
+        out: list[str] = []
+        for item in list(history or [])[-12:]:
+            try:
+                role = item.get("role") if isinstance(item, dict) else getattr(item, "role", "")
+                content = item.get("content") if isinstance(item, dict) else getattr(item, "content", "")
+            except (AttributeError, TypeError):
+                continue
+            if role in ("user", "human") and content:
+                out.append(str(content)[:300])
+        return out[-limit:]
 
     async def _analyze_user_message(self, ava: Any, objective: str) -> None:
         analyzer = getattr(ava, "analyze_message", None)
