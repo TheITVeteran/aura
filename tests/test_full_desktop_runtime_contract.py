@@ -20,6 +20,16 @@ def _full_services():
         "mhaf": object(),
         "curiosity_engine": _status_service(running=True),
         "proactive_comm": _status_service(running=True),
+        "autonomous_initiative_loop": _status_service(
+            running=True,
+            core_tasks={
+                "world": True,
+                "knowledge": True,
+                "self_development": True,
+                "social": True,
+                "mission": True,
+            },
+        ),
         "research_cycle": _status_service(running=True),
         "self_healing": _status_service(running=True),
         "self_modification_engine": _status_service(
@@ -69,6 +79,7 @@ def test_full_desktop_runtime_reports_every_canonical_background_organ(monkeypat
     assert status["ready"] is True
     assert status["blockers"] == []
     assert status["components"]["self_modification"]["mode"] == "validation_quarantine"
+    assert status["components"]["autonomous_initiative"]["core_tasks"]["social"] is True
     assert status["components"]["overt_action"]["scheduled"] is True
     assert status["components"]["deliberation"]["scheduled"] is True
 
@@ -87,3 +98,46 @@ def test_full_desktop_runtime_fails_readiness_when_background_organ_is_missing(m
 
     assert status["ready"] is False
     assert "research" in status["blockers"]
+
+
+def test_full_desktop_runtime_fails_readiness_when_initiative_loop_is_missing(monkeypatch):
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    monkeypatch.setenv("AURA_DESKTOP_RESOURCE_GUARD", "1")
+    monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_BACKGROUND_COGNITION", raising=False)
+    services = _full_services()
+    services.pop("autonomous_initiative_loop")
+    _install_services(monkeypatch, services)
+
+    status = _collect_full_runtime_status({"online": True}, {"online": True})
+
+    assert status["ready"] is False
+    assert "autonomous_initiative" in status["blockers"]
+
+
+def test_full_desktop_runtime_fails_readiness_when_initiative_task_is_dead(monkeypatch):
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    monkeypatch.setenv("AURA_DESKTOP_RESOURCE_GUARD", "1")
+    monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_BACKGROUND_COGNITION", raising=False)
+    services = _full_services()
+    services["autonomous_initiative_loop"] = _status_service(
+        running=False,
+        enabled=True,
+        core_tasks={
+            "world": True,
+            "knowledge": True,
+            "self_development": False,
+            "social": True,
+            "mission": True,
+        },
+    )
+    _install_services(monkeypatch, services)
+
+    status = _collect_full_runtime_status({"online": True}, {"online": True})
+
+    assert status["ready"] is False
+    assert status["components"]["autonomous_initiative"]["core_tasks"]["self_development"] is False
+    assert "autonomous_initiative" in status["blockers"]

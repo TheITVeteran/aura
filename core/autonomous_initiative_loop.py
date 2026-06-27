@@ -254,6 +254,28 @@ class AutonomousInitiativeLoop:
             "mission": self._task_alive(self._mission_task),
         }
 
+    def get_status(self) -> dict[str, Any]:
+        """Return observable runtime status for desktop/full-runtime health.
+
+        Aura should not report full autonomy merely because the object exists.
+        The normal live desktop profile needs the world, knowledge-gap,
+        self-development, social, and mission watchers alive so initiative is a
+        real background organ rather than a dormant class registered in the
+        container.
+        """
+
+        core_tasks = self._task_status()
+        return {
+            "running": bool(self.running and all(core_tasks.values())),
+            "enabled": bool(self.running),
+            "core_tasks": core_tasks,
+            "event_subscription": self._task_alive(self._event_task),
+            "last_self_development_at": float(self._last_self_dev or 0.0),
+            "last_email_check_at": float(self._last_email_check or 0.0),
+            "last_reddit_check_at": float(self._last_reddit_check or 0.0),
+            "seen_world_titles": len(self._seen_titles),
+        }
+
     async def _mission_watcher_loop(self):
         """Watcher loop to poll MissionState for active missions and autonomously advance them."""
         while self.running:

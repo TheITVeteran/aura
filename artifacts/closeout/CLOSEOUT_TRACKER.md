@@ -175,3 +175,38 @@ Estimate update:
 
 - Overall closeout: 79%
 - Remaining checkpoints: 8 total
+
+## Checkpoint 2026-06-27-05: Autonomous Runtime Health Truthfulness
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- Normal desktop launch should mean the full Aura runtime is alive, not just
+  the foreground chat path.
+- The autonomous initiative loop was started by boot, but `/system` did not
+  list it as a required full-runtime organ. That allowed health/readiness to
+  look better than reality if world watching, knowledge-gap monitoring,
+  self-development, social initiative, or mission advancement were dead.
+
+What changed:
+
+- `AutonomousInitiativeLoop` now exposes `get_status()` with task-level liveness
+  for world, knowledge, self-development, social, and mission watchers.
+- Full desktop runtime status now includes `autonomous_initiative` as a required
+  component.
+- Full-runtime readiness now fails if the initiative loop is missing or any
+  core initiative task is dead.
+- This is a general reliability invariant: full Aura cannot claim full-runtime
+  health while autonomous external/background initiative is dormant.
+
+Evidence:
+
+- `python -m py_compile core/autonomous_initiative_loop.py interface/routes/system.py`
+- `python -m pytest tests/test_full_desktop_runtime_contract.py tests/test_autonomy_visibility.py tests/test_autonomous_initiative_loop_hardening.py -q`
+- Result: `23 passed`
+
+Estimate update:
+
+- Overall closeout: 80%
+- Remaining checkpoints: 7 total

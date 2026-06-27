@@ -178,6 +178,10 @@ def _collect_full_runtime_status(
         },
         "curiosity": _runtime_component_status("curiosity_engine", "get_status"),
         "proactive_communication": _runtime_component_status("proactive_comm", "get_status"),
+        "autonomous_initiative": _runtime_component_status(
+            "autonomous_initiative_loop",
+            "get_status",
+        ),
         "research": _runtime_component_status("research_cycle", "get_status"),
         "self_healing": _runtime_component_status("self_healing", "get_status"),
         "self_modification": _runtime_component_status(
@@ -201,6 +205,7 @@ def _collect_full_runtime_status(
         "mhaf",
         "curiosity",
         "proactive_communication",
+        "autonomous_initiative",
         "research",
         "self_healing",
         "self_modification",
