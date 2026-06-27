@@ -6,8 +6,8 @@ remains open.
 
 ## Current Estimate
 
-- Overall closeout: 76%
-- Remaining checkpoints: 11 total
+- Overall closeout: 78%
+- Remaining checkpoints: 9 total
 - Current phase: live desktop runtime reliability and full-mind conversation
   path hardening
 
@@ -95,3 +95,48 @@ Estimate update:
 
 - Overall closeout: 77%
 - Remaining checkpoints: 10 total
+
+## Checkpoint 2026-06-27-03: Live Capability Inventory Stability
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- Live desktop conversations consistently destabilized when Bryan asked what
+  external tools Aura could use.
+- The capability/tool question was being treated like a broad operational
+  status turn, forcing repeated Cortex retries. The retries outlived the
+  client timeout, opened the Cortex circuit, and produced `No response
+  returned` ASGI failures.
+
+What changed:
+
+- Capability inventory turns now stay inside CognitiveEngine but answer from
+  the live governed capability catalog instead of allocating a foreground 32B
+  generation for a static runtime-fact question.
+- Worker-side surface quality validation no longer treats concise governed
+  capability inventories as too-thin operational-status replies.
+- Capability inventory prompt/context construction remains compact and avoids
+  duplicate style, speech, preflight, recall, and challenge context.
+- The live-turn contract recognizes the catalog-grounded CognitiveEngine path
+  as a valid non-fallback path when live mind context and governance evidence
+  are bound.
+
+Evidence:
+
+- `.venv/bin/python3 -m py_compile core/brain/cognitive_engine.py core/brain/llm/mlx_worker.py interface/routes/chat.py tests/test_cognitive_engine_background_hardening.py tests/test_strict_contract_steering_clamp.py`
+- `.venv/bin/python3 -m pytest -q tests/test_cognitive_engine_background_hardening.py::test_cognitive_engine_capability_inventory_contract_uses_catalog_without_worker tests/test_strict_contract_steering_clamp.py::test_live_user_surface_quality_gate_accepts_concise_capability_inventory tests/test_server_conversation_lane.py::test_desktop_capability_inventory_uses_cognitive_engine_with_catalog_context tests/test_chat_reliability_proof.py::test_capability_inventory_gate_accepts_governed_effect_verified_answer tests/test_chat_reliability_proof.py::test_capability_inventory_gate_rejects_generic_tool_claim tests/test_inference_gate_tiering.py::test_protected_capability_inventory_keeps_min_budget_under_resource_envelope`
+- Result: `6 passed`
+- Live proof:
+  `artifacts/live_proof/full_desktop_runtime_20260627T_desktop_soak_07/live_proof_20260627_101850_verdict.json`
+- Result: `LIVE PROOF PASSED`
+- Capability inventory latency: `0.5s`, status
+  `cognitive_engine_capability_inventory`, RSS delta `4MB`.
+- Conversation soak: `2/2 turns passed`.
+- Shutdown: graceful stop, no orphan process, port freed.
+- Runtime stream scan: no failure markers in runtime stdout.
+
+Estimate update:
+
+- Overall closeout: 78%
+- Remaining checkpoints: 9 total

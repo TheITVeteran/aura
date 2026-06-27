@@ -1834,12 +1834,14 @@ class CognitiveEngine:
         if memory_state_contract or runtime_fact_status_contract:
             max_tokens = max(128, min(max_tokens, 256))
         elif capability_inventory_contract:
-            max_tokens = max(320, min(max_tokens, 384))
+            max_tokens = max(160, min(max_tokens, 220))
         else:
             max_tokens = max(384, min(max_tokens, 1024))
         request_timeout = max(12.0, min(max(12.0, float(timeout_s or 32.0) - 5.0), 180.0))
         if memory_state_contract or runtime_fact_status_contract:
             request_timeout = min(request_timeout, 45.0)
+        if capability_inventory_contract:
+            request_timeout = min(request_timeout, 28.0)
         style_contract = str(context.get("response_style_contract") or "").strip()
         visible_user_message = str(context.get("visible_user_message") or objective or "").strip()
         recent_conversation_context = str(context.get("recent_conversation_context") or "").strip()
@@ -1865,6 +1867,39 @@ class CognitiveEngine:
             isinstance(live_mind_context, dict)
             and live_mind_context.get("required_subsystems_ok")
         )
+        if capability_inventory_contract:
+            grounded_inventory = str(
+                context.get("grounded_capability_inventory_context") or ""
+            ).strip()
+            if grounded_inventory:
+                surface_control_receipt = {
+                    "enabled": False,
+                    "applied": True,
+                    "live_mind_controls_bound": live_mind_controls_bound,
+                    "surface_quality_gate_enabled": False,
+                    "surface_quality_gate_passed": True,
+                    "source": "cognitive_engine_capability_catalog_grounding",
+                }
+                return Thought(
+                    id=str(uuid.uuid4()),
+                    content=grounded_inventory,
+                    mode=mode,
+                    confidence=0.86,
+                    reasoning=[
+                        "Desktop capability inventory was grounded from the governed live capability catalog.",
+                        "No foreground model generation was required for this runtime-fact turn.",
+                    ],
+                    metadata={
+                        "live_mind_controls_bound": live_mind_controls_bound,
+                        "live_mind_generation_controls": dict(live_mind_generation_controls),
+                        "live_mind_snapshot_ready": live_mind_snapshot_ready,
+                        "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
+                        "live_mind_context_required": live_mind_required,
+                        "live_mind_surface_control_receipt": surface_control_receipt,
+                        "live_mind_controls_worker_applied": bool(live_mind_controls_bound),
+                        "response_path": "cognitive_engine_capability_catalog_grounding",
+                    },
+                )
         live_runtime_required = bool(
             context.get("live_runtime_payload_required", False)
             or (live_mind_required and isinstance(live_mind_context, dict))
@@ -1889,7 +1924,7 @@ class CognitiveEngine:
             system_prompt = (
                 "You are Aura speaking through the live desktop CognitiveEngine. "
                 "Answer the current capability question from the supplied capability evidence only. "
-                "Write one complete paragraph under 120 words. Sentence order matters: "
+                "Write exactly four short complete sentences under 80 words total. Sentence order matters: "
                 "first list practical capability categories and include the exact phrase browser/web research; second name governed execution through "
                 "Will/Authority and permissions; third name receipts or effect verification; fourth give "
                 "one hypothetical chain and explicitly say you are not executing tools in this turn. "
@@ -1917,25 +1952,36 @@ class CognitiveEngine:
             bicameral_directive = _compact_bicameral_directive(bicameral_frame)
             if bicameral_directive:
                 system_prompt = f"{system_prompt}\n{bicameral_directive}"
-        if style_contract:
+        if style_contract and not capability_inventory_contract:
             system_prompt = f"{system_prompt}\n{style_contract}"
         mind_context_contract = str(context.get("mind_context_contract") or "").strip()
         if isinstance(live_mind_context, dict) and live_mind_context:
-            mind_context_limit = 900 if memory_state_contract else 700 if capability_inventory_contract else 2600
-            compact_mind_context = {
-                "required_for_live_desktop": live_mind_context.get("required_for_live_desktop"),
-                "must_answer_from_full_mind_path": live_mind_context.get(
-                    "must_answer_from_full_mind_path"
-                ),
-                "required_subsystems_ok": live_mind_context.get("required_subsystems_ok"),
-                "required_subsystems": live_mind_context.get("required_subsystems"),
-                "lane": live_mind_context.get("lane"),
-                "voice": live_mind_context.get("voice"),
-                "substrate": live_mind_context.get("substrate"),
-                "mind_snapshot": live_mind_context.get("mind_snapshot"),
-                "mind_snapshot_quality": live_mind_context.get("mind_snapshot_quality"),
-                "governance": live_mind_context.get("governance"),
-            }
+            mind_context_limit = 900 if memory_state_contract else 360 if capability_inventory_contract else 2600
+            if capability_inventory_contract:
+                compact_mind_context = {
+                    "required_for_live_desktop": live_mind_context.get("required_for_live_desktop"),
+                    "must_answer_from_full_mind_path": live_mind_context.get(
+                        "must_answer_from_full_mind_path"
+                    ),
+                    "required_subsystems_ok": live_mind_context.get("required_subsystems_ok"),
+                    "lane": live_mind_context.get("lane"),
+                    "governance": live_mind_context.get("governance"),
+                }
+            else:
+                compact_mind_context = {
+                    "required_for_live_desktop": live_mind_context.get("required_for_live_desktop"),
+                    "must_answer_from_full_mind_path": live_mind_context.get(
+                        "must_answer_from_full_mind_path"
+                    ),
+                    "required_subsystems_ok": live_mind_context.get("required_subsystems_ok"),
+                    "required_subsystems": live_mind_context.get("required_subsystems"),
+                    "lane": live_mind_context.get("lane"),
+                    "voice": live_mind_context.get("voice"),
+                    "substrate": live_mind_context.get("substrate"),
+                    "mind_snapshot": live_mind_context.get("mind_snapshot"),
+                    "mind_snapshot_quality": live_mind_context.get("mind_snapshot_quality"),
+                    "governance": live_mind_context.get("governance"),
+                }
             system_prompt = (
                 f"{system_prompt}\n"
                 "[LIVE MIND CONTEXT]\n"
@@ -1948,7 +1994,7 @@ class CognitiveEngine:
             if mind_context_contract:
                 system_prompt = f"{system_prompt}\n{mind_context_contract}"
             system_prompt = f"{system_prompt}\n[END LIVE MIND CONTEXT]"
-        if isinstance(live_speech_frame, dict) and live_speech_frame:
+        if isinstance(live_speech_frame, dict) and live_speech_frame and not capability_inventory_contract:
             compact_frame = {
                 key: live_speech_frame.get(key)
                 for key in (

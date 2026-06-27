@@ -128,6 +128,26 @@ def test_live_user_surface_quality_gate_rejects_unfounded_voice_intrusion():
     assert "unfounded_voice_intrusion" in reasons
 
 
+def test_live_user_surface_quality_gate_accepts_concise_capability_inventory():
+    reasons = _surface_quality_failure_reasons(
+        {
+            "clean_user_surface_contract": True,
+            "capability_inventory_contract": True,
+            "user_surface_validation_prompt": (
+                "What tools can you use externally, and what governance has to approve before you act?"
+            ),
+        },
+        (
+            "I can use desktop and app control, browser/web research, file operations, "
+            "terminal/code execution, memory state management, and self-repair. "
+            "Governed actions need Will/Authority approval through the live governance path."
+        ),
+    )
+
+    assert "too_thin_for_operational_status_turn" not in reasons
+    assert "too_thin_for_status_turn" not in reasons
+
+
 def test_live_user_surface_quality_gate_does_not_run_for_strict_contracts():
     assert _surface_quality_gate_enabled(
         {

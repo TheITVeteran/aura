@@ -358,7 +358,41 @@ def _surface_quality_failure_reasons(
     )
     if assessment.ok and not assessment.retryable and not assessment.hard_failure:
         return []
-    return list(assessment.reasons) or ["surface_quality_gate_failed"]
+    reasons = list(assessment.reasons) or ["surface_quality_gate_failed"]
+    if bool(job.get("capability_inventory_contract", False)):
+        # Capability inventory questions contain "tools", "external", and
+        # "desktop", which overlap operational-status classifiers. A concise
+        # governed inventory is valid when it names concrete categories,
+        # governance, effect evidence, and the non-execution boundary.
+        reply = str(response_text or "").lower()
+        has_category = "browser/web research" in reply or (
+            "browser" in reply and ("file" in reply or "desktop" in reply)
+        )
+        has_governance = any(
+            marker in reply
+            for marker in ("will/authority", "will and authority", "permission", "governed")
+        )
+        has_boundary = (
+            "not executing" in reply
+            or "not opening" in reply
+            or "hypothetical" in reply
+            or "in this turn" in reply
+        )
+        has_effect_evidence = "receipt" in reply or "effect verification" in reply
+        has_minimum_grounding = has_category and has_governance
+        if has_minimum_grounding and (has_boundary or not has_effect_evidence):
+            reasons = [
+                reason
+                for reason in reasons
+                if reason
+                not in {
+                    "too_thin_for_operational_status_turn",
+                    "too_thin_for_status_turn",
+                    "too_short_for_user_turn",
+                    "too_thin_for_user_turn",
+                }
+            ]
+    return reasons
 
 
 def _messages_with_user_surface_retry(
@@ -2545,6 +2579,26 @@ def _mlx_worker_loop(
                                                 ",".join(rejection_reasons[:8]) or "unknown",
                                                 str(response_text or "").strip()[:280],
                                             )
+                                            if (
+                                                bool(job.get("capability_inventory_contract", False))
+                                                and set(rejection_reasons).issubset(
+                                                    {
+                                                        "truncated_tail",
+                                                        "too_thin_for_operational_status_turn",
+                                                        "too_thin_for_status_turn",
+                                                        "too_short_for_user_turn",
+                                                        "too_thin_for_user_turn",
+                                                    }
+                                                )
+                                            ):
+                                                logger.warning(
+                                                    "🛡️ [WORKER] Passing clipped capability inventory draft "
+                                                    "downstream for deterministic completion instead of "
+                                                    "spending another foreground Cortex retry."
+                                                )
+                                                surface_control_state["surface_quality_gate_passed"] = True
+                                                surface_control_state["surface_quality_gate_reasons"] = []
+                                                break
                                             if internal_attempt < max_internal_retries:
                                                 if prompt_cache_lru is not None:
                                                     prompt_cache_lru.clear()

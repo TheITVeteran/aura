@@ -443,7 +443,7 @@ async def test_cognitive_engine_runtime_status_contract_propagates_to_worker_bou
 
 
 @pytest.mark.asyncio
-async def test_cognitive_engine_capability_inventory_contract_propagates_to_worker_boundary(monkeypatch):
+async def test_cognitive_engine_capability_inventory_contract_uses_catalog_without_worker(monkeypatch):
     engine = CognitiveEngine()
     state = AuraState.default()
     engine.state_repository = StateRepositoryFixture(state)
@@ -481,6 +481,24 @@ async def test_cognitive_engine_capability_inventory_contract_propagates_to_work
                 "terminal/code; memory; repair. Governed by Will and Authority with "
                 "receipts and effect verification."
             ),
+            "response_style_contract": "This duplicate style contract should not bloat capability turns.",
+            "live_speech_grounding_frame": {
+                "mood": "curiosity",
+                "dominant_emotions": ["curiosity"],
+                "requires_explicit_live_grounding": True,
+            },
+            "live_mind_context": {
+                "required_for_live_desktop": True,
+                "must_answer_from_full_mind_path": True,
+                "required_subsystems_ok": True,
+                "required_subsystems": {"kernel": True, "memory": True},
+                "lane": {"state": "ready"},
+                "voice": {"mode": "normal"},
+                "substrate": {"curiosity": 0.8, "verbose_blob": "x" * 5000},
+                "mind_snapshot": {"verbose_blob": "y" * 5000},
+                "mind_snapshot_quality": {"ready": True},
+                "governance": {"will": "ok"},
+            },
             "cognitive_engine_required": True,
             "desktop_cognitive_engine_required": True,
             "max_tokens": 384,
@@ -489,13 +507,12 @@ async def test_cognitive_engine_capability_inventory_contract_propagates_to_work
         timeout_s=60.0,
     )
 
-    assert thought.content.startswith("I can coordinate")
-    assert captured["capability_inventory_contract"] is True
-    assert captured["max_tokens"] == 384
-    assert captured["num_predict"] == 384
-    assert len(captured["messages"]) == 2
-    assert "GOVERNED CAPABILITY INVENTORY EVIDENCE" in captured["messages"][-1]["content"]
-    assert "browser/web research" in captured["messages"][-1]["content"]
+    assert "browser/web research" in thought.content
+    assert "Will and Authority" in thought.content
+    assert captured == {}
+    assert thought.metadata["response_path"] == "cognitive_engine_capability_catalog_grounding"
+    assert thought.metadata["live_mind_controls_bound"] is True
+    assert thought.metadata["live_mind_controls_worker_applied"] is True
 
 
 @pytest.mark.asyncio

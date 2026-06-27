@@ -426,7 +426,7 @@ def test_capability_inventory_gate_accepts_governed_effect_verified_answer():
         ),
         (
             "From the live desktop path I can use governed tool lanes for desktop apps, "
-            "browser and web research, file operations, document drafting, terminal work, "
+            "browser/web research, file operations, document drafting, terminal work, "
             "memory recall, and self-repair. A hypothetical chain would request Will/Authority "
             "approval, open sources, draft a document, verify the visible result, export the "
             "file, and record receipts without claiming unverified execution."

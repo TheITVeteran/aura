@@ -7674,6 +7674,9 @@ async def test_desktop_capability_inventory_uses_cognitive_engine_with_catalog_c
     assert reply
     assert len(calls) == 1
     assert calls[0]["context"]["capability_inventory_contract"] is True
+    assert calls[0]["context"]["preflight_context_message"] == ""
+    assert calls[0]["context"]["recent_completed_exchanges"] == []
+    assert calls[0]["context"]["recent_conversation_context"] == ""
     assert "desktop control" in reply
     assert "governance receipts" in reply
 
@@ -8877,7 +8880,7 @@ async def test_desktop_required_capability_repair_uses_grounded_inventory_withou
             7,
             {
                 "desktop and app control": ["desktop_task", "computer_use"],
-                "web and browser research": ["grounded_search", "sovereign_browser"],
+                "browser/web research": ["grounded_search", "sovereign_browser"],
                 "files, documents, and workspace operations": ["file_operation", "document_ingest"],
             },
             True,
@@ -8900,7 +8903,7 @@ async def test_desktop_required_capability_repair_uses_grounded_inventory_withou
 
     assert inference_gate.calls == []
     assert "desktop and app control" in result
-    assert "web and browser research" in result
+    assert "browser/web research" in result
     assert "files, documents, and workspace operations" in result
     assert "governance path" in result
     assert "AI language model" not in result

@@ -2144,7 +2144,7 @@ async def test_protected_capability_inventory_keeps_min_budget_under_resource_en
 
     monkeypatch.setattr(ServiceContainer, "get", staticmethod(_get))
     client = _ReadyGeneratingLane(
-        "I can coordinate desktop apps, browser and web research, files and PDFs, "
+        "I can coordinate desktop apps, browser/web research, files and PDFs, "
         "terminal/code work, memory, and repair tools. Consequential actions are "
         "governed by Will and Authority with permission checks; I record receipts "
         "and verify visible effects before claiming completion. A hypothetical chain "

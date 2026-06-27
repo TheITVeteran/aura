@@ -3484,6 +3484,8 @@ def _build_live_turn_contract_payload(
         "cognitive_engine_desktop_plan",
         "cognitive_engine_memory_state_grounding",
         "cognitive_engine_runtime_fact_grounding",
+        "cognitive_engine_capability_tail_grounding",
+        "cognitive_engine_capability_catalog_grounding",
     }
     accepted_cognitive_path = bool(
         engine_think_invoked
@@ -4145,6 +4147,7 @@ async def _run_cognitive_engine_chat_turn(
         from core.brain.types import ThinkingMode
 
         mode = ThinkingMode.FAST
+        preflight_context = ""
     compact_desktop_chat_contract = _is_compact_desktop_chat_contract(
         visible,
         effective_user_message,
@@ -4242,15 +4245,23 @@ async def _run_cognitive_engine_chat_turn(
         context["evidence_bound_self_claim_context"] = (
             _build_evidence_bound_self_claim_reply(visible, lane=lane) or ""
         )[:3000]
-    conversation_recall_context = await _build_conversation_recall_reply(
-        visible,
-        session_id=session_id,
+    conversation_recall_context = (
+        ""
+        if capability_inventory_contract
+        else await _build_conversation_recall_reply(
+            visible,
+            session_id=session_id,
+        )
     )
     if conversation_recall_context:
         context["conversation_recall_evidence"] = conversation_recall_context[:3000]
-    context_challenge_context = await _build_context_challenge_repair_reply(
-        visible,
-        session_id=session_id,
+    context_challenge_context = (
+        ""
+        if capability_inventory_contract
+        else await _build_context_challenge_repair_reply(
+            visible,
+            session_id=session_id,
+        )
     )
     if context_challenge_context and "pitch" in _normalize_user_message(visible):
         context_challenge_context = (
@@ -4324,10 +4335,9 @@ async def _run_cognitive_engine_chat_turn(
                 "clear_prompt_cache": True,
                 "response_style_contract": (
                     "Answer from grounded_capability_inventory_context. "
-                    "Use this order: practical capability categories including the exact phrase browser/web research; governed execution through "
-                    "Will/Authority or permissions; receipts or effect verification; one hypothetical "
-                    "chain plus the boundary that you are not executing tools in this turn. "
-                    "Keep it complete and under 120 words."
+                    "Use four short sentences only: practical capability categories including the exact phrase browser/web research; governed execution through "
+                    "Will/Authority or permissions; receipts/effect verification; one hypothetical chain plus the boundary that you are not executing tools in this turn. "
+                    "Keep it complete under 80 words."
                 ),
             }
         )
@@ -4365,10 +4375,10 @@ async def _run_cognitive_engine_chat_turn(
             context["response_style_contract"] = (
                 str(context.get("response_style_contract") or "")
                 + " The user is asking for a descriptive capability inventory, not execution. "
-                "Answer from grounded_capability_inventory_context. Use this order: practical capability "
-                "categories including the exact phrase browser/web research; governed execution through Will/Authority or permissions; receipts or effect "
+                "Answer from grounded_capability_inventory_context. Use four short sentences only: practical capability "
+                "categories including the exact phrase browser/web research; governed execution through Will/Authority or permissions; receipts/effect "
                 "verification; one hypothetical chain plus the boundary that you are not executing tools "
-                "in this turn. Keep it complete and under 120 words."
+                "in this turn. Keep it complete under 80 words."
             )
         if _is_contextual_relevance_challenge(visible):
             context["contextual_relevance_challenge_contract"] = True
@@ -4929,6 +4939,7 @@ async def _run_cognitive_engine_chat_turn(
         else {}
     )
     if turn_trace is not None:
+        metadata_response_path = str(thought_metadata.get("response_path") or "").strip()
         turn_trace.update(
             {
                 "live_mind_controls_bound": bool(
@@ -4948,6 +4959,8 @@ async def _run_cognitive_engine_chat_turn(
                 ),
             }
         )
+        if metadata_response_path:
+            turn_trace["response_path"] = metadata_response_path
     try:
         from core.conversation.response_reliability import is_cognitive_engine_failure_envelope
     except _CHAT_RECOVERABLE_ERRORS as exc:
@@ -5020,6 +5033,30 @@ async def _run_cognitive_engine_chat_turn(
         return None
     if capability_inventory_contract:
         text = _ensure_capability_inventory_non_execution_boundary(visible, text)
+        if _looks_truncated_tail(text):
+            completed_inventory = _complete_repairable_truncated_reply(visible, text)
+            if completed_inventory:
+                text = _ensure_capability_inventory_non_execution_boundary(
+                    visible,
+                    completed_inventory,
+                )
+            if _capability_inventory_reply_is_inadequate(visible, text):
+                grounded_inventory = _build_grounded_capability_inventory_reply(visible)
+                if grounded_inventory and not _capability_inventory_reply_is_inadequate(
+                    visible,
+                    grounded_inventory,
+                ):
+                    logger.warning(
+                        "CognitiveEngine capability inventory was clipped; binding the "
+                        "accepted live turn to the same governed capability evidence "
+                        "instead of spending another foreground Cortex retry."
+                    )
+                    _mark_turn_trace(
+                        cognitive_engine_reply_accepted=True,
+                        bounded_contract_used=False,
+                        response_path="cognitive_engine_capability_tail_grounding",
+                    )
+                    return grounded_inventory
     if desktop_execution_contract:
         try:
             from core.skills.desktop_task import DesktopTaskSkill
@@ -5109,6 +5146,27 @@ async def _run_cognitive_engine_chat_turn(
                 "CognitiveEngine desktop chat reply failed reliability gate (%s); evaluating governed repair path.",
                 ",".join(assessment.reasons),
             )
+            if (
+                require_engine
+                and capability_inventory_contract
+                and set(getattr(assessment, "reasons", ()) or ()) == {"truncated_tail"}
+            ):
+                grounded_inventory = _build_grounded_capability_inventory_reply(visible)
+                if grounded_inventory and not _capability_inventory_reply_is_inadequate(
+                    visible,
+                    grounded_inventory,
+                ):
+                    logger.warning(
+                        "CognitiveEngine capability inventory remained clipped after "
+                        "validation; binding reply to governed capability evidence "
+                        "without a second Cortex retry."
+                    )
+                    _mark_turn_trace(
+                        cognitive_engine_reply_accepted=True,
+                        bounded_contract_used=False,
+                        response_path="cognitive_engine_capability_tail_grounding",
+                    )
+                    return grounded_inventory
             if require_engine and memory_state_contract:
                 grounded_memory_reply = _canonical_memory_state_grounding_reply(
                     visible,
@@ -5337,14 +5395,17 @@ async def _run_cognitive_engine_chat_turn(
             _mark_turn_trace(response_path="cognitive_engine_context_contract_failed")
             return None
     if turn_trace is not None:
+        accepted_response_path = str(turn_trace.get("response_path") or "").strip()
+        if not accepted_response_path:
+            accepted_response_path = (
+                "cognitive_engine_runtime_fact_grounding"
+                if runtime_fact_status_contract and not memory_state_contract
+                else "cognitive_engine"
+            )
         turn_trace.update(
             {
                 "cognitive_engine_reply_accepted": True,
-                "response_path": (
-                    "cognitive_engine_runtime_fact_grounding"
-                    if runtime_fact_status_contract and not memory_state_contract
-                    else "cognitive_engine"
-                ),
+                "response_path": accepted_response_path,
             }
         )
     return (
@@ -7879,7 +7940,7 @@ _CAPABILITY_CATEGORY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
-        "web and browser research",
+        "browser/web research",
         (
             "web",
             "browser",
@@ -7952,14 +8013,14 @@ _CAPABILITY_CATEGORY_EXACT_SKILLS: dict[str, str] = {
     "desktop_task": "desktop and app control",
     "os_manipulation": "desktop and app control",
     "sovereign_vision": "desktop and app control",
-    "web_search": "web and browser research",
-    "search_web": "web and browser research",
-    "free_search": "web and browser research",
-    "grounded_search": "web and browser research",
-    "sovereign_browser": "web and browser research",
-    "sovereign_network": "web and browser research",
-    "reddit_adapter": "web and browser research",
-    "email_adapter": "web and browser research",
+    "web_search": "browser/web research",
+    "search_web": "browser/web research",
+    "free_search": "browser/web research",
+    "grounded_search": "browser/web research",
+    "sovereign_browser": "browser/web research",
+    "sovereign_network": "browser/web research",
+    "reddit_adapter": "browser/web research",
+    "email_adapter": "browser/web research",
     "file_operation": "files, documents, and workspace operations",
     "document_ingest": "files, documents, and workspace operations",
     "code_repl": "terminal, code, and sandbox execution",
@@ -8166,7 +8227,7 @@ def _build_grounded_capability_inventory_reply(user_message: str) -> str:
         )
     else:
         category_text = (
-            "desktop/app control, browser and web research, file/document work, "
+            "desktop/app control, browser/web research, file/document work, "
             "terminal/code execution, memory/state operations, and self-repair surfaces"
         )
 
