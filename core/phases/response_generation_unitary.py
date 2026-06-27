@@ -1929,23 +1929,39 @@ class UnitaryResponsePhase(Phase):
         if task_type is None:
             return draft
 
-        async def _gen(prompt: str, temperature: float) -> str:
-            try:
-                out = await llm.think(
-                    prompt,
-                    temperature=temperature,
-                    prefer_tier="primary",
-                    allow_cloud_fallback=False,
-                )
-            except _RESPONSE_RECOVERABLE_ERRORS as exc:
-                _record_response_degradation(exc, "UnitaryResponse: amplifier generate failed: %s")
-                return ""
-            if isinstance(out, dict):
-                out = out.get("content") or out.get("response") or ""
-            return str(out or "").strip()
+        def _make_gen(tier: str, allow_cloud: bool) -> Any:
+            async def _gen(prompt: str, temperature: float) -> str:
+                try:
+                    out = await llm.think(
+                        prompt,
+                        temperature=temperature,
+                        prefer_tier=tier,
+                        allow_cloud_fallback=allow_cloud,
+                    )
+                except _RESPONSE_RECOVERABLE_ERRORS as exc:
+                    _record_response_degradation(exc, "UnitaryResponse: amplifier generate failed: %s")
+                    return ""
+                if isinstance(out, dict):
+                    out = out.get("content") or out.get("response") or ""
+                return str(out or "").strip()
+
+            return _gen
+
+        _gen = _make_gen("primary", False)
+
+        # Tier escalation (verifier-of-last-resort): when a hard turn finishes
+        # verifier-dirty with budget left, retry once on the deep tier (72B / cloud).
+        # Off by default so the running foreground lane keeps its latency contract;
+        # opt in with AURA_AMPLIFIER_TIER_ESCALATION=1. Cloud is a separate opt-in.
+        escalate_gen = None
+        if str(os.getenv("AURA_AMPLIFIER_TIER_ESCALATION", "0")).strip().lower() in {"1", "true", "on", "yes"}:
+            allow_cloud = str(os.getenv("AURA_AMPLIFIER_ESCALATE_CLOUD", "0")).strip().lower() in {"1", "true", "on", "yes"}
+            escalate_gen = _make_gen("deep", allow_cloud)
 
         budget = float(min(30.0, max(8.0, (request_timeout or 20.0) * 0.8)))
-        result = await amplify_turn(objective, _gen, task_type=task_type, time_budget_s=budget)
+        result = await amplify_turn(
+            objective, _gen, task_type=task_type, time_budget_s=budget, escalate_generate=escalate_gen
+        )
         receipt = result.receipt.to_dict()
         self._last_reasoning_receipt = receipt
         try:

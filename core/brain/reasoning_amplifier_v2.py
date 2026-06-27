@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -55,6 +56,24 @@ _MODE_BUDGET = {
     ReasoningMode.PROOF: 9,
 }
 _TEMPS = [0.2, 0.5, 0.7, 0.9, 1.0, 0.4, 0.6, 0.8, 1.1]
+_MAX_SAMPLES = len(_TEMPS)
+
+# Φ thresholds mirror core.phases.phi_consciousness so the amplifier's notion of
+# "is cognition integrated enough to spend deep compute" matches the kernel's.
+PHI_DORMANT = 0.05      # below: fragmented — cap at FAST
+PHI_REACTIVE = 0.20     # below: shallow — cap at NORMAL
+PHI_DELIBERATE = 0.55   # at/above: full deliberate capacity
+
+
+def _flag_on(name: str, default: str = "1") -> bool:
+    return str(os.getenv(name, default)).strip().lower() not in {"0", "false", "off", "no"}
+
+
+def _clamp01(value: Any) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +254,7 @@ class ReasoningAmplifierV2:
         evidence_provider: Any | None = None,
         substrate: Any | None = None,
         courtroom_factory: Callable[[GenerateFn, Any], Any] | None = None,
+        escalate_generate: GenerateFn | None = None,
     ) -> None:
         self._generate = generate
         self._verifier = verifier
@@ -244,6 +264,11 @@ class ReasoningAmplifierV2:
         self._evidence_provider = evidence_provider
         self._substrate = substrate
         self._courtroom_factory = courtroom_factory
+        # Optional stronger-tier generator (72B / api_deep). When set, a turn that
+        # finishes verifier-dirty with time left gets one escalation pass. Off by
+        # default (None) so the local/bench lane stays honest and surprise cloud
+        # calls never happen implicitly.
+        self._escalate_generate = escalate_generate
 
     # --- lazy default wiring (so callers can pass just a generate fn) -------
     def _ensure_verifier(self) -> Any:
@@ -307,18 +332,46 @@ class ReasoningAmplifierV2:
                 self._substrate = sub
             except (ImportError, RuntimeError, AttributeError):
                 sub = None
-        if sub is None:
-            return {}
-        for attr in ("get_substrate_affect", "get_affect", "affect_snapshot"):
-            fn = getattr(sub, attr, None)
-            if callable(fn):
-                try:
-                    data = fn()
-                    if isinstance(data, dict):
-                        return {k: float(v) for k, v in data.items() if isinstance(v, (int, float))}
-                except (RuntimeError, AttributeError, TypeError, ValueError):
-                    continue
-        return {}
+        signals: dict[str, float] = {}
+        if sub is not None:
+            for attr in ("get_substrate_affect", "get_affect", "affect_snapshot"):
+                fn = getattr(sub, attr, None)
+                if callable(fn):
+                    try:
+                        data = fn()
+                        if isinstance(data, dict):
+                            signals = {k: float(v) for k, v in data.items() if isinstance(v, (int, float))}
+                            break
+                    except (RuntimeError, AttributeError, TypeError, ValueError):
+                        continue
+        # Augment with the kernel's live Φ (integration) and free-energy (prediction
+        # error) so compute is allocated by how integrated AND how surprised the mind
+        # is right now — not just by task type. Read-only, fail-open to whatever the
+        # affect snapshot already gave us.
+        try:
+            from core.kernel.kernel_interface import KernelInterface
+
+            loop = KernelInterface.get_instance().loop_state()
+            if isinstance(loop, dict):
+                if "phi" in loop and "phi" not in signals:
+                    signals["phi"] = float(loop.get("phi") or 0.0)
+                if "arousal" in loop and "arousal" not in signals:
+                    signals["arousal"] = float(loop.get("arousal") or 0.0)
+                if "valence" in loop and "valence" not in signals:
+                    signals["valence"] = float(loop.get("valence") or 0.0)
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            pass
+        if "free_energy" not in signals and "fe" not in signals:
+            try:
+                from core.container import ServiceContainer
+
+                fe_engine = ServiceContainer.get("free_energy_engine", default=None)
+                fe_state = fe_engine.get_current_state() if fe_engine is not None and hasattr(fe_engine, "get_current_state") else None
+                if fe_state is not None and hasattr(fe_state, "free_energy"):
+                    signals["free_energy"] = float(fe_state.free_energy)
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                pass
+        return signals
 
     @staticmethod
     def _should_deepen(affect: dict[str, float]) -> bool:
@@ -330,13 +383,103 @@ class ReasoningAmplifierV2:
         return uncertainty >= 0.75 or valence <= -0.4 or frustration >= 0.6
 
     @staticmethod
-    def _deepen(mode: ReasoningMode) -> ReasoningMode:
+    def _deepen(mode: ReasoningMode, rungs: int = 1) -> ReasoningMode:
         ladder = {
             ReasoningMode.FAST: ReasoningMode.NORMAL,
             ReasoningMode.NORMAL: ReasoningMode.DEEP,
             ReasoningMode.DEEP: ReasoningMode.EXTREME,
         }
-        return ladder.get(mode, mode)
+        for _ in range(max(0, int(rungs))):
+            nxt = ladder.get(mode)
+            if nxt is None:
+                break
+            mode = nxt
+        return mode
+
+    @staticmethod
+    def _phi_mode_cap(mode: ReasoningMode, phi: float) -> ReasoningMode:
+        """Fragmented cognition (low Φ) cannot sustain deep deliberation.
+
+        Mirrors phi_consciousness mode-gating: under-integrated states get capped
+        so the amplifier never burns a 9-sample courtroom on a mind that can't hold
+        the result together. PROOF is never downgraded — refusal-on-unverified is a
+        safety contract, not a compute tier.
+        """
+        if mode is ReasoningMode.PROOF:
+            return mode
+        order = [ReasoningMode.FAST, ReasoningMode.NORMAL, ReasoningMode.DEEP, ReasoningMode.EXTREME]
+        if mode not in order:
+            return mode
+        if phi < PHI_DORMANT:
+            ceiling = ReasoningMode.FAST
+        elif phi < PHI_REACTIVE:
+            ceiling = ReasoningMode.NORMAL
+        else:
+            return mode
+        return mode if order.index(mode) <= order.index(ceiling) else ceiling
+
+    @classmethod
+    def _cognitive_demand(cls, signals: dict[str, float]) -> float:
+        """How hard is *this* thought, from the live mind state → [0, 1].
+
+        High prediction-error (free energy), uncertainty, negative valence (stuck),
+        or frustration all say "you are not converging — think harder". Weights sum
+        > 1 on purpose so a single strong signal can drive demand high; the result
+        is clamped.
+        """
+        if not signals:
+            return 0.0
+        fe = _clamp01(signals.get("free_energy", signals.get("fe", 0.0)))
+        uncertainty = _clamp01(signals.get("uncertainty", signals.get("entropy", 0.0)))
+        neg_valence = _clamp01(-float(signals.get("valence", 0.0) or 0.0))
+        frustration = _clamp01(signals.get("frustration", 0.0))
+        return _clamp01(0.45 * fe + 0.30 * uncertainty + 0.25 * neg_valence + 0.20 * frustration)
+
+    @staticmethod
+    def _phi_capacity(phi: float) -> float:
+        """Fraction of deep-compute the current integration level can support → [0,1]."""
+        if phi <= PHI_DORMANT:
+            return 0.2
+        if phi >= PHI_DELIBERATE:
+            return 1.0
+        # Linear ramp from 0.2 at DORMANT to 1.0 at DELIBERATE.
+        span = PHI_DELIBERATE - PHI_DORMANT
+        return _clamp01(0.2 + 0.8 * ((phi - PHI_DORMANT) / span))
+
+    @classmethod
+    def _resolve_compute_budget(
+        cls, base_mode: ReasoningMode, signals: dict[str, float]
+    ) -> tuple[ReasoningMode, int, float]:
+        """Φ-gated test-time compute allocation.
+
+        Returns ``(mode, sample_budget, time_multiplier)``. Demand (how hard the
+        thought is) buys depth; Φ-capacity (how integrated the mind is) gates how
+        much of that depth it is allowed to spend. This is the controller that turns
+        a fixed local model into a variable-effort reasoner.
+        """
+        phi = _clamp01(signals.get("phi", PHI_DELIBERATE))  # absent Φ ⇒ full capacity
+        demand = cls._cognitive_demand(signals)
+        capacity = cls._phi_capacity(phi)
+        push = demand * capacity
+
+        rungs = 0
+        if push >= 0.66:
+            rungs = 2
+        elif push >= 0.33:
+            rungs = 1
+        # Preserve the legacy hard trigger: a clearly stuck mind always deepens once.
+        if rungs == 0 and cls._should_deepen(signals):
+            rungs = 1
+
+        mode = cls._deepen(base_mode, rungs) if rungs else base_mode
+        mode = cls._phi_mode_cap(mode, phi)
+
+        base_samples = _MODE_BUDGET[mode]
+        sample_budget = int(round(base_samples * (1.0 + 0.5 * push)))
+        sample_budget = max(1, min(_MAX_SAMPLES, sample_budget))
+
+        time_multiplier = round(max(0.6, min(2.5, 1.0 + 1.2 * push)), 3)
+        return mode, sample_budget, time_multiplier
 
     async def amplify(self, request: AmplificationRequest) -> AmplifiedAnswer:
         start = time.monotonic()
@@ -349,15 +492,69 @@ class ReasoningAmplifierV2:
             task_type=request.task_type or None,
             required_evidence=request.required_evidence,
         )
+
+        # 1b. solved-cache — a verifier-clean derivation of this exact problem is an
+        # O(1) lookup instead of a full amplifier run. The lawful free lunch: amortize
+        # search cost across re-encounters. Only source-independent task types are
+        # cached, so a stale answer can never be served as current truth.
+        if _flag_on("AURA_REASONING_CACHE") and not request.context.get("skip_cache"):
+            try:
+                from core.brain.reasoning_solved_cache import get_reasoning_solved_cache
+
+                cached = get_reasoning_solved_cache().get(problem.objective, problem.task_type)
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("amplifier_v2_cache_get", exc)
+                cached = None
+            if cached is not None and cached.answer:
+                logger.info(
+                    "🧠 [AmplifyV2] solved-cache HIT task=%s conf=%.2f (hits=%d)",
+                    problem.task_type, cached.confidence, cached.hits,
+                )
+                receipt = ReasoningReceipt(
+                    mode=cached.mode or "cached",
+                    strategy_used="solved_cache",
+                    task_type=problem.task_type,
+                    num_candidates=0,
+                    verifiers_run=list(cached.verifiers_run),
+                    valid_candidates=1,
+                    winning_candidate_id=0,
+                    confidence=cached.confidence,
+                    agreement=1.0,
+                    epistemic_status="verified",
+                    budget_used={"samples": 0, "time_s": round(time.monotonic() - start, 3), "cache": True},
+                    fallbacks_used=["solved_cache_hit"],
+                )
+                return AmplifiedAnswer(
+                    answer=cached.answer,
+                    confidence=cached.confidence,
+                    verified=True,
+                    calibrated=False,
+                    receipt=receipt,
+                )
+
         mode = ReasoningBudgetPolicy.choose_mode(
             problem.task_type, risk_level=request.risk_level, explicit=request.mode
         )
-        # Couple to the live substrate: a stuck/uncertain mind reasons deeper.
+        # Couple to the live mind: Φ-gated test-time compute. Demand (free energy,
+        # uncertainty, stuck-valence) buys depth; Φ-capacity gates how much depth the
+        # current integration level can spend. Explicit caller mode is never overridden.
         affect = self._read_substrate()
-        if request.mode is None and self._should_deepen(affect):
-            mode = self._deepen(mode)
-            fallbacks.append("substrate_deepened")
         sample_budget = request.sample_budget or _MODE_BUDGET[mode]
+        if request.mode is None:
+            if _flag_on("AURA_PHI_GATED_COMPUTE"):
+                resolved_mode, resolved_samples, time_mult = self._resolve_compute_budget(mode, affect)
+                if resolved_mode is not mode:
+                    fallbacks.append(f"phi_gated:{mode.value}->{resolved_mode.value}")
+                mode = resolved_mode
+                if request.sample_budget is None:
+                    sample_budget = resolved_samples
+                if time_mult != 1.0:
+                    deadline = start + max(2.0, float(request.time_budget_s) * time_mult)
+                    fallbacks.append(f"phi_time_x{time_mult}")
+            elif self._should_deepen(affect):
+                mode = self._deepen(mode)
+                sample_budget = request.sample_budget or _MODE_BUDGET[mode]
+                fallbacks.append("substrate_deepened")
 
         # 2. retrieve failure-mode guards from prior reasoning.
         guard_text = ""
@@ -400,6 +597,44 @@ class ReasoningAmplifierV2:
         verifier_issues = list(getattr(verdict, "issues", []) or []) if verdict is not None else []
         verifiers_run = (getattr(verdict, "engine", "") or "").split("+") if verdict is not None else []
 
+        # 8b. Tier escalation — verifier-of-last-resort. If the local pipeline finished
+        # verifier-dirty, a stronger generator (72B / api_deep) is wired, and budget
+        # remains, spend one bounded pass on the strong tier and adopt a clean candidate.
+        # "Go get the answer where it lives" — Wall-2/Wall-3 loophole, never implicit.
+        if (
+            not verifier_ok
+            and self._escalate_generate is not None
+            and mode in (ReasoningMode.DEEP, ReasoningMode.EXTREME, ReasoningMode.PROOF)
+            and time.monotonic() < deadline
+        ):
+            esc_prompt = self._build_prompt(problem, guard_text)
+
+            async def _escalate_one(temp: float) -> str:
+                try:
+                    return str(await self._escalate_generate(esc_prompt, temp) or "").strip()
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    record_degradation("amplifier_v2_escalate_generate", exc)
+                    return ""
+
+            try:
+                esc_candidates = await self._with_deadline(
+                    asyncio.gather(_escalate_one(0.2), _escalate_one(0.5)), deadline
+                )
+            except (RuntimeError, AttributeError, TypeError, ValueError, asyncio.TimeoutError) as exc:
+                record_degradation("amplifier_v2_escalate", exc)
+                esc_candidates = []
+            for cand in [c for c in (esc_candidates or []) if c]:
+                esc_verdict = await self._verify(cand, problem, request.context)
+                if bool(getattr(esc_verdict, "ok", False)):
+                    answer = cand
+                    verdict = esc_verdict
+                    verifier_ok = True
+                    verifier_issues = list(getattr(esc_verdict, "issues", []) or [])
+                    verifiers_run = (getattr(esc_verdict, "engine", "") or "").split("+")
+                    fallbacks.append("tier_escalated")
+                    logger.info("🧠 [AmplifyV2] tier escalation produced a verifier-clean answer.")
+                    break
+
         # 9. final critique — calibrate confidence to epistemic status. Uses the
         # full evidence pack (caller-supplied + ReAct-gathered source spans/memories).
         evidence = list(problem.required_evidence) + list(request.context.get("evidence", []) or [])
@@ -414,6 +649,28 @@ class ReasoningAmplifierV2:
             fallbacks.append("proof_refused_unverified")
 
         confidence = round(min(calibration.confidence, 0.98 if verifier_ok else 0.55), 4)
+
+        # 9b. memoize verifier-clean source-independent derivations for instant re-use.
+        if (
+            verifier_ok
+            and _flag_on("AURA_REASONING_CACHE")
+            and not request.context.get("skip_cache")
+            and "solved_cache_hit" not in fallbacks
+        ):
+            try:
+                from core.brain.reasoning_solved_cache import get_reasoning_solved_cache
+
+                get_reasoning_solved_cache().put(
+                    problem.objective,
+                    problem.task_type,
+                    answer=calibrated_answer,
+                    confidence=confidence,
+                    mode=mode.value,
+                    verifiers_run=[v for v in verifiers_run if v],
+                    verified=verifier_ok,
+                )
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("amplifier_v2_cache_put", exc)
 
         # 10. record the episode so the next one is wiser.
         try:
