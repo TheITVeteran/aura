@@ -86,10 +86,15 @@ class ConductedJob:
     last_status: str = "never_run"
     last_result: dict[str, Any] = field(default_factory=dict)
     failures: int = 0
+    policy: str = "maintenance"
+    allow_desktop_safe_boot: bool = False
+    next_eligible_at: float = 0.0
 
     def due(self, now: float) -> bool:
+        if now < self.next_eligible_at:
+            return False
         if self.last_started_at <= 0:
-            return self.run_immediately
+            return self.run_immediately or self.next_eligible_at > 0.0
         return (now - self.last_started_at) >= self.interval_s
 
     def to_dict(self) -> dict[str, Any]:
@@ -101,6 +106,9 @@ class ConductedJob:
             "last_status": self.last_status,
             "last_result": self.last_result,
             "failures": self.failures,
+            "policy": self.policy,
+            "allow_desktop_safe_boot": self.allow_desktop_safe_boot,
+            "next_eligible_at": self.next_eligible_at,
         }
 
 
@@ -117,7 +125,14 @@ class AutonomyConductor:
         self._stop = asyncio.Event()
 
     def register(
-        self, name: str, interval_s: float, fn: JobFn, *, run_immediately: bool = False
+        self,
+        name: str,
+        interval_s: float,
+        fn: JobFn,
+        *,
+        run_immediately: bool = False,
+        policy: str = "maintenance",
+        allow_desktop_safe_boot: bool = False,
     ) -> None:
         if not name or not isinstance(name, str):
             raise ValueError("autonomy job name must be a non-empty string")
@@ -131,18 +146,27 @@ class AutonomyConductor:
             interval_s=interval,
             fn=fn,
             run_immediately=run_immediately,
+            policy=str(policy or "maintenance"),
+            allow_desktop_safe_boot=bool(allow_desktop_safe_boot),
+            next_eligible_at=0.0 if run_immediately else time.time() + interval,
         )
 
     def register_defaults(self) -> None:
-        self.register("metabolic_budget", 300.0, self._job_metabolic_budget, run_immediately=True)
+        self.register(
+            "metabolic_budget",
+            300.0,
+            self._job_metabolic_budget,
+            run_immediately=True,
+            policy="constitutive",
+        )
         self.register(
             "stdp_external_validation",
             6 * 3600.0,
             self._job_stdp_external_validation,
-            run_immediately=True,
+            run_immediately=False,
         )
         self.register(
-            "caa_32b_validation", 6 * 3600.0, self._job_caa_32b_validation, run_immediately=True
+            "caa_32b_validation", 6 * 3600.0, self._job_caa_32b_validation, run_immediately=False
         )
         self.register("proof_bundle", 12 * 3600.0, self._job_proof_bundle, run_immediately=False)
         self.register(
@@ -152,11 +176,39 @@ class AutonomyConductor:
             "architecture_auto_cycle", 600.0, self._job_architecture_auto, run_immediately=False
         )
         self.register(
-            "overt_action_cycle", 120.0, self._job_overt_action_cycle, run_immediately=True
+            "overt_action_cycle",
+            120.0,
+            self._job_overt_action_cycle,
+            run_immediately=True,
+            policy="delegated",
         )
         self.register(
-            "online_lora_status", 900.0, self._job_online_lora_status, run_immediately=True
+            "online_lora_status",
+            900.0,
+            self._job_online_lora_status,
+            run_immediately=True,
+            policy="constitutive",
         )
+        self.register(
+            "internal_deliberation_cycle",
+            30 * 60.0,
+            self._job_internal_deliberation,
+            run_immediately=False,
+            policy="research",
+        )
+        # Reasoning flywheel: idle pre-compute (drain verifier-dirty hard problems off
+        # the foreground path) + self-improvement feed (STaR traces -> governed train
+        # pipe). Capture/enqueue are already live in the amplifier; these drain/feed it.
+        try:
+            from core.brain.reasoning_background import register_reasoning_jobs
+
+            register_reasoning_jobs(self)
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _record_autonomy_degradation(
+                exc,
+                action="continued without reasoning background loops",
+                stage="register_defaults.reasoning_jobs",
+            )
 
     async def start(self) -> None:
         if self._task and not self._task.done():
@@ -211,6 +263,11 @@ class AutonomyConductor:
     async def _run(self) -> None:
         while not self._stop.is_set():
             try:
+                from core.container import ServiceContainer
+
+                healer = ServiceContainer.get("self_healing", default=None)
+                if healer is not None:
+                    healer.heartbeat("autonomy_conductor")
                 await self.run_due_once()
             except _AUTONOMY_RECOVERABLE_ERRORS as exc:
                 _record_autonomy_degradation(
@@ -229,7 +286,16 @@ class AutonomyConductor:
                 )
 
     async def _run_job(self, job: ConductedJob) -> dict[str, Any]:
+        policy_reason = self._job_policy_reason(job)
+        if policy_reason:
+            job.last_status = "deferred"
+            job.last_result = {"reason": policy_reason}
+            job.next_eligible_at = time.time() + min(60.0, max(5.0, job.interval_s / 10.0))
+            self._record(job)
+            return job.to_dict()
+
         job.last_started_at = time.time()
+        job.next_eligible_at = 0.0
         try:
             result = job.fn()
             if asyncio.iscoroutine(result):
@@ -251,6 +317,45 @@ class AutonomyConductor:
         job.last_finished_at = time.time()
         self._record(job)
         return job.to_dict()
+
+    def _job_policy_reason(self, job: ConductedJob) -> str:
+        try:
+            from core.container import ServiceContainer
+            from core.runtime.background_policy import (
+                MAINTENANCE_BACKGROUND_POLICY,
+                RESEARCH_BACKGROUND_POLICY,
+                background_activity_reason,
+                background_loop_start_reason,
+            )
+
+            start_reason = background_loop_start_reason(
+                origin=f"autonomy_conductor:{job.name}",
+                allow_desktop_safe_boot=job.allow_desktop_safe_boot,
+            )
+            if start_reason:
+                return start_reason
+            if job.policy in {"constitutive", "delegated"}:
+                return ""
+
+            profile = (
+                RESEARCH_BACKGROUND_POLICY
+                if job.policy == "research"
+                else MAINTENANCE_BACKGROUND_POLICY
+            )
+            return background_activity_reason(
+                ServiceContainer.get("orchestrator", default=None),
+                profile=profile,
+                allow_no_user_anchor=True,
+                allow_desktop_safe_boot=job.allow_desktop_safe_boot,
+            )
+        except _AUTONOMY_RECOVERABLE_ERRORS as exc:
+            _record_autonomy_degradation(
+                exc,
+                action="deferred autonomy job because background admission could not be verified",
+                stage="run_job.policy",
+                job_name=job.name,
+            )
+            return "background_policy_unavailable"
 
     def _record(self, job: ConductedJob) -> None:
         entry = {"when": time.time(), "job": job.to_dict()}
@@ -359,6 +464,25 @@ class AutonomyConductor:
             "active_lora_processes": governor.active_lora_processes(),
             "last_receipt": governor.last_receipt.to_dict() if governor.last_receipt else None,
         }
+
+    async def _job_internal_deliberation(self) -> dict[str, Any]:
+        from core.autonomy.topic_selection import select_autonomous_topic
+        from core.container import ServiceContainer
+
+        orchestrator = ServiceContainer.get("orchestrator", default=None)
+        agency = ServiceContainer.get("agency_core", default=None)
+        swarm = getattr(agency, "swarm", None)
+        if orchestrator is None or swarm is None or not hasattr(swarm, "run_deliberation"):
+            return {"status": "unavailable", "reason": "agency_swarm_not_registered"}
+        state = getattr(getattr(orchestrator, "kernel", None), "state", None)
+        candidate = select_autonomous_topic(orchestrator, state)
+        if candidate is None:
+            return {"status": "idle", "reason": "no_grounded_deliberation_topic"}
+        return await swarm.run_deliberation(
+            topic=candidate.text,
+            topic_source=candidate.source,
+            max_perspectives=2,
+        )
 
 
 _instance: AutonomyConductor | None = None
