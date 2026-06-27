@@ -211,32 +211,49 @@ async def run_delta(
 
 
 # ── live wiring (explicit; never auto-runs on import) ───────────────────────
-def make_mlx_generators() -> tuple[GenerateFn, GenerateFn]:
-    """Build (cortex_32b, solver_72b) generators over the live MLX runtime.
+def make_mlx_lm_generator(model_path: str, *, max_tokens: int = 640) -> GenerateFn:
+    """Build a standalone async generate fn over a local MLX model via mlx_lm.
 
-    Reuses the already-resident models via the InferenceGate so a --live run does
-    not load a second copy and OOM the host. Only call this from an explicit
-    --live invocation with verified memory headroom.
+    No app boot, no InferenceGate — loads the weights directly (the same pattern as
+    benchmarks/reasoning). Only call this from an explicit --live run with verified
+    memory headroom; each call loads one model copy into unified memory.
     """
-    from core.brain.inference_gate import InferenceGate
+    from mlx_lm import generate as _mlx_generate
+    from mlx_lm import load as _mlx_load
 
-    gate = InferenceGate.get_instance() if hasattr(InferenceGate, "get_instance") else InferenceGate()
+    model, tokenizer = _mlx_load(model_path)
 
-    async def _gen(tier: str):
-        async def _call(prompt: str, temperature: float) -> str:
-            out = await gate.generate(
-                prompt,
-                context={"prefer_tier": tier, "is_background": True, "temperature": temperature},
-            )
-            if isinstance(out, dict):
-                out = out.get("content") or out.get("response") or ""
-            return str(out or "")
-        return _call
+    def _sampler(temperature: float):
+        try:
+            from mlx_lm.sample_utils import make_sampler
 
-    loop = asyncio.get_event_loop()
-    cortex = loop.run_until_complete(_gen("primary"))
-    solver = loop.run_until_complete(_gen("deep"))
-    return cortex, solver
+            return make_sampler(temp=float(temperature))
+        except (ImportError, TypeError, ValueError):
+            return None
+
+    async def _gen(prompt: str, temperature: float) -> str:
+        def _run() -> str:
+            try:
+                chat = tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    add_generation_prompt=True,
+                    tokenize=False,
+                )
+            except (AttributeError, TypeError, ValueError):
+                chat = prompt
+            sampler = _sampler(temperature)
+            kwargs: dict[str, Any] = {"max_tokens": max_tokens, "verbose": False}
+            if sampler is not None:
+                kwargs["sampler"] = sampler
+            try:
+                return str(_mlx_generate(model, tokenizer, prompt=chat, **kwargs) or "")
+            except TypeError:
+                # Older signature without sampler/verbose kwargs.
+                return str(_mlx_generate(model, tokenizer, prompt=chat, max_tokens=max_tokens) or "")
+
+        return await asyncio.to_thread(_run)
+
+    return _gen
 
 
 def _deterministic_generators() -> tuple[GenerateFn, GenerateFn]:
@@ -253,18 +270,27 @@ def main(argv: list[str] | None = None) -> int:
     import json
 
     parser = argparse.ArgumentParser(description="Aura reasoning-delta harness")
-    parser.add_argument("--live", action="store_true", help="Use the live MLX 32B/72B models (explicit, heavy)")
+    parser.add_argument("--live", action="store_true", help="Load real MLX models via mlx_lm (explicit, heavy)")
+    parser.add_argument("--model", type=str, default="models/Qwen2.5-7B-Instruct-4bit",
+                        help="Cortex model path for --live (default: safe 7B)")
+    parser.add_argument("--solver-model", type=str, default="",
+                        help="Optional larger solver model path for the 72B comparison (omit to skip)")
     parser.add_argument("--limit", type=int, default=0, help="Cap number of tasks (0 = all)")
-    parser.add_argument("--per-task-timeout", type=float, default=60.0)
-    parser.add_argument("--deadline", type=float, default=600.0, help="Wall-clock deadline (s)")
-    parser.add_argument("--amp-budget", type=float, default=45.0, help="Amplifier per-turn time budget (s)")
+    parser.add_argument("--per-task-timeout", type=float, default=120.0)
+    parser.add_argument("--deadline", type=float, default=900.0, help="Wall-clock deadline (s)")
+    parser.add_argument("--amp-budget", type=float, default=60.0, help="Amplifier per-turn time budget (s)")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     tasks = DEFAULT_TASKS[: args.limit] if args.limit > 0 else DEFAULT_TASKS
 
     if args.live:
-        cortex, solver = make_mlx_generators()
+        logger.info("Loading cortex model: %s", args.model)
+        cortex = make_mlx_lm_generator(args.model)
+        solver = None
+        if args.solver_model:
+            logger.info("Loading solver model: %s", args.solver_model)
+            solver = make_mlx_lm_generator(args.solver_model)
     else:
         logger.warning("Running with DETERMINISTIC STUB generators (no models). Use --live for real numbers.")
         cortex, solver = _deterministic_generators()
