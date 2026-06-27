@@ -560,14 +560,16 @@ async def test_api_health_exposes_ready_conversation_at_top_level(service_contai
     assert payload["blockers"] == []
 
 
-@pytest.mark.asyncio
-async def test_desktop_access_summary_reuses_cached_probe_result(monkeypatch):
+def test_desktop_access_summary_reuses_cached_probe_result(monkeypatch):
     import core.security.permission_guard as permission_guard_module
     from interface.routes import system as system_routes
 
     calls = []
 
     class _Guard:
+        def current_process_identity(self):
+            return {"pid": 123, "executable": "/usr/bin/python3"}
+
         async def check_permission(self, ptype, force=False):
             calls.append((ptype.name, force))
             return {"granted": False, "status": "denied", "guidance": ""}
@@ -581,12 +583,13 @@ async def test_desktop_access_summary_reuses_cached_probe_result(monkeypatch):
     system_routes._desktop_access_cache["captured_at"] = 0.0
     system_routes._desktop_access_cache["payload"] = None
     try:
-        first = await system_routes._collect_desktop_access_summary()
-        second = await system_routes._collect_desktop_access_summary()
+        first = asyncio.run(system_routes._collect_desktop_access_summary())
+        second = asyncio.run(system_routes._collect_desktop_access_summary())
     finally:
         system_routes._desktop_access_cache.update(original_cache)
 
     assert first["overall_status"] == "blocked"
+    assert first["process_identity"]["pid"] == 123
     assert second["overall_status"] == "blocked"
     assert calls == [
         ("SCREEN", False),
@@ -595,12 +598,14 @@ async def test_desktop_access_summary_reuses_cached_probe_result(monkeypatch):
     ]
 
 
-@pytest.mark.asyncio
-async def test_desktop_access_summary_labels_env_assumptions_separately(monkeypatch):
+def test_desktop_access_summary_labels_env_assumptions_separately(monkeypatch):
     import core.security.permission_guard as permission_guard_module
     from interface.routes import system as system_routes
 
     class _Guard:
+        def current_process_identity(self):
+            return {"pid": 456, "executable": "/Applications/Aura.app/Contents/MacOS/Aura"}
+
         async def check_permission(self, ptype, force=False):
             return {"granted": True, "status": "asserted_env", "guidance": ""}
 
@@ -620,7 +625,7 @@ async def test_desktop_access_summary_labels_env_assumptions_separately(monkeypa
     system_routes._desktop_access_cache["captured_at"] = 0.0
     system_routes._desktop_access_cache["payload"] = None
     try:
-        payload = await system_routes._collect_desktop_access_summary()
+        payload = asyncio.run(system_routes._collect_desktop_access_summary())
     finally:
         system_routes._desktop_access_cache.update(original_cache)
 
@@ -638,6 +643,7 @@ async def test_desktop_access_summary_labels_env_assumptions_separately(monkeypa
         "accessibility",
         "automation",
     ]
+    assert payload["process_identity"]["pid"] == 456
     assert payload["blocking_permissions"] == [
         "screen_recording",
         "accessibility",
@@ -649,6 +655,19 @@ async def test_desktop_access_summary_labels_env_assumptions_separately(monkeypa
         "accessibility",
         "automation",
     ]
+
+
+def test_desktop_access_endpoint_returns_json_summary(monkeypatch):
+    from interface.routes import system as system_routes
+
+    async def _summary():
+        return {"overall_status": "ready", "process_identity": {"pid": 789}}
+
+    monkeypatch.setattr(system_routes, "_collect_desktop_access_summary", _summary)
+
+    payload = asyncio.run(system_routes.desktop_access_summary())
+
+    assert payload == {"overall_status": "ready", "process_identity": {"pid": 789}}
 
 
 @pytest.mark.asyncio

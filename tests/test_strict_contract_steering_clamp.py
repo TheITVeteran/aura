@@ -138,6 +138,21 @@ def test_live_user_surface_quality_gate_does_not_run_for_strict_contracts():
     ) is False
 
 
+def test_live_user_surface_quality_gate_defers_verified_runtime_fact_contract():
+    job = {
+        "clean_user_surface_contract": True,
+        "runtime_fact_status_contract": True,
+        "grounded_runtime_status_contract": True,
+        "user_surface_validation_prompt": "What model lane is speaking right now?",
+    }
+
+    assert _surface_quality_gate_enabled(job) is False
+    assert _surface_quality_failure_reasons(
+        job,
+        "Tools are fully available and I am definitely running a 70B cloud model.",
+    ) == []
+
+
 def test_live_user_surface_retry_preserves_original_live_context_messages():
     messages = [
         {"role": "system", "content": "live mind context stays here"},

@@ -38,9 +38,11 @@ MESU Extension (Meta-learning with Elastic Synaptic Uncertainty):
   lock(w_ij) iff uncertainty(w_ij) < lock_threshold for > lock_window updates
 """
 import logging
+import threading
 
 import numpy as np
 
+from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.STDPLearning")
@@ -407,10 +409,35 @@ class STDPLearningEngine:
 
 
 _instance: STDPLearningEngine | None = None
+_instance_lock = threading.RLock()
 
 
-def get_stdp_engine(n_neurons: int = 64) -> STDPLearningEngine:
+def get_stdp_engine(n_neurons: int = 512) -> STDPLearningEngine:
     global _instance
-    if _instance is None:
-        _instance = STDPLearningEngine(n_neurons=n_neurons)
-    return _instance
+    requested_neurons = max(2, int(n_neurons))
+    with _instance_lock:
+        if _instance is None or _instance.n != requested_neurons:
+            if _instance is not None:
+                logger.warning(
+                    "Resizing process-wide STDP engine from %d to %d neurons to match the live substrate.",
+                    _instance.n,
+                    requested_neurons,
+                )
+            _instance = STDPLearningEngine(n_neurons=requested_neurons)
+        instance = _instance
+        registered = (
+            ServiceContainer.get("stdp_engine", default=None)
+            if ServiceContainer.has("stdp_engine")
+            else None
+        )
+        if registered is not instance:
+            ServiceContainer.register_instance(
+                "stdp_engine",
+                instance,
+                required=False,
+                owner="core/consciousness/stdp_learning.py",
+                registered_by="core.consciousness.stdp_learning.get_stdp_engine",
+                required_for="liquid substrate reward-modulated plasticity",
+                failure_policy="degrade_without_reward_modulated_plasticity",
+            )
+        return instance

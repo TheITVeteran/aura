@@ -195,6 +195,7 @@ class ServiceContainer:
     _start_time: float | None = None
     _init_locks: dict[str, threading.Lock] = {}
     _last_seal_hash: str | None = None
+    _optional_absent_breadcrumbs: set[str] = set()
 
     def __new__(cls):
         with cls._lock:
@@ -400,6 +401,7 @@ class ServiceContainer:
             cls._services.clear()
             cls._aliases.clear()
             cls._init_locks.clear()
+            cls._optional_absent_breadcrumbs.clear()
             cls._registration_locked = False
             cls._start_time = None
         cls._resolving_var.set(frozenset())
@@ -518,7 +520,7 @@ class ServiceContainer:
                 return desc.instance
             if not desc:
                 if default != "_SENTINEL":
-                    cls._emit_absent_event(resolved_name)
+                    cls._emit_absent_event_once(resolved_name)
                     return default
                 raise ServiceNotFoundError(f"Service '{resolved_name}' not found in static registry.")
 
@@ -535,7 +537,7 @@ class ServiceContainer:
 
             if desc is None:
                 if default != "_SENTINEL":
-                    cls._emit_absent_event(resolved_name)
+                    cls._emit_absent_event_once(resolved_name)
                     return default
                 raise ServiceNotFoundError(f"Service '{resolved_name}' not found in static registry.")
 
@@ -906,14 +908,17 @@ class ServiceContainer:
         as diagnostic context, not a live degradation, so UI/status probes do not
         pollute the neural feed with false subsystem failures.
         """
-        record_degraded_event(
-            "service_container",
-            "SUBSYSTEM_ABSENT",
-            detail=service_name,
-            severity="info",
-            classification="non_critical_fallback",
-            context={"service": service_name},
-        )
+        logger.debug("Optional service absent from static registry: %s", service_name)
+
+    @classmethod
+    def _emit_absent_event_once(cls, service_name: str) -> None:
+        """Record one optional-absence breadcrumb per service per process."""
+
+        with cls._lock:
+            if service_name in cls._optional_absent_breadcrumbs:
+                return
+            cls._optional_absent_breadcrumbs.add(service_name)
+        cls._emit_absent_event(service_name)
 
 
 def get_container() -> type[ServiceContainer]:

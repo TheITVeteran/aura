@@ -391,6 +391,58 @@ async def test_cognitive_engine_desktop_quick_reply_uses_governed_primary_router
 
 
 @pytest.mark.asyncio
+async def test_cognitive_engine_runtime_status_contract_propagates_to_worker_boundary(monkeypatch):
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = StateRepositoryFixture(state)
+    captured = {}
+
+    class _Router:
+        async def think(self, **kwargs):
+            captured.update(kwargs)
+            return "Cortex (32B) is the active foreground lane."
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router() if name == "llm_router" else default
+        ),
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "What model lane is speaking right now?",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "visible_user_message": "What model lane is speaking right now?",
+            "runtime_fact_status_contract": True,
+            "grounded_runtime_status_contract": True,
+            "grounded_runtime_status_context": (
+                "Cortex (32B) is the active foreground lane, "
+                "CognitiveEngine handled this turn: yes."
+            ),
+            "recent_completed_exchanges": [
+                {"user": "Old topic", "aura": "Old answer"}
+            ],
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "max_tokens": 896,
+        },
+        is_background=False,
+        timeout_s=60.0,
+    )
+
+    assert thought.content.startswith("Cortex (32B)")
+    assert captured["runtime_fact_status_contract"] is True
+    assert captured["grounded_runtime_status_contract"] is True
+    assert captured["max_tokens"] == 256
+    assert len(captured["messages"]) == 2
+    assert "VERIFIED LIVE RUNTIME STATUS" in captured["messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_cognitive_engine_desktop_quick_reply_includes_recent_context(monkeypatch):
     engine = CognitiveEngine()
     state = AuraState.default()

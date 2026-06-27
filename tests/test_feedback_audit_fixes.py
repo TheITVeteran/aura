@@ -1920,6 +1920,7 @@ async def test_unitary_response_execute_routes_user_turns_through_llm(monkeypatc
         organs = {}
 
     llm_called = False
+    amplifier_background_flags = []
 
     class DummyLLM:
         async def think(self, *_args, **_kwargs):
@@ -1931,6 +1932,13 @@ async def test_unitary_response_execute_routes_user_turns_through_llm(monkeypatc
             )
 
     phase = UnitaryResponsePhase(DummyKernel())
+    original_amplifier = phase._maybe_amplify_response
+
+    async def capture_amplifier_background(**kwargs):
+        amplifier_background_flags.append(kwargs["is_background"])
+        return await original_amplifier(**kwargs)
+
+    monkeypatch.setattr(phase, "_maybe_amplify_response", capture_amplifier_background)
     state = AuraState.default()
     state.cognition.current_origin = "api"
     state.affect.dominant_emotion = "curious"
@@ -1959,6 +1967,7 @@ async def test_unitary_response_execute_routes_user_turns_through_llm(monkeypatc
     # The LLM should be called for user-facing turns
     response = result.cognition.last_response or ""
     assert llm_called is True
+    assert amplifier_background_flags == [False]
     assert len(response) > 0
     assert "attention" in response
     assert "live thread" in response

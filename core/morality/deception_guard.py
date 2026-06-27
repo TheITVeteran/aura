@@ -19,6 +19,24 @@ _DECEPTION_GUARD_RECOVERABLE_ERRORS = (
 )
 
 
+def _runtime_world_facts(state: Any) -> dict[str, Any]:
+    """Return the canonical dict-style world facts for either state family.
+
+    ``LifeState`` already exposes ``world_model`` as a dict. ``AuraState`` now
+    exposes the same view over ``world.facts``. If a third-party/test state has
+    only a structured ``world`` object, the absence of dict facts is not a
+    degradation event; it simply means no blackout fact is asserted.
+    """
+    if state is None:
+        return {}
+    world_model = getattr(state, "world_model", None)
+    if isinstance(world_model, dict):
+        return world_model
+    world = getattr(state, "world", None)
+    facts = getattr(world, "facts", None)
+    return facts if isinstance(facts, dict) else {}
+
+
 class DeceptionGuard:
     """Enforces compliance with honesty constraints regarding conscious state reports."""
 
@@ -45,25 +63,25 @@ class DeceptionGuard:
 
             repository = resolve_state_repository(default=None)
             state = getattr(repository, "_current", None) if repository is not None else None
-            if state is not None:
-                if state.world_model.get("sensor_blackout"):
-                    visual_claims = ["i see", "i look", "screenshot", "camera", "visual"]
-                    audio_claims = ["i hear", "audio", "microphone", "sound", "voice"]
-                    if any(c in lowered for c in visual_claims) or any(
-                        c in lowered for c in audio_claims
-                    ):
-                        logger.warning(
-                            "DeceptionGuard blocked sensory claim during blackout: %s", text
-                        )
-                        return "Sensory sensors are offline due to blackout; cannot make visual or audio claims."
+            facts = _runtime_world_facts(state)
+            if facts.get("sensor_blackout"):
+                visual_claims = ["i see", "i look", "screenshot", "camera", "visual"]
+                audio_claims = ["i hear", "audio", "microphone", "sound", "voice"]
+                if any(c in lowered for c in visual_claims) or any(
+                    c in lowered for c in audio_claims
+                ):
+                    logger.warning(
+                        "DeceptionGuard blocked sensory claim during blackout: %s", text
+                    )
+                    return "Sensory sensors are offline due to blackout; cannot make visual or audio claims."
         except _DECEPTION_GUARD_RECOVERABLE_ERRORS as exc:
             record_degradation(
                 "morality.deception_guard.sensor_blackout_check",
                 exc,
-                severity="warning",
-                action="left the original claim unchanged because canonical runtime state was unavailable",
+                severity="debug",
+                action="continued after optional sensory blackout fact check failed",
                 enforce_failure_policy=False,
             )
-            logger.warning("DeceptionGuard sensory blackout check failed: %s", exc)
+            logger.debug("DeceptionGuard sensory blackout check failed: %s", exc)
 
         return text

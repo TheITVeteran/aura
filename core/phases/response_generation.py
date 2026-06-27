@@ -515,6 +515,28 @@ class ResponseGenerationPhase(BasePhase):
                 runtime_context.get("desktop_cognitive_engine_required", False)
                 or runtime_context.get("cognitive_engine_required", False)
             )
+            live_mind_generation_controls = runtime_context.get(
+                "live_mind_generation_controls"
+            )
+            if not isinstance(live_mind_generation_controls, dict):
+                live_mind_generation_controls = {}
+            live_mind_controls_bound = bool(
+                runtime_context.get("live_mind_controls_bound", False)
+            )
+            clean_user_surface_contract = bool(
+                runtime_context.get("clean_user_surface_contract", False)
+                or desktop_cognitive_engine_required
+            )
+            user_surface_validation_prompt = str(
+                runtime_context.get("user_surface_validation_prompt")
+                or runtime_context.get("visible_user_message")
+                or objective
+                or ""
+            ).strip()
+            runtime_fact_status_contract = bool(
+                runtime_context.get("runtime_fact_status_contract", False)
+                or runtime_context.get("grounded_runtime_status_contract", False)
+            )
             tier = state.response_modifiers.get(
                 "model_tier", "tertiary" if is_background else "primary"
             )
@@ -562,6 +584,27 @@ class ResponseGenerationPhase(BasePhase):
                     state.response_modifiers.get("imagination_sampling_bias"),
                     state.response_modifiers.get("bicameral_sampling_bias"),
                 ],
+            )
+            if live_mind_controls_bound:
+                generation_temperature = max(
+                    0.10,
+                    min(
+                        1.15,
+                        self._safe_bias_float(
+                            live_mind_generation_controls.get("temperature"),
+                            generation_temperature,
+                        ),
+                    ),
+                )
+            generation_top_p = max(
+                0.05,
+                min(
+                    1.0,
+                    self._safe_bias_float(
+                        live_mind_generation_controls.get("top_p"),
+                        0.90,
+                    ),
+                ),
             )
             # [STABILITY v55] Raised thermal from 85°C to 95°C (M-series
             # throttles at 100°C+) and memory pressure from 85% to 94%
@@ -630,9 +673,40 @@ class ResponseGenerationPhase(BasePhase):
                         clear_prompt_cache=bool(
                             runtime_context.get("clear_prompt_cache", False)
                         ),
+                        memory_state_contract=bool(
+                            runtime_context.get("memory_state_contract", False)
+                        ),
+                        runtime_fact_status_contract=runtime_fact_status_contract,
+                        grounded_runtime_status_contract=runtime_fact_status_contract,
+                        clean_user_surface_contract=clean_user_surface_contract,
+                        user_surface_validation_prompt=user_surface_validation_prompt,
+                        clean_user_surface_recurrent_loops=int(
+                            live_mind_generation_controls.get(
+                                "clean_user_surface_recurrent_loops", 1
+                            )
+                        ),
+                        clean_user_surface_steering_alpha=self._safe_bias_float(
+                            live_mind_generation_controls.get(
+                                "clean_user_surface_steering_alpha"
+                            ),
+                            0.25,
+                        ),
+                        live_mind_controls_bound=live_mind_controls_bound,
+                        live_mind_generation_controls=dict(
+                            live_mind_generation_controls
+                        ),
+                        live_mind_snapshot_ready=bool(
+                            runtime_context.get("live_mind_snapshot_ready", False)
+                        ),
+                        live_mind_required_subsystems_ok=bool(
+                            runtime_context.get(
+                                "live_mind_required_subsystems_ok", False
+                            )
+                        ),
                         soma=soma_data,
                         state=state,
                         temperature=generation_temperature,
+                        top_p=generation_top_p,
                         max_tokens=token_budget,
                         timeout=request_timeout,
                 )
@@ -873,9 +947,68 @@ class ResponseGenerationPhase(BasePhase):
                     protected_foreground_lane=not is_background,
                     deep_handoff=deep_handoff,
                     allow_cloud_fallback=False,
+                    cognitive_engine_required=bool(
+                        runtime_context.get("cognitive_engine_required", False)
+                    ),
+                    desktop_cognitive_engine_required=desktop_cognitive_engine_required,
+                    live_runtime_payload_required=bool(
+                        runtime_context.get("live_runtime_payload_required", False)
+                    ),
+                    visible_user_message=str(
+                        runtime_context.get("visible_user_message") or objective or ""
+                    ),
+                    recent_conversation_context=str(
+                        runtime_context.get("recent_conversation_context") or ""
+                    ),
+                    recent_context_needed=bool(
+                        runtime_context.get("recent_context_needed", False)
+                    ),
+                    allow_mesh_cognition=bool(
+                        runtime_context.get("allow_mesh_cognition", True)
+                    ),
+                    skip_runtime_payload=bool(
+                        runtime_context.get("skip_runtime_payload", False)
+                    ),
+                    disable_prompt_cache=bool(
+                        runtime_context.get("disable_prompt_cache", False)
+                    ),
+                    clear_prompt_cache=bool(
+                        runtime_context.get("clear_prompt_cache", False)
+                    ),
+                    memory_state_contract=bool(
+                        runtime_context.get("memory_state_contract", False)
+                    ),
+                    runtime_fact_status_contract=runtime_fact_status_contract,
+                    grounded_runtime_status_contract=runtime_fact_status_contract,
+                    clean_user_surface_contract=clean_user_surface_contract,
+                    user_surface_validation_prompt=user_surface_validation_prompt,
+                    clean_user_surface_recurrent_loops=int(
+                        live_mind_generation_controls.get(
+                            "clean_user_surface_recurrent_loops", 1
+                        )
+                    ),
+                    clean_user_surface_steering_alpha=self._safe_bias_float(
+                        live_mind_generation_controls.get(
+                            "clean_user_surface_steering_alpha"
+                        ),
+                        0.25,
+                    ),
+                    live_mind_controls_bound=live_mind_controls_bound,
+                    live_mind_generation_controls=dict(
+                        live_mind_generation_controls
+                    ),
+                    live_mind_snapshot_ready=bool(
+                        runtime_context.get("live_mind_snapshot_ready", False)
+                    ),
+                    live_mind_required_subsystems_ok=bool(
+                        runtime_context.get(
+                            "live_mind_required_subsystems_ok", False
+                        )
+                    ),
                     soma=soma_data,
                     state=state,
                     temperature=generation_temperature,
+                    top_p=generation_top_p,
                     max_tokens=token_budget,
                     timeout=retry_timeout,
                 )
@@ -947,6 +1080,27 @@ class ResponseGenerationPhase(BasePhase):
             # 6c. Skip emission for background tasks if they produced no meaningful content
             if is_background and not cleaned_response:
                 return state
+
+            surface_control_receipt: dict[str, Any] = {}
+            if hasattr(router, "get_last_generation_metadata"):
+                try:
+                    generation_metadata = router.get_last_generation_metadata()
+                    if isinstance(generation_metadata, dict):
+                        candidate = generation_metadata.get("surface_control_receipt")
+                        if isinstance(candidate, dict):
+                            surface_control_receipt = dict(candidate)
+                except (AttributeError, RuntimeError, TypeError) as exc:
+                    logger.debug(
+                        "ResponseGeneration could not read surface-control receipt: %s",
+                        exc,
+                    )
+            state.response_modifiers["live_mind_surface_control_receipt"] = dict(
+                surface_control_receipt
+            )
+            state.response_modifiers["live_mind_controls_worker_applied"] = bool(
+                surface_control_receipt.get("live_mind_controls_bound")
+                and surface_control_receipt.get("applied")
+            )
 
             # 7. Derive new state with the response
             new_state = state.derive("response_generation")

@@ -25,6 +25,25 @@ class _Router:
             "reducing the local load, and preserving the conversation thread."
         )
 
+    def get_last_generation_metadata(self):
+        return {
+            "surface_control_receipt": {
+                "enabled": True,
+                "live_mind_controls_bound": True,
+                "clean_user_surface_contract": True,
+                "surface_validation_prompt_present": True,
+                "surface_alpha_applied": 0.30,
+                "surface_alpha_applied_ok": True,
+                "recurrent_runtime_loops_applied": 2,
+                "recurrent_runtime_loops_applied_ok": True,
+                "surface_quality_gate_enabled": True,
+                "surface_quality_gate_passed": True,
+                "surface_quality_gate_attempts": 1,
+                "surface_quality_gate_reasons": [],
+                "applied": True,
+            }
+        }
+
 
 @pytest.mark.asyncio
 async def test_response_generation_downshifts_on_thermal_pressure(monkeypatch):
@@ -173,7 +192,7 @@ async def test_response_generation_full_phase_injects_live_desktop_grounding(mon
         lambda: SimpleNamespace(align=lambda text: (text, False, [])),
     )
 
-    await phase.execute(
+    result = await phase.execute(
         state,
         context={
             "desktop_cognitive_engine_required": True,
@@ -199,6 +218,17 @@ async def test_response_generation_full_phase_injects_live_desktop_grounding(mon
                 "Aura can use governed desktop, browser, file, document, and terminal lanes "
                 "only with authorization and effect receipts."
             ),
+            "clean_user_surface_contract": True,
+            "user_surface_validation_prompt": "What tools can you use externally?",
+            "live_mind_controls_bound": True,
+            "live_mind_generation_controls": {
+                "temperature": 0.61,
+                "top_p": 0.87,
+                "clean_user_surface_recurrent_loops": 2,
+                "clean_user_surface_steering_alpha": 0.30,
+            },
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
         },
     )
 
@@ -208,5 +238,80 @@ async def test_response_generation_full_phase_injects_live_desktop_grounding(mon
     assert "must_answer_from_full_mind_path" in system_prompt
     assert "LIVE SPEECH GROUNDING" in system_prompt
     assert "GOVERNED CAPABILITY INVENTORY EVIDENCE" in system_prompt
+    call = router.calls[0]
+    assert call["clean_user_surface_contract"] is True
+    assert call["user_surface_validation_prompt"] == "What tools can you use externally?"
+    assert call["live_mind_controls_bound"] is True
+    assert call["live_mind_snapshot_ready"] is True
+    assert call["live_mind_required_subsystems_ok"] is True
+    assert call["clean_user_surface_recurrent_loops"] == 2
+    assert call["clean_user_surface_steering_alpha"] == 0.30
+    assert call["temperature"] == 0.61
+    assert call["top_p"] == 0.87
+    assert result.response_modifiers["live_mind_controls_worker_applied"] is True
+    assert result.response_modifiers["live_mind_surface_control_receipt"]["applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_response_generation_dialogue_retry_preserves_live_mind_contract(monkeypatch):
+    state = AuraState()
+    state.cognition.current_objective = "Explain how confusion changes your reasoning."
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.REACTIVE
+
+    router = _Router()
+    phase = ResponseGenerationPhase(_Container({"llm_router": router}))
+
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [
+            {"role": "system", "content": "base live Aura context"},
+            {"role": "user", "content": "Explain how confusion changes your reasoning."},
+        ],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+
+    async def _force_retry(response, contract, *, retry_generate, state):
+        retried = await retry_generate("Repair the answer without leaving the live mind path.")
+        return retried, SimpleNamespace(to_dict=lambda: {"valid": True}), True
+
+    monkeypatch.setattr(
+        "core.phases.response_generation.enforce_dialogue_contract",
+        _force_retry,
+    )
+
+    await phase.execute(
+        state,
+        context={
+            "desktop_cognitive_engine_required": True,
+            "cognitive_engine_required": True,
+            "live_runtime_payload_required": True,
+            "visible_user_message": "Explain how confusion changes your reasoning.",
+            "clean_user_surface_contract": True,
+            "live_mind_controls_bound": True,
+            "live_mind_generation_controls": {
+                "temperature": 0.49,
+                "top_p": 0.81,
+                "clean_user_surface_recurrent_loops": 2,
+                "clean_user_surface_steering_alpha": 0.34,
+            },
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+        },
+    )
+
+    assert len(router.calls) == 2
+    retry_call = router.calls[1]
+    assert retry_call["desktop_cognitive_engine_required"] is True
+    assert retry_call["live_runtime_payload_required"] is True
+    assert retry_call["clean_user_surface_contract"] is True
+    assert retry_call["live_mind_controls_bound"] is True
+    assert retry_call["clean_user_surface_recurrent_loops"] == 2
+    assert retry_call["clean_user_surface_steering_alpha"] == 0.34
+    assert retry_call["temperature"] == 0.49
+    assert retry_call["top_p"] == 0.81
     assert router.calls[0]["desktop_cognitive_engine_required"] is True
     assert router.calls[0]["allow_cloud_fallback"] is False

@@ -698,6 +698,9 @@ class WorldModel:
     relationship_graph: dict[str, dict] = field(default_factory=dict)
     # Durable user preferences — learned from conversation, not re-discovered each time
     user_preferences: dict[str, str] = field(default_factory=dict)
+    # Legacy/canonical bridge: many executive, welfare, proof, and body paths use
+    # ``state.world_model`` as a dict-backed scratchpad for verified runtime facts.
+    facts: dict[str, Any] = field(default_factory=dict)
 
     def trim_percepts(self, limit: int = 50):
         if len(self.recent_percepts) > limit:
@@ -787,6 +790,42 @@ class AuraState:
     @property
     def mood(self) -> str:
         return self.affect.dominant_emotion
+
+    @property
+    def world_model(self) -> dict[str, Any]:
+        """Dict-backed compatibility view for canonical world facts.
+
+        ``AuraState`` owns a structured ``world`` object. Older but still-live
+        runtime paths intentionally use ``state.world_model[...]`` for small,
+        consequential facts such as sensor blackout, active policy limits, or
+        post-action verification. Keeping this as a real mutable view prevents
+        those paths from degrading while preserving the structured world model.
+        """
+        if getattr(self, "world", None) is None:
+            self.world = WorldModel()
+        facts = getattr(self.world, "facts", None)
+        if not isinstance(facts, dict):
+            self.world.facts = {}
+        return self.world.facts
+
+    @world_model.setter
+    def world_model(self, value: Any) -> None:
+        if isinstance(value, WorldModel):
+            self.world = value
+            if not isinstance(getattr(self.world, "facts", None), dict):
+                self.world.facts = {}
+            return
+        if getattr(self, "world", None) is None:
+            self.world = WorldModel()
+        if value is None:
+            self.world.facts = {}
+        elif isinstance(value, dict):
+            self.world.facts = value
+        else:
+            try:
+                self.world.facts = dict(value)
+            except (TypeError, ValueError):
+                self.world.facts = {"value": value}
 
     @classmethod
     def default(cls) -> "AuraState":
@@ -880,6 +919,7 @@ class AuraState:
             "world": {
                 "entities": sorted(list((self.world.known_entities or {}).keys()))[:12],
                 "relationships": sorted(list((self.world.relationship_graph or {}).keys()))[:12],
+                "facts": sorted(list((self.world_model or {}).keys()))[:12],
             },
             "partition": {
                 "context_partition": self.context_partition,

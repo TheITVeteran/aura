@@ -5343,10 +5343,14 @@ async def test_required_runtime_status_turn_invokes_cognitive_engine(monkeypatch
     assert calls
     assert "Runtime path contract" in calls[0]["objective"]
     assert calls[0]["context"]["runtime_fact_status_contract"] is True
+    assert calls[0]["context"]["grounded_runtime_status_contract"] is True
+    assert "Cortex (32B) is the active foreground lane" in calls[0]["context"][
+        "grounded_runtime_status_context"
+    ]
     assert calls[0]["context"]["cognitive_engine_required"] is True
     assert trace["engine_think_invoked"] is True
     assert trace["cognitive_engine_reply_accepted"] is True
-    assert trace["response_path"] == "cognitive_engine"
+    assert trace["response_path"] == "cognitive_engine_runtime_fact_grounding"
     assert trace.get("bounded_contract_used") is not True
     assert reply.startswith("You asked me to identify the current request")
     assert "Cortex (32B) is the active foreground lane" in reply
@@ -5432,6 +5436,14 @@ async def test_desktop_cognitive_engine_rejects_unfounded_voice_intrusion(monkey
 
     monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
     monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            warning=False,
+            refuse_heavy_local_generation=False,
+            reason="",
+        ),
+    )
     monkeypatch.setattr(chat_routes, "_repair_final_degraded_reply", _no_repair)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(
@@ -5455,7 +5467,7 @@ async def test_desktop_cognitive_engine_rejects_unfounded_voice_intrusion(monkey
         turn_trace=trace,
     )
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert reply is None
     assert trace["engine_think_invoked"] is True
     assert trace["cognitive_engine_reply_accepted"] is False
@@ -5564,11 +5576,12 @@ async def test_desktop_cognitive_engine_retries_failed_reply_on_same_lane(monkey
 
 
 @pytest.mark.asyncio
-async def test_desktop_cognitive_engine_does_not_retry_failed_reply_by_default(monkeypatch):
+async def test_desktop_cognitive_engine_retries_failed_reply_by_default_when_memory_is_safe(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
     calls = []
+    degradations = []
 
     class _FakeCognitiveEngine:
         async def think(self, objective, context=None, **_kwargs):
@@ -5589,6 +5602,25 @@ async def test_desktop_cognitive_engine_does_not_retry_failed_reply_by_default(m
 
     monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
     monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes,
+        "record_degradation",
+        lambda subsystem, error, **kwargs: degradations.append(
+            {
+                "subsystem": subsystem,
+                "error": str(error),
+                "kwargs": kwargs,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            warning=False,
+            refuse_heavy_local_generation=False,
+            reason="",
+        ),
+    )
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -5613,8 +5645,12 @@ async def test_desktop_cognitive_engine_does_not_retry_failed_reply_by_default(m
         require_engine=True,
     )
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert reply is None or "reliable desktop tool use matters" not in reply.lower()
+    assert len(degradations) == 1
+    assert degradations[0]["subsystem"] == "chat.cognitive_engine_reply"
+    assert degradations[0]["kwargs"]["receipt_required"] is True
+    assert degradations[0]["kwargs"]["extra"]["retry_attempted"] is True
 
 
 @pytest.mark.asyncio
@@ -6267,7 +6303,7 @@ def test_reported_live_chat_breakage_still_uses_reliability_floor():
 
 
 @pytest.mark.asyncio
-async def test_desktop_low_risk_social_turn_fails_closed_on_model_gate_leak_without_second_pass(monkeypatch):
+async def test_desktop_low_risk_social_turn_retries_once_then_fails_closed(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -6298,6 +6334,14 @@ async def test_desktop_low_risk_social_turn_fails_closed_on_model_gate_leak_with
 
     monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
     monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            warning=False,
+            refuse_heavy_local_generation=False,
+            reason="",
+        ),
+    )
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
@@ -6320,7 +6364,7 @@ async def test_desktop_low_risk_social_turn_fails_closed_on_model_gate_leak_with
         require_engine=True,
     )
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert reply is None
 
 
@@ -7815,7 +7859,7 @@ async def test_cognitive_engine_desktop_status_fails_closed_after_thin_draft(mon
     )
 
     assert result is None
-    assert engine_calls == ["engine_think"]
+    assert engine_calls == ["engine_think", "engine_think"]
     assert social_repair_calls == []
 
 
@@ -8716,7 +8760,7 @@ def test_stabilizer_generation_budget_respects_memory_token_cap(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_desktop_required_stabilizer_skips_second_model_pass_by_default(monkeypatch):
+async def test_desktop_required_stabilizer_does_not_add_a_third_generation_by_default(monkeypatch):
     from interface.routes import chat as chat_routes
 
     class _Gate:
@@ -8780,7 +8824,7 @@ async def test_desktop_required_stabilizer_skips_second_model_pass_by_default(mo
 
 
 @pytest.mark.asyncio
-async def test_desktop_required_capability_repair_uses_grounded_inventory_without_second_pass(monkeypatch):
+async def test_desktop_required_capability_repair_uses_grounded_inventory_without_third_pass(monkeypatch):
     from interface.routes import chat as chat_routes
 
     class _Gate:

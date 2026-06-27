@@ -1257,7 +1257,15 @@ class MindTick:
 
         # 5. STDP MESU diagnostics
         try:
-            stdp = ServiceContainer.get("stdp_engine", default=None)
+            from core.consciousness.stdp_learning import get_stdp_engine
+
+            stdp = (
+                ServiceContainer.get("stdp_engine", default=None)
+                if ServiceContainer.has("stdp_engine")
+                else None
+            )
+            if stdp is None:
+                stdp = get_stdp_engine()
             if stdp is not None and hasattr(stdp, 'get_mesu_diagnostics'):
                 diag = stdp.get_mesu_diagnostics()
                 logger.info(

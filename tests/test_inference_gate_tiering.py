@@ -2059,11 +2059,23 @@ async def test_think_forwards_user_surface_validation_prompt_to_generate():
         prefer_tier="primary",
         clean_user_surface_contract=True,
         user_surface_validation_prompt="With me?",
+        runtime_fact_status_contract=True,
+        grounded_runtime_status_contract=True,
+        live_mind_controls_bound=True,
+        live_mind_generation_controls={"temperature": 0.58},
+        live_mind_snapshot_ready=True,
+        live_mind_required_subsystems_ok=True,
     )
 
     context = gate.generate.await_args.kwargs["context"]
     assert context["clean_user_surface_contract"] is True
     assert context["user_surface_validation_prompt"] == "With me?"
+    assert context["runtime_fact_status_contract"] is True
+    assert context["grounded_runtime_status_contract"] is True
+    assert context["live_mind_controls_bound"] is True
+    assert context["live_mind_generation_controls"] == {"temperature": 0.58}
+    assert context["live_mind_snapshot_ready"] is True
+    assert context["live_mind_required_subsystems_ok"] is True
 
 
 @pytest.mark.asyncio
@@ -2099,6 +2111,7 @@ async def test_inference_gate_exposes_local_surface_control_receipt():
     assert metadata["surface_control_receipt"]["applied"] is True
     assert receipt["surface_validation_prompt_present"] is True
     assert client.kwargs[0]["user_surface_validation_prompt"] == "What are you tracking?"
+    assert client.kwargs[0]["live_mind_controls_bound"] is True
 
 
 @pytest.mark.asyncio
@@ -3111,6 +3124,7 @@ def test_conversation_status_recovery_schedule_is_cooldowned(monkeypatch):
     gate._initialized = True
     gate._mlx_client = _Client()
     gate._prewarm_task = _CompletedFailedPrewarm()
+    monkeypatch.setattr(gate, "_cortex_warmup_deferral_reason", lambda context="background": None)
     monkeypatch.setattr(gate, "_schedule_background_cortex_prewarm", lambda delay=12.0: scheduled.append(delay))
 
     first = gate.get_conversation_status()

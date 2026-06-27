@@ -4108,6 +4108,7 @@ class UnitaryResponsePhase(Phase):
             is_user_facing = bool(priority or self._is_user_facing_origin(routing_origin))
             if routing_origin == "benchmark":
                 is_user_facing = True
+            is_background = not is_user_facing
             new_state.cognition.current_origin = routing_origin
             contract = build_response_contract(new_state, objective, is_user_facing=is_user_facing)
             new_state.response_modifiers["response_contract"] = contract.to_dict()
@@ -5259,7 +5260,7 @@ class UnitaryResponsePhase(Phase):
                 "allow_cloud_fallback": False,
                 "origin": routing_origin,
                 "purpose": "reply",
-                "is_background": not is_user_facing,
+                "is_background": is_background,
                 "foreground_request": is_user_facing,
                 "protected_foreground_lane": is_deep_probe_objective,
                 "deep_mind_probe": is_deep_probe_objective,

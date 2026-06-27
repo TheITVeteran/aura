@@ -78,6 +78,39 @@ def test_build_context_block_contains_quote(monkeypatch):
     assert block is not None
     assert "you with me, Aura?" in block
     assert "GROUNDED RECALL" in block
+    assert "quoted speaker is the user, not you" in block
+    assert "never as something you said" in block
+
+
+def test_get_world_state_registers_canonical_singleton(monkeypatch):
+    registrations = []
+
+    from core import world_state as world_state_module
+
+    monkeypatch.setattr(world_state_module, "_ws_instance", None)
+    monkeypatch.setattr(
+        world_state_module.ServiceContainer,
+        "has",
+        classmethod(lambda cls, name: bool(registrations)),
+    )
+    monkeypatch.setattr(
+        world_state_module.ServiceContainer,
+        "register_instance",
+        classmethod(
+            lambda cls, name, instance, **metadata: registrations.append(
+                (name, instance, metadata)
+            )
+        ),
+    )
+
+    first = world_state_module.get_world_state()
+    second = world_state_module.get_world_state()
+
+    assert first is second
+    assert len(registrations) == 1
+    assert registrations[0][0] == "world_state"
+    assert registrations[0][1] is first
+    assert registrations[0][2]["required_for"] == "live environment grounding"
 
 
 def test_build_context_none_when_no_prior_turn(monkeypatch):
@@ -96,3 +129,39 @@ def test_build_context_none_when_no_prior_turn(monkeypatch):
 
 def test_build_context_none_for_non_recall():
     assert gr.build_grounded_recall_context("what's the weather like") is None
+
+
+@pytest.mark.parametrize(
+    "reply,expected",
+    [
+        (
+            "I care more about reliability than spectacle because trust is built slowly.",
+            "You said you care more about reliability than spectacle because trust is built slowly.",
+        ),
+        (
+            "I said reliability matters because consistency earns trust.",
+            "You said reliability matters because consistency earns trust.",
+        ),
+        (
+            "My point was that dependable behavior matters. Spectacle fades.",
+            "You said your point was that dependable behavior matters. Spectacle fades.",
+        ),
+    ],
+)
+def test_repair_grounded_recall_speaker_attribution(reply, expected):
+    repaired, changed = gr.repair_grounded_recall_speaker_attribution(
+        "What did I just say?",
+        reply,
+    )
+    assert changed is True
+    assert repaired == expected
+
+
+def test_repair_grounded_recall_does_not_rewrite_ordinary_first_person_reply():
+    reply = "I am checking my uncertainty before I answer."
+    repaired, changed = gr.repair_grounded_recall_speaker_attribution(
+        "How does confusion affect your reasoning?",
+        reply,
+    )
+    assert changed is False
+    assert repaired == reply

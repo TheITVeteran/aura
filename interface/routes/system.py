@@ -904,6 +904,7 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
         "pyautogui_error": "",
         "permission_confidence": "unknown",
         "permission_assumptions": [],
+        "process_identity": {},
     }
     try:
         from core.security.permission_guard import PermissionType, get_permission_guard
@@ -911,6 +912,17 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
 
         guard = ServiceContainer.get("permission_guard", default=None) or get_permission_guard()
         if guard:
+            identity_probe = getattr(guard, "current_process_identity", None)
+            if callable(identity_probe):
+                try:
+                    payload["process_identity"] = identity_probe()
+                except _SYSTEM_RECOVERABLE_ERRORS as exc:
+                    record_degradation(
+                        "system.desktop_access.process_identity",
+                        exc,
+                        action="continued desktop access summary without process identity",
+                        severity="debug",
+                    )
             screen = await guard.check_permission(PermissionType.SCREEN, force=False)
             accessibility = await guard.check_permission(PermissionType.ACCESSIBILITY, force=False)
             automation = await guard.check_permission(PermissionType.AUTOMATION, force=False)
@@ -1069,6 +1081,51 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
     _desktop_access_cache["captured_at"] = time.monotonic()
     _desktop_access_cache["payload"] = payload
     return payload
+
+
+@router.get("/system/desktop-access")
+async def desktop_access_summary() -> dict[str, Any]:
+    return await _collect_desktop_access_summary()
+
+
+@router.post("/system/desktop-access/request-screen")
+async def request_screen_access() -> dict[str, Any]:
+    try:
+        from core.security.permission_guard import get_permission_guard
+
+        guard = get_permission_guard()
+        request = getattr(guard, "request_screen_capture_access", None)
+        granted = bool(request()) if callable(request) else False
+        _desktop_access_cache["captured_at"] = 0.0
+        return {"requested": callable(request), "granted": granted}
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "system.desktop_access.request_screen",
+            exc,
+            action="reported Screen Recording request failure",
+            severity="warning",
+        )
+        return {"requested": False, "granted": False, "error": str(exc)[:240]}
+
+
+@router.post("/system/desktop-access/request-accessibility")
+async def request_accessibility_access() -> dict[str, Any]:
+    try:
+        from core.security.permission_guard import get_permission_guard
+
+        guard = get_permission_guard()
+        request = getattr(guard, "request_accessibility_trust", None)
+        granted = bool(request()) if callable(request) else False
+        _desktop_access_cache["captured_at"] = 0.0
+        return {"requested": callable(request), "granted": granted}
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "system.desktop_access.request_accessibility",
+            exc,
+            action="reported Accessibility request failure",
+            severity="warning",
+        )
+        return {"requested": False, "granted": False, "error": str(exc)[:240]}
 
 
 def _collect_neurodynamic_status() -> dict[str, Any]:

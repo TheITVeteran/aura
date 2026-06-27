@@ -16,6 +16,7 @@ happening in the world, not just internal timers.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -418,10 +419,23 @@ class WorldState:
 # ---------------------------------------------------------------------------
 
 _ws_instance: WorldState | None = None
+_ws_instance_lock = threading.RLock()
 
 
 def get_world_state() -> WorldState:
     global _ws_instance
-    if _ws_instance is None:
-        _ws_instance = WorldState()
-    return _ws_instance
+    with _ws_instance_lock:
+        if _ws_instance is None:
+            _ws_instance = WorldState()
+        instance = _ws_instance
+        if not ServiceContainer.has("world_state"):
+            ServiceContainer.register_instance(
+                "world_state",
+                instance,
+                required=False,
+                owner="core/world_state.py",
+                registered_by="core.world_state.get_world_state",
+                required_for="live environment grounding",
+                failure_policy="degrade_without_environment_initiative",
+            )
+        return instance

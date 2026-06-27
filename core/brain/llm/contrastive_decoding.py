@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import threading
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -212,10 +214,9 @@ class MLXAmateurModel:
 
     The amateur MUST share the strong model's tokenizer/vocab for the logit
     subtraction to be meaningful — use a same-family small model (e.g. Qwen2.5-1.5B
-    as the amateur for a Qwen2.5-32B cortex). Each step runs a forward pass over the
-    current prefix and returns the last-position logits. This is correctness-first
-    (no KV cache reuse across steps), so it is validation-grade; a production build
-    would thread a persistent amateur KV cache.
+    as the amateur for a Qwen2.5-32B cortex). The callable keeps a bounded MLX
+    prompt/KV cache when the installed ``mlx_lm`` build supports it, and falls
+    open to full-prefix forward passes when it does not.
     """
 
     def __init__(self, model_path: str) -> None:
@@ -223,19 +224,120 @@ class MLXAmateurModel:
 
         self._model, self._tokenizer = load(model_path)
         self.model_path = model_path
+        self._lock = threading.RLock()
+        self._cached_tokens: list[int] = []
+        self._prompt_cache: Any | None = None
+        self._last_logits: Any | None = None
+        self._cache_disabled = False
+        self._max_cache_tokens = max(
+            0,
+            int(os.getenv("AURA_CONTRASTIVE_AMATEUR_CACHE_TOKENS", "4096") or "0"),
+        )
+        self._make_prompt_cache: Callable[..., Any] | None = None
+        self._trim_prompt_cache: Callable[..., Any] | None = None
+        if self._max_cache_tokens > 0:
+            try:
+                from mlx_lm.models.cache import make_prompt_cache, trim_prompt_cache
+
+                self._make_prompt_cache = make_prompt_cache
+                self._trim_prompt_cache = trim_prompt_cache
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("amateur KV cache unavailable for %s: %s", model_path, exc)
+                self._cache_disabled = True
+
+    @staticmethod
+    def _last_position_logits(output: Any) -> Any:
+        logits = output[0] if isinstance(output, (list, tuple)) else output
+        return logits[:, -1, :]
+
+    def _new_prompt_cache(self) -> Any | None:
+        if self._cache_disabled or self._make_prompt_cache is None:
+            return None
+        try:
+            return self._make_prompt_cache(self._model, max_kv_size=self._max_cache_tokens)
+        except TypeError:
+            try:
+                return self._make_prompt_cache(self._model)
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("amateur KV cache creation failed for %s: %s", self.model_path, exc)
+                self._cache_disabled = True
+                return None
+        except (RuntimeError, AttributeError, ValueError) as exc:
+            logger.debug("amateur KV cache creation failed for %s: %s", self.model_path, exc)
+            self._cache_disabled = True
+            return None
+
+    def _reset_cache(self) -> None:
+        self._cached_tokens = []
+        self._last_logits = None
+        self._prompt_cache = self._new_prompt_cache()
+
+    def _full_forward(self, mx: Any, ids: list[int]) -> Any:
+        out = self._model(mx.array([ids]))
+        return self._last_position_logits(out)
+
+    def _cached_forward(self, mx: Any, ids: list[int]) -> Any:
+        if (
+            self._cache_disabled
+            or self._max_cache_tokens <= 0
+            or self._make_prompt_cache is None
+        ):
+            return self._full_forward(mx, ids)
+
+        if len(ids) > self._max_cache_tokens:
+            ids = ids[-self._max_cache_tokens:]
+            self._reset_cache()
+
+        if self._prompt_cache is None:
+            self._reset_cache()
+
+        if self._cached_tokens == ids and self._last_logits is not None:
+            return self._last_logits
+
+        if self._cached_tokens and ids[: len(self._cached_tokens)] == self._cached_tokens:
+            suffix = ids[len(self._cached_tokens):]
+        else:
+            self._reset_cache()
+            suffix = ids
+
+        if not suffix:
+            return self._full_forward(mx, ids)
+
+        try:
+            out = self._model(mx.array([suffix]), cache=self._prompt_cache)
+            logits = self._last_position_logits(out)
+        except TypeError:
+            # Older/variant MLX models may not accept ``cache=``. Disable once
+            # and keep contrastive decoding correct via full-prefix forwards.
+            self._cache_disabled = True
+            self._reset_cache()
+            return self._full_forward(mx, ids)
+
+        self._cached_tokens = list(ids)
+        self._last_logits = logits
+        if (
+            self._trim_prompt_cache is not None
+            and self._max_cache_tokens > 0
+            and len(self._cached_tokens) > self._max_cache_tokens
+        ):
+            overflow = len(self._cached_tokens) - self._max_cache_tokens
+            try:
+                self._prompt_cache = self._trim_prompt_cache(self._prompt_cache, overflow)
+                self._cached_tokens = self._cached_tokens[-self._max_cache_tokens:]
+            except (RuntimeError, AttributeError, TypeError, ValueError):
+                self._reset_cache()
+        return logits
 
     def logits_fn(self) -> Callable[[Sequence[int]], Any]:
         import mlx.core as mx
-
-        model = self._model
 
         def amateur(tokens: Any) -> Any:
             try:
                 ids = [int(t) for t in (tokens.tolist() if hasattr(tokens, "tolist") else tokens)]
                 if not ids:
                     return None
-                out = model(mx.array([ids]))
-                return out[:, -1, :]
+                with self._lock:
+                    return self._cached_forward(mx, ids)
             except (RuntimeError, ValueError, TypeError, AttributeError):
                 return None
 

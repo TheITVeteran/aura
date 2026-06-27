@@ -1630,11 +1630,35 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
                 ServiceContainer._emit_absent_event("voice_pipeline")
 
             events = get_recent_degraded_events(limit=5)
-            self.assertEqual(events[0]["severity"], "info")
-            self.assertEqual(events[0]["classification"], "non_critical_fallback")
+            self.assertEqual(events, [])
             self.assertEqual(forwarded, [])
             self.assertEqual(get_unified_failure_state()["pressure"], 0.0)
         finally:
+            clear_degraded_events()
+
+    def test_optional_service_absence_is_recorded_once_under_polling(self):
+        from core.container import ServiceContainer
+        from core.health.degraded_events import (
+            clear_degraded_events,
+            get_recent_degraded_events,
+        )
+
+        clear_degraded_events()
+        ServiceContainer._optional_absent_breadcrumbs.discard("poll_only_service")
+        try:
+            for _ in range(100):
+                self.assertIsNone(
+                    ServiceContainer.get("poll_only_service", default=None)
+                )
+
+            events = [
+                event
+                for event in get_recent_degraded_events(limit=20)
+                if event.get("detail") == "poll_only_service"
+            ]
+            self.assertEqual(events, [])
+        finally:
+            ServiceContainer._optional_absent_breadcrumbs.discard("poll_only_service")
             clear_degraded_events()
 
     async def test_private_phenomenology_uses_local_reflection_by_default(self):

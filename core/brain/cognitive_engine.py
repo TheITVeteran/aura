@@ -196,6 +196,39 @@ def _live_mind_controls_bound(
     return required_control_keys.issubset(generation_controls.keys())
 
 
+def _bind_live_mind_generation_contract(context: dict[str, Any]) -> dict[str, Any]:
+    """Bind one authoritative mind-state control contract to a cognitive turn."""
+
+    live_mind_context = context.get("live_mind_context")
+    generation_controls = _live_mind_generation_controls(live_mind_context)
+    controls_bound = _live_mind_controls_bound(
+        live_mind_context,
+        generation_controls,
+    )
+    snapshot_ready = bool(
+        isinstance(live_mind_context, dict)
+        and isinstance(live_mind_context.get("mind_snapshot_quality"), dict)
+        and live_mind_context["mind_snapshot_quality"].get("ready")
+    )
+    required_subsystems_ok = bool(
+        isinstance(live_mind_context, dict)
+        and live_mind_context.get("required_subsystems_ok")
+    )
+    desktop_required = bool(
+        context.get("desktop_cognitive_engine_required", False)
+        or context.get("cognitive_engine_required", False)
+    )
+
+    context["live_mind_generation_controls"] = dict(generation_controls)
+    context["live_mind_controls_bound"] = controls_bound
+    context["live_mind_snapshot_ready"] = snapshot_ready
+    context["live_mind_required_subsystems_ok"] = required_subsystems_ok
+    context["clean_user_surface_contract"] = bool(
+        context.get("clean_user_surface_contract", False) or desktop_required
+    )
+    return generation_controls
+
+
 def _desktop_history_messages_from_context(
     context: dict[str, Any],
     *,
@@ -1235,12 +1268,19 @@ class CognitiveEngine:
         Internal method to execute the core cognitive phase loop.
         Extracted from `think` to allow pre/post-processing in `think`.
         """
+        if not isinstance(context, dict):
+            context = {}
+        _bind_live_mind_generation_contract(context)
+        if not str(context.get("user_surface_validation_prompt") or "").strip():
+            context["user_surface_validation_prompt"] = str(
+                context.get("visible_user_message") or objective or ""
+            ).strip()
+
         append_user_message = True
-        if isinstance(context, dict):
-            append_user_message = not bool(
-                context.get("suppress_user_memory_append")
-                or context.get("suppress_working_memory_user_append")
-            )
+        append_user_message = not bool(
+            context.get("suppress_user_memory_append")
+            or context.get("suppress_working_memory_user_append")
+        )
         if self._is_user_facing_origin(origin) and append_user_message:
             # Check if already in history to avoid duplication
             # vResilience: Workaround for Pyre2 slice limitations
@@ -1474,6 +1514,32 @@ class CognitiveEngine:
                     "bicameral_advisory_feedback": bicameral_feedback,
                 }
             else:
+                generation_controls = context.get("live_mind_generation_controls")
+                if not isinstance(generation_controls, dict):
+                    generation_controls = {}
+                surface_control_receipt = state.response_modifiers.get(
+                    "live_mind_surface_control_receipt"
+                )
+                if not isinstance(surface_control_receipt, dict):
+                    surface_control_receipt = {}
+                if not surface_control_receipt:
+                    try:
+                        router = get_container().get("llm_router", default=None)
+                        if router is not None and hasattr(
+                            router, "get_last_generation_metadata"
+                        ):
+                            generation_metadata = router.get_last_generation_metadata()
+                            if isinstance(generation_metadata, dict):
+                                candidate = generation_metadata.get(
+                                    "surface_control_receipt"
+                                )
+                                if isinstance(candidate, dict):
+                                    surface_control_receipt = dict(candidate)
+                    except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+                        logger.debug(
+                            "Could not read full-phase surface-control receipt: %s",
+                            exc,
+                        )
                 thought = Thought(
                     id=str(uuid.uuid4()),
                     content=last_msg["content"],
@@ -1490,6 +1556,26 @@ class CognitiveEngine:
                         if isinstance(context, dict)
                         else None,
                         "bicameral_advisory_feedback": bicameral_feedback,
+                        "live_mind_controls_bound": bool(
+                            context.get("live_mind_controls_bound", False)
+                        ),
+                        "live_mind_generation_controls": dict(generation_controls),
+                        "live_mind_snapshot_ready": bool(
+                            context.get("live_mind_snapshot_ready", False)
+                        ),
+                        "live_mind_required_subsystems_ok": bool(
+                            context.get("live_mind_required_subsystems_ok", False)
+                        ),
+                        "live_mind_context_required": bool(
+                            context.get("live_mind_context_required", False)
+                        ),
+                        "live_mind_surface_control_receipt": dict(
+                            surface_control_receipt
+                        ),
+                        "live_mind_controls_worker_applied": bool(
+                            surface_control_receipt.get("live_mind_controls_bound")
+                            and surface_control_receipt.get("applied")
+                        ),
                     },
                 )
             self.thoughts.append(thought)
@@ -1727,6 +1813,10 @@ class CognitiveEngine:
         if isinstance(bicameral_frame, dict):
             sampling_sources.append(bicameral_frame.get("sampling_bias") or {})
         memory_state_contract = bool(context.get("memory_state_contract", False))
+        runtime_fact_status_contract = bool(
+            context.get("runtime_fact_status_contract", False)
+            or context.get("grounded_runtime_status_contract", False)
+        )
         canonical_memory_state_evidence = str(
             context.get("canonical_memory_state_evidence") or ""
         ).strip()
@@ -1738,19 +1828,19 @@ class CognitiveEngine:
                     factor_value = 1.0
                 if 0.25 <= factor_value <= 1.25:
                     max_tokens = max(128, int(max_tokens * factor_value))
-        if memory_state_contract:
+        if memory_state_contract or runtime_fact_status_contract:
             max_tokens = max(128, min(max_tokens, 256))
         else:
             max_tokens = max(384, min(max_tokens, 1024))
         request_timeout = max(12.0, min(max(12.0, float(timeout_s or 32.0) - 5.0), 180.0))
-        if memory_state_contract:
+        if memory_state_contract or runtime_fact_status_contract:
             request_timeout = min(request_timeout, 45.0)
         style_contract = str(context.get("response_style_contract") or "").strip()
         visible_user_message = str(context.get("visible_user_message") or objective or "").strip()
         recent_conversation_context = str(context.get("recent_conversation_context") or "").strip()
         history_messages = (
             []
-            if memory_state_contract
+            if memory_state_contract or runtime_fact_status_contract
             else _desktop_history_messages_from_context(context)
         )
         live_speech_frame = context.get("live_speech_grounding_frame")
@@ -1781,6 +1871,14 @@ class CognitiveEngine:
                 "Use canonical memory/state evidence as source of truth. "
                 "The current user message has priority over older topics. "
                 "Do not mention prompt contracts, internal recovery, or implementation details."
+            )
+        elif runtime_fact_status_contract:
+            system_prompt = (
+                "You are Aura speaking through the live desktop CognitiveEngine. "
+                "Answer the current runtime-path question directly and compactly. "
+                "Use only the verified runtime status evidence supplied for this turn; "
+                "do not infer tool readiness, model identity, fallback state, or recurrent "
+                "depth from general knowledge. Do not mention hidden prompt contracts."
             )
         else:
             system_prompt = (
@@ -1885,6 +1983,16 @@ class CognitiveEngine:
                 "If the current user also asks for one live-state detail, answer that from the live mind context "
                 "without reciting telemetry."
             )
+        grounded_runtime_status = str(
+            context.get("grounded_runtime_status_context") or ""
+        ).strip()
+        if runtime_fact_status_contract and grounded_runtime_status:
+            grounding_blocks.append(
+                "[VERIFIED LIVE RUNTIME STATUS]\n"
+                f"{grounded_runtime_status}\n"
+                "Use this as the source of truth. Preserve its factual boundaries and do not "
+                "invent stronger availability or completion claims."
+            )
         capability_evidence = str(
             context.get("grounded_capability_inventory_context") or ""
         ).strip()
@@ -1959,6 +2067,8 @@ class CognitiveEngine:
                 "allow_mesh_cognition": False,
                 "skip_runtime_payload": True,
                 "memory_state_contract": memory_state_contract,
+                "runtime_fact_status_contract": runtime_fact_status_contract,
+                "grounded_runtime_status_contract": runtime_fact_status_contract,
                 "clean_user_surface_contract": True,
                 "user_surface_validation_prompt": visible_user_message or objective,
                 "clean_user_surface_recurrent_loops": live_mind_generation_controls.get(

@@ -1045,8 +1045,16 @@ class LiquidSubstrate:
             # 2. STDP reward-modulated learning (from BrainCog research)
             try:
                 from core.container import ServiceContainer
+                from core.consciousness.stdp_learning import get_stdp_engine
 
-                stdp = ServiceContainer.get("stdp_engine", default=None)
+                substrate_neurons = int(np.asarray(self.x).size)
+                stdp = (
+                    ServiceContainer.get("stdp_engine", default=None)
+                    if ServiceContainer.has("stdp_engine")
+                    else None
+                )
+                if stdp is None or int(getattr(stdp, "n", 0) or 0) != substrate_neurons:
+                    stdp = get_stdp_engine(n_neurons=substrate_neurons)
                 if stdp is not None:
                     # Record current activations as spikes
                     stdp.record_spikes(self.x, t=self.tick_count * 50.0)

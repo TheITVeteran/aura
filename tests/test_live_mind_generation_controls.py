@@ -133,3 +133,67 @@ async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypat
     assert thought.metadata["live_mind_controls_worker_applied"] is True
     assert thought.metadata["live_mind_snapshot_ready"] is True
     assert thought.metadata["live_mind_generation_controls"]["top_p"] <= 0.94
+
+
+@pytest.mark.asyncio
+async def test_full_phase_reply_preserves_live_mind_controls_and_worker_receipt():
+    from core.brain.cognitive_engine import CognitiveEngine
+    from core.brain.types import ThinkingMode
+    from core.state.aura_state import AuraState
+
+    receipt = {
+        "enabled": True,
+        "live_mind_controls_bound": True,
+        "clean_user_surface_contract": True,
+        "surface_quality_gate_passed": True,
+        "applied": True,
+    }
+
+    class FullPhase:
+        async def execute(self, state, *, objective, context, **_kwargs):
+            assert context["live_mind_controls_bound"] is True
+            assert context["live_mind_snapshot_ready"] is True
+            assert context["live_mind_required_subsystems_ok"] is True
+            assert context["clean_user_surface_contract"] is True
+            assert context["live_mind_generation_controls"]["temperature"] > 0.58
+            state.response_modifiers["live_mind_surface_control_receipt"] = dict(receipt)
+            state.cognition.working_memory.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Confusion increases my checking depth and lowers my willingness "
+                        "to act until evidence resolves the uncertainty."
+                    ),
+                }
+            )
+            return state
+
+    engine = CognitiveEngine()
+    engine._phases = [FullPhase()]
+    state = AuraState.default()
+    thought = await engine._run_thinking_loop(
+        state,
+        "How does confusion change your reasoning?",
+        ThinkingMode.REFLECTIVE,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": False,
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "live_mind_context_required": True,
+            "live_mind_context": {
+                **_ready_live_mind_context(),
+                "required_subsystems_ok": True,
+            },
+            "visible_user_message": "How does confusion change your reasoning?",
+        },
+        is_background=False,
+        timeout_s=30.0,
+    )
+
+    assert thought.metadata["live_mind_controls_bound"] is True
+    assert thought.metadata["live_mind_snapshot_ready"] is True
+    assert thought.metadata["live_mind_required_subsystems_ok"] is True
+    assert thought.metadata["live_mind_controls_worker_applied"] is True
+    assert thought.metadata["live_mind_surface_control_receipt"] == receipt
+    assert thought.metadata["live_mind_generation_controls"]["temperature"] > 0.58

@@ -264,6 +264,22 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertIn("no_worker_progress", lane["readiness_blockers"])
         self.assertIn("lane_recovering", lane["readiness_blockers"])
 
+    def test_heartbeat_alone_does_not_make_conversation_ready(self):
+        client = MLXLocalClient(model_path=TEST_MODEL)
+        client._process = ProcessProbe(alive=True)
+        client._init_done = True
+        client._set_lane_state("ready")
+        client._last_heartbeat = 999.5
+
+        with replace_dotted("core.brain.llm.mlx_client.time.time", lambda: 1000.0):
+            lane = client.get_lane_status()
+
+        self.assertEqual(lane["state"], "recovering")
+        self.assertFalse(lane["conversation_ready"])
+        self.assertIn("no_worker_progress", lane["readiness_blockers"])
+        self.assertLess(lane["heartbeat_age_s"], 1.0)
+        self.assertIsNone(lane["progress_age_s"])
+
     def test_ready_lane_with_stale_progress_is_not_conversation_ready(self):
         client = MLXLocalClient(model_path=TEST_MODEL)
         client._process = ProcessProbe(alive=True)

@@ -96,6 +96,7 @@ def test_factory_assembles_processors():
 # --- amateur logits source (real model wiring) -------------------------------
 import os
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -120,6 +121,45 @@ def test_factory_skips_contrastive_when_amateur_unavailable():
     )
     # Amateur failed to load → only the steering processor remains.
     assert len(procs) == 1
+
+
+def test_amateur_model_reuses_prompt_cache_for_prefix_extension():
+    from core.brain.llm.contrastive_decoding import MLXAmateurModel
+
+    class _MX:
+        @staticmethod
+        def array(value):
+            return value
+
+    class _FakeModel:
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, value, cache=None):
+            self.calls.append((list(value[0]), cache is not None))
+            return np.ones((1, len(value[0]), 8), dtype=np.float32) * len(self.calls)
+
+    model = object.__new__(MLXAmateurModel)
+    model._model = _FakeModel()
+    model._tokenizer = object()
+    model.model_path = "fake-amateur"
+    model._lock = threading.RLock()
+    model._cached_tokens = []
+    model._prompt_cache = None
+    model._last_logits = None
+    model._cache_disabled = False
+    model._max_cache_tokens = 64
+    model._make_prompt_cache = lambda _model, max_kv_size=None: {"max": max_kv_size}
+    model._trim_prompt_cache = lambda cache, _num_tokens: cache
+
+    first = model._cached_forward(_MX, [1, 2, 3])
+    second = model._cached_forward(_MX, [1, 2, 3, 4, 5])
+    third = model._cached_forward(_MX, [1, 2, 3, 4, 5])
+
+    assert first.shape == (1, 8)
+    assert second.shape == (1, 8)
+    assert np.array_equal(second, third)
+    assert model._model.calls == [([1, 2, 3], True), ([4, 5], True)]
 
 
 @pytest.mark.skipif(not _AMATEUR.exists(), reason="local 1.5B amateur model not present")

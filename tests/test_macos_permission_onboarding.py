@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import plistlib
+import types
 
 import core.security.permission_guard as pg
 from core.security.macos_bundle_manifest import (
@@ -97,6 +98,28 @@ def test_av_probe_not_applicable_off_macos(monkeypatch):
     monkeypatch.setattr(pg.sys, "platform", "linux")
     out = guard._av_media_authorization_probe("AVMediaTypeAudio", PermissionType.MIC)
     assert out == {"granted": True, "status": "not_applicable", "guidance": ""}
+
+
+def test_current_process_identity_reports_tcc_target():
+    identity = PermissionGuard().current_process_identity()
+
+    assert identity["pid"] > 0
+    assert identity["executable"]
+    assert "bundle_identifier" in identity
+    assert "parent_pid" in identity
+
+
+def test_screen_capture_request_updates_cache(monkeypatch):
+    guard = PermissionGuard()
+    fake_quartz = types.SimpleNamespace(CGRequestScreenCaptureAccess=lambda: True)
+
+    monkeypatch.setattr(pg.sys, "platform", "darwin")
+    monkeypatch.setitem(__import__("sys").modules, "Quartz", fake_quartz)
+
+    assert guard.request_screen_capture_access() is True
+    cached = guard._cache[PermissionType.SCREEN]
+    assert cached["granted"] is True
+    assert cached["status"] == "active"
 
 
 def test_denied_permission_is_actionable_undetermined_is_not():

@@ -241,6 +241,70 @@ class TestNavigatingGraph:
 # ── STDP Learning ────────────────────────────────────────────────────────────
 
 class TestSTDPLearning:
+    def test_process_singleton_registers_at_requested_live_dimension(self, monkeypatch):
+        from core.consciousness import stdp_learning
+
+        registrations = []
+        monkeypatch.setattr(stdp_learning, "_instance", None)
+        monkeypatch.setattr(
+            stdp_learning.ServiceContainer,
+            "has",
+            classmethod(lambda cls, name: False),
+        )
+        monkeypatch.setattr(
+            stdp_learning.ServiceContainer,
+            "get",
+            classmethod(lambda cls, name, default=None: default),
+        )
+        monkeypatch.setattr(
+            stdp_learning.ServiceContainer,
+            "register_instance",
+            classmethod(
+                lambda cls, name, instance, **metadata: registrations.append(
+                    (name, instance, metadata)
+                )
+            ),
+        )
+
+        engine = stdp_learning.get_stdp_engine(n_neurons=512)
+
+        assert engine.n == 512
+        assert engine._eligibility.shape == (512, 512)
+        assert registrations[0][0] == "stdp_engine"
+        assert registrations[0][1] is engine
+        assert registrations[0][2]["required_for"] == (
+            "liquid substrate reward-modulated plasticity"
+        )
+
+    def test_process_singleton_resizes_to_match_new_substrate(self, monkeypatch):
+        from core.consciousness import stdp_learning
+
+        monkeypatch.setattr(
+            stdp_learning,
+            "_instance",
+            stdp_learning.STDPLearningEngine(n_neurons=8),
+        )
+        monkeypatch.setattr(
+            stdp_learning.ServiceContainer,
+            "has",
+            classmethod(lambda cls, name: False),
+        )
+        monkeypatch.setattr(
+            stdp_learning.ServiceContainer,
+            "get",
+            classmethod(lambda cls, name, default=None: default),
+        )
+        monkeypatch.setattr(
+            stdp_learning.ServiceContainer,
+            "register_instance",
+            classmethod(lambda cls, name, instance, **metadata: None),
+        )
+
+        engine = stdp_learning.get_stdp_engine(n_neurons=16)
+
+        assert engine.n == 16
+        assert engine._eligibility.shape == (16, 16)
+
 
     def test_record_spikes_updates_eligibility(self):
         from core.consciousness.stdp_learning import STDPLearningEngine

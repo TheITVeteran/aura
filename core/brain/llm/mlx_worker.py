@@ -252,6 +252,12 @@ def _surface_generation_control_receipt(
         "proof_evaluation_contract": bool(job.get("proof_evaluation_contract", False)),
         "operator_evidence_contract": bool(job.get("operator_evidence_contract", False)),
         "health_probe": bool(job.get("health_probe", False)),
+        "runtime_fact_status_contract": bool(
+            job.get("runtime_fact_status_contract", False)
+        ),
+        "grounded_runtime_status_contract": bool(
+            job.get("grounded_runtime_status_contract", False)
+        ),
         "applied": False,
     }
     if not enabled:
@@ -309,6 +315,8 @@ def _surface_quality_gate_enabled(job: dict[str, Any]) -> bool:
         return False
     return not bool(
         job.get("health_probe", False)
+        or job.get("runtime_fact_status_contract", False)
+        or job.get("grounded_runtime_status_contract", False)
         or job.get("operator_evidence_contract", False)
         or job.get("strict_answer_contract", False)
         or job.get("strict_value_contract", False)

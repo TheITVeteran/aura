@@ -433,6 +433,8 @@ def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
         "proof_evaluation_contract",
         "operator_evidence_contract",
         "health_probe",
+        "runtime_fact_status_contract",
+        "grounded_runtime_status_contract",
         "surface_alpha_requested",
         "surface_alpha_applied",
         "surface_alpha_applied_ok",
@@ -1543,8 +1545,7 @@ class MLXLocalClient:
         lane_state = self._lane_state
         lane_error = self._lane_error
         now = time.time()
-        progress_anchor = max(
-            self._last_heartbeat,
+        worker_progress_anchor = max(
             self._last_progress_at,
             self._last_ready_at,
             self._last_token_progress_at,
@@ -1554,7 +1555,11 @@ class MLXLocalClient:
             float(getattr(self, "_last_visible_readiness_at", 0.0) or 0.0),
             float(getattr(self, "_last_user_facing_completed_at", 0.0) or 0.0),
         )
-        progress_age_s = max(0.0, now - progress_anchor) if progress_anchor > 0.0 else None
+        progress_age_s = (
+            max(0.0, now - worker_progress_anchor)
+            if worker_progress_anchor > 0.0
+            else None
+        )
         heartbeat_age_s = (
             max(0.0, now - self._last_heartbeat) if self._last_heartbeat > 0.0 else None
         )
@@ -1567,7 +1572,7 @@ class MLXLocalClient:
             readiness_blockers.append("init_not_complete")
         if lane_state != "ready":
             readiness_blockers.append(f"lane_{lane_state}")
-        if progress_anchor <= 0.0:
+        if worker_progress_anchor <= 0.0:
             readiness_blockers.append("no_worker_progress")
         elif progress_age_s is not None and progress_age_s > self._stale_after():
             readiness_blockers.append("worker_progress_stale")
@@ -1637,6 +1642,7 @@ class MLXLocalClient:
             "heartbeat_age_s": heartbeat_age_s,
             "last_progress_at": self._last_progress_at,
             "progress_age_s": progress_age_s,
+            "worker_progress_anchor": worker_progress_anchor,
             "last_token_progress_at": self._last_token_progress_at,
             "last_ready_at": self._last_ready_at,
             "last_generation_completed_at": self._last_generation_completed_at,
@@ -3508,6 +3514,12 @@ class MLXLocalClient:
             "proof_evaluation_contract": bool(kwargs.get("proof_evaluation_contract", False)),
             "operator_evidence_contract": bool(kwargs.get("operator_evidence_contract", False)),
             "health_probe": bool(kwargs.get("health_probe", False)),
+            "runtime_fact_status_contract": bool(
+                kwargs.get("runtime_fact_status_contract", False)
+            ),
+            "grounded_runtime_status_contract": bool(
+                kwargs.get("grounded_runtime_status_contract", False)
+            ),
             "clean_user_surface_contract": bool(
                 kwargs.get("clean_user_surface_contract", False)
                 or kwargs.get("health_probe", False)

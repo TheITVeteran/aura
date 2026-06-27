@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import platform
 import sys
 import time
 from enum import Enum, auto
@@ -240,6 +241,70 @@ class PermissionGuard(AuraBaseModule):
             record_degradation("permission_guard", exc)
             self.logger.debug("Accessibility trust prompt unavailable: %s", exc)
             return False
+
+    def request_screen_capture_access(self) -> bool:
+        """Actively request Screen Recording access for this process identity.
+
+        macOS grants TCC permissions to the app/executable identity that asks.
+        Aura cannot safely edit TCC databases; the production path is to invoke
+        the system prompt for the exact process that will read the screen.
+        """
+        if sys.platform != "darwin":
+            return True
+        try:
+            import Quartz  # type: ignore
+
+            request = getattr(Quartz, "CGRequestScreenCaptureAccess", None)
+            if callable(request):
+                granted = bool(request())
+                self._cache[PermissionType.SCREEN] = {
+                    "granted": granted,
+                    "status": "active" if granted else "prompted",
+                    "guidance": "" if granted else self.get_guidance(PermissionType.SCREEN),
+                }
+                self._cache_ts[PermissionType.SCREEN] = time.monotonic()
+                return granted
+        except _PERMISSION_RECOVERABLE_ERRORS as exc:
+            record_degradation("permission_guard.screen_capture_prompt", exc)
+            self.logger.debug("Screen Recording prompt unavailable: %s", exc)
+        return False
+
+    def current_process_identity(self) -> dict[str, Any]:
+        """Return the executable/app identity macOS TCC will evaluate.
+
+        This makes permission mismatch diagnosable: if System Settings shows
+        Terminal/Codex/Aura enabled but the running detached Python identity is
+        different, the UI can tell the user exactly which identity needs trust.
+        """
+        payload: dict[str, Any] = {
+            "platform": platform.platform(),
+            "pid": os.getpid(),
+            "executable": sys.executable,
+            "argv0": sys.argv[0] if sys.argv else "",
+            "bundle_identifier": "",
+            "bundle_path": "",
+            "parent_pid": os.getppid(),
+            "parent_name": "",
+        }
+        if sys.platform == "darwin":
+            try:
+                from Foundation import NSBundle  # type: ignore
+
+                bundle = NSBundle.mainBundle()
+                if bundle is not None:
+                    payload["bundle_identifier"] = str(bundle.bundleIdentifier() or "")
+                    payload["bundle_path"] = str(bundle.bundlePath() or "")
+            except _PERMISSION_RECOVERABLE_ERRORS as exc:
+                self.logger.debug("Bundle identity lookup unavailable: %s", exc)
+        try:
+            import psutil  # type: ignore
+
+            parent = psutil.Process(os.getppid())
+            payload["parent_name"] = parent.name()
+            payload["parent_executable"] = parent.exe()
+        except _PERMISSION_RECOVERABLE_ERRORS as exc:
+            self.logger.debug("Parent process identity lookup unavailable: %s", exc)
+        return payload
 
     def _automation_preflight_probe(self) -> dict[str, Any]:
         """Probe Apple Events access to System Events without shelling out."""

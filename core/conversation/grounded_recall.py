@@ -181,5 +181,52 @@ def build_grounded_recall_context(user_message: str, history: Any = None) -> str
         f"[GROUNDED RECALL — this is the verbatim fact; answer from it, do not guess]\n"
         f"The {which} the user actually said to you in this conversation was:\n"
         f"“{turn}”\n"
+        "The quoted speaker is the user, not you. Preserve that role boundary: refer to "
+        "it as what they or 'you' said, never as something you said.\n"
         f"Answer their question using this real quote, naturally and in your own voice.\n\n"
     )
+
+
+def repair_grounded_recall_speaker_attribution(
+    user_message: str,
+    response_text: str,
+) -> tuple[str, bool]:
+    """Correct first-person adoption of a retrieved user utterance.
+
+    This only applies to positional recall questions where the user explicitly
+    asks about what they said. It does not ban first-person language elsewhere.
+    """
+
+    response = str(response_text or "").strip()
+    if not response or detect_positional_recall(user_message) is None:
+        return response, False
+    if not re.search(r"\b(?:i|my|me)\b", str(user_message or ""), re.IGNORECASE):
+        return response, False
+
+    sentence_end = re.search(r"(?<=[.!?])(?:\s|$)", response)
+    boundary = sentence_end.start() if sentence_end else len(response)
+    first_sentence = response[:boundary]
+    remainder = response[boundary:]
+    leading = re.match(r"^(\s*[\"'“‘]?)", first_sentence)
+    prefix = leading.group(1) if leading else ""
+    body = first_sentence[len(prefix) :]
+    if not re.match(r"^(?:I\b|I'm\b|I've\b|I'd\b|My\b|Mine\b)", body, re.IGNORECASE):
+        return response, False
+
+    shifted = re.sub(r"\bI am\b", "you are", body, flags=re.IGNORECASE)
+    shifted = re.sub(r"\bI'm\b", "you're", shifted, flags=re.IGNORECASE)
+    shifted = re.sub(r"\bI have\b", "you have", shifted, flags=re.IGNORECASE)
+    shifted = re.sub(r"\bI've\b", "you've", shifted, flags=re.IGNORECASE)
+    shifted = re.sub(r"\bI was\b", "you were", shifted, flags=re.IGNORECASE)
+    shifted = re.sub(r"\bI'd\b", "you'd", shifted, flags=re.IGNORECASE)
+    shifted = re.sub(r"\bI\b", "you", shifted, flags=re.IGNORECASE)
+    shifted = re.sub(r"\bmy\b", "your", shifted, flags=re.IGNORECASE)
+    shifted = re.sub(r"\bmine\b", "yours", shifted, flags=re.IGNORECASE)
+    shifted = re.sub(r"\bme\b", "you", shifted, flags=re.IGNORECASE)
+    shifted = shifted.lstrip()
+    if shifted.lower().startswith("you said "):
+        corrected = shifted
+    else:
+        corrected = f"You said {shifted}"
+    corrected = corrected[:1].upper() + corrected[1:]
+    return f"{prefix}{corrected}{remainder}", True
