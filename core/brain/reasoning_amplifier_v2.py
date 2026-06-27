@@ -650,27 +650,48 @@ class ReasoningAmplifierV2:
 
         confidence = round(min(calibration.confidence, 0.98 if verifier_ok else 0.55), 4)
 
-        # 9b. memoize verifier-clean source-independent derivations for instant re-use.
-        if (
-            verifier_ok
-            and _flag_on("AURA_REASONING_CACHE")
-            and not request.context.get("skip_cache")
-            and "solved_cache_hit" not in fallbacks
-        ):
-            try:
-                from core.brain.reasoning_solved_cache import get_reasoning_solved_cache
+        # 9b. learn from the outcome — memoize wins, queue losses for idle retry.
+        if "solved_cache_hit" not in fallbacks:
+            if verifier_ok:
+                # Memoize verifier-clean source-independent derivations for instant re-use.
+                if _flag_on("AURA_REASONING_CACHE") and not request.context.get("skip_cache"):
+                    try:
+                        from core.brain.reasoning_solved_cache import get_reasoning_solved_cache
 
-                get_reasoning_solved_cache().put(
-                    problem.objective,
-                    problem.task_type,
-                    answer=calibrated_answer,
-                    confidence=confidence,
-                    mode=mode.value,
-                    verifiers_run=[v for v in verifiers_run if v],
-                    verified=verifier_ok,
-                )
-            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation("amplifier_v2_cache_put", exc)
+                        get_reasoning_solved_cache().put(
+                            problem.objective,
+                            problem.task_type,
+                            answer=calibrated_answer,
+                            confidence=confidence,
+                            mode=mode.value,
+                            verifiers_run=[v for v in verifiers_run if v],
+                            verified=verifier_ok,
+                        )
+                    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                        record_degradation("amplifier_v2_cache_put", exc)
+                # Capture as a STaR self-improvement training trace (internal bootstrap).
+                try:
+                    from core.brain.reasoning_self_improvement import get_reasoning_self_improvement
+
+                    get_reasoning_self_improvement().record_win(
+                        problem.objective,
+                        problem.task_type,
+                        answer=calibrated_answer,
+                        confidence=confidence,
+                        mode=mode.value,
+                        verified=verifier_ok,
+                    )
+                except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    record_degradation("amplifier_v2_self_improve", exc)
+            elif not request.context.get("skip_precompute_enqueue"):
+                # Verifier-dirty under the foreground budget — queue an idle deep retry
+                # (off the critical path; the win lands in the cache for next time).
+                try:
+                    from core.brain.reasoning_precompute import get_precompute_queue
+
+                    get_precompute_queue().enqueue(problem.objective, problem.task_type)
+                except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    record_degradation("amplifier_v2_precompute_enqueue", exc)
 
         # 10. record the episode so the next one is wiser.
         try:
@@ -926,21 +947,28 @@ async def amplify_turn(
     evidence: list[str] | None = None,
     risk_level: str = "normal",
     time_budget_s: float = 30.0,
+    extra_context: dict[str, Any] | None = None,
     **kw: Any,
 ) -> AmplifiedAnswer:
     """One-call entrypoint for the live response path.
 
     Builds an amplifier wired to the real organs (verifiers, sandbox, calibration,
     memory, evidence provider, substrate) and runs the full pipeline for a turn.
+    ``extra_context`` is merged into the request context (e.g. ``skip_cache`` or
+    ``skip_precompute_enqueue`` for the idle pre-compute path). ``escalate_generate``
+    may be passed through ``**kw`` to enable the deep-tier verifier-of-last-resort.
     """
     tt = task_type or classify_task_type(objective)
     amplifier = ReasoningAmplifierV2(generate, **kw)
+    context: dict[str, Any] = {"evidence": list(evidence or [])}
+    if extra_context:
+        context.update(extra_context)
     request = AmplificationRequest(
         objective=objective,
         task_type=tt,
         risk_level=risk_level,
         time_budget_s=time_budget_s,
         required_evidence=list(evidence or []),
-        context={"evidence": list(evidence or [])},
+        context=context,
     )
     return await amplifier.amplify(request)
