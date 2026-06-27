@@ -3832,6 +3832,37 @@ async function pollHealth() {
             }
         }
 
+        // ── Full Runtime / Autonomous Initiative ──
+        if (d.full_runtime) {
+            const fr = d.full_runtime;
+            const components = (fr.components && typeof fr.components === 'object') ? fr.components : {};
+            const initiative = components.autonomous_initiative || {};
+            const admission = (initiative.admission && typeof initiative.admission === 'object') ? initiative.admission : {};
+            const blockers = Array.isArray(fr.blockers) ? fr.blockers : [];
+            const setFullRuntimeCell = (id, value, healthy) => {
+                const el = $(id);
+                if (!el) return;
+                el.textContent = String(value || '--').toUpperCase();
+                el.style.color = healthy ? 'var(--success)' : 'var(--error)';
+                el.title = blockers.length ? `Blocked: ${blockers.join(', ')}` : 'Full runtime organ is healthy.';
+            };
+            setFullRuntimeCell('fr-profile', fr.profile || '--', fr.profile === 'full_desktop');
+            setFullRuntimeCell('fr-ready', fr.ready ? 'READY' : 'BLOCKED', !!fr.ready);
+            setFullRuntimeCell('fr-initiative', initiative.running ? 'ACTIVE' : 'BLOCKED', !!initiative.running);
+            if ($('fr-selfdev')) {
+                const selfDev = admission.self_development || '--';
+                $('fr-selfdev').textContent = String(selfDev).toUpperCase();
+                $('fr-selfdev').style.color = selfDev === 'allowed' ? 'var(--success)' : 'var(--warn)';
+                $('fr-selfdev').title = 'Autonomous self-development admission state.';
+            }
+            if ($('fr-social')) {
+                const social = admission.social || '--';
+                $('fr-social').textContent = String(social).toUpperCase();
+                $('fr-social').style.color = social === 'allowed' ? 'var(--success)' : 'var(--warn)';
+                $('fr-social').title = 'Autonomous social/world presence admission state.';
+            }
+        }
+
         // ── Phase III: Mycelial Network ──
         if (d.mycelial) {
             const m = d.mycelial;

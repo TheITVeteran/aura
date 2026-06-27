@@ -752,6 +752,21 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "const laneOperational = (state.conversationReady || laneHasActiveGeneration(effectiveLane)) && healthy;" in aura_js
 
 
+def test_desktop_shell_surfaces_full_runtime_autonomy_status():
+    aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+    index_html = (PROJECT_ROOT / "interface" / "static" / "index.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "FULL RUNTIME" in index_html
+    assert 'id="fr-initiative"' in index_html
+    assert 'id="fr-selfdev"' in index_html
+    assert "d.full_runtime" in aura_js
+    assert "components.autonomous_initiative" in aura_js
+    assert "admission.self_development" in aura_js
+    assert "admission.social" in aura_js
+
+
 def test_fault_forensics_supports_nonfatal_stack_dump_signal():
     source = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
 

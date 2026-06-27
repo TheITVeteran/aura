@@ -276,3 +276,34 @@ Estimate update:
 
 - Overall closeout: 81.5%
 - Remaining checkpoints: 6 total
+
+## Checkpoint 2026-06-27-08: Full Runtime Status Visible In Desktop UI
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- Backend full-runtime truth is not enough if the live desktop UI still leaves
+  Bryan guessing whether full Aura, safe boot, autonomy, and initiative
+  admission are actually active.
+- The telemetry panel showed substrate and learning values, but did not expose
+  the canonical full-runtime readiness or autonomous initiative admission state.
+
+What changed:
+
+- Added a `FULL RUNTIME` telemetry section to the desktop UI.
+- The section shows profile, full organ readiness, autonomous initiative
+  liveness, self-development admission, and social/autonomous admission.
+- The UI reads these values from `/api/health` `full_runtime.components`, not
+  from decorative local state.
+
+Evidence:
+
+- `python -m py_compile tests/test_runtime_polish.py`
+- `python -m pytest tests/test_runtime_polish.py::test_desktop_shell_surfaces_full_runtime_autonomy_status tests/test_runtime_polish.py::test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health tests/test_full_desktop_runtime_contract.py tests/test_autonomy_visibility.py -q`
+- Result: `20 passed`
+
+Estimate update:
+
+- Overall closeout: 82%
+- Remaining checkpoints: 6 total
