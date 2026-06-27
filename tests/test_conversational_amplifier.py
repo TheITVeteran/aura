@@ -113,11 +113,15 @@ def test_amplify_selects_better_candidate_and_revises():
 
 
 def test_amplify_fail_open_on_generate_error():
+    calls = []
+
     async def gen(prompt, temp):
+        calls.append((prompt, temp))
         raise RuntimeError("model down")
 
     res = asyncio.run(amplify_conversation(_GOOD, generate=gen, user_message="hi there friend", n=3))
     assert res.answer == _GOOD  # fell back to the draft, no crash
+    assert calls
 
 
 def test_amplify_disabled_returns_draft(monkeypatch):

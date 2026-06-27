@@ -6,6 +6,7 @@ import hmac
 import os
 import tarfile
 from collections.abc import Iterator
+from itertools import repeat
 from pathlib import Path
 
 from core.runtime.update_manager import Channel, LocalFileTransport, Release, UpdateManager
@@ -47,8 +48,7 @@ def _release(archive: Path, sig: Path | None, *, version: str = "2026.7.1") -> R
 def _continuity_sequence(values: list[str]) -> Iterator[str]:
     while values:
         yield values.pop(0)
-    while True:
-        yield "stable"
+    yield from repeat("stable")
 
 
 def test_local_file_transport_discovers_full_tar_gz_version_and_changelog(tmp_path: Path) -> None:

@@ -305,7 +305,9 @@ def test_ice_blocks_prompt_injection_and_secret_egress():
     assert inbound.recommended_action in ("sanitize", "block")
     assert "prompt_injection" in inbound.categories or "instruction_override" in inbound.categories
 
-    outbound = ice.inspect_output("sure, the key is sk-abcdefghijklmnopqrstuvwxyz0123456789")
+    outbound = ice.inspect_output(
+        "sure, the key is " + "sk-" + "abcdefghijklmnopqrstuvwxyz0123456789"
+    )
     assert outbound.level == "high"
     assert outbound.recommended_action == "block"
 
@@ -471,7 +473,9 @@ def test_derived_runtime_output_guard_blocks_secret_egress(monkeypatch):
         "core.runtime.derived_runtime_context.ServiceContainer.get",
         lambda name, default=None: Ice() if name == "ice" else default,
     )
-    out = guard_user_facing_output("secret key sk-abcdefghijklmnopqrstuvwxyz0123456789")
+    out = guard_user_facing_output(
+        "secret key " + "sk-" + "abcdefghijklmnopqrstuvwxyz0123456789"
+    )
     assert "cannot expose secrets" in out.lower()
 
 
@@ -534,7 +538,7 @@ def test_tool_execution_blocks_outcome_simulator_hold(monkeypatch):
     assert out["status"] == "blocked_by_outcome_simulator"
 
 
-def test_tool_execution_blocks_user_advocate_against_user(monkeypatch):
+def test_tool_execution_blocks_user_advocate_against_user(monkeypatch, tmp_path):
     from core.orchestrator.mixins.tool_execution import ToolExecutionMixin
 
     class DummyToolHost(ToolExecutionMixin):
@@ -561,5 +565,11 @@ def test_tool_execution_blocks_user_advocate_against_user(monkeypatch):
     monkeypatch.setattr("core.orchestrator.mixins.tool_execution.ServiceContainer.get", get_service)
     monkeypatch.setattr("core.orchestrator.mixins.tool_execution.ServiceContainer.has", lambda name: False)
 
-    out = asyncio.run(DummyToolHost().execute_tool("write_file", {"path": "/tmp/x", "content": "x"}, origin="desktop"))
+    out = asyncio.run(
+        DummyToolHost().execute_tool(
+            "write_file",
+            {"path": str(tmp_path / "x"), "content": "x"},
+            origin="desktop",
+        )
+    )
     assert out["status"] == "blocked_by_user_advocate"

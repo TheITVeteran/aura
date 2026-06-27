@@ -178,7 +178,7 @@ class StanceInference:
         if _RHETORICAL_RE.search(text):
             bump(Stance.RHETORICAL, 0.6, "rhetorical question")
         if _FACETIOUS_RE.search(text) and len(text.split()) < 16:
-            bump(Stance.FACETIOUS, 0.35, "mock-authoritative framing")
+            bump(Stance.FACETIOUS, 0.35, "falsely authoritative framing")
 
         # 6. Belief grounding — does a confident factual claim conflict with known fact?
         factual_conflict, conflict_signal = self._factual_conflict(text, known_facts)

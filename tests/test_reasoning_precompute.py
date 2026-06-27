@@ -86,10 +86,14 @@ def test_tick_disabled_by_flag(fresh_cache, monkeypatch):
     q = PrecomputeQueue()
     q.enqueue("p", "math")
 
+    calls = []
+
     async def _solve(objective, task_type):
+        calls.append((objective, task_type))
         raise AssertionError("should not be called when disabled")
 
     assert asyncio.run(q.tick(_solve)) == 0
+    assert calls == []
 
 
 def test_singleton_reset():

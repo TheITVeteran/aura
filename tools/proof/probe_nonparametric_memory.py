@@ -18,6 +18,8 @@ budget. Reports a real number, or it does not count.
 from __future__ import annotations
 
 import sys
+import tempfile
+from pathlib import Path
 
 import numpy as np
 
@@ -87,7 +89,8 @@ def main() -> int:
         return {int(t): float(p) for t, p in zip(idx, ex)}
 
     # 1. Build the datastore from real hidden states (ingestion, made real).
-    mem = NonParametricMemory(dim=dim, path="/tmp/_npm_probe", base_lambda=0.4, max_lambda=0.8)
+    probe_path = Path(tempfile.gettempdir()) / "aura_nonparametric_memory_probe"
+    mem = NonParametricMemory(dim=dim, path=probe_path, base_lambda=0.4, max_lambda=0.8)
     for ctx, ans in FACTS:
         key, _ = hidden_and_logits(ctx)
         mem.add(key, _gold_token(tok, ans), token=ans, weight=1.0)

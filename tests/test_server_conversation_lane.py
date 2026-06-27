@@ -5662,6 +5662,7 @@ def test_desktop_cognitive_failure_trains_immunity_without_repairing_first_incid
     from interface.routes import chat as chat_routes
 
     observed = []
+    repair_calls = []
 
     class _Immune:
         def observe_signature(self, component, exception_type, **kwargs):
@@ -5671,8 +5672,9 @@ def test_desktop_cognitive_failure_trains_immunity_without_repairing_first_incid
             )
 
     class _Healer:
-        def schedule_deep_repair(self, *_args, **_kwargs):
-            raise AssertionError("a first transient failure must not schedule code repair")
+        def schedule_deep_repair(self, *args, **kwargs):
+            repair_calls.append((args, kwargs))
+            return {"result": "unexpected_repair_request"}
 
     services = {
         "adaptive_immune_system": _Immune(),
@@ -5699,6 +5701,7 @@ def test_desktop_cognitive_failure_trains_immunity_without_repairing_first_incid
     }
     assert observed[0][0] == "chat.cognitive_engine_reply"
     assert observed[0][2]["context"]["protected"] is True
+    assert repair_calls == []
 
 
 def test_recurrent_desktop_cognitive_failure_schedules_one_governed_repair(monkeypatch):

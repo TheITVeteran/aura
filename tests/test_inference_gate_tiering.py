@@ -1951,6 +1951,8 @@ async def test_ensure_foreground_ready_allows_first_visible_turn_to_prove_ready(
     gate._last_successful_generation_at = time.time()
 
     class _ReadyButUnprovenVisibleLane:
+        warmup_calls = 0
+
         def get_lane_status(self):
             return {
                 "state": "ready",
@@ -1969,6 +1971,7 @@ async def test_ensure_foreground_ready_allows_first_visible_turn_to_prove_ready(
             return True
 
         async def warmup(self):
+            self.warmup_calls += 1
             raise AssertionError("already-loaded foreground lane must not re-warm")
 
     gate._mlx_client = _ReadyButUnprovenVisibleLane()
@@ -1978,6 +1981,7 @@ async def test_ensure_foreground_ready_allows_first_visible_turn_to_prove_ready(
     assert lane["state"] == "ready"
     assert lane["conversation_ready"] is False
     assert lane["readiness_blockers"] == ["visible_conversation_probe_missing"]
+    assert gate._mlx_client.warmup_calls == 0
 
 
 @pytest.mark.asyncio
@@ -1985,6 +1989,8 @@ async def test_generate_attempts_ready_lane_that_only_lacks_visible_turn_proof()
     gate = InferenceGate()
 
     class _ReadyButUnprovenVisibleGeneratingLane(_RecordingClient):
+        warmup_calls = 0
+
         def get_lane_status(self):
             now = time.time()
             return {
@@ -2004,6 +2010,7 @@ async def test_generate_attempts_ready_lane_that_only_lacks_visible_turn_proof()
             return True
 
         async def warmup(self):
+            self.warmup_calls += 1
             raise AssertionError("already-loaded foreground lane must not re-warm")
 
     client = _ReadyButUnprovenVisibleGeneratingLane(

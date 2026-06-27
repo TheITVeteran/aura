@@ -100,6 +100,12 @@ ALLOW_SUBPROCESS = {
     # TextEdit) and reads it back via osascript — the scene setup and
     # independent verification must sit outside Aura's gateways.
     "tools/vision_screen_proof.py",
+    # Benchmark grader: executes candidate snippets in isolated temporary
+    # interpreters so untrusted answers cannot mutate the evaluator process.
+    "aura_bench/hard_suite.py",
+    # Operator migration utility: invokes the official mlx_lm fuse CLI only
+    # after explicit --execute confirmation.
+    "scripts/migrate_to_qwen3.py",
     # Clean-env install proof: drives git archive, venv, pip, and a
     # sub-interpreter to verify a pristine clone installs — subprocess
     # orchestration is the whole point.
@@ -567,6 +573,14 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
     for line_no, line in enumerate(source.splitlines(), start=1):
         for kind, pattern in TEXT_PATTERNS.items():
             if not pattern.search(line):
+                continue
+            if kind == "placeholder_stub_mock" and re.search(
+                r"\b(?:from\s+unittest(?:\.mock)?\s+import|"
+                r"mock\.(?:patch|AsyncMock|MagicMock)|MagicMock)\b",
+                line,
+            ):
+                # Concrete test-double syntax is not incomplete product code.
+                # Descriptive uses of stub/mock/placeholder remain findings.
                 continue
             if rel in SELF_DESCRIPTIVE_PATTERN_FILES and kind in {
                 "placeholder_stub_mock",

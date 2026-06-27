@@ -35,11 +35,13 @@ def test_error_intelligence_targets_deepest_aura_traceback_frame(tmp_path):
     from core.self_modification.error_intelligence import StructuredErrorLogger
 
     logger = StructuredErrorLogger(str(tmp_path))
+    entered = []
 
     def inner_failure():
+        entered.append(True)
         raise RuntimeError("deep failure")
 
-    expected_line = inner_failure.__code__.co_firstlineno + 1
+    expected_line = inner_failure.__code__.co_firstlineno + 2
 
     def outer_wrapper():
         inner_failure()
@@ -51,6 +53,7 @@ def test_error_intelligence_targets_deepest_aura_traceback_frame(tmp_path):
 
     assert event.file_path == __file__
     assert event.line_number == expected_line
+    assert entered == [True]
 
 
 def test_omni_tracer_does_not_turn_forwarded_info_logs_into_failure_pressure():
