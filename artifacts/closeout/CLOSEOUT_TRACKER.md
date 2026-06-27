@@ -210,3 +210,35 @@ Estimate update:
 
 - Overall closeout: 80%
 - Remaining checkpoints: 7 total
+
+## Checkpoint 2026-06-27-06: Substrate Health Requires Live Tasks
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- The desktop UI showed PNEUMA/MHAF as offline, and full-runtime health must not
+  rely on weak flags that can drift from real task liveness.
+- PNEUMA and MHAF expose stronger `get_state_dict().online` signals that prove
+  the background task exists and has not already died. The status routes were
+  still partially keyed off `_running`.
+
+What changed:
+
+- PNEUMA and MHAF subsystem status endpoints now reject dead background tasks
+  even if an object still exists.
+- `/api/health` system collection now reports PNEUMA/MHAF `online` from the
+  modules' task-liveness state, not only from `_running`.
+- Full-runtime readiness therefore tracks the actual substrate loops, not just
+  initialized substrate objects.
+
+Evidence:
+
+- `python -m py_compile interface/routes/system.py interface/routes/subsystems.py tests/test_system_route_hardening.py`
+- `python -m pytest tests/test_system_route_hardening.py tests/test_full_desktop_runtime_contract.py tests/test_pneuma_runtime_hardening.py -q`
+- Result: `28 passed`
+
+Estimate update:
+
+- Overall closeout: 81%
+- Remaining checkpoints: 6 total

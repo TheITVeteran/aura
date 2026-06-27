@@ -113,9 +113,9 @@ async def api_pneuma_status():
     try:
         from core.pneuma.pneuma import get_pneuma
         pn = get_pneuma()
-        if not pn or not pn._running:
+        runtime_state = pn.get_state_dict() if pn else {}
+        if not pn or not runtime_state.get("online", False):
             return JSONResponse({"online": False, "error": "PNEUMA not running"}, status_code=503)
-        runtime_state = pn.get_state_dict()
         block = pn.get_context_block()
         pe = getattr(pn, "precision", None)
         tm = getattr(pn, "topo_memory", None)
@@ -150,13 +150,13 @@ async def api_mhaf_status():
         from core.consciousness.neologism_engine import get_neologism_engine
         mhaf = get_mhaf()
         neo = get_neologism_engine()
-        if not mhaf or not mhaf._running:
+        runtime_state = mhaf.get_state_dict() if mhaf else {}
+        if not mhaf or not runtime_state.get("online", False):
             return JSONResponse({"online": False, "error": "MHAF not running"}, status_code=503)
         nodes = [
             {"name": n.name, "activation": round(float(n.activation), 3)}
             for n in mhaf._nodes.values()
         ]
-        runtime_state = mhaf.get_state_dict()
         return JSONResponse({
             "online": True,
             "tick_count": runtime_state.get("tick_count", 0),

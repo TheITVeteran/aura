@@ -2035,10 +2035,10 @@ async def api_health(request: Request):
     try:
         from core.pneuma.pneuma import get_pneuma
         pn = get_pneuma()
-        if pn and pn._running:
+        if pn:
             runtime_state = pn.get_state_dict()
-            pneuma_data["online"] = True
-            pneuma_data["_stale"] = False
+            pneuma_data["online"] = bool(runtime_state.get("online", False))
+            pneuma_data["_stale"] = not bool(runtime_state.get("online", False))
             pneuma_data["temperature"] = round(pn.get_llm_temperature(), 3)
             pe = getattr(pn, "precision", None)
             if pe and hasattr(pe, "fhn"):
@@ -2062,10 +2062,10 @@ async def api_health(request: Request):
     try:
         from core.consciousness.mhaf_field import get_mhaf
         mhaf = get_mhaf()
-        if mhaf and mhaf._running:
+        if mhaf:
             runtime_state = mhaf.get_state_dict()
-            mhaf_data["online"] = True
-            mhaf_data["_stale"] = False
+            mhaf_data["online"] = bool(runtime_state.get("online", False))
+            mhaf_data["_stale"] = not bool(runtime_state.get("online", False))
             mhaf_data["nodes"] = len(mhaf._nodes)
             mhaf_data["edges"] = len(mhaf._edges)
             mhaf_data["free_energy"] = round(float(mhaf._free_energy), 4)

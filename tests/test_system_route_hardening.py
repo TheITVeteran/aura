@@ -7,6 +7,52 @@ import time
 import pytest
 
 
+@pytest.mark.asyncio
+async def test_pneuma_status_rejects_dead_background_task(monkeypatch):
+    from interface.routes import subsystems
+    from core.pneuma import pneuma as pneuma_module
+
+    class DeadPneuma:
+        def get_state_dict(self):
+            return {"online": False, "tick_count": 3}
+
+    monkeypatch.setattr(pneuma_module, "get_pneuma", lambda: DeadPneuma())
+
+    response = await subsystems.api_pneuma_status()
+
+    assert response.status_code == 503
+    assert json.loads(response.body)["online"] is False
+
+
+@pytest.mark.asyncio
+async def test_mhaf_status_rejects_dead_background_task(monkeypatch):
+    from interface.routes import subsystems
+    from core.consciousness import mhaf_field
+    from core.consciousness import neologism_engine
+
+    class DeadMHAF:
+        def get_state_dict(self):
+            return {"online": False, "tick_count": 2}
+
+    monkeypatch.setattr(mhaf_field, "get_mhaf", lambda: DeadMHAF())
+    monkeypatch.setattr(neologism_engine, "get_neologism_engine", lambda: None)
+
+    response = await subsystems.api_mhaf_status()
+
+    assert response.status_code == 503
+    assert json.loads(response.body)["online"] is False
+
+
+def test_system_health_uses_task_liveness_for_pneuma_and_mhaf():
+    from pathlib import Path
+    from interface.routes import system as system_routes
+
+    source = Path(system_routes.__file__).read_text(encoding="utf-8")
+
+    assert 'pneuma_data["online"] = bool(runtime_state.get("online", False))' in source
+    assert 'mhaf_data["online"] = bool(runtime_state.get("online", False))' in source
+
+
 def test_conversation_lane_resilient_helper_contains_legacy_override_failure(monkeypatch):
     from interface.routes import system as system_routes
 
