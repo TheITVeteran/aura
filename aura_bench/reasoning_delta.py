@@ -137,10 +137,11 @@ async def _score_answer(answer: str, task: ReasoningTask) -> float:
 
 async def _run_one(
     name: str,
-    task: ReasoningTask,
-    runner: Callable[[ReasoningTask], Awaitable[str]],
+    task: Any,
+    runner: Callable[[Any], Awaitable[str]],
     *,
     per_task_timeout: float,
+    score_fn: Callable[[str, Any], Awaitable[float]],
 ) -> tuple[float, float]:
     start = time.monotonic()
     try:
@@ -148,7 +149,7 @@ async def _run_one(
     except (asyncio.TimeoutError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
         logger.warning("[%s] task %s failed/timed out: %s", name, task.task_id, exc)
         answer = ""
-    score = await _score_answer(answer, task)
+    score = await score_fn(answer, task)
     return score, time.monotonic() - start
 
 
@@ -156,23 +157,32 @@ async def run_delta(
     *,
     cortex_generate: GenerateFn,
     solver_generate: GenerateFn | None = None,
-    tasks: tuple[ReasoningTask, ...] = DEFAULT_TASKS,
+    tasks: tuple[Any, ...] = DEFAULT_TASKS,
     per_task_timeout: float = 60.0,
     wall_clock_deadline_s: float = 600.0,
     amplifier_time_budget_s: float = 45.0,
+    grader: Callable[[Any, str], float] | None = None,
+    skip_amplified: bool = False,
 ) -> DeltaReport:
-    """Run the three conditions over the suite and return a delta report.
+    """Run the conditions over the suite and return a delta report.
 
-    Bounded: each task is capped at ``per_task_timeout`` and the whole run stops at
+    ``grader(task, answer) -> float`` overrides the default verifier-based scoring
+    (use the hard-suite's external grader for an honest, independent grade).
+    ``skip_amplified`` measures only single-pass (for a baseline run of a big model).
+    Bounded: each task capped at ``per_task_timeout``; run stops at
     ``wall_clock_deadline_s`` (NO-UNBOUNDED).
     """
     from core.brain.reasoning_amplifier_v2 import amplify_turn, classify_task_type
 
+    async def _score_fn(answer: str, task: Any) -> float:
+        if grader is not None:
+            return float(grader(task, answer))
+        return await _score_answer(answer, task)
+
     start = time.monotonic()
-    results: dict[str, ConditionResult] = {
-        "cortex_single": ConditionResult("cortex_single"),
-        "cortex_amplified": ConditionResult("cortex_amplified"),
-    }
+    results: dict[str, ConditionResult] = {"cortex_single": ConditionResult("cortex_single")}
+    if not skip_amplified:
+        results["cortex_amplified"] = ConditionResult("cortex_amplified")
     if solver_generate is not None:
         results["solver_single"] = ConditionResult("solver_single")
 
@@ -197,12 +207,14 @@ async def run_delta(
             break
         for name, runner in (
             ("cortex_single", _cortex_single),
-            ("cortex_amplified", _cortex_amplified),
+            ("cortex_amplified", None if skip_amplified else _cortex_amplified),
             ("solver_single", _solver_single if solver_generate is not None else None),
         ):
             if runner is None:
                 continue
-            score, runtime = await _run_one(name, task, runner, per_task_timeout=per_task_timeout)
+            score, runtime = await _run_one(
+                name, task, runner, per_task_timeout=per_task_timeout, score_fn=_score_fn
+            )
             results[name].scores.append(score)
             results[name].runtimes.append(runtime)
             logger.info("[%s] %s: score=%.2f (%.1fs)", name, task.task_id, score, runtime)
@@ -275,6 +287,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="Cortex model path for --live (default: safe 7B)")
     parser.add_argument("--solver-model", type=str, default="",
                         help="Optional larger solver model path for the 72B comparison (omit to skip)")
+    parser.add_argument("--suite", choices=["default", "hard"], default="default",
+                        help="Task suite: 'hard' = base-failing tasks + sound external grader")
+    parser.add_argument("--skip-amplified", action="store_true",
+                        help="Only run single-pass (use for a big-model baseline run)")
     parser.add_argument("--limit", type=int, default=0, help="Cap number of tasks (0 = all)")
     parser.add_argument("--per-task-timeout", type=float, default=120.0)
     parser.add_argument("--deadline", type=float, default=900.0, help="Wall-clock deadline (s)")
@@ -282,7 +298,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    tasks = DEFAULT_TASKS[: args.limit] if args.limit > 0 else DEFAULT_TASKS
+
+    grader = None
+    if args.suite == "hard":
+        from aura_bench.hard_suite import HARD_TASKS, grade as hard_grade
+
+        suite = HARD_TASKS
+        grader = hard_grade
+    else:
+        suite = DEFAULT_TASKS
+    tasks = suite[: args.limit] if args.limit > 0 else suite
 
     if args.live:
         logger.info("Loading cortex model: %s", args.model)
@@ -303,6 +328,8 @@ def main(argv: list[str] | None = None) -> int:
             per_task_timeout=args.per_task_timeout,
             wall_clock_deadline_s=args.deadline,
             amplifier_time_budget_s=args.amp_budget,
+            grader=grader,
+            skip_amplified=args.skip_amplified,
         )
     )
     print(json.dumps(report.to_dict(), indent=2))
