@@ -140,3 +140,38 @@ Estimate update:
 
 - Overall closeout: 78%
 - Remaining checkpoints: 9 total
+
+## Checkpoint 2026-06-27-04: Browser Editor Focus Proof
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- Live desktop-action attempts could still paste/type generated document
+  content into Chrome's address/search field or another generic browser text
+  field instead of the intended web document body.
+- The previous guard only proved that focus was not obviously the URL bar. That
+  is too weak for Google Docs and similar canvas-heavy editors.
+
+What changed:
+
+- Web editor focus now requires positive editor-like evidence before
+  `desktop_task` allows paste/type into a browser document surface.
+- Generic browser `AXTextField` and `AXComboBox` controls are rejected even when
+  they are not explicitly labeled as the address bar.
+- Accepted browser editor focus is limited to editor-like roles with document,
+  editor, body, canvas, page, or Google web-document metadata.
+- This is a general desktop-control invariant, not a demo-specific script.
+
+Evidence:
+
+- `python -m py_compile core/skills/computer_use.py core/skills/desktop_task.py`
+- `python -m pytest tests/test_hardened_computer_use.py::test_browser_paste_refuses_generic_text_field_when_doc_focus_required tests/test_hardened_computer_use.py::test_browser_type_refuses_generic_text_field_when_doc_focus_required tests/test_hardened_computer_use.py::test_web_editor_focus_rejects_generic_browser_text_field tests/test_hardened_computer_use.py::test_web_editor_focus_accepts_editor_like_surface tests/test_hardened_computer_use.py::test_open_url_targets_named_browser -q`
+- Result: `5 passed`
+- `python -m pytest tests/test_hardened_computer_use.py tests/test_desktop_task_skill.py -q`
+- Result: `115 passed`
+
+Estimate update:
+
+- Overall closeout: 79%
+- Remaining checkpoints: 8 total

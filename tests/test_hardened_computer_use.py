@@ -1116,6 +1116,74 @@ async def test_browser_type_refuses_generic_text_field_when_doc_focus_required(m
 
 
 @pytest.mark.asyncio
+async def test_web_editor_focus_rejects_generic_browser_text_field(monkeypatch):
+    skill = ComputerUseSkill()
+
+    class PyAutoGUIDouble:
+        def size(self):
+            return (1440, 900)
+
+        def click(self, x, y):
+            return None
+
+    snapshots = iter(
+        (
+            "AXTextField\tquery text\t\tSearch or enter address\t",
+            "AXTextField\tarticle draft\t\t\t",
+            "AXTextField\tarticle draft\t\t\t",
+        )
+    )
+    monkeypatch.setattr(
+        skill,
+        "_focused_element_snapshot",
+        lambda: next(snapshots),
+    )
+    monkeypatch.setattr(skill, "_send_hotkey_system_events", lambda keys: "ok")
+
+    async def controlled_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    focused, snapshot, reason = await skill._focus_web_editor_surface(PyAutoGUIDouble())
+
+    assert focused is False
+    assert "AXTextField" in snapshot
+    assert reason == "generic_browser_text_field_focused"
+
+
+@pytest.mark.asyncio
+async def test_web_editor_focus_accepts_editor_like_surface(monkeypatch):
+    skill = ComputerUseSkill()
+
+    class PyAutoGUIDouble:
+        def size(self):
+            return (1440, 900)
+
+        def click(self, x, y):
+            return None
+
+    snapshots = iter(("AXWebArea\tGoogle Docs document editor body\t\t\t",))
+    monkeypatch.setattr(
+        skill,
+        "_focused_element_snapshot",
+        lambda: next(snapshots),
+    )
+    monkeypatch.setattr(skill, "_send_hotkey_system_events", lambda keys: "ok")
+
+    async def controlled_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    focused, snapshot, reason = await skill._focus_web_editor_surface(PyAutoGUIDouble())
+
+    assert focused is True
+    assert "Google Docs" in snapshot
+    assert reason == "editable_focus_verified"
+
+
+@pytest.mark.asyncio
 async def test_hotkey_screen_shift_still_required_when_screen_readable(monkeypatch):
     """With a readable screen and NO state shift, the step stays red —
     the dispatch-receipt fallback must not soften real verification."""

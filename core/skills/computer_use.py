@@ -490,8 +490,8 @@ end tell
         """Move browser focus from the omnibox into a web editor body.
 
         Google Docs/Sheets/Slides expose editor bodies through canvas-heavy UI,
-        so the reliable invariant we can enforce locally is negative: focus must
-        not remain in the browser address/search field before a paste is allowed.
+        so the invariant must be stronger than "not the URL bar": focus must look
+        like an editor surface before a paste/type is allowed.
         """
         if pyautogui is None:
             return False, "", "pyautogui_unavailable_for_web_editor_focus"
@@ -521,15 +521,15 @@ end tell
                 last_snapshot = await asyncio.to_thread(self._focused_element_snapshot)
             except (RuntimeError, OSError, ValueError, AttributeError) as exc:
                 return False, last_snapshot, f"web_editor_focus_click_failed: {exc}"
-            if last_snapshot and not self._focused_snapshot_looks_browser_location_bar(
-                last_snapshot
-            ):
+            if self._focused_snapshot_looks_web_editor_surface(last_snapshot):
                 return True, last_snapshot, "editable_focus_verified"
             if self._focused_snapshot_looks_browser_location_bar(last_snapshot):
                 continue
 
         if self._focused_snapshot_looks_browser_location_bar(last_snapshot):
             return False, last_snapshot, "browser_location_bar_still_focused"
+        if self._focused_snapshot_is_browser_text_entry(last_snapshot):
+            return False, last_snapshot, "generic_browser_text_field_focused"
         return False, last_snapshot, "editable_focus_unverified"
 
     @staticmethod
@@ -563,6 +563,47 @@ end tell
             return False
         role = raw.split("\t", 1)[0].strip().lower()
         return role in {"axtextfield", "axcombobox"}
+
+    @staticmethod
+    def _focused_snapshot_looks_web_editor_surface(snapshot: str) -> bool:
+        """Best-effort positive proof for browser editor focus.
+
+        Generic AXTextField/AXComboBox controls are explicitly rejected because
+        they include browser omniboxes, search fields, and sign-in inputs. Google
+        Docs often exposes the editing target as a text area, web area, scroll
+        area, or group with editor/document descriptors; those are acceptable
+        only when the metadata also points at a document/editor body.
+        """
+        raw = str(snapshot or "").strip()
+        if not raw:
+            return False
+        parts = [part.strip().lower() for part in raw.split("\t")]
+        role = parts[0] if parts else ""
+        metadata = " ".join(part for part in parts[1:] if part)
+        if ComputerUseSkill._focused_snapshot_looks_browser_location_bar(raw):
+            return False
+        if role in {"axtextfield", "axcombobox"}:
+            return False
+        editor_roles = {
+            "axtextarea",
+            "axwebarea",
+            "axgroup",
+            "axscrollarea",
+            "axlayoutarea",
+            "axunknown",
+        }
+        editor_hints = (
+            "document",
+            "editor",
+            "editing",
+            "canvas",
+            "body",
+            "page",
+            "google docs",
+            "google sheets",
+            "google slides",
+        )
+        return role in editor_roles and any(hint in metadata for hint in editor_hints)
 
     def _send_hotkey_system_events(self, keys: list[str]) -> str:
         """Send a keyboard shortcut via System Events; raise with the real
