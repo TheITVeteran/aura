@@ -6,8 +6,8 @@ remains open.
 
 ## Current Estimate
 
-- Overall closeout: 83%
-- Remaining checkpoints: 5 total
+- Overall closeout: 84%
+- Remaining checkpoints: 4 total
 - Current phase: live desktop runtime reliability and full-mind conversation
   path hardening
 
@@ -350,3 +350,51 @@ Estimate update:
 
 - Overall closeout: 83%
 - Remaining checkpoints: 5 total
+
+## Checkpoint 2026-06-27-10: Exhausted Full-Mind Failures Enter Immune Repair
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- Exhausted live CognitiveEngine failures produced a durable degradation
+  receipt, but the incident explicitly reported `repair_requested: false` and
+  never reached adaptive immunity or SelfHealing.
+- A single malformed generation must not rewrite runtime code, while repeated
+  failures must become causal repair evidence instead of recurring forever.
+- The full conversation suite also exposed an over-broad capability classifier:
+  merely asking whether governed tools were available was incorrectly treated
+  as a request for a full multi-category capability inventory.
+
+What changed:
+
+- Every exhausted desktop full-mind reply now records its failure signature in
+  the canonical adaptive immune system.
+- Adaptive immune recurrence pressure controls escalation. A first transient
+  incident remains evidence only; pressure at or above the existing `0.35`
+  escalation floor can schedule a governed deep repair.
+- Repair targets are narrowed by failure class: inference timeout/empty-output
+  failures route to MLX, response-quality failures route to response
+  generation, and unclassified engine failures route to CognitiveEngine.
+- SelfHealing retains validation/promotion ownership, deduplicates active work,
+  and a 15-minute per-target cooldown prevents repair storms.
+- Operational tool-status questions no longer trigger the full capability
+  inventory contract. Explicit requests to list or explain capabilities still
+  require categories, governance, effect evidence, and a hypothetical boundary.
+- Conversation-lane tests now reset response-history state between cases, so
+  stale-response evidence cannot leak across test sessions.
+
+Evidence:
+
+- `python -m py_compile interface/routes/chat.py tests/test_server_conversation_lane.py`
+- `python -m pytest -q tests/test_server_conversation_lane.py`
+- Result: `206 passed`
+- `python -m pytest -q tests/test_chat_reliability_proof.py tests/test_adaptive_immune_system.py tests/test_reconstruction_deep_repair.py`
+- Result: `118 passed`
+- `python -m pytest -q tests/test_full_desktop_runtime_contract.py tests/test_system_route_hardening.py tests/test_autonomy_visibility.py tests/test_boot_runtime_safety.py`
+- Result: `80 passed`
+
+Estimate update:
+
+- Overall closeout: 84%
+- Remaining checkpoints: 4 total

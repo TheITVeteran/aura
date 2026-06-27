@@ -143,6 +143,8 @@ def _reset_conversation_log():
         from interface.routes import chat as chat_routes
 
         chat_routes._conversation_log.clear()
+        chat_routes._recent_responses.clear()
+        chat_routes._recent_response_pairs.clear()
     except (ImportError, AttributeError):
         pass
     yield
@@ -150,6 +152,8 @@ def _reset_conversation_log():
         from interface.routes import chat as chat_routes
 
         chat_routes._conversation_log.clear()
+        chat_routes._recent_responses.clear()
+        chat_routes._recent_response_pairs.clear()
     except (ImportError, AttributeError):
         pass
 
@@ -4384,7 +4388,8 @@ async def test_api_chat_desktop_runtime_status_uses_cognitive_engine_when_requir
         cognitive_calls.append((args, kwargs))
         return (
             "Cortex (32B) is the active foreground lane, CognitiveEngine handled this turn: yes, "
-            "governed tools available: yes, recurrent depth: active."
+            "governed tools available: yes, subject to Will/Authority approval and effect receipts; "
+            "recurrent depth: active."
         )
 
     async def _fake_log_exchange(*_args, **_kwargs):
@@ -5651,6 +5656,99 @@ async def test_desktop_cognitive_engine_retries_failed_reply_by_default_when_mem
     assert degradations[0]["subsystem"] == "chat.cognitive_engine_reply"
     assert degradations[0]["kwargs"]["receipt_required"] is True
     assert degradations[0]["kwargs"]["extra"]["retry_attempted"] is True
+
+
+def test_desktop_cognitive_failure_trains_immunity_without_repairing_first_incident(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    observed = []
+
+    class _Immune:
+        def observe_signature(self, component, exception_type, **kwargs):
+            observed.append((component, exception_type, kwargs))
+            return SimpleNamespace(
+                antigen=SimpleNamespace(recurrence_pressure=0.12)
+            )
+
+    class _Healer:
+        def schedule_deep_repair(self, *_args, **_kwargs):
+            raise AssertionError("a first transient failure must not schedule code repair")
+
+    services = {
+        "adaptive_immune_system": _Immune(),
+        "self_healing": _Healer(),
+    }
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: services.get(name, default)),
+    )
+
+    result = chat_routes._route_desktop_cognitive_failure_to_resilience(
+        "empty_cognitive_engine_reply",
+        source="desktop_ui",
+        session_present=True,
+        retry_attempted=True,
+    )
+
+    assert result == {
+        "immune_observed": True,
+        "recurrence_pressure": 0.12,
+        "repair_requested": False,
+        "repair_result": "below_recurrence_floor",
+    }
+    assert observed[0][0] == "chat.cognitive_engine_reply"
+    assert observed[0][2]["context"]["protected"] is True
+
+
+def test_recurrent_desktop_cognitive_failure_schedules_one_governed_repair(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    repairs = []
+
+    class _Immune:
+        def observe_signature(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                antigen=SimpleNamespace(recurrence_pressure=0.61)
+            )
+
+    class _Healer:
+        def schedule_deep_repair(self, module_path, **kwargs):
+            repairs.append((module_path, kwargs))
+            return {"result": "deep_repair_scheduled"}
+
+    services = {
+        "adaptive_immune_system": _Immune(),
+        "self_healing": _Healer(),
+    }
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: services.get(name, default)),
+    )
+    monkeypatch.setattr(chat_routes.time, "monotonic", lambda: 10_000.0)
+    chat_routes._desktop_cognitive_repair_last_scheduled.clear()
+
+    first = chat_routes._route_desktop_cognitive_failure_to_resilience(
+        "cognitive_engine_timeout",
+        source="desktop_ui",
+        session_present=True,
+        retry_attempted=False,
+    )
+    second = chat_routes._route_desktop_cognitive_failure_to_resilience(
+        "cognitive_engine_timeout",
+        source="desktop_ui",
+        session_present=True,
+        retry_attempted=False,
+    )
+
+    assert first["repair_requested"] is True
+    assert first["repair_result"] == "deep_repair_scheduled"
+    assert first["repair_target"] == "core/brain/llm/mlx_client.py"
+    assert second["repair_requested"] is False
+    assert second["repair_result"] == "repair_cooldown_active"
+    assert len(repairs) == 1
+    assert repairs[0][1]["metadata"]["recurrence_pressure"] == 0.61
 
 
 @pytest.mark.asyncio

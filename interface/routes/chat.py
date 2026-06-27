@@ -1585,6 +1585,10 @@ _recent_response_pairs: collections.deque = collections.deque(maxlen=12)  # (use
 _STALE_REPEAT_THRESHOLD = 2  # [STABILITY] Reverting to 2. A single identical repeat is enough to trigger defensive measures.
 _FUZZY_SIMILARITY_THRESHOLD = 0.80  # word-overlap ratio that counts as semantically stale
 _consecutive_degraded_count: int = 0  # tracks degradation streak for proactive recovery
+_DESKTOP_COGNITIVE_REPAIR_RECURRENCE_FLOOR = 0.35
+_DESKTOP_COGNITIVE_REPAIR_COOLDOWN_S = 15 * 60.0
+_desktop_cognitive_repair_lock = threading.Lock()
+_desktop_cognitive_repair_last_scheduled: dict[str, float] = {}
 _TOPIC_TOKEN_RE = re.compile(r"\b[a-z0-9][a-z0-9'/-]*\b", re.IGNORECASE)
 _TOPIC_STOPWORDS = frozenset(
     {
@@ -3969,6 +3973,112 @@ def _build_cognitive_engine_reply_repair_directive(
     ).strip()
 
 
+def _desktop_cognitive_failure_repair_target(reason: str) -> str:
+    """Choose the narrowest implementation surface implicated by a failed turn."""
+
+    normalized = str(reason or "").lower()
+    if any(marker in normalized for marker in ("timeout", "no_thought", "empty")):
+        return "core/brain/llm/mlx_client.py"
+    if any(marker in normalized for marker in ("quality", "unsafe", "failure_envelope")):
+        return "core/phases/response_generation.py"
+    return "core/brain/cognitive_engine.py"
+
+
+def _route_desktop_cognitive_failure_to_resilience(
+    reason: str,
+    *,
+    source: str,
+    session_present: bool,
+    retry_attempted: bool,
+) -> dict[str, Any]:
+    """Feed exhausted desktop failures into immunity and recurrence-gated repair.
+
+    A single bad generation is evidence, not permission to rewrite code. Adaptive
+    immunity accumulates the signature durably; only repeated failures above its
+    established escalation floor may schedule a governed deep repair. SelfHealing
+    and its repair lab retain ownership of validation and promotion.
+    """
+
+    normalized_reason = str(reason or "cognitive_reply_failed")[:240]
+    outcome: dict[str, Any] = {
+        "immune_observed": False,
+        "recurrence_pressure": 0.0,
+        "repair_requested": False,
+        "repair_result": "below_recurrence_floor",
+    }
+    context = {
+        "request_surface": str(source or "")[:80],
+        "session_present": bool(session_present),
+        "retry_attempted": bool(retry_attempted),
+        "protected": True,
+    }
+
+    try:
+        immune = ServiceContainer.get("adaptive_immune_system", default=None)
+        if immune is None or not hasattr(immune, "observe_signature"):
+            outcome["repair_result"] = "adaptive_immunity_unavailable"
+            return outcome
+        response = immune.observe_signature(
+            "chat.cognitive_engine_reply",
+            normalized_reason,
+            context=context,
+        )
+        recurrence = float(
+            getattr(getattr(response, "antigen", None), "recurrence_pressure", 0.0)
+            or 0.0
+        )
+        outcome.update(
+            immune_observed=True,
+            recurrence_pressure=round(max(0.0, min(1.0, recurrence)), 4),
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        logger.warning("Adaptive immunity could not observe desktop cognitive failure: %s", exc)
+        outcome["repair_result"] = f"adaptive_immunity_error:{type(exc).__name__}"
+        return outcome
+
+    if recurrence < _DESKTOP_COGNITIVE_REPAIR_RECURRENCE_FLOOR:
+        return outcome
+
+    target = _desktop_cognitive_failure_repair_target(normalized_reason)
+    now = time.monotonic()
+    with _desktop_cognitive_repair_lock:
+        last_scheduled = _desktop_cognitive_repair_last_scheduled.get(target, 0.0)
+        if now - last_scheduled < _DESKTOP_COGNITIVE_REPAIR_COOLDOWN_S:
+            outcome["repair_result"] = "repair_cooldown_active"
+            return outcome
+
+        healer = ServiceContainer.get("self_healing", default=None)
+        if healer is None or not hasattr(healer, "schedule_deep_repair"):
+            outcome["repair_result"] = "self_healing_unavailable"
+            return outcome
+        try:
+            repair = healer.schedule_deep_repair(
+                target,
+                reason="recurrent_desktop_full_mind_reply_failure",
+                watch_name="desktop_cognitive_reply",
+                metadata={
+                    **context,
+                    "failure_class": normalized_reason,
+                    "recurrence_pressure": outcome["recurrence_pressure"],
+                },
+            )
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            logger.warning("SelfHealing could not schedule desktop cognitive repair: %s", exc)
+            outcome["repair_result"] = f"self_healing_error:{type(exc).__name__}"
+            return outcome
+
+        repair_result = str((repair or {}).get("result") or "repair_schedule_unknown")
+        outcome.update(
+            repair_requested=repair_result
+            in {"deep_repair_scheduled", "deep_repair_already_running"},
+            repair_result=repair_result,
+            repair_target=target,
+        )
+        if outcome["repair_requested"]:
+            _desktop_cognitive_repair_last_scheduled[target] = now
+    return outcome
+
+
 async def _run_cognitive_engine_chat_turn(
     effective_user_message: str,
     *,
@@ -4030,6 +4140,12 @@ async def _run_cognitive_engine_chat_turn(
             return
         failure_incident_recorded = True
         normalized_reason = str(reason or "cognitive_reply_failed")[:240]
+        resilience = _route_desktop_cognitive_failure_to_resilience(
+            normalized_reason,
+            source=source,
+            session_present=bool(session_id),
+            retry_attempted=retry_attempted,
+        )
         record_degradation(
             "chat.cognitive_engine_reply",
             RuntimeError(normalized_reason),
@@ -4044,7 +4160,7 @@ async def _run_cognitive_engine_chat_turn(
                 "request_surface": str(source or "")[:80],
                 "session_present": bool(session_id),
                 "retry_attempted": bool(retry_attempted),
-                "repair_requested": False,
+                **resilience,
             },
             enforce_failure_policy=False,
         )
@@ -4052,6 +4168,7 @@ async def _run_cognitive_engine_chat_turn(
             failure_incident_recorded=True,
             failure_incident_reason=normalized_reason,
             bounded_correction_attempted=bool(retry_attempted),
+            resilience_routing=resilience,
         )
 
     preflight_context = str(preflight_context_message or "").strip()

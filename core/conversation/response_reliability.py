@@ -747,9 +747,7 @@ _CAPABILITY_STATUS_REQUEST_RE = re.compile(
     r"\b(?:"
     r"what\s+(?:external\s+)?tools?\s+(?:can|could|would|do)\s+(?:you|aura|she)|"
     r"what\s+(?:can|could|would)\s+(?:you|aura|she)\s+do\s+(?:externally|with\s+(?:tools?|apps?|desktop|browser|files?|documents?))|"
-    r"(?:list|show|describe|name|explain)\s+(?:your\s+)?(?:tools?|capabilities)|"
-    r"tool\s+(?:availability|surface|pathway|path)|"
-    r"governed\s+tools?"
+    r"(?:list|show|describe|name|explain)\s+(?:your\s+)?(?:tools?|capabilities)"
     r")\b",
     re.IGNORECASE,
 )
