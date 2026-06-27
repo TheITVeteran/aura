@@ -2470,12 +2470,6 @@ class InferenceGate:
         if is_background:
             return False
         context = context or {}
-        visible_prompt = str(
-            context.get("visible_user_message")
-            or context.get("current_user_message")
-            or prompt
-            or ""
-        )
         if bool(context.get("deep_mind_probe", False)):
             return False
         if bool(context.get("desktop_quick_reply_contract", False)):
@@ -7251,13 +7245,56 @@ class InferenceGate:
             except _INFERENCE_RECOVERABLE_ERRORS:
                 return False
 
+        def _active_generation_is_progressing(lane: Any) -> bool:
+            """Treat bounded, observable foreground work as operational inference.
+
+            A client cannot advertise ``conversation_ready`` while it owns the
+            foreground generation lock. That is backpressure, not backend
+            failure. Health may accept the in-flight request only while its
+            start and token-progress timestamps prove it has not stalled.
+            """
+            if not isinstance(lane, dict):
+                return False
+            if int(lane.get("active_generations", 0) or 0) <= 0:
+                return False
+            if not bool(lane.get("foreground_owned", False)):
+                return False
+
+            now = time.time()
+            request_started_at = float(lane.get("current_request_started_at", 0.0) or 0.0)
+            if request_started_at <= 0.0:
+                return False
+            request_age_s = max(0.0, now - request_started_at)
+            try:
+                startup_grace_s = max(
+                    15.0,
+                    float(
+                        os.environ.get("AURA_INFERENCE_ACTIVE_STARTUP_GRACE_S", "120")
+                        or 120.0
+                    ),
+                )
+                progress_stale_s = max(
+                    10.0,
+                    float(
+                        os.environ.get("AURA_INFERENCE_ACTIVE_PROGRESS_STALE_S", "45")
+                        or 45.0
+                    ),
+                )
+            except (TypeError, ValueError):
+                startup_grace_s = 120.0
+                progress_stale_s = 45.0
+            token_progress_at = float(lane.get("last_token_progress_at", 0.0) or 0.0)
+            if token_progress_at > 0.0:
+                return max(0.0, now - token_progress_at) <= progress_stale_s
+            return request_age_s <= startup_grace_s
+
         primary_ready = _client_alive(self._mlx_client)
         if primary_ready:
             try:
                 lane = self.get_conversation_status()
             except _INFERENCE_RECOVERABLE_ERRORS:
                 return False
-            if bool(lane.get("conversation_ready", False)):
+            if bool(lane.get("conversation_ready", False)) or _active_generation_is_progressing(lane):
                 return True
 
         try:
@@ -7283,5 +7320,7 @@ class InferenceGate:
             except _INFERENCE_RECOVERABLE_ERRORS:
                 continue
             if bool(isinstance(lane, dict) and lane.get("conversation_ready", False)):
+                return True
+            if _active_generation_is_progressing(lane):
                 return True
         return False

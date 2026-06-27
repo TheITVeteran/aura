@@ -218,8 +218,8 @@ _DESKTOP_COGNITIVE_TURN_TIMEOUT_S = _env_float(
 )
 _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S",
-    18.0,
-    minimum=5.0,
+    75.0,
+    minimum=30.0,
 )
 _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S",
@@ -4357,7 +4357,7 @@ async def _run_cognitive_engine_chat_turn(
     if capability_inventory_contract:
         context["grounded_capability_inventory_context"] = (
             _build_grounded_capability_inventory_reply(visible) or ""
-        )[:1000]
+        )
     if _is_self_claim_boundary_question(visible):
         context["evidence_bound_self_claim_context"] = (
             _build_evidence_bound_self_claim_reply(visible, lane=lane) or ""
@@ -5613,8 +5613,8 @@ def _record_recent_response(text: str, user_message: str = "") -> None:
     # it never alters the reply.
     if text and len(str(text)) < 4000:
         try:
-            from core.reasoning.symbolic_bridge import SymbolicBridge
             from core.reasoning.deduction_governance import get_deduction_governance
+            from core.reasoning.symbolic_bridge import SymbolicBridge
 
             findings = SymbolicBridge().audit_reasoning(str(text))
             if not findings.get("clean", True):

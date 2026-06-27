@@ -3342,6 +3342,50 @@ def test_inference_health_ready_accepts_conversation_ready_primary_worker(monkey
     assert gate.is_inference_ready() is True
 
 
+def test_inference_health_ready_accepts_recent_active_foreground_generation(monkeypatch):
+    gate = InferenceGate()
+    gate._initialized = True
+    gate._mlx_client = SimpleNamespace(
+        is_alive=lambda: True,
+        get_lane_status=lambda: {
+            "state": "working",
+            "conversation_ready": False,
+            "readiness_blockers": ["active_generation_in_flight"],
+            "foreground_owned": True,
+            "active_generations": 1,
+            "current_request_started_at": time.time() - 8.0,
+            "last_token_progress_at": time.time() - 1.0,
+        },
+    )
+    monkeypatch.setattr(gate, "_iter_local_clients", lambda: {})
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monkeypatch.setenv("AURA_PROOF_MODEL_TIER", "primary")
+
+    assert gate.is_inference_ready() is True
+
+
+def test_inference_health_ready_rejects_stalled_active_foreground_generation(monkeypatch):
+    gate = InferenceGate()
+    gate._initialized = True
+    gate._mlx_client = SimpleNamespace(
+        is_alive=lambda: True,
+        get_lane_status=lambda: {
+            "state": "working",
+            "conversation_ready": False,
+            "readiness_blockers": ["active_generation_in_flight"],
+            "foreground_owned": True,
+            "active_generations": 1,
+            "current_request_started_at": time.time() - 90.0,
+            "last_token_progress_at": time.time() - 60.0,
+        },
+    )
+    monkeypatch.setattr(gate, "_iter_local_clients", lambda: {})
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monkeypatch.setenv("AURA_PROOF_MODEL_TIER", "primary")
+
+    assert gate.is_inference_ready() is False
+
+
 def test_safe_boot_status_does_not_advertise_cold_cortex_as_active(monkeypatch):
     gate = InferenceGate()
     gate._initialized = True

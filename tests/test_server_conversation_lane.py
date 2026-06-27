@@ -5951,6 +5951,79 @@ async def test_desktop_cognitive_engine_required_simple_chat_uses_compact_live_m
     assert calls[0]["kwargs"]["timeout_s"] == pytest.approx(42.0)
 
 
+def test_desktop_cognitive_repair_budget_can_complete_a_primary_model_generation():
+    from interface.routes import chat as chat_routes
+
+    repair_outer = chat_routes._DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S
+    repair_inner = chat_routes._inner_cognitive_cycle_timeout(repair_outer)
+
+    assert repair_outer >= 60.0
+    assert repair_inner >= 40.0
+    assert repair_inner < repair_outer
+
+
+@pytest.mark.asyncio
+async def test_desktop_capability_grounding_reaches_cognitive_engine_without_midword_clipping(
+    monkeypatch,
+):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+    long_inventory = (
+        "I can use governed desktop and app control, browser/web research, file and document "
+        "operations, terminal and code execution, memory and continuity, and self-repair. "
+        + "Governed capability detail remains concrete and inspectable. " * 16
+        + "Will and Authority approve consequential actions, and effect receipts verify results. "
+        "For this turn I am only describing the tool surface; I am not executing tools."
+    )
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append({"context": dict(context or {}), "kwargs": dict(kwargs)})
+            return SimpleNamespace(
+                content=str(context["grounded_capability_inventory_context"]),
+                metadata=_bound_live_mind_controls_metadata(),
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes,
+        "_build_grounded_capability_inventory_reply",
+        lambda _message: long_inventory,
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    prompt = "Explain what tools you can use and give a hypothetical scenario without executing it."
+    await chat_routes._run_cognitive_engine_chat_turn(
+        prompt,
+        visible_user_message=prompt,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert len(long_inventory) > 1000
+    assert calls[0]["context"]["grounded_capability_inventory_context"] == long_inventory
+    assert calls[0]["context"]["grounded_capability_inventory_context"].endswith(
+        "I am not executing tools."
+    )
+
+
 @pytest.mark.asyncio
 async def test_desktop_required_chat_gets_default_recent_context_window(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
