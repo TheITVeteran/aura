@@ -709,7 +709,8 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
 
 ## Current Closeout Progress Gauge
 
-- Latest checkpoint: MLX worker user-surface quality gate.
+- Latest checkpoint: live desktop generation health and repair-budget proof
+  (`b157bfda`, pushed 2026-06-27).
 - Evidence added: subprocess ownership routed through `SubprocessGateway` for
   DNU/wedge supervisor paths, hardcoded local test paths removed, one broad
   watchdog exception narrowed, enterprise baseline regressions cleared, direct
@@ -730,14 +731,44 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   the shared response reliability contract before reporting generation success,
   and the desktop full-mind contract requires a passing worker surface-quality
   receipt whenever that gate runs.
-- Current operator estimate: about 92% through the ultimate closeout standard.
-- Estimated remaining checkpoints: 4 major checkpoints plus any small
-  bug-fix checkpoints exposed during live 32B/72B runtime validation:
-  launched GUI/voice demo proof, DNU/Aletheia clean reruns, CRSM/CAA +
-  longevity/replay closure, and final whole-code semantic review/final-proof.
+- Functional closeout estimate: about **86%**. This measures implemented and
+  validated runtime capability, not metaphysical claims or whole-repository
+  semantic certification.
+- Exhaustive semantic-review coverage: **600/3,636 code files (16.5%)** at the
+  latest `make closeout-audit` run. Mechanical enumeration and hashes cover all
+  tracked text, but the remaining code files cannot honestly be called
+  line-reviewed until current semantic ledger records exist.
+- Estimated remaining work: **3 consolidated checkpoints**, each expected to
+  contain multiple focused commits: (1) launched desktop action/voice and
+  multi-turn soak proof, (2) DNU/Aletheia plus CRSM/CAA/longevity/replay proof,
+  and (3) exhaustive semantic ledger closure followed by final-proof and claim
+  purification.
 - Still not closed: final proof, DNU/Aletheia clean reruns, live desktop
   multi-app proof, CRSM-to-LoRA closure, CAA extraction validation, longer soak,
   proof artifact replay, and remaining whole-code semantic review.
+
+## Checkpoint: 2026-06-27 Live Desktop Generation Health
+
+- Root cause fixed: the desktop repair lane had an 18-second outer budget that
+  collapsed to an 8-second CognitiveEngine watchdog, cancelling valid 32B
+  correction work. The bounded repair budget is now 75 seconds with more than
+  40 seconds available to the inner full-mind cycle.
+- False-health fix: a live, foreground-owned generation now counts as
+  operational inference only while the worker is alive and request/token
+  timestamps prove bounded progress. Stalled active work still fails health.
+- Capability-grounding fix: the live capability catalog was sliced at exactly
+  1,000 characters, producing a mid-word fragment before a boundary sentence
+  hid the defect. The complete bounded catalog now reaches CognitiveEngine.
+- Evidence: 320 inference/desktop route tests passed; Ruff, enterprise gate,
+  and all 37 production readiness checks passed. The repeated external desktop
+  proof passed with the real 32B lane: healthy boot in 27 seconds, complete
+  capability answer, 32.1-second identity answer, immediate memory continuity,
+  19.67 GB peak process-tree RSS, no runtime failure markers, clean shutdown,
+  no orphan workers, and port release.
+- Artifact: `artifacts/live_proof/full_desktop_runtime_20260627_checkpoint_13c/`.
+- Next exact task: run the full desktop action plus multi-turn conversation soak
+  under the same 28/32 GB ceilings, then repair any general planning, computer
+  use, receipt, or coherence failure before moving to proof batteries.
 
 ## Checkpoint: 2026-06-25 Live Desktop Heavy-Lane Memory Admission
 
