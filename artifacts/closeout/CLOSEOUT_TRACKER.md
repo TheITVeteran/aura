@@ -62,3 +62,36 @@ Still open:
 - Full `make final-proof` remains open.
 - Broad suite failures listed in `artifacts/closeout/OPEN_FINDINGS_2026-06-09.md`
   still need closure or refreshed triage against the current tree.
+
+## Checkpoint 2026-06-27-02: Conversational Amplifier Safety
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- A concurrent change wired best-of-N conversational amplification into the
+  primary `UnitaryResponsePhase`.
+- Extra foreground model calls can improve voice, but can also recreate the
+  lag and RAM spikes seen on the live desktop lane if enabled unconditionally.
+
+What changed:
+
+- Live conversational amplification now requires explicit
+  `AURA_CONVERSATIONAL_AMPLIFIER_LIVE=1`.
+- The hook checks the runtime memory-pressure snapshot before spawning extra
+  foreground model calls.
+- The hook is bounded to a smaller time budget and uses fewer candidates under
+  tighter budget.
+- Normal live chat remains single-generation by default; the taste-learning
+  module remains callable and separately tested.
+
+Evidence:
+
+- `.venv/bin/python3 -m py_compile core/phases/response_generation_unitary.py tests/test_conversational_amplifier.py`
+- `.venv/bin/python3 -m pytest -q tests/test_conversational_amplifier.py`
+- Result: `17 passed`
+
+Estimate update:
+
+- Overall closeout: 77%
+- Remaining checkpoints: 10 total

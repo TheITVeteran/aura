@@ -1999,6 +1999,19 @@ class UnitaryResponsePhase(Phase):
         """
         if not is_user_facing or is_background or proof_or_benchmark or not draft:
             return draft
+        live_flag = str(os.getenv("AURA_CONVERSATIONAL_AMPLIFIER_LIVE", "0")).strip().lower()
+        if live_flag not in {"1", "true", "on", "yes"}:
+            return draft
+        try:
+            from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+            pressure = get_memory_pressure_snapshot()
+            if bool(getattr(pressure, "refuse_heavy_local_generation", False)):
+                return draft
+            if float(getattr(pressure, "pressure_pct", 0.0) or 0.0) >= 85.0:
+                return draft
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
         try:
             from core.brain.conversational_amplifier import (
                 amplify_conversation,
@@ -2037,7 +2050,8 @@ class UnitaryResponsePhase(Phase):
         except (AttributeError, TypeError, ValueError):
             word_budget = 0
 
-        budget = float(min(20.0, max(6.0, (request_timeout or 20.0) * 0.5)))
+        budget = float(min(10.0, max(3.0, (request_timeout or 20.0) * 0.25)))
+        n_candidates = 2 if budget < 8.0 else 3
         try:
             result = await amplify_conversation(
                 draft,
@@ -2046,8 +2060,9 @@ class UnitaryResponsePhase(Phase):
                 user_message=objective,
                 grounding_tokens=grounding_tokens,
                 word_budget=word_budget,
-                n=3,
+                n=n_candidates,
                 time_budget_s=budget,
+                revise=budget >= 6.0,
             )
         except _RESPONSE_RECOVERABLE_ERRORS as exc:
             _record_response_degradation(exc, "UnitaryResponse: conversational amplifier failed: %s")

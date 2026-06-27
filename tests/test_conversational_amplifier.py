@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -136,3 +137,105 @@ def test_gating_excludes_actions_and_reasoning():
     assert is_conversationally_amplifiable("what is 17 to the power of 4", "user") is False  # reasoning
     assert is_conversationally_amplifiable("hey", "user") is False                  # too short
     assert is_conversationally_amplifiable("what's your take on jazz?", "background") is False
+
+
+# ── primary response phase hook ─────────────────────────────────────────────
+class _LLMSpy:
+    def __init__(self):
+        self.calls = 0
+
+    async def think(self, prompt, **kwargs):
+        self.calls += 1
+        if "Improve this reply" in str(prompt):
+            return "Honestly, this is the sharper revised version with one concrete detail."
+        return "Honestly, this is the alternate version with one concrete detail."
+
+
+def _unitary_state(origin: str = "user"):
+    return SimpleNamespace(
+        cognition=SimpleNamespace(current_origin=origin, rolling_summary="Bryan likes direct specific answers"),
+        response_modifiers={},
+        metadata={},
+    )
+
+
+def test_unitary_conversational_amplifier_default_does_not_spawn_extra_model_calls(monkeypatch):
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
+
+    monkeypatch.delenv("AURA_CONVERSATIONAL_AMPLIFIER_LIVE", raising=False)
+    phase = UnitaryResponsePhase.__new__(UnitaryResponsePhase)
+    llm = _LLMSpy()
+
+    out = asyncio.run(
+        phase._maybe_amplify_conversation(
+            objective="what do you think about long horizon autonomy?",
+            draft=_GOOD,
+            llm=llm,
+            state=_unitary_state(),
+            request_timeout=20.0,
+            is_user_facing=True,
+            is_background=False,
+            proof_or_benchmark=False,
+        )
+    )
+
+    assert out == _GOOD
+    assert llm.calls == 0
+
+
+def test_unitary_conversational_amplifier_live_opt_in_is_bounded(monkeypatch):
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
+
+    monkeypatch.setenv("AURA_CONVERSATIONAL_AMPLIFIER_LIVE", "1")
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False, pressure_pct=20.0),
+    )
+    phase = UnitaryResponsePhase.__new__(UnitaryResponsePhase)
+    llm = _LLMSpy()
+    state = _unitary_state()
+
+    out = asyncio.run(
+        phase._maybe_amplify_conversation(
+            objective="what do you think about long horizon autonomy?",
+            draft=_BAD,
+            llm=llm,
+            state=state,
+            request_timeout=20.0,
+            is_user_facing=True,
+            is_background=False,
+            proof_or_benchmark=False,
+        )
+    )
+
+    assert out != _BAD
+    assert 1 <= llm.calls <= 2
+    assert state.metadata["conversation_amplification"]["n_candidates"] == 2
+
+
+def test_unitary_conversational_amplifier_blocks_under_memory_pressure(monkeypatch):
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
+
+    monkeypatch.setenv("AURA_CONVERSATIONAL_AMPLIFIER_LIVE", "1")
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=True, pressure_pct=94.0),
+    )
+    phase = UnitaryResponsePhase.__new__(UnitaryResponsePhase)
+    llm = _LLMSpy()
+
+    out = asyncio.run(
+        phase._maybe_amplify_conversation(
+            objective="what do you think about long horizon autonomy?",
+            draft=_GOOD,
+            llm=llm,
+            state=_unitary_state(),
+            request_timeout=20.0,
+            is_user_facing=True,
+            is_background=False,
+            proof_or_benchmark=False,
+        )
+    )
+
+    assert out == _GOOD
+    assert llm.calls == 0
