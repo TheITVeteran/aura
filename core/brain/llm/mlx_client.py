@@ -3948,6 +3948,7 @@ class MLXLocalClient:
                     if not readiness_text or not str(readiness_text).strip():
                         self._set_lane_state("recovering", "warmup_readiness_no_text")
                         raise RuntimeError("warmup_readiness_no_text")
+                    self._last_visible_readiness_at = time.time()
                 self._set_lane_state("ready")
                 self._last_ready_at = time.time()
                 self._warmup_in_flight = False

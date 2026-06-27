@@ -43,7 +43,10 @@ from core.conversation.response_reliability import (
     is_live_self_reflection_turn,
     is_self_process_question,
 )
-from core.runtime.desktop_boot_safety import desktop_resource_guard_enabled
+from core.runtime.desktop_boot_safety import (
+    desktop_resource_guard_enabled,
+    desktop_safe_boot_enabled,
+)
 from core.runtime.errors import record_degradation
 from core.runtime.proof_policy import (
     is_proof_evaluation_purpose,
@@ -461,7 +464,13 @@ class InferenceGate:
 
     @staticmethod
     def _desktop_safe_boot_enabled() -> bool:
-        """Compatibility name for the desktop resource-admission guard."""
+        """Return True only for explicit reduced recovery safe boot."""
+
+        return desktop_safe_boot_enabled()
+
+    @staticmethod
+    def _desktop_resource_guard_enabled() -> bool:
+        """Return True when the normal desktop RAM/process guard is active."""
 
         return desktop_resource_guard_enabled()
 
@@ -604,7 +613,7 @@ class InferenceGate:
             "on",
         }:
             return True
-        if InferenceGate._desktop_safe_boot_enabled():
+        if InferenceGate._desktop_resource_guard_enabled():
             logger.info("🛡️ Desktop resource guard active — skipping eager 32B warmup during launch.")
             return False
         setting = str(os.environ.get("AURA_EAGER_CORTEX_WARMUP", "auto")).strip().lower()
@@ -663,13 +672,13 @@ class InferenceGate:
         if InferenceGate._desktop_safe_boot_enabled():
             if explicit_setting is None:
                 logger.info(
-                    "🛡️ Desktop resource guard active — skipping implicit deferred 32B prewarm during launch."
+                    "🛡️ Recovery safe boot active — skipping implicit deferred 32B prewarm during launch."
                 )
                 return False
             snapshot = InferenceGate._cortex_warmup_admission_snapshot("background")
             if not snapshot["can_admit"]:
                 logger.warning(
-                    "⏸️ Safe desktop deferred Cortex prewarm deferred to protect RAM: %s",
+                    "⏸️ Recovery safe-boot deferred Cortex prewarm deferred to protect RAM: %s",
                     snapshot["reason"],
                 )
                 return False

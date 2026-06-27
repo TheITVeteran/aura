@@ -6,8 +6,8 @@ remains open.
 
 ## Current Estimate
 
-- Overall closeout: 78%
-- Remaining checkpoints: 9 total
+- Overall closeout: 83%
+- Remaining checkpoints: 5 total
 - Current phase: live desktop runtime reliability and full-mind conversation
   path hardening
 
@@ -307,3 +307,46 @@ Estimate update:
 
 - Overall closeout: 82%
 - Remaining checkpoints: 6 total
+
+## Checkpoint 2026-06-27-09: Resource Guard Is Not Safe Boot
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- Normal desktop launch must run full Aura under RAM/process protection.
+- The inference gate still treated the desktop resource guard as
+  `_desktop_safe_boot_enabled()`, which could make normal app launch look like
+  recovery safe boot and suppress/defer background local cognition.
+- That directly matched the live symptom where full-mind/background systems
+  appeared dormant even though the user had not requested safe boot.
+
+What changed:
+
+- Split inference-gate semantics:
+  - `_desktop_safe_boot_enabled()` now means only explicit
+    `AURA_SAFE_BOOT_DESKTOP`.
+  - `_desktop_resource_guard_enabled()` now means normal RAM/process guard.
+- Eager Cortex warmup remains RAM-protected by the resource guard.
+- Background local cognition is no longer permanently disabled just because
+  Aura launched from the desktop app with resource protection enabled.
+- Successful visible MLX readiness probes now set the visible-readiness anchor,
+  so `conversation_ready` cannot remain false after a real visible probe
+  returns text.
+
+Evidence:
+
+- `python -m py_compile core/brain/inference_gate.py core/brain/llm/mlx_client.py tests/test_boot_runtime_safety.py`
+- `python -m pytest tests/test_mlx_client_resilience.py::TestMLXClientResilience::test_warmup_precompile_requires_visible_readiness_after_empty_compile tests/test_boot_runtime_safety.py -q`
+- Result: `42 passed`
+- `python -m pytest tests/test_full_desktop_runtime_contract.py tests/test_autonomy_visibility.py tests/test_autonomous_initiative_loop_hardening.py tests/test_system_route_hardening.py -q`
+- Result: `45 passed`
+- `python -m pytest tests/test_mlx_client_resilience.py -q`
+- Result: `59 passed`
+- `python -m pytest tests/test_inference_gate_tiering.py::test_desktop_safe_boot_skips_deferred_cortex_prewarm tests/test_inference_gate_tiering.py::test_desktop_safe_boot_respects_deferred_cortex_prewarm_opt_out tests/test_inference_gate_tiering.py::test_desktop_safe_boot_allows_explicit_auto_deferred_prewarm_when_admitted tests/test_inference_gate_tiering.py::test_desktop_safe_boot_refuses_explicit_auto_deferred_prewarm_under_pressure tests/test_inference_gate_tiering.py::test_background_local_deferral_protects_cold_cortex_during_safe_boot tests/test_inference_gate_tiering.py::test_background_local_deferral_reserves_ready_cortex_during_safe_boot tests/test_inference_gate_tiering.py::test_background_local_deferral_honors_ready_cortex_foreground_quiet_window -q`
+- Result: `7 passed`
+
+Estimate update:
+
+- Overall closeout: 83%
+- Remaining checkpoints: 5 total

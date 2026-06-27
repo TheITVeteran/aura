@@ -205,6 +205,32 @@ def test_desktop_app_launch_uses_resource_guard_without_reduced_safe_boot(monkey
 
     assert desktop_safe_boot_enabled() is False
     assert desktop_resource_guard_enabled() is True
+    assert InferenceGate._desktop_safe_boot_enabled() is False
+    assert InferenceGate._desktop_resource_guard_enabled() is True
+
+
+def test_desktop_resource_guard_does_not_disable_background_local_cognition(monkeypatch):
+    gate = InferenceGate.__new__(InferenceGate)
+    gate._created_at = 0.0
+
+    monkeypatch.setenv("AURA_DESKTOP_RESOURCE_GUARD", "1")
+    monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM", raising=False)
+    monkeypatch.setattr(gate, "_foreground_user_turn_active", lambda: False)
+    monkeypatch.setattr(gate, "_foreground_owner_active", lambda: False)
+    monkeypatch.setattr(gate, "_foreground_headroom_reserved", lambda _tier: False)
+    monkeypatch.setattr(gate, "_should_quiet_background_for_cortex_startup", lambda: False)
+    monkeypatch.setattr(gate, "_foreground_quiet_window_active", lambda: False)
+    monkeypatch.setattr(gate, "get_conversation_status", lambda: {
+        "conversation_ready": True,
+        "state": "ready",
+        "warmup_in_flight": False,
+    })
+    monkeypatch.setattr(gate, "_background_memory_pressure_active", lambda: False)
+    monkeypatch.setattr("core.runtime.proof_policy.proof_run_active", lambda *args, **kwargs: False)
+    monkeypatch.setattr("core.brain.llm.model_registry.get_local_backend", lambda: "mlx")
+
+    assert gate._background_local_deferral_reason(origin="autonomous_initiative") is None
 
 
 def test_inference_gate_disables_boot_prewarm_under_safe_desktop_boot(monkeypatch):
