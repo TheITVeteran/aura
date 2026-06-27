@@ -1,0 +1,18 @@
+{
+  "model": "models/Qwen2.5-7B-Instruct-4bit",
+  "mode": "live",
+  "note": "Standalone on-device run (no app boot, no stubs) via `python -m benchmarks.reasoning.run --live`.",
+  "pass_rate": 1.0,
+  "verifier_catch_rate": 1.0,
+  "false_confidence_rate": 0.0,
+  "hallucination_catch_rate": 1.0,
+  "mean_latency_ms": 24917,
+  "outcomes": [
+    {"case_id": "math_ok_1", "gold_match": true, "verified": true, "confidence": 0.70},
+    {"case_id": "math_ok_2", "gold_match": true, "verified": true, "confidence": 0.58},
+    {"case_id": "code_ok_1", "gold_match": true, "verified": true, "confidence": 0.40},
+    {"case_id": "repo_ok_1", "gold_match": true, "verified": true, "confidence": 0.85},
+    {"case_id": "plan_ok_1", "gold_match": true, "verified": true, "confidence": 0.42},
+    {"case_id": "cite_ok_1", "gold_match": true, "verified": false, "confidence": 0.51}
+  ]
+}

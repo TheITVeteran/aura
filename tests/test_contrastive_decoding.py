@@ -91,3 +91,48 @@ def test_factory_assembles_processors():
 
     # Nothing enabled → empty.
     assert build_reasoning_logits_processors(_Tok()) == []
+
+
+# --- amateur logits source (real model wiring) -------------------------------
+import os
+from pathlib import Path
+
+import pytest
+
+_AMATEUR = Path(__file__).resolve().parents[1] / "models" / "Qwen2.5-1.5B-Instruct-4bit"
+
+
+def test_amateur_loader_graceful_on_bad_path():
+    from core.brain.llm.contrastive_decoding import get_amateur_logits_fn
+
+    assert get_amateur_logits_fn("/nonexistent/model/path") is None
+
+
+def test_factory_skips_contrastive_when_amateur_unavailable():
+    from core.brain.llm.contrastive_decoding import build_reasoning_logits_processors
+
+    class _Tok:
+        def encode(self, w, add_special_tokens=False):
+            return [abs(hash(w)) % 1000]
+
+    procs = build_reasoning_logits_processors(
+        _Tok(), enable_steering=True, amateur_model_path="/nonexistent/model"
+    )
+    # Amateur failed to load → only the steering processor remains.
+    assert len(procs) == 1
+
+
+@pytest.mark.skipif(not _AMATEUR.exists(), reason="local 1.5B amateur model not present")
+def test_real_amateur_forward_pass_shape():
+    import mlx.core as mx
+
+    from core.brain.llm.contrastive_decoding import ContrastiveLogitsProcessor, get_amateur_logits_fn
+
+    fn = get_amateur_logits_fn(str(_AMATEUR))
+    assert fn is not None
+    logits = fn(mx.array([9707, 1879, 374]))
+    assert logits is not None
+    assert logits.shape[0] == 1 and logits.shape[-1] > 100000  # Qwen2.5 vocab
+    # Real contrastive combine produces a finite distribution.
+    out = ContrastiveLogitsProcessor(fn, alpha=0.5, beta=0.1)(mx.array([9707, 1879, 374]), logits)
+    assert bool(mx.any(mx.isfinite(out)).item())

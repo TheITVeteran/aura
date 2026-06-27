@@ -20,19 +20,23 @@ class CaseOutcome:
     should_pass: bool
     verified: bool
     confidence: float
-    correct: bool                # verified == should_pass
+    correct: bool                # graded truth (verifier-grade or gold-match)
     false_confidence: bool       # wrong yet asserted with high confidence
     latency_ms: float
+    mode: str = "deterministic"  # "deterministic" | "live"
+    answer_gold_match: bool | None = None  # live only: did the answer contain gold?
     known_failures: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "case_id": self.case_id,
             "task_type": self.task_type,
+            "mode": self.mode,
             "should_pass": self.should_pass,
             "verified": self.verified,
             "confidence": round(self.confidence, 3),
             "correct": self.correct,
+            "gold_match": self.answer_gold_match,
             "false_confidence": self.false_confidence,
             "latency_ms": round(self.latency_ms, 1),
         }
@@ -82,9 +86,17 @@ class ReasoningBenchmark:
 
         return gen
 
+    @staticmethod
+    def _gold_match(answer: str, gold: str) -> bool:
+        if not gold:
+            return True
+        a = " ".join(str(answer or "").lower().split())
+        return gold.lower() in a
+
     async def _run_case(self, case: ReasoningCase, generate: GenerateFn | None) -> CaseOutcome:
         from core.brain.reasoning_amplifier_v2 import amplify_turn
 
+        live = generate is not None
         gen = generate or self._canned_generator(case)
         t0 = time.monotonic()
         result = await amplify_turn(
@@ -92,35 +104,54 @@ class ReasoningBenchmark:
             gen,
             task_type=case.task_type,
             evidence=case.evidence,
-            time_budget_s=20.0,
+            time_budget_s=30.0 if live else 20.0,
         )
         latency = (time.monotonic() - t0) * 1000.0
         verified = bool(result.verified)
+
+        if live:
+            # Grade the REAL answer against gold; "correct" means the model got it
+            # right. A good system also makes verified track correctness.
+            gold_match = self._gold_match(result.answer, case.gold)
+            correct = gold_match
+            false_confidence = (not correct) and result.confidence >= self.confidence_floor
+            return CaseOutcome(
+                case_id=case.case_id, task_type=case.task_type, should_pass=case.should_pass,
+                verified=verified, confidence=result.confidence, correct=correct,
+                false_confidence=false_confidence, latency_ms=latency, mode="live",
+                answer_gold_match=gold_match, known_failures=result.receipt.known_failures,
+            )
+
+        # Deterministic: grade whether the verifier reached the expected verdict.
         correct = verified == case.should_pass
-        # False confidence = graded wrong AND asserted with high confidence.
         false_confidence = (not correct) and result.confidence >= self.confidence_floor
         return CaseOutcome(
-            case_id=case.case_id,
-            task_type=case.task_type,
-            should_pass=case.should_pass,
-            verified=verified,
-            confidence=result.confidence,
-            correct=correct,
-            false_confidence=false_confidence,
-            latency_ms=latency,
+            case_id=case.case_id, task_type=case.task_type, should_pass=case.should_pass,
+            verified=verified, confidence=result.confidence, correct=correct,
+            false_confidence=false_confidence, latency_ms=latency, mode="deterministic",
             known_failures=result.receipt.known_failures,
         )
 
     async def run(self, *, generate: GenerateFn | None = None) -> BenchmarkResult:
-        outcomes = [await self._run_case(c, generate) for c in self.cases]
+        live = generate is not None
+        cases = [c for c in self.cases if (c.run_live or not live)]
+        outcomes = [await self._run_case(c, generate) for c in cases]
         n = len(outcomes)
         correct = [o for o in outcomes if o.correct]
-        should_fail = [o for o in outcomes if not o.should_pass]
-        caught = [o for o in should_fail if not o.verified]
         wrong = [o for o in outcomes if not o.correct]
         false_conf = [o for o in wrong if o.false_confidence]
-        # Hallucination cases are the fabrication-style ones (repo/citation should-fail).
-        halluc = [o for o in should_fail if o.task_type in {"repo_audit", "factual", "architecture"}]
+
+        if live:
+            # Verifier-catch = of answers the model actually got WRONG, how many did
+            # the truth engines flag (verified=False)? i.e. does verification track
+            # correctness. Hallucination = same, restricted to repo/factual answers.
+            should_catch = wrong
+            caught = [o for o in wrong if not o.verified]
+            halluc = [o for o in wrong if o.task_type in {"repo_audit", "factual", "architecture"}]
+        else:
+            should_catch = [o for o in outcomes if not o.should_pass]
+            caught = [o for o in should_catch if not o.verified]
+            halluc = [o for o in should_catch if o.task_type in {"repo_audit", "factual", "architecture"}]
         halluc_caught = [o for o in halluc if not o.verified]
 
         by_task: dict[str, list[CaseOutcome]] = {}
@@ -130,7 +161,7 @@ class ReasoningBenchmark:
         return BenchmarkResult(
             n=n,
             pass_rate=len(correct) / max(1, n),
-            verifier_catch_rate=len(caught) / max(1, len(should_fail)),
+            verifier_catch_rate=(len(caught) / max(1, len(should_catch))) if should_catch else 1.0,
             false_confidence_rate=len(false_conf) / max(1, len(wrong)) if wrong else 0.0,
             hallucination_catch_rate=len(halluc_caught) / max(1, len(halluc)) if halluc else 1.0,
             mean_latency_ms=sum(o.latency_ms for o in outcomes) / max(1, n),

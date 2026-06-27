@@ -207,11 +207,61 @@ def build_reasoning_bias(tokenizer: Any, *, suppress: float = -2.0) -> dict[int,
     return bias
 
 
+class MLXAmateurModel:
+    """A small MLX model that supplies the amateur distribution for contrastive decoding.
+
+    The amateur MUST share the strong model's tokenizer/vocab for the logit
+    subtraction to be meaningful — use a same-family small model (e.g. Qwen2.5-1.5B
+    as the amateur for a Qwen2.5-32B cortex). Each step runs a forward pass over the
+    current prefix and returns the last-position logits. This is correctness-first
+    (no KV cache reuse across steps), so it is validation-grade; a production build
+    would thread a persistent amateur KV cache.
+    """
+
+    def __init__(self, model_path: str) -> None:
+        from mlx_lm import load
+
+        self._model, self._tokenizer = load(model_path)
+        self.model_path = model_path
+
+    def logits_fn(self) -> Callable[[Sequence[int]], Any]:
+        import mlx.core as mx
+
+        model = self._model
+
+        def amateur(tokens: Any) -> Any:
+            try:
+                ids = [int(t) for t in (tokens.tolist() if hasattr(tokens, "tolist") else tokens)]
+                if not ids:
+                    return None
+                out = model(mx.array([ids]))
+                return out[:, -1, :]
+            except (RuntimeError, ValueError, TypeError, AttributeError):
+                return None
+
+        return amateur
+
+
+_amateur_cache: dict[str, MLXAmateurModel] = {}
+
+
+def get_amateur_logits_fn(model_path: str) -> Callable[[Sequence[int]], Any] | None:
+    """Load (and cache) a small MLX amateur model and return its per-step logits fn."""
+    try:
+        if model_path not in _amateur_cache:
+            _amateur_cache[model_path] = MLXAmateurModel(model_path)
+        return _amateur_cache[model_path].logits_fn()
+    except (ImportError, RuntimeError, OSError, ValueError) as exc:
+        logger.warning("could not load amateur model %s: %s", model_path, exc)
+        return None
+
+
 def build_reasoning_logits_processors(
     tokenizer: Any,
     *,
     enable_steering: bool = False,
     amateur_logits_fn: Callable[[Sequence[int]], Any] | None = None,
+    amateur_model_path: str | None = None,
     alpha: float = 0.5,
     beta: float = 0.1,
     steering_scale: float = 1.0,
@@ -223,8 +273,11 @@ def build_reasoning_logits_processors(
     source is supplied; steering only when ``enable_steering``.
     """
     procs: list[Callable[[Any, Any], Any]] = []
+    if amateur_logits_fn is None and amateur_model_path:
+        amateur_logits_fn = get_amateur_logits_fn(amateur_model_path)
     if amateur_logits_fn is not None:
         procs.append(ContrastiveLogitsProcessor(amateur_logits_fn, alpha=alpha, beta=beta))
+        logger.info("contrastive decoding active (alpha=%.2f beta=%.2f)", alpha, beta)
     if enable_steering:
         bias = build_reasoning_bias(tokenizer)
         if bias:
