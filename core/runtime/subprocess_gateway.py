@@ -116,7 +116,9 @@ def _effective_env_value(env: Mapping[str, str] | None, key: str) -> str | None:
 
 
 def _desktop_safe_mode_requested(env: Mapping[str, str] | None) -> bool:
-    return _truthy_env_value(_effective_env_value(env, "AURA_SAFE_BOOT_DESKTOP")) or _truthy_env_value(
+    return _truthy_env_value(_effective_env_value(env, "AURA_DESKTOP_RESOURCE_GUARD")) or _truthy_env_value(
+        _effective_env_value(env, "AURA_SAFE_BOOT_DESKTOP")
+    ) or _truthy_env_value(
         _effective_env_value(env, "AURA_LAUNCHED_FROM_APP")
     )
 

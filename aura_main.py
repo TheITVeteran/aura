@@ -142,14 +142,12 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def _foreground_only_runtime() -> bool:
-    if _env_flag("AURA_FOREGROUND_ONLY", False):
-        return True
     try:
-        from core.runtime.background_policy import background_cognition_disabled_reason
+        from core.runtime.background_policy import foreground_only_runtime
 
-        return bool(background_cognition_disabled_reason())
+        return bool(foreground_only_runtime())
     except (ImportError, AttributeError, RuntimeError, ValueError):
-        return False
+        return _env_flag("AURA_FOREGROUND_ONLY", False)
 
 
 def _bounded_memory_ceiling_mb(
@@ -361,7 +359,7 @@ if VENV_PATH.exists():
                 site.addsitedir(str(site_packages))
                 logger.info("📍 Injected venv site-packages: %s", site_packages)
 
-# Desktop-safe boot should keep the main Aura process off the in-process
+# Desktop resource protection keeps the main Aura process off the in-process
 # MLX/Metal path. The managed LLM runtimes use their own subprocesses.
 try:
     from core.runtime.desktop_boot_safety import configure_inprocess_mlx_runtime
@@ -861,10 +859,14 @@ async def _boot_runtime_orchestrator(
             # the heartbeat goes stale by 2.5x its expected interval, the
             # healer asks the orchestrator to restart_async() (no-op if
             # the method isn't defined — falls back to ServiceContainer).
-            healer.watch("orchestrator", expected_interval_s=15.0, container_key="orchestrator")
-            healer.watch("agency_bus",   expected_interval_s=30.0, container_key="agency_bus")
-            healer.watch("phi_core",     expected_interval_s=30.0, container_key="phi_core")
-            healer.watch("memory_facade", expected_interval_s=60.0, container_key="memory_facade")
+            healer.watch("orchestrator", expected_interval_s=5.0, container_key="orchestrator")
+            healer.watch("pneuma", expected_interval_s=15.0, container_key="pneuma")
+            healer.watch("mhaf", expected_interval_s=20.0, container_key="mhaf")
+            healer.watch("curiosity", expected_interval_s=90.0, container_key="curiosity_engine")
+            healer.watch("proactive_comm", expected_interval_s=15.0, container_key="proactive_comm")
+            healer.watch("research_cycle", expected_interval_s=60.0, container_key="research_cycle")
+            healer.watch("autonomy_conductor", expected_interval_s=60.0, container_key="autonomy_conductor")
+            healer.watch("wake_word", expected_interval_s=5.0, container_key="wake_word")
             await healer.start(interval=5.0)
             ServiceContainer.register_instance("self_healing", healer, required=False)
         except _AURA_MAIN_BOUNDARY_ERRORS as exc:
@@ -1142,7 +1144,7 @@ def _install_systemwide_memory_protection() -> None:
         from core.runtime.desktop_boot_safety import (
             compute_mlx_memory_limit,
             compute_process_rss_limit,
-            desktop_safe_boot_enabled,
+            desktop_resource_guard_enabled,
             env_flag_enabled,
         )
 
@@ -1155,7 +1157,7 @@ def _install_systemwide_memory_protection() -> None:
             compute_process_rss_limit(int(total_mb * 1024 * 1024)) / float(1024**3),
         )
         safe_desktop_memory_limits = (
-            desktop_safe_boot_enabled()
+            desktop_resource_guard_enabled()
             and not env_flag_enabled(os.environ.get("AURA_ALLOW_UNSAFE_MEMORY_LIMITS"))
         )
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
@@ -1272,7 +1274,9 @@ def _install_liveness_sentinel() -> None:
         )
         Path(heartbeat).parent.mkdir(parents=True, exist_ok=True)
         desktop_foreground = (
-            str(os.environ.get("AURA_SAFE_BOOT_DESKTOP", "")).strip().lower()
+            str(os.environ.get("AURA_DESKTOP_RESOURCE_GUARD", "")).strip().lower()
+            in {"1", "true", "yes", "on"}
+            or str(os.environ.get("AURA_LAUNCHED_FROM_APP", "")).strip().lower()
             in {"1", "true", "yes", "on"}
             or "--headless" in sys.argv
         )
@@ -2096,12 +2100,9 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
         # matter how she was launched. Surfaces the system grant dialog once;
         # the grant then persists for this executable.
         try:
-            from ApplicationServices import (  # type: ignore
-                AXIsProcessTrustedWithOptions,
-                kAXTrustedCheckOptionPrompt,
-            )
+            from core.security.permission_guard import get_permission_guard
 
-            if AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True}):
+            if get_permission_guard().request_accessibility_trust():
                 logger.info("🖐️ Accessibility trust confirmed — full desktop control available.")
             else:
                 logger.warning(
@@ -3028,11 +3029,10 @@ def main():
     # dispatch) that route through the canonical /api/chat loopback lane.
     os.environ["AURA_SERVER_PORT"] = str(args.port)
 
-    # Desktop/headless live sessions run alongside the GUI, browser probes, and
-    # other macOS apps. Default them into safe boot so Cortex warmup is admitted
-    # by live RAM headroom instead of being scheduled optimistically during boot.
-    if (args.desktop or args.headless) and "AURA_SAFE_BOOT_DESKTOP" not in os.environ:
-        os.environ["AURA_SAFE_BOOT_DESKTOP"] = "1"
+    # Desktop/headless sessions boot the full canonical runtime. Resource
+    # protection is independent from the reduced recovery-only safe-boot mode.
+    if (args.desktop or args.headless) and "AURA_DESKTOP_RESOURCE_GUARD" not in os.environ:
+        os.environ["AURA_DESKTOP_RESOURCE_GUARD"] = "1"
         # Run Aura's OWN in-process fine-tuned mind (MLX) as the desktop Cortex,
         # not the base Qwen GGUF behind an external llama-server. This matters for
         # identity, not just weights: an external server is a black box (text in,
@@ -3040,13 +3040,12 @@ def main():
         # activation steering, unified_inference logit modulation — physically
         # cannot reach inside it. The in-process MLX lane loads the active fused
         # model (training/fused-model/active.json) and lets the substrate steer
-        # generation. MLX Metal is available for the LLM (the safe-boot Metal
+        # generation. MLX Metal is available for the LLM (the resource-guard Metal
         # disable only affects the NeuralMesh). Set AURA_LOCAL_BACKEND=llama_cpp
         # to fall back to the base-model server if the native lane misbehaves.
         os.environ.setdefault("AURA_LOCAL_BACKEND", "mlx")
-        # Under safe boot, both eager and deferred 32B prewarm are otherwise
-        # disabled, leaving the Cortex lane cold and the first conversational
-        # message waiting minutes for a cold 32B load (the chat appears hung).
+        # The resource guard keeps Cortex warmup RAM-admitted while preserving
+        # every canonical cognitive organ and governed background worker.
         # Default deferred prewarm ON so the 32B warms in the BACKGROUND shortly
         # after boot — still RAM-gated by the admission snapshot, so it never
         # warms under genuine memory pressure. This makes the first real chat
@@ -3064,13 +3063,13 @@ def main():
 
         # The in-process MLX lane holds the ~20GB 32B in the KERNEL's OWN RSS;
         # the llama_cpp design kept the model in a separate server process. The
-        # safe-boot RSS caps (36GB) and MLX ceiling (28GB) were sized for that
+        # old RSS caps (36GB) and MLX ceiling (28GB) were sized for that
         # split design. Give the in-process model enough room for the 32B lane,
         # but keep the process tree well below host-collapse territory.
         if os.environ.get("AURA_LOCAL_BACKEND", "").strip().lower() == "mlx":
             os.environ.setdefault("AURA_PROCESS_RSS_LIMIT_GB", "40")
-            os.environ.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", "40")
-            os.environ.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "34")
+            os.environ.setdefault("AURA_DESKTOP_PROCESS_RSS_CAP_GB", "40")
+            os.environ.setdefault("AURA_DESKTOP_MLX_MEMORY_CAP_GB", "34")
             os.environ.setdefault("AURA_MEMWATCH_LETHAL_MB", "43008")
             os.environ.setdefault("AURA_MEMORY_SENTINEL_INTERVAL_S", "0.5")
             # The Memory Governor's prune/unload/critical thresholds are capped at
@@ -3129,7 +3128,8 @@ def main():
         # Headless demo mode should stay local even when public API mode is enabled.
         args.host = "127.0.0.1"
     elif args.desktop:
-        os.environ.setdefault("AURA_EAGER_LOCAL_SENSORY_BOOT", "0")
+        os.environ.setdefault("AURA_EAGER_LOCAL_SENSORY_BOOT", "1")
+        os.environ.setdefault("AURA_AUTO_LISTEN", "1")
 
     if not args.gui_window:
         check_environment()

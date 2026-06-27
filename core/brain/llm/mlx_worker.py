@@ -1075,13 +1075,13 @@ def _should_emit_generation_progress(
 
 
 def _prompt_cache_entry_budget_for_model(model_path: str) -> int:
-    from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
+    from core.runtime.desktop_boot_safety import desktop_resource_guard_enabled
 
     lowered = os.path.basename(str(model_path or "")).lower()
     if any(token in lowered for token in ("72b", "solver")):
         return 0
     if any(token in lowered for token in ("32b", "cortex", "zenith")):
-        if desktop_safe_boot_enabled():
+        if desktop_resource_guard_enabled():
             return 0
         return 2
     if any(token in lowered for token in ("14b", "7b", "brainstem")):
@@ -1224,12 +1224,9 @@ class WorkerMemorySentinel(threading.Thread):
         if configured:
             try:
                 configured_limit = max(4.0, float(configured))
-                safe_boot = str(os.environ.get("AURA_SAFE_BOOT_DESKTOP", "")).strip().lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                    "on",
-                }
+                from core.runtime.desktop_boot_safety import desktop_resource_guard_enabled
+
+                safe_boot = desktop_resource_guard_enabled()
                 unsafe_allowed = str(os.environ.get("AURA_ALLOW_UNSAFE_MEMORY_LIMITS", "")).strip().lower() in {
                     "1",
                     "true",

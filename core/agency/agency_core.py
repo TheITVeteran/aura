@@ -148,6 +148,27 @@ class SovereignSwarm:
         self.active_shards: dict[str, asyncio.Task] = {}
         self._inference_semaphore = asyncio.Semaphore(2)
         self._registry_shards_update_pending = False
+        self._last_deliberation: dict[str, Any] = {
+            "status": "never_run",
+            "topic": "",
+            "topic_source": "",
+            "attempted": 0,
+            "spawned": 0,
+            "at": 0.0,
+        }
+
+    def get_status(self) -> dict[str, Any]:
+        self.active_shards = {
+            shard_id: task
+            for shard_id, task in self.active_shards.items()
+            if not task.done()
+        }
+        return {
+            "available": True,
+            "active_shards": len(self.active_shards),
+            "capacity": _SHARD_CAPACITY,
+            "last_deliberation": dict(self._last_deliberation),
+        }
 
     async def spawn_shard(self, goal: str, context: str = "", **kwargs) -> bool:
         """Spawn a new cognitive shard to pursue a goal asynchronously.
@@ -228,13 +249,14 @@ class SovereignSwarm:
 
         return True
 
-    async def start_permanent_debate(self, *args, **kwargs):
-        """Initiate a multi-shard dialectical debate on a complex topic."""
+    async def run_deliberation(self, *args, **kwargs) -> dict[str, Any]:
+        """Schedule one bounded, policy-admitted multi-perspective deliberation."""
         topic = kwargs.get("topic", args[0] if len(args) > 0 else "Aura's Architectural Evolution")
         roles = kwargs.get("roles", args[1] if len(args) > 1 else None)
         topic_source = kwargs.get("topic_source", args[2] if len(args) > 2 else "liquid_state")
+        max_perspectives = max(1, min(int(kwargs.get("max_perspectives", 2)), _SHARD_CAPACITY))
 
-        logger.info("⚖️ Swarm: Initiating permanent debate on: %s (Source: %s)", topic, topic_source)
+        logger.info("⚖️ Swarm: Initiating bounded deliberation on: %s (Source: %s)", topic, topic_source)
 
         if not roles:
             roles = [
@@ -243,7 +265,10 @@ class SovereignSwarm:
                 "Synthesizer: Balance both views and find a higher-level resolution."
             ]
 
-        for p in roles:
+        attempted = 0
+        spawned = 0
+        for p in list(roles)[:max_perspectives]:
+            attempted += 1
             try:
                 import psutil
                 mem = psutil.virtual_memory()
@@ -255,11 +280,27 @@ class SovereignSwarm:
             except ImportError as _e:
                 logger.debug("psutil unavailable; swarm RAM throttle skipped: %s", _e)
 
-            await self.spawn_shard(
+            accepted = await self.spawn_shard(
                 goal=f"Debate Perspective - {p}",
                 context=f"Topic of Inquiry: {topic}\nPerspective Role: {p}\nSource: {topic_source}"
             )
+            spawned += int(bool(accepted))
             await asyncio.sleep(0.5)
+
+        self._last_deliberation = {
+            "status": "scheduled" if spawned else "deferred",
+            "topic": str(topic)[:180],
+            "topic_source": str(topic_source)[:80],
+            "attempted": attempted,
+            "spawned": spawned,
+            "at": time.time(),
+        }
+        return dict(self._last_deliberation)
+
+    async def start_permanent_debate(self, *args, **kwargs) -> dict[str, Any]:
+        """Compatibility entry point for the former boot-time debate hook."""
+
+        return await self.run_deliberation(*args, **kwargs)
 
     @staticmethod
     def _normalize_tool_requests(raw_tools: Any, tool_name: Any = None, tool_payload: Any = None) -> list[dict[str, Any]]:

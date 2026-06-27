@@ -17,6 +17,7 @@ from core.runtime.desktop_boot_safety import (
     compute_mlx_cache_limit,
     compute_mlx_memory_limit,
     compute_process_rss_limit,
+    desktop_resource_guard_enabled,
     desktop_safe_boot_enabled,
     inprocess_mlx_metal_enabled,
 )
@@ -197,11 +198,13 @@ def test_health_router_exposes_only_cortex_during_primary_proof(monkeypatch):
     assert router.endpoints[PRIMARY_ENDPOINT].client is sentinel_gate
 
 
-def test_desktop_safe_boot_tracks_app_launch_context(monkeypatch):
+def test_desktop_app_launch_uses_resource_guard_without_reduced_safe_boot(monkeypatch):
     monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
+    monkeypatch.delenv("AURA_DESKTOP_RESOURCE_GUARD", raising=False)
     monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
 
-    assert desktop_safe_boot_enabled() is True
+    assert desktop_safe_boot_enabled() is False
+    assert desktop_resource_guard_enabled() is True
 
 
 def test_inference_gate_disables_boot_prewarm_under_safe_desktop_boot(monkeypatch):
@@ -299,8 +302,8 @@ def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
     assert env["AURA_LOCAL_PARALLEL_SLOTS"] == "1"
     assert env["AURA_EAGER_LOCAL_SENSORY_BOOT"] == "0"
     assert env["AURA_ENABLE_PROACTIVE_VISION"] == "0"
-    assert env["AURA_SAFE_BOOT_METAL_CACHE_RATIO"] == "0.16"
-    assert env["AURA_SAFE_BOOT_METAL_CACHE_CAP_GB"] == "10"
+    assert env["AURA_DESKTOP_METAL_CACHE_RATIO"] == "0.16"
+    assert env["AURA_DESKTOP_METAL_CACHE_CAP_GB"] == "10"
     assert env["AURA_FOREGROUND_CHAT_MAX_TOKENS"] == "2048"
     assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "34"
     assert env["AURA_PROCESS_RSS_LIMIT_GB"] == "40"
@@ -327,10 +330,13 @@ def test_live_boot_proof_desktop_mode_mirrors_packaged_launcher(monkeypatch):
     env = build_safe_boot_env({}, mode="desktop")
 
     assert env["AURA_LOCAL_BACKEND"] == "mlx"
-    assert env["AURA_SAFE_BOOT_DESKTOP"] == "1"
+    assert env["AURA_SAFE_BOOT_DESKTOP"] == "0"
+    assert env["AURA_DESKTOP_RESOURCE_GUARD"] == "1"
     assert env["AURA_HEADLESS"] == "0"
     assert env["AURA_LAUNCHED_FROM_APP"] == "1"
     assert env["AURA_EXTERNAL_GUI_OWNER"] == "1"
+    assert env["AURA_EAGER_LOCAL_SENSORY_BOOT"] == "1"
+    assert env["AURA_AUTO_LISTEN"] == "1"
     assert env["AURA_EAGER_CORTEX_WARMUP"] == "0"
     assert env["AURA_DEFERRED_CORTEX_PREWARM"] == "1"
 
@@ -373,6 +379,8 @@ def test_live_boot_proof_clamps_unsafe_parent_memory_limits(monkeypatch):
 def test_live_boot_proof_uses_readiness_heartbeat_contract():
     source = (PROJECT_ROOT / "tools" / "live_boot_proof.py").read_text()
 
+    assert "resolve_launch_python()" in source
+    assert "self.launch_python" in source
     assert "/api/health/heartbeat" in source
     assert "required_probes" in source
     assert "runtime_probe_healthy" in source
@@ -559,7 +567,7 @@ def test_inprocess_mlx_metal_disabled_during_safe_boot(monkeypatch):
     )
 
     assert enabled is False
-    assert reason == "desktop_safe_boot"
+    assert reason == "desktop_resource_guard"
 
 
 def test_inprocess_mlx_metal_disabled_on_macos26_by_default(monkeypatch):

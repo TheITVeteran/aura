@@ -94,6 +94,21 @@ def _coqui_license_accepted() -> bool:
     )
 
 
+def _direct_stt_command_dispatch_enabled() -> bool:
+    """Return true only when raw STT should become chat input directly.
+
+    Normal desktop voice uses the wake-word/session layer as the authority
+    boundary.  Raw microphone transcripts are still published to WorldState so
+    wake-word detection and perceptual grounding can see them, but they must not
+    bypass that boundary and enter the user-input EventBus as commands.
+    """
+
+    return _env_flag("AURA_VOICE_DIRECT_EVENTBUS", False) or _env_flag(
+        "AURA_VOICE_ALWAYS_DIRECT_TO_CHAT",
+        False,
+    )
+
+
 def _get_whisper_model_class():
     """Import faster-whisper on demand so STT does not preload PyAV at module import."""
     global _WhisperModel, _whisper_import_attempted
@@ -1015,21 +1030,33 @@ class SovereignVoiceEngine:
         # Record validation state
         self._last_transcript_time = now
         self._last_transcript_text = normalized
+        direct_command_dispatch = _direct_stt_command_dispatch_enabled()
 
-        # 3. Direct recording of a user-sourced salient event in WorldState with salience=1.0
+        # 3. Record the transcript for wake-word/perception.  By default this is
+        # a candidate transcript, not an authorized user command.  The wake-word
+        # detector is the command boundary for normal desktop voice.
         try:
             from core.world_state import get_world_state
             ws = get_world_state()
             ws.last_voice_transcript = text
             ws.voice_activity_detected = True
             ws.record_event(
-                description=f"User voice command: {text}",
-                source="user",
-                salience=1.0,
-                ttl=600.0,
-                metadata={"transcript": text}
+                description=(
+                    f"User voice command: {text}"
+                    if direct_command_dispatch
+                    else f"Voice transcript candidate: {text}"
+                ),
+                source="user" if direct_command_dispatch else "voice_stt_candidate",
+                salience=1.0 if direct_command_dispatch else 0.35,
+                ttl=600.0 if direct_command_dispatch else 90.0,
+                transcript=text,
+                authorized_command=bool(direct_command_dispatch),
+                requires_wake_word_session=not direct_command_dispatch,
             )
-            logger.info("🎙️ Recorded salient voice event in WorldState")
+            logger.info(
+                "🎙️ Recorded %svoice transcript in WorldState",
+                "" if direct_command_dispatch else "candidate ",
+            )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
             record_degradation("voice_engine.world_state_transcript_event", e)
             logger.error("Failed to record transcript event in WorldState: %s", e)
@@ -1052,20 +1079,29 @@ class SovereignVoiceEngine:
             except RuntimeError as e:
                 logger.debug("VoiceEngine: transcript dispatch skipped (loop closed): %s", e)
 
-        # Path 2: EventBus dispatch (always, for redundancy)
-        try:
-            from core.event_bus import get_event_bus
-            bus = get_event_bus()
-            bus.publish_threadsafe("user_input", {"message": text, "source": "voice"})
-            logger.info("🍄 Transcript routed via EventBus: %s", text[:60])
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('voice_engine', e)
-            logger.error("EventBus dispatch failed: %s", e)
+        # Path 2: EventBus dispatch only in explicit raw-dictation mode.  Normal
+        # voice commands route through wake_word._dispatch_to_conversation_lane()
+        # after a wake/session boundary, so ambient STT cannot hijack chat.
+        if direct_command_dispatch:
+            try:
+                from core.event_bus import get_event_bus
+                bus = get_event_bus()
+                bus.publish_threadsafe("user_input", {"message": text, "source": "voice"})
+                logger.info("🍄 Transcript routed via EventBus: %s", text[:60])
+            except (ImportError, AttributeError, RuntimeError) as e:
+                record_degradation('voice_engine', e)
+                logger.error("EventBus dispatch failed: %s", e)
+        else:
+            logger.debug(
+                "VoiceEngine: raw STT transcript retained for wake-word/session; "
+                "direct EventBus dispatch disabled."
+            )
 
         # Pulse the mycelial connection
         self._signal_mycelium("voice_engine", "cognition", {
-            "event": "transcript",
-            "text": text[:100]
+            "event": "transcript" if direct_command_dispatch else "transcript_candidate",
+            "text": text[:100],
+            "authorized_command": bool(direct_command_dispatch),
         })
 
     async def _handle_transcript(self, text: str):

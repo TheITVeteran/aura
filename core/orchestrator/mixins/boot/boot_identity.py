@@ -120,20 +120,18 @@ class BootIdentityMixin:
             )
 
             modifier = self.self_modifier
-            if (
-                config.security.auto_fix_enabled
-                and modifier
-                and modifier.runtime_promotion_enabled()
-            ):
-                # [STABILITY] Use local variable to satisfy Pyre2 None check
+            if config.security.auto_fix_enabled and modifier:
+                # Monitoring is safe in every full runtime: promotion remains
+                # separately gated, while proposal-only mode still diagnoses,
+                # validates, and quarantines repairs produced from real faults.
                 modifier.start_monitoring()
-                logger.info("🧬 Self-Modification Engine Active")
-            elif config.security.auto_fix_enabled and modifier:
-                logger.info(
-                    "🧬 Self-Modification Engine registered in proposal-only mode; "
-                    "source promotion requires quarantine validation, a clean git branch, "
-                    "and an explicit repair-lab or supervised operator profile."
-                )
+                if modifier.runtime_promotion_enabled():
+                    logger.info("🧬 Self-Modification Engine active with supervised promotion")
+                else:
+                    logger.info(
+                        "🧬 Self-Modification Engine active in validation/quarantine mode; "
+                        "source promotion requires a supervised operator profile."
+                    )
         except _BOOT_IDENTITY_BOUNDARY_ERRORS as e:
             _record_identity_degradation(e, action="continued boot with disabled self-modification engine", severity="error")
             logger.warning("🧬 Self-Modification Engine init failed: %s", e)

@@ -199,8 +199,10 @@ class AutonomousSelfModificationEngine:
             "session_start": time.time(),
         }
         self._fix_lock = asyncio.Lock()
+        self._repair_event = asyncio.Event()
         self._last_cycle_error: dict[str, Any] | None = None
         self._last_refinement_error: dict[str, Any] | None = None
+        self._last_proposal: dict[str, Any] | None = None
 
         logger.info("✓ Autonomous Self-Modification Engine initialized")
 
@@ -244,6 +246,7 @@ class AutonomousSelfModificationEngine:
         async def _log():
             event = await self.error_intelligence.on_error(error, context, skill_name, goal)
             logger.debug("Error logged: %s", event.fingerprint())
+            self._repair_event.set()
 
         _schedule_background_coro(_log(), label="self_mod_error_log")
 
@@ -826,27 +829,6 @@ class AutonomousSelfModificationEngine:
             bugs = await self.diagnose_current_bugs()
 
             if not bugs:
-                # Re-enabled proactive refinement (v47) but only every 4 cycles to prevent LLM spam/locking
-                if random.random() < 0.25:
-                    logger.info("No bugs detected - triggering proactive refinement cycle.")
-                    try:
-                        from ..thought_stream import get_emitter
-
-                        get_emitter().emit(
-                            "Proactive Refinement 💎",
-                            "Scanning for architectural optimizations...",
-                            level="info",
-                            category="Self-Modification",
-                        )
-                    except (ImportError, AttributeError, RuntimeError) as _exc:
-                        _record_self_modification_degradation(
-                            _exc,
-                            action="Continued proactive refinement after non-critical thought-stream notification failed",
-                            extra={"cycle": "autonomous", "event": "proactive_refinement"},
-                        )
-                        logger.debug("Suppressed Exception: %s", _exc)
-                    return await self.run_refinement_cycle()
-
                 logger.info("No bugs detected - system healthy (idle)")
                 return {"success": True, "bugs_found": 0, "fixes_applied": 0}
 
@@ -907,12 +889,17 @@ class AutonomousSelfModificationEngine:
                     "cycle_time": cycle_time,
                 }
 
-            logger.info("Auto-fix disabled - fix proposed but not applied")
+            quarantine = await self._quarantine_fix_proposal(fix_proposal)
+            self._last_proposal = quarantine
+            logger.info(
+                "Auto-fix disabled - validated proposal retained in quarantine (%s)",
+                quarantine.get("status", "unknown"),
+            )
             return {
-                "success": True,
+                "success": bool(quarantine.get("validated", False)),
                 "bugs_found": len(bugs),
                 "fixes_applied": 0,
-                "proposed_fix": fix_proposal,
+                "proposal": quarantine,
             }
         except SELF_MOD_RECOVERABLE_ERRORS as exc:
             duration = time.time() - cycle_start
@@ -996,6 +983,96 @@ class AutonomousSelfModificationEngine:
                 "failure": failure,
             }
 
+    async def _quarantine_fix_proposal(self, fix_proposal: dict[str, Any]) -> dict[str, Any]:
+        """Validate a generated repair and retain it without mutating live source."""
+
+        fix = fix_proposal.get("fix")
+        target = str(getattr(fix, "target_file", "") or "")
+        if not target:
+            return {"status": "rejected", "validated": False, "reason": "missing_target_file"}
+
+        target_path = Path(target)
+        if not target_path.is_absolute():
+            target_path = self.code_base / target_path
+        try:
+            target_path = target_path.resolve(strict=True)
+            relative_target = target_path.relative_to(self.code_base.resolve(strict=True))
+        except (OSError, ValueError) as exc:
+            _record_self_modification_degradation(
+                exc,
+                action="rejected repair proposal outside the configured source root",
+                extra={"target_file": target},
+            )
+            return {
+                "status": "rejected",
+                "validated": False,
+                "reason": "target_outside_source_root",
+            }
+        try:
+            before_source = target_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            _record_self_modification_degradation(
+                exc,
+                action="rejected repair proposal because target source could not be read",
+                extra={"target_file": target},
+            )
+            return {"status": "rejected", "validated": False, "reason": "target_unreadable"}
+
+        after_source = before_source
+        if hasattr(fix, "original_code") and hasattr(fix, "fixed_code"):
+            original = str(getattr(fix, "original_code", ""))
+            replacement = str(getattr(fix, "fixed_code", ""))
+            if not original or before_source.count(original) != 1:
+                return {
+                    "status": "rejected",
+                    "validated": False,
+                    "reason": "repair_anchor_not_unique",
+                    "target_file": target,
+                }
+            after_source = before_source.replace(original, replacement, 1)
+        elif hasattr(fix, "chunks"):
+            for chunk in list(getattr(fix, "chunks", []) or []):
+                original = str(chunk.get("original", ""))
+                replacement = str(chunk.get("fixed", ""))
+                if not original or after_source.count(original) != 1:
+                    return {
+                        "status": "rejected",
+                        "validated": False,
+                        "reason": "repair_anchor_not_unique",
+                        "target_file": target,
+                    }
+                after_source = after_source.replace(original, replacement, 1)
+        else:
+            return {"status": "rejected", "validated": False, "reason": "unsupported_fix_shape"}
+
+        from dataclasses import asdict
+        from core.self_modification.safe_pipeline import SafePipeline
+
+        proposal = await SafePipeline().run(
+            drive="repair",
+            intent=str(getattr(fix, "explanation", "repair observed runtime defect")),
+            file_path=str(relative_target),
+            before_source=before_source,
+            after_source=after_source,
+            owner_approved=False,
+        )
+        payload = asdict(proposal)
+        payload["status"] = (
+            "quarantined"
+            if proposal.promotion_artifact_path
+            else "rejected"
+            if proposal.blocked_at
+            else "validated"
+        )
+        payload["validated"] = bool(
+            proposal.promotion_artifact_path
+            or (
+                "shadow_runtime" in proposal.stages_completed
+                and "formal_verify" in proposal.stages_completed
+            )
+        )
+        return payload
+
     # ========================================================================
     # Background Monitoring
     # ========================================================================
@@ -1045,8 +1122,8 @@ class AutonomousSelfModificationEngine:
         from core.container import ServiceContainer
         from core.runtime.background_policy import background_activity_reason
 
-        # Phase 24 Optimization: Delay first cycle to unblock boot
-        await asyncio.sleep(10)
+        # Event-driven: the monitor consumes real error observations instead of
+        # polling the model or inventing optimization work while the runtime is idle.
         logger.info("Monitoring loop starting...")
         _consecutive_failures = 0
         _max_failures = 5
@@ -1054,11 +1131,11 @@ class AutonomousSelfModificationEngine:
 
         while self.monitoring_enabled:
             try:
+                await self._repair_event.wait()
                 orch = ServiceContainer.get("orchestrator", default=None)
                 policy_reason = background_activity_reason(
                     orch,
                     min_idle_seconds=float(self.monitor_interval),
-                    # Memory and failure thresholds are now managed by relaxed BackgroundPolicy defaults
                     require_conversation_ready=False,
                 )
                 if policy_reason:
@@ -1066,6 +1143,7 @@ class AutonomousSelfModificationEngine:
                     await asyncio.sleep(min(_backoff, 60.0))
                     continue
 
+                self._repair_event.clear()
                 result = await self.run_autonomous_cycle()
 
                 # Fix: run_autonomous_cycle can return a bool via report_optimization
@@ -1256,6 +1334,8 @@ class AutonomousSelfModificationEngine:
             "session_stats": self.session_stats,
             "last_cycle_error": getattr(self, "_last_cycle_error", None),
             "last_refinement_error": getattr(self, "_last_refinement_error", None),
+            "last_proposal": getattr(self, "_last_proposal", None),
+            "repair_event_pending": bool(self._repair_event.is_set()),
             "error_intelligence": ei_status,
             "modification_stats": mod_stats,
             "learned_strategies": len(learning_report),
@@ -1265,6 +1345,26 @@ class AutonomousSelfModificationEngine:
                 "improvement_message": improvement_msg,
                 "learning_velocity": f"{learning_velocity:.2f} fixes/hour",
             },
+        }
+
+    def runtime_status(self) -> dict[str, Any]:
+        """Return liveness without loading historical learning reports."""
+
+        return {
+            "running": bool(
+                self.monitoring_enabled
+                and self.monitor_thread
+                and not self.monitor_thread.done()
+            ),
+            "health_watcher_running": bool(
+                getattr(self, "health_thread", None)
+                and not self.health_thread.done()
+            ),
+            "mode": "promotion" if self.runtime_promotion_enabled() else "validation_quarantine",
+            "repair_event_pending": bool(self._repair_event.is_set()),
+            "last_proposal": getattr(self, "_last_proposal", None),
+            "last_cycle_error": getattr(self, "_last_cycle_error", None),
+            "session_stats": dict(self.session_stats),
         }
 
     def get_report(self) -> str:

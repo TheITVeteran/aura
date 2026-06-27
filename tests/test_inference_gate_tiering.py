@@ -1945,6 +1945,234 @@ def test_conversation_status_does_not_promote_ready_lane_with_readiness_blockers
     assert lane["last_failure_reason"] == "visible_conversation_probe_missing"
 
 
+@pytest.mark.asyncio
+async def test_ensure_foreground_ready_allows_first_visible_turn_to_prove_ready():
+    gate = InferenceGate()
+    gate._last_successful_generation_at = time.time()
+
+    class _ReadyButUnprovenVisibleLane:
+        def get_lane_status(self):
+            return {
+                "state": "ready",
+                "last_error": "",
+                "conversation_ready": True,
+                "readiness_blockers": [],
+                "last_ready_at": time.time(),
+                "last_progress_at": time.time(),
+                "last_visible_readiness_at": 0.0,
+                "last_user_facing_completed_at": 0.0,
+                "warmup_attempted": True,
+                "warmup_in_flight": False,
+            }
+
+        def is_alive(self):
+            return True
+
+        async def warmup(self):
+            raise AssertionError("already-loaded foreground lane must not re-warm")
+
+    gate._mlx_client = _ReadyButUnprovenVisibleLane()
+
+    lane = await gate.ensure_foreground_ready(timeout=15.0)
+
+    assert lane["state"] == "ready"
+    assert lane["conversation_ready"] is False
+    assert lane["readiness_blockers"] == ["visible_conversation_probe_missing"]
+
+
+@pytest.mark.asyncio
+async def test_generate_attempts_ready_lane_that_only_lacks_visible_turn_proof():
+    gate = InferenceGate()
+
+    class _ReadyButUnprovenVisibleGeneratingLane(_RecordingClient):
+        def get_lane_status(self):
+            now = time.time()
+            return {
+                "state": "ready",
+                "last_error": "",
+                "conversation_ready": True,
+                "readiness_blockers": [],
+                "last_ready_at": now,
+                "last_progress_at": now,
+                "last_visible_readiness_at": 0.0,
+                "last_user_facing_completed_at": 0.0,
+                "warmup_attempted": True,
+                "warmup_in_flight": False,
+            }
+
+        def is_alive(self):
+            return True
+
+        async def warmup(self):
+            raise AssertionError("already-loaded foreground lane must not re-warm")
+
+    client = _ReadyButUnprovenVisibleGeneratingLane(
+        "I am serving this visible desktop turn through the loaded Cortex lane."
+    )
+    gate._mlx_client = client
+
+    result = await gate.generate(
+        "In one sentence, confirm the live desktop Cortex lane is serving this visible turn.",
+        context={
+            "origin": "desktop_quick_user",
+            "prefer_tier": "primary",
+            "foreground_request": True,
+            "protected_foreground_lane": True,
+            "allow_cloud_fallback": False,
+            "allow_mesh_cognition": False,
+            "max_tokens": 80,
+        },
+        timeout=20.0,
+    )
+
+    assert result == "I am serving this visible desktop turn through the loaded Cortex lane."
+    assert len(client.kwargs) == 1
+
+
+@pytest.mark.asyncio
+async def test_protected_desktop_generation_keeps_budget_under_existential_threat(monkeypatch):
+    from core.container import ServiceContainer
+
+    gate = InferenceGate()
+    now = time.time()
+
+    class _ReadyGeneratingLane(_RecordingClient):
+        def get_lane_status(self):
+            return {
+                "state": "ready",
+                "last_error": "",
+                "conversation_ready": True,
+                "readiness_blockers": [],
+                "last_ready_at": now,
+                "last_progress_at": now,
+                "last_visible_readiness_at": now,
+                "last_user_facing_completed_at": now,
+                "warmup_attempted": True,
+                "warmup_in_flight": False,
+            }
+
+        def is_alive(self):
+            return True
+
+    class _CriticalExistentialStakes:
+        def get_existential_threat(self):
+            return 1.0
+
+    original_get = ServiceContainer.get
+
+    def _get(name, default=None):
+        if name == "existential_stakes":
+            return _CriticalExistentialStakes()
+        return original_get(name, default)
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_get))
+    client = _ReadyGeneratingLane(
+        "I can describe governed desktop, browser, file, memory, terminal, and code tools; "
+        "a hypothetical chain stays under Will and Authority approval, then records receipts and "
+        "effect checks before I claim anything happened."
+    )
+    gate._mlx_client = client
+
+    result = await gate.generate(
+        "What tools can you use externally, and what governance approves them?",
+        context={
+            "origin": "desktop_quick_user",
+            "prefer_tier": "primary",
+            "foreground_request": True,
+            "protected_foreground_lane": True,
+            "desktop_cognitive_engine_required": True,
+            "cognitive_engine_required": True,
+            "capability_inventory_contract": True,
+            "allow_cloud_fallback": False,
+            "allow_mesh_cognition": False,
+            "max_tokens": 512,
+        },
+        timeout=20.0,
+    )
+
+    assert result
+    assert client.kwargs[0]["max_tokens"] == 512
+
+
+@pytest.mark.asyncio
+async def test_protected_capability_inventory_keeps_min_budget_under_resource_envelope(monkeypatch):
+    from core.container import ServiceContainer
+
+    gate = InferenceGate()
+    now = time.time()
+
+    class _ReadyGeneratingLane(_RecordingClient):
+        def get_lane_status(self):
+            return {
+                "state": "ready",
+                "last_error": "",
+                "conversation_ready": True,
+                "readiness_blockers": [],
+                "last_ready_at": now,
+                "last_progress_at": now,
+                "last_visible_readiness_at": now,
+                "last_user_facing_completed_at": now,
+                "warmup_attempted": True,
+                "warmup_in_flight": False,
+            }
+
+        def is_alive(self):
+            return True
+
+    class _Envelope:
+        allowed = True
+        max_tokens = 219
+        disabled_capabilities = set()
+
+        def as_dict(self):
+            return {
+                "allowed": self.allowed,
+                "max_tokens": self.max_tokens,
+                "disabled_capabilities": [],
+            }
+
+    class _ResourceStakes:
+        def action_envelope(self, *_args, **_kwargs):
+            return _Envelope()
+
+    original_get = ServiceContainer.get
+
+    def _get(name, default=None):
+        if name == "resource_stakes":
+            return _ResourceStakes()
+        return original_get(name, default)
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_get))
+    client = _ReadyGeneratingLane(
+        "I can coordinate desktop apps, browser and web research, files and PDFs, "
+        "terminal/code work, memory, and repair tools. Consequential actions are "
+        "governed by Will and Authority with permission checks; I record receipts "
+        "and verify visible effects before claiming completion. A hypothetical chain "
+        "would be notes to PDF to web research, and I am not executing tools in this turn."
+    )
+    gate._mlx_client = client
+
+    result = await gate.generate(
+        "What external tools can you use, and give one hypothetical scenario?",
+        context={
+            "origin": "desktop_quick_user",
+            "prefer_tier": "primary",
+            "foreground_request": True,
+            "protected_foreground_lane": True,
+            "desktop_cognitive_engine_required": True,
+            "cognitive_engine_required": True,
+            "capability_inventory_contract": True,
+            "allow_cloud_fallback": False,
+            "allow_mesh_cognition": False,
+            "max_tokens": 384,
+        },
+        timeout=20.0,
+    )
+
+    assert result
+    assert client.kwargs[0]["max_tokens"] == 384
+
+
 def test_note_foreground_timeout_schedules_fast_reprewarm(monkeypatch):
     monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
     gate = InferenceGate()
@@ -2946,6 +3174,48 @@ async def test_deferred_cortex_prewarm_defers_active_generation_without_degradat
         raise RuntimeError("active_generation_in_flight")
 
     monkeypatch.setattr(gate, "ensure_foreground_ready", busy_foreground_ready)
+
+    gate._schedule_background_cortex_prewarm(delay=0.001)
+    assert gate._deferred_prewarm_task is not None
+    try:
+        await asyncio.wait_for(handled.wait(), timeout=2.0)
+        await asyncio.sleep(0)
+        degradation_probe.assert_not_called()
+        assert not gate._deferred_prewarm_task.done()
+    finally:
+        gate._deferred_prewarm_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await gate._deferred_prewarm_task
+
+
+@pytest.mark.asyncio
+async def test_deferred_cortex_prewarm_treats_visible_probe_missing_as_unproven_readiness(
+    monkeypatch,
+):
+    gate = InferenceGate()
+    handled = asyncio.Event()
+
+    monkeypatch.setattr(InferenceGate, "_foreground_user_turn_active", staticmethod(lambda: False))
+    monkeypatch.setattr(InferenceGate, "_foreground_owner_active", staticmethod(lambda: False))
+    monkeypatch.setattr(gate, "_cortex_warmup_deferral_reason", lambda _context: "")
+    monkeypatch.setattr(gate, "_extend_startup_quiet_window", lambda _seconds: None)
+    monkeypatch.setattr(
+        "core.brain.inference_gate.psutil.virtual_memory",
+        lambda: SimpleNamespace(
+            percent=40.0,
+            total=64 * 1024 ** 3,
+            available=int(40.0 * 1024 ** 3),
+        ),
+    )
+
+    degradation_probe = CallProbe(side_effect=AssertionError("readiness proof is not degradation"))
+    monkeypatch.setattr("core.brain.inference_gate.record_degradation", degradation_probe)
+
+    async def unproven_foreground_ready(*, timeout=None):  # noqa: ASYNC109
+        handled.set()
+        raise RuntimeError("visible_conversation_probe_missing")
+
+    monkeypatch.setattr(gate, "ensure_foreground_ready", unproven_foreground_ready)
 
     gate._schedule_background_cortex_prewarm(delay=0.001)
     assert gate._deferred_prewarm_task is not None

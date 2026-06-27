@@ -22,8 +22,11 @@ _PERMISSION_RECOVERABLE_ERRORS = (
 )
 
 
-def _load_scripting_bridge_application() -> Any:
-    from ScriptingBridge import SBApplication  # type: ignore
+def _load_scripting_bridge_application() -> Any | None:
+    try:
+        from ScriptingBridge import SBApplication  # type: ignore
+    except ImportError:
+        return None
 
     return SBApplication
 
@@ -237,6 +240,31 @@ class PermissionGuard(AuraBaseModule):
             }
             self._cache_ts[PermissionType.ACCESSIBILITY] = time.monotonic()
             return trusted
+        except ImportError as exc:
+            probe = self._accessibility_preflight_probe()
+            trusted = bool(probe and probe.get("granted") is True)
+            self._cache[PermissionType.ACCESSIBILITY] = {
+                "granted": trusted,
+                "status": "active" if trusted else "prompt_unavailable",
+                "guidance": (
+                    ""
+                    if trusted
+                    else (
+                        "Aura could not import pyobjc-framework-ApplicationServices "
+                        "to surface the Accessibility prompt. Install the declared "
+                        "macOS desktop requirements, then approve Aura in System "
+                        "Settings -> Privacy & Security -> Accessibility."
+                    )
+                ),
+                "detail": f"{type(exc).__name__}: {exc}",
+            }
+            self._cache_ts[PermissionType.ACCESSIBILITY] = time.monotonic()
+            self.logger.warning(
+                "Accessibility prompt unavailable because pyobjc-framework-ApplicationServices "
+                "is not installed for %s.",
+                sys.executable,
+            )
+            return trusted
         except _PERMISSION_RECOVERABLE_ERRORS as exc:
             record_degradation("permission_guard", exc)
             self.logger.debug("Accessibility trust prompt unavailable: %s", exc)
@@ -316,6 +344,17 @@ class PermissionGuard(AuraBaseModule):
             }
         try:
             application_bridge = _load_scripting_bridge_application()
+            if application_bridge is None:
+                return {
+                    "granted": False,
+                    "status": "dependency_missing",
+                    "guidance": (
+                        "Install pyobjc-framework-ScriptingBridge for native "
+                        "Automation preflight, then allow Aura to control System Events. "
+                        + self.get_guidance(PermissionType.AUTOMATION)
+                    ),
+                    "detail": "ScriptingBridge is not installed for this Python interpreter.",
+                }
             system_events = application_bridge.applicationWithBundleIdentifier_("com.apple.systemevents")
             # Verify permission by querying the process count (safe, single-call)
             _ = len(system_events.processes())

@@ -115,6 +115,9 @@ class WakeWordDetector:
         try:
             while self._started:
                 try:
+                    healer = ServiceContainer.get("self_healing", default=None)
+                    if healer is not None:
+                        healer.heartbeat("wake_word")
                     transcript = self._get_latest_transcript()
 
                     if self.state == WakeState.IDLE:
@@ -473,6 +476,7 @@ class WakeWordDetector:
 
     def get_status(self) -> Dict[str, Any]:
         return {
+            "running": bool(self._started and self._task and not self._task.done()),
             "state": self.state.value,
             "wake_count": self._wake_count,
             "session_active": self.state != WakeState.IDLE,

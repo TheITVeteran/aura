@@ -15,6 +15,7 @@ cognitive modules at a deeper level than the service bus.
 Persistence: state is checkpointed to ~/.aura/data/mhaf_state.json
 """
 
+from core.runtime.background_policy import constitutive_compute_budget
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 import asyncio
@@ -100,6 +101,10 @@ class MycelialHypergraphAttractorField:
         self._free_energy: float = 1.0
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self._tick_count = 0
+        self._last_tick = 0.0
+        self._loop_errors = 0
+        self._last_budget = None
 
         # Register default nodes
         for name in self.DEFAULT_NODES:
@@ -222,13 +227,31 @@ class MycelialHypergraphAttractorField:
         """Background loop: sync node activations from live services."""
         while self._running:
             try:
-                await asyncio.sleep(2.0)
+                budget = constitutive_compute_budget(
+                    "mhaf",
+                    0.5,
+                    min_hz=0.1,
+                    foreground_hz=0.2,
+                    memory_high_hz=0.2,
+                    memory_critical_hz=0.1,
+                    failure_pressure_hz=0.2,
+                )
+                self._last_budget = budget
+                await asyncio.sleep(budget.interval_s)
                 self._sync_from_services()
                 self._compute_global_phi()
                 self._minimize_free_energy()
+                self._tick_count += 1
+                self._last_tick = time.time()
+                from core.container import ServiceContainer
+
+                healer = ServiceContainer.get("self_healing", default=None)
+                if healer is not None:
+                    healer.heartbeat("mhaf")
             except asyncio.CancelledError:
                 break
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                self._loop_errors += 1
                 record_degradation('mhaf_field', e)
                 logger.debug("MHAF loop error: %s", e)
 
@@ -301,7 +324,11 @@ class MycelialHypergraphAttractorField:
         return "\n".join(lines)
 
     def get_state_dict(self) -> dict:
-        return {
+        state = {
+            "online": bool(self._running and self._task and not self._task.done()),
+            "tick_count": self._tick_count,
+            "last_tick": self._last_tick,
+            "loop_errors": self._loop_errors,
             "global_phi": self.get_phi(),
             "free_energy": round(self._free_energy, 4),
             "node_count": len(self._nodes),
@@ -311,6 +338,15 @@ class MycelialHypergraphAttractorField:
                 for n, nd in sorted(self._nodes.items(), key=lambda x: x[1].activation, reverse=True)[:5]
             },
         }
+        if self._last_budget is not None:
+            state["compute_budget"] = {
+                "effective_hz": self._last_budget.effective_hz,
+                "interval_s": self._last_budget.interval_s,
+                "reason": self._last_budget.reason,
+                "foreground_active": self._last_budget.foreground_active,
+                "memory_percent": self._last_budget.memory_percent,
+            }
+        return state
 
     def _save(self):
         """Checkpoint MHAF state to disk (Horcrux persistence)."""

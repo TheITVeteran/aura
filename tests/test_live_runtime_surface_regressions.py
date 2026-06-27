@@ -484,6 +484,58 @@ def test_health_pulse_reports_conversation_warmup_as_booting_not_failure(monkeyp
     assert "❌ conversation_lane" not in pulse
 
 
+def test_health_pulse_reports_cold_conversation_standby_as_booting_not_degraded(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+    from core.subsystem_audit import SubsystemAudit
+
+    required_probes = {
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = True
+    monkeypatch.setenv("AURA_HEALTH_PULSE_BOOT_GRACE_S", "120")
+    monkeypatch.setattr("core.subsystem_audit.is_shutdown_requested", lambda: False)
+    monkeypatch.setattr(
+        "core.runtime.health_contract.runtime_health_report",
+        lambda: {
+            "healthy": True,
+            "status": "healthy",
+            "required_probes": required_probes,
+            "failures": {"critical": [], "important": [], "optional": []},
+        },
+    )
+
+    class ColdConversationGate:
+        @staticmethod
+        def get_conversation_status():
+            return {
+                "conversation_ready": False,
+                "state": "cold",
+                "warmup_attempted": False,
+                "warmup_in_flight": False,
+                "last_failure_reason": "worker_not_alive,init_not_complete,lane_cold",
+            }
+
+    ServiceContainer.register_instance("inference_gate", ColdConversationGate())
+    try:
+        audit = SubsystemAudit()
+        for name in audit.SUBSYSTEMS:
+            audit.heartbeat(name)
+
+        pulse = audit.emit_pulse()
+    finally:
+        ServiceContainer.clear()
+
+    assert "Runtime: BOOTING" in pulse
+    assert "Required probes: PASS" in pulse
+    assert "Subsystem audit: PASS" in pulse
+    assert "Conversation: STANDBY" in pulse
+    assert "Runtime: DEGRADED" not in pulse
+    assert "Conversation: FAIL" not in pulse
+    assert "❌ conversation_lane" not in pulse
+
+
 def test_health_pulse_reports_active_generation_as_working_not_failure(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS

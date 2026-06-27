@@ -390,7 +390,15 @@ class SubsystemAudit:
             and not conversation_ready
             and _conversation_lane_is_boot_warming(conversation_lane)
         )
-        boot_warming = core_boot_warming or conversation_boot_warming
+        conversation_grace_standby = (
+            boot_grace_active
+            and not shutdown_active
+            and required_ok
+            and subsystem_ok
+            and not conversation_ready
+            and conversation_standby
+        )
+        boot_warming = core_boot_warming or conversation_boot_warming or conversation_grace_standby
         if shutdown_active:
             probe_status = "SHUTDOWN"
             conversation_status = "STOPPING"
@@ -400,6 +408,9 @@ class SubsystemAudit:
         elif conversation_boot_warming:
             probe_status = "PASS" if required_ok else "WARMING"
             conversation_status = "WARMING"
+        elif conversation_grace_standby:
+            probe_status = "PASS"
+            conversation_status = "STANDBY"
         else:
             probe_status = "PASS" if required_ok else "FAIL"
             conversation_status = (
@@ -441,6 +452,8 @@ class SubsystemAudit:
             lines.append("  ⏳ boot: required runtime probes are still warming.")
         elif conversation_boot_warming:
             lines.append("  ⏳ boot: conversation lane is still warming.")
+        elif conversation_grace_standby:
+            lines.append("  ⏳ boot: conversation lane is standing by for the first visible turn.")
         if not shutdown_active and not boot_warming and (not contract_healthy or not required_ok):
             failures = contract.get("failures", {}) if isinstance(contract, dict) else {}
             for tier in ("critical", "important"):

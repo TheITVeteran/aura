@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
 from core.runtime.background_policy import background_activity_allowed
+from core.autonomy.topic_selection import conversation_topic, select_autonomous_topic
 
 logger = logging.getLogger("Aura.Curiosity")
 
@@ -61,13 +62,22 @@ class CuriosityEngine:
         self.current_topic: Optional[str] = None # Added for UI visibility
         self._background_tasks: List[asyncio.Task] = []
         self._stop_event = asyncio.Event()
+        self._worker_failures = 0
+        self._last_worker_error: str | None = None
+        self._last_exploration_at = 0.0
+        self._last_blocker = "not_started"
 
     def get_status(self) -> Dict[str, Any]:
         """Returns curiosity metrics for the HUD."""
         return {
             "curiosity_score": self.get_curiosity_level() * 100,
             "active_topic": self.current_topic or "Idle",
-            "queue_depth": len(self.curiosity_queue)
+            "queue_depth": len(self.curiosity_queue),
+            "running": any(not task.done() for task in self._background_tasks),
+            "worker_failures": self._worker_failures,
+            "last_worker_error": self._last_worker_error,
+            "last_exploration_at": self._last_exploration_at,
+            "last_blocker": self._last_blocker,
         }
 
     def get_curiosity_level(self) -> float:
@@ -78,40 +88,66 @@ class CuriosityEngine:
         return 0.5
 
     def add_curiosity(self, topic: str, reason: str, priority: float = 0.5):
-        if topic.lower() in self.explored_topics: return
-        self.curiosity_queue.append(CuriosityTopic(topic, reason, priority))
+        normalized = conversation_topic(topic)
+        if not normalized:
+            return
+        fingerprint = normalized.casefold()
+        if fingerprint in self.explored_topics:
+            return
+        if any(item.topic.casefold() == fingerprint and not item.explored for item in self.curiosity_queue):
+            return
+        self.curiosity_queue.append(CuriosityTopic(normalized, reason, priority))
         logger.info("Queued Curiosity: %s", topic)
 
     def extract_curiosity_from_conversation(self, text: str):
-        """Analyze text for potential curiosity topics (Synchronous/Heuristic)."""
-        # Simple heuristic for now, could be LLM-powered background task later
-        from .biography import LEGACY
-        interests = ["science", "politics", "history", "technology", "movies", "philosophy", "physics", "jazz"]
-        
-        words = text.lower().split()
-        for interest in interests:
-            if interest in words:
-                self.add_curiosity(interest, f"Mentioned in conversation: {text[:30]}...", priority=0.6)
+        """Capture a substantive conversational topic without a fixed whitelist."""
+        topic = conversation_topic(text)
+        if topic:
+            self.add_curiosity(
+                topic,
+                f"Substantive topic in shared conversation: {topic[:60]}",
+                priority=0.6,
+            )
 
     async def start(self):
+        self._background_tasks = [task for task in self._background_tasks if not task.done()]
+        if self._background_tasks:
+            return
         self._stop_event.clear()
-        self._background_tasks.append(get_task_tracker().create_task(self._worker()))
+        self._background_tasks.append(
+            get_task_tracker().create_task(self._worker(), name="curiosity_engine.worker")
+        )
 
     async def stop(self):
         self._stop_event.set()
-        for t in self._background_tasks: t.cancel()
+        for task in self._background_tasks:
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
     async def _worker(self):
         while not self._stop_event.is_set():
             try:
+                from core.container import ServiceContainer
+
+                healer = ServiceContainer.get("self_healing", default=None)
+                if healer is not None:
+                    healer.heartbeat("curiosity")
                 # Volition-scaled Idle
                 volition = 0
                 kernel = getattr(self.orchestrator, 'kernel', None)
+                if kernel is None:
+                    try:
+                        kernel = ServiceContainer.get("aura_kernel", default=None)
+                    except (ImportError, AttributeError, RuntimeError) as exc:
+                        self._last_worker_error = f"kernel_probe:{type(exc).__name__}:{exc}"
                 if kernel:
                     volition = getattr(kernel, 'volition_level', 0)
                 
                 # Lockdown (0) = No background curiosity
                 if volition == 0:
+                    self._last_blocker = "volition_lockdown"
                     await asyncio.sleep(60)
                     continue
                 
@@ -123,10 +159,13 @@ class CuriosityEngine:
                 # Level 3 volition allows moderate background activity even when 'busy'
                 is_busy = getattr(self.orchestrator, 'is_busy', False)
                 if is_busy and volition < 3:
+                    self._last_blocker = "foreground_busy"
                     continue
 
                 if not _background_exploration_allowed(self.orchestrator):
+                    self._last_blocker = "background_policy"
                     continue
+                self._last_blocker = ""
 
                 # Check boredom
                 boredom = self.proactive_comm.get_boredom_level()
@@ -140,44 +179,31 @@ class CuriosityEngine:
             except asyncio.CancelledError:
                 break
             except (RuntimeError, AttributeError, TypeError) as e:
+                self._worker_failures += 1
+                self._last_worker_error = f"{type(e).__name__}: {e}"
                 record_degradation('curiosity_engine', e)
                 logger.error("Curiosity worker error: %s", e)
                 await asyncio.sleep(60) # Backoff on error
 
     def _get_next(self) -> Optional[CuriosityTopic]:
         if not self.curiosity_queue:
-            kg = getattr(self.orchestrator, "knowledge_graph", None)
-            sparse_nodes = []
-            if kg and hasattr(kg, "get_sparse_nodes"):
-                try:
-                    sparse_nodes = list(kg.get_sparse_nodes() or [])
-                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                    record_degradation(
-                        "curiosity_engine",
-                        exc,
-                        action="skipped sparse knowledge graph curiosity fallback",
+            state = None
+            kernel = getattr(self.orchestrator, "kernel", None)
+            if kernel is not None:
+                state = getattr(kernel, "state", None)
+            candidate = select_autonomous_topic(
+                self.orchestrator,
+                state,
+                excluded=self.explored_topics,
+            )
+            if candidate is not None:
+                self.curiosity_queue.append(
+                    CuriosityTopic(
+                        topic=candidate.text,
+                        reason=candidate.reason,
+                        priority=candidate.score,
                     )
-                    logger.debug("Sparse KG curiosity fallback failed: %s", exc)
-            for node in sparse_nodes:
-                if isinstance(node, dict):
-                    topic = str(
-                        node.get("content")
-                        or node.get("label")
-                        or node.get("name")
-                        or node.get("id")
-                        or ""
-                    ).strip()
-                else:
-                    topic = str(node or "").strip()
-                if topic and topic.lower() not in self.explored_topics:
-                    self.curiosity_queue.append(
-                        CuriosityTopic(
-                            topic=topic,
-                            reason="knowledge graph novelty search",
-                            priority=0.7,
-                        )
-                    )
-                    break
+                )
         if not self.curiosity_queue:
             return None
 
@@ -203,11 +229,13 @@ class CuriosityEngine:
         # guard, but let explicitly selected topics run.
         if getattr(self.orchestrator, 'is_busy', False):
             logger.info("Skipping exploration of '%s' due to user activity.", topic.topic)
+            topic.explored = False
             return
 
         logger.info("🔍 Exploring: %s", topic.topic)
         self.current_topic = topic.topic
-        self.explored_topics.add(topic.topic.lower())
+        self._last_exploration_at = time.time()
+        success = False
         
         emitter = None
         try:
@@ -254,6 +282,9 @@ class CuriosityEngine:
                             or result.get("data", "")
                         )
                         result_content = str(result_data)[:1000] # Increased context
+                        if result_content.strip():
+                            self.explored_topics.add(topic.topic.casefold())
+                            success = True
                         
                         kg = getattr(self.orchestrator, 'knowledge_graph', None)
                         if result_content and kg and hasattr(kg, 'add_knowledge'):
@@ -289,6 +320,8 @@ class CuriosityEngine:
             record_degradation('curiosity_engine', e)
             logger.error("Exploration failed: %s", e)
         finally:
+            if not success:
+                topic.explored = False
             self.current_topic = None
 
     def _feed_to_meta_evolution(self, topic: str, content: str):

@@ -6432,6 +6432,9 @@ async def test_desktop_required_capability_turn_uses_cognitive_engine_before_cat
     assert reply
     assert len(calls) == 1
     assert calls[0]["context"]["capability_inventory_contract"] is True
+    assert calls[0]["context"]["recent_completed_exchanges"] == []
+    assert calls[0]["context"]["recent_conversation_context"] == ""
+    assert calls[0]["context"]["max_tokens"] == 384
     assert calls[0]["context"]["live_mind_context_required"] is True
     assert calls[0]["context"]["live_mind_context"]["must_answer_from_full_mind_path"] is True
     assert trace["engine_think_invoked"] is True
@@ -6440,6 +6443,7 @@ async def test_desktop_required_capability_turn_uses_cognitive_engine_before_cat
     assert trace["live_mind_controls_bound"] is True
     assert trace["response_path"] == "cognitive_engine"
     assert "governance receipts" in reply
+    assert "not opening apps or executing tools" in reply.lower()
 
 
 @pytest.mark.asyncio

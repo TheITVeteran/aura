@@ -570,7 +570,10 @@ async def test_router_defers_background_local_runtime_during_safe_boot_guard(mon
         client=client,
     )
 
-    monkeypatch.setattr("core.brain.llm_health_router.desktop_safe_boot_enabled", lambda: True)
+    monkeypatch.setattr(
+        "core.brain.llm_health_router.desktop_resource_guard_enabled",
+        lambda: True,
+    )
     monkeypatch.setenv("AURA_SAFE_BOOT_BACKGROUND_GUARD_SECS", "180")
 
     result = await router.think(

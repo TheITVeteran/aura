@@ -57,12 +57,14 @@ def _env_flag(name: str, default: bool = False) -> bool:
 def _deep_repair_block_reason(origin: str = "self_healing_deep_repair") -> str:
     """Return a reason deep repair must not run in this runtime mode."""
 
-    if not _env_flag("AURA_ENABLE_DEEP_REPAIR", False):
+    if not _env_flag("AURA_ENABLE_DEEP_REPAIR", True):
         return "deep_repair_disabled"
     try:
         from core.runtime.background_policy import background_loop_start_reason
 
-        return background_loop_start_reason(origin)
+        return background_loop_start_reason(
+            origin,
+        )
     except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation(
             "self_healing",
@@ -148,6 +150,25 @@ class SelfHealing:
             except asyncio.CancelledError:
                 pass  # no-op: intentional
             self._task = None
+
+    def get_status(self) -> dict[str, Any]:
+        now = time.time()
+        return {
+            "running": bool(self._running and self._task and not self._task.done()),
+            "watch_count": len(self._watches),
+            "deep_repairs_active": sum(
+                1 for task in self._deep_repairs.values() if not task.done()
+            ),
+            "watches": {
+                name: {
+                    "heartbeat_age_s": round(max(0.0, now - watch.last_heartbeat_at), 2),
+                    "expected_interval_s": watch.expected_interval_s,
+                    "restart_count": watch.restarts,
+                    "container_key": watch.container_key,
+                }
+                for name, watch in sorted(self._watches.items())
+            },
+        }
 
     async def _tick(self) -> None:
         now = time.time()
@@ -253,16 +274,48 @@ class SelfHealing:
                 "deep_repair_failed_no_module_path",
                 "deep_repair_failed_no_lab",
             ):
+                restarted = False
                 if w.restart_async is not None:
                     await w.restart_async()
+                    restarted = True
                 elif w.container_key:
                     from core.container import ServiceContainer
                     instance = ServiceContainer.get(w.container_key, default=None)
                     if instance is not None and hasattr(instance, "restart_async"):
                         await instance.restart_async()
-                w.restarts += 1
+                        restarted = True
+                    elif instance is not None:
+                        stop = getattr(instance, "stop", None)
+                        start = getattr(instance, "start", None)
+                        if callable(stop) and callable(start):
+                            stopped = stop()
+                            if inspect.isawaitable(stopped):
+                                await stopped
+                            started = start()
+                            if inspect.isawaitable(started):
+                                await started
+                            restarted = True
+
+                if restarted:
+                    w.restarts += 1
+                    record["result"] = "restarted"
+                else:
+                    module_path = await asyncio.to_thread(self._module_path_for_watch, w)
+                    block_reason = _deep_repair_block_reason(
+                        "self_healing_restart_unavailable"
+                    )
+                    if module_path and not block_reason:
+                        record.update(
+                            self.schedule_deep_repair(
+                                module_path,
+                                reason="restart_interface_unavailable",
+                                watch_name=w.name,
+                                metadata={"stale_for_s": age},
+                            )
+                        )
+                    else:
+                        record["result"] = block_reason or "restart_interface_unavailable"
                 w.last_heartbeat_at = time.time()
-                record["result"] = "restarted"
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('self_healing', exc)
             record["result"] = f"restart_failed:{exc}"
@@ -299,7 +352,15 @@ class SelfHealing:
             elif hasattr(instance, "_instance"):
                 instance = instance._instance or instance
 
-            source_file = inspect.getsourcefile(type(instance)) or inspect.getfile(type(instance))
+            try:
+                source_file = inspect.getsourcefile(type(instance)) or inspect.getfile(type(instance))
+            except (TypeError, OSError, AttributeError, RuntimeError, ValueError) as _exc:
+                logger.debug(
+                    "Watched service %s has no resolvable source file: %s",
+                    w.name,
+                    _exc,
+                )
+                source_file = None
             if source_file:
                 source_path = Path(source_file)
                 try:
@@ -310,11 +371,12 @@ class SelfHealing:
                 except ValueError as _exc:
                     logger.debug("Suppressed %s in core.runtime.self_healing: %s", type(_exc).__name__, _exc)
 
-            module_name = type(instance).__module__
-            candidate = module_name.replace(".", "/") + ".py"
-            if (config.paths.base_dir / candidate).exists():
-                self._module_path_cache[w.container_key] = candidate
-                return candidate
+            module_name = getattr(type(instance), "__module__", "")
+            if module_name and module_name != "builtins":
+                candidate = module_name.replace(".", "/") + ".py"
+                if (config.paths.base_dir / candidate).exists():
+                    self._module_path_cache[w.container_key] = candidate
+                    return candidate
                 
             self._module_path_cache[w.container_key] = fallback
             return fallback

@@ -41,6 +41,9 @@ colorlog>=6.0
 prometheus-client>=0.21
 python-dateutil>=2.9
 PyYAML>=6.0
+pyobjc-framework-Cocoa>=11.0; sys_platform == "darwin"
+pyobjc-framework-ApplicationServices>=11.0; sys_platform == "darwin"
+pyobjc-framework-ScriptingBridge>=11.0; sys_platform == "darwin"
 
 # Memory / storage
 # (chromadb in ml.txt — core uses SQLite only)

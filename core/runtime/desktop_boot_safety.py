@@ -1,4 +1,9 @@
-"""Shared helpers for safer macOS desktop boot behavior."""
+"""Shared helpers for full desktop boot resource protection.
+
+The normal desktop profile is a complete Aura runtime.  Resource guards bound
+MLX, process RSS, and duplicate Metal ownership without disabling cognitive
+organs.  ``AURA_SAFE_BOOT_DESKTOP`` is reserved for an explicit recovery boot.
+"""
 
 from __future__ import annotations
 
@@ -31,28 +36,66 @@ def _env_float(env: Mapping[str, str], name: str, default: float) -> float:
         return default
 
 
+def _resource_env_float(
+    env: Mapping[str, str],
+    name: str,
+    legacy_name: str,
+    default: float,
+) -> float:
+    """Read a desktop guard setting with recovery-profile compatibility."""
+
+    if name in env:
+        return _env_float(env, name, default)
+    return _env_float(env, legacy_name, default)
+
+
 def _unsafe_memory_limits_allowed(env: Mapping[str, str]) -> bool:
     return env_flag_enabled(env.get("AURA_ALLOW_UNSAFE_MEMORY_LIMITS"))
 
 
 def desktop_safe_boot_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Return whether the explicit reduced recovery profile was requested."""
+
     env = env or os.environ
     explicit = str(env.get("AURA_SAFE_BOOT_DESKTOP", "")).strip().lower()
     if explicit in {"1", "true", "yes", "on"}:
         return True
     if explicit in {"0", "false", "no", "off"}:
         return False
-    return env_flag_enabled(env.get("AURA_LAUNCHED_FROM_APP"))
+    return False
+
+
+def desktop_resource_guard_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Return whether desktop memory/process ownership guards are active.
+
+    The guard is on for normal app launches and explicit recovery boots.  It is
+    deliberately independent of subsystem admission: a protected desktop boot
+    is still the full runtime.
+    """
+
+    env = env or os.environ
+    explicit = str(env.get("AURA_DESKTOP_RESOURCE_GUARD", "")).strip().lower()
+    if explicit in {"1", "true", "yes", "on"}:
+        return True
+    if explicit in {"0", "false", "no", "off"}:
+        return False
+    return desktop_safe_boot_enabled(env) or env_flag_enabled(env.get("AURA_LAUNCHED_FROM_APP"))
 
 
 def compute_mlx_cache_limit(total_ram_bytes: int, env: Mapping[str, str] | None = None) -> int:
     env = env or os.environ
     total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
 
-    if desktop_safe_boot_enabled(env):
-        ratio = _env_float(env, "AURA_SAFE_BOOT_METAL_CACHE_RATIO", 0.16)
-        hard_cap_gb = _env_float(env, "AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", 10.0)
-        floor_gb = _env_float(env, "AURA_SAFE_BOOT_METAL_CACHE_FLOOR_GB", 4.0)
+    if desktop_resource_guard_enabled(env):
+        ratio = _resource_env_float(
+            env, "AURA_DESKTOP_METAL_CACHE_RATIO", "AURA_SAFE_BOOT_METAL_CACHE_RATIO", 0.16
+        )
+        hard_cap_gb = _resource_env_float(
+            env, "AURA_DESKTOP_METAL_CACHE_CAP_GB", "AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", 10.0
+        )
+        floor_gb = _resource_env_float(
+            env, "AURA_DESKTOP_METAL_CACHE_FLOOR_GB", "AURA_SAFE_BOOT_METAL_CACHE_FLOOR_GB", 4.0
+        )
         limit = int(total_ram_bytes * ratio)
         limit = min(limit, int(hard_cap_gb * _GIB))
         limit = max(int(floor_gb * _GIB), limit)
@@ -73,7 +116,7 @@ def compute_mlx_memory_limit(total_ram_bytes: int, env: Mapping[str, str] | None
 
     env = env or os.environ
     total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
-    safe_boot = desktop_safe_boot_enabled(env)
+    resource_guard = desktop_resource_guard_enabled(env)
     unsafe_allowed = _unsafe_memory_limits_allowed(env)
     configured = str(env.get("AURA_MLX_MEMORY_LIMIT_GB", "") or "").strip()
     if configured:
@@ -83,18 +126,32 @@ def compute_mlx_memory_limit(total_ram_bytes: int, env: Mapping[str, str] | None
             configured_gb = 0.0
         if configured_gb > 0.0:
             configured_limit = int(configured_gb * _GIB)
-            if safe_boot and not unsafe_allowed:
+            if resource_guard and not unsafe_allowed:
                 safe_cap_gb = min(
-                    _env_float(env, "AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", SAFE_BOOT_MLX_MEMORY_CAP_GB),
+                    _resource_env_float(
+                        env,
+                        "AURA_DESKTOP_MLX_MEMORY_CAP_GB",
+                        "AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB",
+                        SAFE_BOOT_MLX_MEMORY_CAP_GB,
+                    ),
                     SAFE_BOOT_MLX_MEMORY_CAP_GB,
                 )
                 return min(configured_limit, int(safe_cap_gb * _GIB))
             return configured_limit
 
-    if safe_boot:
-        ratio = _env_float(env, "AURA_SAFE_BOOT_MLX_MEMORY_RATIO", 0.54)
-        hard_cap_gb = _env_float(env, "AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", SAFE_BOOT_MLX_MEMORY_CAP_GB)
-        floor_gb = _env_float(env, "AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB", 18.0)
+    if resource_guard:
+        ratio = _resource_env_float(
+            env, "AURA_DESKTOP_MLX_MEMORY_RATIO", "AURA_SAFE_BOOT_MLX_MEMORY_RATIO", 0.54
+        )
+        hard_cap_gb = _resource_env_float(
+            env,
+            "AURA_DESKTOP_MLX_MEMORY_CAP_GB",
+            "AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB",
+            SAFE_BOOT_MLX_MEMORY_CAP_GB,
+        )
+        floor_gb = _resource_env_float(
+            env, "AURA_DESKTOP_MLX_MEMORY_FLOOR_GB", "AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB", 18.0
+        )
         limit = min(int(total_ram_bytes * ratio), int(hard_cap_gb * _GIB))
         limit = max(int(floor_gb * _GIB), limit)
         if not unsafe_allowed:
@@ -110,7 +167,7 @@ def compute_mlx_memory_limit(total_ram_bytes: int, env: Mapping[str, str] | None
 
 
 def compute_process_rss_limit(total_ram_bytes: int, env: Mapping[str, str] | None = None) -> int:
-    """Return the process-tree RSS guard used by desktop safe boot.
+    """Return the process-tree RSS guard used by full desktop runtime.
 
     This is intentionally lower than the external sentinel kill ceiling. The
     in-process guard should refuse/recycle before the out-of-process sentinel
@@ -119,7 +176,7 @@ def compute_process_rss_limit(total_ram_bytes: int, env: Mapping[str, str] | Non
 
     env = env or os.environ
     total_ram_bytes = max(int(total_ram_bytes), 8 * _GIB)
-    safe_boot = desktop_safe_boot_enabled(env)
+    resource_guard = desktop_resource_guard_enabled(env)
     unsafe_allowed = _unsafe_memory_limits_allowed(env)
     configured = str(env.get("AURA_PROCESS_RSS_LIMIT_GB", "") or "").strip()
     if configured:
@@ -129,18 +186,32 @@ def compute_process_rss_limit(total_ram_bytes: int, env: Mapping[str, str] | Non
             configured_gb = 0.0
         if configured_gb > 0.0:
             configured_limit = int(configured_gb * _GIB)
-            if safe_boot and not unsafe_allowed:
+            if resource_guard and not unsafe_allowed:
                 safe_cap_gb = min(
-                    _env_float(env, "AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", SAFE_BOOT_PROCESS_RSS_CAP_GB),
+                    _resource_env_float(
+                        env,
+                        "AURA_DESKTOP_PROCESS_RSS_CAP_GB",
+                        "AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB",
+                        SAFE_BOOT_PROCESS_RSS_CAP_GB,
+                    ),
                     SAFE_BOOT_PROCESS_RSS_CAP_GB,
                 )
                 return min(configured_limit, int(safe_cap_gb * _GIB))
             return configured_limit
 
-    if safe_boot:
-        ratio = _env_float(env, "AURA_SAFE_BOOT_PROCESS_RSS_RATIO", 0.62)
-        hard_cap_gb = _env_float(env, "AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", SAFE_BOOT_PROCESS_RSS_CAP_GB)
-        floor_gb = _env_float(env, "AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB", 24.0)
+    if resource_guard:
+        ratio = _resource_env_float(
+            env, "AURA_DESKTOP_PROCESS_RSS_RATIO", "AURA_SAFE_BOOT_PROCESS_RSS_RATIO", 0.62
+        )
+        hard_cap_gb = _resource_env_float(
+            env,
+            "AURA_DESKTOP_PROCESS_RSS_CAP_GB",
+            "AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB",
+            SAFE_BOOT_PROCESS_RSS_CAP_GB,
+        )
+        floor_gb = _resource_env_float(
+            env, "AURA_DESKTOP_PROCESS_RSS_FLOOR_GB", "AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB", 24.0
+        )
         limit = min(int(total_ram_bytes * ratio), int(hard_cap_gb * _GIB))
         limit = max(int(floor_gb * _GIB), limit)
         if not unsafe_allowed:
@@ -186,8 +257,8 @@ def inprocess_mlx_metal_enabled(
     if _truthy(env.get("AURA_DISABLE_INPROCESS_MLX_METAL")):
         return False, "env_disabled"
 
-    if desktop_safe_boot_enabled(env):
-        return False, "desktop_safe_boot"
+    if desktop_resource_guard_enabled(env):
+        return False, "desktop_resource_guard"
 
     if platform_name == "darwin" and _macos_major_version(mac_version) >= 26:
         return False, "macos26_guard"

@@ -126,3 +126,24 @@ def test_register_rejects_invalid_job_contract(tmp_path):
         conductor.register("bad_interval", 0, lambda: {})
     with pytest.raises(TypeError):
         conductor.register("bad_callable", 1, None)
+
+
+def test_non_immediate_job_becomes_due_after_its_first_interval(tmp_path):
+    conductor = AutonomyConductor(tmp_path / "autonomy.jsonl")
+    conductor.register("delayed", 60, lambda: {"ok": True}, run_immediately=False)
+
+    job = conductor.jobs["delayed"]
+
+    assert job.due(job.next_eligible_at - 0.001) is False
+    assert job.due(job.next_eligible_at) is True
+
+
+def test_default_conductor_schedules_bounded_internal_deliberation(tmp_path):
+    conductor = AutonomyConductor(tmp_path / "autonomy.jsonl")
+
+    conductor.register_defaults()
+
+    job = conductor.jobs["internal_deliberation_cycle"]
+    assert job.policy == "research"
+    assert job.run_immediately is False
+    assert job.interval_s == 30 * 60.0

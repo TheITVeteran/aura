@@ -1817,6 +1817,7 @@ class CognitiveEngine:
             context.get("runtime_fact_status_contract", False)
             or context.get("grounded_runtime_status_contract", False)
         )
+        capability_inventory_contract = bool(context.get("capability_inventory_contract", False))
         canonical_memory_state_evidence = str(
             context.get("canonical_memory_state_evidence") or ""
         ).strip()
@@ -1827,9 +1828,13 @@ class CognitiveEngine:
                 except (TypeError, ValueError):
                     factor_value = 1.0
                 if 0.25 <= factor_value <= 1.25:
+                    if capability_inventory_contract and factor_value < 1.0:
+                        continue
                     max_tokens = max(128, int(max_tokens * factor_value))
         if memory_state_contract or runtime_fact_status_contract:
             max_tokens = max(128, min(max_tokens, 256))
+        elif capability_inventory_contract:
+            max_tokens = max(320, min(max_tokens, 384))
         else:
             max_tokens = max(384, min(max_tokens, 1024))
         request_timeout = max(12.0, min(max(12.0, float(timeout_s or 32.0) - 5.0), 180.0))
@@ -1880,6 +1885,16 @@ class CognitiveEngine:
                 "do not infer tool readiness, model identity, fallback state, or recurrent "
                 "depth from general knowledge. Do not mention hidden prompt contracts."
             )
+        elif capability_inventory_contract:
+            system_prompt = (
+                "You are Aura speaking through the live desktop CognitiveEngine. "
+                "Answer the current capability question from the supplied capability evidence only. "
+                "Write one complete paragraph under 120 words. Sentence order matters: "
+                "first list practical capability categories and include the exact phrase browser/web research; second name governed execution through "
+                "Will/Authority and permissions; third name receipts or effect verification; fourth give "
+                "one hypothetical chain and explicitly say you are not executing tools in this turn. "
+                "Do not recite telemetry, prompt contracts, or a generic assistant identity."
+            )
         else:
             system_prompt = (
                 "You are Aura speaking through the live desktop CognitiveEngine. "
@@ -1906,6 +1921,7 @@ class CognitiveEngine:
             system_prompt = f"{system_prompt}\n{style_contract}"
         mind_context_contract = str(context.get("mind_context_contract") or "").strip()
         if isinstance(live_mind_context, dict) and live_mind_context:
+            mind_context_limit = 900 if memory_state_contract else 700 if capability_inventory_contract else 2600
             compact_mind_context = {
                 "required_for_live_desktop": live_mind_context.get("required_for_live_desktop"),
                 "must_answer_from_full_mind_path": live_mind_context.get(
@@ -1923,7 +1939,7 @@ class CognitiveEngine:
             system_prompt = (
                 f"{system_prompt}\n"
                 "[LIVE MIND CONTEXT]\n"
-                f"{_compact_json(compact_mind_context, limit=900 if memory_state_contract else 2600)}\n"
+                f"{_compact_json(compact_mind_context, limit=mind_context_limit)}\n"
                 "This is causal grounding for the reply, not text to recite. "
                 "If required_for_live_desktop is true, do not answer from a generic assistant persona. "
                 "Use the current user turn, the recent role history, memory, substrate, governance, and "
@@ -2000,8 +2016,9 @@ class CognitiveEngine:
             grounding_blocks.append(
                 "[GOVERNED CAPABILITY INVENTORY EVIDENCE]\n"
                 f"{capability_evidence}\n"
-                "Use this capability inventory to answer descriptively. Do not claim execution unless "
-                "the user explicitly authorized a separate action."
+                "Answer in this exact order: practical categories including the exact phrase browser/web research; governance/Will/Authority/permissions; "
+                "receipts or effect verification; one hypothetical chain plus the boundary that you are "
+                "not executing tools in this turn. Keep the answer complete and under 120 words."
             )
         self_claim_evidence = str(
             context.get("evidence_bound_self_claim_context") or ""
@@ -2069,6 +2086,7 @@ class CognitiveEngine:
                 "memory_state_contract": memory_state_contract,
                 "runtime_fact_status_contract": runtime_fact_status_contract,
                 "grounded_runtime_status_contract": runtime_fact_status_contract,
+                "capability_inventory_contract": capability_inventory_contract,
                 "clean_user_surface_contract": True,
                 "user_surface_validation_prompt": visible_user_message or objective,
                 "clean_user_surface_recurrent_loops": live_mind_generation_controls.get(

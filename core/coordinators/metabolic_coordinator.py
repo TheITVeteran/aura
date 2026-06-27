@@ -779,8 +779,21 @@ class MetabolicCoordinator:
             return
         logger.info("🥱 BOREDOM TRIGGERED: Generating curiosity impulse.")
         orch._last_boredom_impulse = time.time()
-        topics = ["quantum physics", "ancient history", "future of AI", "art movements", "cybersecurity", "mythology"]
-        topic = random.choice(topics)
+        try:
+            from core.autonomy.topic_selection import select_autonomous_topic
+
+            state = getattr(getattr(orch, "kernel", None), "state", None)
+            candidate = select_autonomous_topic(orch, state)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_metabolic_degradation(
+                exc,
+                action="left boredom impulse idle because no grounded topic could be selected",
+            )
+            candidate = None
+        if candidate is None:
+            logger.debug("Boredom impulse found no grounded unresolved topic or interest.")
+            return
+        topic = candidate.text
         try:
             asyncio.get_running_loop()
             self.track_metabolic_task(
@@ -788,7 +801,7 @@ class MetabolicCoordinator:
                 run_governed_impulse(
                     orch,
                     source="metabolic_coordinator",
-                    summary=f"metabolic_boredom_impulse:{topic}",
+                    summary=f"metabolic_boredom_impulse:{candidate.source}:{topic}",
                     message=f"Impulse: I am bored. I want to research {topic}.",
                     urgency=0.3,
                     state_cause="metabolic_boredom_shift",

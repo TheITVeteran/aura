@@ -1234,6 +1234,7 @@ class MLXLocalClient:
         self._last_generation_completed_at = time.time()
         if user_facing:
             self._last_user_facing_completed_at = self._last_generation_completed_at
+            self._last_visible_readiness_at = self._last_generation_completed_at
         self._clear_active_generation_tracking()
 
     def _set_lane_state(self, state: str, error: str = "") -> None:
@@ -3671,8 +3672,11 @@ class MLXLocalClient:
                         self._set_lane_state("recovering", "repeated_empty_generation")
                     return None
                 self._consecutive_empty = 0
+                is_health_probe = bool(kwargs.get("health_probe", False))
                 self._set_lane_state("ready")
-                self._mark_generation_completed(user_facing=foreground_request)
+                self._mark_generation_completed(
+                    user_facing=bool(foreground_request and not is_health_probe)
+                )
                 _notify_closed_loop_output(text)
                 return text
             reason = str(res.get("message") or res.get("status") or "generation_failed")
@@ -3946,7 +3950,6 @@ class MLXLocalClient:
                         raise RuntimeError("warmup_readiness_no_text")
                 self._set_lane_state("ready")
                 self._last_ready_at = time.time()
-                self._last_visible_readiness_at = self._last_ready_at
                 self._warmup_in_flight = False
                 _clear_matching_foreground_owner(owner_name)
                 logger.info("🔥 [MLX] Warmup complete — Metal shaders compiled.")

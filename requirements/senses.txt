@@ -3,6 +3,9 @@
 playwright>=1.44           # Web browsing + scraping
 playwright-stealth>=2.0.3  # Browser stealth helpers for PhantomBrowser
 pyautogui>=0.9             # Desktop automation
+pyobjc-framework-Cocoa>=11.0; sys_platform == "darwin"                 # macOS window/app integration
+pyobjc-framework-ApplicationServices>=11.0; sys_platform == "darwin"   # Accessibility prompt/preflight
+pyobjc-framework-ScriptingBridge>=11.0; sys_platform == "darwin"       # Apple Events automation preflight
 pillow>=10.0               # Image processing
 python-nmap>=0.7           # Network discovery (requires nmap binary)
 netifaces>=0.11            # Network interface info

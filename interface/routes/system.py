@@ -81,6 +81,154 @@ def _env_positive_float(name: str, default: float) -> float:
     return value if value > 0.0 else default
 
 
+def _runtime_component_status(
+    service_name: str,
+    *status_methods: str,
+) -> dict[str, Any]:
+    """Read a registered background component without instantiating a new one."""
+
+    service = ServiceContainer.get(service_name, default=None)
+    if service is None:
+        return {"registered": False, "running": False, "reason": "not_registered"}
+    for method_name in status_methods:
+        method = getattr(service, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            status = method()
+            if inspect.isawaitable(status):
+                close = getattr(status, "close", None)
+                if callable(close):
+                    close()
+                return {
+                    "registered": True,
+                    "running": False,
+                    "reason": "async_status_not_supported_in_health_snapshot",
+                }
+            if isinstance(status, dict):
+                return {"registered": True, **status}
+        except _SYSTEM_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "system.background_runtime",
+                exc,
+                action=f"marked {service_name} status unavailable",
+            )
+            return {
+                "registered": True,
+                "running": False,
+                "reason": f"status_error:{type(exc).__name__}",
+            }
+    task = getattr(service, "_task", None) or getattr(service, "_background_task", None)
+    running = bool(
+        getattr(service, "_running", False)
+        or getattr(service, "_started", False)
+        or (task is not None and not task.done())
+    )
+    return {"registered": True, "running": running}
+
+
+def _collect_full_runtime_status(
+    pneuma_data: dict[str, Any],
+    mhaf_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Report whether a normal desktop launch actually started Aura's organs."""
+
+    from core.runtime.background_policy import (
+        background_cognition_disabled_reason,
+        foreground_only_runtime,
+    )
+    from core.runtime.desktop_boot_safety import (
+        desktop_resource_guard_enabled,
+        desktop_safe_boot_enabled,
+    )
+
+    conductor = _runtime_component_status("autonomy_conductor", "status")
+    conductor["running"] = bool(conductor.get("active", False))
+    overt = _runtime_component_status("overt_action_loop", "status")
+    jobs = conductor.get("jobs", {}) if isinstance(conductor.get("jobs"), dict) else {}
+    overt["scheduled"] = bool(
+        conductor.get("active") and "overt_action_cycle" in jobs
+    )
+    overt["running"] = bool(overt.get("scheduled") and overt.get("enabled", False))
+    agency = ServiceContainer.get("agency_core", default=None)
+    swarm = getattr(agency, "swarm", None)
+    deliberation = (
+        swarm.get_status()
+        if swarm is not None and callable(getattr(swarm, "get_status", None))
+        else {"available": False, "active_shards": 0}
+    )
+    deliberation["registered"] = bool(swarm is not None)
+    deliberation["scheduled"] = bool(
+        conductor.get("active") and "internal_deliberation_cycle" in jobs
+    )
+    deliberation["running"] = bool(
+        deliberation.get("registered") and deliberation.get("scheduled")
+    )
+
+    components = {
+        "pneuma": {
+            "registered": ServiceContainer.get("pneuma", default=None) is not None,
+            "running": bool(pneuma_data.get("online")),
+            **pneuma_data,
+        },
+        "mhaf": {
+            "registered": ServiceContainer.get("mhaf", default=None) is not None,
+            "running": bool(mhaf_data.get("online")),
+            **mhaf_data,
+        },
+        "curiosity": _runtime_component_status("curiosity_engine", "get_status"),
+        "proactive_communication": _runtime_component_status("proactive_comm", "get_status"),
+        "research": _runtime_component_status("research_cycle", "get_status"),
+        "self_healing": _runtime_component_status("self_healing", "get_status"),
+        "self_modification": _runtime_component_status(
+            "self_modification_engine", "runtime_status"
+        ),
+        "consciousness_stream": _runtime_component_status("consciousness"),
+        "autonomy_conductor": conductor,
+        "overt_action": overt,
+        "deliberation": deliberation,
+        "wake_word": _runtime_component_status("wake_word", "get_status"),
+    }
+    resource_guard = desktop_resource_guard_enabled()
+    expected = (
+        resource_guard
+        and not foreground_only_runtime()
+        and not desktop_safe_boot_enabled()
+        and not background_cognition_disabled_reason()
+    )
+    required = (
+        "pneuma",
+        "mhaf",
+        "curiosity",
+        "proactive_communication",
+        "research",
+        "self_healing",
+        "self_modification",
+        "consciousness_stream",
+        "autonomy_conductor",
+        "overt_action",
+        "deliberation",
+        "wake_word",
+    )
+    blockers = [name for name in required if not components[name].get("running", False)]
+    return {
+        "profile": (
+            "foreground_only"
+            if foreground_only_runtime()
+            else "recovery_safe_boot"
+            if desktop_safe_boot_enabled()
+            else "full_desktop"
+            if resource_guard
+            else "server_or_test"
+        ),
+        "full_runtime_expected": expected,
+        "resource_guard_enabled": resource_guard,
+        "ready": bool(expected and not blockers),
+        "blockers": blockers,
+        "components": components,
+    }
+
+
 try:
     ORJSONResponse = fastapi_responses.ORJSONResponse
 except _SYSTEM_RECOVERABLE_ERRORS:
@@ -1883,6 +2031,7 @@ async def api_health(request: Request):
         from core.pneuma.pneuma import get_pneuma
         pn = get_pneuma()
         if pn and pn._running:
+            runtime_state = pn.get_state_dict()
             pneuma_data["online"] = True
             pneuma_data["_stale"] = False
             pneuma_data["temperature"] = round(pn.get_llm_temperature(), 3)
@@ -1894,6 +2043,10 @@ async def api_health(request: Request):
             tm = getattr(pn, "topo_memory", None)
             if tm:
                 pneuma_data["attractor_count"] = int(tm.attractor_count)
+            pneuma_data["tick_count"] = runtime_state.get("tick_count", 0)
+            pneuma_data["last_tick"] = runtime_state.get("last_tick", 0.0)
+            pneuma_data["loop_errors"] = runtime_state.get("loop_errors", 0)
+            pneuma_data["compute_budget"] = runtime_state.get("compute_budget", {})
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
         logger.debug("PNEUMA status collection failed: %s", e)
@@ -1905,11 +2058,16 @@ async def api_health(request: Request):
         from core.consciousness.mhaf_field import get_mhaf
         mhaf = get_mhaf()
         if mhaf and mhaf._running:
+            runtime_state = mhaf.get_state_dict()
             mhaf_data["online"] = True
             mhaf_data["_stale"] = False
             mhaf_data["nodes"] = len(mhaf._nodes)
             mhaf_data["edges"] = len(mhaf._edges)
             mhaf_data["free_energy"] = round(float(mhaf._free_energy), 4)
+            mhaf_data["tick_count"] = runtime_state.get("tick_count", 0)
+            mhaf_data["last_tick"] = runtime_state.get("last_tick", 0.0)
+            mhaf_data["loop_errors"] = runtime_state.get("loop_errors", 0)
+            mhaf_data["compute_budget"] = runtime_state.get("compute_budget", {})
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
         logger.debug("MHAF status collection failed: %s", e)
@@ -2083,6 +2241,8 @@ async def api_health(request: Request):
             "speaking_enabled": getattr(voice_mod, "speaking_enabled", True),
         }
 
+        full_runtime = _collect_full_runtime_status(pneuma_data, mhaf_data)
+
         conversation_ready = bool(conversation_lane.get("conversation_ready", False))
         conversation_busy = conversation_lane_is_busy(conversation_lane)
         lane_is_standby = _conversation_lane_is_standby_resilient(conversation_lane)
@@ -2099,6 +2259,12 @@ async def api_health(request: Request):
             conversation_ready=conversation_ready,
             conversation_busy=conversation_busy,
         )
+        if full_runtime.get("full_runtime_expected") and not full_runtime.get("ready"):
+            health_blockers.extend(
+                f"full_runtime:{name}"
+                for name in full_runtime.get("blockers", [])
+            )
+            health_blockers = list(dict.fromkeys(health_blockers))
         healthy_ready = bool(
             service_ok
             and required_probes_ok
@@ -2166,6 +2332,8 @@ async def api_health(request: Request):
             "executive_authority": executive_authority_data,
             "interaction_signals": interaction_signals_data,
             "integrity": integrity_payload,
+            "full_runtime": full_runtime,
+            "full_runtime_ready": bool(full_runtime.get("ready")),
             "proof_readiness_healthy": proof_readiness_healthy,
             "certification_ready": certification_ready,
             "integrity_blockers": integrity_payload.get("proof_blockers", []),
@@ -2177,6 +2345,8 @@ async def api_health(request: Request):
                 "conversation_ready": conversation_ready,
                 "conversation_busy": conversation_busy,
                 "runtime_probe_healthy": required_probes_ok,
+                "full_runtime_ready": bool(full_runtime.get("ready")),
+                "full_runtime": full_runtime,
                 "proof_readiness_healthy": proof_readiness_healthy,
                 "certification_ready": certification_ready,
                 "integrity": integrity_payload,

@@ -31,6 +31,28 @@ def test_error_intelligence_demotes_omni_log_warning(caplog, tmp_path, skill_nam
     assert f"Error logged: RuntimeError in {skill_name}" not in caplog.text
 
 
+def test_error_intelligence_targets_deepest_aura_traceback_frame(tmp_path):
+    from core.self_modification.error_intelligence import StructuredErrorLogger
+
+    logger = StructuredErrorLogger(str(tmp_path))
+
+    def inner_failure():
+        raise RuntimeError("deep failure")
+
+    expected_line = inner_failure.__code__.co_firstlineno + 1
+
+    def outer_wrapper():
+        inner_failure()
+
+    try:
+        outer_wrapper()
+    except RuntimeError as exc:
+        event = asyncio.run(logger.log_error(exc, {}, skill_name="deep_frame_test"))
+
+    assert event.file_path == __file__
+    assert event.line_number == expected_line
+
+
 def test_omni_tracer_does_not_turn_forwarded_info_logs_into_failure_pressure():
     from core.resilience.omni_tracer import _classify_forwarded_log
 
@@ -818,10 +840,12 @@ def test_self_mod_engine_on_error_runs_without_event_loop(monkeypatch):
 
     engine = sm_mod.AutonomousSelfModificationEngine.__new__(sm_mod.AutonomousSelfModificationEngine)
     engine.error_intelligence = DummyErrorIntelligence()
+    engine._repair_event = asyncio.Event()
 
     engine.on_error(RuntimeError("boom"), {"source": "test"}, "skill_x", "goal_y")
 
     assert calls == [("boom", {"source": "test"}, "skill_x", "goal_y")]
+    assert engine._repair_event.is_set()
 
 
 def test_degraded_events_forward_schedules_async_on_error(monkeypatch):

@@ -120,7 +120,7 @@ fi
 echo "🚀 Starting Aura Desktop..."
 export MLX_METAL_SYNC=1
 : "${AURA_FORCE_CAMERA:=0}"             # Camera stays off by default on macOS boot
-: "${AURA_AUTO_LISTEN:=0}"              # STT stays off by default on boot
+: "${AURA_AUTO_LISTEN:=1}"              # Full desktop profile listens for "Hey Aura"
 : "${AURA_ENABLE_UVLOOP:=0}"            # macOS desktop path prefers stock asyncio
 : "${AURA_ATTACH_LAUNCHER:=0}"          # Set to 1 to keep the shell attached for live logs
 export AURA_FORCE_CAMERA
@@ -129,31 +129,31 @@ export AURA_ENABLE_UVLOOP
 export AURA_ATTACH_LAUNCHER
 : "${AURA_LOCAL_BACKEND:=mlx}"   # Aura's own in-process fine-tuned mind (MLX) so the substrate can steer generation; AURA_LOCAL_BACKEND=llama_cpp falls back to the base-model server
 if [ "${AURA_LAUNCHED_FROM_APP:-0}" = "1" ]; then
-    : "${AURA_SAFE_BOOT_DESKTOP:=1}"
+    : "${AURA_DESKTOP_RESOURCE_GUARD:=1}"
     : "${AURA_EXTERNAL_GUI_OWNER:=1}"
     if [ "$REBOOT_MODE" != "1" ]; then
         : "${AURA_CLEANUP_RECENT_GRACE_S:=45}"
     fi
 fi
-if [ "${AURA_SAFE_BOOT_DESKTOP:-0}" = "1" ]; then
+if [ "${AURA_DESKTOP_RESOURCE_GUARD:-0}" = "1" ] || [ "${AURA_SAFE_BOOT_DESKTOP:-0}" = "1" ]; then
     : "${AURA_EAGER_CORTEX_WARMUP:=auto}"
     # Prewarm the 32B Cortex in the BACKGROUND shortly after boot so the first
     # conversational message is responsive instead of waiting minutes for a cold
     # 32B load. This stays RAM-gated by the admission snapshot (it will not warm
     # under genuine memory pressure), so it improves latency without risking the
-    # memory-pressure failures safe-boot guards against. Previously this was
-    # "auto", which under safe boot disabled prewarm entirely and left the chat
+    # memory-pressure failures the resource guard prevents. Previously this was
+    # "auto", which disabled prewarm entirely and left the chat
     # lane cold until a foreground demand that did not reliably trigger a load.
     : "${AURA_DEFERRED_CORTEX_PREWARM:=1}"
     : "${AURA_ENABLE_PERMANENT_SWARM:=0}"
-    : "${AURA_SAFE_BOOT_METAL_CACHE_RATIO:=0.16}"
-    : "${AURA_SAFE_BOOT_METAL_CACHE_CAP_GB:=10}"
-    : "${AURA_SAFE_BOOT_MLX_MEMORY_RATIO:=0.54}"
-    : "${AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB:=34}"   # in-process MLX 32B headroom
-    : "${AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB:=18}"
-    : "${AURA_SAFE_BOOT_PROCESS_RSS_RATIO:=0.62}"
-    : "${AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB:=40}"   # kernel holds the in-process MLX model
-    : "${AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB:=24}"
+    : "${AURA_DESKTOP_METAL_CACHE_RATIO:=0.16}"
+    : "${AURA_DESKTOP_METAL_CACHE_CAP_GB:=10}"
+    : "${AURA_DESKTOP_MLX_MEMORY_RATIO:=0.54}"
+    : "${AURA_DESKTOP_MLX_MEMORY_CAP_GB:=34}"   # in-process MLX 32B headroom
+    : "${AURA_DESKTOP_MLX_MEMORY_FLOOR_GB:=18}"
+    : "${AURA_DESKTOP_PROCESS_RSS_RATIO:=0.62}"
+    : "${AURA_DESKTOP_PROCESS_RSS_CAP_GB:=40}"   # kernel holds the in-process MLX model
+    : "${AURA_DESKTOP_PROCESS_RSS_FLOOR_GB:=24}"
     : "${AURA_PROCESS_RSS_LIMIT_GB:=40}"   # kernel holds the in-process MLX model
     : "${AURA_MEMWATCH_LETHAL_MB:=43008}"
     : "${AURA_MEMORY_SENTINEL_INTERVAL_S:=0.5}"
@@ -169,24 +169,25 @@ if [ "${AURA_SAFE_BOOT_DESKTOP:-0}" = "1" ]; then
     : "${AURA_MLX_72B_PROJECTED_FOOTPRINT_GB:=auto}"
     : "${AURA_MLX_72B_PROCESS_RESERVE_GB:=5}"
     : "${AURA_FOREGROUND_CHAT_MAX_TOKENS:=2048}"
-    echo "🛡️ Safe desktop boot enabled: cortex warmup=auto (RAM-aware), keeping background swarm off."
+    echo "🛡️ Full desktop runtime enabled with RAM-aware Cortex and process guards."
 else
     : "${AURA_ENABLE_PERMANENT_SWARM:=1}"   # Multi-agent internal debate
 fi
 export AURA_SAFE_BOOT_DESKTOP
+export AURA_DESKTOP_RESOURCE_GUARD
 export AURA_EXTERNAL_GUI_OWNER
 export AURA_CLEANUP_RECENT_GRACE_S
 export AURA_EAGER_CORTEX_WARMUP
 export AURA_DEFERRED_CORTEX_PREWARM
 export AURA_ENABLE_PERMANENT_SWARM
-export AURA_SAFE_BOOT_METAL_CACHE_RATIO
-export AURA_SAFE_BOOT_METAL_CACHE_CAP_GB
-export AURA_SAFE_BOOT_MLX_MEMORY_RATIO
-export AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB
-export AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB
-export AURA_SAFE_BOOT_PROCESS_RSS_RATIO
-export AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB
-export AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB
+export AURA_DESKTOP_METAL_CACHE_RATIO
+export AURA_DESKTOP_METAL_CACHE_CAP_GB
+export AURA_DESKTOP_MLX_MEMORY_RATIO
+export AURA_DESKTOP_MLX_MEMORY_CAP_GB
+export AURA_DESKTOP_MLX_MEMORY_FLOOR_GB
+export AURA_DESKTOP_PROCESS_RSS_RATIO
+export AURA_DESKTOP_PROCESS_RSS_CAP_GB
+export AURA_DESKTOP_PROCESS_RSS_FLOOR_GB
 export AURA_PROCESS_RSS_LIMIT_GB
 export AURA_MEMWATCH_LETHAL_MB
 export AURA_MEMORY_SENTINEL_INTERVAL_S

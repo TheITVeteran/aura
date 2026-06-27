@@ -416,6 +416,58 @@ def test_reliability_gate_rejects_meta_task_artifact_as_user_prose():
     assert "format_meta_artifact" in assessment.reasons
 
 
+def test_capability_inventory_gate_accepts_governed_effect_verified_answer():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "What tools can you do externally from the live desktop path? "
+            "Name the practical categories and one hypothetical multi-step scenario."
+        ),
+        (
+            "From the live desktop path I can use governed tool lanes for desktop apps, "
+            "browser and web research, file operations, document drafting, terminal work, "
+            "memory recall, and self-repair. A hypothetical chain would request Will/Authority "
+            "approval, open sources, draft a document, verify the visible result, export the "
+            "file, and record receipts without claiming unverified execution."
+        ),
+    )
+
+    assert assessment.ok
+    assert not assessment.retryable
+
+
+def test_capability_inventory_gate_rejects_generic_tool_claim():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "What tools can you do externally from the live desktop path?",
+        "I can use tools.",
+    )
+
+    assert assessment.retryable
+    assert "too_thin_for_operational_status_turn" in assessment.reasons
+
+
+def test_capability_inventory_gate_rejects_mid_sentence_tool_inventory():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "What tools can you do externally from the live desktop path? "
+            "Name the practical categories and one hypothetical multi-step scenario."
+        ),
+        (
+            "I can do desktop and app control, browser research, file operations, "
+            "code execution in a sandbox, and memory recall. A hypothetical chain would "
+            "request approval, compare sources, summarize findings, and save the doc loc..."
+        ),
+    )
+
+    assert assessment.retryable
+    assert "truncated_tail" in assessment.reasons
+
+
 def test_inference_gate_does_not_pass_thin_reliability_downstream():
     from core.brain.inference_gate import _should_pass_user_facing_draft_downstream
 

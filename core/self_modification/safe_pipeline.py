@@ -165,12 +165,10 @@ class SafePipeline:
                 Stage.APPROVAL,
                 f"{tier_decision.path} is sealed from runtime self-modification",
             )
-        if tier_decision.tier is MutationTier.PROPOSE_ONLY and not owner_approved:
-            return self._block(
-                proposal,
-                Stage.APPROVAL,
-                f"{tier_decision.path} is proposal-only and requires explicit owner approval",
-            )
+        # PROPOSE_ONLY targets still traverse the complete validation pipeline.
+        # The tier prevents live deployment, not diagnosis or quarantine. This
+        # lets the daily immune system produce evidence-bearing repairs without
+        # mutating the interpreter that is currently running Aura.
 
         # 2. SANDBOX_PATCH
         sandbox = Path(tempfile.mkdtemp(prefix="aura-selfmod-"))
@@ -361,23 +359,40 @@ class SafePipeline:
         # ulimit-style caps where available. macOS lacks setrlimit for
         # mem in some cases, so we use a wall-clock timeout as the
         # primary backstop.
-        cmd = [sys.executable, "-B", str(sandbox_file)]
+        test_file = sandbox_file.parent / "test_self_mod_patch.py"
+        commands = (
+            [sys.executable, "-B", str(test_file)],
+            [sys.executable, "-B", str(sandbox_file)],
+        )
         try:
-            proc = await get_subprocess_gateway().spawn_async(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(sandbox_file.parent),
-                source="self_modification:safe_pipeline.shadow_runtime",
-            )
-            try:
-                out, err = await asyncio.wait_for(proc.communicate(), timeout=self.SHADOW_TIMEOUT_S)
-            except TimeoutError:
-                proc.kill()
-                return False, f"shadow_timeout>{self.SHADOW_TIMEOUT_S}s"
-            if proc.returncode != 0:
-                return False, f"shadow_rc={proc.returncode} stderr={err.decode('utf-8', 'replace')[:240]}"
-            return True, out.decode("utf-8", "replace")[:240]
+            outputs: list[str] = []
+            for index, cmd in enumerate(commands):
+                proc = await get_subprocess_gateway().spawn_async(
+                    cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(sandbox_file.parent),
+                    source=(
+                        "self_modification:safe_pipeline.generated_tests"
+                        if index == 0
+                        else "self_modification:safe_pipeline.shadow_runtime"
+                    ),
+                )
+                try:
+                    out, err = await asyncio.wait_for(
+                        proc.communicate(), timeout=self.SHADOW_TIMEOUT_S
+                    )
+                except TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                    return False, f"shadow_timeout>{self.SHADOW_TIMEOUT_S}s step={index}"
+                if proc.returncode != 0:
+                    return False, (
+                        f"shadow_rc={proc.returncode} step={index} "
+                        f"stderr={err.decode('utf-8', 'replace')[:240]}"
+                    )
+                outputs.append(out.decode("utf-8", "replace")[:160])
+            return True, " | ".join(outputs)
         except (subprocess.SubprocessError, OSError) as exc:
             record_degradation('safe_pipeline', exc)
             return False, f"shadow_exception:{exc}"

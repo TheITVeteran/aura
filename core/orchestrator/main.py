@@ -82,14 +82,12 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def _foreground_only_runtime() -> bool:
-    if _env_flag("AURA_FOREGROUND_ONLY", False):
-        return True
     try:
-        from core.runtime.background_policy import background_cognition_disabled_reason
+        from core.runtime.background_policy import foreground_only_runtime
 
-        return bool(background_cognition_disabled_reason())
+        return bool(foreground_only_runtime())
     except _ORCHESTRATOR_RECOVERABLE_ERRORS:
-        return False
+        return _env_flag("AURA_FOREGROUND_ONLY", False)
 
 
 def _proof_runtime_active(origin: str = "orchestrator") -> bool:
@@ -102,7 +100,12 @@ def _proof_runtime_active(origin: str = "orchestrator") -> bool:
 
 
 def _background_quiescent_runtime(origin: str = "orchestrator_background") -> bool:
-    return _foreground_only_runtime() or _proof_runtime_active(origin)
+    try:
+        from core.runtime.background_policy import background_loop_start_reason
+
+        return bool(background_loop_start_reason(origin=origin))
+    except _ORCHESTRATOR_RECOVERABLE_ERRORS:
+        return _foreground_only_runtime() or _proof_runtime_active(origin)
 
 
 def _record_main_degradation(
@@ -1497,7 +1500,9 @@ class RobustOrchestrator(
                 self._fire_and_forget(self.mind_tick.start(), name="orchestrator.mind_tick.start")
                 logger.info("🧠 Peer Mode: MindTick elevated as primary sovereign thread")
 
-                # 🗣️ [PEER MODE] Evolution 5: Permanent internal society (Internal Debate)
+                # Optional compatibility hook for a one-time boot deliberation.
+                # Normal desktop operation uses the resource-admitted recurring
+                # AutonomyConductor job instead of spawning model work at boot.
                 swarm_autostart = os.getenv("AURA_ENABLE_PERMANENT_SWARM", "").strip().lower() in {
                     "1",
                     "true",
@@ -1542,7 +1547,7 @@ class RobustOrchestrator(
                             ),
                             name="orchestrator.swarm.start_permanent_debate",
                         )
-                        logger.info("🗣️ Peer Mode: Internal multi-agent society running 24/7")
+                        logger.info("🗣️ Peer Mode: One boot-time internal deliberation scheduled")
                     else:
                         logger.info(
                             "🗣️ Peer Mode: Permanent swarm debate suppressed by Executive: %s",
@@ -1550,7 +1555,7 @@ class RobustOrchestrator(
                         )
                 elif self.sovereign_swarm is not None and not swarm_autostart:
                     logger.info(
-                        "🗣️ Peer Mode: Permanent swarm debate disabled by default. Set AURA_ENABLE_PERMANENT_SWARM=1 to enable."
+                        "🗣️ Peer Mode: Boot-time swarm disabled; conductor-managed deliberation remains scheduled."
                     )
                 elif self.sovereign_swarm is not None:
                     logger.warning(
@@ -1636,6 +1641,7 @@ class RobustOrchestrator(
 
         self.status.running = True
         logger.info("🚩 [ORCHESTRATOR] Main Heartbeat Active (Loop started).")
+        _last_healer_heartbeat = 0.0
 
         while not self._stop_event.is_set():
             try:
@@ -1645,6 +1651,12 @@ class RobustOrchestrator(
                 watchdog = getattr(self, "watchdog", None)
                 if watchdog and hasattr(watchdog, "heartbeat"):
                     watchdog.heartbeat("orchestrator_loop")
+                now = time.monotonic()
+                if now - _last_healer_heartbeat >= 1.0:
+                    healer = ServiceContainer.get("self_healing", default=None)
+                    if healer is not None:
+                        healer.heartbeat("orchestrator")
+                    _last_healer_heartbeat = now
 
                 # Short sleep to prevent CPU spinning while remaining responsive
                 await asyncio.sleep(0.05)

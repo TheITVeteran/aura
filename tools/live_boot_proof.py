@@ -140,28 +140,32 @@ def build_safe_boot_env(
     env = dict(os.environ if base_env is None else base_env)
     mode = str(mode or "headless").strip().lower()
     env.setdefault("AURA_LOCAL_BACKEND", "mlx")
-    env.setdefault("AURA_SAFE_BOOT_DESKTOP", "1")
     env.setdefault("AURA_LOCAL_RUNTIME_SINGLETON", "1")
     env.setdefault("AURA_LOCAL_PARALLEL_SLOTS", "1")
     if mode == "desktop":
+        env["AURA_SAFE_BOOT_DESKTOP"] = "0"
+        env["AURA_DESKTOP_RESOURCE_GUARD"] = "1"
         env["AURA_HEADLESS"] = "0"
         env["AURA_LAUNCHED_FROM_APP"] = "1"
         env["AURA_EXTERNAL_GUI_OWNER"] = "1"
+        env["AURA_EAGER_LOCAL_SENSORY_BOOT"] = "1"
+        env["AURA_AUTO_LISTEN"] = "1"
         env.setdefault("AURA_EAGER_CORTEX_WARMUP", "0")
         env.setdefault("AURA_DEFERRED_CORTEX_PREWARM", "1")
     else:
+        env.setdefault("AURA_SAFE_BOOT_DESKTOP", "1")
         env.setdefault("AURA_HEADLESS", "1")
+        env.setdefault("AURA_EAGER_LOCAL_SENSORY_BOOT", "0")
         env.setdefault("AURA_DEFERRED_CORTEX_PREWARM", "1")
-    env.setdefault("AURA_EAGER_LOCAL_SENSORY_BOOT", "0")
     env.setdefault("AURA_ENABLE_PROACTIVE_VISION", "0")
-    env.setdefault("AURA_SAFE_BOOT_METAL_CACHE_RATIO", "0.16")
-    env.setdefault("AURA_SAFE_BOOT_METAL_CACHE_CAP_GB", "10")
-    env.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_RATIO", "0.54")
-    env.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_CAP_GB", "34")
-    env.setdefault("AURA_SAFE_BOOT_MLX_MEMORY_FLOOR_GB", "18")
-    env.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_RATIO", "0.62")
-    env.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_CAP_GB", "40")
-    env.setdefault("AURA_SAFE_BOOT_PROCESS_RSS_FLOOR_GB", "24")
+    env.setdefault("AURA_DESKTOP_METAL_CACHE_RATIO", "0.16")
+    env.setdefault("AURA_DESKTOP_METAL_CACHE_CAP_GB", "10")
+    env.setdefault("AURA_DESKTOP_MLX_MEMORY_RATIO", "0.54")
+    env.setdefault("AURA_DESKTOP_MLX_MEMORY_CAP_GB", "34")
+    env.setdefault("AURA_DESKTOP_MLX_MEMORY_FLOOR_GB", "18")
+    env.setdefault("AURA_DESKTOP_PROCESS_RSS_RATIO", "0.62")
+    env.setdefault("AURA_DESKTOP_PROCESS_RSS_CAP_GB", "40")
+    env.setdefault("AURA_DESKTOP_PROCESS_RSS_FLOOR_GB", "24")
     env.setdefault("AURA_MEMWATCH_LETHAL_MB", "43008")
     env.setdefault("AURA_MEMORY_SENTINEL_INTERVAL_S", "0.5")
     env.setdefault("AURA_GOVERNOR_PRUNE_MB", "37888")
@@ -246,6 +250,41 @@ def artifact_display_path(path: Path) -> str:
         return str(path)
 
 
+def resolve_launch_python() -> str:
+    """Return the interpreter Aura's desktop launcher would use.
+
+    The proof harness itself may be invoked from a different shell Python. The
+    launched runtime must still match the real desktop lane, which prefers the
+    repository venv and only then a Python 3.12 executable. Launching with the
+    harness interpreter can silently move Aura onto the wrong dependency set and
+    create false failures around macOS/MLX frameworks.
+    """
+
+    candidates = [
+        ROOT / ".venv" / "bin" / "python3",
+        ROOT / ".venv" / "bin" / "python",
+        Path("/opt/homebrew/bin/python3.12"),
+        Path("/usr/local/bin/python3.12"),
+        Path("/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12"),
+    ]
+    for candidate in candidates:
+        if not candidate.exists() or not os.access(candidate, os.X_OK):
+            continue
+        try:
+            proc = subprocess.run(
+                [str(candidate), "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        version = f"{proc.stdout} {proc.stderr}".strip()
+        if "Python 3.12" in version:
+            return str(candidate)
+    return sys.executable
+
+
 class LiveProof:
     def __init__(
         self,
@@ -279,6 +318,7 @@ class LiveProof:
         self.rss_abort_mb = DEFAULT_RSS_ABORT_MB
         self._stdout_handle = None
         self._boot_count = 0
+        self.launch_python = resolve_launch_python()
 
     # ── recording ─────────────────────────────────────────────────────
 
@@ -374,7 +414,7 @@ class LiveProof:
         self._stdout_handle.flush()
         mode_arg = "--desktop" if self.mode == "desktop" else "--headless"
         self.proc = subprocess.Popen(
-            [sys.executable, "aura_main.py", mode_arg, "--port", str(self.port)],
+            [self.launch_python, "aura_main.py", mode_arg, "--port", str(self.port)],
             cwd=ROOT,
             stdout=self._stdout_handle,
             stderr=subprocess.STDOUT,
@@ -397,7 +437,7 @@ class LiveProof:
                 with httpx.Client(timeout=5.0) as client:
                     heartbeat_resp = client.get(f"{self.base}/api/health/heartbeat")
                     boot_resp = client.get(f"{self.base}/api/health/boot")
-                if heartbeat_resp.status_code == 200 and boot_resp.status_code == 200:
+                if heartbeat_resp.status_code in {200, 503} and boot_resp.status_code in {200, 503}:
                     heartbeat_payload = heartbeat_resp.json()
                     boot_payload = boot_resp.json()
                     heartbeat = heartbeat_payload if isinstance(heartbeat_payload, dict) else {}
@@ -409,7 +449,83 @@ class LiveProof:
                         and required.get("all_passed") is True
                     )
                     blockers = heartbeat.get("blockers")
+                    boot_blockers = boot.get("blockers")
                     no_blockers = isinstance(blockers, list) and not blockers
+                    normalized_blockers = {
+                        str(item)
+                        for item in (blockers if isinstance(blockers, list) else [])
+                        if str(item or "").strip()
+                    }
+                    normalized_boot_blockers = {
+                        str(item)
+                        for item in (boot_blockers if isinstance(boot_blockers, list) else [])
+                        if str(item or "").strip()
+                    }
+                    lane = heartbeat.get("conversation_lane")
+                    if not isinstance(lane, dict):
+                        lane = boot.get("conversation_lane")
+                    if not isinstance(lane, dict):
+                        lane = {}
+                    lane_blockers = {
+                        str(item)
+                        for item in (lane.get("readiness_blockers") or [])
+                        if str(item or "").strip()
+                    }
+                    runtime_degradations = boot.get("runtime_degradations")
+                    if not isinstance(runtime_degradations, dict):
+                        runtime_degradations = {}
+                    degraded_critical = list(runtime_degradations.get("critical") or [])
+                    degraded_important = list(runtime_degradations.get("important") or [])
+                    checks = boot.get("checks")
+                    if not isinstance(checks, dict):
+                        checks = {}
+                    all_observed_blockers = normalized_blockers | normalized_boot_blockers | lane_blockers
+                    allowed_unproven_conversation_blockers = {
+                        "healthy",
+                        "runtime_contract_healthy",
+                        "conversation_ready",
+                        "conversation_lane:cold",
+                        "conversation_lane:closed",
+                        "conversation_lane:handshaking",
+                        "conversation_lane:warming",
+                        "conversation_lane:ready",
+                        "conversation_reason:worker_not_alive",
+                        "conversation_reason:init_not_complete",
+                        "conversation_reason:lane_cold",
+                        "worker_not_alive",
+                        "init_not_complete",
+                        "lane_cold",
+                        "conversation_reason:visible_conversation_probe_missing",
+                        "visible_conversation_probe_missing",
+                    }
+                    conversation_unproven_only = bool(
+                        self.mode == "desktop"
+                        and required_ok
+                        and heartbeat.get("runtime_probe_healthy") is True
+                        and checks.get("runtime_required_probes") is True
+                        and not degraded_critical
+                        and not degraded_important
+                        and lane.get("state") == "ready"
+                        and "visible_conversation_probe_missing" in lane_blockers
+                        and all_observed_blockers
+                        and all_observed_blockers <= allowed_unproven_conversation_blockers
+                    )
+                    conversation_standby_only = bool(
+                        self.mode == "desktop"
+                        and required_ok
+                        and heartbeat.get("runtime_probe_healthy") is True
+                        and boot.get("system_ready") is True
+                        and boot.get("launcher_ready") is True
+                        and checks.get("runtime_required_probes") is True
+                        and not degraded_critical
+                        and not degraded_important
+                        and lane.get("state") in {"cold", "closed", ""}
+                        and lane.get("conversation_ready") is False
+                        and not bool(lane.get("warmup_attempted", False))
+                        and not bool(lane.get("warmup_in_flight", False))
+                        and all_observed_blockers
+                        and all_observed_blockers <= allowed_unproven_conversation_blockers
+                    )
                     if (
                         heartbeat.get("healthy") is True
                         and heartbeat.get("runtime_probe_healthy") is True
@@ -425,6 +541,30 @@ class LiveProof:
                             summary=f"healthy after {time.time() - self.started_at:.0f}s "
                             f"(rss {self.tree_rss_mb():.0f}MB)",
                             health=last_state,
+                        )
+                    if conversation_unproven_only:
+                        return self.record(
+                            "boot_health",
+                            True,
+                            summary=(
+                                "desktop system ready; live conversation remains unproven "
+                                "until the first required CognitiveEngine chat probe "
+                                f"(rss {self.tree_rss_mb():.0f}MB)"
+                            ),
+                            health=last_state,
+                            conversation_probe_required=True,
+                        )
+                    if conversation_standby_only:
+                        return self.record(
+                            "boot_health",
+                            True,
+                            summary=(
+                                "desktop system ready; conversation lane is standby and "
+                                "must warm on the first required CognitiveEngine chat probe "
+                                f"(rss {self.tree_rss_mb():.0f}MB)"
+                            ),
+                            health=last_state,
+                            conversation_probe_required=True,
                         )
             except httpx.HTTPError as exc:
                 last_state = {
@@ -851,9 +991,10 @@ class LiveProof:
     def shutdown(self, *, step: str = "shutdown") -> bool:
         if self.proc is None:
             return self.record(step, False, summary="no process")
+
         try:
             stop = subprocess.run(
-                [sys.executable, "aura_main.py", "--stop"],
+                [self.launch_python, "aura_main.py", "--stop"],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,

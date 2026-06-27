@@ -743,6 +743,54 @@ _OPERATIONAL_STATUS_SUBSTANCE_MARKERS = (
     "tool",
     "tools",
 )
+_CAPABILITY_STATUS_REQUEST_RE = re.compile(
+    r"\b(?:"
+    r"what\s+(?:external\s+)?tools?\s+(?:can|could|would|do)\s+(?:you|aura|she)|"
+    r"what\s+(?:can|could|would)\s+(?:you|aura|she)\s+do\s+(?:externally|with\s+(?:tools?|apps?|desktop|browser|files?|documents?))|"
+    r"(?:list|show|describe|name|explain)\s+(?:your\s+)?(?:tools?|capabilities)|"
+    r"tool\s+(?:availability|surface|pathway|path)|"
+    r"governed\s+tools?"
+    r")\b",
+    re.IGNORECASE,
+)
+_CAPABILITY_CATEGORY_MARKERS: tuple[tuple[str, ...], ...] = (
+    ("desktop", "app", "apps", "screen", "window", "mouse", "keyboard", "os", "computer"),
+    ("browser", "web", "search", "internet", "page", "url", "article"),
+    ("file", "folder", "document", "pdf", "notes", "docs", "write", "export"),
+    ("terminal", "shell", "code", "python", "test", "sandbox", "subprocess"),
+    ("memory", "recall", "state", "continuity", "learn", "remember"),
+    ("repair", "self-repair", "patch", "self-modification", "improve", "debug"),
+)
+_CAPABILITY_GOVERNANCE_MARKERS = (
+    "governed",
+    "governance",
+    "authority",
+    "will",
+    "approval",
+    "authorize",
+    "permission",
+    "policy",
+)
+_CAPABILITY_EVIDENCE_MARKERS = (
+    "receipt",
+    "receipts",
+    "effect verification",
+    "effect evidence",
+    "verify",
+    "verified",
+    "observable",
+    "visible result",
+    "claiming unverified",
+)
+_CAPABILITY_HYPOTHETICAL_MARKERS = (
+    "hypothetical",
+    "scenario",
+    "example",
+    "would",
+    "if you asked",
+    "you ask me",
+    "unless",
+)
 _SELF_REFLECTION_SUBSTANCE_MARKERS = (
     "mind",
     "attention",
@@ -2291,7 +2339,28 @@ def _has_operational_status_substance(user_message: Any, reply_text: Any) -> boo
         return False
     if _reply_has_pseudo_internal_jargon(reply_text):
         return False
+    if _CAPABILITY_STATUS_REQUEST_RE.search(str(user_message or "")):
+        return _has_capability_inventory_substance(reply_text)
     return any(marker in reply for marker in _OPERATIONAL_STATUS_SUBSTANCE_MARKERS)
+
+
+def _has_capability_inventory_substance(reply_text: Any) -> bool:
+    """Require real capability evidence, not a generic "I can use tools" line."""
+
+    reply = _normalize(reply_text)
+    if _word_count(reply) < 28:
+        return False
+    category_hits = sum(
+        1
+        for category_markers in _CAPABILITY_CATEGORY_MARKERS
+        if any(marker in reply for marker in category_markers)
+    )
+    if category_hits < 3:
+        return False
+    has_governance = any(marker in reply for marker in _CAPABILITY_GOVERNANCE_MARKERS)
+    has_effect_evidence = any(marker in reply for marker in _CAPABILITY_EVIDENCE_MARKERS)
+    has_hypothetical_boundary = any(marker in reply for marker in _CAPABILITY_HYPOTHETICAL_MARKERS)
+    return has_governance and has_effect_evidence and has_hypothetical_boundary
 
 
 def _operational_status_overclaim_reasons(user_message: Any, reply_text: Any) -> list[str]:

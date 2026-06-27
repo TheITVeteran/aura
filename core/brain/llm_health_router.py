@@ -46,7 +46,7 @@ from core.brain.llm.runtime_wiring import (
     should_force_tool_handoff,
 )
 from core.phases.response_contract import ResponseContract
-from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
+from core.runtime.desktop_boot_safety import desktop_resource_guard_enabled
 from core.runtime.errors import record_degradation
 from core.runtime.network_gateway import get_network_gateway
 from core.runtime.proof_policy import (
@@ -87,7 +87,7 @@ def generation_concurrency_limit(env: Mapping[str, str] | None = None) -> int:
     allow_desktop_parallelism = str(
         env.get("AURA_ALLOW_CONCURRENT_DESKTOP_GENERATIONS", "")
     ).strip().lower() in {"1", "true", "yes", "on"}
-    if desktop_safe_boot_enabled(env) and not allow_desktop_parallelism:
+    if desktop_resource_guard_enabled(env) and not allow_desktop_parallelism:
         return 1
     return configured
 
@@ -1681,7 +1681,7 @@ class HealthAwareLLMRouter:
 
     def _safe_boot_background_guard_active(self) -> bool:
         """Reserve launch headroom for foreground chat before waking spare local models."""
-        if not desktop_safe_boot_enabled():
+        if not desktop_resource_guard_enabled():
             return False
         try:
             guard_secs = float(os.environ.get("AURA_SAFE_BOOT_BACKGROUND_GUARD_SECS", "180"))
@@ -1701,7 +1701,7 @@ class HealthAwareLLMRouter:
         }
 
     def _desktop_background_local_disabled(self) -> bool:
-        return desktop_safe_boot_enabled() and not self._desktop_background_local_enabled()
+        return desktop_resource_guard_enabled() and not self._desktop_background_local_enabled()
 
     def _cortex_startup_quiet_window_active(self) -> bool:
         """Block background local fallbacks while Cortex is still warming or launch headroom is reserved."""

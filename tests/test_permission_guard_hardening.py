@@ -28,6 +28,25 @@ def test_automation_probe_reports_denied_native_error(monkeypatch) -> None:
     assert "Automation" in result["guidance"]
 
 
+def test_automation_probe_reports_missing_scripting_bridge_without_degradation(monkeypatch) -> None:
+    monkeypatch.setattr(permission_guard_module.sys, "platform", "darwin")
+    monkeypatch.setattr(permission_guard_module, "_load_scripting_bridge_application", lambda: None)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        permission_guard_module,
+        "record_degradation",
+        lambda *_args, **_kwargs: calls.append("degradation"),
+    )
+
+    result = PermissionGuard()._automation_preflight_probe()
+
+    assert result["granted"] is False
+    assert result["status"] == "dependency_missing"
+    assert "ScriptingBridge" in result["detail"]
+    assert calls == []
+
+
 def test_automation_probe_reads_frontmost_process(monkeypatch) -> None:
     class DemoProcess:
         def __init__(self, name: str, frontmost: bool) -> None:

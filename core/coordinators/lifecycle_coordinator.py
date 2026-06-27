@@ -192,7 +192,9 @@ class LifecycleCoordinator:
             await self._boot_barrier()
 
             # Start Background Loops
-            background_start_block = background_loop_start_reason("lifecycle_coordinator")
+            background_start_block = background_loop_start_reason(
+                "lifecycle_coordinator",
+            )
             if (
                 not background_start_block
                 and hasattr(orch, 'consciousness')

@@ -262,14 +262,13 @@ class BootManager:
                 auto_fix_enabled=self.orchestrator.auto_fix_enabled
             )
             modifier = self.orchestrator.self_modifier
-            if config.security.auto_fix_enabled and modifier.runtime_promotion_enabled():
+            if config.security.auto_fix_enabled:
                 modifier.start_monitoring()
-            elif config.security.auto_fix_enabled:
-                self.logger.info(
-                    "Self-modification engine registered in proposal-only mode; "
-                    "source promotion requires an explicit repair-lab or supervised "
-                    "operator profile."
-                )
+                if not modifier.runtime_promotion_enabled():
+                    self.logger.info(
+                        "Self-modification engine active in validation/quarantine mode; "
+                        "source promotion requires a supervised operator profile."
+                    )
         except (ImportError, AttributeError, RuntimeError) as e:
             self._record_degradation(
                 e,

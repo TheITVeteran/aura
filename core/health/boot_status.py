@@ -139,6 +139,18 @@ def _boot_status_message(
     return "Starting Aura kernel…"
 
 
+def _conversation_lane_is_standby(lane: dict[str, Any] | None) -> bool:
+    lane = dict(lane or {})
+    state = str(lane.get("state", "") or "").strip().lower()
+    return (
+        not bool(lane.get("conversation_ready", False))
+        and state in {"cold", "closed", ""}
+        and not bool(lane.get("warmup_attempted", False))
+        and not bool(lane.get("warmup_in_flight", False))
+        and not str(lane.get("last_failure_reason", "") or lane.get("last_error", "") or "").strip()
+    )
+
+
 def build_boot_health_snapshot(
     orchestrator: Any,
     runtime_state: dict[str, Any] | None,
@@ -267,6 +279,7 @@ def build_boot_health_snapshot(
             conversation_ready = bool(conversation_lane.get("conversation_ready", False))
             conversation_busy = conversation_lane_is_busy(conversation_lane)
             conversation_state = str(conversation_lane.get("state", "warming") or "warming")
+        conversation_standby = _conversation_lane_is_standby(conversation_lane)
 
         system_ready = (
             orchestrator is not None
@@ -308,11 +321,12 @@ def build_boot_health_snapshot(
             # conversation lane passes, so heartbeat/readiness cannot report a
             # false healthy state while the desktop is still inspectable.
             launcher_ready = True
-            http_status = 503
+            http_status = 200 if conversation_standby else 503
             if conversation_state == "failed":
                 blockers.append("conversation_failed")
                 boot_phase = "conversation_failed"
                 status_text = "degraded"
+                http_status = 503
             else:
                 boot_phase = "conversation_recovering" if conversation_state == "recovering" else "conversation_warming"
                 status_text = "recovering" if conversation_state == "recovering" else "warming"

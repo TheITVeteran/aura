@@ -381,14 +381,9 @@ def gui_actor_entry(port: int, token: str = None):
         def _request_accessibility_trust():
             try:
                 time.sleep(2.5)  # let the window become the foreground application
-                from ApplicationServices import (  # type: ignore
-                    AXIsProcessTrustedWithOptions,
-                    kAXTrustedCheckOptionPrompt,
-                )
+                from core.security.permission_guard import get_permission_guard
 
-                trusted = bool(
-                    AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True})
-                )
+                trusted = bool(get_permission_guard().request_accessibility_trust())
                 logger.info(
                     "🖐️ Accessibility trust %s for desktop control.",
                     "confirmed" if trusted else "requested (awaiting grant in System Settings)",

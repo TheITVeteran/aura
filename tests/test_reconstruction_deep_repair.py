@@ -101,8 +101,8 @@ async def test_code_repair_fallback_calls_self_healing_deep_repair(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_self_healing_deep_repair_is_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("AURA_ENABLE_DEEP_REPAIR", raising=False)
+async def test_self_healing_deep_repair_honors_explicit_disable(monkeypatch):
+    monkeypatch.setenv("AURA_ENABLE_DEEP_REPAIR", "0")
 
     class Lab:
         def __init__(self):
@@ -110,7 +110,7 @@ async def test_self_healing_deep_repair_is_disabled_by_default(monkeypatch):
 
         async def run_reconstruction(self, *_args, **_kwargs):
             self.reconstruction_attempts += 1
-            raise AssertionError("deep repair must not run without explicit opt-in")
+            raise AssertionError("deep repair must not run after explicit disable")
 
     ServiceContainer.clear()
     lab = Lab()
@@ -139,6 +139,57 @@ def test_self_healing_schedule_deep_repair_respects_foreground_only_runtime(monk
     )
 
     assert record["result"] == "foreground_only_runtime"
+
+
+@pytest.mark.asyncio
+async def test_self_healing_performs_real_stop_start_lifecycle_restart(monkeypatch):
+    class Restartable:
+        def __init__(self):
+            self.stops = 0
+            self.starts = 0
+
+        async def stop(self):
+            self.stops += 1
+
+        async def start(self):
+            self.starts += 1
+
+    ServiceContainer.clear()
+    service = Restartable()
+    ServiceContainer.register_instance("restartable", service, required=False)
+    healer = SelfHealing()
+    healer.watch("restartable", expected_interval_s=1.0, container_key="restartable")
+    records = []
+
+    async def append(record):
+        records.append(record)
+
+    monkeypatch.setattr(healer, "_append_record_async", append)
+    await healer._heal(healer._watches["restartable"], 10.0)
+
+    assert service.stops == 1
+    assert service.starts == 1
+    assert records[-1]["result"] == "restarted"
+    ServiceContainer.clear()
+
+
+@pytest.mark.asyncio
+async def test_self_healing_never_claims_restart_without_restart_interface(monkeypatch):
+    monkeypatch.setenv("AURA_ENABLE_DEEP_REPAIR", "0")
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("static_service", object(), required=False)
+    healer = SelfHealing()
+    healer.watch("static", expected_interval_s=1.0, container_key="static_service")
+    records = []
+
+    async def append(record):
+        records.append(record)
+
+    monkeypatch.setattr(healer, "_append_record_async", append)
+    await healer._heal(healer._watches["static"], 10.0)
+
+    assert records[-1]["result"] == "deep_repair_disabled"
+    ServiceContainer.clear()
 
 
 def test_self_healing_ledger_append_uses_internal_governance(monkeypatch, tmp_path):

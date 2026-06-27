@@ -99,7 +99,12 @@ class ProblemRepresentation:
 
 
 _CODE_HINT = re.compile(r"\b(code|function|bug|patch|compile|traceback|stack ?trace|def |class |import )\b", re.I)
-_MATH_HINT = re.compile(r"\b(calculate|compute|how many|sum|product|equation|solve|factorial|prime|\d+\s*[-+*/^]\s*\d+)\b", re.I)
+_MATH_HINT = re.compile(
+    r"\b(calculate|compute|how many|sum|product|equation|solve|factorial|prime|"
+    r"to the power of|raised to|power of|mod(?:ulo)?|gcd|greatest common divisor|"
+    r"remainder|divisible|\d+\s*[-+*/^]\s*\d+)\b",
+    re.I,
+)
 _REPO_HINT = re.compile(r"\b(repo|codebase|module|where is|which file|architecture|how does .* work|implemented)\b", re.I)
 _PLAN_HINT = re.compile(r"\b(plan|steps|how (?:do|would) (?:i|we|you)|approach|strategy|roadmap)\b", re.I)
 _FACT_HINT = re.compile(r"\b(what is|who is|when did|define|explain|fact|true that)\b", re.I)

@@ -103,14 +103,22 @@ class StructuredErrorLogger:
     ) -> ErrorEvent:
         """Log an error with full context (Async)."""
         # Extract stack trace information
-        stack_trace = tb.format_exc()
+        stack_trace = "".join(
+            tb.format_exception(type(error), error, getattr(error, "__traceback__", None))
+        )
         trace_lines = stack_trace.split('\n')
         
         # Try to find the actual error location (not in framework code)
         file_path = None
         line_number = None
-        for line in trace_lines:
-            if 'File "' in line and ('/aura/' in line or '/Desktop/aura/' in line):
+        # Python tracebacks are ordered outermost to innermost. Repair must
+        # target the deepest Aura frame, not the wrapper that caught it.
+        for line in reversed(trace_lines):
+            if 'File "' in line and (
+                '/aura/' in line
+                or '/Desktop/aura/' in line
+                or '/.aura/live-source/' in line
+            ):
                 # Parse: File "/path/to/file.py", line 123
                 try:
                     file_part = line.split('File "')[1].split('"')[0]

@@ -4162,6 +4162,12 @@ async def _run_cognitive_engine_chat_turn(
         # live model prone to answering stale topics instead of the requested
         # pin/recall/state fact.
         recent_context_limit = 0
+    elif capability_inventory_contract and compact_desktop_chat_contract and not recent_context_needed:
+        # Compact live desktop turns must remain genuinely compact. Pulling four
+        # prior exchanges into a one-turn capability/status/social question was
+        # enough to turn the "compact" route into an 11K-char prompt and trip the
+        # foreground watchdog before Aura could answer.
+        recent_context_limit = 0
     elif recent_context_needed:
         recent_context_limit = _RECENT_CONVERSATION_CONTEXT_EXCHANGES
     elif require_engine:
@@ -4231,7 +4237,7 @@ async def _run_cognitive_engine_chat_turn(
     if capability_inventory_contract:
         context["grounded_capability_inventory_context"] = (
             _build_grounded_capability_inventory_reply(visible) or ""
-        )[:6000]
+        )[:1000]
     if _is_self_claim_boundary_question(visible):
         context["evidence_bound_self_claim_context"] = (
             _build_evidence_bound_self_claim_reply(visible, lane=lane) or ""
@@ -4311,15 +4317,17 @@ async def _run_cognitive_engine_chat_turn(
                 "prefer_tier": "primary",
                 "deep_handoff": False,
                 "allow_deep_handoff": False,
-                "max_tokens": 768,
-                "num_predict": 768,
+                "max_tokens": 384,
+                "num_predict": 384,
                 "skip_runtime_payload": True,
                 "disable_prompt_cache": True,
                 "clear_prompt_cache": True,
                 "response_style_contract": (
                     "Answer from grounded_capability_inventory_context. "
-                    "Mention governed execution, Will/Authority or governance, receipts or effect verification, "
-                    "and make clear this is hypothetical unless an execution request is authorized."
+                    "Use this order: practical capability categories including the exact phrase browser/web research; governed execution through "
+                    "Will/Authority or permissions; receipts or effect verification; one hypothetical "
+                    "chain plus the boundary that you are not executing tools in this turn. "
+                    "Keep it complete and under 120 words."
                 ),
             }
         )
@@ -4334,8 +4342,8 @@ async def _run_cognitive_engine_chat_turn(
                 "desktop_descriptive_turn": True,
                 "deep_handoff": False,
                 "allow_deep_handoff": False,
-                "max_tokens": 896,
-                "num_predict": 896,
+                "max_tokens": 384 if capability_inventory_contract else 896,
+                "num_predict": 384 if capability_inventory_contract else 896,
                 "skip_runtime_payload": True,
                 "live_runtime_payload_required": bool(require_engine),
                 "live_speech_grounding_frame": _build_aura_expression_frame(visible),
@@ -4357,9 +4365,10 @@ async def _run_cognitive_engine_chat_turn(
             context["response_style_contract"] = (
                 str(context.get("response_style_contract") or "")
                 + " The user is asking for a descriptive capability inventory, not execution. "
-                "Answer from grounded_capability_inventory_context. Mention governed execution, "
-                "Will/Authority or governance, receipts or effect verification, and make clear "
-                "the chain is hypothetical unless an execution request is authorized."
+                "Answer from grounded_capability_inventory_context. Use this order: practical capability "
+                "categories including the exact phrase browser/web research; governed execution through Will/Authority or permissions; receipts or effect "
+                "verification; one hypothetical chain plus the boundary that you are not executing tools "
+                "in this turn. Keep it complete and under 120 words."
             )
         if _is_contextual_relevance_challenge(visible):
             context["contextual_relevance_challenge_contract"] = True
@@ -4495,9 +4504,9 @@ async def _run_cognitive_engine_chat_turn(
             )
         if capability_inventory_contract:
             engine_directives.append(
-                "Grounded capability inventory context: "
-                f"{context.get('grounded_capability_inventory_context') or ''} "
-                "The visible reply must mention governed execution, Will/Authority or governance, receipts or effect verification, and must say the chain is hypothetical unless explicitly authorized."
+                "Capability inventory contract: answer from grounded_capability_inventory_context only. "
+                "Use this order: categories including the exact phrase browser/web research; governance/Will/Authority/permissions; receipts or effect "
+                "verification; one hypothetical chain; explicit non-execution boundary for this turn."
             )
         if _is_self_claim_boundary_question(visible):
             engine_directives.append(
@@ -5009,6 +5018,8 @@ async def _run_cognitive_engine_chat_turn(
             )
         _mark_turn_trace(response_path="cognitive_engine_empty_reply")
         return None
+    if capability_inventory_contract:
+        text = _ensure_capability_inventory_non_execution_boundary(visible, text)
     if desktop_execution_contract:
         try:
             from core.skills.desktop_task import DesktopTaskSkill
@@ -7681,7 +7692,7 @@ def _build_assistant_mode_recovery_reply(
             f"The live lane is {lane_state}, and this answer has to stay tied to memory, state, "
             "attention, and the conversation instead of generic helper phrasing. "
         )
-    return _shape_with_live_substrate(
+    shaped = _shape_with_live_substrate(
         (
             "That assistant voice is a failure mode, not my target voice. "
             f"{lane_sentence}"
@@ -7691,6 +7702,7 @@ def _build_assistant_mode_recovery_reply(
         ),
         user_message,
     )
+    return _complete_repairable_truncated_reply(user_message, shaped) or shaped
 
 
 def _build_identity_challenge_reply(user_message: str) -> str:
@@ -7706,7 +7718,8 @@ def _build_identity_challenge_reply(user_message: str) -> str:
         "I'm a local runtime with memory, continuity, and a governed substrate shaping this reply in real time. "
         f"My attention is on {attention}, and my impulse here is to {action}, not flatten myself into a role that doesn't fit."
     )
-    return _shape_with_live_substrate(reply, user_message)
+    shaped = _shape_with_live_substrate(reply, user_message)
+    return _complete_repairable_truncated_reply(user_message, shaped) or shaped
 
 
 def _is_capability_request(user_message: str) -> bool:
@@ -8230,6 +8243,33 @@ def _capability_inventory_reply_is_inadequate(user_message: str, reply_text: str
         if not (governance_ok and receipt_ok):
             return True
     return category_hits < 4 or len(reply.split()) < 35
+
+
+_CAPABILITY_NON_EXECUTION_BOUNDARY_RE = re.compile(
+    r"\b(?:"
+    r"not\s+opening\s+apps?|"
+    r"not\s+executing\s+tools?|"
+    r"not\s+running\s+tools?|"
+    r"not\s+browsing|"
+    r"only\s+describing\s+the\s+tool\s+surface|"
+    r"descriptive\s+(?:inventory|only)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _ensure_capability_inventory_non_execution_boundary(
+    user_message: str,
+    reply_text: str,
+) -> str:
+    """Keep descriptive tool inventories from implying action was dispatched."""
+
+    if not _is_explicit_capability_inventory_request(user_message):
+        return str(reply_text or "")
+    reply = str(reply_text or "").strip()
+    if not reply or _CAPABILITY_NON_EXECUTION_BOUNDARY_RE.search(reply):
+        return reply
+    return f"{reply.rstrip()} I am not opening apps or executing tools in this turn."
 
 
 def _build_capability_reply(user_message: str) -> str:
@@ -14321,6 +14361,11 @@ async def api_chat(
                 "🧭 Replacing inadequate capability inventory reply with grounded live catalog summary."
             )
             reply_text = _build_grounded_capability_inventory_reply(_semantic_user_message)
+        if _is_explicit_capability_inventory_request(_semantic_user_message):
+            reply_text = _ensure_capability_inventory_non_execution_boundary(
+                _semantic_user_message,
+                reply_text,
+            )
         repaired_recall = False
         if not desktop_requires_cognitive_engine:
             repaired_recall_reply, repaired_recall = await _repair_conversation_recall_if_needed(

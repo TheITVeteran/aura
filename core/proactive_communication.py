@@ -168,8 +168,9 @@ class ProactiveCommunicationManager:
         self.pending_messages.append(msg)
 
     async def start(self):
-        if self._background_task:
+        if self._background_task and not self._background_task.done():
             return
+        self._background_task = None
         self._stop_event.clear()
         self._background_task = get_task_tracker().track_task(self._process_messages(), name="proactive_communication.process_messages")
 
@@ -179,11 +180,31 @@ class ProactiveCommunicationManager:
             await self._background_task
             self._background_task = None
 
+    def get_status(self) -> dict[str, Any]:
+        return {
+            "running": bool(self._background_task and not self._background_task.done()),
+            "enabled": _proactive_messaging_enabled(),
+            "pending_messages": len(self.pending_messages),
+            "messages_sent_today": self.messages_sent_today,
+            "daily_message_limit": self.daily_message_limit,
+            "unanswered_count": self.unanswered_count,
+            "last_message_time": self.last_message_time,
+            "idle_s": max(0.0, time.time() - self.last_interaction_time),
+            "boredom": self.get_boredom_level(),
+            "consecutive_errors": self._consecutive_processing_errors,
+            "next_attempt_at": self._next_processing_attempt_at,
+        }
+
     async def _process_messages(self):
         while not self._stop_event.is_set():
             try:
                 await asyncio.sleep(5)
                 now = time.time()
+                from core.container import ServiceContainer
+
+                healer = ServiceContainer.get("self_healing", default=None)
+                if healer is not None:
+                    healer.heartbeat("proactive_comm")
                 if not _proactive_messaging_enabled():
                     # User disabled proactive messaging: never initiate. Pending
                     # messages wait (deque is bounded) and resume if re-enabled.

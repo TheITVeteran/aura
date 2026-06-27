@@ -443,6 +443,62 @@ async def test_cognitive_engine_runtime_status_contract_propagates_to_worker_bou
 
 
 @pytest.mark.asyncio
+async def test_cognitive_engine_capability_inventory_contract_propagates_to_worker_boundary(monkeypatch):
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = StateRepositoryFixture(state)
+    captured = {}
+
+    class _Router:
+        async def think(self, **kwargs):
+            captured.update(kwargs)
+            return (
+                "I can coordinate desktop apps, browser/web research, files, documents, "
+                "terminal/code, memory, and repair tools. Consequential use is governed "
+                "by Will and Authority permissions, receipts, and effect verification. "
+                "Hypothetically, I could research, write, export, and file artifacts, "
+                "but I am not executing tools in this turn."
+            )
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router() if name == "llm_router" else default
+        ),
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "What external tools can you use from the desktop?",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "visible_user_message": "What external tools can you use from the desktop?",
+            "capability_inventory_contract": True,
+            "grounded_capability_inventory_context": (
+                "desktop/app control; browser/web research; file/document/PDF operations; "
+                "terminal/code; memory; repair. Governed by Will and Authority with "
+                "receipts and effect verification."
+            ),
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "max_tokens": 384,
+        },
+        is_background=False,
+        timeout_s=60.0,
+    )
+
+    assert thought.content.startswith("I can coordinate")
+    assert captured["capability_inventory_contract"] is True
+    assert captured["max_tokens"] == 384
+    assert captured["num_predict"] == 384
+    assert len(captured["messages"]) == 2
+    assert "GOVERNED CAPABILITY INVENTORY EVIDENCE" in captured["messages"][-1]["content"]
+    assert "browser/web research" in captured["messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_cognitive_engine_desktop_quick_reply_includes_recent_context(monkeypatch):
     engine = CognitiveEngine()
     state = AuraState.default()

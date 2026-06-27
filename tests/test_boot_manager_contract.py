@@ -60,7 +60,7 @@ def test_boot_sequence_failure_fails_closed(monkeypatch):
     assert degraded[-1]["severity"] == "critical"
 
 
-def test_boot_manager_self_modification_monitor_needs_runtime_promotion_opt_in(monkeypatch):
+def test_boot_manager_starts_quarantine_monitor_without_runtime_promotion(monkeypatch):
     monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
     monkeypatch.delenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", raising=False)
     monkeypatch.delenv("AURA_ALLOW_AUTONOMOUS_PATCH_PROMOTION", raising=False)
@@ -86,10 +86,10 @@ def test_boot_manager_self_modification_monitor_needs_runtime_promotion_opt_in(m
     manager._init_autonomous_evolution()
 
     assert isinstance(manager.orchestrator.self_modifier, FakeSelfModifier)
-    assert manager.orchestrator.self_modifier.started is False
+    assert manager.orchestrator.self_modifier.started is True
 
 
-def test_boot_manager_starts_self_modification_monitor_only_after_runtime_opt_in(monkeypatch):
+def test_boot_manager_keeps_monitor_active_after_runtime_promotion_opt_in(monkeypatch):
     monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
     manager = _manager()
     manager.orchestrator.cognitive_engine = object()

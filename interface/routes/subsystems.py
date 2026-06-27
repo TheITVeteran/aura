@@ -115,6 +115,7 @@ async def api_pneuma_status():
         pn = get_pneuma()
         if not pn or not pn._running:
             return JSONResponse({"online": False, "error": "PNEUMA not running"}, status_code=503)
+        runtime_state = pn.get_state_dict()
         block = pn.get_context_block()
         pe = getattr(pn, "precision", None)
         tm = getattr(pn, "topo_memory", None)
@@ -124,6 +125,10 @@ async def api_pneuma_status():
             stability = round(float(pe.fhn.state.w), 4)
         return JSONResponse({
             "online": True,
+            "tick_count": runtime_state.get("tick_count", 0),
+            "last_tick": runtime_state.get("last_tick", 0.0),
+            "loop_errors": runtime_state.get("loop_errors", 0),
+            "compute_budget": runtime_state.get("compute_budget", {}),
             "temperature": round(pn.get_llm_temperature(), 4),
             "context_block": block,
             "attractor_count": int(tm.attractor_count) if tm else 0,
@@ -148,12 +153,16 @@ async def api_mhaf_status():
         if not mhaf or not mhaf._running:
             return JSONResponse({"online": False, "error": "MHAF not running"}, status_code=503)
         nodes = [
-            {"name": n.name, "activation": round(float(n.activation), 3),
-             "phi": round(float(n.phi), 3)}
+            {"name": n.name, "activation": round(float(n.activation), 3)}
             for n in mhaf._nodes.values()
         ]
+        runtime_state = mhaf.get_state_dict()
         return JSONResponse({
             "online": True,
+            "tick_count": runtime_state.get("tick_count", 0),
+            "last_tick": runtime_state.get("last_tick", 0.0),
+            "loop_errors": runtime_state.get("loop_errors", 0),
+            "compute_budget": runtime_state.get("compute_budget", {}),
             "phi": round(float(mhaf._global_phi), 4),
             "free_energy": round(float(mhaf._free_energy), 4),
             "nodes": nodes,

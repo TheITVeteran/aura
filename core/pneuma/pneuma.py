@@ -18,6 +18,7 @@ Public API (used by InferenceGate):
     pneuma.get_llm_temperature()    → precision-weighted temperature
 """
 
+from core.runtime.background_policy import constitutive_compute_budget
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 import asyncio
@@ -52,6 +53,9 @@ class PNEUMA:
         self._task: Optional[asyncio.Task] = None
         self._tick_interval = 0.5   # seconds between background ticks
         self._last_tick = 0.0
+        self._tick_count = 0
+        self._loop_errors = 0
+        self._last_budget = None
         self._cached_context_block = ""
         self._cached_context_at = 0.0
         self._context_cache_ttl_s = 1.0
@@ -76,7 +80,17 @@ class PNEUMA:
         """Background tick loop: advance FHN + ODE + IGTracker + Topo."""
         while self._running:
             try:
-                await asyncio.sleep(self._tick_interval)
+                budget = constitutive_compute_budget(
+                    "pneuma",
+                    1.0 / self._tick_interval,
+                    min_hz=0.1,
+                    foreground_hz=0.5,
+                    memory_high_hz=0.25,
+                    memory_critical_hz=0.1,
+                    failure_pressure_hz=0.25,
+                )
+                self._last_budget = budget
+                await asyncio.sleep(budget.interval_s)
                 now = time.time()
                 dt = min(2.0, now - self._last_tick) if self._last_tick else 0.5
                 self._last_tick = now
@@ -92,10 +106,17 @@ class PNEUMA:
 
                 # 4. Push to topological memory
                 self.topo_memory.push(belief_state.vector)
+                self._tick_count += 1
+                from core.container import ServiceContainer
+
+                healer = ServiceContainer.get("self_healing", default=None)
+                if healer is not None:
+                    healer.heartbeat("pneuma")
 
             except asyncio.CancelledError:
                 break
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                self._loop_errors += 1
                 record_degradation('pneuma', e)
                 logger.debug("PNEUMA loop error: %s", e)
 
@@ -169,13 +190,26 @@ class PNEUMA:
         return embedding
 
     def get_state_dict(self) -> dict:
-        return {
+        state = {
+            "online": bool(self._running and self._task and not self._task.done()),
+            "tick_count": self._tick_count,
+            "last_tick": self._last_tick,
+            "loop_errors": self._loop_errors,
             "precision": self.precision.get_state_dict(),
             "ode_flow": self.ode_flow.get_state_dict(),
             "ig_tracker": self.ig_tracker.get_state_dict(),
             "topo_memory": self.topo_memory.get_state_dict(),
             "feo": self.feo.get_state_dict(),
         }
+        if self._last_budget is not None:
+            state["compute_budget"] = {
+                "effective_hz": self._last_budget.effective_hz,
+                "interval_s": self._last_budget.interval_s,
+                "reason": self._last_budget.reason,
+                "foreground_active": self._last_budget.foreground_active,
+                "memory_percent": self._last_budget.memory_percent,
+            }
+        return state
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────

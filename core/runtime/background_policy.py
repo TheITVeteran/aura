@@ -42,13 +42,13 @@ def foreground_only_runtime() -> bool:
     return _env_flag("AURA_FOREGROUND_ONLY", False)
 
 
-def background_cognition_disabled_reason() -> str:
+def background_cognition_disabled_reason(*, allow_desktop_safe_boot: bool = False) -> str:
     """Return why optional background cognition must stay offline.
 
-    Desktop safe boot is foreground-first by default. The live desktop lane has
-    repeatedly failed by letting idle autonomy, dreaming, and background model
-    work compete with the user's foreground turn. Operators can explicitly
-    re-enable these loops after boot with AURA_ENABLE_BACKGROUND_COGNITION=1.
+    Normal desktop launches run the complete background runtime under resource
+    admission. Only the explicit recovery safe-boot profile suppresses these
+    loops. Operators may also disable them deliberately with
+    ``AURA_ENABLE_BACKGROUND_COGNITION=0``.
     """
 
     configured = str(os.getenv("AURA_ENABLE_BACKGROUND_COGNITION", "") or "").strip().lower()
@@ -59,20 +59,24 @@ def background_cognition_disabled_reason() -> str:
     try:
         from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
 
-        if desktop_safe_boot_enabled():
+        if desktop_safe_boot_enabled() and not allow_desktop_safe_boot:
             return "desktop_background_disabled"
     except (ImportError, AttributeError, RuntimeError) as _exc:
         record_degradation(
             "background_policy",
             _exc,
-            action="blocked background cognition because desktop safe-boot probe failed",
+                action="blocked background cognition because recovery-profile detection failed",
         )
-        logger.warning("Background cognition desktop safe-boot probe failed: %s", _exc)
+        logger.warning("Background cognition recovery-profile probe failed: %s", _exc)
         return "desktop_safe_boot_probe_unavailable"
     return ""
 
 
-def background_loop_start_reason(origin: Any = None) -> str:
+def background_loop_start_reason(
+    origin: Any = None,
+    *,
+    allow_desktop_safe_boot: bool = False,
+) -> str:
     """Explain why a persistent background loop must not start.
 
     ``background_activity_reason`` gates individual work items. This helper
@@ -111,15 +115,24 @@ def background_loop_start_reason(origin: Any = None) -> str:
     if foreground_only_runtime():
         return "foreground_only_runtime"
 
-    disabled_reason = background_cognition_disabled_reason()
+    disabled_reason = background_cognition_disabled_reason(
+        allow_desktop_safe_boot=allow_desktop_safe_boot,
+    )
     if disabled_reason:
         return disabled_reason
 
     return ""
 
 
-def background_loop_start_allowed(origin: Any = None) -> bool:
-    return not background_loop_start_reason(origin)
+def background_loop_start_allowed(
+    origin: Any = None,
+    *,
+    allow_desktop_safe_boot: bool = False,
+) -> bool:
+    return not background_loop_start_reason(
+        origin,
+        allow_desktop_safe_boot=allow_desktop_safe_boot,
+    )
 
 
 _USER_FACING_ORIGIN_TOKENS = frozenset({
@@ -532,6 +545,7 @@ def background_activity_reason(
     max_failure_pressure: float | None = None,
     require_conversation_ready: bool | None = None,
     allow_no_user_anchor: bool = False,
+    allow_desktop_safe_boot: bool = False,
 ) -> str:
     if profile is not None:
         if min_idle_seconds is None:
@@ -568,7 +582,9 @@ def background_activity_reason(
     if foreground_only_runtime():
         return "foreground_only_runtime"
 
-    disabled_reason = background_cognition_disabled_reason()
+    disabled_reason = background_cognition_disabled_reason(
+        allow_desktop_safe_boot=allow_desktop_safe_boot,
+    )
     if disabled_reason:
         return disabled_reason
 
@@ -678,6 +694,7 @@ def background_activity_allowed(
     max_failure_pressure: float | None = None,
     require_conversation_ready: bool | None = None,
     allow_no_user_anchor: bool = False,
+    allow_desktop_safe_boot: bool = False,
 ) -> bool:
     return not background_activity_reason(
         orchestrator,
@@ -687,4 +704,5 @@ def background_activity_allowed(
         max_failure_pressure=max_failure_pressure,
         require_conversation_ready=require_conversation_ready,
         allow_no_user_anchor=allow_no_user_anchor,
+        allow_desktop_safe_boot=allow_desktop_safe_boot,
     )

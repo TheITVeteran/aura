@@ -489,14 +489,23 @@ class TestOwnerAutonomyGating(unittest.TestCase):
         engine._transcript_callbacks = {}
         engine._anonymous_transcript_callbacks = []
 
-        # 1. First dispatch: should succeed and record high salience event
+        # 1. First dispatch: should succeed and record a candidate transcript.
+        # Raw STT is not an authorized command unless explicit direct-dictation
+        # mode is enabled; normal desktop voice goes through the wake-word lane.
         now = time.time()
         engine._dispatch_transcript("Hello Aura")
         self.assertEqual(ws.last_voice_transcript, "Hello Aura")
         self.assertTrue(ws.voice_activity_detected)
         
         events = ws.get_salient_events()
-        self.assertTrue(any(e["description"] == "User voice command: Hello Aura" and e["salience"] == 1.0 for e in events))
+        self.assertTrue(
+            any(
+                e["description"] == "Voice transcript candidate: Hello Aura"
+                and e["salience"] == 0.35
+                and e.get("metadata", {}).get("requires_wake_word_session") is True
+                for e in events
+            )
+        )
 
         # Reset events to check duplicates/rate-limits easily
         ws._events.clear()
@@ -516,6 +525,36 @@ class TestOwnerAutonomyGating(unittest.TestCase):
         engine._dispatch_transcript("Open browser")
         events = ws.get_salient_events()
         self.assertEqual(len(events), 1, "Should succeed after time elapsed")
+
+    def test_voice_engine_direct_eventbus_requires_explicit_opt_in(self):
+        """Raw STT becomes an authorized command only in direct dictation mode."""
+        from core.senses.voice_engine import SovereignVoiceEngine
+        from core.world_state import get_world_state
+        import os
+        from unittest import mock
+
+        ws = get_world_state()
+        ws._events.clear()
+        ws.last_voice_transcript = ""
+        ws.voice_activity_detected = False
+
+        engine = SovereignVoiceEngine()
+        engine._on_transcript = None
+        engine._transcript_callbacks = {}
+        engine._anonymous_transcript_callbacks = []
+
+        with mock.patch.dict(os.environ, {"AURA_VOICE_DIRECT_EVENTBUS": "1"}):
+            engine._dispatch_transcript("Hello Aura")
+
+        events = ws.get_salient_events()
+        self.assertTrue(
+            any(
+                e["description"] == "User voice command: Hello Aura"
+                and e["salience"] == 1.0
+                and e.get("metadata", {}).get("authorized_command") is True
+                for e in events
+            )
+        )
 
     def test_wake_word_voice_print_shift(self):
         """Wake words start sessions, but only real verifier evidence issues presence tokens."""

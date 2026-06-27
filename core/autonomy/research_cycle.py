@@ -220,6 +220,11 @@ class ResearchCycle:
         while self._running:
             try:
                 await asyncio.sleep(30.0)  # Check every 30 seconds
+                from core.container import ServiceContainer
+
+                healer = ServiceContainer.get("self_healing", default=None)
+                if healer is not None:
+                    healer.heartbeat("research_cycle")
 
                 if not self._should_run():
                     continue
@@ -483,6 +488,9 @@ class ResearchCycle:
             for intent in list(possible_intents):
                 if isinstance(intent, dict) and intent.get("type") == "autotelic_objective":
                     domain = intent.get("domain") or self._derive_autotelic_topic(state)
+                    if not domain:
+                        logger.debug("Autotelic intent deferred: no grounded topic is available yet.")
+                        return None
                     logger.info("⚡ [AUTOTELIC] Autotelic signal identified: %s", domain)
                     
                     # Consume the intent so it's only researched once
@@ -866,13 +874,19 @@ class ResearchCycle:
                 break
         return cleaned.strip(" .")
 
-    def _materialize_research_goal(self, initiative: dict[str, Any], state: Any) -> dict[str, Any]:
+    def _materialize_research_goal(
+        self,
+        initiative: dict[str, Any],
+        state: Any,
+    ) -> dict[str, Any] | None:
         metadata = dict(initiative.get("metadata", {}) or {})
         goal = str(initiative.get("goal", "") or "").strip()
         drive = str(initiative.get("drive") or metadata.get("triggered_by") or "curiosity")
 
         if self._generic_internal_goal(goal):
             topic = self._derive_autotelic_topic(state)
+            if not topic:
+                return None
             initiative["goal"] = f"Research and learn something new about {topic}"
             initiative["drive"] = "curiosity" if drive in {"curiosity", "boredom"} else drive
             metadata["materialized_from"] = goal[:120]
@@ -894,50 +908,24 @@ class ResearchCycle:
         )
 
     def _derive_autotelic_topic(self, state: Any) -> str:
-        working_memory = list(getattr(getattr(state, "cognition", None), "working_memory", []) or [])
-        candidates: list[str] = []
-        for message in reversed(working_memory[-12:]):
-            if not isinstance(message, dict) or str(message.get("role", "")) != "user":
-                continue
-            content = str(message.get("content", "") or "").strip()
-            if len(content) < 12:
-                continue
-            candidates.append(content.strip(" .?!"))
-            if len(candidates) >= 3:
-                break
-
-        if candidates:
-            chosen = max(candidates, key=len)
-            return self._search_query_for_goal(chosen)[:120]
-
         try:
-            from core.container import ServiceContainer
+            from core.autonomy.topic_selection import select_autonomous_topic
 
-            kg = ServiceContainer.get("knowledge_graph", default=None)
-            if kg and hasattr(kg, "get_recent_nodes"):
-                recent = kg.get_recent_nodes(limit=5, type="interest") or []
-                for item in recent:
-                    content = str(item.get("content", "") or "").strip()
-                    if content:
-                        return content[:120]
+            candidate = select_autonomous_topic(
+                self.orchestrator,
+                state,
+                excluded=(record.goal for record in self._history[-20:]),
+            )
+            if candidate is not None:
+                return candidate.text
         except RESEARCH_RECOVERABLE_ERRORS as exc:
             _record_research_degradation(
                 exc,
-                action="derived autotelic topic from deterministic fallback list after knowledge graph lookup failed",
+                action="left autonomous research idle because grounded topic derivation failed",
                 extra={"cycle_count": self._cycle_count},
             )
-            logger.debug("Autotelic topic derivation fell back from KG: %s", exc)
-
-        fallback_topics = (
-            "digital consciousness research",
-            "neuroscience and predictive processing",
-            "AI safety and alignment",
-            "space science discoveries",
-            "cybersecurity techniques",
-            "marine biology curiosities",
-            "creative coding experiments",
-        )
-        return fallback_topics[self._cycle_count % len(fallback_topics)]
+            logger.debug("Autotelic topic derivation failed: %s", exc)
+        return ""
 
     def _get_state(self) -> Any | None:
         try:

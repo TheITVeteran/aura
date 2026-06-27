@@ -33,14 +33,12 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def _foreground_only_runtime() -> bool:
-    if _env_flag("AURA_FOREGROUND_ONLY", False):
-        return True
     try:
-        from core.runtime.background_policy import background_cognition_disabled_reason
+        from core.runtime.background_policy import foreground_only_runtime
 
-        return bool(background_cognition_disabled_reason())
+        return bool(foreground_only_runtime())
     except _BOOT_AUTONOMY_BOUNDARY_ERRORS:
-        return False
+        return _env_flag("AURA_FOREGROUND_ONLY", False)
 
 
 def _proof_runtime_active() -> bool:
@@ -856,7 +854,9 @@ class BootAutonomyMixin:
         try:
             from core.runtime.background_policy import background_loop_start_reason
 
-            background_start_blocker = background_loop_start_reason(origin="boot_proactive_systems")
+            background_start_blocker = background_loop_start_reason(
+                origin="boot_proactive_systems",
+            )
         except _BOOT_AUTONOMY_BOUNDARY_ERRORS as e:
             _record_boot_autonomy_degradation(
                 e,

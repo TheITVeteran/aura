@@ -351,6 +351,26 @@ class TestMLXCompatibility(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("recurrent_depth_inactive", status["readiness_blockers"])
         self.assertNotIn("recurrent_depth_loop_mismatch", status["readiness_blockers"])
 
+    async def test_health_probe_completion_does_not_prove_visible_conversation(self):
+        client = MLXLocalClient(model_path=QWEN32_TEST_MODEL)
+
+        client._mark_generation_completed(user_facing=False)
+
+        self.assertGreater(client._last_generation_completed_at, 0.0)
+        self.assertEqual(client._last_user_facing_completed_at, 0.0)
+        self.assertEqual(client._last_visible_readiness_at, 0.0)
+
+    async def test_user_facing_completion_proves_visible_conversation(self):
+        client = MLXLocalClient(model_path=QWEN32_TEST_MODEL)
+
+        client._mark_generation_completed(user_facing=True)
+
+        self.assertGreater(client._last_user_facing_completed_at, 0.0)
+        self.assertEqual(
+            client._last_visible_readiness_at,
+            client._last_user_facing_completed_at,
+        )
+
     async def test_32b_lane_status_rejects_recurrent_depth_loop_mismatch(self):
         client = self._ready_client(QWEN32_TEST_MODEL)
         client._recurrent_depth_status = {

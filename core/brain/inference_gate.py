@@ -43,7 +43,7 @@ from core.conversation.response_reliability import (
     is_live_self_reflection_turn,
     is_self_process_question,
 )
-from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
+from core.runtime.desktop_boot_safety import desktop_resource_guard_enabled
 from core.runtime.errors import record_degradation
 from core.runtime.proof_policy import (
     is_proof_evaluation_purpose,
@@ -461,7 +461,9 @@ class InferenceGate:
 
     @staticmethod
     def _desktop_safe_boot_enabled() -> bool:
-        return desktop_safe_boot_enabled()
+        """Compatibility name for the desktop resource-admission guard."""
+
+        return desktop_resource_guard_enabled()
 
     @staticmethod
     def _desktop_background_local_enabled() -> bool:
@@ -603,7 +605,7 @@ class InferenceGate:
         }:
             return True
         if InferenceGate._desktop_safe_boot_enabled():
-            logger.info("🛡️ Desktop safe boot active — skipping eager 32B warmup during launch.")
+            logger.info("🛡️ Desktop resource guard active — skipping eager 32B warmup during launch.")
             return False
         setting = str(os.environ.get("AURA_EAGER_CORTEX_WARMUP", "auto")).strip().lower()
         if setting in {"1", "true", "yes", "on"}:
@@ -661,7 +663,7 @@ class InferenceGate:
         if InferenceGate._desktop_safe_boot_enabled():
             if explicit_setting is None:
                 logger.info(
-                    "🛡️ Desktop safe boot active — skipping implicit deferred 32B prewarm during launch."
+                    "🛡️ Desktop resource guard active — skipping implicit deferred 32B prewarm during launch."
                 )
                 return False
             snapshot = InferenceGate._cortex_warmup_admission_snapshot("background")
@@ -1580,6 +1582,14 @@ class InferenceGate:
                         )
                         next_delay = min(20.0, max(6.0, next_delay))
                         continue
+                    if "visible_conversation_probe_missing" in str(exc):
+                        logger.info(
+                            "⏸️ Deferred cortex prewarm loaded the lane, but visible "
+                            "conversation readiness is still unproven; the next "
+                            "foreground user turn will prove or fail it."
+                        )
+                        next_delay = min(60.0, max(20.0, next_delay * 1.25))
+                        continue
                     record_degradation(
                         "inference_gate",
                         exc,
@@ -1647,11 +1657,42 @@ class InferenceGate:
             )
         return rearmed
 
+    @staticmethod
+    def _lane_only_needs_visible_conversation_proof(lane: dict[str, Any] | None) -> bool:
+        """Return True when the worker is loaded and only lacks a visible turn proof."""
+
+        if not isinstance(lane, dict):
+            return False
+        blockers = {
+            str(item)
+            for item in (lane.get("readiness_blockers") or [])
+            if str(item or "").strip()
+        }
+        if blockers != {"visible_conversation_probe_missing"}:
+            return False
+        return (
+            str(lane.get("state", "") or "").lower() == "ready"
+            and bool(lane.get("warmup_attempted", True))
+            and not bool(lane.get("warmup_in_flight", False))
+        )
+
+    @classmethod
+    def _lane_can_attempt_visible_conversation_turn(cls, lane: dict[str, Any] | None) -> bool:
+        """Return True when a lane may serve the foreground turn that proves readiness."""
+
+        return bool(
+            isinstance(lane, dict)
+            and (
+                lane.get("conversation_ready")
+                or cls._lane_only_needs_visible_conversation_proof(lane)
+            )
+        )
+
     async def ensure_foreground_ready(self, timeout: float | None = None) -> dict[str, Any]:  # noqa: ASYNC109
         """Ensure the 32B conversation lane has actually attempted warmup for this turn."""
         timeout = max(15.0, float(timeout or 90.0))
         lane = self.get_conversation_status()
-        if lane.get("conversation_ready"):
+        if self._lane_can_attempt_visible_conversation_turn(lane):
             return lane
         lane_state = str(lane.get("state", "") or "").lower()
         lane_reason = str(lane.get("last_failure_reason", "") or "")
@@ -1673,7 +1714,7 @@ class InferenceGate:
                 label="foreground_ready_lock",
             ):
                 lane = self.get_conversation_status()
-                if lane.get("conversation_ready"):
+                if self._lane_can_attempt_visible_conversation_turn(lane):
                     return lane
                 if self._prewarm_task and not self._prewarm_task.done():
                     task = self._prewarm_task
@@ -1729,6 +1770,8 @@ class InferenceGate:
 
         lane = self.get_conversation_status()
         if not lane.get("conversation_ready"):
+            if self._lane_only_needs_visible_conversation_proof(lane):
+                return lane
             raise RuntimeError(str(lane.get("last_failure_reason") or "foreground_lane_not_ready"))
         return lane
 
@@ -3173,7 +3216,7 @@ class InferenceGate:
                 )
             else:
                 logger.info(
-                    "🛡️ InferenceGate ONLINE (desktop safe boot: 32B warmup deferred until the first real foreground request)."
+                    "🛡️ InferenceGate ONLINE (desktop resource guard: 32B warmup is RAM-admitted)."
                 )
 
             if self._maintenance_task is None or self._maintenance_task.done():
@@ -4718,6 +4761,14 @@ class InferenceGate:
             context.get("cognitive_engine_required", False)
             or context.get("desktop_cognitive_engine_required", False)
         )
+        protected_compact_capability_contract = bool(
+            context.get("capability_inventory_contract", False)
+            and (
+                desktop_cognitive_engine_contract
+                or context.get("protected_foreground_lane", False)
+                or explicit_foreground
+            )
+        )
         if requested_tier == "secondary":
             deep_handoff = True
         if deep_handoff and not explicit_background:
@@ -5267,10 +5318,12 @@ class InferenceGate:
                 if not envelope.allowed:
                     requested_tier = "primary"
                     deep_handoff = False
-                    max_tokens = min(max_tokens, 128)
+                    if not protected_compact_capability_contract:
+                        max_tokens = min(max_tokens, 128)
                     context["resource_stakes_blocked"] = True
                 else:
-                    max_tokens = min(max_tokens, max(1, int(envelope.max_tokens)))
+                    if not protected_compact_capability_contract:
+                        max_tokens = min(max_tokens, max(1, int(envelope.max_tokens)))
                     if "large_model_cortex" in set(envelope.disabled_capabilities):
                         requested_tier = "primary"
                         deep_handoff = False
@@ -5503,7 +5556,7 @@ class InferenceGate:
                         )
                         morpho_kwargs["repetition_penalty"] = max(1.0, 1.15 - (_curiosity * 0.1))
 
-                    if _resource_pressure > 0.5:
+                    if _resource_pressure > 0.5 and not protected_compact_capability_contract:
                         max_tokens = int(max_tokens * (1.0 - (_resource_pressure * 0.5)))
                         max_tokens = max(128, max_tokens)
 
@@ -5516,9 +5569,23 @@ class InferenceGate:
                                 raise ValueError("existential threat must be finite")
                             threat = max(0.0, min(1.0, threat))
                             if threat > 0.2:
-                                # Scale token limit down based on threat
-                                max_tokens = int(max_tokens * (1.0 - threat * 0.7))
-                                max_tokens = max(96, max_tokens)
+                                protected_live_foreground = bool(
+                                    not is_background
+                                    and (
+                                        protected_foreground_lane
+                                        or context.get("desktop_cognitive_engine_required")
+                                        or context.get("cognitive_engine_required")
+                                        or explicit_foreground
+                                    )
+                                )
+                                # Background and unprotected turns may shrink output under
+                                # survival pressure. Protected live desktop turns must not:
+                                # starving the first user-visible Cortex reply causes clipped
+                                # drafts, recovery storms, worker respawns, and higher memory
+                                # pressure than simply answering with the requested budget.
+                                if not protected_live_foreground:
+                                    max_tokens = int(max_tokens * (1.0 - threat * 0.7))
+                                    max_tokens = max(96, max_tokens)
                                 # Decrease temperature to make generation fast/deterministic
                                 if somatic_temperature is not None:
                                     somatic_temperature = somatic_temperature * (1.0 - threat * 0.5)
@@ -5800,6 +5867,11 @@ class InferenceGate:
 
         if explicit_max_tokens_cap is not None:
             max_tokens = min(max_tokens, explicit_max_tokens_cap)
+            if (
+                protected_compact_capability_contract
+                and not bool(context.get("resource_stakes_blocked", False))
+            ):
+                max_tokens = max(max_tokens, min(384, explicit_max_tokens_cap))
             context["max_tokens"] = max_tokens
 
         if (
@@ -6279,7 +6351,7 @@ class InferenceGate:
                                     warmup_exc,
                                 )
                                 lane_status = self.get_conversation_status()
-                            if not lane_status.get("conversation_ready"):
+                            if not self._lane_can_attempt_visible_conversation_turn(lane_status):
                                 skip_initial_primary_attempt = True
                                 logger.warning(
                                     "🧠 %s is still not ready after foreground preflight warmup (state=%s). Skipping the cold first attempt and waiting for recovery before retry.",
@@ -6405,7 +6477,7 @@ class InferenceGate:
                                 )
                                 return ""
                             lane_status = self.get_conversation_status()
-                            if not lane_status.get("conversation_ready"):
+                            if not self._lane_can_attempt_visible_conversation_turn(lane_status):
                                 logger.warning(
                                     "🧠 %s is not ready after the failed attempt (state=%s); "
                                     "skipping same-lane retry %d.",

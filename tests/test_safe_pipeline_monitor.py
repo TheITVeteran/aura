@@ -206,3 +206,49 @@ def test_safe_pipeline_quarantines_approved_patch_without_supervised_deploy(
     assert artifact_path.is_file()
     assert artifact_path.read_text(encoding="utf-8") == "VALUE = 2\n"
     assert target.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
+def test_safe_pipeline_fully_validates_propose_only_patch_before_owner_promotion(
+    tmp_path,
+    monkeypatch,
+):
+    import core.self_modification.safe_pipeline as safe_pipeline
+    from core.self_modification.safe_pipeline import SafePipeline, Stage
+
+    _install_pipeline_approval_fakes(monkeypatch)
+    monkeypatch.delenv("AURA_ALLOW_SUPERVISED_SELF_MODIFICATION", raising=False)
+    monkeypatch.setattr(safe_pipeline, "_LEDGER_PATH", tmp_path / "pipeline.jsonl")
+    monkeypatch.setattr(safe_pipeline, "_STAGING_DIR", tmp_path / "staged")
+
+    proposal = asyncio.run(
+        SafePipeline().run(
+            drive="repair",
+            intent="validate consequential repair without mutating live source",
+            file_path="core/brain/inference_gate.py",
+            before_source="VALUE = 1\n",
+            after_source="VALUE = 2\n",
+            owner_approved=False,
+        )
+    )
+
+    assert proposal.blocked_at == Stage.STAGED_DEPLOY.value
+    assert proposal.promotion_artifact_path
+    assert Stage.FORMAL_VERIFY.value in proposal.stages_completed
+    assert Stage.SHADOW_RUNTIME.value in proposal.stages_completed
+    assert Stage.APPROVAL.value in proposal.stages_completed
+
+
+def test_shadow_runtime_executes_generated_tests_before_patched_module(tmp_path):
+    from core.self_modification.safe_pipeline import SafePipeline
+
+    module = tmp_path / "candidate.py"
+    module.write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "test_self_mod_patch.py").write_text(
+        "raise SystemExit(7)\n",
+        encoding="utf-8",
+    )
+
+    ok, detail = asyncio.run(SafePipeline()._run_shadow(module))
+
+    assert ok is False
+    assert "step=0" in detail

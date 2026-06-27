@@ -3706,6 +3706,14 @@ async def test_metabolic_coordinator_impulses_are_task_tracked(monkeypatch):
     orch = SimpleNamespace(
         _last_boredom_impulse=0.0,
         _last_reflection_impulse=0.0,
+        kernel=SimpleNamespace(
+            state=SimpleNamespace(
+                cognition=SimpleNamespace(working_memory=[], pending_initiatives=[]),
+                motivation=SimpleNamespace(
+                    latent_interests=["distributed cognition in cephalopods"]
+                ),
+            )
+        ),
     )
     coord = MetabolicCoordinator(orch=orch)
 
@@ -3714,8 +3722,6 @@ async def test_metabolic_coordinator_impulses_are_task_tracked(monkeypatch):
         metabolic_module, "background_activity_reason", lambda *_args, **_kwargs: None
     )
     monkeypatch.setattr(metabolic_module, "run_governed_impulse", impulse)
-    monkeypatch.setattr(metabolic_module.random, "choice", lambda _topics: "quantum physics")
-
     coord.trigger_boredom_impulse()
     coord.trigger_reflection_impulse()
 
@@ -3726,6 +3732,10 @@ async def test_metabolic_coordinator_impulses_are_task_tracked(monkeypatch):
         "metabolic.boredom_impulse",
         "metabolic.reflection_impulse",
     ]
+    assert (
+        "distributed cognition in cephalopods"
+        in impulse.await_args_list[0].kwargs["summary"]
+    )
     assert impulse.await_count == 2
 
 
