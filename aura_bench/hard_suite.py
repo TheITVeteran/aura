@@ -82,6 +82,45 @@ HARD_TASKS: tuple[HardTask, ...] = (
             "assert int_to_roman(3888) == 'MMMDCCCLXXXVIII'",
         ],
     ),
+    # ── widened set (more headroom: harder arithmetic, a CRT trap, more code) ──
+    HardTask("mod_100000_97", "What is 100000 mod 97? Give only the integer.", "math", "numeric", gold="90"),
+    HardTask("pow_7_5", "What is 7 to the power of 5? Give only the integer.", "math", "numeric", gold="16807"),
+    HardTask("gcd_252_198", "What is the GCD of 252 and 198? Give only the integer.", "math", "numeric", gold="18"),
+    HardTask("pow_2_16", "What is 2 to the power of 16? Give only the integer.", "math", "numeric", gold="65536"),
+    HardTask("bat_ball", "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost, in dollars? Give only the number.", "math", "numeric", gold="0.05"),
+    HardTask("days", "If today is two days after Monday, what day of the week is it? Answer with just the day name.", "logic", "numeric", gold="Wednesday"),
+    HardTask(
+        "is_prime", "Write a Python function is_prime(n) that returns True iff n is prime (n < 2 is not prime).",
+        "code", "code", entrypoint="is_prime",
+        tests=[
+            "assert is_prime(2) is True",
+            "assert is_prime(1) is False",
+            "assert is_prime(0) is False",
+            "assert is_prime(17) is True",
+            "assert is_prime(91) is False",
+            "assert is_prime(7919) is True",
+        ],
+    ),
+    HardTask(
+        "fizzbuzz", "Write a Python function fizzbuzz(n) returning a list of n strings for 1..n: 'Fizz' if divisible by 3, 'Buzz' if by 5, 'FizzBuzz' if both, else the number as a string.",
+        "code", "code", entrypoint="fizzbuzz",
+        tests=[
+            "assert fizzbuzz(5) == ['1','2','Fizz','4','Buzz']",
+            "assert fizzbuzz(15)[-1] == 'FizzBuzz'",
+            "assert fizzbuzz(3) == ['1','2','Fizz']",
+            "assert fizzbuzz(0) == []",
+        ],
+    ),
+    HardTask(
+        "reverse_words", "Write a Python function reverse_words(s) that reverses word order and collapses any run of whitespace to a single space, with no leading or trailing spaces.",
+        "code", "code", entrypoint="reverse_words",
+        tests=[
+            "assert reverse_words('hello   world') == 'world hello'",
+            "assert reverse_words('  a b  c ') == 'c b a'",
+            "assert reverse_words('') == ''",
+            "assert reverse_words('one') == 'one'",
+        ],
+    ),
 )
 
 

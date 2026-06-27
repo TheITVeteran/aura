@@ -844,7 +844,13 @@ class ReasoningAmplifierV2:
 
     async def _verify(self, candidate: str, problem: ProblemRepresentation, context: dict[str, Any]) -> Any:
         try:
-            ctx = {"required_evidence": problem.required_evidence, **(context or {})}
+            # Pass the objective so domain engines can derive a canonical exact answer
+            # from the QUESTION (e.g. math: compute "123456 mod 7" and check it).
+            ctx = {
+                "required_evidence": problem.required_evidence,
+                "objective": problem.objective,
+                **(context or {}),
+            }
             return await self._ensure_verifier().verify(candidate, task_type=problem.task_type, context=ctx)
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("amplifier_v2_verify", exc)
