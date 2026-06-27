@@ -1978,6 +1978,89 @@ class UnitaryResponsePhase(Phase):
             return result.answer.strip()
         return draft
 
+    async def _maybe_amplify_conversation(
+        self,
+        *,
+        objective: str,
+        draft: str,
+        llm: Any,
+        state: AuraState,
+        request_timeout: float,
+        is_user_facing: bool,
+        is_background: bool,
+        proof_or_benchmark: bool,
+    ) -> str:
+        """Best-of-N taste-selection + self-revise for substantive conversational turns.
+
+        The unverifiable analogue of the reasoning amplifier: there's no truth-engine for
+        wit/voice, so candidates are ranked by the personalized TasteModel and the winner
+        is optionally self-revised. Foreground conversational turns only; excludes actions
+        and verifiable-reasoning turns (those are owned elsewhere). Bounded, fail-open.
+        """
+        if not is_user_facing or is_background or proof_or_benchmark or not draft:
+            return draft
+        try:
+            from core.brain.conversational_amplifier import (
+                amplify_conversation,
+                is_conversationally_amplifiable,
+            )
+        except ImportError:
+            return draft
+        origin = self._normalize_origin(getattr(getattr(state, "cognition", None), "current_origin", "") or "user")
+        if not is_conversationally_amplifiable(objective, origin):
+            return draft
+
+        async def _gen(prompt: str, temperature: float) -> str:
+            try:
+                out = await llm.think(
+                    prompt, temperature=temperature, prefer_tier="primary", allow_cloud_fallback=False
+                )
+            except _RESPONSE_RECOVERABLE_ERRORS as exc:
+                _record_response_degradation(exc, "UnitaryResponse: conversational amplifier generate failed: %s")
+                return ""
+            if isinstance(out, dict):
+                out = out.get("content") or out.get("response") or ""
+            return str(out or "").strip()
+
+        # Grounding tokens (rolling summary + recent working memory) feed the callback
+        # feature so wit-via-memory is rewarded.
+        grounding_tokens: set[str] = set()
+        try:
+            cog = getattr(state, "cognition", None)
+            summary = str(getattr(cog, "rolling_summary", "") or "")
+            grounding_tokens = {w.lower() for w in re.findall(r"[A-Za-z0-9']+", summary)}
+        except (AttributeError, TypeError, ValueError):
+            grounding_tokens = set()
+        word_budget = 0
+        try:
+            word_budget = int(state.response_modifiers.get("voice_word_budget", 0) or 0)
+        except (AttributeError, TypeError, ValueError):
+            word_budget = 0
+
+        budget = float(min(20.0, max(6.0, (request_timeout or 20.0) * 0.5)))
+        try:
+            result = await amplify_conversation(
+                draft,
+                generate=_gen,
+                objective=objective,
+                user_message=objective,
+                grounding_tokens=grounding_tokens,
+                word_budget=word_budget,
+                n=3,
+                time_budget_s=budget,
+            )
+        except _RESPONSE_RECOVERABLE_ERRORS as exc:
+            _record_response_degradation(exc, "UnitaryResponse: conversational amplifier failed: %s")
+            return draft
+        if result.answer and len(result.answer.strip()) >= 2:
+            try:
+                if hasattr(state, "metadata") and isinstance(state.metadata, dict):
+                    state.metadata["conversation_amplification"] = result.to_dict()
+            except (AttributeError, TypeError):
+                pass
+            return result.answer.strip()
+        return draft
+
     def _build_router_messages(
         self,
         state: AuraState,
@@ -5469,6 +5552,25 @@ class UnitaryResponsePhase(Phase):
                 )
             except _RESPONSE_RECOVERABLE_ERRORS as amp_exc:
                 logger.debug("Reasoning amplifier v2 skipped (fail-open): %s", amp_exc)
+
+            # ── Conversational Amplifier (live, taste-selected) ───────────────
+            # For substantive conversational turns (not actions, not verifiable
+            # reasoning), don't ship the median sample: generate alternatives, rank
+            # by the personalized TasteModel, self-revise the winner. Harvests the
+            # median→best gap for wit/voice/creativity. Bounded, fail-open.
+            try:
+                response_text = await self._maybe_amplify_conversation(
+                    objective=objective,
+                    draft=response_text,
+                    llm=llm,
+                    state=new_state,
+                    request_timeout=request_timeout,
+                    is_user_facing=is_user_facing,
+                    is_background=is_background,
+                    proof_or_benchmark=bool(proof_evaluation_turn or benchmark_turn or strict_proof_answer_request),
+                )
+            except _RESPONSE_RECOVERABLE_ERRORS as conv_exc:
+                logger.debug("Conversational amplifier skipped (fail-open): %s", conv_exc)
 
             if benchmark_turn:
                 try:

@@ -411,6 +411,19 @@ class KernelInterface:
                     severity="warning",
                     stage="process.subcortical_stimulus",
                 )
+            # Taste loop: read this message as Bryan's reaction to the response we sent
+            # last turn, and nudge the personalized TasteModel (inference-time alignment).
+            try:
+                from core.brain.conversation_outcome import register_reaction
+
+                register_reaction(message)
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                _emit_kernel_fault(
+                    exc,
+                    action="continued kernel processing without taste-loop reaction update",
+                    severity="warning",
+                    stage="process.taste_reaction",
+                )
 
         try:
             # Inject user turn into working memory before tick so history builds.
