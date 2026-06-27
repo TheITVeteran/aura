@@ -242,3 +242,37 @@ Estimate update:
 
 - Overall closeout: 81%
 - Remaining checkpoints: 6 total
+
+## Checkpoint 2026-06-27-07: Autonomous Initiative Admission Visibility
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- Aura's autonomous initiative loop could be alive while visibly doing nothing,
+  leaving no clear distinction between “dead,” “waiting for idle/boot grace,”
+  “blocked by pressure,” and “allowed.”
+- For daily runtime reliability, the live path needs to expose the actual
+  admission state of autonomous world-watching, self-development, and social
+  initiative without weakening their governance/resource gates.
+
+What changed:
+
+- `AutonomousInitiativeLoop.get_status()` now includes admission state for:
+  world/knowledge initiative, self-development, and passive social initiative.
+- The status reports `allowed` only when the exact production background policy
+  permits work; otherwise it reports the real blocker such as recent user
+  activity, boot grace, memory pressure, or failure lockdown.
+- This keeps autonomous actions governed and bounded while making dormant
+  autonomy diagnosable from the normal live runtime status path.
+
+Evidence:
+
+- `python -m py_compile core/autonomous_initiative_loop.py tests/test_autonomy_visibility.py`
+- `python -m pytest tests/test_autonomy_visibility.py tests/test_autonomous_initiative_loop_hardening.py tests/test_full_desktop_runtime_contract.py -q`
+- Result: `24 passed`
+
+Estimate update:
+
+- Overall closeout: 81.5%
+- Remaining checkpoints: 6 total

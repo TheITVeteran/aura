@@ -137,6 +137,30 @@ def test_background_initiative_gate_does_not_depend_on_chat_lane_readiness(monke
     assert _background_initiative_allowed(orchestrator) is True
 
 
+def test_autonomous_initiative_status_exposes_admission_reasons(monkeypatch):
+    monkeypatch.setattr(
+        "core.autonomous_initiative_loop._background_initiative_blocker",
+        lambda _orchestrator=None: "",
+    )
+    monkeypatch.setattr(
+        "core.autonomous_initiative_loop._self_development_blocker",
+        lambda _orchestrator=None: "recent_user_12",
+    )
+    monkeypatch.setattr(
+        "core.autonomous_initiative_loop._passive_social_blocker",
+        lambda _orchestrator=None: "memory_pressure_83.0",
+    )
+
+    loop = AutonomousInitiativeLoop(orchestrator=SimpleNamespace())
+    loop.running = True
+
+    status = loop.get_status()
+
+    assert status["admission"]["world_and_knowledge"] == "allowed"
+    assert status["admission"]["self_development"] == "recent_user_12"
+    assert status["admission"]["social"] == "memory_pressure_83.0"
+
+
 def test_social_autonomy_due_actions_are_periodic_not_boot_only():
     loop = AutonomousInitiativeLoop(orchestrator=SimpleNamespace())
 

@@ -8,7 +8,7 @@ import psutil
 
 from core.container import ServiceContainer as ServiceContainer  # noqa: F401
 from core.health.degraded_events import get_unified_failure_state, record_degraded_event
-from core.runtime.background_policy import background_activity_allowed
+from core.runtime.background_policy import background_activity_allowed, background_activity_reason
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.service_access import (
     optional_service,
@@ -67,6 +67,16 @@ def _background_initiative_allowed(orchestrator=None) -> bool:
     )
 
 
+def _background_initiative_blocker(orchestrator=None) -> str:
+    return background_activity_reason(
+        orchestrator,
+        min_idle_seconds=30.0,
+        max_memory_percent=80.0,
+        max_failure_pressure=0.12,
+        require_conversation_ready=False,
+    )
+
+
 def _self_development_allowed(orchestrator=None) -> bool:
     return background_activity_allowed(
         orchestrator,
@@ -77,8 +87,29 @@ def _self_development_allowed(orchestrator=None) -> bool:
     )
 
 
+def _self_development_blocker(orchestrator=None) -> str:
+    return background_activity_reason(
+        orchestrator,
+        min_idle_seconds=45.0,
+        max_memory_percent=82.0,
+        max_failure_pressure=0.15,
+        require_conversation_ready=False,
+    )
+
+
 def _passive_social_allowed(orchestrator=None) -> bool:
     return background_activity_allowed(
+        orchestrator,
+        min_idle_seconds=120.0,
+        max_memory_percent=78.0,
+        max_failure_pressure=0.15,
+        require_conversation_ready=False,
+        allow_no_user_anchor=True,
+    )
+
+
+def _passive_social_blocker(orchestrator=None) -> str:
+    return background_activity_reason(
         orchestrator,
         min_idle_seconds=120.0,
         max_memory_percent=78.0,
@@ -265,10 +296,18 @@ class AutonomousInitiativeLoop:
         """
 
         core_tasks = self._task_status()
+        world_blocker = _background_initiative_blocker(self.orchestrator)
+        self_dev_blocker = _self_development_blocker(self.orchestrator)
+        social_blocker = _passive_social_blocker(self.orchestrator)
         return {
             "running": bool(self.running and all(core_tasks.values())),
             "enabled": bool(self.running),
             "core_tasks": core_tasks,
+            "admission": {
+                "world_and_knowledge": "allowed" if not world_blocker else world_blocker,
+                "self_development": "allowed" if not self_dev_blocker else self_dev_blocker,
+                "social": "allowed" if not social_blocker else social_blocker,
+            },
             "event_subscription": self._task_alive(self._event_task),
             "last_self_development_at": float(self._last_self_dev or 0.0),
             "last_email_check_at": float(self._last_email_check or 0.0),
