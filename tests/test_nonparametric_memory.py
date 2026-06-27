@@ -4,7 +4,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from core.brain.nonparametric_memory import NonParametricMemory
+from core.brain.nonparametric_memory import (
+    NonParametricMemory,
+    get_nonparametric_memory,
+    reset_nonparametric_memory,
+)
 
 
 @pytest.fixture
@@ -15,6 +19,7 @@ def mem(tmp_path):
 def test_add_and_len(mem):
     assert mem.add(np.array([1.0, 0, 0, 0]), token_id=7, token="seven")
     assert len(mem) == 1
+    assert mem.stats()["allocated_bytes"] <= (64 * 4 * 4) + (64 * 4)
 
 
 def test_add_rejects_wrong_dim(mem):
@@ -109,7 +114,7 @@ def test_persist_round_trip(tmp_path):
     p = tmp_path / "store"
     m1 = NonParametricMemory(dim=3, path=p)
     m1.add(np.array([1.0, 2.0, 3.0]), token_id=5, token="five", weight=2.0)
-    m1.persist()
+    assert m1.persist() is True
     m2 = NonParametricMemory(dim=3, path=p)
     assert len(m2) == 1
     nbrs = m2.query(np.array([1.0, 2.0, 3.0]))
@@ -124,6 +129,19 @@ def test_dim_mismatch_on_load_starts_fresh(tmp_path):
     # a different base model → different hidden dim → must NOT mix vector spaces
     m2 = NonParametricMemory(dim=8, path=p)
     assert len(m2) == 0
+
+
+def test_inconsistent_persistence_metadata_fails_closed(tmp_path):
+    p = tmp_path / "corrupt"
+    np.save(p.with_suffix(".keys.npy"), np.ones((2, 3), dtype=np.float32))
+    p.with_suffix(".meta.json").write_text(
+        '{"token_ids":[1],"tokens":["one"],"weights":[1.0],"ts":[1.0]}',
+        encoding="utf-8",
+    )
+
+    loaded = NonParametricMemory(dim=3, path=p)
+
+    assert len(loaded) == 0
 
 
 def test_apply_to_logits_flag_off_is_identity(mem, monkeypatch):
@@ -146,3 +164,29 @@ def test_apply_to_logits_flag_on_reweights(mem, monkeypatch):
     out = mem.apply_to_logits(logits, np.array([1.0, 0, 0, 0]), free_energy=1.0)
     # compare probabilities (out is log-probs, logits are raw) — token 0's share must rise
     assert _softmax(out)[0] > _softmax(logits)[0]
+
+
+def test_apply_to_logits_preserves_relative_mass_for_unrecalled_tokens(mem, monkeypatch):
+    monkeypatch.setenv("AURA_NONPARAMETRIC_MEMORY", "1")
+    mem.add(np.array([1.0, 0, 0, 0]), token_id=0, token="x", weight=1.0)
+    logits = np.array([0.0, 1.0, 3.0, -0.5], dtype=np.float32)
+
+    before = _softmax(logits)
+    after = _softmax(
+        mem.apply_to_logits(
+            logits,
+            np.array([1.0, 0, 0, 0]),
+            free_energy=1.0,
+        )
+    )
+
+    assert np.isclose(after[1] / after[2], before[1] / before[2], rtol=1e-5)
+
+
+def test_singleton_refuses_cross_model_hidden_dimension():
+    reset_nonparametric_memory()
+    try:
+        assert get_nonparametric_memory(4) is not None
+        assert get_nonparametric_memory(8) is None
+    finally:
+        reset_nonparametric_memory()

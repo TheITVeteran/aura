@@ -6,7 +6,7 @@ remains open.
 
 ## Current Estimate
 
-- Overall closeout: 84%
+- Overall closeout: 84.5%
 - Remaining checkpoints: 4 total
 - Current phase: live desktop runtime reliability and full-mind conversation
   path hardening
@@ -398,3 +398,48 @@ Estimate update:
 
 - Overall closeout: 84%
 - Remaining checkpoints: 4 total
+
+## Checkpoint 2026-06-27-11: Non-Parametric Memory Safety Review
+
+Status: verified locally, ready for commit; live integration remains open.
+
+Why:
+
+- A concurrent Claude checkpoint added a real-model kNN memory probe and a
+  token-level non-parametric store after the previous runtime checkpoint.
+- The mechanism passed a small 7B proof, but the initial 200,000-entry default
+  could allocate several gigabytes at 32B hidden dimensions, copied the entire
+  key matrix on every insertion, allocated a second full matrix per query, and
+  mixed log-probabilities with untouched raw logits.
+- The feature is not wired into Aura's MLX worker or trusted-knowledge ingestion
+  path, so it must not be represented as a live foreground capability.
+
+What changed:
+
+- Default capacity is bounded to 4,096 entries (roughly 84 MB at a 5,120-wide
+  hidden state) and storage grows geometrically instead of copying on every add.
+- Distance search uses the norm/dot-product identity and avoids an
+  entries-by-hidden-dimension temporary allocation per query.
+- Logit interpolation now operates consistently in normalized log-probability
+  space and preserves relative probability among unrecalled tokens.
+- Persistence validates all metadata lengths, writes atomically, reports
+  success/failure, and isolates stores by model hidden dimension.
+- The process singleton refuses cross-model hidden-state reuse.
+- The heavy real-model probe moved to `tools/proof` and remains explicit opt-in;
+  it is not imported by normal runtime.
+- Removed an unrelated unused import found by the closeout lint gate.
+
+Evidence:
+
+- Existing real-model artifact: exact fictional recall `0/8 -> 8/8`,
+  paraphrase recall `0/8 -> 3/8`, known control preserved.
+- `python -m py_compile core/brain/nonparametric_memory.py core/coordinators/metabolic_coordinator.py tools/proof/probe_nonparametric_memory.py tests/test_nonparametric_memory.py`
+- `python -m pytest -q tests/test_nonparametric_memory.py`
+- Result: `21 passed`
+- `make lint`
+- Result: passed.
+
+Estimate update:
+
+- Overall closeout: 84.5%
+- Remaining consolidated checkpoints: 4 total

@@ -28,6 +28,7 @@ import json
 import logging
 import math
 import os
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -72,19 +73,25 @@ class NonParametricMemory:
         dim: int,
         path: str | Path | None = None,
         *,
-        max_entries: int = 200_000,
+        max_entries: int = 4_096,
         base_lambda: float = 0.25,
         max_lambda: float = 0.7,
         dist_scale: float = 1.0,
     ) -> None:
         self._dim = int(dim)
-        self._path = Path(path or os.path.expanduser("~/.aura/data/runtime/nonparametric_memory"))
+        if self._dim <= 0:
+            raise ValueError("non-parametric memory dimension must be positive")
+        default_path = f"~/.aura/data/runtime/nonparametric_memory_{self._dim}"
+        self._path = Path(path or os.path.expanduser(default_path))
         self._max = max(64, int(max_entries))
         self._base_lambda = float(base_lambda)
         self._max_lambda = float(max_lambda)
         self._dist_scale = max(1e-6, float(dist_scale))
         self._lock = threading.RLock()
-        self._keys: np.ndarray = np.zeros((0, self._dim), dtype=np.float32)
+        self._capacity = min(64, self._max)
+        self._size = 0
+        self._keys = np.empty((self._capacity, self._dim), dtype=np.float32)
+        self._key_norms = np.empty(self._capacity, dtype=np.float32)
         self._token_ids: list[int] = []
         self._tokens: list[str] = []
         self._weights: list[float] = []
@@ -98,30 +105,37 @@ class NonParametricMemory:
         if k.shape[0] != self._dim or not np.all(np.isfinite(k)):
             return False
         with self._lock:
-            self._keys = np.vstack([self._keys, k[None, :]]) if self._keys.size else k[None, :].copy()
+            if self._size >= self._max:
+                self._evict_one_for_incoming()
+            self._ensure_capacity(self._size + 1)
+            self._keys[self._size] = k
+            self._key_norms[self._size] = float(np.dot(k, k))
             self._token_ids.append(int(token_id))
             self._tokens.append(str(token))
-            self._weights.append(float(weight))
+            self._weights.append(max(0.0, float(weight)))
             self._ts.append(time.time())
+            self._size += 1
             self._stats["added"] += 1
-            self._evict_if_needed()
         return True
 
     def __len__(self) -> int:
         with self._lock:
-            return len(self._token_ids)
+            return self._size
 
     # ── retrieval ─────────────────────────────────────────────────────────────
     def query(self, key: np.ndarray, k: int = 8) -> list[Neighbor]:
         q = np.asarray(key, dtype=np.float32).reshape(-1)
         with self._lock:
-            n = len(self._token_ids)
+            n = self._size
             if n == 0 or q.shape[0] != self._dim:
                 return []
             self._stats["queried"] += 1
-            diffs = self._keys - q[None, :]
-            dists = np.sqrt(np.einsum("ij,ij->i", diffs, diffs))
-            kk = min(int(k), n)
+            # ||x-q||^2 = ||x||^2 + ||q||^2 - 2x.q avoids allocating an
+            # n-by-hidden-dimension difference matrix on every decode step.
+            dists_sq = self._key_norms[:n] + float(np.dot(q, q))
+            dists_sq = dists_sq - 2.0 * (self._keys[:n] @ q)
+            dists = np.sqrt(np.maximum(dists_sq, 0.0))
+            kk = min(max(1, int(k)), n)
             idx = np.argpartition(dists, kk - 1)[:kk]
             idx = idx[np.argsort(dists[idx])]
             return [
@@ -223,42 +237,87 @@ class NonParametricMemory:
         if not _flag_on("AURA_NONPARAMETRIC_MEMORY"):
             return logits
         try:
+            original = np.asarray(logits)
             arr = np.asarray(logits, dtype=np.float64).reshape(-1)
-            top = np.argpartition(arr, -min(64, arr.shape[0]))[-min(64, arr.shape[0]):]
-            shift = arr[top] - arr[top].max()
-            ex = np.exp(shift)
-            lm_probs = {int(t): float(p) for t, p in zip(top, ex / ex.sum())}
-            blended = self.interpolate(lm_probs, query_key, **kw)
-            out = arr.copy()
-            for t, p in blended.items():
-                out[int(t)] = math.log(max(p, 1e-12))
-            return out.astype(logits.dtype if hasattr(logits, "dtype") else np.float32)
+            if arr.size == 0 or not np.all(np.isfinite(arr)):
+                return logits
+            neighbors = self.query(query_key, k=int(kw.pop("k", 8)))
+            if not neighbors:
+                return logits
+            lam = kw.pop("lam_override", None)
+            if lam is None:
+                lam = self.adaptive_lambda(
+                    neighbors,
+                    phi=kw.pop("phi", None),
+                    free_energy=kw.pop("free_energy", None),
+                )
+            lam = _clamp(float(lam), 0.0, self._max_lambda)
+            if lam <= 1e-6:
+                return logits
+            knn = self.knn_probs(
+                neighbors,
+                temperature=float(kw.pop("temperature", 1.0)),
+            )
+            if not knn:
+                return logits
+            max_logit = float(np.max(arr))
+            log_z = max_logit + math.log(float(np.exp(arr - max_logit).sum()))
+            out = (arr - log_z) + math.log1p(-lam)
+            log_lam = math.log(lam)
+            for token_id, probability in knn.items():
+                if 0 <= int(token_id) < out.size and probability > 0.0:
+                    out[int(token_id)] = np.logaddexp(
+                        out[int(token_id)],
+                        log_lam + math.log(float(probability)),
+                    )
+            with self._lock:
+                self._stats["interpolated"] += 1
+            return out.reshape(original.shape).astype(
+                original.dtype if hasattr(original, "dtype") else np.float32
+            )
         except (ValueError, TypeError, FloatingPointError, OverflowError) as exc:
             record_degradation("nonparametric_memory_logits", exc)
             return logits
 
     def stats(self) -> dict[str, Any]:
         with self._lock:
-            return {**self._stats, "entries": len(self._token_ids), "dim": self._dim}
+            return {
+                **self._stats,
+                "entries": self._size,
+                "dim": self._dim,
+                "max_entries": self._max,
+                "allocated_bytes": int(self._keys.nbytes + self._key_norms.nbytes),
+            }
 
     # ── internals ───────────────────────────────────────────────────────────────
-    def _evict_if_needed(self) -> None:
-        n = len(self._token_ids)
-        if n <= self._max:
+    def _ensure_capacity(self, needed: int) -> None:
+        if needed <= self._capacity:
+            return
+        new_capacity = min(self._max, max(needed, self._capacity * 2))
+        keys = np.empty((new_capacity, self._dim), dtype=np.float32)
+        norms = np.empty(new_capacity, dtype=np.float32)
+        keys[: self._size] = self._keys[: self._size]
+        norms[: self._size] = self._key_norms[: self._size]
+        self._keys = keys
+        self._key_norms = norms
+        self._capacity = new_capacity
+
+    def _evict_one_for_incoming(self) -> None:
+        n = self._size
+        if n == 0:
             return
         now = time.time()
-        # gravity = weight × recency; evict the lowest-gravity entries.
         gravity = np.array(
             [self._weights[i] * math.exp(-(now - self._ts[i]) / (14 * 24 * 3600.0)) for i in range(n)]
         )
-        keep = np.argsort(gravity)[-(self._max):]
-        keep.sort()
-        self._keys = self._keys[keep]
-        self._token_ids = [self._token_ids[i] for i in keep]
-        self._tokens = [self._tokens[i] for i in keep]
-        self._weights = [self._weights[i] for i in keep]
-        self._ts = [self._ts[i] for i in keep]
-        self._stats["evicted"] += n - len(keep)
+        drop = int(np.argmin(gravity))
+        if drop < n - 1:
+            self._keys[drop : n - 1] = self._keys[drop + 1 : n]
+            self._key_norms[drop : n - 1] = self._key_norms[drop + 1 : n]
+        for values in (self._token_ids, self._tokens, self._weights, self._ts):
+            values.pop(drop)
+        self._size -= 1
+        self._stats["evicted"] += 1
 
     def _load(self) -> None:
         keys_p, meta_p = self._path.with_suffix(".keys.npy"), self._path.with_suffix(".meta.json")
@@ -267,30 +326,64 @@ class NonParametricMemory:
         try:
             keys = np.load(keys_p)
             meta = json.loads(meta_p.read_text(encoding="utf-8"))
-            if keys.shape[1] != self._dim:
+            if keys.ndim != 2 or keys.shape[1] != self._dim:
                 return  # dim changed (e.g. new base model) → start fresh, never mix spaces
+            token_ids = list(meta.get("token_ids", []))
+            tokens = list(meta.get("tokens", []))
+            weights = list(meta.get("weights", []))
+            timestamps = list(meta.get("ts", []))
+            count = min(len(keys), len(token_ids), len(tokens), len(weights), len(timestamps))
+            if count <= 0 or len({len(keys), len(token_ids), len(tokens), len(weights), len(timestamps)}) != 1:
+                raise ValueError("non-parametric memory persistence metadata is inconsistent")
+            count = min(count, self._max)
             with self._lock:
-                self._keys = keys.astype(np.float32)
-                self._token_ids = list(meta.get("token_ids", []))
-                self._tokens = list(meta.get("tokens", []))
-                self._weights = list(meta.get("weights", []))
-                self._ts = list(meta.get("ts", []))
+                self._capacity = max(64, count)
+                self._capacity = min(self._capacity, self._max)
+                self._keys = np.empty((self._capacity, self._dim), dtype=np.float32)
+                self._key_norms = np.empty(self._capacity, dtype=np.float32)
+                self._keys[:count] = keys[-count:].astype(np.float32)
+                self._key_norms[:count] = np.einsum(
+                    "ij,ij->i", self._keys[:count], self._keys[:count]
+                )
+                self._token_ids = [int(value) for value in token_ids[-count:]]
+                self._tokens = [str(value) for value in tokens[-count:]]
+                self._weights = [max(0.0, float(value)) for value in weights[-count:]]
+                self._ts = [float(value) for value in timestamps[-count:]]
+                self._size = count
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             record_degradation("nonparametric_memory_load", exc)
 
-    def persist(self) -> None:
+    def persist(self) -> bool:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with self._lock:
-                np.save(self._path.with_suffix(".keys.npy"), self._keys)
+                keys = self._keys[: self._size].copy()
                 meta = {
                     "schema_version": 1, "dim": self._dim, "saved_at": time.time(),
-                    "token_ids": self._token_ids, "tokens": self._tokens,
-                    "weights": self._weights, "ts": self._ts,
+                    "token_ids": list(self._token_ids), "tokens": list(self._tokens),
+                    "weights": list(self._weights), "ts": list(self._ts),
                 }
-                self._path.with_suffix(".meta.json").write_text(json.dumps(meta), encoding="utf-8")
+            keys_path = self._path.with_suffix(".keys.npy")
+            meta_path = self._path.with_suffix(".meta.json")
+            with tempfile.NamedTemporaryFile(
+                dir=self._path.parent, suffix=".npy", delete=False
+            ) as handle:
+                np.save(handle, keys)
+                temporary_keys = Path(handle.name)
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=self._path.parent,
+                suffix=".json", delete=False
+            ) as handle:
+                json.dump(meta, handle, separators=(",", ":"))
+                handle.flush()
+                os.fsync(handle.fileno())
+                temporary_meta = Path(handle.name)
+            os.replace(temporary_keys, keys_path)
+            os.replace(temporary_meta, meta_path)
+            return True
         except self._ERRORS as exc:
             record_degradation("nonparametric_memory_persist", exc)
+            return False
 
 
 _singleton: NonParametricMemory | None = None
@@ -306,6 +399,13 @@ def get_nonparametric_memory(dim: int = 0) -> NonParametricMemory | None:
         with _lock:
             if _singleton is None:
                 _singleton = NonParametricMemory(dim)
+    elif dim > 0 and _singleton._dim != int(dim):
+        logger.warning(
+            "Non-parametric memory dimension mismatch (%d requested, %d active); refusing cross-model reuse.",
+            int(dim),
+            _singleton._dim,
+        )
+        return None
     return _singleton
 
 

@@ -1,4 +1,4 @@
-"""Real end-to-end probe: does non-parametric memory inject knowledge the weights lack?
+"""Opt-in end-to-end probe for non-parametric memory on a real local model.
 
 Uses FICTIONAL facts the base model cannot know, so any correct next-token recall is
 *purely* from the datastore — a clean proof that capacity was added, not coincidence.
@@ -11,7 +11,9 @@ Procedure (real model, real hidden states):
        - PARAPHRASED contexts (the real test: representation-space recall, not string match),
        - a control prompt the model DOES know (must not be corrupted by fictional memory).
 
-Bounded + foreground. Reports a real number, or it doesn't count.
+This is a proof tool, not a runtime entrypoint. It loads a local model and must
+be run explicitly because doing so alongside Aura can exceed the desktop memory
+budget. Reports a real number, or it does not count.
 """
 from __future__ import annotations
 

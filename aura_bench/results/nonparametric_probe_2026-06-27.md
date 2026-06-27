@@ -3,7 +3,8 @@
 **Date:** 2026-06-27 · **Model:** Qwen2.5-7B-Instruct-4bit (MLX) · **Datastore:** 8 fictional facts
 **Method:** facts the base model CANNOT know (invented entities), so any correct recall is purely
 from the datastore. Real hidden states (`model.model(ids)[0,-1]`, dim 3584) as keys; next-token
-prediction compared BARE vs INTERPOLATED. Run: `python -m aura_bench.nonparametric_probe`.
+prediction compared BARE vs INTERPOLATED. Run:
+`python tools/proof/probe_nonparametric_memory.py models/Qwen2.5-7B-Instruct-4bit`.
 
 ## Result
 
