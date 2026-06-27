@@ -651,8 +651,13 @@ class ReasoningAmplifierV2:
         confidence = round(min(calibration.confidence, 0.98 if verifier_ok else 0.55), 4)
 
         # 9b. learn from the outcome — memoize wins, queue losses for idle retry.
+        # CRITICAL soundness gate: only cache/learn when the verifier ACTUALLY checked
+        # (verdict.checked). A vacuous pass (ok=True, checked=False — e.g. prose with no
+        # arithmetic to evaluate) must never be cached, or a wrong answer gets served as
+        # truth forever. The hard bench caught exactly this poisoning.
+        verifier_checked = bool(getattr(verdict, "checked", False))
         if "solved_cache_hit" not in fallbacks:
-            if verifier_ok:
+            if verifier_ok and verifier_checked:
                 # Memoize verifier-clean source-independent derivations for instant re-use.
                 if _flag_on("AURA_REASONING_CACHE") and not request.context.get("skip_cache"):
                     try:
@@ -683,7 +688,7 @@ class ReasoningAmplifierV2:
                     )
                 except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation("amplifier_v2_self_improve", exc)
-            elif not request.context.get("skip_precompute_enqueue"):
+            elif not verifier_ok and not request.context.get("skip_precompute_enqueue"):
                 # Verifier-dirty under the foreground budget — queue an idle deep retry
                 # (off the critical path; the win lands in the cache for next time).
                 try:

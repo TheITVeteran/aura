@@ -195,6 +195,9 @@ async def run_delta(
             cortex_generate,
             task_type=task.task_type if task.task_type in {"code", "math"} else classify_task_type(task.prompt),
             time_budget_s=amplifier_time_budget_s,
+            # Measurement must be read-only w.r.t. the live cache: never write (so a
+            # bench run can't poison production) and never serve a prior cache hit.
+            extra_context={"skip_cache": True},
         )
         return str(out.answer or "").strip()
 
@@ -212,8 +215,11 @@ async def run_delta(
         ):
             if runner is None:
                 continue
+            # Code tasks (generate full functions + sandbox-repair) need more wall-clock
+            # than numeric ones; give them a larger cap so they aren't false-zeroed.
+            eff_timeout = per_task_timeout * (2.5 if getattr(task, "task_type", "") == "code" else 1.0)
             score, runtime = await _run_one(
-                name, task, runner, per_task_timeout=per_task_timeout, score_fn=_score_fn
+                name, task, runner, per_task_timeout=eff_timeout, score_fn=_score_fn
             )
             results[name].scores.append(score)
             results[name].runtimes.append(runtime)

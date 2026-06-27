@@ -125,3 +125,41 @@ def test_amplify_cache_hit_bypasses_generation(tmp_path, monkeypatch):
     assert result.receipt.strategy_used == "solved_cache"
     assert "solved_cache_hit" in result.receipt.fallbacks_used
     assert calls["n"] == 0  # generation was fully bypassed
+
+
+def _run_amplify_with_verifier(tmp_path, monkeypatch, *, ok: bool, checked: bool):
+    """Run amplify() with an injected verifier verdict; return (result, temp cache)."""
+    from core.brain import reasoning_amplifier_v2 as rav
+    from core.brain import reasoning_solved_cache as rsc
+    from core.brain.verifiers.base import VerificationResult
+
+    cache = rsc.ReasoningSolvedCache(tmp_path / "c.json")
+    monkeypatch.setattr(rsc, "get_reasoning_solved_cache", lambda: cache)
+
+    class _FakeVerifier:
+        async def verify(self, candidate, *, task_type=None, context=None):
+            return VerificationResult(domain="math", ok=ok, checked=checked, score=0.95, engine="fake")
+
+    async def _gen(prompt, temperature):
+        return "the answer is 4"
+
+    amp = rav.ReasoningAmplifierV2(_gen, verifier=_FakeVerifier())
+    req = rav.AmplificationRequest(
+        objective="what is two plus two", task_type="math",
+        mode=rav.ReasoningMode.FAST, context={"skip_evidence": True},
+    )
+    return asyncio.run(amp.amplify(req)), cache
+
+
+def test_vacuous_pass_is_not_cached(tmp_path, monkeypatch):
+    # ok=True but checked=False (verifier had nothing concrete to evaluate) MUST NOT
+    # be cached — this is the poisoning bug the hard bench caught.
+    _result, cache = _run_amplify_with_verifier(tmp_path, monkeypatch, ok=True, checked=False)
+    assert cache.get("what is two plus two", "math") is None
+
+
+def test_genuinely_checked_pass_is_cached(tmp_path, monkeypatch):
+    # ok=True AND checked=True (a real evaluation happened) IS cached.
+    _result, cache = _run_amplify_with_verifier(tmp_path, monkeypatch, ok=True, checked=True)
+    hit = cache.get("what is two plus two", "math")
+    assert hit is not None and "4" in hit.answer
