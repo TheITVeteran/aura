@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -1258,6 +1259,54 @@ async def test_hotkey_skips_screen_reads_on_browser_surface(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_paste_receipt_verifies_expected_clipboard_payload(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Google Chrome")
+    focused_snapshots = iter(
+        ("AXTextArea\tGoogle Docs editor", "AXTextArea\tGoogle Docs editor changed")
+    )
+    monkeypatch.setattr(skill, "_focused_element_snapshot", lambda: next(focused_snapshots))
+    monkeypatch.setattr(
+        skill,
+        "_send_hotkey_system_events",
+        lambda keys: f"system_events:{'+'.join(keys)}",
+    )
+    staged = "Aura should paste this into the document body."
+    monkeypatch.setattr(
+        skill,
+        "_get_clipboard",
+        lambda: {"ok": True, "text": staged, "chars": len(staged)},
+    )
+
+    async def controlled_sleep(secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    result = await skill.execute(
+        {"action": "hotkey", "target": "command+v"},
+        {
+            "desktop_task_expected_frontmost_app": "Google Chrome",
+            "desktop_task_expected_clipboard_sha256": hashlib.sha256(
+                staged.encode("utf-8")
+            ).hexdigest(),
+            "desktop_task_expected_clipboard_chars": len(staged),
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["is_paste"] is True
+    assert result["write_target_app_verified"] is True
+    assert result["clipboard_payload_verification"]["verified"] is True
+    assert result["visible_state_changed"] is True
+
+
+@pytest.mark.asyncio
 async def test_open_url_targets_named_browser(monkeypatch):
     """Bryan's Google session lives in Chrome: open_url honors a browser
     in the step target via 'open -a', bounded to a known browser set."""
@@ -1355,6 +1404,66 @@ async def test_open_url_repairs_frontmost_browser_with_wrong_active_tab(monkeypa
     assert argv_seen == [
         ["open", "-a", "Google Chrome", "https://docs.google.com/document/u/0/create"]
     ]
+
+
+@pytest.mark.asyncio
+async def test_open_url_repairs_default_browser_when_readback_is_empty(monkeypatch):
+    """Default-browser opens still need a proven active tab.
+
+    Live proof exposed the failure: macOS accepted `open <url>`, Safari came
+    frontmost, but active URL readback was empty, so the governed chain stopped
+    before the writing step. The repair must not depend on an explicitly named
+    browser because default-browser dispatch is a normal user-lane action.
+    """
+
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    argv_seen = []
+
+    class FakeSubprocessGateway:
+        def run(self, argv, **kwargs):
+            argv_seen.append(argv)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Safari")
+    monkeypatch.setattr(
+        skill,
+        "_wait_for_frontmost_app",
+        lambda expected: asyncio.sleep(0, result=(True, expected)),
+    )
+    locations = iter(
+        (
+            ("", ""),
+            ("https://duckduckgo.com/?q=robot&iax=images&ia=images", "robot images"),
+        )
+    )
+    monkeypatch.setattr(skill, "_active_browser_location", lambda browser: next(locations))
+    forced = []
+    monkeypatch.setattr(
+        skill,
+        "_force_browser_tab_url",
+        lambda browser, url: forced.append((browser, url)) or "",
+    )
+
+    target = "https://duckduckgo.com/?q=robot&iax=images&ia=images"
+    result = await skill.execute({"action": "open_url", "target": target}, {})
+
+    assert result["ok"] is True
+    assert result["browser"] == ""
+    assert result["frontmost_app"] == "Safari"
+    assert result["active_url"] == target
+    assert result["forced_navigation"] is True
+    assert forced == [("Safari", target)]
+    assert argv_seen == [["open", target]]
 
 
 @pytest.mark.asyncio

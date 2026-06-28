@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import pytest
@@ -88,7 +89,7 @@ def _fake_computer_use_result(params):
             "ok": True,
             "action": action,
             "chars": len(str(target)),
-            "sha256": "0" * 64,
+            "sha256": hashlib.sha256(str(target).encode("utf-8")).hexdigest(),
             "effect_verified": True,
         }
     if action == "hotkey":
@@ -914,6 +915,10 @@ async def test_desktop_task_derives_generic_web_document_plan_without_demo_short
     clipboard_payload = calls[1][1]["target"]
     assert "Essay body from CognitiveEngine." in clipboard_payload
     assert calls[-1][1]["target"] == "command+v"
+    assert calls[-1][2]["desktop_task_expected_clipboard_sha256"] == hashlib.sha256(
+        clipboard_payload.encode("utf-8")
+    ).hexdigest()
+    assert calls[-1][2]["desktop_task_expected_clipboard_chars"] == len(clipboard_payload)
 
 
 def test_web_document_write_target_requires_editable_focus_evidence():
@@ -944,6 +949,34 @@ def test_web_document_write_target_requires_editable_focus_evidence():
 
     assert verified is False
     assert "browser_location_bar_still_focused" in evidence
+
+
+def test_paste_effect_requires_verified_write_target_app():
+    from core.skills.desktop_task import DesktopTaskSkill, DesktopTaskStep
+
+    step = DesktopTaskStep(
+        action="hotkey",
+        target="command+v",
+        reason="Paste the staged body.",
+        expect="The focused writing surface accepts the paste shortcut.",
+    )
+
+    verified, evidence = DesktopTaskSkill._verify_step_effect(
+        step,
+        {
+            "ok": True,
+            "hotkey": "command+v",
+            "is_paste": True,
+            "expected_frontmost_app": "Google Chrome",
+            "write_target_app_verified": False,
+            "effect_verified": True,
+            "verification": "State shifted.",
+            "clipboard_payload_verification": {"verified": True},
+        },
+    )
+
+    assert verified is False
+    assert evidence == "paste target app was not verified"
 
 
 @pytest.mark.asyncio
@@ -1870,6 +1903,15 @@ def test_derivation_honors_safari_and_neutral_defaults():
         for s in safari_urls
     )
 
+    image_steps = skill._derive_steps_from_objective(
+        "Find an online robot image and show me where you found it.", {}
+    )
+    image_urls = [s for s in image_steps if s.action == "open_url"]
+    assert image_urls and all(
+        isinstance(s.target, dict) and s.target["browser"] == "Google Chrome"
+        for s in image_urls
+    )
+
     neutral_steps = skill._derive_steps_from_objective(
         "Search for hiking trails near me.", {}
     )
@@ -1997,7 +2039,10 @@ def test_demo_class_objective_stays_on_verified_primitive_lane():
     ]
     assert docs_targets
     assert all(target.get("requires_editable_focus") is True for target in docs_targets)
-    assert any("q=eagle" in url and "tbm=isch" in url for url in url_values)
+    assert any(
+        "q=eagle" in url and ("tbm=isch" in url or "iax=images" in url)
+        for url in url_values
+    )
     assert all(
         (not isinstance(target, dict)) or target.get("browser") == "Google Chrome"
         for target in open_urls

@@ -17,6 +17,82 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Visible Desktop Proof Checkpoint (2026-06-28)
+
+### Gaps Addressed
+
+- **Visible write targets now require real focus evidence**: desktop-task paste
+  receipts carry the expected frontmost writing app plus clipboard payload
+  hash/length from the verified staging step. Paste effects fail validation if
+  Aura cannot prove the target app or clipboard body, closing the "typed into
+  the URL bar instead of Notes/Docs" class instead of merely reporting it.
+- **Default-browser URL dispatch now repairs failed active-tab readback**:
+  `open_url` performs the same bounded AppleScript tab repair for any verified
+  allowed browser, not only for explicitly named browser targets. This fixed
+  the failed visible proof where macOS accepted the URL, Safari/Chrome came
+  frontmost, but the active URL was unavailable.
+- **Online image/source workflows prefer the live Chrome lane unless Safari is
+  explicit**: visible source/image steps route through Chrome for the same
+  signed-in, proof-supported browser path used by Google Docs and multi-app
+  demos, while explicit Safari requests still stay in Safari.
+- **The visible Notes/folder/PDF/image path is now live-proofed**: the proof
+  booted the real desktop runtime, created the journal artifact through
+  governed desktop-task/computer-use primitives, verified Notes refocus before
+  paste, verified the rendered PDF on disk, checked receipts against disk
+  effects, and shut down cleanly.
+
+### Latest Commands Run
+
+```bash
+python -m ruff check core/skills/computer_use.py core/skills/desktop_task.py tests/test_hardened_computer_use.py tests/test_desktop_task_skill.py tests/test_desktop_planning_generality.py
+python -m pytest -q tests/test_hardened_computer_use.py tests/test_desktop_task_skill.py tests/test_desktop_planning_generality.py tests/test_desktop_intent_safety.py tests/test_desktop_capabilities_runtime.py
+make enterprise-gate
+make production-gate
+AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 AURA_LIVE_PROOF_SHUTDOWN_MAX_S=90 AURA_TIMESCALE_BRIDGE_SAMPLE_INTERVAL_S=2 python tools/visible_journal_demo_proof.py --port 8154 --boot-timeout 600
+```
+
+### Evidence
+
+- Ruff on touched desktop action/planning/test surface: **passed**.
+- Focused desktop planning/computer-use/capability slice: **154 passed**.
+- `make enterprise-gate`: **passed**.
+- `make production-gate`: **passed**, all 37 readiness checks true.
+- Visible journal proof artifact:
+  `artifacts/live_proof/live_proof_20260628_120050_verdict.json`.
+- Proof facts: `passed=true`, boot health in **25s**, process-tree RSS stayed
+  near **19.6 GB**, visible journal chain completed in **19.0s**, fresh PDF
+  `aura_self_summary (3).pdf` was created, extracted PDF text was **1342
+  characters**, timestamp/self/image evidence checks all passed, staging showed
+  `notes_opened=true`, `paste_dispatched=true`,
+  `paste_frontmost_notes=true`, `notes_refocused_before_paste=true`,
+  `receipt_count=11`, `receipt_matches_disk=true`, shutdown was
+  **36.1s/90s**, no orphan workers, and the port was released.
+
+### Closeout Position
+
+- Functional closeout estimate: about **95%**. The launched desktop path now
+  has a green visible Notes/folder/PDF/image proof with focus and receipt
+  verification. This still does not claim AGI, phenomenal consciousness,
+  personhood, or indefinite autonomy as proven.
+- Estimated remaining work: **3 consolidated checkpoints**, likely **3-5
+  smaller sub-checkpoints**:
+  1. Complete the broader visible multi-app proof: Chrome research, article
+     source tabs, Google Docs editable-focus/paste, PDF export, wallpaper/image
+     source readback, and voice wake path.
+  2. Learning/proof closure: CRSM->LoRA, fused-model CAA extraction, memory
+     metabolism, autonomous repair evidence, DNU/Aletheia/final-proof and
+     replay validation.
+  3. Longer soak, claims purification, remaining semantic ledger coverage,
+     clean worktree, and final checkpoint commit/push.
+
+### Next Exact Task
+
+Run and harden the broader browser-research/Google-Docs/wallpaper proof on the
+same launched desktop path. Expand the proof where it exposes real gaps:
+editable Google Docs focus, robust source summarization, visible source tabs,
+image-source evidence, wallpaper readback/rollback, memory pressure, and neural
+stream failure scanning.
+
 ## Latest Timescale Bridge Runtime Checkpoint (2026-06-28)
 
 ### Gaps Addressed

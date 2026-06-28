@@ -1987,6 +1987,10 @@ end tell
                         logger.debug("Pre-state screen read failed before hotkey: %s", exc)
                 keys = [k.strip().lower() for k in params.target.split("+") if k.strip()]
                 is_paste = bool({"command", "cmd"} & set(keys)) and "v" in keys
+                expected_clipboard_sha256 = str(
+                    context.get("desktop_task_expected_clipboard_sha256") or ""
+                ).strip()
+                expected_clipboard_chars = context.get("desktop_task_expected_clipboard_chars")
                 if (
                     browser_surface
                     and is_paste
@@ -2081,15 +2085,55 @@ end tell
                     verification = (
                         "Hotkey dispatched but no visible state shift was verified."
                     )
+                clipboard_verification: dict[str, Any] = {}
+                if is_paste and expected_clipboard_sha256:
+                    observed_clipboard = await asyncio.to_thread(self._get_clipboard)
+                    observed_text = str(observed_clipboard.get("text") or "")
+                    observed_sha256 = hashlib.sha256(
+                        observed_text.encode("utf-8")
+                    ).hexdigest()
+                    clipboard_verification = {
+                        "expected_sha256": expected_clipboard_sha256,
+                        "observed_sha256": observed_sha256,
+                        "expected_chars": expected_clipboard_chars,
+                        "observed_chars": len(observed_text),
+                        "verified": bool(
+                            observed_clipboard.get("ok")
+                            and observed_sha256 == expected_clipboard_sha256
+                        ),
+                    }
+                    if not clipboard_verification["verified"]:
+                        ok = False
+                        effect_verified = False
+                        verification = (
+                            "Hotkey dispatched, but the clipboard payload no longer "
+                            "matched the verified staged document body."
+                        )
+                expected_app_verified = bool(
+                    not expected_frontmost
+                    or self._frontmost_app_matches(front_app, expected_frontmost)
+                    or self._frontmost_app_matches(post_front_app, expected_frontmost)
+                )
                 result = {
                     "ok": ok,
                     "action": "hotkey",
                     "hotkey": params.target,
+                    "is_paste": is_paste,
                     "frontmost_app_before": front_app,
                     "frontmost_app_after": post_front_app,
+                    "expected_frontmost_app": expected_frontmost,
+                    "write_target_app_verified": expected_app_verified,
                     "effect_verified": effect_verified,
                     "dispatch": dispatch_receipt,
                     "verification": verification,
+                    "visible_state_changed": screen_verifiable and post_state != pre_state,
+                    "pre_state_hash": hashlib.sha256(pre_state.encode("utf-8")).hexdigest()[:16]
+                    if pre_state
+                    else "",
+                    "post_state_hash": hashlib.sha256(post_state.encode("utf-8")).hexdigest()[:16]
+                    if post_state
+                    else "",
+                    "clipboard_payload_verification": clipboard_verification,
                 }
                 if not ok:
                     result["error"] = verification
@@ -2389,11 +2433,7 @@ end tell
                         )
                     forced_navigation = False
                     force_error = ""
-                    if (
-                        not effect_verified
-                        and browser
-                        and expected_browser == browser
-                    ):
+                    if not effect_verified and expected_browser in _ALLOWED_URL_BROWSERS:
                         try:
                             await asyncio.to_thread(
                                 self._force_browser_tab_url,

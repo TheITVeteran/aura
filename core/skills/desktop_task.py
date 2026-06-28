@@ -398,6 +398,11 @@ class DesktopTaskSkill(BaseSkill):
             lowered,
         ):
             return "Google Chrome"
+        if (
+            re.search(r"\b(?:image|picture|photo|illustration)\b", lowered)
+            and re.search(r"\b(?:online|internet|web|source|found|show)\b", lowered)
+        ):
+            return "Google Chrome"
         return ""
 
     @staticmethod
@@ -1814,11 +1819,24 @@ class DesktopTaskSkill(BaseSkill):
         if action == "hotkey":
             hotkey = str(result.get("hotkey") or "").strip()
             verification = str(result.get("verification") or "").strip()
+            expected_frontmost = str(result.get("expected_frontmost_app") or "").strip()
+            is_paste = bool(result.get("is_paste"))
             verified = (
                 bool(result.get("effect_verified"))
                 or "state shifted" in verification.lower()
                 or "focused element changed" in verification.lower()
             )
+            if is_paste and expected_frontmost:
+                clipboard_check = result.get("clipboard_payload_verification")
+                clipboard_check = (
+                    clipboard_check if isinstance(clipboard_check, dict) else {}
+                )
+                target_ok = bool(result.get("write_target_app_verified"))
+                clipboard_ok = bool(clipboard_check.get("verified")) or not clipboard_check
+                if not target_ok:
+                    return False, "paste target app was not verified"
+                if not clipboard_ok:
+                    return False, "paste clipboard payload was not verified"
             return (
                 bool(hotkey) and verified,
                 f"hotkey={hotkey};{verification}" if hotkey and verification else "missing hotkey effect evidence",
@@ -2835,6 +2853,8 @@ class DesktopTaskSkill(BaseSkill):
         last_image_page_url = ""
         expected_frontmost_app = ""
         current_surface_requires_editable_focus = False
+        expected_clipboard_sha256 = ""
+        expected_clipboard_chars: int | None = None
         for index, step in enumerate(steps, start=1):
             references_ok, resolved_step, reference_error = self._resolve_step_target(step, receipts)
             if not references_ok:
@@ -2970,6 +2990,14 @@ class DesktopTaskSkill(BaseSkill):
                 step_context["desktop_task_write_surface_app"] = expected_frontmost_app
             if write_commit_action and current_surface_requires_editable_focus:
                 step_context["desktop_task_requires_editable_focus"] = True
+            if (
+                resolved_step.action == "hotkey"
+                and "v" in target_text
+                and ("command" in target_text or "cmd" in target_text)
+                and expected_clipboard_sha256
+            ):
+                step_context["desktop_task_expected_clipboard_sha256"] = expected_clipboard_sha256
+                step_context["desktop_task_expected_clipboard_chars"] = expected_clipboard_chars
             step_context.update(
                 {
                     "origin": step_context.get("origin") or "desktop_task",
@@ -3066,6 +3094,10 @@ class DesktopTaskSkill(BaseSkill):
             )
             if resolved_step.action == "fetch_topic_image" and receipt["ok"]:
                 last_image_page_url = str(result.get("page_url") or "") or last_image_page_url
+            if receipt["ok"] and resolved_step.action == "set_clipboard":
+                expected_clipboard_sha256 = str(result.get("sha256") or "").strip()
+                chars = result.get("chars")
+                expected_clipboard_chars = chars if isinstance(chars, int) else None
             if receipt["ok"] and resolved_step.action == "open_app":
                 expected_frontmost_app = str(result.get("frontmost_app") or result.get("opened") or "").strip()
                 current_surface_requires_editable_focus = False
