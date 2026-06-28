@@ -14,7 +14,7 @@ from core.memory.retention_policy import working_history_retention_policy
 from core.runtime import background_policy
 from core.runtime.errors import record_degradation
 from core.runtime.pipeline_blueprint import instantiate_legacy_runtime_phases
-from core.state.aura_state import AuraState
+from core.state.aura_state import AuraState, CognitiveMode
 from core.utils.concurrency import RobustLock
 
 from ..container import get_container
@@ -422,6 +422,24 @@ def _compact_bicameral_directive(frame: dict[str, Any] | None) -> str:
     if _bounded_float(causal.get("memory_priority"), 0.0) >= 0.45:
         directives.append("Preserve continuity with relevant prior conversation or memory.")
     return " ".join(directives)
+
+
+def _compact_cognitive_situation_directive(frame: dict[str, Any] | None) -> str:
+    if not isinstance(frame, dict):
+        return ""
+    try:
+        from core.brain.cognitive_situation import render_cognitive_situation_prompt_block
+
+        return render_cognitive_situation_prompt_block(frame, compact=True).strip()
+    except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "cognitive_engine",
+            exc,
+            severity="warning",
+            action="continued desktop quick reply without cognitive situation prompt block",
+        )
+        logger.debug("Cognitive situation directive unavailable: %s", exc)
+        return ""
 
 
 class CognitiveEngine:
@@ -917,6 +935,101 @@ class CognitiveEngine:
         merged_context["bicameral_sampling_bias"] = sampling
         return merged_context
 
+    def _apply_cognitive_situation_frame(
+        self,
+        state: AuraState,
+        objective: str,
+        origin: str,
+        context: dict[str, Any] | None,
+        *,
+        is_background: bool,
+    ) -> dict[str, Any] | None:
+        try:
+            from core.brain.cognitive_situation import get_cognitive_situation_engine
+
+            engine = get_cognitive_situation_engine()
+            frame = engine.frame(
+                objective,
+                state=state,
+                context=context,
+                origin=origin,
+                is_background=is_background,
+            )
+        except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "cognitive_engine",
+                exc,
+                severity="warning",
+                action="continued cognitive cycle without cognitive situation frame",
+            )
+            logger.debug("Cognitive situation frame unavailable: %s", exc)
+            return context
+
+        frame_dict = frame.to_dict()
+        if frame.salience < 0.16:
+            return context
+
+        causal = dict(frame.causal_effects or {})
+        routing = dict(frame.routing_bias or {})
+        sampling = dict(frame.sampling_bias or {})
+
+        state.response_modifiers["cognitive_situation_frame"] = frame_dict
+        state.response_modifiers["semantic_flexibility_pressure"] = frame.semantic_flexibility
+        state.response_modifiers["analogical_leap_pressure"] = frame.analogical_leap_pressure
+        state.response_modifiers["sensorimotor_grounding_pressure"] = frame.sensorimotor_grounding
+        state.response_modifiers["cognitive_situation_sampling_bias"] = sampling
+        state.response_modifiers["cognitive_situation_routing_bias"] = routing
+        state.response_modifiers["cognitive_situation_attention_targets"] = list(
+            frame.attention_targets
+        )
+        state.response_modifiers["verification_pressure"] = max(
+            _bounded_float(state.response_modifiers.get("verification_pressure"), 0.0),
+            frame.verification_pressure,
+        )
+        state.response_modifiers["metacognition_depth"] = max(
+            _bounded_float(state.response_modifiers.get("metacognition_depth"), 0.35),
+            frame.metacognition_pressure,
+        )
+        state.response_modifiers["creative_pressure"] = max(
+            _bounded_float(state.response_modifiers.get("creative_pressure"), 0.0),
+            frame.analogical_leap_pressure,
+        )
+        if routing.get("use_tool_gateway") or routing.get("bind_sensorimotor_evidence"):
+            state.response_modifiers["tool_governance_pressure"] = True
+        if routing.get("requires_memory_grounding") or routing.get("preserve_conversation_context"):
+            state.response_modifiers["requires_memory_grounding"] = True
+        if routing.get("deliberate_mode") and not is_background:
+            state.cognition.current_mode = CognitiveMode.DELIBERATE
+
+        cognition_mods = dict(getattr(state.cognition, "modifiers", {}) or {})
+        cognition_mods["cognitive_situation_frame"] = frame_dict
+        cognition_mods["cognitive_situation_prompt_block_available"] = True
+        cognition_mods["semantic_flexibility_pressure"] = frame.semantic_flexibility
+        cognition_mods["analogical_leap_pressure"] = frame.analogical_leap_pressure
+        cognition_mods["sensorimotor_grounding_pressure"] = frame.sensorimotor_grounding
+        cognition_mods["cognitive_situation_sampling_bias"] = sampling
+        cognition_mods["cognitive_situation_routing_bias"] = routing
+        cognition_mods["cognitive_situation_causal_effects"] = causal
+        if routing.get("requires_memory_grounding"):
+            cognition_mods["requires_memory_grounding"] = True
+        if routing.get("bind_sensorimotor_evidence"):
+            cognition_mods["bind_sensorimotor_evidence"] = True
+        state.cognition.modifiers = cognition_mods
+
+        if frame.attention_targets and not is_background:
+            existing_focus = str(getattr(state.cognition, "attention_focus", "") or "").strip()
+            situation_focus = ", ".join(frame.attention_targets[:4])
+            state.cognition.attention_focus = (
+                f"{existing_focus} | situation focus: {situation_focus}"
+                if existing_focus
+                else f"{objective[:120]} | situation focus: {situation_focus}"
+            )
+
+        merged_context = dict(context or {})
+        merged_context["cognitive_situation_frame"] = frame_dict
+        merged_context["cognitive_situation_sampling_bias"] = sampling
+        return merged_context
+
     def _learn_spiking_active_inference_outcome(
         self,
         context: dict[str, Any] | None,
@@ -1120,6 +1233,13 @@ class CognitiveEngine:
             is_background=is_background,
         )
         context = self._apply_bicameral_advisory(
+            state,
+            objective,
+            origin,
+            context,
+            is_background=is_background,
+        )
+        context = self._apply_cognitive_situation_frame(
             state,
             objective,
             origin,
@@ -1557,6 +1677,9 @@ class CognitiveEngine:
                         if isinstance(context, dict)
                         else None,
                         "bicameral_advisory_feedback": bicameral_feedback,
+                        "cognitive_situation_frame": context.get("cognitive_situation_frame")
+                        if isinstance(context, dict)
+                        else None,
                         "live_mind_controls_bound": bool(
                             context.get("live_mind_controls_bound", False)
                         ),
@@ -1807,6 +1930,7 @@ class CognitiveEngine:
         advice = context.get("spiking_active_inference")
         imagination_frame = context.get("imagination_workspace")
         bicameral_frame = context.get("bicameral_advisory")
+        cognitive_situation_frame = context.get("cognitive_situation_frame")
         sampling_sources: list[Any] = []
         if isinstance(advice, dict):
             sampling_sources.append(advice.get("sampling_bias") or {})
@@ -1814,6 +1938,8 @@ class CognitiveEngine:
             sampling_sources.append(imagination_frame.get("sampling_bias") or {})
         if isinstance(bicameral_frame, dict):
             sampling_sources.append(bicameral_frame.get("sampling_bias") or {})
+        if isinstance(cognitive_situation_frame, dict):
+            sampling_sources.append(cognitive_situation_frame.get("sampling_bias") or {})
         memory_state_contract = bool(context.get("memory_state_contract", False))
         runtime_fact_status_contract = bool(
             context.get("runtime_fact_status_contract", False)
@@ -1995,6 +2121,12 @@ class CognitiveEngine:
             bicameral_directive = _compact_bicameral_directive(bicameral_frame)
             if bicameral_directive:
                 system_prompt = f"{system_prompt}\n{bicameral_directive}"
+        if isinstance(cognitive_situation_frame, dict):
+            situation_directive = _compact_cognitive_situation_directive(
+                cognitive_situation_frame
+            )
+            if situation_directive:
+                system_prompt = f"{system_prompt}\n{situation_directive}"
         if style_contract and not capability_inventory_contract:
             system_prompt = f"{system_prompt}\n{style_contract}"
         mind_context_contract = str(context.get("mind_context_contract") or "").strip()
@@ -2205,6 +2337,11 @@ class CognitiveEngine:
                     if isinstance(bicameral_frame, dict)
                     else None
                 ),
+                "cognitive_situation_sampling_bias": (
+                    cognitive_situation_frame.get("sampling_bias")
+                    if isinstance(cognitive_situation_frame, dict)
+                    else None
+                ),
                 "timeout": request_timeout,
             }
             if "temperature" in live_mind_generation_controls:
@@ -2333,6 +2470,9 @@ class CognitiveEngine:
                 if isinstance(bicameral_frame, dict)
                 else None,
                 "bicameral_advisory_feedback": bicameral_feedback,
+                "cognitive_situation_frame": cognitive_situation_frame
+                if isinstance(cognitive_situation_frame, dict)
+                else None,
                 "live_mind_controls_bound": live_mind_controls_bound,
                 "live_mind_generation_controls": dict(live_mind_generation_controls),
                 "live_mind_snapshot_ready": live_mind_snapshot_ready,

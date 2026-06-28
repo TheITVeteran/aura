@@ -652,6 +652,25 @@ class ContextAssembler:
                     record_degradation("context_assembler", _e)
                     logger.debug("Bicameral context injection skipped: %s", _e)
 
+        cognitive_situation_context = ""
+        if not black_box_steering:
+            frame = response_mods.get("cognitive_situation_frame") or mods.get(
+                "cognitive_situation_frame"
+            )
+            if isinstance(frame, dict):
+                try:
+                    from core.brain.cognitive_situation import (
+                        render_cognitive_situation_prompt_block,
+                    )
+
+                    cognitive_situation_context = render_cognitive_situation_prompt_block(
+                        frame,
+                        compact=is_casual or elasticity >= 1,
+                    )
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+                    record_degradation("context_assembler", _e)
+                    logger.debug("Cognitive situation context injection skipped: %s", _e)
+
         # 4. Somatic & World Context (Simplified if casual or under context pressure)
         world_context = ContextAssembler.build_world_context(state) if not is_casual and elasticity < 2 else ""
 
@@ -822,6 +841,8 @@ class ContextAssembler:
                 base += imagination_context
             if bicameral_context:
                 base += bicameral_context
+            if cognitive_situation_context:
+                base += cognitive_situation_context
         elif is_casual:
             # 1. Identity + Requirements
             base = f"{identity_block}\n{requirements}\n"
@@ -842,6 +863,8 @@ class ContextAssembler:
                 base += imagination_context
             if bicameral_context:
                 base += bicameral_context
+            if cognitive_situation_context:
+                base += cognitive_situation_context
         else:
             # Standard path for non-casual/deliberate turns (Research/Complex tasks)
             base = (
@@ -859,6 +882,7 @@ class ContextAssembler:
                 f"{personhood_context}"
                 f"{imagination_context}"
                 f"{bicameral_context}"
+                f"{cognitive_situation_context}"
                 f"{aura_now_block}"
                 f"{world_context}"
                 f"{somatic_context}"

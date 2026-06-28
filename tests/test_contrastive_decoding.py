@@ -1,6 +1,9 @@
 """Tests for the contrastive-decoding + reasoning-steering decision math (numpy core)."""
 from __future__ import annotations
 
+import threading
+from pathlib import Path
+
 import numpy as np
 
 from core.brain.llm.contrastive_decoding import (
@@ -92,14 +95,6 @@ def test_factory_assembles_processors():
     # Nothing enabled → empty.
     assert build_reasoning_logits_processors(_Tok()) == []
 
-
-# --- amateur logits source (real model wiring) -------------------------------
-import os
-from pathlib import Path
-import threading
-
-import pytest
-
 _AMATEUR = Path(__file__).resolve().parents[1] / "models" / "Qwen2.5-1.5B-Instruct-4bit"
 
 
@@ -171,7 +166,10 @@ def test_real_amateur_forward_pass_shape():
         return
     import mlx.core as mx
 
-    from core.brain.llm.contrastive_decoding import ContrastiveLogitsProcessor, get_amateur_logits_fn
+    from core.brain.llm.contrastive_decoding import (
+        ContrastiveLogitsProcessor,
+        get_amateur_logits_fn,
+    )
 
     fn = get_amateur_logits_fn(str(_AMATEUR))
     assert fn is not None

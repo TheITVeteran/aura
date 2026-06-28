@@ -229,6 +229,7 @@ class MLXAmateurModel:
         self._prompt_cache: Any | None = None
         self._last_logits: Any | None = None
         self._cache_disabled = False
+        self._cache_announced = False
         self._max_cache_tokens = max(
             0,
             int(os.getenv("AURA_CONTRASTIVE_AMATEUR_CACHE_TOKENS", "4096") or "0"),
@@ -254,10 +255,25 @@ class MLXAmateurModel:
         if self._cache_disabled or self._make_prompt_cache is None:
             return None
         try:
-            return self._make_prompt_cache(self._model, max_kv_size=self._max_cache_tokens)
+            cache = self._make_prompt_cache(self._model, max_kv_size=self._max_cache_tokens)
+            if not getattr(self, "_cache_announced", False):
+                logger.info(
+                    "amateur KV cache active for %s (max_tokens=%d)",
+                    self.model_path,
+                    self._max_cache_tokens,
+                )
+                self._cache_announced = True
+            return cache
         except TypeError:
             try:
-                return self._make_prompt_cache(self._model)
+                cache = self._make_prompt_cache(self._model)
+                if not getattr(self, "_cache_announced", False):
+                    logger.info(
+                        "amateur KV cache active for %s (unbounded backend cache)",
+                        self.model_path,
+                    )
+                    self._cache_announced = True
+                return cache
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 logger.debug("amateur KV cache creation failed for %s: %s", self.model_path, exc)
                 self._cache_disabled = True

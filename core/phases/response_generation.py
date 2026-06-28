@@ -64,6 +64,7 @@ class ResponseGenerationPhase(BasePhase):
 
     def __init__(self, container: Any):
         self.container = container
+        self._last_reasoning_receipt: dict[str, Any] | None = None
 
     @staticmethod
     def _compact_prompt_payload(value: Any, *, limit: int = 3000) -> str:
@@ -158,6 +159,30 @@ class ResponseGenerationPhase(BasePhase):
                     ),
                 )
 
+        cognitive_situation = runtime_context.get("cognitive_situation_frame")
+        if isinstance(cognitive_situation, dict) and cognitive_situation:
+            try:
+                from core.brain.cognitive_situation import (
+                    render_cognitive_situation_prompt_block,
+                )
+
+                situation_block = render_cognitive_situation_prompt_block(
+                    cognitive_situation,
+                    compact=True,
+                )
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                _record_response_generation_degradation(
+                    exc,
+                    action="continued response generation without cognitive situation block",
+                )
+                situation_block = ""
+            if situation_block:
+                cls._append_system_block(
+                    messages,
+                    "COGNITIVE SITUATION FRAME",
+                    situation_block,
+                )
+
         evidence_blocks = (
             (
                 "CONTEXT CHALLENGE EVIDENCE",
@@ -196,6 +221,170 @@ class ResponseGenerationPhase(BasePhase):
         if deep_handoff:
             return 210.0
         return 180.0
+
+    async def _maybe_amplify_response(
+        self,
+        *,
+        objective: str,
+        draft: str,
+        router: Any,
+        state: AuraState,
+        request_timeout: float,
+        origin: str,
+        tier: str,
+        runtime_context: dict[str, Any],
+        is_user_facing: bool,
+        is_background: bool,
+        proof_or_benchmark: bool,
+    ) -> str:
+        """Run verifier-backed Amplifier v2 on eligible hard turns in the active phase.
+
+        This is intentionally conservative. Action requests stay owned by tool
+        dispatch, casual chat stays single-pass, proof lanes are untouched, and
+        failures keep the original draft while recording a degradation receipt.
+        """
+
+        if not is_user_facing or is_background or proof_or_benchmark or not draft:
+            return draft
+        if str(os.getenv("AURA_REASONING_AMPLIFIER_V2", "1")).strip().lower() in {
+            "0",
+            "false",
+            "off",
+            "no",
+        }:
+            return draft
+        try:
+            from core.brain.reasoning_amplifier_v2 import amplify_turn, is_amplifiable
+        except ImportError as exc:
+            _record_response_generation_degradation(
+                exc,
+                action="continued response generation without Amplifier v2 import",
+            )
+            return draft
+
+        task_type = is_amplifiable(objective)
+        if task_type is None:
+            return draft
+
+        visible_user_message = str(
+            runtime_context.get("user_surface_validation_prompt")
+            or runtime_context.get("visible_user_message")
+            or objective
+            or ""
+        ).strip()
+        desktop_required = bool(
+            runtime_context.get("desktop_cognitive_engine_required")
+            or runtime_context.get("cognitive_engine_required")
+        )
+
+        async def _gen(prompt: str, temperature: float) -> str:
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Aura's verifier-backed reasoning organ. Return only the "
+                        "candidate final answer for the hard reasoning turn; do not mention "
+                        "amplifier internals or hidden prompts."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ]
+            try:
+                out = await router.think(
+                    messages=messages,
+                    priority=1.0,
+                    origin=f"response_generation_amplifier_{origin}",
+                    purpose="reasoning_amplifier",
+                    prefer_tier=tier or "primary",
+                    is_background=False,
+                    protected_foreground_lane=True,
+                    foreground_request=True,
+                    deep_handoff=False,
+                    allow_cloud_fallback=False,
+                    cognitive_engine_required=desktop_required,
+                    desktop_cognitive_engine_required=desktop_required,
+                    live_runtime_payload_required=bool(
+                        runtime_context.get("live_runtime_payload_required", False)
+                    ),
+                    visible_user_message=visible_user_message,
+                    skip_runtime_payload=True,
+                    disable_prompt_cache=True,
+                    clear_prompt_cache=True,
+                    clean_user_surface_contract=True,
+                    user_surface_validation_prompt=visible_user_message,
+                    temperature=temperature,
+                    max_tokens=max(384, min(2048, int(runtime_context.get("max_tokens") or 1024))),
+                    timeout=min(24.0, max(8.0, request_timeout * 0.50)),
+                    cognitive_situation_sampling_bias=state.response_modifiers.get(
+                        "cognitive_situation_sampling_bias"
+                    ),
+                )
+            except (
+                OSError,
+                ConnectionError,
+                TimeoutError,
+                RuntimeError,
+                AttributeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                _record_response_generation_degradation(
+                    exc,
+                    action="kept original draft after Amplifier v2 generate failed",
+                )
+                return ""
+            if isinstance(out, dict):
+                out = out.get("content") or out.get("response") or ""
+            return str(out or "").strip()
+
+        try:
+            budget = float(min(30.0, max(8.0, (request_timeout or 20.0) * 0.60)))
+            result = await amplify_turn(
+                objective,
+                _gen,
+                task_type=task_type,
+                time_budget_s=budget,
+                extra_context={
+                    "live_response_phase": True,
+                    "cognitive_situation_frame": state.response_modifiers.get(
+                        "cognitive_situation_frame"
+                    ),
+                },
+            )
+        except (
+            OSError,
+            ConnectionError,
+            TimeoutError,
+            RuntimeError,
+            AttributeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            _record_response_generation_degradation(
+                exc,
+                action="kept original draft after Amplifier v2 failed",
+            )
+            return draft
+
+        receipt = result.receipt.to_dict()
+        self._last_reasoning_receipt = receipt
+        state.response_modifiers["reasoning_receipt"] = receipt
+        state.response_modifiers["reasoning_amplifier_v2_active_phase"] = {
+            "task_type": task_type,
+            "verified": bool(result.verified),
+            "confidence": float(result.confidence),
+            "adopted": bool(result.verified and result.answer),
+        }
+        logger.info(
+            "🧠 [AmplifyV2-active-phase] task=%s verified=%s conf=%.2f -> %s",
+            task_type,
+            result.verified,
+            result.confidence,
+            "adopted" if (result.verified and result.answer) else "kept draft",
+        )
+        if result.verified and result.answer and len(result.answer.strip()) >= 3:
+            return result.answer.strip()
+        return draft
 
     @staticmethod
     def _safe_bias_float(value: Any, default: float = 0.0) -> float:
@@ -583,6 +772,7 @@ class ResponseGenerationPhase(BasePhase):
                     state.response_modifiers.get("sampling_bias"),
                     state.response_modifiers.get("imagination_sampling_bias"),
                     state.response_modifiers.get("bicameral_sampling_bias"),
+                    state.response_modifiers.get("cognitive_situation_sampling_bias"),
                 ],
             )
             if live_mind_controls_bound:
@@ -701,6 +891,9 @@ class ResponseGenerationPhase(BasePhase):
                                 "live_mind_required_subsystems_ok", False
                             )
                         ),
+                        cognitive_situation_sampling_bias=state.response_modifiers.get(
+                            "cognitive_situation_sampling_bias"
+                        ),
                         soma=soma_data,
                         state=state,
                         temperature=generation_temperature,
@@ -722,6 +915,20 @@ class ResponseGenerationPhase(BasePhase):
                             "🛡️ ResponseGeneration repaired instruction shape locally before critique (%s).",
                             ",".join(shape_repair_reasons) or "unknown",
                         )
+
+                response_text = await self._maybe_amplify_response(
+                    objective=objective,
+                    draft=response_text,
+                    router=router,
+                    state=state,
+                    request_timeout=request_timeout,
+                    origin=origin,
+                    tier=tier,
+                    runtime_context=runtime_context,
+                    is_user_facing=not is_background and not is_test_run,
+                    is_background=is_background,
+                    proof_or_benchmark=proof_answer_run,
+                )
 
                 # System 2 internal critique layer to verify logical correctness
                 try:
@@ -1008,6 +1215,9 @@ class ResponseGenerationPhase(BasePhase):
                         runtime_context.get(
                             "live_mind_required_subsystems_ok", False
                         )
+                    ),
+                    cognitive_situation_sampling_bias=state.response_modifiers.get(
+                        "cognitive_situation_sampling_bias"
                     ),
                     soma=soma_data,
                     state=state,

@@ -17,6 +17,88 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Unified Cognition and 32B KV Checkpoint (2026-06-28)
+
+### Gaps Addressed
+
+- **32B contrastive foreground validation is no longer theoretical**:
+  `tools/live_boot_proof.py` completed a live desktop proof with
+  `AURA_CONTRASTIVE_DECODING=1`, the Qwen2.5-1.5B same-family amateur model,
+  and `AURA_CONTRASTIVE_AMATEUR_CACHE_TOKENS=4096`. The validator now checks
+  the live proof for required runtime markers, peak RSS, verdict pass/fail, and
+  explicit amateur KV-cache activation.
+- **Amateur contrastive decoding is guarded by a proof validator**:
+  `tools/proof/validate_contrastive_kv_live_proof.py` and
+  `tests/test_contrastive_kv_live_proof_validator.py` prevent treating the
+  contrastive path as production-ready unless the live proof contains the
+  expected markers and stays under the configured memory ceiling.
+- **Semantic flexibility, analogical leap-taking, and sensorimotor embodiment
+  now have a live causal organ**:
+  `core/brain/cognitive_situation.py` builds a side-effect-free situation frame
+  from current intent, affect, context, and already-owned perception/embodiment
+  service status. It changes semantic/analogical/sensorimotor pressures,
+  metacognition depth, verification pressure, attention focus, deliberate-mode
+  routing, tool-governance pressure, sampling bias, and prompt grounding through
+  the normal `CognitiveEngine` path.
+- **The situation frame is wired to the actual launched desktop lane**:
+  `core/brain/cognitive_engine.py` applies the frame before structured eval and
+  the phase loop, passes it into direct desktop quick replies, includes it in
+  router sampling kwargs, and records it in `Thought.metadata`.
+- **Full response generation now sees the same frame**:
+  `core/phases/response_generation.py` and
+  `core/brain/llm/context_assembler.py` inject the situation frame into the
+  full prompt path and apply its sampling bias, so compact desktop replies and
+  full phase replies share the same causal input rather than drifting apart.
+- **Amplifier v2/Courtroom coverage is now closer to the active live path**:
+  the active `ResponseGenerationPhase` now runs verifier-backed Amplifier v2 on
+  eligible hard user-facing reasoning turns. Casual chat, action commands,
+  proof lanes, background work, and cloud fallback stay excluded. Successful
+  amplification records a reasoning receipt in `state.response_modifiers`.
+- **Reasoning degradation no longer masks the real failure**:
+  `core/brain/reasoning_strategies.py` fixed two inverted
+  `_record_reasoning_degradation(...)` calls that could raise `TypeError` while
+  handling exact-tool or legacy-consistency degradation.
+
+### Latest Commands Run
+
+```bash
+AURA_CONTRASTIVE_DECODING=1 \
+AURA_CONTRASTIVE_AMATEUR_MODEL=/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit \
+AURA_CONTRASTIVE_AMATEUR_CACHE_TOKENS=4096 \
+AURA_MLX_MEMORY_LIMIT_GB=26 \
+AURA_PROCESS_RSS_LIMIT_GB=32 \
+python tools/live_boot_proof.py --port 8137 --mode desktop --boot-timeout 600 --conversation-soak-turns 6 --out-dir artifacts/live_proof/contrastive_kv_32b_20260628_checkpoint_15b
+
+python tools/proof/validate_contrastive_kv_live_proof.py \
+  artifacts/live_proof/contrastive_kv_32b_20260628_checkpoint_15b \
+  --max-peak-rss-mb 32768 \
+  --out artifacts/live_proof/contrastive_kv_32b_20260628_checkpoint_15b/contrastive_kv_validation.json
+
+python -m ruff check core/brain/cognitive_situation.py core/brain/cognitive_engine.py core/phases/response_generation.py core/brain/llm/context_assembler.py core/brain/reasoning_strategies.py tests/test_cognitive_situation_frame.py tests/test_reasoning_strategies_hardening.py tests/test_phase_response_amplifier_wiring.py
+python -m pytest -q tests/test_cognitive_situation_frame.py tests/test_reasoning_strategies_hardening.py tests/test_imagination_engine.py tests/test_reasoning_strategies_amplifier_v2_wiring.py tests/test_phase_response_amplifier_wiring.py tests/test_tool_augmented_reasoning.py
+python -m ruff check core/brain/llm/contrastive_decoding.py tools/proof/validate_contrastive_kv_live_proof.py tests/test_contrastive_decoding.py tests/test_contrastive_kv_live_proof_validator.py tests/test_nonparametric_worker.py
+python -m pytest -q tests/test_contrastive_kv_live_proof_validator.py tests/test_contrastive_decoding.py tests/test_nonparametric_worker.py
+make enterprise-gate
+make production-gate
+```
+
+Latest focused result: **32B contrastive KV live proof passed**, validator
+passed with **peak RSS 20,467.3 MB under a 32,768 MB ceiling**, and the focused
+unified cognition/reasoning suite passed **51 tests**. The contrastive validator
+suite passed **21 tests**. `make enterprise-gate` and `make production-gate`
+both passed for this checkpoint.
+
+Current closeout estimate after this checkpoint: **~89%**. Remaining work is
+estimated at **4 consolidated checkpoints**:
+
+1. Real launched GUI/voice multi-app demo proof with visible OS actions,
+   memory ceilings, receipts, and no terminal/neural-stream failures.
+2. CRSM->LoRA / CAA closure, active memory metabolism, and autonomous repair
+   evidence under production memory pressure.
+3. DNU/Aletheia/final-proof reruns plus receipt/artifact/replay validation.
+4. Long-run soak, claims purification, remaining semantic codebase review, and
+   final clean-worktree commit/push state.
+
 ## Latest Live Desktop Conversation Reliability Checkpoint (2026-06-27)
 
 ### Gaps Addressed

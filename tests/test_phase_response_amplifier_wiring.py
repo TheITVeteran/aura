@@ -9,7 +9,9 @@ import types
 
 import pytest
 
+from core.phases.response_generation import ResponseGenerationPhase
 from core.phases.response_generation_unitary import UnitaryResponsePhase
+from core.state.aura_state import AuraState
 
 
 class _StubLLM:
@@ -22,6 +24,18 @@ class _StubLLM:
         return self.answer
 
 
+class _StubRouter:
+    def __init__(self, answer: str) -> None:
+        self.answer = answer
+        self.calls = 0
+        self.kwargs = []
+
+    async def think(self, **kwargs) -> str:
+        self.calls += 1
+        self.kwargs.append(kwargs)
+        return self.answer
+
+
 def _self_stub():
     # The method only touches self._last_reasoning_receipt.
     return types.SimpleNamespace(_last_reasoning_receipt=None)
@@ -29,6 +43,10 @@ def _self_stub():
 
 def _state_stub():
     return types.SimpleNamespace(metadata={})
+
+
+def _phase_stub() -> ResponseGenerationPhase:
+    return ResponseGenerationPhase(types.SimpleNamespace())
 
 
 @pytest.mark.asyncio
@@ -127,3 +145,55 @@ async def test_phase_respects_env_disable(monkeypatch):
     )
     assert out == "DRAFT"
     assert llm.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_active_response_generation_phase_amplifies_verified_math_turn():
+    router = _StubRouter("The product: 12 * 12 = 144")
+    state = AuraState.default()
+    phase = _phase_stub()
+
+    out = await phase._maybe_amplify_response(
+        objective="compute the product of the two given values",
+        draft="The product is 12 * 12 = 150",
+        router=router,
+        state=state,
+        request_timeout=20.0,
+        origin="desktop",
+        tier="primary",
+        runtime_context={"desktop_cognitive_engine_required": True},
+        is_user_facing=True,
+        is_background=False,
+        proof_or_benchmark=False,
+    )
+
+    assert "144" in out
+    assert phase._last_reasoning_receipt is not None
+    assert state.response_modifiers["reasoning_receipt"]["task_type"] == "math"
+    assert state.response_modifiers["reasoning_amplifier_v2_active_phase"]["adopted"] is True
+    assert router.calls >= 1
+    assert router.kwargs[0]["desktop_cognitive_engine_required"] is True
+
+
+@pytest.mark.asyncio
+async def test_active_response_generation_phase_skips_casual_turn():
+    router = _StubRouter("hello there")
+    state = AuraState.default()
+    phase = _phase_stub()
+
+    out = await phase._maybe_amplify_response(
+        objective="hey how are you doing today",
+        draft="DRAFT",
+        router=router,
+        state=state,
+        request_timeout=20.0,
+        origin="desktop",
+        tier="primary",
+        runtime_context={"desktop_cognitive_engine_required": True},
+        is_user_facing=True,
+        is_background=False,
+        proof_or_benchmark=False,
+    )
+
+    assert out == "DRAFT"
+    assert router.calls == 0

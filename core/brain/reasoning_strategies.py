@@ -415,7 +415,11 @@ class ReasoningStrategies:
                     metadata={"tool_augmented": True, "method": tool.method},
                 )
         except _REASONING_RECOVERABLE_ERRORS as exc:
-            _record_reasoning_degradation("tool_augmented_fastpath", exc)
+            _record_reasoning_degradation(
+                exc,
+                action="continued reasoning without exact tool-augmented fast path",
+                extra={"stage": "tool_augmented_fastpath"},
+            )
 
         if strategy is None:
             strategy = self.classify(query)
@@ -760,7 +764,11 @@ class ReasoningStrategies:
                 valid_answers.extend(extra)
                 amplified = await amplify(valid_answers)
         except _REASONING_RECOVERABLE_ERRORS as exc:
-            _record_reasoning_degradation("consistency_amplify", exc)
+            _record_reasoning_degradation(
+                exc,
+                action="continued consistency reasoning without legacy amplifier consensus",
+                extra={"stage": "consistency_amplify"},
+            )
 
         if amplified is not None and amplified.answer:
             return StrategyResult(

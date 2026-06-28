@@ -87,3 +87,55 @@ async def test_confidence_estimation_failure_returns_neutral_floor():
     strategies = ReasoningStrategies(generate)
 
     assert await strategies.estimate_confidence("question", "answer") == 0.5
+
+
+@pytest.mark.asyncio
+async def test_tool_augmented_degradation_does_not_mask_reasoning(monkeypatch):
+    from core.brain import tool_augmented_reasoning
+
+    monkeypatch.setattr(
+        tool_augmented_reasoning,
+        "tool_augmented_answer",
+        lambda _query: (_ for _ in ()).throw(RuntimeError("cas unavailable")),
+    )
+
+    async def generate(prompt, **_kwargs):
+        return "fallback answer"
+
+    result = await ReasoningStrategies(generate).execute(
+        "hello there",
+        strategy=StrategyType.DIRECT,
+        bypass_amplifier=True,
+    )
+
+    assert result.content == "fallback answer"
+    assert result.strategy_used is StrategyType.DIRECT
+
+
+@pytest.mark.asyncio
+async def test_legacy_consistency_degradation_does_not_mask_vote(monkeypatch):
+    from core.brain import reasoning_amplifier
+
+    monkeypatch.setenv("AURA_REASONING_AMPLIFIER_V2", "0")
+    monkeypatch.setattr(
+        reasoning_amplifier,
+        "amplify",
+        lambda _answers: (_ for _ in ()).throw(RuntimeError("amplifier unavailable")),
+    )
+
+    calls = 0
+
+    async def generate(prompt, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return "stable answer" if calls < 3 else "alternate answer"
+
+    result = await ReasoningStrategies(generate).execute(
+        "compare two possibilities",
+        strategy=StrategyType.CONSISTENCY,
+        bypass_amplifier=True,
+    )
+
+    assert result.content in {"stable answer", "alternate answer"}
+    assert result.strategy_used is StrategyType.CONSISTENCY
+    assert result.metadata["samples"] == 3
