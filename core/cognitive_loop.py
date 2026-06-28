@@ -271,6 +271,13 @@ class CognitiveLoop:
         spl = resolve_self_prediction(default=None)
         motivation = resolve_motivation_engine(default=None)
 
+        # Appraise the moment through the one control ladder before the specific drives fire.
+        # This is what makes the hierarchical agency causal rather than an island: the live
+        # free-energy + nociception signals become a Situation, and the tier that wins does
+        # real work (reflex/scientific-hypothesis/self-improvement-signal/governance) and opens
+        # an outcome-ledger receipt — binding the action engines into the live heartbeat.
+        await self._appraise_through_agency(fe_state, spl)
+
         if fe_state.dominant_action == "explore":
             # Find the most unpredictable dimension and explore it
             if spl and hasattr(spl, "get_most_unpredictable_dimension"):
@@ -285,6 +292,54 @@ class CognitiveLoop:
                 intention = await motivation.pulse()
                 if intention and hasattr(motivation, "_dispatch_intention"):
                     await motivation._dispatch_intention(intention)
+
+    async def _appraise_through_agency(self, fe_state, spl):
+        """Run the live moment through the hierarchical control ladder (fail-open).
+
+        Builds a Situation from the real internal signals — felt damage (nociception),
+        prediction error / surprise (uncertainty), and free-energy arousal (urgency) — and
+        dispatches it. The winning tier does causal work and records an outcome receipt, so
+        the agency ladder, scientific engine, RSI signal path, nociception, and outcome ledger
+        are all exercised by the heartbeat instead of sitting idle.
+        """
+        try:
+            from core.agency.hierarchical_agency import get_hierarchical_agency, Situation
+
+            threat = 0.0
+            try:
+                from core.affect.nociception import get_nociception_engine
+                threat = float(get_nociception_engine().nociceptive_pressure())
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+                pass
+
+            uncertainty = 0.2
+            if spl is not None and hasattr(spl, "get_surprise_signal"):
+                try:
+                    uncertainty = float(spl.get_surprise_signal())
+                except (RuntimeError, TypeError, ValueError):
+                    pass
+
+            arousal = float(getattr(fe_state, "arousal", 0.0) or 0.0)
+            dominant = str(getattr(fe_state, "dominant_action", "") or "")
+
+            situation = Situation(
+                description=f"heartbeat:{dominant or 'idle'}",
+                threat=threat,
+                uncertainty=uncertainty,
+                novelty=arousal if dominant == "explore" else 0.0,
+                goal_horizon=0.5 if dominant == "act_on_world" else 0.0,
+                context={"dominant_action": dominant, "arousal": arousal},
+            )
+            # Dispatch off the event loop — the tier handlers may touch SQLite / Will.
+            result = await asyncio.to_thread(get_hierarchical_agency().dispatch, situation)
+            logger.debug(
+                "🪜 [Agency] heartbeat appraisal: %s → %s (handled=%s)",
+                result.starting_tier.name, result.final_tier.name, result.handled,
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_cognitive_loop_degradation(
+                exc, action="skipped hierarchical-agency appraisal this cycle", severity="debug",
+            )
 
     def _update_self_telemetry(self, fe_state, prediction_error: float):
         """Update Aura's self-model with ACTUAL internal readings."""
