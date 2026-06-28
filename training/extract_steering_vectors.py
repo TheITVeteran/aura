@@ -1,4 +1,3 @@
-from __future__ import annotations
 #!/usr/bin/env python3
 """Extract proper CAA steering vectors from model hidden states.
 
@@ -29,6 +28,7 @@ Usage:
 Requires MLX and mlx-lm.
 """
 
+from __future__ import annotations
 
 import argparse
 import json
@@ -36,7 +36,7 @@ import logging
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -47,6 +47,9 @@ logging.basicConfig(
 logger = logging.getLogger("CAA.Extract")
 
 VECTORS_DIR = Path(__file__).parent / "vectors"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 # ---------------------------------------------------------------------------
 # Default model path (Aura's runtime model)
@@ -65,7 +68,7 @@ DEFAULT_TARGET_LAYERS = list(range(13, 22))  # layers 13-21 inclusive
 # Contrastive prompt pairs: >= 5 per dimension
 # ---------------------------------------------------------------------------
 
-AFFECTIVE_DIMENSIONS: Dict[str, Dict[str, Any]] = {
+AFFECTIVE_DIMENSIONS: dict[str, dict[str, Any]] = {
     "valence": {
         "description": "Positive vs negative mood / hedonic tone",
         "positive": [
@@ -174,11 +177,56 @@ AFFECTIVE_DIMENSIONS: Dict[str, Dict[str, Any]] = {
 }
 
 
+RESEARCH_AFFECTIVE_DIMENSIONS: dict[str, dict[str, Any]] = dict(AFFECTIVE_DIMENSIONS)
+
+
+def _load_runtime_affective_dimensions() -> dict[str, dict[str, Any]]:
+    """Use the live steering engine's dimensions for production extraction.
+
+    The previous standalone extractor emitted research-oriented keys such as
+    ``valence``/``warmth``/``confidence``. Those are useful for experiments,
+    but the live MLX steering engine loads ``valence_positive``, ``arousal``,
+    ``curiosity``, ``frustration``, and ``energy``. Default extraction must
+    therefore write vectors for the runtime keys or CAA can look "extracted"
+    while the actual speech path still falls back to runtime-derived vectors.
+    """
+    try:
+        from core.consciousness.affective_steering import (
+            AFFECTIVE_DIMENSIONS as RUNTIME_AFFECTIVE_DIMENSIONS,
+        )
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        logger.warning("Runtime affective dimensions unavailable; using research defaults: %s", exc)
+        return dict(RESEARCH_AFFECTIVE_DIMENSIONS)
+
+    runtime: dict[str, dict[str, Any]] = {}
+    for spec in RUNTIME_AFFECTIVE_DIMENSIONS:
+        key = str(spec.get("key", "")).strip()
+        if not key:
+            continue
+        runtime[key] = {
+            "description": f"Runtime substrate steering dimension: {key}",
+            "positive": list(spec.get("positive") or []),
+            "negative": list(spec.get("negative") or []),
+            "runtime_substrate_idx": spec.get("substrate_idx"),
+            "runtime_substrate_fn": spec.get("substrate_fn"),
+        }
+    return runtime or dict(RESEARCH_AFFECTIVE_DIMENSIONS)
+
+
+# Production default: the live runtime dimensions. Research-only dimensions are
+# still available by explicit name through ``--dimensions``.
+AFFECTIVE_DIMENSIONS = _load_runtime_affective_dimensions()
+ALL_AFFECTIVE_DIMENSIONS: dict[str, dict[str, Any]] = {
+    **RESEARCH_AFFECTIVE_DIMENSIONS,
+    **AFFECTIVE_DIMENSIONS,
+}
+
+
 # ---------------------------------------------------------------------------
 # Layer hook utilities
 # ---------------------------------------------------------------------------
 
-def _compute_target_layers(n_layers: int) -> List[int]:
+def _compute_target_layers(n_layers: int) -> list[int]:
     """Compute target layer indices from model depth.
 
     Targets the 40-65% depth range where high-level semantic
@@ -197,9 +245,9 @@ def _extract_hidden_states(
     model: Any,
     tokenizer: Any,
     text: str,
-    target_layers: List[int],
+    target_layers: list[int],
     mx: Any,
-) -> Dict[int, np.ndarray]:
+) -> dict[int, np.ndarray]:
     """Run a forward pass and capture hidden states at target layers.
 
     Uses monkey-patching on transformer layer __call__ methods since
@@ -210,8 +258,8 @@ def _extract_hidden_states(
         Only the last-token hidden state is captured (most informative
         for sentence-level semantics).
     """
-    captured: Dict[int, np.ndarray] = {}
-    hooks: List[Tuple[Any, Any]] = []
+    captured: dict[int, np.ndarray] = {}
+    hooks: list[tuple[Any, Any]] = []
 
     # Determine where the transformer layers live
     # Common patterns: model.model.layers, model.layers
@@ -293,12 +341,12 @@ def _extract_hidden_states(
 
 def extract_steering_vectors(
     model_path: str = DEFAULT_MODEL_PATH,
-    adapter_path: Optional[str] = None,
-    target_layers: Optional[List[int]] = None,
-    output_dir: Optional[Path] = None,
-    dimensions: Optional[List[str]] = None,
-    max_prompts_per_polarity: Optional[int] = None,
-) -> Dict[str, Dict[int, np.ndarray]]:
+    adapter_path: str | None = None,
+    target_layers: list[int] | None = None,
+    output_dir: Path | None = None,
+    dimensions: list[str] | None = None,
+    max_prompts_per_polarity: int | None = None,
+) -> dict[str, dict[int, np.ndarray]]:
     """Extract CAA steering vectors for all affective dimensions.
 
     Args:
@@ -329,7 +377,7 @@ def extract_steering_vectors(
 
     # -- Load model ----------------------------------------------------------
     logger.info("Loading model: %s", model_path)
-    load_kwargs: Dict[str, Any] = {}
+    load_kwargs: dict[str, Any] = {}
     if adapter_path and Path(adapter_path).exists():
         logger.info("With LoRA adapter: %s", adapter_path)
         load_kwargs["adapter_path"] = adapter_path
@@ -367,16 +415,16 @@ def extract_steering_vectors(
     )
 
     # -- Extract per dimension -----------------------------------------------
-    all_vectors: Dict[str, Dict[int, np.ndarray]] = {}
-    meta_dimensions: List[Dict[str, Any]] = []
+    all_vectors: dict[str, dict[int, np.ndarray]] = {}
+    meta_dimensions: list[dict[str, Any]] = []
 
     selected_dimensions = AFFECTIVE_DIMENSIONS
     if dimensions:
-        unknown = sorted(set(dimensions) - set(AFFECTIVE_DIMENSIONS))
+        unknown = sorted(set(dimensions) - set(ALL_AFFECTIVE_DIMENSIONS))
         if unknown:
             raise ValueError(f"Unknown CAA dimension(s): {', '.join(unknown)}")
         selected_dimensions = {
-            key: AFFECTIVE_DIMENSIONS[key]
+            key: ALL_AFFECTIVE_DIMENSIONS[key]
             for key in dimensions
         }
 
@@ -390,8 +438,8 @@ def extract_steering_vectors(
             neg_prompts = neg_prompts[:limit]
 
         # Storage: layer -> list of activation vectors
-        pos_acts: Dict[int, List[np.ndarray]] = {l: [] for l in target_layers}
-        neg_acts: Dict[int, List[np.ndarray]] = {l: [] for l in target_layers}
+        pos_acts: dict[int, list[np.ndarray]] = {layer_idx: [] for layer_idx in target_layers}
+        neg_acts: dict[int, list[np.ndarray]] = {layer_idx: [] for layer_idx in target_layers}
 
         # Positive prompts
         for i, prompt_text in enumerate(pos_prompts):
@@ -418,7 +466,7 @@ def extract_steering_vectors(
                 neg_acts[lidx].append(vec)
 
         # Compute direction vectors per layer
-        dim_vectors: Dict[int, np.ndarray] = {}
+        dim_vectors: dict[int, np.ndarray] = {}
         for lidx in target_layers:
             p_list = pos_acts[lidx]
             n_list = neg_acts[lidx]
@@ -488,7 +536,7 @@ def extract_steering_vectors(
 
     logger.info(
         "Extraction complete. %d total vectors across %d dimensions saved to %s",
-        meta["total_vectors"], len(AFFECTIVE_DIMENSIONS), out_dir,
+        meta["total_vectors"], len(selected_dimensions), out_dir,
     )
     return all_vectors
 

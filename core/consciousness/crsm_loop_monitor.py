@@ -40,10 +40,18 @@ class CRSMLoopMonitor:
         dataset_path: Path | None = None,
         fused_model_dir: Path | None = None,
         marker_path: Path | None = None,
+        integration_manifest_path: Path | None = None,
+        training_state_path: Path | None = None,
     ) -> None:
         self.dataset_path = dataset_path or (_REPO_ROOT / "data" / "synthetic_training" / "lora_dataset.jsonl")
         self.fused_model_dir = fused_model_dir or (_REPO_ROOT / "training" / "fused-model")
         self.marker_path = marker_path or (self.dataset_path.parent / ".crsm_consumed.json")
+        self.integration_manifest_path = integration_manifest_path or (
+            _REPO_ROOT / "training" / "data" / "crsm_integration_manifest.json"
+        )
+        self.training_state_path = training_state_path or (
+            _REPO_ROOT / "training" / "adapters" / "aura-personality" / "training_state.json"
+        )
 
     # ── pipeline observations ─────────────────────────────────────────────
 
@@ -52,7 +60,7 @@ class CRSMLoopMonitor:
             if not self.dataset_path.exists():
                 return {"exists": False, "lines": 0, "mtime": 0.0, "size": 0}
             lines = 0
-            with open(self.dataset_path, "r", encoding="utf-8") as fh:
+            with open(self.dataset_path, encoding="utf-8") as fh:
                 for _ in fh:
                     lines += 1
             st = self.dataset_path.stat()
@@ -99,6 +107,52 @@ class CRSMLoopMonitor:
             record_degradation("crsm_loop_monitor", exc)
         return {}
 
+    def integration_manifest_state(self) -> dict[str, Any]:
+        try:
+            if not self.integration_manifest_path.exists():
+                return {"exists": False, "current_for_dataset": False}
+            manifest = json.loads(self.integration_manifest_path.read_text(encoding="utf-8"))
+            ds = self.dataset_state()
+            source_lines = int(manifest.get("source_lines", 0) or 0)
+            source_mtime = float(manifest.get("source_mtime", 0.0) or 0.0)
+            dataset_mtime = float(ds.get("mtime", 0.0) or 0.0)
+            return {
+                "exists": True,
+                "path": str(self.integration_manifest_path),
+                "source_lines": source_lines,
+                "accepted": int(manifest.get("accepted", 0) or 0),
+                "deduplicated": int(manifest.get("deduplicated", 0) or 0),
+                "rejected_by_reason": dict(manifest.get("rejected_by_reason") or {}),
+                "source_mtime": source_mtime,
+                "current_for_dataset": (
+                    source_lines == int(ds.get("lines", 0) or 0)
+                    and source_mtime + 1.0 >= dataset_mtime
+                ),
+            }
+        except (OSError, ValueError, TypeError) as exc:
+            record_degradation("crsm_loop_monitor", exc)
+            return {"exists": False, "current_for_dataset": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    def training_state(self) -> dict[str, Any]:
+        try:
+            if not self.training_state_path.exists():
+                return {"exists": False}
+            state = json.loads(self.training_state_path.read_text(encoding="utf-8"))
+            return {
+                "exists": True,
+                "path": str(self.training_state_path),
+                "phase": state.get("phase"),
+                "last_iter": int(state.get("last_iter", 0) or 0),
+                "last_checkpoint_path": state.get("last_checkpoint_path"),
+                "last_pipeline_rc": state.get("last_pipeline_rc"),
+                "last_resume_rc": state.get("last_resume_rc"),
+                "last_signal": state.get("last_signal"),
+                "last_heartbeat": state.get("last_heartbeat"),
+            }
+        except (OSError, ValueError, TypeError) as exc:
+            record_degradation("crsm_loop_monitor", exc)
+            return {"exists": False, "error": f"{type(exc).__name__}: {exc}"}
+
     # ── loop closure ──────────────────────────────────────────────────────
 
     def mark_dataset_consumed(
@@ -144,6 +198,8 @@ class CRSMLoopMonitor:
         ds = self.dataset_state()
         art = self.latest_training_artifact()
         marker = self._consumed_marker()
+        manifest = self.integration_manifest_state()
+        training_state = self.training_state()
         lines = int(ds.get("lines", 0))
         consumed = int(marker.get("lines_consumed", 0))
         unconsumed = max(0, lines - consumed)
@@ -166,7 +222,14 @@ class CRSMLoopMonitor:
         elif last_train >= ds_mtime and unconsumed <= _UNCONSUMED_WARN:
             state, reason = "closed", "latest model is newer than the captured data"
         elif unconsumed > _UNCONSUMED_WARN or (ds_mtime - last_train) > _STALE_AFTER_S:
-            state, reason = "open", f"{unconsumed} captures accumulated but not trained in"
+            state = "open"
+            if manifest.get("current_for_dataset"):
+                reason = (
+                    f"{unconsumed} captures are integrated into the LoRA corpus "
+                    "but have not been trained/fused into the active model"
+                )
+            else:
+                reason = f"{unconsumed} captures accumulated but not trained in"
         else:
             state, reason = "pending", "captures awaiting the next training run"
 
@@ -180,7 +243,46 @@ class CRSMLoopMonitor:
             "last_training_at": last_train,
             "active_model": art.get("active_model_path"),
             "dataset_mtime": ds_mtime,
+            "integration_manifest": manifest,
+            "training_state": training_state,
+            "next_action": self.next_action(state, manifest, training_state),
             "consumption_marker": marker,
+        }
+
+    def next_action(
+        self,
+        state: str | None = None,
+        manifest: dict[str, Any] | None = None,
+        training_state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        state = state or self.loop_state().get("state")
+        manifest = manifest if manifest is not None else self.integration_manifest_state()
+        training_state = training_state if training_state is not None else self.training_state()
+        command = [
+            "bash",
+            "training/run_unattended.sh",
+            "--tag",
+            "crsm-closeout",
+        ]
+        if state == "closed":
+            return {"required": False, "reason": "CRSM captures already consumed by active training marker"}
+        if not manifest.get("current_for_dataset"):
+            return {
+                "required": True,
+                "phase": "prepare_dataset",
+                "command": ["python", "training/build_dataset_v3.py"],
+                "reason": "CRSM integration manifest is missing or stale",
+            }
+        return {
+            "required": True,
+            "phase": "train_fuse_publish",
+            "command": command,
+            "reason": (
+                "Current CRSM captures are in the LoRA corpus, but proof closure "
+                "requires a successful train/fuse marker from training/train_and_fuse.py"
+            ),
+            "last_training_phase": training_state.get("phase"),
+            "last_training_rc": training_state.get("last_pipeline_rc"),
         }
 
     def audit(self) -> dict[str, Any]:

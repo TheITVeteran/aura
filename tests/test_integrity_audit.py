@@ -1,8 +1,6 @@
 """Tests for the consolidated system-integrity audit."""
 from __future__ import annotations
 
-import time
-
 import core.runtime.integrity_audit as ia
 
 
@@ -16,9 +14,12 @@ def test_audit_aggregates_signals_and_reports_structure():
 
 def test_caa_and_crsm_are_advisory_not_health_blocking():
     report = ia.run_integrity_audit(log=False)
-    # operational facts (CAA below capacity, CRSM open) surface as ADVISORY — never as
-    # runtime-health concerns, so they cannot make the runtime report "degraded".
-    assert any("CAA steering" in c for c in report["advisory"])
+    # Operational proof facts surface as ADVISORY when they remain open, never
+    # as runtime-health concerns, so they cannot make launch report "degraded".
+    assert any("CRSM" in c for c in report["advisory"])
+    assert report["caa_readiness"]["level"] in {"production", "validated", "mixed", "bootstrap"}
+    if report["caa_readiness"].get("below_design_capacity"):
+        assert any("CAA steering" in c for c in report["advisory"])
     assert not any("CAA steering" in c for c in report["concerns"])
     assert not any("CRSM" in c for c in report["concerns"])
 

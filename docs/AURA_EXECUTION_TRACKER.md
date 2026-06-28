@@ -17,6 +17,79 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest CAA / CRSM Proof-Readiness Checkpoint (2026-06-28)
+
+### Gaps Addressed
+
+- **CAA steering is no longer bootstrap-only for the launched 32B path**: the
+  extractor now defaults to the live runtime steering keys instead of
+  research-only dimensions, and the active Aura-32B model produced real
+  extracted activation vectors for every runtime key/layer pair.
+- **CAA readiness now evaluates the runtime contract, not stale file counts**:
+  the readiness report derives expected keys from the live affective steering
+  engine, derives target layers from the active model config, requires every
+  expected runtime vector to be extracted, and reports stale/non-runtime vector
+  files as ignored evidence instead of lowering production readiness.
+- **CRSM learning debt is actionable instead of vague**: the CRSM monitor now
+  reports generated dataset integration, LoRA training-state evidence, and the
+  next required phase/command. It still does not mark the loop closed until the
+  captured experience is actually trained/fused into the active model.
+
+### Latest Commands Run
+
+```bash
+AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 python training/extract_steering_vectors.py --model-path /Users/bryan/.aura/live-source/training/fused-model/Aura-32B-20260510-151144 --output-dir training/vectors --dimensions valence_positive,arousal,curiosity,frustration,energy --layers 25,30,35
+python training/caa_32b_validation.py --vectors-dir training/vectors --model-path /Users/bryan/.aura/live-source/training/fused-model/Aura-32B-20260510-151144 --behavioral-results tests/CAA_32B_AB_LIVE_RESULTS.json --output artifacts/proof_bundle/CAA_32B_RESULTS.json
+python training/build_dataset_v3.py
+python -m pytest -q tests/test_crsm_loop_monitor.py tests/test_crsm_training_dataset_gate.py tests/test_caa_readiness_report.py tests/test_integrity_audit.py
+python -m pytest -q tests/test_runtime_polish.py::test_api_heartbeat_surfaces_integrity_as_proof_readiness_not_launch_blocker tests/test_runtime_polish.py::test_api_heartbeat_treats_integrity_advisory_as_proof_debt tests/test_runtime_polish.py::test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health
+python -m ruff check core/consciousness/crsm_loop_monitor.py core/consciousness/caa/readiness_report.py training/extract_steering_vectors.py tests/test_crsm_loop_monitor.py tests/test_caa_readiness_report.py tests/test_integrity_audit.py
+make enterprise-gate
+make production-gate
+```
+
+### Evidence
+
+- Active model:
+  `/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-20260510-151144`.
+- Extracted production vectors: **15/15** runtime target vectors,
+  keys `valence_positive`, `arousal`, `curiosity`, `frustration`, `energy`
+  across layers **25, 30, 35**, vector dimension **5120**.
+- CAA readiness: `level=production`, `steering_capacity_pct=100.0`,
+  `runtime_contract.expected_extracted=15/15`, `missing_expected=[]`.
+- CAA behavioral/proof artifact:
+  `artifacts/proof_bundle/CAA_32B_RESULTS.json`, with validation
+  `passed=true`.
+- Integrity audit: runtime `healthy=true`, no runtime concerns, and one proof
+  advisory remains: `CRSM->LoRA loop OPEN (1000 captures untrained)`.
+- Focused CRSM/CAA/integrity tests: **21 passed**.
+- Runtime health/proof-readiness endpoint tests: **3 passed**.
+- Ruff on touched proof-readiness surface: **passed**.
+- `make enterprise-gate`: **passed**.
+- `make production-gate`: **passed**, all 37 readiness checks true.
+
+### Closeout Position
+
+- Functional closeout estimate: about **96%**. One major proof-readiness
+  blocker, CAA runtime extraction, is now closed for the real active 32B path.
+  This still does not claim AGI, phenomenal consciousness, personhood, or
+  indefinite autonomy as proven.
+- Estimated remaining work: **2 consolidated checkpoints**, likely **3-4
+  smaller sub-checkpoints**:
+  1. Complete CRSM->LoRA train/fuse/publish evidence without unsafe memory
+     pressure, then prove the captured experience changed the active model or
+     close the claim honestly if it cannot be completed on this machine.
+  2. Final closeout battery: visible voice/multi-app proof rerun, DNU/Aletheia
+     or final-proof replay as configured, longer soak/claims purification,
+     clean worktree, final commit/push.
+
+### Next Exact Task
+
+Run the broad enterprise/production gates for this checkpoint. If they stay
+green, commit and push the CAA production-readiness closure, then proceed to
+the CRSM training/fusion checkpoint or the final proof battery depending on
+resource headroom.
+
 ## Latest Visible Desktop Proof Checkpoint (2026-06-28)
 
 ### Gaps Addressed

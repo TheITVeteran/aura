@@ -5,7 +5,9 @@ import json
 
 import numpy as np
 
+from core.consciousness.affective_steering import AFFECTIVE_DIMENSIONS as RUNTIME_DIMENSIONS
 from core.consciousness.caa.readiness_report import scan_vector_files, verify_readiness
+from training.extract_steering_vectors import AFFECTIVE_DIMENSIONS, ALL_AFFECTIVE_DIMENSIONS
 
 
 def _vec(path, *, source, extracted, derived_at=1000.0):
@@ -72,3 +74,42 @@ def test_no_vectors_is_bootstrap(tmp_path):
     vdir.mkdir()
     r = verify_readiness(vectors_dir=vdir, fused_model_dir=tmp_path)
     assert r["level"] == "bootstrap"
+
+
+def test_extractor_defaults_to_live_runtime_dimensions():
+    runtime_keys = {spec["key"] for spec in RUNTIME_DIMENSIONS}
+    assert set(AFFECTIVE_DIMENSIONS) == runtime_keys
+    assert {"valence_positive", "arousal", "curiosity", "frustration", "energy"} <= set(
+        AFFECTIVE_DIMENSIONS
+    )
+    assert "confidence" in ALL_AFFECTIVE_DIMENSIONS
+    assert "warmth" in ALL_AFFECTIVE_DIMENSIONS
+
+
+def test_readiness_uses_runtime_contract_and_ignores_stale_nonruntime_vectors(tmp_path):
+    vdir = tmp_path / "vectors"
+    fdir = tmp_path / "fused-model"
+    active = fdir / "active-model"
+    vdir.mkdir()
+    active.mkdir(parents=True)
+    (active / "config.json").write_text(json.dumps({"num_hidden_layers": 64}), encoding="utf-8")
+    fdir.mkdir(exist_ok=True)
+    (fdir / "active.json").write_text(
+        json.dumps({"active_model_path": str(active), "fused_at": 500.0}),
+        encoding="utf-8",
+    )
+
+    for key in {spec["key"] for spec in RUNTIME_DIMENSIONS}:
+        for layer in (25, 30, 35):
+            _vec(vdir / f"{key}_layer{layer}.npz", source="extracted_caa", extracted=True)
+
+    # This file is real directory drift from older derivation attempts; it
+    # should be surfaced as ignored drift, not reduce production readiness.
+    _vec(vdir / "warmth_layer99.npz", source="runtime_derived_caa", extracted=False)
+
+    r = verify_readiness(vectors_dir=vdir, fused_model_dir=fdir)
+    assert r["level"] == "production"
+    assert r["below_design_capacity"] is False
+    assert r["runtime_contract"]["expected_total"] == 15
+    assert r["runtime_contract"]["expected_extracted"] == 15
+    assert r["runtime_contract"]["ignored_file_count"] == 1

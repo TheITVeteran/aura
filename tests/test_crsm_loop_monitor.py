@@ -10,12 +10,18 @@ from core.consciousness.crsm_loop_monitor import CRSMLoopMonitor
 def _monitor(tmp_path):
     ds = tmp_path / "synthetic_training" / "lora_dataset.jsonl"
     fused = tmp_path / "fused-model"
+    manifest = tmp_path / "training" / "data" / "crsm_integration_manifest.json"
+    training_state = tmp_path / "training" / "adapters" / "aura-personality" / "training_state.json"
     ds.parent.mkdir(parents=True, exist_ok=True)
     fused.mkdir(parents=True, exist_ok=True)
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    training_state.parent.mkdir(parents=True, exist_ok=True)
     return CRSMLoopMonitor(
         dataset_path=ds,
         fused_model_dir=fused,
         marker_path=ds.parent / ".crsm_consumed.json",
+        integration_manifest_path=manifest,
+        training_state_path=training_state,
     )
 
 
@@ -90,3 +96,50 @@ def test_marker_round_trip(tmp_path):
     assert data["rejected_lines"] == 5
     assert data["manifest_path"] == str(manifest)
     assert data["source"] == "unit"
+
+
+def test_open_state_reports_current_manifest_and_train_fuse_next_action(tmp_path):
+    m = _monitor(tmp_path)
+    _write_lines(m.dataset_path, 100)
+    m.integration_manifest_path.write_text(
+        json.dumps(
+            {
+                "source_lines": 100,
+                "source_mtime": m.dataset_path.stat().st_mtime,
+                "accepted": 80,
+                "deduplicated": 10,
+                "rejected_by_reason": {"too_short": 10},
+            }
+        ),
+        encoding="utf-8",
+    )
+    m.training_state_path.write_text(
+        json.dumps({"phase": "resume_done", "last_iter": 66000, "last_pipeline_rc": 1}),
+        encoding="utf-8",
+    )
+
+    state = m.loop_state()
+
+    assert state["state"] == "open"
+    assert "integrated into the LoRA corpus" in state["reason"]
+    assert state["integration_manifest"]["current_for_dataset"] is True
+    assert state["integration_manifest"]["accepted"] == 80
+    assert state["training_state"]["last_iter"] == 66000
+    assert state["next_action"]["phase"] == "train_fuse_publish"
+    assert "training/run_unattended.sh" in " ".join(state["next_action"]["command"])
+
+
+def test_stale_manifest_reports_prepare_dataset_next_action(tmp_path):
+    m = _monitor(tmp_path)
+    _write_lines(m.dataset_path, 100)
+    m.integration_manifest_path.write_text(
+        json.dumps({"source_lines": 50, "source_mtime": m.dataset_path.stat().st_mtime - 10, "accepted": 40}),
+        encoding="utf-8",
+    )
+
+    state = m.loop_state()
+
+    assert state["state"] == "open"
+    assert state["integration_manifest"]["current_for_dataset"] is False
+    assert state["next_action"]["phase"] == "prepare_dataset"
+    assert state["next_action"]["command"] == ["python", "training/build_dataset_v3.py"]

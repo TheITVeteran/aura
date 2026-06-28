@@ -1,0 +1,79 @@
+{
+  "method": "contrastive_activation_addition",
+  "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-20260510-151144",
+  "adapter": "/Users/bryan/.aura/live-source/training/adapters/aura-personality",
+  "n_model_layers": 64,
+  "target_layers": [
+    25,
+    30,
+    35
+  ],
+  "target_layer_fraction": [
+    0.4,
+    0.65
+  ],
+  "dimensions": [
+    {
+      "key": "valence_positive",
+      "description": "Runtime substrate steering dimension: valence_positive",
+      "n_positive_prompts": 12,
+      "n_negative_prompts": 12,
+      "layers_extracted": [
+        25,
+        30,
+        35
+      ],
+      "vector_dim": 5120
+    },
+    {
+      "key": "arousal",
+      "description": "Runtime substrate steering dimension: arousal",
+      "n_positive_prompts": 10,
+      "n_negative_prompts": 10,
+      "layers_extracted": [
+        25,
+        30,
+        35
+      ],
+      "vector_dim": 5120
+    },
+    {
+      "key": "curiosity",
+      "description": "Runtime substrate steering dimension: curiosity",
+      "n_positive_prompts": 10,
+      "n_negative_prompts": 10,
+      "layers_extracted": [
+        25,
+        30,
+        35
+      ],
+      "vector_dim": 5120
+    },
+    {
+      "key": "frustration",
+      "description": "Runtime substrate steering dimension: frustration",
+      "n_positive_prompts": 10,
+      "n_negative_prompts": 10,
+      "layers_extracted": [
+        25,
+        30,
+        35
+      ],
+      "vector_dim": 5120
+    },
+    {
+      "key": "energy",
+      "description": "Runtime substrate steering dimension: energy",
+      "n_positive_prompts": 8,
+      "n_negative_prompts": 8,
+      "layers_extracted": [
+        25,
+        30,
+        35
+      ],
+      "vector_dim": 5120
+    }
+  ],
+  "total_vectors": 15,
+  "timestamp": "2026-06-28T22:00:30Z"
+}
