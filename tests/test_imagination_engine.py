@@ -10,6 +10,17 @@ from core.phases.response_generation import ResponseGenerationPhase
 from core.state.aura_state import AuraState
 
 
+def test_imagination_engine_reports_ready_before_first_frame():
+    engine = ImaginationEngine()
+
+    status = engine.get_status()
+
+    assert status["running"] is True
+    assert status["status"] == "idle"
+    assert status["frames_built"] == 0
+    assert status["latest"] is None
+
+
 def test_imagination_engine_models_visual_counterfactual_and_connections():
     state = AuraState.default()
     state.affect.curiosity = 0.86

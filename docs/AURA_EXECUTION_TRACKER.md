@@ -17,6 +17,77 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Semantic, Analogical, and Sensorimotor Runtime Checkpoint (2026-06-28)
+
+### Gaps Addressed
+
+- **Semantic flexibility, abstract analogical transfer, and sensorimotor
+  grounding are first-class live organs**: canonical cognitive boot now eagerly
+  registers `cognitive_situation` and `imagination_engine`. They no longer
+  depend on a first-turn lazy import before runtime ownership can be inspected.
+- **False full-runtime health is blocked**: normal launched-desktop health now
+  requires both organs to be registered and running alongside screen
+  perception and the perceptual pump.
+- **Presence is not accepted as causal participation**: the live desktop proof
+  now polls post-conversation health and fails unless both organs increment
+  their frame counters and expose a latest live-turn frame.
+- **Idle imagination is represented honestly**: before the first turn the
+  engine reports `running=true`, `status=idle`, and zero frames. Once cognition
+  uses it, the same status surface reports the real frame count and latest
+  frame rather than conflating readiness with activity.
+
+### Latest Commands Run
+
+```bash
+python -m ruff check core/brain/cognitive_situation.py core/brain/imagination.py core/orchestrator/mixins/boot/boot_cognitive.py interface/routes/system.py tools/live_boot_proof.py tests/test_cognitive_situation_frame.py tests/test_imagination_engine.py tests/test_full_desktop_runtime_contract.py tests/test_boot_runtime_safety.py
+python -m pytest -q tests/test_cognitive_situation_frame.py tests/test_full_desktop_runtime_contract.py tests/test_boot_runtime_safety.py tests/test_embodied_cognition_runtime.py tests/test_imagination_engine.py tests/test_perceptual_pump_runtime.py tests/test_screen_perception.py tests/test_live_mind_generation_controls.py
+python -m pytest -q tests/test_boot_runtime_safety.py tests/test_imagination_engine.py tests/test_cognitive_situation_frame.py tests/test_full_desktop_runtime_contract.py
+make enterprise-gate
+make production-gate
+AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 python tools/live_boot_proof.py --port 8145 --mode desktop --boot-timeout 600 --conversation-soak-turns 6 --out-dir artifacts/live_proof/full_runtime_semantic_analogy_embodiment_participation_20260628
+```
+
+### Evidence
+
+- Broader semantic/imagination/embodiment/live-mind suite: **93 passed**.
+- Final focused readiness and causal participation suite: **69 passed**.
+- `make enterprise-gate`: **passed**.
+- `make production-gate`: **passed**, all 37 readiness checks true.
+- Live desktop proof artifact:
+  `artifacts/live_proof/full_runtime_semantic_analogy_embodiment_participation_20260628/live_proof_20260628_082727_verdict.json`.
+- Live proof facts: `passed=true`, 32B Cortex recurrent-depth lane ready,
+  **6/6** conversation-soak turns, continuity recall pass, governed desktop
+  artifact verified, peak process-tree RSS **19,713.3 MB**, clean shutdown, no
+  orphan process, port released, and no runtime failure markers.
+- Post-turn causal evidence: `cognitive_situation` built **10** frames and
+  `imagination_engine` built **10** frames; both published non-empty latest
+  frame IDs through the live launched-desktop health surface.
+- The artifact was generated before this checkpoint commit, so its recorded
+  `git_dirty=true` reflects the reviewed source/test changes plus the existing
+  generated unity-result drift. A clean-commit rerun remains the final evidence
+  step for this checkpoint.
+
+### Closeout Position
+
+- Functional closeout estimate: about **92%**. This measures implemented and
+  validated runtime/proof work, not metaphysical consciousness or AGI.
+- Estimated remaining work: **3 consolidated checkpoints**, likely **6-8
+  smaller sub-checkpoints**:
+  1. Real launched GUI/voice visible multi-app proof using general computer-use
+     planning, focus verification, effect receipts, and bounded memory.
+  2. Learning/proof closure: CRSM->LoRA, fused-model CAA extraction, memory
+     metabolism, autonomous repair evidence, DNU/Aletheia/final-proof and
+     replay validation.
+  3. Longer soak, claims purification, remaining semantic ledger coverage,
+     clean worktree, and final checkpoint commit/push.
+
+### Next Exact Task
+
+Commit this runtime contract, rerun its proof from the clean checkpoint SHA,
+then move directly to the visible launched GUI/voice multi-app proof. The next
+proof must verify focus and visible effects in the intended applications rather
+than accepting hidden filesystem artifacts or typed text in a browser URL bar.
+
 ## Latest Live Full-Mind Desktop Proof Checkpoint (2026-06-28)
 
 ### Gaps Addressed

@@ -282,6 +282,25 @@ class CognitiveSituationFrame:
 class CognitiveSituationEngine:
     """Build a unified live-turn situation frame without side effects."""
 
+    def __init__(self) -> None:
+        self.frames_built = 0
+        self.last_frame: CognitiveSituationFrame | None = None
+
+    def get_status(self) -> dict[str, Any]:
+        latest = self.last_frame.to_dict() if self.last_frame is not None else None
+        return {
+            "running": True,
+            "frames_built": self.frames_built,
+            "latest": latest,
+            "governance": {
+                "side_effect_free": True,
+                "external_effects_require_authority_gateway": True,
+                "claims_require_receipts": True,
+            },
+        }
+
+    status = get_status
+
     def frame(
         self,
         objective: str,
@@ -409,7 +428,7 @@ class CognitiveSituationEngine:
             ),
         }
 
-        return CognitiveSituationFrame(
+        frame = CognitiveSituationFrame(
             frame_id=_stable_id(text, origin, time.time() // 60),
             objective=_compact(text, limit=240),
             semantic_flexibility=semantic,
@@ -429,6 +448,9 @@ class CognitiveSituationEngine:
             sampling_bias=sampling_bias,
             causal_effects=causal_effects,
         )
+        self.frames_built += 1
+        self.last_frame = frame
+        return frame
 
     def _perception_summary(self) -> dict[str, Any]:
         screen_available, screen_status = _service_state("screen_perception")
@@ -594,6 +616,25 @@ def get_cognitive_situation_engine() -> CognitiveSituationEngine:
     global _ENGINE
     if _ENGINE is None:
         _ENGINE = CognitiveSituationEngine()
+    try:
+        current = ServiceContainer.get("cognitive_situation", default=None)
+        if current is not _ENGINE:
+            ServiceContainer.register_instance(
+                "cognitive_situation",
+                _ENGINE,
+                required=False,
+                owner="core/brain/cognitive_situation.py",
+                registered_by="core.brain.cognitive_situation.get_cognitive_situation_engine",
+                required_for="semantic flexibility, analogical routing, and sensorimotor grounding",
+                failure_policy="degrade_with_receipt",
+            )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "cognitive_situation",
+            exc,
+            severity="warning",
+            action="continued without ServiceContainer registration for cognitive situation engine",
+        )
     return _ENGINE
 
 

@@ -416,8 +416,65 @@ def test_live_boot_proof_uses_readiness_heartbeat_contract():
     assert "full_runtime_ready" in source
     assert "screen_perception" in source
     assert "perceptual_pump" in source
+    assert "cognitive_situation" in source
+    assert "imagination_engine" in source
+    assert "exercise_cognitive_organ_participation" in source
     assert "exercise_capability_inventory_turn" in source
     assert "X-Aura-Require-CognitiveEngine" in source
+
+
+def test_live_boot_proof_requires_cognitive_organ_participation(monkeypatch, tmp_path):
+    import tools.live_boot_proof as live_boot_proof
+
+    payload = {
+        "full_runtime": {
+            "components": {
+                "cognitive_situation": {
+                    "running": True,
+                    "frames_built": 4,
+                    "latest": {"frame_id": "situation-4"},
+                },
+                "imagination_engine": {
+                    "running": True,
+                    "frames_built": 4,
+                    "latest": {"frame_id": "imagination-4"},
+                },
+            }
+        }
+    }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.timeout = kwargs.get("timeout")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, _url):
+            return SimpleNamespace(status_code=200, text="", json=lambda: payload)
+
+    monkeypatch.setattr(live_boot_proof.httpx, "Client", FakeClient)
+    proof = live_boot_proof.LiveProof(
+        port=8999,
+        mode="desktop",
+        boot_timeout_s=1.0,
+        skip_desktop=True,
+        restart_continuity=False,
+        conversation_soak_turns=0,
+        proof_dir=tmp_path,
+    )
+
+    assert proof.exercise_cognitive_organ_participation() is True
+    assert proof.steps[-1]["organs"]["cognitive_situation"]["participated"] is True
+
+    payload["full_runtime"]["components"]["imagination_engine"]["frames_built"] = 0
+    payload["full_runtime"]["components"]["imagination_engine"]["latest"] = None
+
+    assert proof.exercise_cognitive_organ_participation() is False
+    assert proof.steps[-1]["blockers"] == ["imagination_engine"]
 
 
 def test_live_boot_proof_runtime_stream_scan_fails_failure_markers(monkeypatch, tmp_path):

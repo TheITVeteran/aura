@@ -194,6 +194,17 @@ def _collect_full_runtime_status(
         "wake_word": _runtime_component_status("wake_word", "get_status"),
         "screen_perception": _runtime_component_status("screen_perception", "get_status"),
         "perceptual_pump": _runtime_component_status("perceptual_pump", "get_status"),
+        "cognitive_situation": _runtime_component_status(
+            "cognitive_situation",
+            "get_status",
+            "status",
+        ),
+        "imagination_engine": _runtime_component_status(
+            "imagination_engine",
+            "get_status",
+            "status",
+            "snapshot",
+        ),
     }
     resource_guard = desktop_resource_guard_enabled()
     expected = (
@@ -218,6 +229,8 @@ def _collect_full_runtime_status(
         "wake_word",
         "screen_perception",
         "perceptual_pump",
+        "cognitive_situation",
+        "imagination_engine",
     )
     blockers = [name for name in required if not components[name].get("running", False)]
     return {

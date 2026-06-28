@@ -84,6 +84,16 @@ class BootCognitiveMixin:
             self.scratchpad_engine = scratchpad
             self._scratchpad_engine = scratchpad
 
+            # 3b. Bring the side-effect-free semantic/creative grounding
+            # organs online as first-class services. They are consumed on every
+            # live CognitiveEngine turn and must be visible to desktop health
+            # instead of existing only as lazy module singletons.
+            from core.brain.cognitive_situation import get_cognitive_situation_engine
+            from core.brain.imagination import get_imagination_engine
+
+            self.cognitive_situation = get_cognitive_situation_engine()
+            self.imagination_engine = get_imagination_engine()
+
             # 4. Start API Adapter (LLM Clients)
             api_adapter = ServiceContainer.get("api_adapter", default=None)
             if api_adapter:

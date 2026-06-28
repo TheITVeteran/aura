@@ -572,7 +572,9 @@ class ImaginationEngine:
     def snapshot(self) -> dict[str, Any]:
         latest = self._history[-1].to_dict() if self._history else None
         return {
+            "running": True,
             "status": "active" if latest else "idle",
+            "frames_built": self._frame_count,
             "frames": len(self._history),
             "latest": latest,
             "working_memory": self._working_memory_snapshot(),
@@ -595,6 +597,9 @@ class ImaginationEngine:
                 "authority_gateway_required_for_effects": True,
             },
         }
+
+    get_status = snapshot
+    status = snapshot
 
     def learn_from_feedback(
         self,

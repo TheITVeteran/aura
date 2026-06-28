@@ -102,6 +102,8 @@ LIVE_DESKTOP_FULL_RUNTIME_COMPONENTS = (
     "wake_word",
     "screen_perception",
     "perceptual_pump",
+    "cognitive_situation",
+    "imagination_engine",
 )
 
 LIVE_CONVERSATION_SOAK_PROMPTS = (
@@ -874,6 +876,70 @@ class LiveProof:
             turns=turn_summaries,
         )
 
+    def exercise_cognitive_organ_participation(self) -> bool:
+        """Prove semantic/analogical and imagination organs processed live turns."""
+
+        required = ("cognitive_situation", "imagination_engine")
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.get(f"{self.base}/api/health")
+            if resp.status_code != 200:
+                return self.record(
+                    "chat_cognitive_organs",
+                    False,
+                    summary=f"health http {resp.status_code}: {resp.text[:180]}",
+                )
+            payload = resp.json()
+            full_runtime = payload.get("full_runtime") if isinstance(payload, dict) else None
+            components = (
+                full_runtime.get("components")
+                if isinstance(full_runtime, dict)
+                else None
+            )
+            components = components if isinstance(components, dict) else {}
+            evidence: dict[str, dict[str, Any]] = {}
+            blockers: list[str] = []
+            for name in required:
+                status = components.get(name)
+                status = status if isinstance(status, dict) else {}
+                frames_built = int(status.get("frames_built") or status.get("frames") or 0)
+                latest = status.get("latest")
+                organ_ok = bool(
+                    status.get("running") is True
+                    and frames_built > 0
+                    and isinstance(latest, dict)
+                    and latest
+                )
+                evidence[name] = {
+                    "running": status.get("running") is True,
+                    "frames_built": frames_built,
+                    "latest_frame_id": (
+                        str(latest.get("frame_id") or "")
+                        if isinstance(latest, dict)
+                        else ""
+                    ),
+                    "participated": organ_ok,
+                }
+                if not organ_ok:
+                    blockers.append(name)
+            return self.record(
+                "chat_cognitive_organs",
+                not blockers,
+                summary=(
+                    "semantic/analogical and imagination organs processed live turns"
+                    if not blockers
+                    else f"missing live participation: {', '.join(blockers)}"
+                ),
+                organs=evidence,
+                blockers=blockers,
+            )
+        except (httpx.HTTPError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            return self.record(
+                "chat_cognitive_organs",
+                False,
+                summary=f"{type(exc).__name__}: {exc}",
+            )
+
     def exercise_continuity_turn(self) -> bool:
         token = f"amber-{int(time.time()) % 100000}"
         ok1, _, lat1 = self.chat(
@@ -1151,6 +1217,7 @@ class LiveProof:
                 passed &= self.exercise_identity_turn()
                 passed &= self.exercise_continuity_turn()
                 passed &= self.exercise_conversation_soak()
+                passed &= self.exercise_cognitive_organ_participation()
                 passed &= self.exercise_desktop_action()
                 if self.restart_continuity:
                     passed &= self.exercise_restart_continuity_turn()
