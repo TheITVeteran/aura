@@ -77,3 +77,26 @@ def test_social_binds_when_interlocutor_known():
 def test_unknown_interlocutor_does_not_fabricate_social_content():
     contents = UnityRuntime().gather_contents(_state(objective="hi", partner="self"))
     assert not [c for c in contents if c.modality == "social"]
+
+
+def test_self_audit_binds_when_a_draft_overclaims(monkeypatch):
+    # A leading draft that overclaims must surface an honesty (metacognition) content so the
+    # mind holds it critically — the adversarial auditor is in the moment, not an island.
+    rt = UnityRuntime()
+    overclaiming = SimpleNamespace(
+        content="This is definitely, certainly, undeniably proven and always true."
+    )
+    monkeypatch.setattr(rt, "_draft_inputs", lambda: [overclaiming])
+
+    contents = rt.gather_contents(_state(objective="claim something"))
+    audit = [c for c in contents if c.modality == "metacognition" and c.source == "adversarial_audit"]
+    assert audit, "adversarial auditor did not bind a verdict on the overclaiming draft"
+    assert audit[0].confidence < 1.0  # risk lowered the held-confidence
+
+
+def test_self_audit_silent_on_measured_draft(monkeypatch):
+    rt = UnityRuntime()
+    measured = SimpleNamespace(content="This likely helps, based on the benchmark we ran.")
+    monkeypatch.setattr(rt, "_draft_inputs", lambda: [measured])
+    contents = rt.gather_contents(_state(objective="claim something"))
+    assert not [c for c in contents if c.source == "adversarial_audit"]

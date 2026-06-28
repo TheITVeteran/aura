@@ -348,6 +348,36 @@ class HierarchicalAgency:
         # For a social value-conflict, the governance tier consults the other-agent estimate so
         # the Will weighs the human's read of the situation (frustration, trust, rupture risk).
         social = self._social_context(s)
+
+        # Consult the bounded value model first: it weighs learned preferences against the
+        # immutable constitution and already defers a binding refusal to Will (can only
+        # tighten). This makes value_model causal on the live action path rather than a
+        # registered island — every governance decision runs through it.
+        try:
+            from core.values.value_model import get_value_model, ActionDescriptor
+            judgment = get_value_model().evaluate_with_will(
+                ActionDescriptor(
+                    description=s.description,
+                    impact=_clamp(0.3 + 0.5 * s.value_conflict),
+                    agent_id=str(s.context.get("agent_id", "bryan")),
+                )
+            )
+            detail = {
+                "approved": bool(judgment.permitted),
+                "recommendation": judgment.recommendation,
+                "constitutional_flags": judgment.constitutional_flags,
+                "reasons": judgment.reasons[:4],
+            }
+            if social:
+                detail["social"] = social
+            return TierResult(
+                tier=AgencyTier.GOVERNANCE, handled=True,
+                confidence=0.9 if judgment.permitted else 0.85,
+                detail=detail, reason="value_model_adjudicated",
+            )
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError):
+            pass
+
         try:
             from core.governance.will import ActionDomain, get_will
             decision = get_will().decide(

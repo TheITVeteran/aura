@@ -377,6 +377,50 @@ class UnityRuntime:
             record_degradation("unity_runtime", exc, severity="debug")
             return []
 
+    def _self_audit_contents(self, state: Any) -> list[BoundContent]:
+        """Bind the adversarial auditor's verdict on the current leading draft into the moment.
+
+        This makes the honesty critic causal rather than an island: when a candidate response
+        overclaims, leaks persona-as-fact, asserts an unconfirmed action, or is miscalibrated,
+        an honesty content enters the same workspace the draft competes in — high salience, low
+        confidence — so the integrated mind holds that draft critically. Only runs when a draft
+        actually exists (so it costs nothing on idle ticks).
+        """
+        try:
+            drafts = self._draft_inputs()
+            if not drafts:
+                return []
+            leading = drafts[0]
+            claim = str(getattr(leading, "content", "") or getattr(leading, "claim", "") or "").strip()
+            if len(claim) < 12:
+                return []
+            from core.cognition.adversarial_audit import get_adversarial_auditor
+            report = get_adversarial_auditor().audit(claim[:600])
+            if report.verdict == "trust":
+                return []  # nothing to flag; don't add drag
+            summary = _normalize_text(
+                f"self-audit: {report.verdict} (risk {report.risk_score:.2f}) — "
+                + "; ".join(report.caveats[:2]),
+                200,
+            )
+            return [
+                BoundContent(
+                    content_id=_content_id("self_audit", "metacognition", summary),
+                    modality="metacognition",
+                    source="adversarial_audit",
+                    summary=summary,
+                    salience=_clamp(0.55 + 0.4 * report.risk_score),
+                    confidence=_clamp(1.0 - report.risk_score),  # low confidence = hold it critically
+                    timestamp=time.time(),
+                    ownership="self",
+                    action_relevance=0.7,
+                    affective_charge=-0.2 * report.risk_score,
+                )
+            ]
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("unity_runtime", exc, severity="debug")
+            return []
+
     def gather_contents(self, state: Any, objective: str = "") -> list[BoundContent]:
         contents = (
             self._objective_content(state, objective)
@@ -384,6 +428,7 @@ class UnityRuntime:
             + self._felt_state_contents(state)
             + self._social_contents(state)
             + self._epistemic_contents(state, objective)
+            + self._self_audit_contents(state)
             + self._goal_contents(state)
             + self._working_memory_contents(state)
             + self._long_term_memory_contents(state)
