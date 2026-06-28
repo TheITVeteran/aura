@@ -2202,6 +2202,20 @@ def _mlx_worker_loop(
                         )
                         logger.warning("Failed to setup strict non-empty start guard: %s", e)
 
+                # Foreground non-parametric memory (KV-cache-correct): the tap captures the
+                # hidden state the generation forward already computes, so the processor adds
+                # recall at O(1)/token — no O(n²) recompute. Off by default, fail-open, and
+                # only installed when the datastore is non-empty.
+                _np_tap = None
+                try:
+                    from core.brain.nonparametric_worker import maybe_build_foreground
+                    _np_foreground = maybe_build_foreground(model)
+                    if _np_foreground is not None:
+                        _np_tap, _np_proc = _np_foreground
+                        logits_processors.append(_np_proc)
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+                    logger.debug("Foreground non-parametric memory unavailable: %s", e)
+
                 if logits_processors:
                     kwargs["logits_processors"] = logits_processors
 
@@ -2327,7 +2341,19 @@ def _mlx_worker_loop(
                                     clean_kwargs = {k: v for k, v in kwargs.items() if k not in clean_keys}
 
                                     watchdog.activity()
-                                    for response in stream_generate(model, tokenizer, prompt=gen_prompt, **clean_kwargs):
+
+                                    # If the foreground memory tap is installed, keep it active
+                                    # for the whole generation and restore the model afterward.
+                                    # The context exits on normal completion, break, or error
+                                    # (GeneratorExit), so model.model is always restored.
+                                    def _gen_stream():
+                                        if _np_tap is not None:
+                                            with _np_tap:
+                                                yield from stream_generate(model, tokenizer, prompt=gen_prompt, **clean_kwargs)
+                                        else:
+                                            yield from stream_generate(model, tokenizer, prompt=gen_prompt, **clean_kwargs)
+
+                                    for response in _gen_stream():
                                         watchdog.activity()
                                         token_count += 1
                                         progress_now = time.time()
