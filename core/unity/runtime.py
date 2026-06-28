@@ -262,10 +262,128 @@ class UnityRuntime:
             )
         ]
 
+    def _felt_state_contents(self, state: Any) -> list[BoundContent]:
+        """Bind the nociception substrate's felt damage/valence into the moment.
+
+        This is what makes "how Aura is doing right now" part of the unified state rather than
+        a side channel: real operational damage (memory/identity/tool/governance) and its
+        improvement/deterioration trend enter the same workspace everything else competes in.
+        """
+        try:
+            from core.affect.nociception import get_nociception_engine
+            noci = get_nociception_engine()
+            pressure = noci.nociceptive_pressure()
+            if pressure < 0.05:
+                return []  # nothing hurting → nothing to bind
+            valence = noci.grounded_valence()
+            worst = noci.worst_channel()
+            where = f" ({worst[0]})" if worst else ""
+            summary = _normalize_text(
+                f"felt strain {pressure:.2f}{where}, trend "
+                f"{'improving' if valence > 0 else 'worsening' if valence < 0 else 'flat'}",
+                160,
+            )
+            return [
+                BoundContent(
+                    content_id=_content_id("nociception", "interoception", summary),
+                    modality="interoception",
+                    source="nociception",
+                    summary=summary,
+                    salience=_clamp(0.4 + 0.6 * pressure),
+                    confidence=0.9,
+                    timestamp=time.time(),
+                    ownership="self",
+                    action_relevance=_clamp(0.3 + 0.7 * pressure),
+                    affective_charge=_clamp(valence, -1.0, 1.0),
+                )
+            ]
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("unity_runtime", exc, severity="debug")
+            return []
+
+    def _social_contents(self, state: Any) -> list[BoundContent]:
+        """Bind the live estimate of the interlocutor's state into the moment."""
+        try:
+            agent_id = (
+                str(getattr(getattr(state, "cognition", None), "current_partner", "") or "")
+                or str(getattr(getattr(state, "cognition", None), "current_origin", "") or "")
+            )
+            if agent_id in {"", "self", "internal", "system", "objective"}:
+                return []
+            from core.social.other_agent_model import get_other_agent_model
+            est = get_other_agent_model().estimate(agent_id)
+            if est.overall_confidence < 0.15:
+                return []  # we don't actually know enough to assert their state
+            dominant = max(est.affect.items(), key=lambda kv: kv[1])[0] if est.affect else "neutral"
+            summary = _normalize_text(
+                f"{agent_id}: reads {dominant}, rupture-risk {est.social_rupture_risk:.2f}", 160
+            )
+            return [
+                BoundContent(
+                    content_id=_content_id("other_agent", "social", summary),
+                    modality="social",
+                    source="other_agent_model",
+                    summary=summary,
+                    salience=_clamp(0.4 + 0.5 * est.social_rupture_risk),
+                    confidence=_clamp(est.overall_confidence),   # honest: our actual certainty
+                    timestamp=time.time(),
+                    ownership="world",
+                    action_relevance=_clamp(0.4 + 0.6 * est.social_rupture_risk),
+                    affective_charge=_clamp(est.affect.get("valence", 0.0), -1.0, 1.0),
+                )
+            ]
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("unity_runtime", exc, severity="debug")
+            return []
+
+    def _epistemic_contents(self, state: Any, objective: str) -> list[BoundContent]:
+        """Bind the epistemic stance on the objective in as a content whose *confidence is the
+        warranted confidence*.
+
+        This is the causal alternative to telling the model to hedge: an unverifiable question
+        enters the unified state as a low-confidence content, so the whole mind genuinely holds
+        it tentatively — calibration becomes part of what Aura is in the moment, not an
+        instruction layered over generation.
+        """
+        objective = objective or str(getattr(getattr(state, "cognition", None), "current_objective", "") or "")
+        objective = objective.strip()
+        if not objective:
+            return []
+        try:
+            from core.cognition.epistemic_calibration import get_epistemic_calibrator
+            cal = get_epistemic_calibrator().calibrate(objective)
+            # Only bind when warrant is actually constrained; plainly-checkable questions add nothing.
+            if cal.warranted_confidence >= 0.7 and cal.stance == "assert":
+                return []
+            summary = _normalize_text(
+                f"epistemic stance: {cal.verifiability.value.replace('_', ' ')}; "
+                f"hold as '{cal.stance}' (warrant ≤{cal.warranted_confidence:.2f})", 160
+            )
+            return [
+                BoundContent(
+                    content_id=_content_id("epistemic", "epistemic", summary),
+                    modality="epistemic",
+                    source="epistemic_calibration",
+                    summary=summary,
+                    salience=_clamp(0.5 + 0.4 * (1.0 - cal.warranted_confidence)),
+                    confidence=_clamp(cal.warranted_confidence),  # the mind's actual warrant
+                    timestamp=time.time(),
+                    ownership="self",
+                    action_relevance=0.6,
+                    affective_charge=0.0,
+                )
+            ]
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("unity_runtime", exc, severity="debug")
+            return []
+
     def gather_contents(self, state: Any, objective: str = "") -> list[BoundContent]:
         contents = (
             self._objective_content(state, objective)
             + self._affect_content(state)
+            + self._felt_state_contents(state)
+            + self._social_contents(state)
+            + self._epistemic_contents(state, objective)
             + self._goal_contents(state)
             + self._working_memory_contents(state)
             + self._long_term_memory_contents(state)
@@ -278,7 +396,7 @@ class UnityRuntime:
                 continue
             seen.add(item.content_id)
             deduped.append(item)
-        return deduped[:18]
+        return deduped[:24]
 
     def _draft_inputs(self) -> list[Any]:
         try:

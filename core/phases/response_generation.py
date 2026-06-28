@@ -652,9 +652,7 @@ class ResponseGenerationPhase(BasePhase):
                         live_runtime_payload_required=bool(
                             runtime_context.get("live_runtime_payload_required", False)
                         ),
-                        visible_user_message=str(
-                            runtime_context.get("visible_user_message") or objective or ""
-                        ),
+                        visible_user_message=user_surface_validation_prompt,
                         recent_conversation_context=str(
                             runtime_context.get("recent_conversation_context") or ""
                         ),
@@ -715,7 +713,9 @@ class ResponseGenerationPhase(BasePhase):
                 shape_repaired = False
                 if not is_background and not is_test_run:
                     response_text, shape_repaired, shape_repair_reasons = (
-                        self._repair_substantive_instruction_shape_miss(objective, response_text)
+                        self._repair_substantive_instruction_shape_miss(
+                            user_surface_validation_prompt, response_text
+                        )
                     )
                     if shape_repaired:
                         logger.info(
@@ -739,7 +739,7 @@ class ResponseGenerationPhase(BasePhase):
                         if critique_response and critique_response != response_text:
                             logger.info("⚡ [Critique] Self-critique corrected the generated response!")
                             response_text = critique_response
-                except (ImportError, AttributeError, TypeError, ValueError, LookupError, RuntimeError, NameError, SyntaxError, asyncio.TimeoutError) as critique_exc:
+                except (ImportError, AttributeError, TypeError, ValueError, LookupError, RuntimeError, NameError, SyntaxError, TimeoutError) as critique_exc:
                     logger.warning("Failed to run System 2 self-critique: %s", critique_exc)
 
                 # ComposerNode: Structural Refinement
@@ -771,10 +771,14 @@ class ResponseGenerationPhase(BasePhase):
                     and not os.environ.get("AURA_TESTING")
                     and not os.environ.get("AURA_PROOF_RUN")
                 ):
-                    reliability = assess_user_facing_reply(objective, response_text)
+                    reliability = assess_user_facing_reply(
+                        user_surface_validation_prompt, response_text
+                    )
                     if reliability.retryable:
                         repaired_text, repaired_shape, repair_reasons = (
-                            self._repair_substantive_instruction_shape_miss(objective, response_text)
+                            self._repair_substantive_instruction_shape_miss(
+                                user_surface_validation_prompt, response_text
+                            )
                         )
                         if repaired_shape:
                             logger.info(
@@ -782,7 +786,9 @@ class ResponseGenerationPhase(BasePhase):
                                 ",".join(repair_reasons) or "unknown",
                             )
                             response_text = repaired_text
-                            reliability = assess_user_facing_reply(objective, response_text)
+                            reliability = assess_user_facing_reply(
+                                user_surface_validation_prompt, response_text
+                            )
                         reliability_reasons = set(reliability.reasons or ())
                         response_text_s = str(response_text or "").strip()
                         if (
@@ -887,7 +893,7 @@ class ResponseGenerationPhase(BasePhase):
             # and automatically wrap it in a clean "<answer>...</answer>" block at the end of the text.
             lower_objective = objective.lower() if objective else ""
             lower_response = content.lower() if content else ""
-            if ("<answer>" in lower_objective or "answer_format" in kwargs) and content and not "<answer>" in lower_response:
+            if ("<answer>" in lower_objective or "answer_format" in kwargs) and content and "<answer>" not in lower_response:
                 import re
                 extracted_ans = None
                 
@@ -954,9 +960,7 @@ class ResponseGenerationPhase(BasePhase):
                     live_runtime_payload_required=bool(
                         runtime_context.get("live_runtime_payload_required", False)
                     ),
-                    visible_user_message=str(
-                        runtime_context.get("visible_user_message") or objective or ""
-                    ),
+                    visible_user_message=user_surface_validation_prompt,
                     recent_conversation_context=str(
                         runtime_context.get("recent_conversation_context") or ""
                     ),
@@ -1064,7 +1068,9 @@ class ResponseGenerationPhase(BasePhase):
 
             if not is_background and cleaned_response and not is_test_run:
                 repaired_response, repaired_shape, repair_reasons = (
-                    self._repair_substantive_instruction_shape_miss(objective, cleaned_response)
+                    self._repair_substantive_instruction_shape_miss(
+                        user_surface_validation_prompt, cleaned_response
+                    )
                 )
                 if repaired_shape:
                     cleaned_response = repaired_response
