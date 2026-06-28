@@ -278,6 +278,13 @@ class CognitiveLoop:
         # an outcome-ledger receipt — binding the action engines into the live heartbeat.
         await self._appraise_through_agency(fe_state, spl)
 
+        # Emotional regulation gates impulse: if arousal is high but deliberation is thin and
+        # no real damage backs it, hold this cycle instead of acting on the spike. This is the
+        # maturity layer made causal — it decides whether to act, not just how to feel.
+        if self._regulation_says_hold(fe_state):
+            logger.debug("🧘 [Regulation] holding autonomous action this cycle (impulse regulated).")
+            return
+
         if fe_state.dominant_action == "explore":
             # Find the most unpredictable dimension and explore it
             if spl and hasattr(spl, "get_most_unpredictable_dimension"):
@@ -292,6 +299,19 @@ class CognitiveLoop:
                 intention = await motivation.pulse()
                 if intention and hasattr(motivation, "_dispatch_intention"):
                     await motivation._dispatch_intention(intention)
+
+    def _regulation_says_hold(self, fe_state) -> bool:
+        """Ask the emotional regulator whether to hold the impulse this cycle (fail-open)."""
+        try:
+            from core.affect.emotional_regulation import get_emotional_regulator
+            reg = get_emotional_regulator().regulate(
+                arousal=float(getattr(fe_state, "arousal", 0.0) or 0.0),
+                valence=float(getattr(fe_state, "valence", 0.0) or 0.0),
+                deliberation=0.3,  # the autonomous lane is fast/reactive, not deeply deliberated
+            )
+            return bool(reg.hold)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return False
 
     async def _appraise_through_agency(self, fe_state, spl):
         """Run the live moment through the hierarchical control ladder (fail-open).
