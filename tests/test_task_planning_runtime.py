@@ -23,6 +23,52 @@ async def test_task_decomposer_builds_general_graph_without_llm() -> None:
     assert "search_web" in actions
     assert graph.validate() == []
     assert all(node.verification for node in graph.nodes.values())
+    assert "cognitive_situation_frame" in graph.metadata["planning_context"]
+    assert graph.get_proof_bundle()["metadata"]["planning_context"]["cognitive_situation_frame"]
+
+
+@pytest.mark.asyncio
+async def test_task_decomposer_passes_cognitive_situation_to_llm_planner(monkeypatch) -> None:
+    ServiceContainer.clear()
+
+    captured: dict[str, object] = {}
+
+    class Router:
+        async def route(self, **kwargs):
+            captured.update(kwargs)
+            return type(
+                "Response",
+                (),
+                {
+                    "text": (
+                        '[{"id":"t1","action":"get_screen_text","params":{},'
+                        '"depends_on":[],"verify":"true","description":"observe"}]'
+                    )
+                },
+            )()
+
+    ServiceContainer.register_instance("llm_router", Router(), required=False)
+
+    frame = {
+        "frame_id": "frame-test",
+        "salience": 0.9,
+        "semantic_flexibility": 0.77,
+        "analogical_leap_pressure": 0.64,
+        "sensorimotor_grounding": 0.82,
+        "verification_pressure": 0.7,
+        "embodied_affordances": ["frontmost app: Google Docs", "focused text field"],
+    }
+
+    graph = await TaskDecomposer().decompose(
+        "Use the visible document like a canvas and summarize the articles.",
+        context={"cognitive_situation_frame": frame},
+    )
+
+    prompt = str(captured["prompt"])
+    assert "COGNITIVE SITUATION" in prompt
+    assert "semantic_flexibility=0.77" in prompt
+    assert "frontmost app: Google Docs" in prompt
+    assert graph.metadata["planning_context"]["cognitive_situation_frame"]["frame_id"] == "frame-test"
 
 
 def test_task_graph_dependency_readiness_and_completion() -> None:

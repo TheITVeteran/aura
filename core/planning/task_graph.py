@@ -15,22 +15,20 @@ and recovered by RecoveryEngine.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import time
-from collections import deque
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.TaskGraph")
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     PENDING = "pending"
     READY = "ready"
     RUNNING = "running"
@@ -46,14 +44,14 @@ class TaskNode:
     """A single step in a task graph."""
     task_id: str
     action: str                         # skill/primitive name
-    params: Dict[str, Any] = field(default_factory=dict)
-    preconditions: List[str] = field(default_factory=list)  # task_ids that must complete
+    params: dict[str, Any] = field(default_factory=dict)
+    preconditions: list[str] = field(default_factory=list)  # task_ids that must complete
     verification: str = "true"          # predicate name for PostActionVerifier
-    verification_args: Dict[str, Any] = field(default_factory=dict)
+    verification_args: dict[str, Any] = field(default_factory=dict)
     rollback_action: str = ""           # action to undo this step
-    rollback_params: Dict[str, Any] = field(default_factory=dict)
+    rollback_params: dict[str, Any] = field(default_factory=dict)
     fallback_action: str = ""           # alternative if primary fails
-    fallback_params: Dict[str, Any] = field(default_factory=dict)
+    fallback_params: dict[str, Any] = field(default_factory=dict)
     risk_level: str = "low"             # "low", "medium", "high"
     adapter: str = ""                   # which capability adapter
     description: str = ""               # human-readable step description
@@ -62,15 +60,15 @@ class TaskNode:
     retries_used: int = 0
     critical: bool = True               # if True, graph fails on this node's failure
     status: TaskStatus = TaskStatus.PENDING
-    result: Optional[Dict[str, Any]] = None
-    verification_result: Optional[Dict[str, Any]] = None
+    result: dict[str, Any] | None = None
+    verification_result: dict[str, Any] | None = None
     receipt_id: str = ""
     error: str = ""
     started_at: float = 0.0
     completed_at: float = 0.0
-    artifacts: List[str] = field(default_factory=list)  # file paths created by this step
+    artifacts: list[str] = field(default_factory=list)  # file paths created by this step
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = {
             "task_id": self.task_id,
             "action": self.action,
@@ -97,7 +95,7 @@ class TaskNode:
         return d
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "TaskNode":
+    def from_dict(cls, d: dict[str, Any]) -> TaskNode:
         status_raw = d.get("status", "pending")
         if isinstance(status_raw, TaskStatus):
             status = status_raw
@@ -145,14 +143,21 @@ class TaskGraph:
         graph.mark_succeeded("t1", result={...})
     """
 
-    def __init__(self, mission_id: str, objective: str) -> None:
+    def __init__(
+        self,
+        mission_id: str,
+        objective: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         self.mission_id = mission_id
         self.objective = objective
-        self.nodes: Dict[str, TaskNode] = {}
+        self.metadata: dict[str, Any] = dict(metadata or {})
+        self.nodes: dict[str, TaskNode] = {}
         self.created_at: float = time.time()
         self.updated_at: float = time.time()
-        self.artifacts: List[str] = []
-        self._execution_order: List[str] = []  # topological order cache
+        self.artifacts: list[str] = []
+        self._execution_order: list[str] = []  # topological order cache
 
     def add_node(self, node: TaskNode) -> None:
         """Add a node to the graph. Validates no cycles."""
@@ -169,7 +174,7 @@ class TaskGraph:
         self._execution_order = []  # invalidate cache
         self.updated_at = time.time()
 
-    def get_ready_nodes(self) -> List[TaskNode]:
+    def get_ready_nodes(self) -> list[TaskNode]:
         """Get nodes whose preconditions are all satisfied (SUCCEEDED or SKIPPED)."""
         ready = []
         completed_ids = {
@@ -186,7 +191,7 @@ class TaskGraph:
                 ready.append(node)
         return ready
 
-    def get_next_node(self) -> Optional[TaskNode]:
+    def get_next_node(self) -> TaskNode | None:
         """Get the next single node to execute (first ready by insertion order)."""
         ready = self.get_ready_nodes()
         if not ready:
@@ -203,8 +208,8 @@ class TaskGraph:
         node.started_at = time.time()
         self.updated_at = time.time()
 
-    def mark_succeeded(self, task_id: str, result: Optional[Dict[str, Any]] = None,
-                       receipt_id: str = "", artifacts: Optional[List[str]] = None) -> None:
+    def mark_succeeded(self, task_id: str, result: dict[str, Any] | None = None,
+                       receipt_id: str = "", artifacts: list[str] | None = None) -> None:
         node = self.nodes[task_id]
         node.status = TaskStatus.SUCCEEDED
         node.result = result or {}
@@ -216,7 +221,7 @@ class TaskGraph:
         self.updated_at = time.time()
 
     def mark_failed(self, task_id: str, error: str,
-                    result: Optional[Dict[str, Any]] = None) -> None:
+                    result: dict[str, Any] | None = None) -> None:
         node = self.nodes[task_id]
         node.status = TaskStatus.FAILED
         node.error = error
@@ -279,7 +284,7 @@ class TaskGraph:
     def failed_steps(self) -> int:
         return sum(1 for n in self.nodes.values() if n.status == TaskStatus.FAILED)
 
-    def get_progress(self) -> Dict[str, Any]:
+    def get_progress(self) -> dict[str, Any]:
         """Progress summary for dashboards."""
         total = self.total_steps
         completed = self.completed_steps
@@ -307,7 +312,7 @@ class TaskGraph:
             return "Complete"
         return "Waiting"
 
-    def get_proof_bundle(self) -> Dict[str, Any]:
+    def get_proof_bundle(self) -> dict[str, Any]:
         """Generate a proof bundle with all receipts and artifacts."""
         return {
             "mission_id": self.mission_id,
@@ -319,6 +324,7 @@ class TaskGraph:
             "created_at": self.created_at,
             "completed_at": self.updated_at,
             "duration_s": round(self.updated_at - self.created_at, 1),
+            "metadata": self.metadata,
             "artifacts": self.artifacts,
             "steps": [n.to_dict() for n in self.nodes.values()],
         }
@@ -337,21 +343,23 @@ class TaskGraph:
     # Persistence
     # ------------------------------------------------------------------
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "mission_id": self.mission_id,
             "objective": self.objective,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "metadata": self.metadata,
             "artifacts": self.artifacts,
             "nodes": {tid: n.to_dict() for tid, n in self.nodes.items()},
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "TaskGraph":
+    def from_dict(cls, d: dict[str, Any]) -> TaskGraph:
         graph = cls(
             mission_id=d["mission_id"],
             objective=d.get("objective", ""),
+            metadata=d.get("metadata") if isinstance(d.get("metadata"), dict) else None,
         )
         graph.created_at = d.get("created_at", time.time())
         graph.updated_at = d.get("updated_at", time.time())
@@ -365,7 +373,7 @@ class TaskGraph:
         return json.dumps(self.to_dict(), indent=2, default=str)
 
     @classmethod
-    def from_json(cls, text: str) -> "TaskGraph":
+    def from_json(cls, text: str) -> TaskGraph:
         return cls.from_dict(json.loads(text))
 
     def persist(self, path: Path) -> None:
@@ -379,7 +387,7 @@ class TaskGraph:
         )
 
     @classmethod
-    def resume(cls, path: Path) -> "TaskGraph":
+    def resume(cls, path: Path) -> TaskGraph:
         """Reload graph state from disk."""
         return cls.from_json(path.read_text(encoding="utf-8"))
 
@@ -387,7 +395,7 @@ class TaskGraph:
     # Validation
     # ------------------------------------------------------------------
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """Check graph for issues. Returns list of warnings."""
         warnings = []
         # Check for missing preconditions
@@ -397,8 +405,8 @@ class TaskGraph:
                     warnings.append(f"Node '{node.task_id}' depends on unknown '{pre}'")
 
         # Check for cycles (simple DFS)
-        visited: Set[str] = set()
-        in_stack: Set[str] = set()
+        visited: set[str] = set()
+        in_stack: set[str] = set()
 
         def _dfs(tid: str) -> bool:
             if tid in in_stack:

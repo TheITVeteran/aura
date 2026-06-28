@@ -19,7 +19,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.container import ServiceContainer
 from core.planning.task_graph import TaskGraph, TaskNode
@@ -69,6 +69,9 @@ AVAILABLE APPS ON THIS MACHINE:
 
 CURRENT STATE:
 {current_state}
+
+COGNITIVE SITUATION:
+{cognitive_situation}
 
 OBJECTIVE: {objective}
 
@@ -129,7 +132,7 @@ class TaskDecomposer:
     async def decompose(
         self,
         objective: str,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> TaskGraph:
         """Decompose a natural-language objective into a TaskGraph.
 
@@ -147,8 +150,18 @@ class TaskDecomposer:
         available_apps = await self._get_available_apps()
         current_state = self._get_current_state()
 
+        context = dict(context)
+        cognitive_situation = self._cognitive_situation_for_objective(objective, context)
+        if cognitive_situation and "cognitive_situation_frame" not in context:
+            context["cognitive_situation_frame"] = cognitive_situation
+
         # Try LLM decomposition first
-        steps = await self._llm_decompose(objective, available_apps, current_state, context)
+        steps = await self._llm_decompose(
+            objective,
+            available_apps,
+            current_state,
+            context,
+        )
 
         # Fall back to heuristic if LLM failed
         if not steps:
@@ -156,7 +169,19 @@ class TaskDecomposer:
             steps = self._heuristic_decompose(objective, context)
 
         # Build the TaskGraph
-        graph = TaskGraph(mission_id=mission_id, objective=objective)
+        graph = TaskGraph(
+            mission_id=mission_id,
+            objective=objective,
+            metadata={
+                "planning_context": {
+                    "cognitive_situation_frame": cognitive_situation,
+                    "current_state": current_state,
+                    "available_apps_digest": hashlib.sha256(
+                        available_apps.encode("utf-8", errors="ignore")
+                    ).hexdigest()[:16],
+                }
+            },
+        )
         for step in steps:
             node = TaskNode(
                 task_id=step.get("id", f"t{len(graph.nodes) + 1}"),
@@ -186,6 +211,33 @@ class TaskDecomposer:
             objective[:60], graph.total_steps, mission_id,
         )
         return graph
+
+    def _cognitive_situation_for_objective(
+        self,
+        objective: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build the same semantic/body grounding frame used by live cognition."""
+
+        supplied = context.get("cognitive_situation_frame")
+        if isinstance(supplied, dict):
+            return supplied
+        try:
+            from core.brain.cognitive_situation import get_cognitive_situation_engine
+
+            frame = get_cognitive_situation_engine().frame(
+                objective,
+                context=context,
+                origin=str(context.get("origin") or "task_decomposer"),
+            )
+            return frame.to_dict()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "task_decomposer.cognitive_situation",
+                exc,
+                action="planned without cognitive situation frame after frame construction failed",
+            )
+            return {}
 
     async def _get_available_apps(self) -> str:
         """Get available apps summary from AppRegistry."""
@@ -223,8 +275,8 @@ class TaskDecomposer:
         objective: str,
         available_apps: str,
         current_state: str,
-        context: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
+        context: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         """Use the LLM router to decompose the objective."""
         try:
             # Get LLM router
@@ -232,10 +284,11 @@ class TaskDecomposer:
             if router is None:
                 return []
 
-            prompt = DECOMPOSE_PROMPT.format(
+            prompt = self._render_decompose_prompt(
                 objective=objective,
                 available_apps=available_apps,
                 current_state=current_state,
+                cognitive_situation=self._render_cognitive_situation_for_planning(context),
             )
 
             # Route to the fastest available model
@@ -258,7 +311,70 @@ class TaskDecomposer:
             logger.debug("LLM decomposition failed: %s", e)
             return []
 
-    def _parse_llm_response(self, text: str) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _render_decompose_prompt(
+        *,
+        objective: str,
+        available_apps: str,
+        current_state: str,
+        cognitive_situation: str,
+    ) -> str:
+        """Render the planning prompt without interpreting JSON examples as format fields."""
+
+        return (
+            DECOMPOSE_PROMPT.replace("{available_apps}", available_apps)
+            .replace("{current_state}", current_state)
+            .replace("{cognitive_situation}", cognitive_situation)
+            .replace("{objective}", objective)
+        )
+
+    @staticmethod
+    def _render_cognitive_situation_for_planning(context: dict[str, Any]) -> str:
+        frame = context.get("cognitive_situation_frame")
+        if not isinstance(frame, dict) or not frame:
+            return "No cognitive situation frame available; use direct objective and current state."
+
+        def _num(name: str) -> float:
+            try:
+                return float(frame.get(name, 0.0) or 0.0)
+            except (TypeError, ValueError, OverflowError):
+                return 0.0
+
+        affordances = frame.get("embodied_affordances")
+        interpretations = frame.get("semantic_interpretations")
+        bridges = frame.get("analogy_bridges")
+        lines = [
+            (
+                f"semantic_flexibility={_num('semantic_flexibility'):.2f}; "
+                f"analogical_leap_pressure={_num('analogical_leap_pressure'):.2f}; "
+                f"sensorimotor_grounding={_num('sensorimotor_grounding'):.2f}; "
+                f"verification_pressure={_num('verification_pressure'):.2f}"
+            ),
+            "Planning effects: preserve multiple valid interpretations, use analogous known workflows when useful, and bind every screen/tool step to observable verification.",
+        ]
+        if isinstance(interpretations, list) and interpretations:
+            labels = [
+                str(item.get("label") or item.get("focus") or "")[:80]
+                for item in interpretations[:3]
+                if isinstance(item, dict)
+            ]
+            labels = [item for item in labels if item]
+            if labels:
+                lines.append("Candidate interpretations: " + "; ".join(labels))
+        if isinstance(bridges, list) and bridges:
+            labels = [
+                str(item.get("bridge") or item.get("source") or "")[:80]
+                for item in bridges[:3]
+                if isinstance(item, dict)
+            ]
+            labels = [item for item in labels if item]
+            if labels:
+                lines.append("Analogical bridges: " + "; ".join(labels))
+        if isinstance(affordances, list) and affordances:
+            lines.append("Embodied affordances: " + ", ".join(map(str, affordances[:6])))
+        return "\n".join(lines)
+
+    def _parse_llm_response(self, text: str) -> list[dict[str, Any]]:
         """Parse JSON steps from LLM response text."""
         # Try to extract JSON from various formats
         candidates = []
@@ -295,11 +411,11 @@ class TaskDecomposer:
     def _heuristic_decompose(
         self,
         objective: str,
-        context: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
+        context: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         """Pattern-matching decomposition for common task patterns."""
         text = objective.lower()
-        steps: List[Dict[str, Any]] = []
+        steps: list[dict[str, Any]] = []
         step_id = 0
 
         def _next_id() -> str:
@@ -489,7 +605,7 @@ class TaskDecomposer:
 
         return ""
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "decompositions": self._decomposition_count,
         }
@@ -499,7 +615,7 @@ class TaskDecomposer:
 # Singleton
 # ---------------------------------------------------------------------------
 
-_instance: Optional[TaskDecomposer] = None
+_instance: TaskDecomposer | None = None
 
 
 def get_task_decomposer() -> TaskDecomposer:

@@ -383,6 +383,8 @@ end tell''',
 
     def get_status(self) -> dict[str, Any]:
         return {
+            "running": self._started,
+            "started": self._started,
             "captures": self._capture_count,
             "last_hash": self._last_hash,
         }

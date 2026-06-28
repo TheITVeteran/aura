@@ -17,6 +17,73 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Embodied Cognition Contract Checkpoint (2026-06-28)
+
+### Gaps Addressed
+
+- **False full-runtime health is tighter**: the normal desktop profile now
+  requires `screen_perception` and `perceptual_pump` in the full-runtime
+  readiness contract. A launched desktop runtime can no longer report full
+  readiness while Aura's governed screen reader is missing or the causal
+  perception pump is stopped.
+- **Screen perception exposes liveness**: `ScreenPerception.get_status()` now
+  reports `running`/`started`, so health checks distinguish a registered but
+  inactive visual organ from an actually started one.
+- **Semantic flexibility and analogical transfer now reach planning**:
+  `TaskDecomposer` builds/receives the same `cognitive_situation_frame` used by
+  the live `CognitiveEngine`, renders it into planning, and stores it in
+  `TaskGraph.metadata`. Multi-step desktop plans therefore preserve ambiguity,
+  analogy pressure, sensorimotor grounding, and verification pressure as
+  replayable planning evidence instead of dropping them at the chat boundary.
+- **TaskGraph proof bundles now preserve planning context**: task proof bundles
+  and persisted graphs include metadata, giving later validators a durable
+  receipt that a desktop mission was planned under the current semantic/body
+  frame.
+- **Planner prompt rendering no longer breaks on JSON examples**: the old
+  `.format(...)` path treated literal JSON braces in the planning template as
+  format keys. Planning prompt rendering now performs exact placeholder
+  replacement, preserving the examples while injecting current app/state/body
+  context.
+
+### Latest Commands Run
+
+```bash
+python -m ruff check interface/routes/system.py core/perception/screen_perception.py core/planning/task_graph.py core/planning/task_decomposer.py tests/test_full_desktop_runtime_contract.py tests/test_task_planning_runtime.py
+python -m pytest -q tests/test_full_desktop_runtime_contract.py tests/test_task_planning_runtime.py tests/test_cognitive_situation_frame.py tests/test_perceptual_pump_runtime.py tests/test_screen_perception.py tests/test_system_route_hardening.py
+python -m pytest -q tests/test_desktop_agency.py::TestTaskDecomposer tests/test_deep_mind_service_registration.py tests/test_live_mind_snapshot.py
+make enterprise-gate
+make production-gate
+```
+
+### Evidence
+
+- Ruff passed for the changed runtime/planning/health/test files.
+- Focused runtime/planning/sensory/system route suite: **52 passed**.
+- Additional desktop agency/deep mind/live mind snapshot suite: **6 passed**.
+- `make enterprise-gate`: **passed**.
+- `make production-gate`: **passed**, all 37 readiness checks true.
+
+### Closeout Position
+
+- Functional closeout estimate: about **90%**. This is a runtime reliability and
+  proof-surface estimate, not a metaphysical claim.
+- Estimated remaining work: **3 consolidated checkpoints**, likely **8-10
+  smaller sub-checkpoints**:
+  1. Real launched GUI/voice desktop action proof with visible OS actions,
+     no raw-assistant leakage, memory ceilings, receipts, and clean neural
+     stream/terminal.
+  2. CRSM→LoRA/CAA closure, active memory metabolism, autonomous repair/immune
+     system evidence, and DNU/Aletheia/final-proof reruns with replay packages.
+  3. Longer soak, claims purification, remaining semantic ledger coverage, clean
+     worktree, final checkpoint commit/push.
+
+### Next Exact Task
+
+Run the real launched desktop lane under the full-runtime contract and verify
+that the perceptual pump, screen perception, cognitive situation frame,
+conversation lane, and 32B foreground generation are simultaneously live while
+answering and planning a multi-turn desktop objective under the 32GB RSS ceiling.
+
 ## Latest Unified Cognition and 32B KV Checkpoint (2026-06-28)
 
 ### Gaps Addressed

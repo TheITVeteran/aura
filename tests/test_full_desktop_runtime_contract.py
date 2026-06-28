@@ -49,6 +49,13 @@ def _full_services():
         "agency_core": SimpleNamespace(swarm=swarm),
         "overt_action_loop": _status_service(method="status", enabled=True),
         "wake_word": _status_service(running=True),
+        "screen_perception": _status_service(running=True, captures=1, last_hash="screen"),
+        "perceptual_pump": _status_service(
+            running=True,
+            frames_produced=3,
+            substrate_injections=1,
+            latest_frame={"active_app": "Aura Zenith"},
+        ),
     }
 
 
@@ -82,6 +89,8 @@ def test_full_desktop_runtime_reports_every_canonical_background_organ(monkeypat
     assert status["components"]["autonomous_initiative"]["core_tasks"]["social"] is True
     assert status["components"]["overt_action"]["scheduled"] is True
     assert status["components"]["deliberation"]["scheduled"] is True
+    assert status["components"]["screen_perception"]["running"] is True
+    assert status["components"]["perceptual_pump"]["running"] is True
 
 
 def test_full_desktop_runtime_fails_readiness_when_background_organ_is_missing(monkeypatch):
@@ -98,6 +107,38 @@ def test_full_desktop_runtime_fails_readiness_when_background_organ_is_missing(m
 
     assert status["ready"] is False
     assert "research" in status["blockers"]
+
+
+def test_full_desktop_runtime_fails_readiness_when_screen_perception_is_missing(monkeypatch):
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    monkeypatch.setenv("AURA_DESKTOP_RESOURCE_GUARD", "1")
+    monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_BACKGROUND_COGNITION", raising=False)
+    services = _full_services()
+    services.pop("screen_perception")
+    _install_services(monkeypatch, services)
+
+    status = _collect_full_runtime_status({"online": True}, {"online": True})
+
+    assert status["ready"] is False
+    assert "screen_perception" in status["blockers"]
+
+
+def test_full_desktop_runtime_fails_readiness_when_perceptual_pump_is_stopped(monkeypatch):
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    monkeypatch.setenv("AURA_DESKTOP_RESOURCE_GUARD", "1")
+    monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_BACKGROUND_COGNITION", raising=False)
+    services = _full_services()
+    services["perceptual_pump"] = _status_service(running=False, frames_produced=0)
+    _install_services(monkeypatch, services)
+
+    status = _collect_full_runtime_status({"online": True}, {"online": True})
+
+    assert status["ready"] is False
+    assert "perceptual_pump" in status["blockers"]
 
 
 def test_full_desktop_runtime_fails_readiness_when_initiative_loop_is_missing(monkeypatch):

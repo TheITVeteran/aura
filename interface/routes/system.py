@@ -192,6 +192,8 @@ def _collect_full_runtime_status(
         "overt_action": overt,
         "deliberation": deliberation,
         "wake_word": _runtime_component_status("wake_word", "get_status"),
+        "screen_perception": _runtime_component_status("screen_perception", "get_status"),
+        "perceptual_pump": _runtime_component_status("perceptual_pump", "get_status"),
     }
     resource_guard = desktop_resource_guard_enabled()
     expected = (
@@ -214,6 +216,8 @@ def _collect_full_runtime_status(
         "overt_action",
         "deliberation",
         "wake_word",
+        "screen_perception",
+        "perceptual_pump",
     )
     blockers = [name for name in required if not components[name].get("running", False)]
     return {
@@ -257,6 +261,7 @@ _HEALTH_MANIFEST_FALLBACK_TTL_S = _env_positive_float(
     "AURA_HEALTH_MANIFEST_FALLBACK_TTL_S",
     15.0,
 )
+_UI_SHELL_ERROR_BODY = Body(default=None)
 _boot_health_cache_lock = threading.Lock()
 _boot_health_cache: dict[str, Any] = {
     "captured_at": 0.0,
@@ -904,7 +909,7 @@ def _collect_tool_catalog() -> list[dict[str, Any]]:
         if hasattr(engine, "iter_tool_catalog"):
             raw_catalog = engine.iter_tool_catalog(include_inactive=True)
         elif hasattr(engine, "get_tool_catalog"):
-            get_tool_catalog = getattr(engine, "get_tool_catalog")
+            get_tool_catalog = engine.get_tool_catalog
             if inspect.isgeneratorfunction(get_tool_catalog):
                 raw_catalog = get_tool_catalog(include_inactive=True)
             else:
@@ -1094,7 +1099,7 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
                     payload["direct_screen_recording"] = direct_screen
                     payload["direct_accessibility"] = direct_accessibility
                     payload["direct_automation"] = direct_automation
-                except (asyncio.TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
+                except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
                     record_degradation(
                         "system",
                         exc,
@@ -2552,7 +2557,7 @@ async def api_ui_bootstrap(request: Request = None):
 
 
 @router.post("/ui/shell-error")
-async def api_ui_shell_error(payload: dict[str, Any] | None = Body(default=None)):
+async def api_ui_shell_error(payload: dict[str, Any] | None = _UI_SHELL_ERROR_BODY):
     """Record desktop shell render faults without blocking UI recovery."""
     safe_payload = _json_safe(payload if isinstance(payload, dict) else {})
     message = str(safe_payload.get("error") or "unknown shell render fault")[:500]
