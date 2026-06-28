@@ -17,6 +17,81 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Live Desktop Conversation Grounding Checkpoint (2026-06-28)
+
+### Gaps Addressed
+
+- **Raw-assistant/self-claim leakage is repaired before it reaches the user**:
+  the worker and dialogue contract now ground false memory, substrate, tool,
+  and over-strong future-memory claims before user-surface quality validation
+  or 32B retry. If a draft still cannot satisfy the contract, it fails closed
+  instead of shipping known incoherence.
+- **Live Aura voice no longer depends only on prompt compliance**: ungrounded
+  live-voice drafts for memory/state/reasoning/identity turns now receive a
+  deterministic grounding clause tied to the current contract before model
+  retry, preventing the repeated `ungrounded_live_voice` repair incident seen
+  in the neural stream.
+- **Conversation persistence is serialized under foreground pressure**:
+  SQLite writes now use a process-local write lock, a shorter busy timeout, and
+  one-time WAL setup so the 1.5s live UI persistence budget does not leave
+  timed-out writer threads fighting later turns.
+- **Capability inventories cannot pass while clipped**: live desktop tool
+  inventory replies are rejected if their tail ends mid-word or otherwise looks
+  truncated. The proof harness now runs the same user-facing reliability gate
+  on the inventory turn.
+- **Proof timing uses monotonic shutdown evidence**: `tools/live_boot_proof.py`
+  records explicit shutdown duration, budget, and within-budget status instead
+  of relying only on wall-clock elapsed time.
+
+### Latest Commands Run
+
+```bash
+python -m ruff check core/brain/llm/mlx_worker.py core/conversation/persistence.py core/conversation/self_claim_verifier.py core/phases/dialogue_policy.py interface/routes/chat.py tests/test_boot_runtime_safety.py tests/test_conversation_persistence_hardening.py tests/test_desktop_intent_safety.py tests/test_self_claim_verifier.py tests/test_strict_contract_steering_clamp.py tools/live_boot_proof.py
+python -m pytest -q tests/test_self_claim_verifier.py tests/test_desktop_intent_safety.py tests/test_strict_contract_steering_clamp.py tests/test_conversation_persistence_hardening.py tests/test_boot_runtime_safety.py
+python -m pytest -q tests/test_nonparametric_worker.py tests/test_chat_reliability_proof.py tests/test_chat_human_level_contract.py tests/test_live_mind_generation_controls.py tests/test_server_conversation_lane.py -k 'persistence or restart_recovers_completed_exchange or pending_conversation or capability_inventory or empty_cognitive_engine_reply or cognitive_engine_reply'
+make enterprise-gate
+make production-gate
+AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 AURA_LIVE_PROOF_SHUTDOWN_MAX_S=90 python tools/live_boot_proof.py --port 8153 --mode desktop --boot-timeout 600 --conversation-soak-turns 6 --out-dir artifacts/live_proof/full_runtime_semantic_analogy_embodiment_checkpoint_18_committed_grounding_tailfix
+```
+
+### Evidence
+
+- Focused grounding/persistence/worker/proof regression suite: **137 passed**.
+- Broader targeted live-chat runtime suite: **13 passed**, 356 deselected.
+- `make enterprise-gate`: **passed**.
+- `make production-gate`: **passed**, all 37 readiness checks true.
+- Clean committed live desktop proof artifact:
+  `artifacts/live_proof/full_runtime_semantic_analogy_embodiment_checkpoint_18_committed_grounding_tailfix/live_proof_20260628_112251_verdict.json`.
+- Clean proof facts: `passed=true`, `git_dirty=false`,
+  `git_commit=2898cf91a5b6805548c273ce667b71ab612c111a`, boot health in
+  **25s**, peak process-tree RSS **19,640.5 MB**, capability inventory pass,
+  bounded identity pass, continuity recall pass, **6/6** conversation-soak
+  turns, semantic/analogical plus imagination organs participated, governed
+  desktop action file verified on disk, shutdown **34.3s/90s**, no orphan
+  workers, port released, and runtime stream scan found no failure markers.
+
+### Closeout Position
+
+- Functional closeout estimate: about **93%**. This is an evidence-backed
+  runtime/proof estimate, not a claim that AGI, phenomenal consciousness, or
+  personhood has been proven.
+- Estimated remaining work: **3 consolidated checkpoints**, likely **5-7
+  smaller sub-checkpoints**:
+  1. Real launched GUI/voice visible multi-app proof using general computer-use
+     planning, focus verification, effect receipts, and bounded memory.
+  2. Learning/proof closure: CRSM->LoRA, fused-model CAA extraction, memory
+     metabolism, autonomous repair evidence, DNU/Aletheia/final-proof and
+     replay validation.
+  3. Longer soak, claims purification, remaining semantic ledger coverage,
+     clean worktree, and final checkpoint commit/push.
+
+### Next Exact Task
+
+Implement the timescale bridge for idle metabolism versus dialogue-speed user
+turns: bounded continuous sensory summaries, drift limits during long idle
+gaps, wake-context reconciliation before every foreground turn, and proof that
+background loops enrich context without inventing narrative state.
+
 ## Latest Semantic, Analogical, and Sensorimotor Runtime Checkpoint (2026-06-28)
 
 ### Gaps Addressed
