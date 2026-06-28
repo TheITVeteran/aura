@@ -15,6 +15,7 @@ Generates train/val JSONL in chat format for LoRA fine-tuning.
 Run:
     python training/build_dataset_v3.py
 """
+import hashlib
 import json
 import os
 import random
@@ -67,6 +68,24 @@ _CRSM_BANNED_MARKERS = (
     "password",
     "private key",
 )
+
+
+def _jsonl_file_stats(path: Path) -> dict[str, Any]:
+    """Return line-count and content hash evidence for generated JSONL files."""
+    digest = hashlib.sha256()
+    lines = 0
+    with path.open("rb") as fh:
+        for raw in fh:
+            lines += 1
+            digest.update(raw)
+    stat = path.stat()
+    return {
+        "path": str(path),
+        "lines": lines,
+        "size": stat.st_size,
+        "mtime": stat.st_mtime,
+        "sha256": digest.hexdigest(),
+    }
 
 # ── System prompt variants (expanded from 6 → 12) ─────────────────────────
 SYSTEM_VARIANTS = [
@@ -461,6 +480,15 @@ def main():
     with open(val_path, "w") as f:
         for ex in val:
             f.write(json.dumps(ex) + "\n")
+
+    crsm_manifest["output"] = {
+        "builder": "training/build_dataset_v3.py",
+        "split_seed": 42,
+        "total_examples": len(all_examples),
+        "crsm_examples": len(crsm_examples),
+        "train": _jsonl_file_stats(train_path),
+        "valid": _jsonl_file_stats(val_path),
+    }
 
     with open(CRSM_MANIFEST_PATH, "w") as f:
         json.dump(crsm_manifest, f, indent=2, sort_keys=True)

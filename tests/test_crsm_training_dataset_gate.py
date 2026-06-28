@@ -55,8 +55,8 @@ def test_crsm_experience_gate_rejects_internal_control_captures(tmp_path):
 
 
 def test_train_and_fuse_marks_crsm_consumed_only_from_current_manifest(tmp_path, monkeypatch):
-    from training import train_and_fuse
     import core.consciousness.crsm_loop_monitor as crsm_module
+    from training import train_and_fuse
 
     dataset = tmp_path / "lora_dataset.jsonl"
     dataset.write_text("{}\n{}\n{}\n", encoding="utf-8")

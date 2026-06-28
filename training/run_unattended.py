@@ -20,6 +20,11 @@ import time
 from pathlib import Path
 from subprocess import TimeoutExpired
 
+try:
+    import psutil
+except ImportError:  # pragma: no cover - production requirements include psutil.
+    psutil = None  # type: ignore[assignment]
+
 TRAINING_DIR = Path(__file__).resolve().parent
 REPO_DIR = TRAINING_DIR.parent
 if str(REPO_DIR) not in sys.path:
@@ -41,6 +46,7 @@ _STATE_RECOVERABLE_ERRORS = (
 )
 
 _shutdown = threading.Event()
+_GIB = 1024**3
 
 
 def _now_iso() -> str:
@@ -86,6 +92,78 @@ def update_state(*, started_at: str, **extra: object) -> dict:
     return state
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _process_tree_rss_gb(pid: int) -> float:
+    if psutil is None:
+        return 0.0
+    try:
+        root = psutil.Process(pid)
+        procs = [root, *root.children(recursive=True)]
+    except (psutil.Error, AttributeError, RuntimeError, TypeError, ValueError):
+        return 0.0
+    total = 0
+    for proc in procs:
+        try:
+            total += int(proc.memory_info().rss)
+        except (psutil.Error, AttributeError, RuntimeError, TypeError, ValueError):
+            continue
+    return total / _GIB
+
+
+def _memory_guard_reason(pid: int) -> str | None:
+    if psutil is None:
+        return "psutil_unavailable"
+    max_tree_rss_gb = _env_float("AURA_TRAINING_MAX_PROCESS_TREE_RSS_GB", 56.0)
+    max_host_percent = _env_float("AURA_TRAINING_MAX_HOST_MEMORY_PERCENT", 94.0)
+    tree_rss_gb = _process_tree_rss_gb(pid)
+    if tree_rss_gb >= max_tree_rss_gb:
+        return f"process_tree_rss:{tree_rss_gb:.1f}GB/{max_tree_rss_gb:.1f}GB"
+    try:
+        host = psutil.virtual_memory()
+        percent = float(getattr(host, "percent", 100.0) or 100.0)
+        if percent >= max_host_percent:
+            return f"host_memory_pressure:{percent:.1f}%/{max_host_percent:.1f}%"
+    except (psutil.Error, AttributeError, RuntimeError, TypeError, ValueError):
+        return "host_memory_probe_failed"
+    return None
+
+
+def _terminate_process_tree(proc) -> None:  # noqa: ANN001 - subprocess.Popen-compatible.
+    if psutil is not None:
+        try:
+            root = psutil.Process(proc.pid)
+            children = root.children(recursive=True)
+            for child in reversed(children):
+                try:
+                    child.terminate()
+                except (psutil.Error, RuntimeError, TypeError, ValueError):
+                    pass
+            root.terminate()
+            gone, alive = psutil.wait_procs([*children, root], timeout=15)
+            for child in alive:
+                try:
+                    child.kill()
+                except (psutil.Error, RuntimeError, TypeError, ValueError):
+                    pass
+            return
+        except (psutil.Error, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+    proc.terminate()
+    try:
+        proc.wait(timeout=15)
+    except TimeoutExpired:
+        proc.kill()
+
+
 def _spawn(cmd: list[str], *, started_at: str) -> int:
     """Run subprocess, heartbeat state, honour _shutdown."""
     print(f"[orch] $ {' '.join(cmd)}", flush=True)
@@ -95,14 +173,21 @@ def _spawn(cmd: list[str], *, started_at: str) -> int:
         offline_tooling=True,
         source="training_tooling:run_unattended",
     )
+    watchdog_interval = max(2.0, _env_float("AURA_TRAINING_WATCHDOG_INTERVAL_S", 10.0))
     try:
         while not _shutdown.is_set():
+            reason = _memory_guard_reason(proc.pid)
+            if reason:
+                print(f"[orch] memory guard tripped — {reason}; terminating training tree")
+                update_state(started_at=started_at, phase="memory_guard_kill", memory_guard_reason=reason)
+                _terminate_process_tree(proc)
+                return 137
             try:
-                return proc.wait(timeout=30)
+                return proc.wait(timeout=watchdog_interval)
             except TimeoutExpired:
                 update_state(started_at=started_at, phase="running")
         print("[orch] shutdown — terminating subprocess")
-        proc.terminate()
+        _terminate_process_tree(proc)
         try:
             return proc.wait(timeout=30)
         except TimeoutExpired:
@@ -124,6 +209,8 @@ def run_train_and_fuse(args: argparse.Namespace, *, started_at: str) -> int:
         cmd.append("--skip-train")
     if getattr(args, "resume", False):
         cmd.append("--resume")
+    if getattr(args, "preflight_only", False):
+        cmd.append("--preflight-only")
     if args.base_model:
         cmd += ["--base-model", args.base_model]
     if args.tag:
@@ -181,6 +268,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--base-model", default="")
     p.add_argument("--skip-dataset", action="store_true")
     p.add_argument("--skip-train", action="store_true")
+    p.add_argument("--resume", action="store_true")
+    p.add_argument("--preflight-only", action="store_true")
     return p.parse_args(argv)
 
 
@@ -199,6 +288,12 @@ def main(argv: list[str] | None = None) -> int:
         print("[orch] dryrun mode (skip-train + skip-dataset + dryrun* tag) — clean exit.")
         update_state(started_at=started_at, phase="dryrun_done")
         return 0
+
+    if args.preflight_only:
+        print("[orch] preflight-only mode — checking train/fuse safety without launching training.")
+        rc = run_train_and_fuse(args, started_at=started_at)
+        update_state(started_at=started_at, phase="preflight_done", last_pipeline_rc=rc)
+        return rc
 
     if has_partial_run() and not args.skip_train:
         print("[orch] partial run detected — resuming via resume_training.py")

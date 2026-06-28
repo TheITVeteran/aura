@@ -29,9 +29,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
+from typing import Any
+
+try:
+    import psutil
+except ImportError:  # pragma: no cover - production requirements include psutil.
+    psutil = None  # type: ignore[assignment]
 
 TRAINING_DIR = Path(__file__).parent
 REPO_DIR = TRAINING_DIR.parent
@@ -49,6 +56,14 @@ CRSM_INTEGRATION_MANIFEST = DATA_DIR / "crsm_integration_manifest.json"
 
 DEFAULT_BASE_MODEL = REPO_DIR / "models" / "Qwen2.5-32B-Instruct-4bit"
 TRAINING_COMMAND_TIMEOUT_S = float(os.environ.get("AURA_TRAINING_COMMAND_TIMEOUT_S", "86400"))
+_GIB = 1024**3
+_LIVE_AURA_CMD_MARKERS = (
+    "aura_main.py",
+    "interface/server.py",
+    "core/brain/llm/mlx_worker.py",
+    "tools/live_boot_proof.py",
+    "tools/visible_journal_demo_proof.py",
+)
 
 
 def _run(
@@ -112,6 +127,123 @@ def _model_size_tag(base_model: Path) -> str:
         if size in name:
             return size.upper().replace(".", "_")
     return "model"
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _default_training_headroom_gb(size_tag: str, *, skip_train: bool) -> tuple[float, float]:
+    """Return minimum available RAM and free disk for train/fuse safety."""
+    if size_tag == "72B":
+        return (44.0, 220.0) if not skip_train else (32.0, 160.0)
+    if size_tag == "32B":
+        return (28.0, 110.0) if not skip_train else (20.0, 90.0)
+    if size_tag in {"14B", "8B", "7B"}:
+        return (18.0, 60.0) if not skip_train else (12.0, 40.0)
+    return (12.0, 40.0) if not skip_train else (8.0, 25.0)
+
+
+def _live_aura_processes() -> list[dict[str, Any]]:
+    if psutil is None:
+        return []
+    current_pid = os.getpid()
+    found: list[dict[str, Any]] = []
+    try:
+        iterator = psutil.process_iter(["pid", "name", "cmdline"])
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return found
+    for proc in iterator:
+        try:
+            info = getattr(proc, "info", {}) or {}
+            pid = int(info.get("pid") or proc.pid)
+            if pid == current_pid:
+                continue
+            cmdline = info.get("cmdline") or []
+            if isinstance(cmdline, str):
+                cmdline = [cmdline]
+            cmd = " ".join(str(part) for part in cmdline)
+            if any(marker in cmd for marker in _LIVE_AURA_CMD_MARKERS):
+                found.append({"pid": pid, "name": info.get("name"), "cmdline": cmd[:500]})
+        except (psutil.Error, AttributeError, RuntimeError, TypeError, ValueError):
+            continue
+    return found
+
+
+def training_preflight(*, base_model: Path, skip_train: bool) -> dict[str, Any]:
+    size_tag = _model_size_tag(base_model)
+    default_min_available_gb, default_min_free_disk_gb = _default_training_headroom_gb(
+        size_tag,
+        skip_train=skip_train,
+    )
+    min_available_gb = _env_float("AURA_TRAINING_MIN_AVAILABLE_GB", default_min_available_gb)
+    min_free_disk_gb = _env_float("AURA_TRAINING_MIN_FREE_DISK_GB", default_min_free_disk_gb)
+    max_memory_percent = _env_float("AURA_TRAINING_MAX_MEMORY_PERCENT", 82.0)
+
+    blockers: list[str] = []
+    memory: dict[str, Any] = {"available_gb": None, "percent": None}
+    if psutil is None:
+        blockers.append("psutil_unavailable")
+    else:
+        try:
+            vm = psutil.virtual_memory()
+            available_gb = float(getattr(vm, "available", 0) or 0) / _GIB
+            percent = float(getattr(vm, "percent", 100.0) or 100.0)
+            memory = {"available_gb": round(available_gb, 2), "percent": round(percent, 1)}
+            if available_gb < min_available_gb:
+                blockers.append(
+                    f"available_memory:{available_gb:.1f}GB < required {min_available_gb:.1f}GB"
+                )
+            if percent > max_memory_percent:
+                blockers.append(f"memory_pressure:{percent:.1f}% > {max_memory_percent:.1f}%")
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            blockers.append(f"memory_probe_failed:{type(exc).__name__}")
+
+    disk_path = FUSED_BASE_DIR if FUSED_BASE_DIR.exists() else FUSED_BASE_DIR.parent
+    disk_usage = shutil.disk_usage(disk_path)
+    free_disk_gb = disk_usage.free / _GIB
+    if free_disk_gb < min_free_disk_gb:
+        blockers.append(f"free_disk:{free_disk_gb:.1f}GB < required {min_free_disk_gb:.1f}GB")
+
+    live_processes = [] if _env_flag("AURA_TRAINING_ALLOW_LIVE_AURA") else _live_aura_processes()
+    if live_processes:
+        blockers.append(f"live_aura_processes:{len(live_processes)}")
+
+    return {
+        "passed": not blockers,
+        "mode": "fuse_publish" if skip_train else "train_fuse_publish",
+        "base_model": str(base_model),
+        "size": size_tag,
+        "requirements": {
+            "min_available_gb": min_available_gb,
+            "max_memory_percent": max_memory_percent,
+            "min_free_disk_gb": min_free_disk_gb,
+            "block_live_aura": not _env_flag("AURA_TRAINING_ALLOW_LIVE_AURA"),
+        },
+        "memory": memory,
+        "disk": {"path": str(disk_path), "free_gb": round(free_disk_gb, 2)},
+        "live_aura_processes": live_processes,
+        "blockers": blockers,
+    }
+
+
+def enforce_training_preflight(*, base_model: Path, skip_train: bool) -> dict[str, Any]:
+    report = training_preflight(base_model=base_model, skip_train=skip_train)
+    print("\nTraining preflight:")
+    print(json.dumps(report, indent=2, sort_keys=True))
+    if not report["passed"]:
+        sys.exit("Training preflight failed: " + "; ".join(report["blockers"]))
+    return report
 
 
 def fuse_adapter(*, base_model: Path, tag: str) -> Path:
@@ -254,6 +386,7 @@ def main() -> None:
     parser.add_argument("--skip-dataset", action="store_true")
     parser.add_argument("--skip-train", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument(
         "--base-model",
         default=os.environ.get("AURA_LORA_BASE_MODEL", str(DEFAULT_BASE_MODEL)),
@@ -273,6 +406,14 @@ def main() -> None:
     print(f"  output dir: {FUSED_BASE_DIR}")
     print(f"  tag:        {args.tag or '(none)'}")
     print("=" * 60)
+
+    if not _env_flag("AURA_TRAINING_BYPASS_PREFLIGHT"):
+        enforce_training_preflight(base_model=base_model, skip_train=args.skip_train)
+    else:
+        print("\nTraining preflight bypassed by AURA_TRAINING_BYPASS_PREFLIGHT=1.")
+    if args.preflight_only:
+        print("\nPreflight-only mode complete; no dataset, training, fuse, or publish actions executed.")
+        return
 
     if not args.skip_dataset:
         build_dataset()

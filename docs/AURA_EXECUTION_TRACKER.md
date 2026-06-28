@@ -17,6 +17,81 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest CRSM Corpus Integrity / Training Safety Checkpoint (2026-06-28)
+
+### Gaps Addressed
+
+- **CRSM integration can no longer be proven by a stale manifest alone**: the
+  dataset builder now stores SHA-256 hashes, line counts, file sizes, and output
+  paths for the generated LoRA `train.jsonl` and `valid.jsonl` files. The CRSM
+  loop monitor recomputes those hashes before it reports the capture set as
+  integrated into the training corpus.
+- **Restored or stale train/valid files now fail closed**: if the CRSM manifest
+  matches the source capture log but the actual LoRA corpus was restored,
+  modified, or not rebuilt, the monitor returns `prepare_dataset` instead of
+  `train_fuse_publish`.
+- **32B CRSM training has a real launch preflight**: `training/train_and_fuse.py`
+  now checks available RAM, host memory pressure, free disk, and concurrent live
+  Aura processes before dataset/training/fuse work begins.
+- **Unattended training now has a runtime memory watchdog**:
+  `training/run_unattended.py` monitors process-tree RSS and host memory during
+  train/fuse execution and terminates the training tree before it can run the
+  machine into system memory death.
+- **The CRSM next action is explicit**: the monitor now surfaces both the
+  train/fuse command and a preflight-only command. Current local state is:
+  corpus integrated, training/fusion still pending.
+
+### Latest Commands Run
+
+```bash
+python training/build_dataset_v3.py
+python training/train_and_fuse.py --preflight-only --tag crsm-closeout
+python training/run_unattended.py --preflight-only --tag crsm-closeout
+python -m pytest -q tests/test_crsm_loop_monitor.py tests/test_crsm_training_dataset_gate.py tests/test_crsm_training_preflight.py
+python -m ruff check core/consciousness/crsm_loop_monitor.py training/build_dataset_v3.py training/train_and_fuse.py training/run_unattended.py tests/test_crsm_loop_monitor.py tests/test_crsm_training_preflight.py tests/test_crsm_training_dataset_gate.py
+make enterprise-gate
+make production-gate
+```
+
+### Evidence
+
+- CRSM corpus generation: **67144** total examples, **600** CRSM captures
+  accepted into the corpus, train/valid split **60429/6715**.
+- Current CRSM monitor: `state=open`,
+  `reason="1000 captures are integrated into the LoRA corpus but have not been
+  trained/fused into the active model"`,
+  `integration_manifest.current_for_dataset=true`, and
+  `output_integrity.corpus_current=true`.
+- Real local 32B preflight: **passed**, with **37.9 GB** available RAM,
+  **40.8%** host memory pressure, **811 GB** free disk, and **0** live Aura
+  processes detected.
+- Focused CRSM dataset/monitor/preflight tests: **17 passed**.
+- Ruff on touched CRSM training/proof surface: **passed**.
+- `make enterprise-gate`: **passed**.
+- `make production-gate`: **passed**, all 37 readiness checks true.
+
+### Closeout Position
+
+- Functional closeout estimate: about **96.5%**. CRSM is no longer ambiguous:
+  the experience captures are proven to be in the active LoRA corpus, but the
+  loop is still not closed until a successful train/fuse/publish writes the
+  consumed marker against the new fused model.
+- Estimated remaining work: **2 consolidated checkpoints**, likely **2-3
+  smaller sub-checkpoints**:
+  1. Run `bash training/run_unattended.sh --tag crsm-closeout` under the new
+     memory watchdog; if it completes, verify the fused model loads, active
+     manifest updates, and CRSM consumed marker closes. If it trips the guard,
+     fix the root resource/pipeline issue rather than weakening the proof.
+  2. Final closeout battery: visible voice/multi-app proof rerun,
+     DNU/Aletheia/final-proof replay as configured, longer soak/claims
+     purification, clean worktree, final commit/push.
+
+### Next Exact Task
+
+Commit and push the CRSM corpus-integrity and training-safety work, then start
+the guarded CRSM train/fuse/publish job when the machine has sufficient
+headroom.
+
 ## Latest CAA / CRSM Proof-Readiness Checkpoint (2026-06-28)
 
 ### Gaps Addressed

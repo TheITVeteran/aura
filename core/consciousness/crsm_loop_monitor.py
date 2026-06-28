@@ -17,6 +17,7 @@ verified, queryable fact.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -42,12 +43,14 @@ class CRSMLoopMonitor:
         marker_path: Path | None = None,
         integration_manifest_path: Path | None = None,
         training_state_path: Path | None = None,
+        training_data_dir: Path | None = None,
     ) -> None:
         self.dataset_path = dataset_path or (_REPO_ROOT / "data" / "synthetic_training" / "lora_dataset.jsonl")
         self.fused_model_dir = fused_model_dir or (_REPO_ROOT / "training" / "fused-model")
         self.marker_path = marker_path or (self.dataset_path.parent / ".crsm_consumed.json")
+        self.training_data_dir = training_data_dir or (_REPO_ROOT / "training" / "data")
         self.integration_manifest_path = integration_manifest_path or (
-            _REPO_ROOT / "training" / "data" / "crsm_integration_manifest.json"
+            self.training_data_dir / "crsm_integration_manifest.json"
         )
         self.training_state_path = training_state_path or (
             _REPO_ROOT / "training" / "adapters" / "aura-personality" / "training_state.json"
@@ -107,6 +110,40 @@ class CRSMLoopMonitor:
             record_degradation("crsm_loop_monitor", exc)
         return {}
 
+    def _jsonl_file_state(self, path: Path, expected: dict[str, Any] | None = None) -> dict[str, Any]:
+        expected = expected or {}
+        try:
+            if not path.exists():
+                return {"exists": False, "path": str(path), "matches_expected": False}
+            digest = hashlib.sha256()
+            lines = 0
+            with path.open("rb") as fh:
+                for raw in fh:
+                    lines += 1
+                    digest.update(raw)
+            stat = path.stat()
+            actual = {
+                "exists": True,
+                "path": str(path),
+                "lines": lines,
+                "size": stat.st_size,
+                "mtime": stat.st_mtime,
+                "sha256": digest.hexdigest(),
+            }
+            expected_hash = str(expected.get("sha256") or "")
+            expected_lines = int(expected.get("lines", -1) or -1)
+            expected_size = int(expected.get("size", -1) or -1)
+            actual["matches_expected"] = bool(
+                expected_hash
+                and actual["sha256"] == expected_hash
+                and expected_lines == lines
+                and expected_size == stat.st_size
+            )
+            return actual
+        except (OSError, ValueError, TypeError) as exc:
+            record_degradation("crsm_loop_monitor", exc)
+            return {"exists": False, "path": str(path), "matches_expected": False, "error": f"{type(exc).__name__}: {exc}"}
+
     def integration_manifest_state(self) -> dict[str, Any]:
         try:
             if not self.integration_manifest_path.exists():
@@ -116,6 +153,25 @@ class CRSMLoopMonitor:
             source_lines = int(manifest.get("source_lines", 0) or 0)
             source_mtime = float(manifest.get("source_mtime", 0.0) or 0.0)
             dataset_mtime = float(ds.get("mtime", 0.0) or 0.0)
+            output = dict(manifest.get("output") or {})
+            train_expected = dict(output.get("train") or {})
+            valid_expected = dict(output.get("valid") or {})
+            train_path = Path(str(train_expected.get("path") or (self.training_data_dir / "train.jsonl")))
+            valid_path = Path(str(valid_expected.get("path") or (self.training_data_dir / "valid.jsonl")))
+            train_state = self._jsonl_file_state(train_path, train_expected)
+            valid_state = self._jsonl_file_state(valid_path, valid_expected)
+            expected_total = int(output.get("total_examples", 0) or 0)
+            actual_total = int(train_state.get("lines", 0) or 0) + int(valid_state.get("lines", 0) or 0)
+            source_current = (
+                source_lines == int(ds.get("lines", 0) or 0)
+                and source_mtime + 1.0 >= dataset_mtime
+            )
+            corpus_current = bool(
+                output
+                and train_state.get("matches_expected")
+                and valid_state.get("matches_expected")
+                and expected_total == actual_total
+            )
             return {
                 "exists": True,
                 "path": str(self.integration_manifest_path),
@@ -124,10 +180,14 @@ class CRSMLoopMonitor:
                 "deduplicated": int(manifest.get("deduplicated", 0) or 0),
                 "rejected_by_reason": dict(manifest.get("rejected_by_reason") or {}),
                 "source_mtime": source_mtime,
-                "current_for_dataset": (
-                    source_lines == int(ds.get("lines", 0) or 0)
-                    and source_mtime + 1.0 >= dataset_mtime
-                ),
+                "output_integrity": {
+                    "expected_total": expected_total,
+                    "actual_total": actual_total,
+                    "train": train_state,
+                    "valid": valid_state,
+                    "corpus_current": corpus_current,
+                },
+                "current_for_dataset": source_current and corpus_current,
             }
         except (OSError, ValueError, TypeError) as exc:
             record_degradation("crsm_loop_monitor", exc)
@@ -264,6 +324,13 @@ class CRSMLoopMonitor:
             "--tag",
             "crsm-closeout",
         ]
+        preflight_command = [
+            "python",
+            "training/train_and_fuse.py",
+            "--preflight-only",
+            "--tag",
+            "crsm-closeout",
+        ]
         if state == "closed":
             return {"required": False, "reason": "CRSM captures already consumed by active training marker"}
         if not manifest.get("current_for_dataset"):
@@ -277,6 +344,7 @@ class CRSMLoopMonitor:
             "required": True,
             "phase": "train_fuse_publish",
             "command": command,
+            "preflight_command": preflight_command,
             "reason": (
                 "Current CRSM captures are in the LoRA corpus, but proof closure "
                 "requires a successful train/fuse marker from training/train_and_fuse.py"

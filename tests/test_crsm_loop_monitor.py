@@ -1,6 +1,7 @@
 """Tests for CRSM→LoRA loop closure verification."""
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 
@@ -22,11 +23,49 @@ def _monitor(tmp_path):
         marker_path=ds.parent / ".crsm_consumed.json",
         integration_manifest_path=manifest,
         training_state_path=training_state,
+        training_data_dir=manifest.parent,
     )
 
 
 def _write_lines(path, n):
     path.write_text("".join(json.dumps({"text": f"sample {i}"}) + "\n" for i in range(n)), encoding="utf-8")
+
+
+def _jsonl_stats(path):
+    digest = hashlib.sha256()
+    lines = 0
+    with path.open("rb") as fh:
+        for raw in fh:
+            lines += 1
+            digest.update(raw)
+    st = path.stat()
+    return {"path": str(path), "lines": lines, "size": st.st_size, "mtime": st.st_mtime, "sha256": digest.hexdigest()}
+
+
+def _write_manifest_with_corpus(m, *, source_lines, accepted):
+    train = m.training_data_dir / "train.jsonl"
+    valid = m.training_data_dir / "valid.jsonl"
+    train.parent.mkdir(parents=True, exist_ok=True)
+    _write_lines(train, 3)
+    _write_lines(valid, 2)
+    m.integration_manifest_path.write_text(
+        json.dumps(
+            {
+                "source_lines": source_lines,
+                "source_mtime": m.dataset_path.stat().st_mtime,
+                "accepted": accepted,
+                "deduplicated": 10,
+                "rejected_by_reason": {"too_short": 10},
+                "output": {
+                    "total_examples": 5,
+                    "crsm_examples": accepted,
+                    "train": _jsonl_stats(train),
+                    "valid": _jsonl_stats(valid),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_idle_when_no_captures(tmp_path):
@@ -101,18 +140,7 @@ def test_marker_round_trip(tmp_path):
 def test_open_state_reports_current_manifest_and_train_fuse_next_action(tmp_path):
     m = _monitor(tmp_path)
     _write_lines(m.dataset_path, 100)
-    m.integration_manifest_path.write_text(
-        json.dumps(
-            {
-                "source_lines": 100,
-                "source_mtime": m.dataset_path.stat().st_mtime,
-                "accepted": 80,
-                "deduplicated": 10,
-                "rejected_by_reason": {"too_short": 10},
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_manifest_with_corpus(m, source_lines=100, accepted=80)
     m.training_state_path.write_text(
         json.dumps({"phase": "resume_done", "last_iter": 66000, "last_pipeline_rc": 1}),
         encoding="utf-8",
@@ -124,9 +152,23 @@ def test_open_state_reports_current_manifest_and_train_fuse_next_action(tmp_path
     assert "integrated into the LoRA corpus" in state["reason"]
     assert state["integration_manifest"]["current_for_dataset"] is True
     assert state["integration_manifest"]["accepted"] == 80
+    assert state["integration_manifest"]["output_integrity"]["corpus_current"] is True
     assert state["training_state"]["last_iter"] == 66000
     assert state["next_action"]["phase"] == "train_fuse_publish"
     assert "training/run_unattended.sh" in " ".join(state["next_action"]["command"])
+
+
+def test_restored_training_corpus_invalidates_current_manifest(tmp_path):
+    m = _monitor(tmp_path)
+    _write_lines(m.dataset_path, 100)
+    _write_manifest_with_corpus(m, source_lines=100, accepted=80)
+    (m.training_data_dir / "train.jsonl").write_text("{}\n", encoding="utf-8")
+
+    state = m.loop_state()
+
+    assert state["integration_manifest"]["current_for_dataset"] is False
+    assert state["integration_manifest"]["output_integrity"]["corpus_current"] is False
+    assert state["next_action"]["phase"] == "prepare_dataset"
 
 
 def test_stale_manifest_reports_prepare_dataset_next_action(tmp_path):
