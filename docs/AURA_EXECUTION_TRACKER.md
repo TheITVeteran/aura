@@ -17,6 +17,82 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Live Full-Mind Desktop Proof Checkpoint (2026-06-28)
+
+### Gaps Addressed
+
+- **Live proof now checks the full desktop runtime, not just heartbeat health**:
+  `tools/live_boot_proof.py` polls `/api/health` during boot and requires the
+  normal desktop profile to report all full-runtime organs running:
+  `pneuma`, `mhaf`, curiosity, proactive communication, autonomous initiative,
+  research, self-healing, self-modification quarantine, consciousness stream,
+  autonomy conductor, overt action, deliberation, wake-word, `screen_perception`,
+  and `perceptual_pump`.
+- **Bounded planning can no longer masquerade as a full-mind desktop reply**:
+  required desktop CognitiveEngine turns now set
+  `require_full_foreground_mind_reply`. The bounded planning floor can still be
+  used as context, but it cannot replace foreground model generation on the
+  live full-mind proof path.
+- **Runtime stream failure scanning is stricter but less noisy**: the proof now
+  fails on live-conversation failures such as dialogue repair exhaustion,
+  ungrounded live-voice drafts, Cortex route blocks, and no-answer-quality
+  replies, while avoiding false positives from ordinary words like
+  `error_logs` or "critical services online".
+
+### Latest Commands Run
+
+```bash
+python -m ruff check tools/live_boot_proof.py core/brain/cognitive_engine.py interface/routes/chat.py tests/test_boot_runtime_safety.py tests/test_server_conversation_lane.py tests/test_live_mind_generation_controls.py
+python -m pytest -q tests/test_boot_runtime_safety.py::test_live_boot_proof_runtime_stream_scan_fails_failure_markers tests/test_boot_runtime_safety.py::test_live_boot_proof_stream_scan_ignores_non_log_level_error_words tests/test_server_conversation_lane.py::test_desktop_required_bounded_planning_uses_foreground_cognitive_engine tests/test_live_mind_generation_controls.py::test_desktop_quick_reply_bounded_planning_uses_live_mind_floor tests/test_live_mind_generation_controls.py::test_required_desktop_full_mind_reply_does_not_use_bounded_planning_floor
+python -m pytest -q tests/test_boot_runtime_safety.py tests/test_full_desktop_runtime_contract.py tests/test_task_planning_runtime.py tests/test_cognitive_situation_frame.py tests/test_perceptual_pump_runtime.py tests/test_screen_perception.py tests/test_system_route_hardening.py tests/test_live_mind_generation_controls.py::test_desktop_quick_reply_bounded_planning_uses_live_mind_floor tests/test_live_mind_generation_controls.py::test_required_desktop_full_mind_reply_does_not_use_bounded_planning_floor tests/test_server_conversation_lane.py::test_desktop_required_bounded_planning_uses_foreground_cognitive_engine tests/test_server_conversation_lane.py::test_bounded_planning_floor_can_prove_live_full_mind_path
+make enterprise-gate
+make production-gate
+AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 python tools/live_boot_proof.py --port 8143 --mode desktop --boot-timeout 600 --conversation-soak-turns 6 --out-dir artifacts/live_proof/full_runtime_embodied_desktop_20260628_checkpoint_17_clean
+```
+
+### Evidence
+
+- Ruff passed for all changed proof/chat/CognitiveEngine/test files.
+- Focused proof/chat/CognitiveEngine regression suite: **5 passed**.
+- Broader affected runtime suite: **98 passed**.
+- `make enterprise-gate`: **passed**.
+- `make production-gate`: **passed**, all 37 readiness checks true.
+- Clean live desktop proof artifact:
+  `artifacts/live_proof/full_runtime_embodied_desktop_20260628_checkpoint_17_clean/live_proof_20260628_054528_verdict.json`.
+- Clean live proof facts: `passed=true`, `git_dirty=false`,
+  `git_commit=c1f9269d294752299bb2cef911fdb41aa3f221af`,
+  peak process-tree RSS **19,714.3 MB**, boot health in **25s**, full runtime
+  ready with no blockers, identity pass, continuity recall pass, **6/6**
+  conversation-soak turns, desktop action file verified on disk, clean
+  shutdown, no orphan workers, port released, and runtime stream scan found no
+  failure markers.
+- The previously weak planning probe now used `status=cognitive_engine`
+  instead of `cognitive_engine_bounded_planning`.
+
+### Closeout Position
+
+- Functional closeout estimate: about **91%**. This is a runtime reliability
+  and proof-surface estimate, not a claim that AGI, consciousness, or
+  personhood has been proven.
+- Estimated remaining work: **3 consolidated checkpoints**, likely **7-9
+  smaller sub-checkpoints**:
+  1. Real launched GUI/voice visible multi-app proof: wake/launch, live chat,
+     Notes/Chrome/Docs/file/PDF/wallpaper-style actions through general
+     computer-use planning, no hardcoded demo path, effect receipts, and clean
+     terminal/neural stream.
+  2. Learning/proof closure: CRSM→LoRA, CAA extraction validation, active memory
+     metabolism, autonomous repair/immune evidence, DNU/Aletheia/final-proof
+     reruns, replay package, and no proof contamination.
+  3. Long-run closure: longer soak, claims purification, remaining semantic
+     review ledger coverage, clean worktree, final checkpoint commit/push.
+
+### Next Exact Task
+
+Run the real launched GUI/voice desktop path with visible OS control, not just
+the backend live proof. The proof must show Aura typing into the intended app
+surface, not URL bars or Codex, while keeping memory bounded and every major
+action governed and receipt-verified.
+
 ## Latest Embodied Cognition Contract Checkpoint (2026-06-28)
 
 ### Gaps Addressed
