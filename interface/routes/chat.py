@@ -4330,6 +4330,7 @@ async def _run_cognitive_engine_chat_turn(
         "recent_context_needed": recent_context_needed,
         "live_mind_context": live_mind_context,
         "live_mind_context_required": bool(require_engine),
+        "require_full_foreground_mind_reply": bool(require_engine),
         "live_mind_required_subsystems": dict(live_mind_context.get("required_subsystems") or {}),
         "live_mind_required_subsystems_ok": bool(live_mind_context.get("required_subsystems_ok")),
         "cognitive_engine_required": bool(require_engine),

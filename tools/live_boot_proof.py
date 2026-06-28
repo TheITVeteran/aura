@@ -58,6 +58,7 @@ LIVE_FALLBACK_RE = re.compile(
     r"hit a bump|one moment|having trouble formulating|could you try rephrasing)",
     re.IGNORECASE,
 )
+LIVE_LOG_LEVEL_RE = re.compile(r"(?:^|[\s\[])(?:ERROR|CRITICAL)(?:\]|:)", re.IGNORECASE)
 
 LIVE_STREAM_FAILURE_MARKERS = (
     "ERROR",
@@ -78,6 +79,29 @@ LIVE_STREAM_FAILURE_MARKERS = (
     "out of application memory",
     "Cortex Warming",
     "CORTEX UNAVAILABLE",
+    "Cortex route blocked",
+    "Desktop CognitiveEngine produced no acceptable reply",
+    "no answer-quality response",
+    "Dialogue contract deterministic repair still failed before retry",
+    "ungrounded_live_voice",
+)
+
+LIVE_DESKTOP_FULL_RUNTIME_COMPONENTS = (
+    "pneuma",
+    "mhaf",
+    "curiosity",
+    "proactive_communication",
+    "autonomous_initiative",
+    "research",
+    "self_healing",
+    "self_modification",
+    "consciousness_stream",
+    "autonomy_conductor",
+    "overt_action",
+    "deliberation",
+    "wake_word",
+    "screen_perception",
+    "perceptual_pump",
 )
 
 LIVE_CONVERSATION_SOAK_PROMPTS = (
@@ -437,12 +461,19 @@ class LiveProof:
                 with httpx.Client(timeout=5.0) as client:
                     heartbeat_resp = client.get(f"{self.base}/api/health/heartbeat")
                     boot_resp = client.get(f"{self.base}/api/health/boot")
-                if heartbeat_resp.status_code in {200, 503} and boot_resp.status_code in {200, 503}:
+                    health_resp = client.get(f"{self.base}/api/health")
+                if (
+                    heartbeat_resp.status_code in {200, 503}
+                    and boot_resp.status_code in {200, 503}
+                    and health_resp.status_code in {200, 503}
+                ):
                     heartbeat_payload = heartbeat_resp.json()
                     boot_payload = boot_resp.json()
+                    health_payload = health_resp.json()
                     heartbeat = heartbeat_payload if isinstance(heartbeat_payload, dict) else {}
                     boot = boot_payload if isinstance(boot_payload, dict) else {}
-                    last_state = {"heartbeat": heartbeat, "boot": boot}
+                    api_health = health_payload if isinstance(health_payload, dict) else {}
+                    last_state = {"heartbeat": heartbeat, "boot": boot, "health": api_health}
                     required = heartbeat.get("required_probes")
                     required_ok = bool(
                         isinstance(required, dict)
@@ -479,6 +510,34 @@ class LiveProof:
                     checks = boot.get("checks")
                     if not isinstance(checks, dict):
                         checks = {}
+                    full_runtime = api_health.get("full_runtime")
+                    if not isinstance(full_runtime, dict):
+                        full_runtime = {}
+                    full_components = full_runtime.get("components")
+                    if not isinstance(full_components, dict):
+                        full_components = {}
+                    full_runtime_blockers = [
+                        str(item)
+                        for item in (full_runtime.get("blockers") or [])
+                        if str(item or "").strip()
+                    ]
+                    missing_full_components: list[str] = []
+                    if self.mode == "desktop":
+                        for component in LIVE_DESKTOP_FULL_RUNTIME_COMPONENTS:
+                            component_status = full_components.get(component)
+                            if not isinstance(component_status, dict) or not bool(
+                                component_status.get("running", False)
+                            ):
+                                missing_full_components.append(component)
+                    full_runtime_ok = (
+                        self.mode != "desktop"
+                        or (
+                            bool(full_runtime.get("full_runtime_expected", False))
+                            and bool(api_health.get("full_runtime_ready", full_runtime.get("ready", False)))
+                            and not full_runtime_blockers
+                            and not missing_full_components
+                        )
+                    )
                     all_observed_blockers = normalized_blockers | normalized_boot_blockers | lane_blockers
                     allowed_unproven_conversation_blockers = {
                         "healthy",
@@ -501,6 +560,7 @@ class LiveProof:
                     conversation_unproven_only = bool(
                         self.mode == "desktop"
                         and required_ok
+                        and full_runtime_ok
                         and heartbeat.get("runtime_probe_healthy") is True
                         and checks.get("runtime_required_probes") is True
                         and not degraded_critical
@@ -513,6 +573,7 @@ class LiveProof:
                     conversation_standby_only = bool(
                         self.mode == "desktop"
                         and required_ok
+                        and full_runtime_ok
                         and heartbeat.get("runtime_probe_healthy") is True
                         and boot.get("system_ready") is True
                         and boot.get("launcher_ready") is True
@@ -533,6 +594,7 @@ class LiveProof:
                         and boot.get("conversation_ready") is True
                         and boot.get("ready") is True
                         and required_ok
+                        and full_runtime_ok
                         and no_blockers
                     ):
                         return self.record(
@@ -755,7 +817,13 @@ class LiveProof:
                 status = str(payload.get("status") or "")
                 reliability = assess_user_facing_reply(prompt, text)
                 fallback = bool(LIVE_FALLBACK_RE.search(text))
-                ok = bool(text) and reliability.ok and not fallback
+                bounded_floor = status in {
+                    "cognitive_engine_bounded_planning",
+                    "cognitive_engine_failure_mode_surface",
+                    "desktop_social_presence_contract",
+                    "runtime_fact_status",
+                }
+                ok = bool(text) and reliability.ok and not fallback and not bounded_floor
                 turn_detail = {
                     "turn": index,
                     "status": status,
@@ -766,6 +834,7 @@ class LiveProof:
                     "reliability_ok": reliability.ok,
                     "reliability_reasons": list(reliability.reasons),
                     "fallback": fallback,
+                    "bounded_floor": bounded_floor,
                     "reply": text[:800],
                 }
                 turn_summaries.append(turn_detail)
@@ -775,7 +844,14 @@ class LiveProof:
                     summary=(
                         f"{latency:.1f}s status={status or 'unknown'} "
                         f"chars={len(text)} rss_delta={self.tree_rss_mb() - rss_before:.0f}MB"
-                        + ("" if ok else f" reasons={list(reliability.reasons)} fallback={fallback}")
+                        + (
+                            ""
+                            if ok
+                            else (
+                                f" reasons={list(reliability.reasons)} "
+                                f"fallback={fallback} bounded_floor={bounded_floor}"
+                            )
+                        )
                     ),
                     **turn_detail,
                 )
@@ -966,10 +1042,15 @@ class LiveProof:
         text = self.stdout_path.read_text(errors="replace")
         matches: dict[str, list[str]] = {}
         for marker in LIVE_STREAM_FAILURE_MARKERS:
+            marker_lower = marker.lower()
             lines = [
                 line[:700]
                 for line in text.splitlines()
-                if marker in line
+                if (
+                    LIVE_LOG_LEVEL_RE.search(line)
+                    if marker in {"ERROR", "CRITICAL"}
+                    else marker_lower in line.lower()
+                )
             ][:5]
             if lines:
                 matches[marker] = lines

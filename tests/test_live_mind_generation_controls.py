@@ -265,6 +265,63 @@ async def test_desktop_quick_reply_bounded_planning_uses_live_mind_floor(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_required_desktop_full_mind_reply_does_not_use_bounded_planning_floor(monkeypatch):
+    from core.brain import cognitive_engine as cognitive_engine_module
+    from core.brain.cognitive_engine import CognitiveEngine
+    from core.brain.types import ThinkingMode
+
+    calls: list[dict[str, object]] = []
+
+    class Router:
+        async def think(self, **kwargs):
+            calls.append(dict(kwargs))
+            return "I would do that as one governed workflow: gather sources, write the document, verify the visible result, export it, and record receipts."
+
+    class Container:
+        def get(self, name, default=None):
+            if name == "llm_router":
+                return Router()
+            return default
+
+    monkeypatch.setattr(cognitive_engine_module, "get_container", lambda: Container())
+
+    engine = CognitiveEngine()
+    bounded_reply = (
+        "I would use browser research and the document editor as one governed workflow: "
+        "collect sources, draft the synthesis, verify the visible document, export it, and "
+        "record receipts without claiming unverified completion."
+    )
+    thought = await engine._direct_desktop_quick_reply(
+        "Explain how you would use browser research and a document editor together on a user task.",
+        ThinkingMode.FAST,
+        "desktop_quick_user",
+        {
+            "desktop_quick_reply_contract": True,
+            "bounded_planning_contract": True,
+            "bounded_planning_reply": bounded_reply,
+            "require_full_foreground_mind_reply": True,
+            "live_mind_context_required": True,
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "live_mind_context": {
+                **_ready_live_mind_context(),
+                "required_subsystems_ok": True,
+            },
+            "visible_user_message": (
+                "Explain how you would use browser research and a document editor together on a user task."
+            ),
+            "max_tokens": 512,
+        },
+        timeout_s=30.0,
+    )
+
+    assert thought is not None
+    assert calls
+    assert thought.content != bounded_reply
+    assert thought.metadata.get("response_path") != "cognitive_engine_bounded_planning"
+
+
+@pytest.mark.asyncio
 async def test_full_phase_reply_preserves_live_mind_controls_and_worker_receipt():
     from core.brain.cognitive_engine import CognitiveEngine
     from core.brain.types import ThinkingMode

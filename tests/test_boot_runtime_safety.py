@@ -411,6 +411,11 @@ def test_live_boot_proof_uses_readiness_heartbeat_contract():
     assert "required_probes" in source
     assert "runtime_probe_healthy" in source
     assert "system_ready" in source
+    assert "/api/health" in source
+    assert "LIVE_DESKTOP_FULL_RUNTIME_COMPONENTS" in source
+    assert "full_runtime_ready" in source
+    assert "screen_perception" in source
+    assert "perceptual_pump" in source
     assert "exercise_capability_inventory_turn" in source
     assert "X-Aura-Require-CognitiveEngine" in source
 
@@ -428,7 +433,11 @@ def test_live_boot_proof_runtime_stream_scan_fails_failure_markers(monkeypatch, 
         conversation_soak_turns=0,
     )
     proof.stdout_path.write_text(
-        "Cortex Warming...\nTraceback (most recent call last):\nRuntime: DEGRADED\n",
+        "Cortex Warming...\n"
+        "Traceback (most recent call last):\n"
+        "Runtime: DEGRADED\n"
+        "Dialogue contract deterministic repair still failed before retry: initial=ungrounded_live_voice\n"
+        "cortex route blocked\n",
         encoding="utf-8",
     )
 
@@ -438,6 +447,33 @@ def test_live_boot_proof_runtime_stream_scan_fails_failure_markers(monkeypatch, 
     assert "Cortex Warming" in step["markers"]
     assert "Traceback" in step["markers"]
     assert "Runtime: DEGRADED" in step["markers"]
+    assert "Dialogue contract deterministic repair still failed before retry" in step["markers"]
+    assert "Cortex route blocked" in step["markers"]
+
+
+def test_live_boot_proof_stream_scan_ignores_non_log_level_error_words(monkeypatch, tmp_path):
+    import tools.live_boot_proof as live_boot_proof
+
+    monkeypatch.setattr(live_boot_proof, "PROOF_DIR", tmp_path)
+    proof = live_boot_proof.LiveProof(
+        port=8999,
+        mode="desktop",
+        boot_timeout_s=1.0,
+        skip_desktop=True,
+        restart_continuity=False,
+        conversation_soak_turns=0,
+    )
+    proof.stdout_path.write_text(
+        "StructuredErrorLogger initialized at data/error_logs\n"
+        "HEALTH CONTRACT: All critical + important services online\n"
+        "CriticalityRegulator initialized\n",
+        encoding="utf-8",
+    )
+
+    assert proof.scan_runtime_stream() is True
+    step = proof.steps[-1]
+    assert step["step"] == "runtime_stream_scan"
+    assert step["markers"] == {}
 
 
 def test_live_boot_proof_verdict_records_commit_and_end_metadata():

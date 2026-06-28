@@ -2011,7 +2011,9 @@ class CognitiveEngine:
             and live_mind_required_subsystems_ok
         ):
             live_mind_controls_bound = True
-        if bool(context.get("bounded_planning_contract")):
+        if bool(context.get("bounded_planning_contract")) and not bool(
+            context.get("require_full_foreground_mind_reply", False)
+        ):
             bounded_reply = str(context.get("bounded_planning_reply") or "").strip()
             if bounded_reply:
                 metadata = self._live_mind_structured_floor_metadata(
