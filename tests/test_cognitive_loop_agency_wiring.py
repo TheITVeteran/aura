@@ -10,8 +10,6 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-import pytest
-
 from core.cognitive_loop import CognitiveLoop
 
 
@@ -22,15 +20,19 @@ def _loop():
     return loop
 
 
-def test_heartbeat_appraisal_dispatches_and_records_a_receipt(monkeypatch):
+def test_heartbeat_appraisal_dispatches_and_records_a_receipt(monkeypatch, tmp_path):
     import core.cognition.outcome_ledger as ol
-    monkeypatch.setattr(ol, "_ledger", ol.OutcomeLedger(db_path="/tmp/aura_test_hb_ledger.db"))
+    monkeypatch.setattr(
+        ol,
+        "_ledger",
+        ol.OutcomeLedger(db_path=str(tmp_path / "aura_test_hb_ledger.db")),
+    )
 
     # Reset agency singleton so it uses the (ledger-enabled) default.
     import core.agency.hierarchical_agency as ha
     monkeypatch.setattr(ha, "_agency", None)
 
-    from core.affect.nociception import get_nociception_engine, DamageChannel
+    from core.affect.nociception import DamageChannel, get_nociception_engine
     noci = get_nociception_engine()
     noci.reset()
     noci.register_damage(DamageChannel.GOVERNANCE_BREACH, 0.95)  # acute → reflex tier
@@ -52,10 +54,14 @@ def test_appraisal_is_fail_open(monkeypatch):
     # Even if the agency module blows up, the heartbeat must not raise.
     import core.agency.hierarchical_agency as ha
 
+    calls = []
+
     def _boom():
+        calls.append("called")
         raise RuntimeError("agency down")
 
     monkeypatch.setattr(ha, "get_hierarchical_agency", _boom)
     fe_state = SimpleNamespace(arousal=0.1, dominant_action="idle", valence=0.0)
     # should swallow the error, not propagate
     asyncio.run(_loop()._appraise_through_agency(fe_state, spl=None))
+    assert calls == ["called"]

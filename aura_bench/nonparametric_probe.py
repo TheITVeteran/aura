@@ -68,16 +68,24 @@ def main() -> int:
         sub = logits[idx] - logits[idx].max()
         ex = np.exp(sub)
         ex /= ex.sum()
-        return {int(t): float(p) for t, p in zip(idx, ex)}
+        return {int(t): float(p) for t, p in zip(idx, ex, strict=True)}
 
     import os as _os
+    import tempfile
+    from pathlib import Path
 
-    for _f in ("/tmp/_npm_probe.keys.npy", "/tmp/_npm_probe.meta.json", "/tmp/_npm_seen.json"):
+    probe_root = Path(tempfile.gettempdir()) / "aura_npm_probe"
+    seen_path = Path(tempfile.gettempdir()) / "aura_npm_seen.json"
+    for _f in (
+        str(probe_root.with_suffix(".keys.npy")),
+        str(probe_root.with_suffix(".meta.json")),
+        str(seen_path),
+    ):
         if _os.path.exists(_f):
             _os.remove(_f)
-    mem = NonParametricMemory(dim=dim, path="/tmp/_npm_probe", base_lambda=0.4, max_lambda=0.8)
+    mem = NonParametricMemory(dim=dim, path=str(probe_root), base_lambda=0.4, max_lambda=0.8)
     enc = MLXEncoder(model, tok)
-    ing = NonParametricIngestor(mem, dedup_path="/tmp/_npm_seen.json")
+    ing = NonParametricIngestor(mem, dedup_path=str(seen_path))
     positions = sum(ing.ingest_sequence(ctx, ans, enc) for ctx, ans in FACTS)
     print(f"Datastore built: {len(mem)} entries from {len(FACTS)} facts ({positions} positions).\n")
 

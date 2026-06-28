@@ -17,6 +17,80 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Live Desktop Conversation Reliability Checkpoint (2026-06-27)
+
+### Gaps Addressed
+
+- **Visible desktop turns were validating hidden/prebuilt prompt text instead
+  of the user's actual message in some paths**: `core/brain/inference_gate.py`
+  and `core/phases/response_generation.py` now carry the canonical
+  `user_surface_validation_prompt`/`visible_user_message` through the live
+  desktop path so quality gates judge the real user turn.
+- **Full-mind proof metadata could be erased after a successful CognitiveEngine
+  turn**: `core/brain/cognitive_engine.py` and `interface/routes/chat.py`
+  now preserve preflight live-mind generation controls, snapshot readiness,
+  and worker-control receipts when the accepted route is still the governed
+  CognitiveEngine path.
+- **Non-executing tool-planning prompts could burn a foreground 32B generation
+  and time out into `desktop_cognitive_engine_required_no_reply`**:
+  bounded planning requests now use a CognitiveEngine structured floor with
+  live-mind proof metadata. This is general planning infrastructure, not a
+  demo-specific app sequence.
+- **Foreground generation leases could stay stuck after stale ownership**:
+  `core/brain/llm_health_router.py` now aborts stale foreground generation
+  leases instead of leaving the live desktop lane blocked indefinitely.
+
+### Latest Commands Run
+
+```bash
+python -m ruff check interface/routes/chat.py core/brain/cognitive_engine.py core/brain/llm_health_router.py core/brain/inference_gate.py core/phases/response_generation.py tests/test_enterprise_hardening_fixes.py tests/test_server_conversation_lane.py tests/test_inference_gate_tiering.py tests/test_response_generation_thermal_guard.py tests/test_live_mind_generation_controls.py
+python -m pytest -q tests/test_live_mind_generation_controls.py tests/test_server_conversation_lane.py::test_bounded_planning_floor_can_prove_live_full_mind_path tests/test_server_conversation_lane.py::test_full_mind_contract_preserves_proven_generation_when_lane_flips_failed tests/test_server_conversation_lane.py::test_structured_governance_refusal_can_prove_live_full_mind_path
+python -m pytest -q tests/test_inference_gate_tiering.py tests/test_response_generation_thermal_guard.py tests/test_server_conversation_lane.py tests/test_chat_reliability_proof.py tests/test_live_mind_generation_controls.py
+AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 python tools/live_boot_proof.py --port 8137 --mode desktop --boot-timeout 600 --conversation-soak-turns 12 --out-dir artifacts/live_proof/full_desktop_runtime_20260627_checkpoint_14i
+python -m pytest -q tests/test_cognitive_loop_agency_wiring.py tests/test_moral_responsibility.py tests/test_nonparametric_worker.py
+make enterprise-gate
+make production-gate
+```
+
+Latest focused/broad result: **434 live desktop/chat-route tests passed** and
+**14 agency/moral/non-parametric worker tests passed**. `make
+enterprise-gate` and `make production-gate` passed after removing static
+regressions in hardcoded temp paths, scaffold wording, broad exception
+handling, and active-model resolution.
+Live proof artifact:
+`artifacts/live_proof/full_desktop_runtime_20260627_checkpoint_14i/`.
+The live proof passed boot health, capability inventory, identity,
+conversation continuity, **12/12 desktop conversation soak turns**, desktop
+action verification, graceful shutdown, orphan cleanup, port release, and
+runtime stream scan with no failure markers.
+
+Current closeout estimate after this checkpoint: **~88%**. Remaining work is
+estimated at **4 consolidated checkpoints**:
+
+1. Real launched GUI/voice multi-app demo proof with visible OS actions,
+   memory ceilings, and tool receipts.
+2. CRSM→LoRA / CAA closure plus **one live-32B KV-cache foreground validation
+   run before any default flag flip**.
+3. DNU/Aletheia/final-proof reruns plus receipt/artifact/replay validation.
+4. Long-run soak, claims purification, and remaining semantic codebase review.
+
+### Newly Tracked Open Items
+
+- **Substrate-to-weights consolidation**: transient affect/chemical/substrate
+  states already influence runtime controls; do not claim structural weight
+  learning until SafeOptimizer/CRSM produces eval-gated LoRA updates and a
+  live 32B validation proves the adapter path.
+- **Active memory metabolism**: static retention is not enough. SovereignPruner
+  / memory metabolism must compress historical logs into semantic insights,
+  clear low-salience residue, and prove retrieval quality does not regress.
+- **Full cognitive-stack causality audit**: confirm there are no disconnected
+  islands among amplifiers, affect, psychology, workspace, reasoning,
+  imagination, governance, memory, and speech. Each active organ needs a live
+  causal path or a documented inactive/experimental status.
+- **KV-cache production readiness**: the foreground KV-cache path remains
+  opt-in until a live 32B proof run validates conversation quality, RAM
+  behavior, and no neural-stream errors.
+
 ## Latest Mind-Control Binding Checkpoint (2026-06-25)
 
 ### Gaps Addressed

@@ -8,7 +8,6 @@ token, and that everything is fail-open.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from core.brain.nonparametric_generation import normalize
 from core.brain.nonparametric_memory import NonParametricMemory
@@ -162,7 +161,7 @@ def test_cached_generate_is_linear_and_uses_memory(monkeypatch):
         def decode(self, ids):
             return " ".join(str(i) for i in ids)
 
-    # Stub the KV cache so the loop runs without a real mlx model.
+    # Replace the KV cache factory so the loop runs without a real MLX model.
     monkeypatch.setattr("mlx_lm.models.cache.make_prompt_cache", lambda model: object())
 
     model = Model()

@@ -3083,7 +3083,9 @@ class InferenceGate:
 
             # STABILITY v58: Extract actual user message to avoid false positives
             # from system prompts containing words like "cortex" or "conversation".
-            user_input_for_eval = self._visible_user_prompt_from_messages(llm_messages, prompt)
+            user_input_for_eval = str(
+                kwargs.get("user_surface_validation_prompt") or ""
+            ).strip() or self._visible_user_prompt_from_messages(llm_messages, prompt)
 
             integrity = assess_model_text_integrity(
                 cleaned,
@@ -4669,9 +4671,15 @@ class InferenceGate:
         initial_messages = context.get("messages")
         if not isinstance(initial_messages, list):
             initial_messages = None
-        initial_visible_user_prompt = self._visible_user_prompt_from_messages(
-            initial_messages,
-            prompt,
+        explicit_visible_user_prompt = str(
+            context.get("user_surface_validation_prompt")
+            or context.get("visible_user_message")
+            or context.get("current_user_message")
+            or ""
+        ).strip()
+        initial_visible_user_prompt = (
+            explicit_visible_user_prompt
+            or self._visible_user_prompt_from_messages(initial_messages, prompt)
         )
         state = context.get("state")
         origin = str(context.get("origin", "") or "").lower()
@@ -5993,7 +6001,7 @@ class InferenceGate:
                 {"role": "system", "content": strict_value_system_prompt},
                 {"role": "user", "content": strict_value_user_prompt},
             ]
-        visible_user_prompt = self._visible_user_prompt_from_messages(provided_messages, prompt)
+        visible_user_prompt = initial_visible_user_prompt
         if provided_messages is not None:
             system_prompt = ""
             for msg in provided_messages:

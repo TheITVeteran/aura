@@ -19,13 +19,12 @@ this lands without entangling concurrent edits there.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.ReasoningBackground")
-
-import os
 
 # Conservative intervals: idle pre-compute is cheap-ish but uses the cortex, and the
 # self-improve feed can trigger governed training, so it runs rarely.
@@ -60,7 +59,6 @@ def _resolve_active_model_path() -> str | None:
         import json
         from pathlib import Path
 
-        active = Path.home().parent  # placeholder; prefer training/fused-model/active.json
         active = Path(__file__).resolve().parents[2] / "training" / "fused-model" / "active.json"
         if active.exists():
             data = json.loads(active.read_text(encoding="utf-8"))

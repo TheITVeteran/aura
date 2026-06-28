@@ -44,7 +44,7 @@ def test_attribution_owns_bad_outcome_matching_a_commitment(mr, monkeypatch):
     finally:
         try:
             ce.break_commitment(c.id, "test cleanup")
-        except Exception:
+        except (KeyError, RuntimeError, ValueError):
             pass
 
 

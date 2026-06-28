@@ -173,6 +173,14 @@ def _active_foreground_generation_owner() -> str:
     return owner if _generation_owner_is_user_foreground(owner) else ""
 
 
+def _oldest_generation_gate_lease_age_s() -> float:
+    oldest_lease = _oldest_generation_gate_lease()
+    if oldest_lease is None:
+        return 0.0
+    _lease_id, acquired_at, _owner = oldest_lease
+    return max(0.0, time.time() - float(acquired_at))
+
+
 def _mark_generation_gate_acquired(owner: str) -> int:
     global _GENERATION_GATE_NEXT_LEASE_ID, _GENERATION_GATE_LAST_ACQUIRED_AT, _GENERATION_GATE_LAST_OWNER
     with _GENERATION_GATE_STATE_LOCK:
@@ -1030,7 +1038,8 @@ class HealthAwareLLMRouter:
         )
         if not acquired:
             foreground_owner = _active_foreground_generation_owner()
-            if foreground_owner:
+            foreground_age_s = _oldest_generation_gate_lease_age_s() if foreground_owner else 0.0
+            if foreground_owner and foreground_age_s < max(30.0, _GENERATION_GATE_WAIT_S):
                 return _generation_gate_busy_result(foreground_owner)
             aborted = self.force_abort_active_generation(
                 reason=f"generation_gate_wait_timeout:{_GENERATION_GATE_WAIT_S:.1f}s"

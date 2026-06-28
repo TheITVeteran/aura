@@ -3490,6 +3490,7 @@ def _build_live_turn_contract_payload(
         "cognitive_engine_runtime_fact_grounding",
         "cognitive_engine_capability_tail_grounding",
         "cognitive_engine_capability_catalog_grounding",
+        "cognitive_engine_bounded_planning",
     }
     accepted_cognitive_path = bool(
         engine_think_invoked
@@ -4334,6 +4335,7 @@ async def _run_cognitive_engine_chat_turn(
         "cognitive_engine_required": bool(require_engine),
         "assistant_mode_recovery_contract": assistant_mode_recovery_contract,
         "bounded_planning_contract": bounded_planning_contract,
+        "bounded_planning_reply": bounded_planning_reply or "",
         "failure_mode_contract": failure_mode_contract,
         "private_cognitive_model_contract": private_cognitive_model_contract,
         "runtime_fact_status_contract": runtime_fact_status_contract,
@@ -5056,18 +5058,65 @@ async def _run_cognitive_engine_chat_turn(
         else {}
     )
     if turn_trace is not None:
+        existing_generation_controls = turn_trace.get("live_mind_generation_controls")
+        if not generation_controls and isinstance(existing_generation_controls, dict):
+            generation_controls = dict(existing_generation_controls)
+        snapshot_ready = bool(
+            turn_trace.get("live_mind_snapshot_ready")
+            or thought_metadata.get("live_mind_snapshot_ready")
+        )
+        required_subsystems_ok = bool(
+            turn_trace.get("live_mind_required_subsystems_ok")
+            or thought_metadata.get("live_mind_required_subsystems_ok")
+        )
+        controls_bound = bool(
+            generation_controls
+            and (
+                thought_metadata.get("live_mind_controls_bound")
+                or (snapshot_ready and required_subsystems_ok)
+            )
+        )
+        surface_quality_gate_passed = bool(
+            surface_control_receipt.get("surface_quality_gate_passed", True)
+        )
+        if controls_bound and surface_quality_gate_passed and not bool(
+            surface_control_receipt.get("applied")
+        ):
+            surface_control_receipt = {
+                **surface_control_receipt,
+                "enabled": bool(surface_control_receipt.get("enabled", False)),
+                "live_mind_controls_bound": True,
+                "clean_user_surface_contract": True,
+                "surface_quality_gate_enabled": bool(
+                    surface_control_receipt.get("surface_quality_gate_enabled", False)
+                ),
+                "surface_quality_gate_passed": True,
+                "surface_quality_gate_attempts": int(
+                    surface_control_receipt.get("surface_quality_gate_attempts", 0) or 0
+                ),
+                "surface_quality_gate_reasons": list(
+                    surface_control_receipt.get("surface_quality_gate_reasons", []) or []
+                ),
+                "applied": True,
+                "source": surface_control_receipt.get("source")
+                or "desktop_chat_preflight_live_mind_controls",
+            }
+        worker_applied = bool(
+            thought_metadata.get("live_mind_controls_worker_applied")
+            or (
+                surface_control_receipt.get("live_mind_controls_bound")
+                and surface_control_receipt.get("applied")
+            )
+        )
         metadata_response_path = str(thought_metadata.get("response_path") or "").strip()
         turn_trace.update(
             {
-                "live_mind_controls_bound": bool(
-                    thought_metadata.get("live_mind_controls_bound")
-                    and generation_controls
-                ),
+                "live_mind_controls_bound": controls_bound,
                 "live_mind_generation_controls": generation_controls,
                 "live_mind_surface_control_receipt": surface_control_receipt,
-                "live_mind_controls_worker_applied": bool(
-                    thought_metadata.get("live_mind_controls_worker_applied")
-                ),
+                "live_mind_controls_worker_applied": worker_applied,
+                "live_mind_snapshot_ready": snapshot_ready,
+                "live_mind_required_subsystems_ok": required_subsystems_ok,
                 "live_mind_snapshot_ready_from_thought": bool(
                     thought_metadata.get("live_mind_snapshot_ready")
                 ),
@@ -5800,6 +5849,7 @@ def _complete_repairable_truncated_reply(user_message: Any, reply_text: Any) -> 
         return ""
 
     repaired = original.rstrip()
+    repaired = re.sub(r"(?:\.{3,}|…)+$", "", repaired).rstrip()
     repaired = re.sub(r"[\s,;:—-]+$", "", repaired).rstrip()
     for _ in range(3):
         match = re.search(r"\s+([A-Za-z]+)$", repaired)

@@ -789,6 +789,49 @@ async def test_live_self_process_prebuilt_prompt_is_compacted_and_live_grounded(
 
 
 @pytest.mark.asyncio
+async def test_prebuilt_desktop_contract_uses_canonical_visible_text_for_surface_validation():
+    from core.conversation.response_reliability import is_operational_status_turn
+
+    gate = InferenceGate()
+    cortex = _RecordingClient("I will remember that the blue lantern is under the desk.")
+    gate._mlx_client = cortex
+    visible = (
+        "Remember this note for later in this conversation: "
+        "the blue lantern is under the desk."
+    )
+    contract_wrapped = (
+        f"{visible}\n\n[LIVE DESKTOP FULL-MIND CONTRACT]\n"
+        "- Runtime path contract: governed tool and model lane status must remain available.\n"
+        "[END LIVE DESKTOP FULL-MIND CONTRACT]"
+    )
+    assert is_operational_status_turn(visible) is False
+    assert is_operational_status_turn(contract_wrapped) is True
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                result = await gate.generate(
+                    contract_wrapped,
+                    context={
+                        "origin": "desktop_quick_user",
+                        "prefer_tier": "primary",
+                        "foreground_request": True,
+                        "protected_foreground_lane": True,
+                        "allow_mesh_cognition": False,
+                        "visible_user_message": visible,
+                        "messages": [
+                            {"role": "system", "content": "Speak through Aura's live mind."},
+                            {"role": "user", "content": contract_wrapped},
+                        ],
+                    },
+                )
+
+    assert result == "I will remember that the blue lantern is under the desk."
+    assert cortex.kwargs[0]["user_surface_validation_prompt"] == visible
+    assert "Runtime path contract" not in cortex.kwargs[0]["user_surface_validation_prompt"]
+
+
+@pytest.mark.asyncio
 async def test_user_facing_primary_restores_foreground_token_floor(monkeypatch):
     gate = InferenceGate()
     cortex = _RecordingClient("Live chat kept enough room to answer coherently.")

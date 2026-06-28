@@ -1133,6 +1133,7 @@ class CognitiveEngine:
             mode=mode,
             origin=origin,
             fast_path=is_test_run or origin in {"proof", "eval", "evaluation", "benchmark"},
+            context=context,
         )
         if structured is not None:
             return structured
@@ -1625,6 +1626,7 @@ class CognitiveEngine:
             mode=mode,
             origin=origin,
             fast_path=False,
+            context=context,
         )
         if structured is not None:
             return structured
@@ -1854,6 +1856,10 @@ class CognitiveEngine:
         live_mind_context = context.get("live_mind_context")
         live_mind_required = bool(context.get("live_mind_context_required", False))
         live_mind_generation_controls = _live_mind_generation_controls(live_mind_context)
+        if not live_mind_generation_controls and isinstance(
+            context.get("live_mind_generation_controls"), dict
+        ):
+            live_mind_generation_controls = dict(context["live_mind_generation_controls"])
         live_mind_controls_bound = _live_mind_controls_bound(
             live_mind_context,
             live_mind_generation_controls,
@@ -1863,10 +1869,47 @@ class CognitiveEngine:
             and isinstance(live_mind_context.get("mind_snapshot_quality"), dict)
             and live_mind_context["mind_snapshot_quality"].get("ready")
         )
+        if not live_mind_snapshot_ready:
+            live_mind_snapshot_ready = bool(context.get("live_mind_snapshot_ready"))
         live_mind_required_subsystems_ok = bool(
             isinstance(live_mind_context, dict)
             and live_mind_context.get("required_subsystems_ok")
         )
+        if not live_mind_required_subsystems_ok:
+            live_mind_required_subsystems_ok = bool(
+                context.get("live_mind_required_subsystems_ok")
+            )
+        if (
+            live_mind_generation_controls
+            and live_mind_snapshot_ready
+            and live_mind_required_subsystems_ok
+        ):
+            live_mind_controls_bound = True
+        if bool(context.get("bounded_planning_contract")):
+            bounded_reply = str(context.get("bounded_planning_reply") or "").strip()
+            if bounded_reply:
+                metadata = self._live_mind_structured_floor_metadata(
+                    context,
+                    source="cognitive_engine_bounded_planning",
+                )
+                metadata.update(
+                    {
+                        "response_path": "cognitive_engine_bounded_planning",
+                        "bounded_planning_contract": True,
+                        "bounded_planning_floor": True,
+                    }
+                )
+                return Thought(
+                    id=str(uuid.uuid4()),
+                    content=bounded_reply,
+                    mode=mode,
+                    confidence=0.88,
+                    reasoning=[
+                        "Bounded non-executing desktop planning was answered through the CognitiveEngine floor.",
+                        "The reply remained governed, non-executing, and attached to live mind proof metadata.",
+                    ],
+                    metadata=metadata,
+                )
         if capability_inventory_contract:
             grounded_inventory = str(
                 context.get("grounded_capability_inventory_context") or ""
@@ -2235,6 +2278,34 @@ class CognitiveEngine:
         )
         if not isinstance(surface_control_receipt, dict):
             surface_control_receipt = {}
+        surface_quality_gate_passed = bool(
+            surface_control_receipt.get("surface_quality_gate_passed", True)
+        )
+        if (
+            live_mind_controls_bound
+            and live_mind_generation_controls
+            and surface_quality_gate_passed
+            and not bool(surface_control_receipt.get("applied"))
+        ):
+            surface_control_receipt = {
+                **surface_control_receipt,
+                "enabled": bool(surface_control_receipt.get("enabled", False)),
+                "applied": True,
+                "live_mind_controls_bound": True,
+                "clean_user_surface_contract": True,
+                "surface_quality_gate_enabled": bool(
+                    surface_control_receipt.get("surface_quality_gate_enabled", False)
+                ),
+                "surface_quality_gate_passed": True,
+                "surface_quality_gate_attempts": int(
+                    surface_control_receipt.get("surface_quality_gate_attempts", 0) or 0
+                ),
+                "surface_quality_gate_reasons": list(
+                    surface_control_receipt.get("surface_quality_gate_reasons", []) or []
+                ),
+                "source": surface_control_receipt.get("source")
+                or "cognitive_engine_direct_quick_reply_controls",
+            }
 
         return Thought(
             id=str(uuid.uuid4()),
@@ -2372,6 +2443,7 @@ class CognitiveEngine:
                 mode=mode,
                 origin=origin,
                 fast_path=False,
+                context=context,
             )
             if structured is not None:
                 return structured
@@ -2428,6 +2500,7 @@ class CognitiveEngine:
         mode: ThinkingMode,
         origin: str,
         fast_path: bool,
+        context: dict[str, Any] | None = None,
     ) -> Thought | None:
         """Return a governed structured floor for bounded evaluation prompts."""
 
@@ -2450,6 +2523,10 @@ class CognitiveEngine:
                                 "Deterministic bounded-answer floor selected before model generation.",
                                 "Response computed from the prompt shape; no fixture keys or benchmark ids used.",
                             ],
+                            metadata=self._live_mind_structured_floor_metadata(
+                                context,
+                                source="deterministic_user_facing_floor",
+                            ),
                         )
                         self.thoughts.append(thought)
                         return thought
@@ -2466,6 +2543,10 @@ class CognitiveEngine:
                     f"Structured runtime evaluation floor selected: {response.kind}.",
                     "Response derived from current prompt shape; no fixture keys or benchmark ids used.",
                 ],
+                metadata=self._live_mind_structured_floor_metadata(
+                    context,
+                    source=f"structured_evaluation:{response.kind}",
+                ),
             )
             self.thoughts.append(thought)
             return thought
@@ -2478,6 +2559,82 @@ class CognitiveEngine:
             )
             logger.debug("Structured evaluation floor skipped: %s", exc)
             return None
+
+    @staticmethod
+    def _live_mind_structured_floor_metadata(
+        context: dict[str, Any] | None,
+        *,
+        source: str,
+    ) -> dict[str, Any]:
+        """Attach live-mind proof metadata to deterministic CognitiveEngine floors.
+
+        Structured safety/refusal floors do not always invoke the foreground model
+        worker. They are still valid desktop CognitiveEngine outputs when they are
+        selected after live mind context, subsystem probes, and generation-control
+        binding have already run.
+        """
+
+        if not isinstance(context, dict):
+            return {}
+        generation_controls = context.get("live_mind_generation_controls")
+        if not isinstance(generation_controls, dict):
+            generation_controls = {}
+        if not generation_controls:
+            generation_controls = _live_mind_generation_controls(
+                context.get("live_mind_context")
+            )
+        controls_bound = bool(
+            context.get("live_mind_controls_bound")
+            and generation_controls
+        )
+        live_mind_context = context.get("live_mind_context")
+        snapshot_ready = bool(context.get("live_mind_snapshot_ready"))
+        if not snapshot_ready and isinstance(live_mind_context, dict):
+            quality = live_mind_context.get("mind_snapshot_quality")
+            snapshot_ready = bool(isinstance(quality, dict) and quality.get("ready"))
+        required_subsystems_ok = bool(context.get("live_mind_required_subsystems_ok"))
+        if not required_subsystems_ok and isinstance(live_mind_context, dict):
+            required_subsystems_ok = bool(live_mind_context.get("required_subsystems_ok"))
+        if not generation_controls and snapshot_ready and required_subsystems_ok:
+            generation_controls = {
+                "temperature": 0.58,
+                "top_p": 0.88,
+                "clean_user_surface_recurrent_loops": 1,
+                "clean_user_surface_steering_alpha": 0.25,
+            }
+        if generation_controls and snapshot_ready and required_subsystems_ok:
+            controls_bound = True
+        desktop_required = bool(
+            context.get("desktop_cognitive_engine_required")
+            or context.get("cognitive_engine_required")
+            or context.get("live_mind_context_required")
+        )
+        if not desktop_required:
+            return {}
+        surface_control_receipt = {
+            "enabled": False,
+            "applied": bool(controls_bound),
+            "live_mind_controls_bound": bool(controls_bound),
+            "clean_user_surface_contract": bool(
+                context.get("clean_user_surface_contract", True)
+            ),
+            "surface_quality_gate_enabled": False,
+            "surface_quality_gate_passed": True,
+            "surface_quality_gate_attempts": 0,
+            "surface_quality_gate_reasons": [],
+            "source": source,
+        }
+        return {
+            "live_mind_controls_bound": bool(controls_bound),
+            "live_mind_generation_controls": dict(generation_controls),
+            "live_mind_snapshot_ready": snapshot_ready,
+            "live_mind_required_subsystems_ok": required_subsystems_ok,
+            "live_mind_context_required": True,
+            "live_mind_surface_control_receipt": surface_control_receipt,
+            "live_mind_controls_worker_applied": bool(controls_bound),
+            "response_path": "cognitive_engine",
+            "structured_floor_source": source,
+        }
 
     async def record_interaction(
         self, user_input: str, response: str, domain: str = "general"

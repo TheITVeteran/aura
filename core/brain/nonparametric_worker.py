@@ -28,7 +28,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
@@ -43,7 +44,7 @@ def foreground_enabled() -> bool:
     return os.getenv("AURA_NONPARAMETRIC_FOREGROUND", "0").strip().lower() in {"1", "true", "on", "yes"}
 
 
-def maybe_build_foreground(model: Any) -> Optional[Tuple["HiddenStateTap", Callable[[Any, Any], Any]]]:
+def maybe_build_foreground(model: Any) -> tuple[HiddenStateTap, Callable[[Any, Any], Any]] | None:
     """Build (tap, processor) for the live worker iff foreground memory is on and non-empty.
 
     Returns None when disabled, when there is no datastore, or when the datastore is empty —
@@ -65,7 +66,7 @@ def maybe_build_foreground(model: Any) -> Optional[Tuple["HiddenStateTap", Calla
         logger.info("🧠 [WORKER] Foreground non-parametric memory ACTIVE (%d entries, dim=%d).",
                     len(memory), dim)
         return tap, proc
-    except Exception as exc:  # noqa: BLE001 - never block generation on memory wiring
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation("nonparametric_foreground_build", exc, severity="debug",
                            action="foreground non-parametric memory not installed; normal generation")
         return None
@@ -97,7 +98,7 @@ def _logits_from_hidden(model: Any, hidden: Any) -> Any:
 class _TappedInner:
     """Transparent proxy around model.model that records the last-token hidden per call."""
 
-    def __init__(self, inner: Any, tap: "HiddenStateTap") -> None:
+    def __init__(self, inner: Any, tap: HiddenStateTap) -> None:
         object.__setattr__(self, "_inner", inner)
         object.__setattr__(self, "_tap", tap)
 
@@ -127,9 +128,9 @@ class HiddenStateTap:
         self._model = model
         self._real_inner: Any = None
         self.active = False
-        self.last_key: Optional[np.ndarray] = None
+        self.last_key: np.ndarray | None = None
 
-    def __enter__(self) -> "HiddenStateTap":
+    def __enter__(self) -> HiddenStateTap:
         try:
             inner = getattr(self._model, "model", None)
             if inner is None or not callable(inner):
@@ -137,7 +138,7 @@ class HiddenStateTap:
             self._real_inner = inner
             self._model.model = _TappedInner(inner, self)
             self.active = True
-        except Exception as exc:  # noqa: BLE001 - never let the tap break generation
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation("nonparametric_worker_tap", exc, severity="debug",
                                action="hidden-state tap disabled; foreground memory inert")
             self.active = False
@@ -147,7 +148,7 @@ class HiddenStateTap:
         if self._real_inner is not None:
             try:
                 self._model.model = self._real_inner
-            except Exception as e:  # noqa: BLE001
+            except (AttributeError, RuntimeError, TypeError, ValueError) as e:
                 record_degradation("nonparametric_worker_tap", e, severity="warning",
                                    action="failed to restore model.model after tap")
         self._real_inner = None
@@ -189,7 +190,7 @@ def make_tapped_nonparametric_processor(
             sub = lg[idx] - lg[idx].max()
             ex = np.exp(sub)
             ex /= ex.sum()
-            lm_probs = {int(t): float(p) for t, p in zip(idx, ex)}
+            lm_probs = {int(t): float(p) for t, p in zip(idx, ex, strict=True)}
             blended = memory.interpolate(
                 lm_probs, key, k=k, temperature=temperature, phi=phi,
                 free_energy=free_energy, lam_override=min(lam, 0.9),
@@ -241,13 +242,12 @@ def cached_generate_with_memory(
         return ""
 
     ids = list(tokenizer.encode(prompt))
-    start = len(ids)
     eos = getattr(tokenizer, "eos_token_id", None)
     out_ids: list[int] = []
 
     # Prefill the cache with the full prompt, then decode one token at a time.
     cursor = mx.array([ids])
-    for step in range(max(1, int(max_tokens))):
+    for _step in range(max(1, int(max_tokens))):
         try:
             hidden = model.model(cursor, cache=cache)           # cached forward (incremental)
             logits = _logits_from_hidden(model, hidden)

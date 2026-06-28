@@ -2071,6 +2071,63 @@ def test_generation_gate_does_not_abort_active_user_foreground_lease(monkeypatch
         get_degradation_tracker().reset()
 
 
+def test_generation_gate_aborts_stale_user_foreground_lease(monkeypatch):
+    import threading
+
+    from core.brain import llm_health_router as router_module
+    from core.brain.llm_health_router import HealthAwareLLMRouter
+    from core.runtime.errors import get_degradation_tracker
+
+    gate = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(router_module, "_GENERATION_GATE", gate)
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_WAIT_S", 0.01)
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_ACTIVE_LEASES", {})
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_FORCED_LEASES", set())
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_NEXT_LEASE_ID", 0)
+
+    assert gate.acquire(False) is True
+    stale_lease = router_module._mark_generation_gate_acquired(
+        "response_generation_user:reply"
+    )
+    stale_acquired_at, stale_owner = router_module._GENERATION_GATE_ACTIVE_LEASES[
+        stale_lease
+    ]
+    router_module._GENERATION_GATE_ACTIVE_LEASES[stale_lease] = (
+        stale_acquired_at - 120.0,
+        stale_owner,
+    )
+    get_degradation_tracker().reset()
+
+    async def scenario():
+        router = HealthAwareLLMRouter()
+
+        async def fake_gated(*_args, **_kwargs):
+            return {
+                "ok": True,
+                "text": "recovered after stale foreground lease",
+                "endpoint": "unit-test",
+                "tokens": 1,
+                "error": "",
+            }
+
+        monkeypatch.setattr(router, "_generate_with_metadata_gated", fake_gated)
+        return await router.generate_with_metadata(
+            "new user turn after stale foreground lease",
+            origin="desktop_quick_user",
+            purpose="reply",
+            foreground_request=True,
+        )
+
+    try:
+        result = asyncio.run(scenario())
+        assert result["ok"] is True
+        assert result["text"] == "recovered after stale foreground lease"
+        assert stale_lease in router_module._GENERATION_GATE_FORCED_LEASES
+    finally:
+        router_module._release_generation_gate_after_call(stale_lease)
+        get_degradation_tracker().reset()
+
+
 def test_agency_baseline_watchdog_accepts_dict_and_list_endpoint_maps():
     from tools.agency.run_agency_emergence_battery import _force_abort_router_generation
 
@@ -2581,7 +2638,10 @@ def test_dnu_ablation_validation_rejects_equal_performance_lesions():
 
 
 def test_dnu_comparison_sample_is_stratified():
-    from tools.agi.run_dnu_agi_proof_battery import TASK_CATEGORIES, select_stratified_comparison_tasks
+    from tools.agi.run_dnu_agi_proof_battery import (
+        TASK_CATEGORIES,
+        select_stratified_comparison_tasks,
+    )
 
     tasks = [
         {"task_id": f"{category}_{idx}", "category": category}

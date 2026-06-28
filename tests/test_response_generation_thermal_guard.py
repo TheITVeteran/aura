@@ -45,6 +45,12 @@ class _Router:
         }
 
 
+class _MemoryAckRouter(_Router):
+    async def think(self, **kwargs):
+        self.calls.append(kwargs)
+        return "I’ll remember that the blue lantern is under the desk for later in this conversation."
+
+
 @pytest.mark.asyncio
 async def test_response_generation_downshifts_on_thermal_pressure(monkeypatch):
     state = AuraState()
@@ -250,6 +256,72 @@ async def test_response_generation_full_phase_injects_live_desktop_grounding(mon
     assert call["top_p"] == 0.87
     assert result.response_modifiers["live_mind_controls_worker_applied"] is True
     assert result.response_modifiers["live_mind_surface_control_receipt"]["applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_response_generation_quality_gate_uses_visible_desktop_prompt(monkeypatch):
+    state = AuraState()
+    visible = (
+        "Remember this note for later in this conversation: "
+        "the blue lantern is under the desk."
+    )
+    contract_wrapped = (
+        f"{visible}\n\n[LIVE DESKTOP FULL-MIND CONTRACT]\n"
+        "- Runtime path contract: governed tool and model lane status must remain available.\n"
+        "[END LIVE DESKTOP FULL-MIND CONTRACT]"
+    )
+    state.cognition.current_objective = contract_wrapped
+    state.cognition.current_origin = "desktop_quick_user"
+    state.cognition.current_mode = CognitiveMode.REACTIVE
+
+    router = _MemoryAckRouter()
+    phase = ResponseGenerationPhase(_Container({"llm_router": router}))
+    prompts_seen = []
+
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [
+            {"role": "system", "content": "base live Aura context"},
+            {"role": "user", "content": contract_wrapped},
+        ],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+
+    from core.conversation.response_reliability import assess_user_facing_reply as real_assess
+
+    def _record_assess(prompt, reply):
+        prompts_seen.append(str(prompt))
+        return real_assess(prompt, reply)
+
+    monkeypatch.setattr(
+        "core.phases.response_generation.assess_user_facing_reply",
+        _record_assess,
+    )
+
+    result = await phase.execute(
+        state,
+        context={
+            "desktop_cognitive_engine_required": True,
+            "cognitive_engine_required": True,
+            "live_runtime_payload_required": True,
+            "clean_user_surface_contract": True,
+            "visible_user_message": visible,
+            "user_surface_validation_prompt": visible,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+        },
+    )
+
+    assert router.calls
+    assert router.calls[0]["visible_user_message"] == visible
+    assert router.calls[0]["user_surface_validation_prompt"] == visible
+    assert prompts_seen
+    assert all(prompt == visible for prompt in prompts_seen)
+    assert "blue lantern" in result.cognition.last_response
+    assert "Runtime path contract" not in result.cognition.last_response
 
 
 @pytest.mark.asyncio

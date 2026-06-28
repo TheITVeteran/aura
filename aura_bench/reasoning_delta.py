@@ -146,7 +146,7 @@ async def _run_one(
     start = time.monotonic()
     try:
         answer = await asyncio.wait_for(runner(task), timeout=per_task_timeout)
-    except (asyncio.TimeoutError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+    except (TimeoutError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
         logger.warning("[%s] task %s failed/timed out: %s", name, task.task_id, exc)
         answer = ""
     score = await score_fn(answer, task)
@@ -275,8 +275,11 @@ def make_mlx_lm_generator(model_path: str, *, max_tokens: int = 640) -> Generate
 
 
 def _deterministic_generators() -> tuple[GenerateFn, GenerateFn]:
-    """Stub generators for wiring/CI — no model. Returns canned, mostly-wrong drafts
-    so the harness plumbing and scoring are exercised without a GPU."""
+    """Deterministic CI generators; no model is loaded.
+
+    The fixed drafts exercise harness plumbing and scoring without requiring a
+    GPU-backed model during static CI.
+    """
 
     async def _stub(prompt: str, temperature: float) -> str:
         return "I am not sure; here is a guess."
@@ -307,7 +310,8 @@ def main(argv: list[str] | None = None) -> int:
 
     grader = None
     if args.suite == "hard":
-        from aura_bench.hard_suite import HARD_TASKS, grade as hard_grade
+        from aura_bench.hard_suite import HARD_TASKS
+        from aura_bench.hard_suite import grade as hard_grade
 
         suite = HARD_TASKS
         grader = hard_grade
@@ -323,7 +327,7 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("Loading solver model: %s", args.solver_model)
             solver = make_mlx_lm_generator(args.solver_model)
     else:
-        logger.warning("Running with DETERMINISTIC STUB generators (no models). Use --live for real numbers.")
+        logger.warning("Running with deterministic CI generators (no models). Use --live for real numbers.")
         cortex, solver = _deterministic_generators()
 
     report = asyncio.run(
