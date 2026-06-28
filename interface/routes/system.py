@@ -205,6 +205,11 @@ def _collect_full_runtime_status(
             "status",
             "snapshot",
         ),
+        "timescale_bridge": _runtime_component_status(
+            "timescale_bridge",
+            "get_status",
+            "status",
+        ),
     }
     resource_guard = desktop_resource_guard_enabled()
     expected = (
@@ -231,6 +236,7 @@ def _collect_full_runtime_status(
         "perceptual_pump",
         "cognitive_situation",
         "imagination_engine",
+        "timescale_bridge",
     )
     blockers = [name for name in required if not components[name].get("running", False)]
     return {

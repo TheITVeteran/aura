@@ -30,7 +30,7 @@ import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Deque, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
@@ -276,8 +276,8 @@ def _collect_screen_state(prev_hash: str) -> ScreenState:
 
     # 2. Screen content from ScreenObserver JSON (if vision service is running)
     try:
-        from pathlib import Path
         import json
+        from pathlib import Path
         vision_path = Path(__file__).resolve().parent.parent.parent / "sensory_vision.json"
         if vision_path.exists() and (now - vision_path.stat().st_mtime) < 15:
             data = json.loads(vision_path.read_text(encoding="utf-8"))
@@ -307,8 +307,8 @@ def _collect_audio_state() -> AudioState:
 
     # Read from audio service JSON (if running)
     try:
-        from pathlib import Path
         import json
+        from pathlib import Path
         audio_path = Path(__file__).resolve().parent.parent.parent / "sensory_audio.json"
         if audio_path.exists() and (time.time() - audio_path.stat().st_mtime) < 10:
             data = json.loads(audio_path.read_text(encoding="utf-8"))
@@ -418,7 +418,7 @@ def _collect_user_state() -> UserState:
 # RuntimeBody mapping
 # ---------------------------------------------------------------------------
 
-def frame_to_runtime_body(frame: PerceptualFrame) -> "RuntimeBody":
+def frame_to_runtime_body(frame: PerceptualFrame) -> RuntimeBody:
     """Map a PerceptualFrame into RuntimeBody fields for the phenomenal engine.
 
     This is where physical-world perception becomes interoceptive state.
@@ -512,11 +512,11 @@ class PerceptualPump:
 
     def __init__(self) -> None:
         self.running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._frame_count: int = 0
         self._last_screen_hash: str = ""
-        self._latest_frame: Optional[PerceptualFrame] = None
-        self._frame_history: Deque[PerceptualFrame] = deque(maxlen=100)
+        self._latest_frame: PerceptualFrame | None = None
+        self._frame_history: deque[PerceptualFrame] = deque(maxlen=100)
 
         # Cached sub-states (updated at different rates)
         self._screen: ScreenState = ScreenState()
@@ -562,11 +562,11 @@ class PerceptualPump:
         )
 
     @property
-    def latest_frame(self) -> Optional[PerceptualFrame]:
+    def latest_frame(self) -> PerceptualFrame | None:
         """The most recent perceptual frame."""
         return self._latest_frame
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Pump status for dashboards."""
         return {
             "running": self.running,
@@ -688,6 +688,19 @@ class PerceptualPump:
 
         # Update WorldState with perceptual data (every tick)
         self._update_world_state(frame)
+
+        try:
+            from core.runtime.timescale_bridge import get_timescale_bridge
+
+            get_timescale_bridge().ingest_perceptual_frame(frame)
+        except _PUMP_RUNTIME_ERRORS as e:
+            record_degradation(
+                "perceptual_pump.timescale_bridge",
+                e,
+                severity="warning",
+                action="continued perceptual pump without timescale observation bridge",
+                enforce_failure_policy=False,
+            )
 
     async def _inject_into_substrate(self, frame: PerceptualFrame) -> None:
         """Map frame → RuntimeBody → PhenomenalEngine → Substrate.
@@ -828,7 +841,7 @@ class PerceptualPump:
 # Singleton
 # ---------------------------------------------------------------------------
 
-_pump_instance: Optional[PerceptualPump] = None
+_pump_instance: PerceptualPump | None = None
 
 
 def get_perceptual_pump() -> PerceptualPump:

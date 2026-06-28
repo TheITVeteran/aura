@@ -442,6 +442,19 @@ def test_live_boot_proof_requires_cognitive_organ_participation(monkeypatch, tmp
                     "frames_built": 4,
                     "latest": {"frame_id": "imagination-4"},
                 },
+                "timescale_bridge": {
+                    "running": True,
+                    "observations": 3,
+                    "frames_ingested": 3,
+                    "latest_observation": {"source": "perceptual_pump"},
+                    "last_reconciliation": {
+                        "idle_gap_s": 0.2,
+                        "summary": "recent apps: Aura Zenith",
+                        "directives": [
+                            "Anchor the reply to the user's current message and verified recent conversation."
+                        ],
+                    },
+                },
             }
         }
     }
@@ -472,12 +485,22 @@ def test_live_boot_proof_requires_cognitive_organ_participation(monkeypatch, tmp
 
     assert proof.exercise_cognitive_organ_participation() is True
     assert proof.steps[-1]["organs"]["cognitive_situation"]["participated"] is True
+    assert proof.steps[-1]["organs"]["timescale_bridge"]["participated"] is True
 
     payload["full_runtime"]["components"]["imagination_engine"]["frames_built"] = 0
     payload["full_runtime"]["components"]["imagination_engine"]["latest"] = None
 
     assert proof.exercise_cognitive_organ_participation() is False
     assert proof.steps[-1]["blockers"] == ["imagination_engine"]
+
+    payload["full_runtime"]["components"]["imagination_engine"]["frames_built"] = 4
+    payload["full_runtime"]["components"]["imagination_engine"]["latest"] = {
+        "frame_id": "imagination-4"
+    }
+    payload["full_runtime"]["components"]["timescale_bridge"]["last_reconciliation"] = None
+
+    assert proof.exercise_cognitive_organ_participation() is False
+    assert proof.steps[-1]["blockers"] == ["timescale_bridge"]
 
 
 def test_live_boot_proof_runtime_stream_scan_fails_failure_markers(monkeypatch, tmp_path):

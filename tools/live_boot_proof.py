@@ -104,6 +104,7 @@ LIVE_DESKTOP_FULL_RUNTIME_COMPONENTS = (
     "perceptual_pump",
     "cognitive_situation",
     "imagination_engine",
+    "timescale_bridge",
 )
 
 LIVE_CONVERSATION_SOAK_PROMPTS = (
@@ -890,7 +891,7 @@ class LiveProof:
         )
 
     def exercise_cognitive_organ_participation(self) -> bool:
-        """Prove semantic/analogical and imagination organs processed live turns."""
+        """Prove foreground replies used live mind organs and timescale grounding."""
 
         required = ("cognitive_situation", "imagination_engine")
         try:
@@ -935,11 +936,49 @@ class LiveProof:
                 }
                 if not organ_ok:
                     blockers.append(name)
+            timescale_status = components.get("timescale_bridge")
+            timescale_status = timescale_status if isinstance(timescale_status, dict) else {}
+            latest_observation = timescale_status.get("latest_observation")
+            latest_observation = (
+                latest_observation
+                if isinstance(latest_observation, dict)
+                else {}
+            )
+            last_reconciliation = timescale_status.get("last_reconciliation")
+            last_reconciliation = (
+                last_reconciliation
+                if isinstance(last_reconciliation, dict)
+                else {}
+            )
+            directives = last_reconciliation.get("directives")
+            directives = directives if isinstance(directives, list) else []
+            observations = int(timescale_status.get("observations") or 0)
+            frames_ingested = int(timescale_status.get("frames_ingested") or 0)
+            timescale_ok = bool(
+                timescale_status.get("running") is True
+                and observations > 0
+                and frames_ingested > 0
+                and latest_observation
+                and last_reconciliation
+                and directives
+            )
+            evidence["timescale_bridge"] = {
+                "running": timescale_status.get("running") is True,
+                "observations": observations,
+                "frames_ingested": frames_ingested,
+                "latest_source": str(latest_observation.get("source") or ""),
+                "last_idle_gap_s": last_reconciliation.get("idle_gap_s"),
+                "last_summary": str(last_reconciliation.get("summary") or ""),
+                "directives": directives[:4],
+                "participated": timescale_ok,
+            }
+            if not timescale_ok:
+                blockers.append("timescale_bridge")
             return self.record(
                 "chat_cognitive_organs",
                 not blockers,
                 summary=(
-                    "semantic/analogical and imagination organs processed live turns"
+                    "semantic, imagination, and timescale organs processed live turns"
                     if not blockers
                     else f"missing live participation: {', '.join(blockers)}"
                 ),

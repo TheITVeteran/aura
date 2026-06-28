@@ -17,6 +17,77 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Timescale Bridge Runtime Checkpoint (2026-06-28)
+
+### Gaps Addressed
+
+- **Dialogue-speed turns are now reconciled with continuous background
+  metabolism**: the perceptual pump feeds a bounded `timescale_bridge` service
+  with summarized sensory/runtime observations instead of letting idle
+  background loops drift into invented narrative state.
+- **Live foreground replies receive causal wake-context, not long-form prompt
+  theater**: the desktop chat path reconciles every user message through the
+  bridge and injects a compact timescale block into the live mind context. The
+  block explicitly biases Aura toward verified recent conversation, sparse
+  sensory honesty, and compact reasoning under pressure.
+- **False full-runtime health is harder**: `/api/health` now requires
+  `timescale_bridge` alongside the perceptual pump, cognitive situation, and
+  imagination organs for launched-desktop full-runtime readiness.
+- **The live proof requires participation, not presence**:
+  `tools/live_boot_proof.py` now fails `chat_cognitive_organs` unless the
+  bridge is running, has ingested perceptual frames, has a latest summarized
+  observation, and has reconciled a foreground turn with directives.
+
+### Latest Commands Run
+
+```bash
+python -m ruff check core/runtime/timescale_bridge.py core/orchestrator/mixins/boot/boot_cognitive.py core/perception/perceptual_pump.py interface/routes/system.py interface/routes/chat.py core/phases/response_generation.py tools/live_boot_proof.py tests/test_full_desktop_runtime_contract.py tests/test_timescale_bridge.py tests/test_boot_runtime_safety.py
+python -m pytest -q tests/test_timescale_bridge.py tests/test_full_desktop_runtime_contract.py tests/test_boot_runtime_safety.py tests/test_live_mind_generation_controls.py tests/test_perceptual_pump_runtime.py
+make enterprise-gate
+make production-gate
+AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 AURA_LIVE_PROOF_SHUTDOWN_MAX_S=90 AURA_TIMESCALE_BRIDGE_SAMPLE_INTERVAL_S=2 python tools/live_boot_proof.py --port 8153 --mode desktop --boot-timeout 600 --conversation-soak-turns 6 --out-dir artifacts/live_proof/full_runtime_timescale_bridge_checkpoint_19
+```
+
+### Evidence
+
+- Ruff on the touched runtime/proof/test surface: **passed**.
+- Focused bridge/full-runtime/proof/perception test slice: **72 passed**.
+- `make enterprise-gate`: **passed**.
+- `make production-gate`: **passed**, all 37 readiness checks true.
+- Live desktop proof artifact:
+  `artifacts/live_proof/full_runtime_timescale_bridge_checkpoint_19/live_proof_20260628_114034_verdict.json`.
+- Proof facts: `passed=true`, boot health in **25s**, peak process-tree RSS
+  **19,444.6 MB**, capability inventory pass, bounded identity pass,
+  continuity recall pass, **6/6** conversation-soak turns, semantic,
+  imagination, and timescale organs participated, governed desktop action file
+  verified on disk, shutdown **34.0s/90s**, no orphan workers, port released,
+  and runtime stream scan found no failure markers.
+- The proof verdict records `git_dirty=true` because
+  `artifacts/unity/latest/UNITY_RESULTS.json` was already modified outside
+  this checkpoint and was deliberately not staged or reverted.
+
+### Closeout Position
+
+- Functional closeout estimate: about **94%**. This measures implemented,
+  tested, and live-proofed runtime reliability progress; it does not claim
+  AGI, phenomenal consciousness, personhood, or indefinite autonomy as proven.
+- Estimated remaining work: **3 consolidated checkpoints**, likely **4-6
+  smaller sub-checkpoints**:
+  1. Real launched GUI/voice visible multi-app proof using general computer-use
+     planning, focus verification, effect receipts, and bounded memory.
+  2. Learning/proof closure: CRSM->LoRA, fused-model CAA extraction, memory
+     metabolism, autonomous repair evidence, DNU/Aletheia/final-proof and
+     replay validation.
+  3. Longer soak, claims purification, remaining semantic ledger coverage,
+     clean worktree, and final checkpoint commit/push.
+
+### Next Exact Task
+
+Advance the real launched GUI/voice proof from backend live proof into visible
+user-lane validation: confirm focus, screen perception, typed effects,
+multi-app handoff, browser/document/file actions, memory safety, and terminal
+/ neural-stream cleanliness without task-specific hardcoding.
+
 ## Latest Live Desktop Conversation Grounding Checkpoint (2026-06-28)
 
 ### Gaps Addressed

@@ -90,9 +90,11 @@ class BootCognitiveMixin:
             # instead of existing only as lazy module singletons.
             from core.brain.cognitive_situation import get_cognitive_situation_engine
             from core.brain.imagination import get_imagination_engine
+            from core.runtime.timescale_bridge import get_timescale_bridge
 
             self.cognitive_situation = get_cognitive_situation_engine()
             self.imagination_engine = get_imagination_engine()
+            self.timescale_bridge = get_timescale_bridge()
 
             # 4. Start API Adapter (LLM Clients)
             api_adapter = ServiceContainer.get("api_adapter", default=None)

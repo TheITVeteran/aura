@@ -3627,6 +3627,18 @@ def _build_live_mind_context_payload(
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Live mind context derived-organ bridge unavailable: %s", exc)
+    timescale_reconciliation: dict[str, Any] = {}
+    try:
+        from core.runtime.timescale_bridge import get_timescale_bridge
+
+        timescale_reconciliation = (
+            get_timescale_bridge()
+            .reconcile_foreground_turn(user_message)
+            .to_dict()
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Live mind context timescale bridge unavailable: %s", exc)
 
     return {
         "schema": "aura.live_mind_context.v1",
@@ -3649,6 +3661,7 @@ def _build_live_mind_context_payload(
         "mind_snapshot": mind_snapshot,
         "mind_snapshot_quality": mind_snapshot_quality,
         "derived_runtime_context": derived_runtime_context,
+        "timescale_reconciliation": timescale_reconciliation,
         "governance": {
             "tool_governance_available": bool(required.get("tool_governance")),
             "legacy_fallback_allowed": False,

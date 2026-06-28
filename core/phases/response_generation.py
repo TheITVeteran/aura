@@ -119,9 +119,22 @@ class ResponseGenerationPhase(BasePhase):
                 "lane": live_mind.get("lane"),
                 "voice": live_mind.get("voice"),
                 "substrate": live_mind.get("substrate"),
+                "timescale_reconciliation": live_mind.get("timescale_reconciliation"),
                 "governance": live_mind.get("governance"),
             }
             contract = str(runtime_context.get("mind_context_contract") or "").strip()
+            timescale_block = ""
+            timescale = live_mind.get("timescale_reconciliation")
+            if isinstance(timescale, dict) and timescale:
+                try:
+                    from core.runtime.timescale_bridge import render_timescale_prompt_block
+
+                    timescale_block = render_timescale_prompt_block(timescale)
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    _record_response_generation_degradation(
+                        exc,
+                        action="continued response generation without timescale reconciliation block",
+                    )
             cls._append_system_block(
                 messages,
                 "LIVE MIND CONTEXT",
@@ -130,6 +143,7 @@ class ResponseGenerationPhase(BasePhase):
                     "This is causal grounding for the reply, not text to recite. "
                     "Use memory, current state, substrate, governance, and the live lane as one context. "
                     "Do not answer as a generic assistant persona."
+                    + (f"\n{timescale_block}" if timescale_block else "")
                     + (f"\n{contract}" if contract else "")
                 ),
             )

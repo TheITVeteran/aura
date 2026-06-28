@@ -67,6 +67,11 @@ def _full_services():
             status="active",
             frames=1,
         ),
+        "timescale_bridge": _status_service(
+            running=True,
+            observations=2,
+            last_reconciliation={"foreground_anchor_required": False},
+        ),
     }
 
 
@@ -104,6 +109,7 @@ def test_full_desktop_runtime_reports_every_canonical_background_organ(monkeypat
     assert status["components"]["perceptual_pump"]["running"] is True
     assert status["components"]["cognitive_situation"]["running"] is True
     assert status["components"]["imagination_engine"]["running"] is True
+    assert status["components"]["timescale_bridge"]["running"] is True
 
 
 def test_full_desktop_runtime_fails_readiness_when_background_organ_is_missing(monkeypatch):
@@ -184,6 +190,22 @@ def test_full_desktop_runtime_fails_readiness_when_imagination_engine_missing(mo
 
     assert status["ready"] is False
     assert "imagination_engine" in status["blockers"]
+
+
+def test_full_desktop_runtime_fails_readiness_when_timescale_bridge_missing(monkeypatch):
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    monkeypatch.setenv("AURA_DESKTOP_RESOURCE_GUARD", "1")
+    monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_BACKGROUND_COGNITION", raising=False)
+    services = _full_services()
+    services.pop("timescale_bridge")
+    _install_services(monkeypatch, services)
+
+    status = _collect_full_runtime_status({"online": True}, {"online": True})
+
+    assert status["ready"] is False
+    assert "timescale_bridge" in status["blockers"]
 
 
 def test_full_desktop_runtime_fails_readiness_when_initiative_loop_is_missing(monkeypatch):
