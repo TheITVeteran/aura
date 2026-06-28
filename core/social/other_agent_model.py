@@ -563,6 +563,60 @@ class OtherAgentStateEstimator:
             reasons=reasons,
         )
 
+    # ── social intuition: forward-simulate an action's social consequence ──
+
+    def forecast_social_consequence(
+        self,
+        agent_id: str,
+        *,
+        warmth: float = 0.5,
+        directness: float = 0.5,
+        reliability: float = 0.5,
+        fulfills_expectation: float = 0.0,
+        now: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Forward-simulate how a candidate action would land socially.
+
+        Social *intuition*, not just state estimation: given the agent's current read and an
+        action's social properties (warmth, directness, reliability, whether it meets or
+        violates what they expect), predict the trust / rupture / satisfaction deltas and a
+        recommendation. Grounded in the live estimate — a blunt action lands far worse on an
+        already-frustrated agent than a calm one.
+        """
+        est = self.estimate(agent_id, now)
+        frustration = est.affect.get("frustration", 0.3)
+        warmth = _clamp(warmth); directness = _clamp(directness)
+        reliability = _clamp(reliability); fulfills = _clamp(fulfills_expectation, -1.0, 1.0)
+
+        trust_delta = _clamp(0.3 * reliability + 0.2 * max(0.0, fulfills) - 0.1 * (1.0 - warmth), -1.0, 1.0)
+        if fulfills < 0:
+            trust_delta = _clamp(trust_delta + 0.3 * fulfills, -1.0, 1.0)  # breaking expectation costs trust
+        # bluntness hurts more when they're already frustrated
+        rupture_delta = _clamp(
+            (1.0 - warmth) * directness * (0.4 + 0.4 * frustration)
+            - 0.2 * reliability
+            + 0.3 * max(0.0, -fulfills),
+            -1.0, 1.0,
+        )
+        satisfaction_delta = _clamp(0.3 * fulfills + 0.2 * warmth - 0.15 * (1.0 - reliability), -1.0, 1.0)
+
+        projected_rupture = _clamp(est.social_rupture_risk + rupture_delta)
+        if projected_rupture >= 0.6:
+            rec = "repair_first" if est.social_rupture_risk >= 0.4 else "soften_before_acting"
+        elif trust_delta > 0.15:
+            rec = "proceed"
+        else:
+            rec = "proceed_with_care"
+        return {
+            "agent_id": agent_id,
+            "trust_delta": round(trust_delta, 3),
+            "rupture_delta": round(rupture_delta, 3),
+            "satisfaction_delta": round(satisfaction_delta, 3),
+            "projected_rupture_risk": round(projected_rupture, 3),
+            "recommendation": rec,
+            "confidence": round(est.overall_confidence, 3),
+        }
+
     # ── agency-ladder seam ────────────────────────────────────────────────
 
     def social_signals(self, agent_id: str, now: Optional[float] = None) -> Dict[str, float]:
