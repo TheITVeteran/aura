@@ -421,6 +421,37 @@ class UnityRuntime:
             record_degradation("unity_runtime", exc, severity="debug")
             return []
 
+    def _accountability_contents(self, state: Any) -> list[BoundContent]:
+        """Bind owed amends (broken/overdue commitments, social ruptures) into the moment.
+
+        Moral responsibility made causal: when Aura owes an acknowledgment or repair, it enters
+        the unified state as a high-salience, high-action-relevance content, so taking
+        responsibility competes for attention instead of quietly lapsing.
+        """
+        try:
+            agent_id = str(getattr(getattr(state, "cognition", None), "current_partner", "") or "bryan")
+            from core.values.moral_responsibility import get_moral_responsibility
+            amends = get_moral_responsibility().owed_amends(agent_id=agent_id)
+            out: list[BoundContent] = []
+            for a in amends[:3]:
+                summary = _normalize_text(f"owed: {a.owed_action} (re: {a.subject})", 180)
+                out.append(BoundContent(
+                    content_id=_content_id("accountability", "responsibility", summary),
+                    modality="responsibility",
+                    source="moral_responsibility",
+                    summary=summary,
+                    salience=_clamp(0.5 + 0.5 * a.severity),
+                    confidence=0.85,
+                    timestamp=time.time(),
+                    ownership="self",
+                    action_relevance=_clamp(0.5 + 0.5 * a.severity),
+                    affective_charge=-0.3 * a.severity,
+                ))
+            return out
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("unity_runtime", exc, severity="debug")
+            return []
+
     def gather_contents(self, state: Any, objective: str = "") -> list[BoundContent]:
         contents = (
             self._objective_content(state, objective)
@@ -429,6 +460,7 @@ class UnityRuntime:
             + self._social_contents(state)
             + self._epistemic_contents(state, objective)
             + self._self_audit_contents(state)
+            + self._accountability_contents(state)
             + self._goal_contents(state)
             + self._working_memory_contents(state)
             + self._long_term_memory_contents(state)
