@@ -231,6 +231,22 @@ def test_capability_inventory_reply_repairs_false_tool_limitation(monkeypatch: p
     assert "i can't" not in lowered
 
 
+def test_capability_inventory_rejects_midword_clipped_tail() -> None:
+    from interface.routes import chat as chat_routes
+
+    clipped = (
+        "I can use governed desktop control, browser and web research, file and "
+        "document work, terminal execution, memory, tools, and skill surfaces. "
+        "Will/Authority approval and receipts are required before execution. "
+        "For this turn I am only describing th"
+    )
+
+    assert chat_routes._capability_inventory_reply_is_inadequate(
+        INVENTORY_PROMPT,
+        clipped,
+    )
+
+
 def test_runtime_status_grounding_does_not_replace_capability_inventory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -395,6 +395,45 @@ def _surface_quality_failure_reasons(
     return reasons
 
 
+def _repair_live_user_surface_self_claims(response_text: Any) -> str:
+    """Ground false or over-strong self-claims before worker quality retries."""
+
+    text = str(response_text or "").strip()
+    if not text:
+        return text
+    try:
+        from core.conversation.self_claim_verifier import repair_self_claim_surface
+
+        return repair_self_claim_surface(text)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        _record_mlx_degradation(
+            exc,
+            action="continued with unmodified draft after self-claim grounding failed",
+            severity="error",
+        )
+        return text
+
+
+def _repair_live_user_surface_truncated_tail(response_text: Any) -> str:
+    """Keep complete model-derived content when only the final tail is clipped."""
+
+    text = str(response_text or "").strip()
+    if len(text) < 80 or len(text.split()) < 12:
+        return ""
+    sentence_ends = [
+        match.end()
+        for match in re.finditer(r"[.!?](?=(?:\s|$|\d))", text)
+    ]
+    for end in reversed(sentence_ends):
+        candidate = text[:end].strip()
+        if re.search(r"(?:^|\s)\d+\.$", candidate):
+            continue
+        if len(candidate) < 80 or len(candidate.split()) < 12:
+            continue
+        return candidate
+    return ""
+
+
 def _messages_with_user_surface_retry(
     messages: Any,
     reasons: list[str],
@@ -2346,14 +2385,28 @@ def _mlx_worker_loop(
                                     # for the whole generation and restore the model afterward.
                                     # The context exits on normal completion, break, or error
                                     # (GeneratorExit), so model.model is always restored.
-                                    def _gen_stream():
-                                        if _np_tap is not None:
-                                            with _np_tap:
-                                                yield from stream_generate(model, tokenizer, prompt=gen_prompt, **clean_kwargs)
+                                    def _gen_stream(tap, prompt_text, generation_kwargs):
+                                        if tap is not None:
+                                            with tap:
+                                                yield from stream_generate(
+                                                    model,
+                                                    tokenizer,
+                                                    prompt=prompt_text,
+                                                    **generation_kwargs,
+                                                )
                                         else:
-                                            yield from stream_generate(model, tokenizer, prompt=gen_prompt, **clean_kwargs)
+                                            yield from stream_generate(
+                                                model,
+                                                tokenizer,
+                                                prompt=prompt_text,
+                                                **generation_kwargs,
+                                            )
 
-                                    for response in _gen_stream():
+                                    for response in _gen_stream(
+                                        _np_tap,
+                                        gen_prompt,
+                                        clean_kwargs,
+                                    ):
                                         watchdog.activity()
                                         token_count += 1
                                         progress_now = time.time()
@@ -2589,6 +2642,15 @@ def _mlx_worker_loop(
                                             )
 
                                     if surface_quality_gate_enabled and response_text.strip():
+                                        grounded_surface = _repair_live_user_surface_self_claims(
+                                            response_text
+                                        )
+                                        if grounded_surface != response_text:
+                                            logger.info(
+                                                "🛡️ [WORKER] Grounded user-surface self-claim "
+                                                "before quality validation."
+                                            )
+                                            response_text = grounded_surface
                                         surface_control_state["surface_quality_gate_attempts"] = int(
                                             surface_control_state.get("surface_quality_gate_attempts", 0)
                                             or 0
@@ -2597,6 +2659,27 @@ def _mlx_worker_loop(
                                             job,
                                             response_text,
                                         )
+                                        if set(rejection_reasons) == {"truncated_tail"}:
+                                            completed_surface = (
+                                                _repair_live_user_surface_truncated_tail(
+                                                    response_text
+                                                )
+                                            )
+                                            completed_reasons = (
+                                                _surface_quality_failure_reasons(
+                                                    job,
+                                                    completed_surface,
+                                                )
+                                                if completed_surface
+                                                else rejection_reasons
+                                            )
+                                            if completed_surface and not completed_reasons:
+                                                logger.info(
+                                                    "🛡️ [WORKER] Kept complete foreground "
+                                                    "sentences after a clipped tail."
+                                                )
+                                                response_text = completed_surface
+                                                rejection_reasons = []
                                         if rejection_reasons:
                                             surface_control_state["surface_quality_gate_passed"] = False
                                             surface_control_state["surface_quality_gate_reasons"] = rejection_reasons[:8]

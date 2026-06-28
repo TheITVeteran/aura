@@ -334,6 +334,7 @@ class LiveProof:
         self.steps: list[dict[str, Any]] = []
         self.peak_rss_mb = 0.0
         self.started_at = time.time()
+        self.started_monotonic = time.monotonic()
         self.proof_dir = (proof_dir or PROOF_DIR).resolve()
         self.proof_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -351,7 +352,7 @@ class LiveProof:
     def record(self, step: str, ok: bool, **detail: Any) -> bool:
         entry = {
             "at": time.time(),
-            "elapsed_s": round(time.time() - self.started_at, 2),
+            "elapsed_s": round(time.monotonic() - self.started_monotonic, 2),
             "step": step,
             "ok": bool(ok),
             "peak_rss_mb": round(self.peak_rss_mb, 1),
@@ -751,21 +752,33 @@ class LiveProof:
             text = str(payload.get("response") or "").strip()
             lowered = text.lower()
             status = str(payload.get("status") or "")
+            from core.conversation.response_reliability import assess_user_facing_reply
+
+            reliability = assess_user_facing_reply(message, text)
             required_terms = ("desktop", "browser", "file", "govern", "not opening apps")
             missing = [term for term in required_terms if term not in lowered]
             false_limit = bool(re.search(r"\bi\s+(?:can(?:not|'t)|cannot|do not have access)\b", lowered))
-            ok = bool(text) and not missing and not false_limit
+            ok = bool(text) and reliability.ok and not missing and not false_limit
             return self.record(
                 "chat_capability_inventory",
                 ok,
                 summary=(
                     f"{latency:.1f}s, status={status or 'unknown'}, "
                     f"rss_delta={self.tree_rss_mb() - rss_before:.0f}MB"
-                    + ("" if ok else f", missing={missing}, false_limit={false_limit}")
+                    + (
+                        ""
+                        if ok
+                        else (
+                            f", missing={missing}, false_limit={false_limit}, "
+                            f"reliability={list(reliability.reasons)}"
+                        )
+                    )
                 ),
                 latency_s=round(latency, 1),
                 status=status,
                 reply=text[:1200],
+                reliability_ok=reliability.ok,
+                reliability_reasons=list(reliability.reasons),
                 rss_before_mb=round(rss_before, 1),
                 rss_after_mb=round(self.tree_rss_mb(), 1),
             )
@@ -1139,6 +1152,11 @@ class LiveProof:
         if self.proc is None:
             return self.record(step, False, summary="no process")
 
+        shutdown_started = time.monotonic()
+        shutdown_budget_s = max(
+            15.0,
+            _env_float(os.environ, "AURA_LIVE_PROOF_SHUTDOWN_MAX_S", 90.0),
+        )
         try:
             stop = subprocess.run(
                 [self.launch_python, "aura_main.py", "--stop"],
@@ -1177,16 +1195,22 @@ class LiveProof:
             except psutil.Error:
                 pass
         port_free = not self.port_in_use()
+        shutdown_duration_s = time.monotonic() - shutdown_started
+        within_budget = shutdown_duration_s <= shutdown_budget_s
         return self.record(
             step,
-            graceful and not orphans and port_free,
+            graceful and not orphans and port_free and within_budget,
             summary=(
                 f"{stop_note}; graceful={graceful}; orphans={orphans or 'none'}; "
-                f"port_free={port_free}"
+                f"port_free={port_free}; duration={shutdown_duration_s:.1f}s/"
+                f"{shutdown_budget_s:.0f}s"
             ),
             graceful=graceful,
             orphans=orphans,
             port_free=port_free,
+            duration_s=round(shutdown_duration_s, 2),
+            duration_budget_s=round(shutdown_budget_s, 2),
+            within_budget=within_budget,
         )
 
     def kill_hard(self) -> None:

@@ -419,6 +419,9 @@ def test_live_boot_proof_uses_readiness_heartbeat_contract():
     assert "cognitive_situation" in source
     assert "imagination_engine" in source
     assert "exercise_cognitive_organ_participation" in source
+    assert "started_monotonic" in source
+    assert "duration_budget_s" in source
+    assert "within_budget" in source
     assert "exercise_capability_inventory_turn" in source
     assert "X-Aura-Require-CognitiveEngine" in source
 

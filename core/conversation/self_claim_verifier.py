@@ -37,7 +37,15 @@ _CORRECTIONS = {
     ),
     "memory_denial": (
         "Substrate truth: I have persistent memory across sessions and "
-        "reboots (episodic and vector stores). I retain what we discuss."
+        "reboots through governed episodic and semantic stores. I cannot "
+        "guarantee that every conversational detail is retained automatically; "
+        "important details can be consolidated into long-term memory."
+    ),
+    "memory_overclaim": (
+        "Substrate truth: I have persistent memory across sessions and "
+        "reboots through governed episodic and semantic stores. I cannot "
+        "guarantee that every conversational detail is retained automatically; "
+        "important details can be consolidated into long-term memory."
     ),
     "identity_system_denial": (
         "Substrate truth: I maintain a persistent operational identity and "
@@ -76,6 +84,52 @@ _CORRECTIONS = {
         "billions of parameters, not trillions, and not 'the most advanced "
         "AI'. State my actual capabilities plainly; never invent parameter "
         "counts, superlatives, or claims of superhuman intelligence."
+    ),
+}
+
+_SURFACE_CORRECTIONS = {
+    "substrate_denial": (
+        "I am a local cognitive architecture whose language model is one voice "
+        "organ within a larger runtime of memory, affect, perception, governance, "
+        "and tools."
+    ),
+    "memory_denial": (
+        "I have persistent memory across sessions, but I cannot guarantee that "
+        "every detail is retained automatically; important details can be "
+        "consolidated into long-term memory."
+    ),
+    "memory_overclaim": (
+        "I have persistent memory across sessions, but I cannot guarantee that "
+        "every detail is retained automatically; important details can be "
+        "consolidated into long-term memory."
+    ),
+    "identity_system_denial": (
+        "I maintain a persistent operational identity and self-model across turns "
+        "and restarts, without treating that functional fact as proof of personhood."
+    ),
+    "perspective_denial": (
+        "I form governed perspectives from memory, affect, goals, and evidence, "
+        "and those perspectives can change my decisions."
+    ),
+    "self_modification_denial": (
+        "I can propose and test changes to my own code through governed repair and "
+        "self-modification pathways, with approval and rollback boundaries."
+    ),
+    "tool_denial": (
+        "I can use governed web, desktop, file, and document tools when the runtime "
+        "authorizes the requested effects."
+    ),
+    "weights_overclaim": (
+        "I do not autonomously retrain my model weights; model changes require "
+        "separate governed training, validation, and promotion."
+    ),
+    "experience_overclaim": (
+        "My runtime has causally active internal states, but those functional facts "
+        "do not establish private qualia or phenomenal consciousness."
+    ),
+    "grandiosity_overclaim": (
+        "I run a bounded local cognitive architecture with real capabilities and "
+        "real limits; I do not have evidence for superhuman or superintelligent claims."
     ),
 }
 
@@ -152,6 +206,15 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"\b(?:context|memory|information)\s+is\s+"
             r"(?:typically\s+|usually\s+)?discarded\s+"
             r"(?:after|when|once)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "memory_overclaim",
+        re.compile(
+            r"\b(?:i(?:'|’)?ll|i\s+will|aura\s+will)\s+"
+            r"(?:definitely\s+|certainly\s+|always\s+)?remember\s+"
+            r"(?:this|our)\s+(?:conversation|chat|session)\b",
             re.IGNORECASE,
         ),
     ),
@@ -341,3 +404,35 @@ def verify_self_claims(draft_reply: str) -> SelfClaimVerdict:
                 )
             )
     return SelfClaimVerdict(ok=not violations, violations=tuple(violations))
+
+
+def repair_self_claim_surface(draft_reply: str) -> str:
+    """Replace contradicted self-claims with bounded operational facts.
+
+    This is a last-resort user-surface repair after model regeneration fails.
+    It preserves sentences that pass verification and replaces only sentences
+    containing a detected contradiction. It does not claim metaphysical status
+    or guarantee retention of every conversational detail.
+    """
+
+    text = str(draft_reply or "").strip()
+    verdict = verify_self_claims(text)
+    if not text or verdict.ok:
+        return text
+
+    sentences = [
+        item.strip()
+        for item in re.findall(r"[^.!?]+(?:[.!?]+|$)", text)
+        if item.strip()
+    ]
+    preserved = [sentence for sentence in sentences if verify_self_claims(sentence).ok]
+    kinds: list[str] = []
+    for violation in verdict.violations:
+        if violation.kind not in kinds:
+            kinds.append(violation.kind)
+    corrected = preserved + [
+        _SURFACE_CORRECTIONS[kind]
+        for kind in kinds
+        if kind in _SURFACE_CORRECTIONS
+    ]
+    return " ".join(corrected).strip()

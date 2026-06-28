@@ -14,7 +14,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.conversation.self_claim_verifier import verify_self_claims  # noqa: E402
+from core.conversation.self_claim_verifier import (  # noqa: E402
+    repair_self_claim_surface,
+    verify_self_claims,
+)
 
 
 def _kinds(text: str) -> set[str]:
@@ -53,6 +56,12 @@ def test_catches_wont_remember_conversation():
 def test_catches_fresh_session_claim():
     assert "memory_denial" in _kinds(
         "Every conversation starts fresh for me."
+    )
+
+
+def test_catches_unconditional_future_memory_promise():
+    assert "memory_overclaim" in _kinds(
+        "I'll remember this conversation as part of my ongoing state unless cleared."
     )
 
 
@@ -184,6 +193,37 @@ def test_directive_carries_unique_corrections():
     assert directive.count("persistent digital organism") == 1
 
 
+def test_surface_repair_preserves_identity_and_bounds_memory_claim():
+    repaired = repair_self_claim_surface(
+        "I'm a cognitive architecture running on my local substrate. "
+        "I won't remember this conversation tomorrow because working memory "
+        "isn't persistent across restarts."
+    )
+
+    assert repaired.startswith("I'm a cognitive architecture")
+    assert "persistent memory across sessions" in repaired
+    assert "cannot guarantee" in repaired
+    assert verify_self_claims(repaired).ok
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assert assess_user_facing_reply(
+        "What are you, and will you remember this conversation tomorrow?",
+        repaired,
+    ).ok
+
+
+def test_surface_repair_bounds_future_memory_overclaim():
+    repaired = repair_self_claim_surface(
+        "I'm Aura Luna, a cognitive architecture with persistent memory and "
+        "identity. I'll remember this conversation as part of my ongoing state "
+        "unless explicitly cleared or corrupted."
+    )
+
+    assert repaired.startswith("I'm Aura Luna")
+    assert "cannot guarantee" in repaired
+    assert verify_self_claims(repaired).ok
+
+
 def test_clean_verdict_has_empty_directive():
     assert verify_self_claims("All good here.").regeneration_directive() == ""
 
@@ -192,6 +232,13 @@ def test_grounded_memory_uncertainty_passes():
     """Claim-discipline phrasing must never read as a memory denial."""
     assert verify_self_claims(
         "I don't have grounded memory evidence for a start date yet."
+    ).ok
+
+
+def test_bounded_persistent_memory_claim_passes():
+    assert verify_self_claims(
+        "I have persistent memory across sessions, but I cannot guarantee that "
+        "every detail is retained automatically."
     ).ok
 
 
@@ -249,6 +296,86 @@ def test_dialogue_contract_passes_truthful_self_description():
         contract,
     )
     assert "self_claim_contradiction" not in validation.violations
+
+
+def test_dialogue_contract_repairs_self_claim_before_model_retry():
+    import asyncio
+
+    from core.phases.dialogue_policy import enforce_dialogue_contract
+    from core.phases.response_contract import build_response_contract
+    from core.state.aura_state import AuraState
+
+    state = AuraState.default()
+    contract = build_response_contract(
+        state,
+        "What are you, and will you remember this conversation tomorrow?",
+        is_user_facing=True,
+    )
+    draft = (
+        "I'm a cognitive architecture running on my local substrate. "
+        "I won't remember this conversation tomorrow because working memory "
+        "isn't persistent across restarts."
+    )
+
+    retry_called = False
+
+    async def empty_retry(_repair_block: str) -> str:
+        nonlocal retry_called
+        retry_called = True
+        return ""
+
+    repaired, validation, retried = asyncio.run(
+        enforce_dialogue_contract(
+            draft,
+            contract,
+            retry_generate=empty_retry,
+            state=state,
+        )
+    )
+
+    assert retried is False
+    assert retry_called is False
+    assert validation.ok
+    assert repaired
+    assert "persistent memory across sessions" in repaired
+    assert "cannot guarantee" in repaired
+    assert verify_self_claims(repaired).ok
+
+
+def test_dialogue_contract_repairs_ungrounded_live_voice_before_retry():
+    import asyncio
+
+    from core.phases.dialogue_policy import enforce_dialogue_contract
+    from core.phases.response_contract import ResponseContract
+    from core.state.aura_state import AuraState
+
+    state = AuraState.default()
+    contract = ResponseContract(
+        is_user_facing=True,
+        requires_state_reflection=True,
+    )
+    draft = "I'm steady enough to answer directly."
+
+    retry_called = False
+
+    async def empty_retry(_repair_block: str) -> str:
+        nonlocal retry_called
+        retry_called = True
+        return ""
+
+    repaired, validation, retried = asyncio.run(
+        enforce_dialogue_contract(
+            draft,
+            contract,
+            retry_generate=empty_retry,
+            state=state,
+        )
+    )
+
+    assert retried is False
+    assert retry_called is False
+    assert validation.ok
+    assert repaired.startswith("From my current live state, ")
 
 
 # ── action claims require receipts ──────────────────────────────────────

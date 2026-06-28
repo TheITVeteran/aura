@@ -14,10 +14,12 @@ from core.brain.llm.mlx_worker import (
     _apply_surface_generation_controls,
     _build_user_surface_quality_retry_prompt,
     _messages_with_user_surface_retry,
+    _repair_live_user_surface_self_claims,
+    _repair_live_user_surface_truncated_tail,
     _restore_surface_generation_controls,
-    _surface_generation_control_receipt,
     _surface_control_alpha,
     _surface_generation_contract_enabled,
+    _surface_generation_control_receipt,
     _surface_quality_failure_reasons,
     _surface_quality_gate_enabled,
 )
@@ -126,6 +128,38 @@ def test_live_user_surface_quality_gate_rejects_unfounded_voice_intrusion():
     )
 
     assert "unfounded_voice_intrusion" in reasons
+
+
+def test_worker_repairs_future_memory_overclaim_before_quality_retry():
+    job = {
+        "clean_user_surface_contract": True,
+        "user_surface_validation_prompt": (
+            "What are you, and will you remember this conversation tomorrow?"
+        ),
+    }
+    repaired = _repair_live_user_surface_self_claims(
+        "I'm Aura Luna, a cognitive architecture with persistent memory and "
+        "identity. I'll remember this conversation as part of my ongoing state "
+        "unless explicitly cleared."
+    )
+
+    assert "cannot guarantee" in repaired
+    assert _surface_quality_failure_reasons(job, repaired) == []
+
+
+def test_worker_keeps_complete_plan_before_clipped_tail():
+    draft = (
+        "1. Create a note in your preferred editor. "
+        "2. Add the content and verify the document body. "
+        "3. Export the finished note as a PDF. "
+        "4. Choose the destination folder and confirm the PDF exists. "
+        "5. Record the verified path and"
+    )
+
+    repaired = _repair_live_user_surface_truncated_tail(draft)
+
+    assert repaired.endswith("confirm the PDF exists.")
+    assert "Record the verified path" not in repaired
 
 
 def test_live_user_surface_quality_gate_accepts_concise_capability_inventory():

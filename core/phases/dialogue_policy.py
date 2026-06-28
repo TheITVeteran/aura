@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import re
 import logging
-from collections.abc import Awaitable, Callable
+import re
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -324,7 +324,7 @@ def _collapse_repeated_sentences(text: str) -> str:
         return str(text or "").strip()
     seen: set[str] = set()
     kept: list[str] = []
-    for sentence, key in zip(sentences, keys):
+    for sentence, key in zip(sentences, keys, strict=True):
         if key in repeated:
             if key in seen:
                 continue
@@ -541,6 +541,33 @@ def repair_dialogue_surface(text: str, contract: object | None) -> str:
     return body
 
 
+def _ground_live_voice_surface(text: str, contract: object | None) -> str:
+    body = str(text or "").strip()
+    if not body or not _requires_explicit_live_grounding(contract):
+        return body
+    if _contains_live_aura_grounding(body):
+        return body
+
+    grounding = "From my live runtime state, "
+    if getattr(contract, "requires_memory_grounding", False):
+        grounding = "From this conversation memory, "
+    elif getattr(contract, "requires_state_reflection", False):
+        grounding = "From my current live state, "
+    elif getattr(contract, "requires_reasoned_defense", False):
+        grounding = "My reasoning is grounded in this conversation and current runtime context: "
+    elif getattr(contract, "requires_identity_defense", False):
+        grounding = "From my runtime continuity and memory, "
+    elif getattr(contract, "requires_self_preservation", False):
+        grounding = "From my governance and self-preservation state, "
+    elif getattr(contract, "requires_recent_specific_grounding", False):
+        grounding = "From the recent conversation context, "
+
+    if body[:1].islower():
+        body = body[:1].upper() + body[1:]
+    grounded = f"{grounding}{body}"
+    return grounded.strip()
+
+
 def build_dialogue_repair_block(contract: object | None, validation: DialogueValidation, failed_text: str) -> str:
     lines = [
         "## DIALOGUE REPAIR",
@@ -614,9 +641,24 @@ async def enforce_dialogue_contract(
         return text, validation, False
 
     repaired = repair_dialogue_surface(text, contract)
+    repaired = _ground_live_voice_surface(repaired, contract)
     repaired_validation = validate_dialogue_response(repaired, contract, state)
     if repaired_validation.ok:
         return repaired, repaired_validation, False
+
+    # Self-claim contradictions are grounded facts, not a creative-writing
+    # problem. Correct them deterministically before spending another 32B
+    # foreground generation and risking a timeout or worker recycle.
+    if "self_claim_contradiction" in repaired_validation.violations:
+        try:
+            from core.conversation.self_claim_verifier import repair_self_claim_surface
+
+            grounded = repair_self_claim_surface(repaired)
+            grounded_validation = validate_dialogue_response(grounded, contract, state)
+            if grounded and grounded_validation.ok:
+                return grounded, grounded_validation, False
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Deterministic self-claim repair unavailable: %s", exc)
 
     if retry_generate is None:
         return repaired, repaired_validation, False
@@ -628,14 +670,37 @@ async def enforce_dialogue_contract(
     )
     retry_block = build_dialogue_repair_block(contract, validation, text)
     retried = str(await retry_generate(retry_block) or "").strip()
+    retried = _ground_live_voice_surface(retried, contract)
     retried_validation = validate_dialogue_response(retried, contract, state)
     if retried_validation.ok:
         return retried, retried_validation, True
 
     retried_repaired = repair_dialogue_surface(retried, contract)
+    retried_repaired = _ground_live_voice_surface(retried_repaired, contract)
     retried_repaired_validation = validate_dialogue_response(retried_repaired, contract, state)
     if retried_repaired_validation.ok:
         return retried_repaired, retried_repaired_validation, True
 
-    fallback = retried_repaired or repaired or text
-    return fallback, validate_dialogue_response(fallback, contract, state), True
+    # A rejected draft must never become the user-facing fallback merely
+    # because the model retry timed out or returned no text. For self-claim
+    # contradictions, replace only the contradicted sentences with bounded
+    # runtime facts and validate the complete surface again.
+    try:
+        from core.conversation.self_claim_verifier import repair_self_claim_surface
+
+        for candidate in (retried_repaired, repaired, text):
+            grounded = repair_self_claim_surface(candidate)
+            if not grounded:
+                continue
+            grounded_validation = validate_dialogue_response(grounded, contract, state)
+            if grounded_validation.ok:
+                return grounded, grounded_validation, True
+    except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("Self-claim surface repair unavailable: %s", exc)
+
+    # Returning an invalid draft would defeat the contract. Empty output is
+    # intentionally fail-closed so the caller's no-answer recovery path can
+    # retry through the canonical CognitiveEngine instead of shipping known
+    # incoherence or a false self-description.
+    failed = retried_repaired or repaired or text
+    return "", validate_dialogue_response(failed, contract, state), True

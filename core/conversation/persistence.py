@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -26,6 +27,7 @@ MAX_ORIGIN_CHARS = 64
 MAX_CID_CHARS = 128
 MAX_CONTENT_CHARS = 2_000_000
 MAX_QUERY_LIMIT = 1000
+CONVERSATION_DB_BUSY_TIMEOUT_MS = 1000
 
 _PERSISTENCE_ERRORS = (
     AttributeError,
@@ -119,6 +121,7 @@ class ConversationPersistence:
     def __init__(self, db_path: str | Path | None = None):
         self._db = str(db_path or _DB_PATH)
         Path(self._db).parent.mkdir(parents=True, exist_ok=True)
+        self._write_lock = threading.RLock()
         self._init()
         self._current_session_id: str | None = None
         self._retention_keep_days = DEFAULT_CONVERSATION_RETENTION_DAYS
@@ -128,16 +131,19 @@ class ConversationPersistence:
         self._last_persist_error_at: float = 0.0
 
     def _connect(self) -> sqlite3.Connection:
-        con = sqlite3.connect(self._db, timeout=10)
+        con = sqlite3.connect(
+            self._db,
+            timeout=CONVERSATION_DB_BUSY_TIMEOUT_MS / 1000.0,
+        )
         con.row_factory = sqlite3.Row
-        con.execute("PRAGMA busy_timeout=10000")
-        con.execute("PRAGMA journal_mode=WAL")
+        con.execute(f"PRAGMA busy_timeout={CONVERSATION_DB_BUSY_TIMEOUT_MS}")
         con.execute("PRAGMA synchronous=NORMAL")
         con.execute("PRAGMA foreign_keys=ON")
         return con
 
     def _init(self):
-        with self._connect() as con:
+        with self._write_lock, self._connect() as con:
+            con.execute("PRAGMA journal_mode=WAL")
             con.executescript(_SCHEMA)
             con.commit()
 
@@ -153,7 +159,7 @@ class ConversationPersistence:
                 severity="warning",
             )
             metadata_json = "{}"
-        with self._connect() as con:
+        with self._write_lock, self._connect() as con:
             con.execute(
                 "INSERT INTO sessions VALUES (?,?,?,?)",
                 (session_id, now, now, metadata_json),
@@ -197,7 +203,7 @@ class ConversationPersistence:
         origin = _safe_text(origin, max_chars=MAX_ORIGIN_CHARS)
         cid = _safe_text(cid, max_chars=MAX_CID_CHARS)
         inserted = False
-        with self._connect() as con:
+        with self._write_lock, self._connect() as con:
             con.execute("BEGIN IMMEDIATE")
             self._ensure_session_row(con, sid, now)
             if cid:
@@ -260,7 +266,7 @@ class ConversationPersistence:
         publish_user = False
         publish_aura = False
 
-        with self._connect() as con:
+        with self._write_lock, self._connect() as con:
             con.execute("BEGIN IMMEDIATE")
             self._ensure_session_row(con, sid, now)
             existing_user = (
@@ -434,7 +440,7 @@ class ConversationPersistence:
             keep_days = DEFAULT_CONVERSATION_RETENTION_DAYS
         keep_days = max(1, min(3650, keep_days))
         cutoff = time.time() - (keep_days * SECONDS_PER_DAY)
-        with self._connect() as con:
+        with self._write_lock, self._connect() as con:
             # Manually cascade to be absolutely sure (Audit-33 fix)
             con.execute(
                 "DELETE FROM turns WHERE session_id IN (SELECT id FROM sessions WHERE last_active < ?)",

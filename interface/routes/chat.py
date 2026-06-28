@@ -8443,6 +8443,8 @@ def _capability_inventory_reply_is_inadequate(user_message: str, reply_text: str
     reply = str(reply_text or "").strip()
     if not reply:
         return True
+    if _looks_truncated_tail(reply):
+        return True
     if _CAPABILITY_FALSE_LIMITATION_RE.search(reply):
         return True
     lowered = reply.lower()

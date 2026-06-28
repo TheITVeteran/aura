@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import types
+from concurrent.futures import ThreadPoolExecutor
 
 from core.conversation import persistence as persistence_module
 from core.conversation.persistence import ConversationPersistence
@@ -137,6 +138,36 @@ def test_conversation_persistence_bounded_history_returns_newest_turns(tmp_path)
     history = store.get_session_history(session_id, limit=3)
 
     assert [row["content"] for row in history] == ["turn-5", "turn-6", "turn-7"]
+
+
+def test_conversation_persistence_serializes_concurrent_writers(monkeypatch, tmp_path):
+    class Bus:
+        def publish_threadsafe(self, _topic, _payload):
+            return None
+
+    _install_event_bus(monkeypatch, Bus())
+    store = ConversationPersistence(tmp_path / "concurrent-conversations.db")
+    session_id = store.start_session()
+
+    def write_turn(index: int) -> str:
+        return store.record_turn(
+            "user",
+            f"concurrent-turn-{index}",
+            origin="desktop_ui",
+            cid=f"concurrent-{index}",
+            session_id=session_id,
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        turn_ids = list(pool.map(write_turn, range(40)))
+
+    history = store.get_session_history(session_id, limit=100)
+
+    assert len(set(turn_ids)) == 40
+    assert len(history) == 40
+    assert {row["cid"] for row in history} == {
+        f"concurrent-{index}" for index in range(40)
+    }
 
 
 def test_conversation_persistence_async_publish_is_scheduled(monkeypatch, tmp_path):
