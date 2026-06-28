@@ -143,3 +143,61 @@ def generate_with_memory(
         if eos is not None and next_id == eos:
             break
     return tokenizer.decode(ids[start:]).strip()
+
+
+def make_nonparametric_logits_processor(
+    model: Any,
+    memory: Any,
+    *,
+    k: int = 4,
+    temperature: float = 2.0,
+    phi: float | None = 0.5,
+    free_energy: float | None = 0.7,
+    min_cos: float = 0.55,
+    base_lam: float = 0.75,
+) -> Any:
+    """A live mlx_lm logits-processor: interpolate non-parametric recall per token.
+
+    Signature ``(tokens, logits) -> logits`` matches mlx_lm. Recomputes the hidden state
+    from the running tokens to form the query key (so it works through the standard
+    stream_generate seam) — that's an extra forward per token, so this is the *validation/
+    opt-in* form; the KV-cached version inside the worker loop is the latency-optimized
+    follow-up. Fail-open: any error returns the original logits unchanged.
+    """
+    import mlx.core as mx
+
+    def _proc(tokens: Any, logits: Any) -> Any:
+        try:
+            seq = tokens.reshape(1, -1) if hasattr(tokens, "reshape") else mx.array([tokens])
+            h = model.model(seq)
+            key = normalize(np.array(h[0, -1], dtype=np.float32))
+            neighbors = memory.query(key, k=k)
+            if not neighbors:
+                return logits
+            cos = cosine_from_l2(neighbors[0].distance)
+            if cos < min_cos:
+                return logits
+            fe = 0.5 if free_energy is None else float(free_energy)
+            lam = base_lam * ((cos - min_cos) / (1.0 - min_cos)) * (0.6 + 0.8 * fe)
+            lg = np.array(logits, dtype=np.float32).reshape(-1)
+            ktop = min(64, lg.shape[0])
+            idx = np.argpartition(lg, -ktop)[-ktop:]
+            sub = lg[idx] - lg[idx].max()
+            ex = np.exp(sub)
+            ex /= ex.sum()
+            lm_probs = {int(t): float(p) for t, p in zip(idx, ex)}
+            blended = memory.interpolate(
+                lm_probs, key, k=k, temperature=temperature, phi=phi,
+                free_energy=free_energy, lam_override=min(lam, 0.9),
+            )
+            out = lg.copy()
+            import math as _m
+
+            for t, p in blended.items():
+                out[int(t)] = _m.log(max(p, 1e-12))
+            return mx.array(out).reshape(logits.shape)
+        except (RuntimeError, ValueError, TypeError, AttributeError, IndexError) as exc:
+            record_degradation("nonparametric_logits_processor", exc)
+            return logits
+
+    return _proc

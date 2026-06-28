@@ -38,3 +38,53 @@ def test_cosine_from_l2_opposite_is_minus_one():
 
 def test_cosine_monotonic_in_distance():
     assert cosine_from_l2(0.1) > cosine_from_l2(0.5) > cosine_from_l2(1.0)
+
+
+def _softmax(a: np.ndarray) -> np.ndarray:
+    a = a - a.max()
+    e = np.exp(a)
+    return e / e.sum()
+
+
+def test_logits_processor_boosts_recalled_token():
+    import mlx.core as mx
+
+    from core.brain.nonparametric_generation import make_nonparametric_logits_processor
+    from core.brain.nonparametric_memory import NonParametricMemory
+
+    mem = NonParametricMemory(dim=4)
+    kvec = normalize(np.array([1.0, 0, 0, 0]))
+    mem.add(kvec, token_id=0, token="x", weight=1.0)   # recall favors token 0
+
+    class FakeModel:
+        def model(self, seq):
+            n = int(seq.shape[1])
+            return mx.array(np.tile(kvec.astype(np.float32), (1, n, 1)))
+
+    proc = make_nonparametric_logits_processor(FakeModel(), mem, free_energy=1.0)
+    tokens = mx.array([1, 2, 3])
+    logits = mx.array(np.array([0.0, 0.0, 5.0, 0.0], dtype=np.float32))  # model favors token 2
+    out = np.array(proc(tokens, logits)).reshape(-1)
+    assert _softmax(out)[0] > _softmax(np.array([0.0, 0.0, 5.0, 0.0]))[0]
+
+
+def test_logits_processor_fail_open_on_far_neighbor():
+    import mlx.core as mx
+
+    from core.brain.nonparametric_generation import make_nonparametric_logits_processor
+    from core.brain.nonparametric_memory import NonParametricMemory
+
+    mem = NonParametricMemory(dim=4)
+    mem.add(normalize(np.array([0.0, 0.0, 0.0, 1.0])), token_id=0, token="x")  # orthogonal to query
+
+    class FakeModel:
+        def model(self, seq):
+            n = int(seq.shape[1])
+            q = normalize(np.array([1.0, 0, 0, 0]))
+            return mx.array(np.tile(q.astype(np.float32), (1, n, 1)))
+
+    proc = make_nonparametric_logits_processor(FakeModel(), mem)
+    logits = mx.array(np.array([0.0, 0.0, 5.0, 0.0], dtype=np.float32))
+    out = np.array(proc(mx.array([1, 2]), logits)).reshape(-1)
+    # far neighbor (cos≈0 < min_cos) → λ gated to 0 → logits unchanged
+    assert np.allclose(out, np.array([0.0, 0.0, 5.0, 0.0]))
