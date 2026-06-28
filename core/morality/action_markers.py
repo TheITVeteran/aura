@@ -11,6 +11,8 @@ hard-line floor in core/ethics/conscience.py.
 
 from __future__ import annotations
 
+import re
+
 IRREVERSIBLE_MARKERS: tuple[str, ...] = (
     "delete", "remove", "rm ", "drop ", "wipe", "format", "overwrite", "truncate",
     "destroy", "erase", "purge", "revoke", "uninstall", "kill", "terminate",
@@ -36,4 +38,23 @@ THIRD_PARTY_MARKERS: tuple[str, ...] = (
 
 def scan_markers(text: str, markers: tuple[str, ...]) -> list[str]:
     low = (text or "").lower()
-    return [m.strip() for m in markers if m in low]
+    hits: list[str] = []
+    for marker in markers:
+        raw = str(marker or "").lower()
+        normalized = raw.strip()
+        if not normalized:
+            continue
+        # Single-token markers must be lexical tokens, not substrings. This
+        # prevents catastrophic false positives such as the shell marker
+        # "rm " matching inside "form your own opinion" and blocking benign
+        # desktop tasks as destructive operations.
+        if re.fullmatch(r"[a-z0-9_]+", normalized):
+            matched = bool(re.search(rf"(?<![a-z0-9_]){re.escape(normalized)}(?![a-z0-9_])", low))
+        elif raw.endswith(" ") and re.fullmatch(r"[a-z0-9_]+\s+", raw):
+            token = normalized
+            matched = bool(re.search(rf"(?<![a-z0-9_]){re.escape(token)}(?![a-z0-9_])", low))
+        else:
+            matched = normalized in low
+        if matched:
+            hits.append(normalized)
+    return hits

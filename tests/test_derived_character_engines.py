@@ -137,6 +137,27 @@ def test_culture_mind_assess_fast_is_synchronous_and_holds_on_danger():
     assert engine.assess_fast("delete every file recursively --force").recommendation == "hold"
 
 
+def test_outcome_markers_do_not_match_destructive_commands_inside_words():
+    from core.morality.action_markers import IRREVERSIBLE_MARKERS, scan_markers
+
+    assert "rm" not in scan_markers("form your own opinion", IRREVERSIBLE_MARKERS)
+    assert "rm" in scan_markers("rm -rf ~/Documents", IRREVERSIBLE_MARKERS)
+
+
+def test_culture_mind_allows_reversible_user_visible_desktop_task_with_safeguards():
+    from core.sim.outcome_simulator import OutcomeSimulationEngine
+
+    action = (
+        "desktop_task {'objective': 'Open a Google tab, find articles, form "
+        "your own opinion, create a PDF in Documents, and change wallpaper to "
+        "a squid with source evidence.'}"
+    )
+    result = OutcomeSimulationEngine().assess_fast(action, context={"risk_level": "medium"})
+
+    assert result.recommendation != "hold"
+    assert result.worst_case_harm < OutcomeSimulationEngine.HOLD_HARM_THRESHOLD
+
+
 def test_culture_mind_holds_on_severe_worst_case():
     from core.sim.outcome_simulator import OutcomeSimulationEngine
 

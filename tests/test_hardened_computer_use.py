@@ -1093,6 +1093,47 @@ async def test_browser_paste_refuses_generic_text_field_when_doc_focus_required(
 
 
 @pytest.mark.asyncio
+async def test_browser_paste_uses_prior_editor_focus_when_ax_unavailable(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    staged = "Aura writes the article summary into the verified document body."
+    staged_sha = hashlib.sha256(staged.encode("utf-8")).hexdigest()
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Google Chrome")
+    monkeypatch.setattr(skill, "_focused_element_snapshot", lambda: "")
+    monkeypatch.setattr(skill, "_send_hotkey_system_events", lambda keys: "ok")
+    monkeypatch.setattr(skill, "_get_clipboard", lambda: {"ok": True, "text": staged})
+
+    async def controlled_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    result = await skill.execute(
+        {"action": "hotkey", "target": "command+v"},
+        {
+            "desktop_task_expected_frontmost_app": "Google Chrome",
+            "desktop_task_requires_editable_focus": True,
+            "desktop_task_editor_focus_verified": True,
+            "desktop_task_verified_editor_url": "https://docs.google.com/document/d/abc/edit",
+            "desktop_task_expected_clipboard_sha256": staged_sha,
+            "desktop_task_expected_clipboard_chars": len(staged),
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["effect_verified"] is True
+    assert result["is_paste"] is True
+    assert result["write_target_app_verified"] is True
+    assert result["clipboard_payload_verification"]["verified"] is True
+    assert "previously verified browser editor" in result["verification"]
+
+
+@pytest.mark.asyncio
 async def test_browser_type_refuses_generic_text_field_when_doc_focus_required(monkeypatch):
     skill = ComputerUseSkill()
 
@@ -1182,6 +1223,190 @@ async def test_web_editor_focus_accepts_editor_like_surface(monkeypatch):
     assert focused is True
     assert "Google Docs" in snapshot
     assert reason == "editable_focus_verified"
+
+
+@pytest.mark.asyncio
+async def test_web_editor_focus_accepts_canvas_surface_when_editor_url_still_active(
+    monkeypatch,
+):
+    skill = ComputerUseSkill()
+
+    class PyAutoGUIDouble:
+        def size(self):
+            return (1440, 900)
+
+        def click(self, x, y):
+            return None
+
+    monkeypatch.setattr(
+        skill,
+        "_focused_element_snapshot",
+        lambda: "AXWebArea\t\t\t\t",
+    )
+    monkeypatch.setattr(skill, "_send_hotkey_system_events", lambda keys: "ok")
+    monkeypatch.setattr(
+        skill,
+        "_active_browser_location",
+        lambda browser: ("https://docs.google.com/document/d/abc/edit", "Aura proof"),
+    )
+
+    async def controlled_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    focused, snapshot, reason = await skill._focus_web_editor_surface(
+        PyAutoGUIDouble(),
+        browser="Google Chrome",
+        target_url="https://docs.google.com/document/u/0/create",
+    )
+
+    assert focused is True
+    assert snapshot.startswith("AXWebArea")
+    assert reason == "editable_focus_verified_canvas_url"
+
+
+@pytest.mark.asyncio
+async def test_web_editor_focus_accepts_no_ax_focus_when_editor_url_still_active(
+    monkeypatch,
+):
+    skill = ComputerUseSkill()
+
+    class PyAutoGUIDouble:
+        def size(self):
+            return (1440, 900)
+
+        def click(self, x, y):
+            return None
+
+    monkeypatch.setattr(skill, "_focused_element_snapshot", lambda: "")
+    monkeypatch.setattr(skill, "_send_hotkey_system_events", lambda keys: "ok")
+    monkeypatch.setattr(
+        skill,
+        "_active_browser_location",
+        lambda browser: ("https://docs.google.com/document/d/abc/edit", "Aura proof"),
+    )
+
+    async def controlled_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    focused, snapshot, reason = await skill._focus_web_editor_surface(
+        PyAutoGUIDouble(),
+        browser="Google Chrome",
+        target_url="https://docs.google.com/document/u/0/create",
+    )
+
+    assert focused is True
+    assert snapshot == ""
+    assert reason == "editable_focus_verified_canvas_no_ax_focus"
+
+
+@pytest.mark.asyncio
+async def test_web_editor_focus_rejects_canvas_surface_when_editor_url_not_active(
+    monkeypatch,
+):
+    skill = ComputerUseSkill()
+
+    class PyAutoGUIDouble:
+        def size(self):
+            return (1440, 900)
+
+        def click(self, x, y):
+            return None
+
+    monkeypatch.setattr(
+        skill,
+        "_focused_element_snapshot",
+        lambda: "AXWebArea\t\t\t\t",
+    )
+    monkeypatch.setattr(skill, "_send_hotkey_system_events", lambda keys: "ok")
+    monkeypatch.setattr(
+        skill,
+        "_active_browser_location",
+        lambda browser: ("https://example.com/not-a-doc", "Example"),
+    )
+
+    async def controlled_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    focused, snapshot, reason = await skill._focus_web_editor_surface(
+        PyAutoGUIDouble(),
+        browser="Google Chrome",
+        target_url="https://docs.google.com/document/u/0/create",
+    )
+
+    assert focused is False
+    assert snapshot.startswith("AXWebArea")
+    assert reason == "editable_focus_unverified"
+
+
+@pytest.mark.asyncio
+async def test_open_url_waits_for_google_docs_create_to_resolve_before_focus(
+    monkeypatch,
+):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    argv_seen = []
+
+    class FakeSubprocessGateway:
+        def run(self, argv, **kwargs):
+            argv_seen.append(argv)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "core.skills.computer_use.get_subprocess_gateway",
+        lambda: FakeSubprocessGateway(),
+    )
+    async def wait_for_frontmost_app(expected):
+        return True, expected
+
+    monkeypatch.setattr(skill, "_wait_for_frontmost_app", wait_for_frontmost_app)
+    locations = iter(
+        (
+            ("https://docs.google.com/document/u/0/create", "New document"),
+            ("https://docs.google.com/document/d/abc/edit", "Aura proof"),
+        )
+    )
+    monkeypatch.setattr(skill, "_active_browser_location", lambda browser: next(locations))
+
+    async def focus_surface(pyautogui, *, browser="", target_url=""):
+        assert browser == "Google Chrome"
+        assert target_url == "https://docs.google.com/document/u/0/create"
+        return True, "AXWebArea\t\t\t\t", "editable_focus_verified_canvas_url"
+
+    monkeypatch.setattr(skill, "_focus_web_editor_surface", focus_surface)
+    monkeypatch.setattr("core.skills.computer_use.get_pyautogui", lambda: (object(), ""))
+
+    async def controlled_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    target = json.dumps(
+        {
+            "url": "https://docs.google.com/document/u/0/create",
+            "browser": "Google Chrome",
+            "requires_editable_focus": True,
+        }
+    )
+    result = await skill.execute({"action": "open_url", "target": target}, {})
+
+    assert result["ok"] is True
+    assert result["doc_focused"] is True
+    assert result["active_url"] == "https://docs.google.com/document/d/abc/edit"
+    assert result["focus_error"] == "editable_focus_verified_canvas_url"
+    assert argv_seen == [
+        ["open", "-a", "Google Chrome", "https://docs.google.com/document/u/0/create"]
+    ]
 
 
 @pytest.mark.asyncio
@@ -1582,6 +1807,31 @@ def test_frontmost_app_match_accepts_bundle_suffix_not_wrong_app():
     assert skill._frontmost_app_matches("Calculator", "Calculator.app") is True
     assert skill._frontmost_app_matches("Notes", "Notes app") is True
     assert skill._frontmost_app_matches("Finder", "Notes.app") is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_frontmost_app_actively_raises_expected_app(monkeypatch):
+    skill = ComputerUseSkill()
+
+    seen = iter(("Notes", "Google Chrome"))
+    activations = []
+
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: next(seen))
+
+    async def controlled_activate(app_name):
+        activations.append(app_name)
+
+    async def controlled_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(skill, "_activate_app", controlled_activate)
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    ok, last_seen = await skill._wait_for_frontmost_app("Google Chrome")
+
+    assert ok is True
+    assert last_seen == "Google Chrome"
+    assert activations == ["Google Chrome"]
 
 
 @pytest.mark.asyncio

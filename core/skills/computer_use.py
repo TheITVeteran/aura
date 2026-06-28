@@ -393,10 +393,15 @@ class ComputerUseSkill(BaseSkill):
 
     async def _wait_for_frontmost_app(self, expected: str) -> tuple[bool, str]:
         last_seen = ""
-        for _attempt in range(6):
+        for attempt in range(10):
             last_seen = await asyncio.to_thread(self._frontmost_app_name)
             if self._frontmost_app_matches(last_seen, expected):
                 return True, last_seen
+            if attempt in {0, 3, 6}:
+                try:
+                    await self._activate_app(expected)
+                except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                    logger.debug("Frontmost activation retry failed for %s: %s", expected, exc)
             await asyncio.sleep(0.35)
         return False, last_seen
 
@@ -486,7 +491,13 @@ end tell
             logger.debug("Focused element snapshot failed: %s", exc)
             return ""
 
-    async def _focus_web_editor_surface(self, pyautogui: Any) -> tuple[bool, str, str]:
+    async def _focus_web_editor_surface(
+        self,
+        pyautogui: Any,
+        *,
+        browser: str = "",
+        target_url: str = "",
+    ) -> tuple[bool, str, str]:
         """Move browser focus from the omnibox into a web editor body.
 
         Google Docs/Sheets/Slides expose editor bodies through canvas-heavy UI,
@@ -523,6 +534,27 @@ end tell
                 return False, last_snapshot, f"web_editor_focus_click_failed: {exc}"
             if self._focused_snapshot_looks_web_editor_surface(last_snapshot):
                 return True, last_snapshot, "editable_focus_verified"
+            if (
+                browser
+                and target_url
+                and (
+                    self._focused_snapshot_looks_web_editor_canvas_candidate(last_snapshot)
+                    or not str(last_snapshot or "").strip()
+                )
+            ):
+                active_url, _active_title = await asyncio.to_thread(
+                    self._active_browser_location,
+                    browser,
+                )
+                if self._is_resolved_web_editor_url(
+                    active_url
+                ) and self._url_semantically_matches(target_url, active_url):
+                    reason = (
+                        "editable_focus_verified_canvas_no_ax_focus"
+                        if not str(last_snapshot or "").strip()
+                        else "editable_focus_verified_canvas_url"
+                    )
+                    return True, last_snapshot, reason
             if self._focused_snapshot_looks_browser_location_bar(last_snapshot):
                 continue
 
@@ -563,6 +595,46 @@ end tell
             return False
         role = raw.split("\t", 1)[0].strip().lower()
         return role in {"axtextfield", "axcombobox"}
+
+    @staticmethod
+    def _focused_snapshot_looks_web_editor_canvas_candidate(snapshot: str) -> bool:
+        """Positive-but-conservative proof for canvas-backed editors.
+
+        Google Docs can expose the editable canvas as a plain AXWebArea/AXGroup
+        without "document" metadata. That shape is only acceptable when the
+        caller also proves the active browser URL is still a known editor URL.
+        """
+        raw = str(snapshot or "").strip()
+        if not raw:
+            return False
+        if ComputerUseSkill._focused_snapshot_looks_browser_location_bar(raw):
+            return False
+        if ComputerUseSkill._focused_snapshot_is_browser_text_entry(raw):
+            return False
+        parts = [part.strip().lower() for part in raw.split("\t")]
+        role = parts[0] if parts else ""
+        metadata = " ".join(part for part in parts[1:] if part)
+        disallowed_hints = (
+            "address",
+            "email",
+            "login",
+            "omnibox",
+            "password",
+            "search or enter",
+            "sign in",
+            "url",
+            "username",
+        )
+        if any(hint in metadata for hint in disallowed_hints):
+            return False
+        return role in {
+            "axgroup",
+            "axlayoutarea",
+            "axscrollarea",
+            "axtextarea",
+            "axunknown",
+            "axwebarea",
+        }
 
     @staticmethod
     def _focused_snapshot_looks_web_editor_surface(snapshot: str) -> bool:
@@ -2062,12 +2134,29 @@ end tell
                     )
                 elif not screen_verifiable:
                     if browser_surface:
-                        ok = False
-                        effect_verified = False
-                        verification = (
-                            "Hotkey dispatched, but browser focused-control verification "
-                            "was unavailable; refusing to count the shortcut as a document edit."
+                        inherited_editor_focus = bool(
+                            context.get("desktop_task_editor_focus_verified")
+                        ) and self._is_resolved_web_editor_url(
+                            str(context.get("desktop_task_verified_editor_url") or "")
                         )
+                        if (
+                            is_paste
+                            and bool(context.get("desktop_task_requires_editable_focus"))
+                            and inherited_editor_focus
+                        ):
+                            ok = True
+                            effect_verified = True
+                            verification = (
+                                "Paste dispatched into a previously verified browser editor; "
+                                "focused-control read-back was unavailable after dispatch."
+                            )
+                        else:
+                            ok = False
+                            effect_verified = False
+                            verification = (
+                                "Hotkey dispatched, but browser focused-control verification "
+                                "was unavailable; refusing to count the shortcut as a document edit."
+                            )
                     else:
                         # Native apps such as Notes often do not expose text
                         # through the screen-reader path. For those surfaces, a
@@ -2471,19 +2560,39 @@ end tell
                 doc_focused = False
                 focus_error = ""
                 focus_snapshot = ""
-                if effect_verified and self._is_web_editor_url(active_url or target_url):
+                if (
+                    effect_verified
+                    and requires_editable_focus
+                    and self._is_web_editor_url(active_url or target_url)
+                ):
+                    if expected_browser and self._is_web_editor_create_url(active_url):
+                        deadline = time.monotonic() + 12.0
+                        while time.monotonic() < deadline:
+                            await asyncio.sleep(0.75)
+                            next_url, next_title = await asyncio.to_thread(
+                                self._active_browser_location,
+                                expected_browser,
+                            )
+                            if next_url:
+                                active_url, active_title = next_url, next_title
+                            if self._is_resolved_web_editor_url(active_url):
+                                break
+                        if self._is_web_editor_create_url(active_url):
+                            focus_error = "web_editor_create_not_resolved"
                     editor_pyautogui = pyautogui
-                    if editor_pyautogui is None:
+                    if not focus_error and editor_pyautogui is None:
                         editor_pyautogui, pyautogui_error = get_pyautogui()
                         if editor_pyautogui is None:
                             focus_error = (
                                 "pyautogui_unavailable_for_web_editor_focus"
                                 + (f": {pyautogui_error}" if pyautogui_error else "")
                             )
-                    if editor_pyautogui is not None:
+                    if not focus_error and editor_pyautogui is not None:
                         await asyncio.sleep(3.5)  # let the web editor finish loading
                         doc_focused, focus_snapshot, focus_error = await self._focus_web_editor_surface(
-                            editor_pyautogui
+                            editor_pyautogui,
+                            browser=expected_browser,
+                            target_url=target_url,
                         )
                     if requires_editable_focus and not doc_focused:
                         effect_verified = False
@@ -2545,6 +2654,20 @@ end tell
         return "docs.google.com/" in u and any(
             seg in u for seg in ("/document/", "/spreadsheets/", "/presentation/")
         )
+
+    @staticmethod
+    def _is_web_editor_create_url(url: str) -> bool:
+        try:
+            parsed = urllib.parse.urlparse(str(url or "").lower())
+        except ValueError:
+            return False
+        if parsed.netloc != "docs.google.com":
+            return False
+        return parsed.path.rstrip("/").endswith("/create")
+
+    @classmethod
+    def _is_resolved_web_editor_url(cls, url: str) -> bool:
+        return cls._is_web_editor_url(url) and not cls._is_web_editor_create_url(url)
 
     @staticmethod
     def _url_semantically_matches(expected: str, observed: str) -> bool:

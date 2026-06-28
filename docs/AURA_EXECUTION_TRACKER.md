@@ -1385,6 +1385,53 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   policy, verify `conversation_ready` reaches ready without assistant-mode
   leakage, and monitor terminal/neural-stream memory and route receipts.
 
+## Checkpoint: 2026-06-28 Visible Multi-App Desktop Proof
+
+- Scope: real launched Aura desktop path with the 32B foreground lane, governed
+  desktop_task planning, visible Chrome/Google Docs/OS wallpaper actions, and
+  receipt-backed effect verification.
+- Root issues addressed:
+  - The outcome simulator falsely matched `rm ` inside normal words such as
+    "form", causing safe visible desktop research tasks to be blocked before
+    execution.
+  - Google Docs `/create` was treated as editable before it had resolved to a
+    concrete document URL, so Aura could race the page and lose editor focus.
+  - Browser activation was passive; Notes or another foreground app could keep
+    focus after `open -a`, making live URL verification fail despite the browser
+    opening.
+  - Canvas-backed Google Docs sometimes exposes no focused AX element after a
+    valid editor click. The paste step now inherits the immediately preceding
+    editor-focus proof while still refusing URL-bar/text-field focus, wrong
+    foreground apps, and clipboard mismatches.
+- General fixes landed:
+  - Destructive-command marker matching is lexical, preventing substring false
+    positives without weakening actual destructive-command detection.
+  - Browser web-editor opening now waits for Google Docs creation URLs to become
+    resolved editor URLs before counting document focus.
+  - Browser foreground waits actively raise the expected app during bounded
+    verification.
+  - Desktop task context carries verified editor focus and resolved editor URL
+    into the following paste step.
+- Evidence:
+  - Focused desktop/OS-control regression suite: `200 passed`.
+  - Ruff on touched runtime/test files: passed.
+  - Live browser proof command:
+    `AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 AURA_LIVE_PROOF_SHUTDOWN_MAX_S=90 AURA_TIMESCALE_BRIDGE_SAMPLE_INTERVAL_S=2 python tools/browser_research_demo_proof.py --port 8159 --boot-timeout 600`.
+  - Live result: PASSED. Boot healthy in 25s; peak proof RSS about 19.5GB;
+    governed chain completed in 17.0s; 14 receipts; Chrome search verified;
+    Google Docs verified; generated `climate_change_summary (2).pdf` with 2167
+    chars, source coverage, and opinion; wallpaper set and restored; source tab
+    opened; receipt matched disk; shutdown clean in 38.3s with no orphan workers.
+  - Artifact:
+    `artifacts/live_proof/live_proof_20260628_124954_verdict.json`.
+- Closeout tracker:
+  - Estimated closeout completion after this checkpoint: about 96%.
+  - Remaining total checkpoints: 2 consolidated checkpoints / 2-4 smaller
+    sub-checkpoints.
+  - Remaining work: CRSM-to-LoRA and CAA extraction proof closure, broader
+    proof-battery/replay/final-proof pass, claims purification, longer soak,
+    final clean-worktree checkpoint.
+
 ## Unresolved Failures / Known Backlog
 
 1. **R-001**: AGENTS.md, AURA_MASTER_SPEC.md, docs/AURA_MASTER_SPEC.md,

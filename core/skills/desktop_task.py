@@ -3107,6 +3107,20 @@ class DesktopTaskSkill(BaseSkill):
                     target_payload.get("requires_editable_focus")
                     or target_payload.get("require_editable_focus")
                 )
+                if current_surface_requires_editable_focus:
+                    editor_focus_verified = bool(
+                        result.get("doc_focused")
+                        or result.get("editable_focus_verified")
+                    )
+                    task_context["desktop_task_editor_focus_verified"] = editor_focus_verified
+                    task_context["desktop_task_verified_editor_url"] = str(
+                        result.get("active_url") or ""
+                    ).strip()
+                    task_context["desktop_task_editor_focus_evidence"] = str(
+                        result.get("focus_error")
+                        or result.get("verification")
+                        or ""
+                    ).strip()
             if not receipt["ok"]:
                 failures.append(receipt)
                 self._emit_progress(
