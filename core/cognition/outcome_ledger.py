@@ -279,6 +279,15 @@ class OutcomeLedger:
         observed = receipt.observed if receipt.observed is not None else 0.0
         reward = 2.0 * observed - 1.0  # [0,1] → [-1,1]
 
+        # An outcome that carried weight (strongly good or bad) teaches the mattering model
+        # that this action's topics matter — so "what matters" is learned from consequences,
+        # not declared.
+        try:
+            from core.cognition.mattering import get_mattering_model
+            get_mattering_model().note_mattered(receipt.action, weight=0.5 * abs(reward))
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
         total_w = sum(max(0.0, s.weight) for s in receipt.sources) or 1.0
         try:
             from core.consciousness.credit_assignment import get_credit_assignment_system

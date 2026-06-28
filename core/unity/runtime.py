@@ -441,6 +441,17 @@ class UnityRuntime:
                 continue
             seen.add(item.content_id)
             deduped.append(item)
+
+        # Mattering reweights salience so what matters rises in the workspace competition —
+        # causal selection bias, in the substrate, not an instruction about what to care about.
+        try:
+            from core.cognition.mattering import get_mattering_model
+            deduped = get_mattering_model().reweight_contents(deduped)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("unity_runtime", exc, severity="debug")
+
+        # Highest-mattering content first, so the cap keeps what matters.
+        deduped.sort(key=lambda c: getattr(c, "salience", 0.0), reverse=True)
         return deduped[:24]
 
     def _draft_inputs(self) -> list[Any]:
