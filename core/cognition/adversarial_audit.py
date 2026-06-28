@@ -99,6 +99,16 @@ _USER_PROJECTION = re.compile(
 _FACTUAL_ASSERTION = re.compile(
     r"\b(is|are|was|were|will|has|have|does|causes|means|equals)\b", re.IGNORECASE)
 
+# How to repair an over-confident claim, by the calibrator's recommended stance.
+_CALIBRATION_CAVEAT = {
+    "hedge": "lower confidence to match what's actually verifiable here",
+    "mark_speculative": "mark this as speculation — there's no oracle to check it",
+    "frame_as_view": "frame this as a reasoned view, not a settled fact",
+    "defer_to_person": "you're inferring someone's inner state; ask or defer to them",
+    "disclaim": "this is not knowable with confidence; say so plainly",
+    "assert": "state confidence, not certainty",
+}
+
 
 class AdversarialAuditor:
     """Runs the epistemic checklist against a claim and returns a grounded verdict."""
@@ -126,6 +136,8 @@ class AdversarialAuditor:
         world_state_age_s: Optional[float] = None,
         evidence: Optional[Sequence[Any]] = None,
         agent_id: Optional[str] = None,
+        stated_confidence: Optional[float] = None,
+        tool_verified: bool = False,
         now: Optional[float] = None,
     ) -> AuditReport:
         """Audit a claim. Optional context grounds the checks in real runtime state."""
@@ -222,6 +234,27 @@ class AdversarialAuditor:
             ))
             caveats.append("state what would falsify this")
 
+        # 10) Calibration — does stated confidence outrun what the claim's verifiability
+        # warrants? This is the "sounding smart vs being right" gap on unverifiable claims.
+        try:
+            from core.cognition.epistemic_calibration import get_epistemic_calibrator
+            cal = get_epistemic_calibrator().calibrate(
+                claim,
+                stated_confidence=stated_confidence,  # None → inferred from the claim's own language
+                tool_verified=tool_verified,
+                evidence_count=len(evidence) if evidence else 0,
+                other_agent_confidence=self._projection_confidence(agent_id, now),
+            )
+            findings.append(AuditFinding(
+                "calibration", passed=not cal.overconfident, severity=0.5,
+                detail=f"{cal.verifiability.value}: warranted≤{cal.warranted_confidence:.2f}"
+                       + ("" if not cal.overconfident else " (stated confidence outruns warrant)"),
+            ))
+            if cal.overconfident:
+                caveats.append(_CALIBRATION_CAVEAT.get(cal.stance, "lower confidence to match what's actually verifiable"))
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
         risk = self._risk(findings)
         verdict = "block" if risk >= self._block_t else "caveat" if risk >= self._caveat_t else "trust"
         # de-dup caveats, preserve order
@@ -257,15 +290,20 @@ class AdversarialAuditor:
 
     @staticmethod
     def _projection_grounded(agent_id: Optional[str], now: float) -> bool:
+        conf = AdversarialAuditor._projection_confidence(agent_id, now)
+        return conf is not None and conf >= 0.4
+
+    @staticmethod
+    def _projection_confidence(agent_id: Optional[str], now: float) -> Optional[float]:
         if not agent_id:
-            return False
+            return None
         try:
             from core.social.other_agent_model import get_other_agent_model
             est = get_other_agent_model().estimate(agent_id, now)
-            return est.overall_confidence >= 0.4
+            return float(est.overall_confidence)
         except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation("adversarial_audit", exc, severity="debug")
-            return False
+            return None
 
     @staticmethod
     def _risk(findings: List[AuditFinding]) -> float:
