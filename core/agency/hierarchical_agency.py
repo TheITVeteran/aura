@@ -261,6 +261,23 @@ class HierarchicalAgency:
         if s.uncertainty >= self._uncertainty_t or s.capability_gap >= self._capgap_t:
             return TierResult(tier=AgencyTier.DELIBERATIVE, handled=False, escalate=True,
                               confidence=0.3, reason="needs_higher_tier")
+
+        # Naive-physics sanity gate: a plan/claim that violates basic physical invariants is
+        # not something to confidently act on — escalate to the scientific tier where it can
+        # be tested rather than asserted.
+        try:
+            from core.cognition.embodied_commonsense import get_embodied_commonsense
+            verdict = get_embodied_commonsense().check(s.description)
+            if not verdict.plausible:
+                return TierResult(
+                    tier=AgencyTier.DELIBERATIVE, handled=False, escalate=True,
+                    confidence=verdict.plausibility,
+                    detail={"commonsense_violations": verdict.violations, "spans": verdict.spans[:3]},
+                    reason="naive_physics_violation_escalate_to_test",
+                )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
         return TierResult(
             tier=AgencyTier.DELIBERATIVE, handled=True,
             confidence=_clamp(0.8 - 0.4 * s.uncertainty),
