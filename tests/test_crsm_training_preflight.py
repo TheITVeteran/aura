@@ -231,3 +231,66 @@ def test_run_unattended_memory_guard_blocks_host_pressure(monkeypatch):
     reason = run_unattended._memory_guard_reason(123)
 
     assert reason == "host_memory_pressure:93.0%/90.0%"
+
+
+def test_run_unattended_update_state_uses_current_started_at(monkeypatch, tmp_path):
+    adapter_dir = tmp_path / "adapter"
+    adapter_dir.mkdir()
+    checkpoint = adapter_dir / "0000100_adapters.safetensors"
+    checkpoint.write_text("adapter", encoding="utf-8")
+    state_file = adapter_dir / "training_state.json"
+    monkeypatch.setattr(run_unattended, "ADAPTER_DIR", adapter_dir)
+    monkeypatch.setattr(run_unattended, "STATE_FILE", state_file)
+
+    first = run_unattended.update_state(started_at="first", phase="boot")
+    second = run_unattended.update_state(started_at="second", phase="running")
+
+    assert first["started_at"] == "first"
+    assert second["started_at"] == "second"
+    assert second["previous_started_at"] == "first"
+    assert second["last_iter"] == 100
+
+
+def test_record_crsm_delta_training_state_writes_receipt(monkeypatch, tmp_path):
+    adapter_dir = tmp_path / "adapter"
+    adapter_dir.mkdir()
+    state_path = adapter_dir / "training_state.json"
+    state_path.write_text(json.dumps({"phase": "train_and_fuse_done"}), encoding="utf-8")
+    manifest = tmp_path / "crsm_delta_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "source_lines": 10,
+                "accepted": 8,
+                "output": {
+                    "retention_examples": 3,
+                    "train": {"sha256": "train-hash"},
+                    "valid": {"sha256": "valid-hash"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(train_and_fuse, "ADAPTER_DIR", adapter_dir)
+
+    train_and_fuse.record_crsm_delta_training_state(
+        adapter_dir=tmp_path / "delta_adapter",
+        fused_path=tmp_path / "fused_model",
+        manifest_path=manifest,
+        iters=25,
+        max_seq_length=1024,
+    )
+
+    state = json.loads(state_path.read_text())
+    receipt = state["crsm_delta"]
+    assert receipt["status"] == "fused_published_consumed"
+    assert receipt["adapter_path"] == str(tmp_path / "delta_adapter")
+    assert receipt["fused_model_path"] == str(tmp_path / "fused_model")
+    assert receipt["source_lines"] == 10
+    assert receipt["accepted"] == 8
+    assert receipt["rejected"] == 2
+    assert receipt["retention_examples"] == 3
+    assert receipt["train_sha256"] == "train-hash"
+    assert receipt["valid_sha256"] == "valid-hash"
+    assert receipt["iters"] == 25
+    assert receipt["max_seq_length"] == 1024

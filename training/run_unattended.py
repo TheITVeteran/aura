@@ -78,12 +78,15 @@ def update_state(*, started_at: str, **extra: object) -> dict:
             state = json.loads(STATE_FILE.read_text())
         except _STATE_RECOVERABLE_ERRORS as exc:
             state = {"state_read_error": f"{type(exc).__name__}: {exc}"}
+    previous_started_at = state.get("started_at")
     state.update({
-        "started_at": state.get("started_at") or started_at,
+        "started_at": started_at,
         "last_iter": last_iter,
         "last_checkpoint_path": str(ckpt) if ckpt else None,
         "last_heartbeat": _now_iso(),
     })
+    if previous_started_at and previous_started_at != started_at:
+        state["previous_started_at"] = previous_started_at
     state.update(extra)
     ADAPTER_DIR.mkdir(parents=True, exist_ok=True)
     tmp = STATE_FILE.with_suffix(".json.tmp")

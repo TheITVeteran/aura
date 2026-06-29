@@ -700,6 +700,43 @@ def mark_crsm_loop_consumed_after_training(
     )
 
 
+def record_crsm_delta_training_state(
+    *,
+    adapter_dir: Path,
+    fused_path: Path,
+    manifest_path: Path = CRSM_DELTA_MANIFEST,
+    iters: int | None = None,
+    max_seq_length: int | None = None,
+) -> None:
+    """Persist operator-visible evidence for the bounded CRSM delta run."""
+    state_path = ADAPTER_DIR / "training_state.json"
+    try:
+        state = _read_json(state_path)
+        manifest = _read_json(manifest_path)
+        output = dict(manifest.get("output") or {})
+        payload = {
+            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "adapter_path": str(adapter_dir),
+            "fused_model_path": str(fused_path),
+            "manifest_path": str(manifest_path),
+            "source_lines": int(manifest.get("source_lines", 0) or 0),
+            "accepted": int(manifest.get("accepted", 0) or 0),
+            "rejected": max(0, int(manifest.get("source_lines", 0) or 0) - int(manifest.get("accepted", 0) or 0)),
+            "retention_examples": int(output.get("retention_examples", 0) or 0),
+            "train_sha256": (dict(output.get("train") or {})).get("sha256"),
+            "valid_sha256": (dict(output.get("valid") or {})).get("sha256"),
+            "iters": iters,
+            "max_seq_length": max_seq_length,
+            "status": "fused_published_consumed",
+        }
+        state["crsm_delta"] = payload
+        tmp = state_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, state_path)
+    except (OSError, TypeError, ValueError) as exc:
+        print(f"\nWarning: failed to record CRSM delta training state: {type(exc).__name__}: {exc}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-dataset", action="store_true")
@@ -785,6 +822,7 @@ def main() -> None:
     adapter_dir = ADAPTER_DIR
     crsm_marker_manifest = CRSM_INTEGRATION_MANIFEST
     crsm_marker_source = "training.train_and_fuse"
+    crsm_delta_adapter_dir: Path | None = None
 
     if args.crsm_delta:
         build_crsm_delta_dataset(
@@ -797,6 +835,7 @@ def main() -> None:
             iters=args.crsm_delta_iters,
             max_seq_length=args.crsm_delta_max_seq_length,
         )
+        crsm_delta_adapter_dir = adapter_dir
         crsm_marker_manifest = CRSM_DELTA_MANIFEST
         crsm_marker_source = "training.train_and_fuse.crsm_delta"
     elif not args.skip_dataset:
@@ -811,6 +850,17 @@ def main() -> None:
             fused_path,
             manifest_path=crsm_marker_manifest,
             source=crsm_marker_source,
+        )
+    if args.crsm_delta and crsm_delta_adapter_dir is not None:
+        record_crsm_delta_training_state(
+            adapter_dir=crsm_delta_adapter_dir,
+            fused_path=fused_path,
+            manifest_path=CRSM_DELTA_MANIFEST,
+            iters=args.crsm_delta_iters or _env_int("AURA_CRSM_DELTA_ITERS", 600, minimum=25, maximum=5000),
+            max_seq_length=(
+                args.crsm_delta_max_seq_length
+                or _env_int("AURA_CRSM_DELTA_MAX_SEQ_LENGTH", 2048, minimum=512, maximum=4096)
+            ),
         )
 
 

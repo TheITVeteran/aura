@@ -1695,6 +1695,43 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
     marker, close CAA extraction/steering proof, run final replay/proof gates,
     complete claims purification, and run a longer live/soak validation.
 
+## Checkpoint: 2026-06-28 CRSM Delta Train/Fuse Closure
+
+- Scope: actual CRSM-to-LoRA loop closure on the live 32B lane.
+- Action run:
+  `MAX_RETRIES=1 AURA_TRAINING_WATCHDOG_INTERVAL_S=10 AURA_TRAINING_MAX_PROCESS_TREE_RSS_GB=48 AURA_TRAINING_MAX_HOST_MEMORY_PERCENT=88 AURA_CRSM_DELTA_ITERS=600 AURA_CRSM_DELTA_MAX_SEQ_LENGTH=2048 bash training/run_unattended.sh --crsm-delta --tag crsm-closeout`.
+- Result:
+  - Built `training/data/crsm_delta/` with 1112 examples: 600 eligible CRSM
+    captures plus 512 retention examples.
+  - Trained 600 LoRA iterations from the current 32B adapter.
+  - Peak MLX memory stayed at 24.341GB; observed process RSS stayed about
+    17-19GB, under the 48GB process-tree watchdog limit.
+  - Final validation loss at iteration 600: 0.171.
+  - Fused model:
+    `training/fused-model/Aura-32B-crsm-closeout-20260628-181638`.
+  - Verified fused model load through `mlx_lm.load` and tokenizer encode.
+  - Published `training/fused-model/active.json` to the new 32B fused model.
+  - Marked CRSM captures consumed only after train/fuse/load/publish success:
+    600 trained, 400 retired by the safety gate.
+- Monitor verification:
+  - `CRSMLoopMonitor.loop_state().state == "closed"`.
+  - `unconsumed == 0`.
+  - `next_action.required == false`.
+  - Reason: `600 eligible captures trained and 400 retired by the training gate`.
+- Follow-up hardening landed after the run:
+  - `training/run_unattended.py` now records the current run `started_at`
+    instead of preserving stale historical start times.
+  - `training/train_and_fuse.py` now writes a CRSM-delta state receipt with
+    adapter path, fused model path, manifest path, data hashes, iterations, max
+    sequence length, and accepted/rejected counts.
+- Closeout tracker:
+  - Estimated closeout completion after this checkpoint: about 97.5%.
+  - Remaining total checkpoints: 2 consolidated checkpoints / 2-4 smaller
+    sub-checkpoints.
+  - Remaining work: CAA extraction/steering proof closure, final replay/proof
+    gates, claims purification, longer live/soak validation, and clean-worktree
+    closure.
+
 ## Unresolved Failures / Known Backlog
 
 1. **R-001**: AGENTS.md, AURA_MASTER_SPEC.md, docs/AURA_MASTER_SPEC.md,
