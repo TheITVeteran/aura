@@ -2336,3 +2336,64 @@ real launched desktop path proof.
 
 - This document records the live desktop heavy-lane memory-admission checkpoint.
 - No successful launched multi-app desktop demo receipt is present yet.
+
+## Checkpoint 2026-06-29-14: Live Cognition And Audiovisual Arbitration
+
+Status: live desktop conversation proof passed; visible multi-app action proof remains open.
+
+What changed:
+
+- Ambient microphone transcripts are now perception candidates, not implicit
+  user commands. Only authorized capture sessions reach the CognitiveEngine
+  command callback; candidate-safe perception listeners may still observe
+  ambient speech.
+- Audio source attribution distinguishes direct address, nearby speech,
+  visible nearby speakers, device media, ambient speech, and unknown speech.
+  Attention can observe or attend without authorizing a spoken response.
+- Fresh camera evidence contributes face presence and lower-face motion to
+  audiovisual source attribution without making identity claims or bypassing
+  macOS privacy controls.
+- The desktop reply budget now scales from semantic workload. Multi-part and
+  governed planning turns retain enough completion capacity while short
+  status, memory, and capability turns remain bounded.
+- Substrate state remains causally able to reduce foreground compute, but the
+  latent bridge can no longer multiply non-critical homeostatic reductions
+  until coherent speech becomes structurally impossible.
+- Clipped live drafts receive one bounded same-worker budget expansion. No
+  second model process or lower-lane assistant fallback is introduced.
+- Straight/curly unmatched quotes and fused numbered-list tails now fail the
+  canonical reply validator.
+
+Evidence:
+
+- Affected runtime, conversation, MLX, voice, vision, wake, and desktop suites:
+  `472 passed`.
+- `make enterprise-gate`: passed.
+- `make production-gate`: all 37 checks passed.
+- Real desktop launch proof:
+  `artifacts/live_proof/desktop_conversation_final_checkpoint/live_proof_20260629_154403_verdict.json`.
+- Live result: boot healthy in 25 seconds; identity and continuity passed;
+  12/12 conversation-soak turns passed through `cognitive_engine`; semantic,
+  imagination, timescale, ambient, and autonomic organs participated; peak
+  process-tree RSS was 20,025.9 MB; runtime stream scan found no failure
+  markers; graceful shutdown left no process or listening port.
+- The prior bounded-planning failure point passed in 15.3 seconds with a
+  complete, grounded reply. Ambient TV speech remained non-authorized and did
+  not cancel or replace typed turns.
+
+Honest boundary:
+
+- This proves the launched 32B desktop conversation path and audiovisual
+  arbitration. It does not yet prove the visible cross-app demo or a sustained
+  browser conversation with an external AI.
+- Internal same-worker draft rejection/retry remains observable telemetry; it
+  is bounded recovery, not hidden success or a fallback lane.
+
+Estimate update:
+
+- Overall closeout: 99.1%.
+- Remaining consolidated checkpoints: 1.
+- Remaining smaller sub-checkpoints: 2-3.
+- Remaining work: visible general computer-use proof; general web-interlocutor
+  conversation/learning/recall proof; final replay/final-proof artifact pass,
+  claims calibration, and clean-worktree closure.

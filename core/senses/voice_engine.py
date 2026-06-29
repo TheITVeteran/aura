@@ -32,6 +32,7 @@ import wave
 from collections.abc import Awaitable, Callable
 from enum import Enum, auto
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -288,7 +289,9 @@ class SovereignVoiceEngine:
         # ── Callbacks ─────────────────────────────────────
         self._on_transcript: Callable[[str], Awaitable[None]] | None = None
         self._transcript_callbacks: dict[str, Callable[[str], Awaitable[None]]] = {}
+        self._candidate_transcript_callbacks: set[str] = set()
         self._anonymous_transcript_callbacks: list[Callable[[str], Awaitable[None]]] = []
+        self._last_audio_source_assessment: dict[str, Any] = {}
         self._on_tts_audio: Callable[[bytes], Awaitable[None]] | None = None
         self._on_state_change: Callable[[VoiceState], Awaitable[None]] | None = None
         self._on_vad_change: Callable[[bool], None] | None = None # Pulse when VAD detection changes
@@ -1002,15 +1005,84 @@ class SovereignVoiceEngine:
                        avg_prob if segments else 0, text)
             self._pulse_hypha("voice_engine", "cognition", success=True)
 
+            source_assessment = self._classify_audio_source(
+                text,
+                rms_db=rms_db,
+                transcript_confidence=avg_prob if segments else 0.0,
+                duration_s=audio_seconds,
+            )
+
             # Dispatch transcript
-            self._dispatch_transcript(text)
+            self._dispatch_transcript(
+                text,
+                source_assessment=source_assessment,
+            )
 
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('voice_engine', e)
             logger.error("Transcription error: %s", e)
             self._pulse_hypha("voice_engine", "cognition", success=False)
 
-    def _dispatch_transcript(self, text: str):
+    def _classify_audio_source(
+        self,
+        text: str,
+        *,
+        rms_db: float,
+        transcript_confidence: float,
+        duration_s: float,
+    ) -> dict[str, Any]:
+        from core.senses.audio_attention import classify_audio_attention
+
+        active_app = ""
+        visual_context: dict[str, Any] = {}
+        try:
+            from core.world_state import get_world_state
+
+            world_state = get_world_state()
+            active_app = str(
+                getattr(world_state, "active_foreground_app", "")
+                or getattr(world_state, "active_app_context", "")
+                or ""
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Audio source attribution lacks active-app context: %s", exc)
+
+        try:
+            from core.container import ServiceContainer
+
+            interaction_signals = ServiceContainer.get("interaction_signals", default=None)
+            if interaction_signals is not None and hasattr(interaction_signals, "get_status"):
+                status = interaction_signals.get_status()
+                if isinstance(status, dict) and isinstance(status.get("vision"), dict):
+                    visual_context = dict(status["vision"])
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Audio source attribution lacks fresh camera context: %s", exc)
+
+        assessment = classify_audio_attention(
+            text,
+            rms_db=rms_db,
+            transcript_confidence=transcript_confidence,
+            duration_s=duration_s,
+            active_app=active_app,
+            explicit_command=_direct_stt_command_dispatch_enabled(),
+            visual_context=visual_context,
+        ).as_dict()
+        self._last_audio_source_assessment = assessment
+        logger.info(
+            "🎧 Audio attribution: source=%s confidence=%.2f attention=%s response_authorized=%s",
+            assessment.get("source"),
+            float(assessment.get("confidence", 0.0) or 0.0),
+            assessment.get("attention_mode"),
+            assessment.get("response_authorized"),
+        )
+        return assessment
+
+    def _dispatch_transcript(
+        self,
+        text: str,
+        *,
+        source_assessment: dict[str, Any] | None = None,
+    ):
         """Route transcript to the orchestrator via callback + EventBus."""
         now = time.time()
         
@@ -1031,6 +1103,8 @@ class SovereignVoiceEngine:
         self._last_transcript_time = now
         self._last_transcript_text = normalized
         direct_command_dispatch = _direct_stt_command_dispatch_enabled()
+        audio_source = dict(source_assessment or self._last_audio_source_assessment or {})
+        audio_source["response_authorized"] = bool(direct_command_dispatch)
 
         # 3. Record the transcript for wake-word/perception.  By default this is
         # a candidate transcript, not an authorized user command.  The wake-word
@@ -1040,6 +1114,7 @@ class SovereignVoiceEngine:
             ws = get_world_state()
             ws.last_voice_transcript = text
             ws.voice_activity_detected = True
+            ws.last_audio_source_assessment = dict(audio_source)
             ws.record_event(
                 description=(
                     f"User voice command: {text}"
@@ -1052,6 +1127,7 @@ class SovereignVoiceEngine:
                 transcript=text,
                 authorized_command=bool(direct_command_dispatch),
                 requires_wake_word_session=not direct_command_dispatch,
+                audio_source=audio_source,
             )
             logger.info(
                 "🎙️ Recorded %svoice transcript in WorldState",
@@ -1072,7 +1148,10 @@ class SovereignVoiceEngine:
             try:
                 loop.call_soon_threadsafe(
                     lambda t=text: get_task_tracker().create_task(
-                        self._handle_transcript(t),
+                        self._handle_transcript(
+                            t,
+                            authorized_command=direct_command_dispatch,
+                        ),
                         name=f"transcript_{hash(t) & 0xFFFF}"
                     )
                 )
@@ -1102,13 +1181,22 @@ class SovereignVoiceEngine:
             "event": "transcript" if direct_command_dispatch else "transcript_candidate",
             "text": text[:100],
             "authorized_command": bool(direct_command_dispatch),
+            "audio_source": audio_source,
         })
 
-    async def _handle_transcript(self, text: str):
+    async def _handle_transcript(
+        self,
+        text: str,
+        *,
+        authorized_command: bool = True,
+    ):
         """Async handler for direct callback path."""
         await self._set_state(VoiceState.PROCESSING)
         try:
-            await self._run_transcript_callbacks(text)
+            await self._run_transcript_callbacks(
+                text,
+                authorized_command=authorized_command,
+            )
             logger.debug("Transcript successfully routed.")
         except (RuntimeError, AttributeError, TypeError) as e:
             record_degradation('voice_engine', e)
@@ -1415,14 +1503,20 @@ class SovereignVoiceEngine:
         if q in self._sse_queues:
             self._sse_queues.remove(q)
 
-    async def _run_transcript_callbacks(self, text: str) -> None:
-        callbacks: list[Callable[[str], Awaitable[None]]] = [
-            self._transcript_callbacks[key]
-            for key in list(self._transcript_callbacks.keys())
-        ]
-        callbacks.extend(self._anonymous_transcript_callbacks)
+    async def _run_transcript_callbacks(
+        self,
+        text: str,
+        *,
+        authorized_command: bool = True,
+    ) -> None:
+        callbacks: list[Callable[[str], Awaitable[None]]] = []
+        for key in list(self._transcript_callbacks.keys()):
+            if authorized_command or key in self._candidate_transcript_callbacks:
+                callbacks.append(self._transcript_callbacks[key])
+        if authorized_command:
+            callbacks.extend(self._anonymous_transcript_callbacks)
 
-        if not callbacks and self._on_transcript is not None:
+        if authorized_command and not callbacks and self._on_transcript is not None:
             callbacks.append(self._on_transcript)
 
         for callback in callbacks:
@@ -1445,13 +1539,24 @@ class SovereignVoiceEngine:
         *,
         key: str | None = None,
         replace: bool = False,
+        candidate_safe: bool = False,
     ):
-        """Register a transcript callback without stealing existing listeners."""
+        """Register a transcript callback without stealing existing listeners.
+
+        Candidate-safe listeners may observe ambient STT for perception or
+        wake-word detection. Other listeners receive only authorized commands,
+        so background audio cannot enter the user-input cognition path.
+        """
         if replace:
             self._transcript_callbacks.clear()
+            self._candidate_transcript_callbacks.clear()
             self._anonymous_transcript_callbacks.clear()
         if key:
             self._transcript_callbacks[key] = callback
+            if candidate_safe:
+                self._candidate_transcript_callbacks.add(key)
+            else:
+                self._candidate_transcript_callbacks.discard(key)
         elif callback not in self._anonymous_transcript_callbacks:
             self._anonymous_transcript_callbacks.append(callback)
         self._on_transcript = self._run_transcript_callbacks

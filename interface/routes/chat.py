@@ -3916,6 +3916,42 @@ def _build_bounded_planning_reply(user_message: str) -> str | None:
     )
 
 
+def _desktop_live_reply_token_budget(
+    user_message: str,
+    *,
+    capability_inventory_contract: bool,
+    bounded_planning_contract: bool,
+    runtime_fact_status_contract: bool,
+    memory_state_contract: bool,
+) -> int:
+    """Allocate live reply capacity from semantic workload, not route name.
+
+    The desktop lane intentionally uses a compact prompt, but "compact" must
+    not imply a small completion for multi-step planning.  Keeping this policy
+    beside the route classifiers also prevents backend and live UI calls from
+    silently receiving different reasoning budgets for the same request.
+    """
+
+    if memory_state_contract or runtime_fact_status_contract:
+        return 384
+    if capability_inventory_contract:
+        return 384
+
+    shape = analyze_prompt_shape(user_message)
+    question_parts = int(getattr(shape, "question_parts", 0) or 0)
+    extended = bool(
+        bounded_planning_contract
+        or getattr(shape, "prefers_extended_answer", False)
+        or getattr(shape, "requires_single_reply_coverage", False)
+        or question_parts >= 2
+    )
+    if extended:
+        return 1536
+    if len(str(user_message or "")) > 600:
+        return 1280
+    return 896
+
+
 def _build_failure_mode_surface_reply(user_message: str) -> str | None:
     if not _FAILURE_MODE_SURFACE_RE.search(str(user_message or "")):
         return None
@@ -4479,14 +4515,21 @@ async def _run_cognitive_engine_chat_turn(
 
         mode = ThinkingMode.FAST
         existing_style_contract = str(context.get("response_style_contract") or "").strip()
+        live_reply_token_budget = _desktop_live_reply_token_budget(
+            visible,
+            capability_inventory_contract=capability_inventory_contract,
+            bounded_planning_contract=bounded_planning_contract,
+            runtime_fact_status_contract=runtime_fact_status_contract,
+            memory_state_contract=memory_state_contract,
+        )
         context.update(
             {
                 "desktop_quick_reply_contract": True,
                 "desktop_descriptive_turn": True,
                 "deep_handoff": False,
                 "allow_deep_handoff": False,
-                "max_tokens": 384 if capability_inventory_contract else 896,
-                "num_predict": 384 if capability_inventory_contract else 896,
+                "max_tokens": live_reply_token_budget,
+                "num_predict": live_reply_token_budget,
                 "skip_runtime_payload": True,
                 "live_runtime_payload_required": bool(require_engine),
                 "live_speech_grounding_frame": _build_aura_expression_frame(visible),
@@ -4512,6 +4555,15 @@ async def _run_cognitive_engine_chat_turn(
                 "categories including the exact phrase browser/web research; governed execution through Will/Authority or permissions; receipts/effect "
                 "verification; one hypothetical chain plus the boundary that you are not executing tools "
                 "in this turn. Keep it complete under 80 words."
+            )
+        if bounded_planning_contract:
+            context["response_style_contract"] = (
+                str(context.get("response_style_contract") or "")
+                + " This is a bounded planning turn. Answer in one natural paragraph of four to six "
+                "complete sentences under 180 words. Cover the goal, authorization boundary, action "
+                "sequence, effect verification, and bounded recovery. Do not use a numbered list unless "
+                "the user explicitly requests one, and do not invent a specific example that replaces "
+                "the user's stated task."
             )
         if _is_contextual_relevance_challenge(visible):
             context["contextual_relevance_challenge_contract"] = True
@@ -5809,8 +5861,11 @@ def _looks_truncated_tail(text: str) -> bool:
             _PUNCTUATED_INCOMPLETE_TAIL_RE,
             _STRUCTURAL_INCOMPLETE_TAIL_RE,
             _STRUCTURAL_UNPUNCTUATED_TAIL_RE,
+            _has_truncated_tail,
         )
 
+        if _has_truncated_tail(body):
+            return True
         if _STRUCTURAL_INCOMPLETE_TAIL_RE.search(body):
             return True
         if _STRUCTURAL_UNPUNCTUATED_TAIL_RE.search(body):
@@ -12406,7 +12461,8 @@ async def api_chat(
     if len(body.message.encode('utf-8', errors='replace')) > MAX_CHAT_MESSAGE_BYTES:
         raise HTTPException(status_code=413, detail="Message too large (max 64KB)")
 
-    _request_origin = request.client.host if request.client else "unknown"
+    request_client = getattr(request, "client", None)
+    _request_origin = str(getattr(request_client, "host", "unknown") or "unknown")
     _trusted_local_origin = _request_origin in {"127.0.0.1", "::1", "localhost"}
     _defensive_context = ""
     try:

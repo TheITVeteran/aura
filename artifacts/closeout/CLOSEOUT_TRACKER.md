@@ -805,3 +805,39 @@ Estimate update:
 - Overall closeout: 98.8%
 - Remaining consolidated checkpoints: 1 total
 - Remaining smaller sub-checkpoints: 2-4 total
+
+## Checkpoint 2026-06-29-14: Live Cognition And Audiovisual Arbitration
+
+Status: passed on the real launched desktop 32B path.
+
+Evidence:
+
+- `472 passed` across affected CognitiveEngine, inference, MLX, reliability,
+  voice, vision, wake/session, and desktop-agency suites.
+- Enterprise gate passed.
+- Production gate passed all 37 checks.
+- Live verdict:
+  `artifacts/live_proof/desktop_conversation_final_checkpoint/live_proof_20260629_154403_verdict.json`.
+- Boot healthy in 25 seconds; 12/12 live conversation turns passed through the
+  CognitiveEngine; continuity and cognitive-organ participation passed; peak
+  RSS 20,025.9 MB; no runtime failure markers; graceful shutdown; no orphans.
+
+General runtime changes:
+
+- Ambient audio cannot enter the user-command callback without an authorized
+  capture session. Perception still receives candidate audio.
+- Audio attention fuses acoustic, active-app, semantic-interest, and fresh
+  camera mouth-motion evidence, while keeping response authorization separate
+  from attention.
+- Workload-aware reply budgets and a foreground completion floor prevent
+  multiplicative substrate modulation from forcing clipped live speech.
+- Structural truncation is rejected and receives only a bounded same-worker
+  retry; the full-mind route remains mandatory.
+
+Honest boundary and estimate:
+
+- Visible multi-app action and browser-interlocutor proof remain unproven.
+- Overall closeout: 99.1%.
+- Remaining: 1 consolidated checkpoint / 2-3 smaller sub-checkpoints, covering
+  visible general computer use, external-AI conversation learning/recall, final
+  proof/replay normalization, claims calibration, and clean-worktree closure.

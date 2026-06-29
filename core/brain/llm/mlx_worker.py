@@ -526,6 +526,36 @@ def _prepare_clean_retry_kwargs(kwargs: dict[str, Any], *, structured: bool = Fa
     )
 
 
+def _expand_user_surface_retry_budget(
+    kwargs: dict[str, Any],
+    reasons: list[str],
+    *,
+    ceiling: int = 2048,
+) -> bool:
+    """Give a clipped live reply one larger pass on the existing worker.
+
+    This is deliberately limited to structural truncation. It does not create
+    another model process, alter strict/proof contracts, or inflate retries for
+    off-topic and low-quality drafts.
+    """
+
+    if "truncated_tail" not in set(reasons):
+        return False
+    current = max(
+        _safe_int(kwargs.get("max_tokens"), 0),
+        _safe_int(kwargs.get("num_predict"), 0),
+    )
+    if current <= 0:
+        return False
+    expanded = min(max(current * 2, current + 384), max(current, int(ceiling)))
+    if expanded <= current:
+        return False
+    kwargs["max_tokens"] = expanded
+    if "num_predict" in kwargs:
+        kwargs["num_predict"] = expanded
+    return True
+
+
 def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None:
     """Strip leaked internal telemetry labels and paths that occasionally
     slip out from the LoRA fine-tune weights during specific topics.
@@ -2791,6 +2821,15 @@ def _mlx_worker_loop(
                                                     prompt_cache_lru.clear()
                                                 if mx and device != "cpu":
                                                     _clear_mlx_cache(mx)
+                                                if _expand_user_surface_retry_budget(
+                                                    kwargs,
+                                                    rejection_reasons,
+                                                ):
+                                                    logger.info(
+                                                        "🛡️ [WORKER] Expanded same-worker live reply budget to %s "
+                                                        "after structural truncation.",
+                                                        kwargs.get("max_tokens"),
+                                                    )
                                                 prompt = _build_user_surface_quality_retry_prompt(
                                                     tokenizer=tokenizer,
                                                     messages=original_messages,

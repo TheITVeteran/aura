@@ -443,6 +443,63 @@ async def test_cognitive_engine_runtime_status_contract_propagates_to_worker_bou
 
 
 @pytest.mark.asyncio
+async def test_cognitive_engine_full_mind_planning_keeps_extended_live_budget(monkeypatch):
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = StateRepositoryFixture(state)
+    captured = {}
+
+    class _Router:
+        async def think(self, **kwargs):
+            captured.update(kwargs)
+            return (
+                "I would authorize the workflow, research the sources, draft the document, "
+                "verify the visible result, and preserve effect receipts before reporting completion."
+            )
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router() if name == "llm_router" else default
+        ),
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "Give a practical multi-step desktop task you could attempt after authorization.",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "visible_user_message": (
+                "Give a practical multi-step desktop task you could attempt after authorization."
+            ),
+            "bounded_planning_contract": True,
+            "bounded_planning_reply": (
+                "Authorize the requested desktop workflow, perform each step in order, "
+                "verify the visible effects, and preserve receipts before reporting completion."
+            ),
+            "require_full_foreground_mind_reply": True,
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "prompt_shape": {
+                "question_parts": 1,
+                "prefers_extended_answer": False,
+                "requires_single_reply_coverage": False,
+            },
+            "max_tokens": 1536,
+        },
+        is_background=False,
+        timeout_s=90.0,
+    )
+
+    assert thought.content.startswith("I would authorize")
+    assert captured["max_tokens"] == 1536
+    assert "[GOVERNED PLANNING OUTLINE]" in captured["messages"][-1]["content"]
+    assert "Do not use a numbered list" in captured["messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_cognitive_engine_capability_inventory_contract_uses_catalog_without_worker(monkeypatch):
     engine = CognitiveEngine()
     state = AuraState.default()

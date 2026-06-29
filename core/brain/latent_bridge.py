@@ -254,8 +254,13 @@ def compute_inference_params(
     rationale.append(f"top_k={top_k} (sero={s['serotonin']:.2f}, ne={s['norepinephrine']:.2f})")
 
     # ─── max_tokens budget ─────────────────────────────────────────────
-    # Vitality drop literally shortens the output. This is the structural
-    # version of "tell the model to be brief when tired".
+    # Vitality and load still change how much compute the substrate spends,
+    # but foreground speech needs enough room to finish a coherent thought.
+    # Multiplying every homeostatic reduction used to collapse a requested
+    # 972-token desktop turn to ~189 tokens, guaranteeing clipped prose and a
+    # costly retry storm. Critical memory admission is enforced before this
+    # bridge; this floor only prevents non-critical affective state from
+    # making the speech organ structurally incapable of completing a reply.
     vitality_factor = max(0.35, min(1.0, s["vitality"]))
     cap = max(1, int(base_max_tokens * vitality_factor))
     # Fatigue from cortisol clips further
@@ -265,6 +270,17 @@ def compute_inference_params(
     cap = max(1, int(cap * max(0.45, s["causal_metabolic_budget"])))
     if s["organismal_coherence"] < 0.45:
         cap = max(1, int(cap * 0.82))
+    if foreground and base_max_tokens >= 512:
+        completion_floor_factor = 0.55
+        if s["active_reduce_load"] > 0.0:
+            completion_floor_factor = min(completion_floor_factor, 0.45)
+        if s["organismal_coherence"] < 0.45:
+            completion_floor_factor = min(completion_floor_factor, 0.48)
+        completion_floor = min(
+            base_max_tokens,
+            max(384, int(base_max_tokens * completion_floor_factor)),
+        )
+        cap = max(cap, completion_floor)
     rationale.append(f"max_tokens={cap} (vitality={s['vitality']:.2f}, cap={cap})")
 
     # ─── repetition penalty ────────────────────────────────────────────

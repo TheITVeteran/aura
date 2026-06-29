@@ -2874,6 +2874,20 @@ def _has_truncated_tail(reply_text: Any) -> bool:
     body = str(reply_text or "").strip()
     if len(body) < 24:
         return False
+    straight_quote_positions = [
+        match.start() for match in re.finditer(r'(?<!\\)"', body)
+    ]
+    if len(straight_quote_positions) % 2:
+        unmatched_position = straight_quote_positions[-1]
+        preceding = body[unmatched_position - 1] if unmatched_position else ""
+        # Preserve ordinary inch/second notation such as 6" while rejecting
+        # prose that opens a quotation and never closes it.
+        if not preceding.isdigit():
+            return True
+    if body.count("“") != body.count("”"):
+        return True
+    if re.search(r'(?<!\d)[.!?]["”’)]?\d+[.)](?:\s*|$)', body):
+        return True
     if _STRUCTURAL_INCOMPLETE_TAIL_RE.search(body):
         return True
     if _STRUCTURAL_UNPUNCTUATED_TAIL_RE.search(body):

@@ -30,6 +30,127 @@ async def test_voice_transcript_callbacks_fan_out_without_clobbering(tmp_path) -
 
 
 @pytest.mark.asyncio
+async def test_ambient_transcript_candidate_cannot_enter_full_cognitive_path(tmp_path) -> None:
+    from core.senses.voice_engine import SovereignVoiceEngine
+
+    engine = SovereignVoiceEngine(data_dir=str(tmp_path))
+    calls: list[tuple[str, str]] = []
+
+    async def full_cognitive_path(text: str) -> None:
+        calls.append(("full_cognitive_path", text))
+
+    def perceptual_listener(text: str) -> None:
+        calls.append(("perception", text))
+
+    engine.on_transcript(full_cognitive_path, key="sovereign_ears")
+    engine.on_transcript(
+        perceptual_listener,
+        key="continuous_perception",
+        candidate_safe=True,
+    )
+
+    await engine._handle_transcript(
+        "ambient television dialogue without a wake word",
+        authorized_command=False,
+    )
+
+    assert calls == [
+        ("perception", "ambient television dialogue without a wake word")
+    ]
+
+
+def test_audio_attention_distinguishes_media_direct_address_and_nearby_speech() -> None:
+    from core.senses.audio_attention import classify_audio_attention
+
+    media = classify_audio_attention(
+        "The documentary continues with a long historical explanation about migration patterns.",
+        rms_db=-27.0,
+        transcript_confidence=-0.30,
+        duration_s=12.0,
+        active_app="Google Chrome - YouTube",
+    )
+    addressed = classify_audio_attention(
+        "Hey Aura, can you help me understand this?",
+        rms_db=-18.0,
+        transcript_confidence=-0.12,
+        duration_s=3.0,
+        active_app="Google Chrome",
+    )
+    nearby = classify_audio_attention(
+        "That is an interesting idea about the design.",
+        rms_db=-18.0,
+        transcript_confidence=-0.20,
+        duration_s=3.0,
+        active_app="Finder",
+    )
+
+    assert media.source == "device_media"
+    assert media.response_authorized is False
+    assert media.attention_mode in {"ignore", "observe"}
+    assert addressed.source == "direct_address"
+    assert addressed.addressed_to_aura is True
+    assert addressed.attention_mode == "conversation_candidate"
+    assert addressed.response_authorized is False
+    assert nearby.source == "nearby_person"
+    assert nearby.response_authorized is False
+
+
+def test_audio_attention_uses_fresh_camera_speaker_evidence() -> None:
+    import time
+
+    from core.senses.audio_attention import classify_audio_attention
+
+    visible_speaker = classify_audio_attention(
+        "That connection between memory and imagination is interesting.",
+        rms_db=-19.0,
+        transcript_confidence=-0.18,
+        duration_s=4.0,
+        active_app="Finder",
+        visual_context={
+            "updated_at": time.time(),
+            "face_present": True,
+            "face_count": 1,
+            "speaking_likelihood": 0.72,
+            "attention_available": 0.82,
+        },
+    )
+    stale_camera = classify_audio_attention(
+        "That connection between memory and imagination is interesting.",
+        rms_db=-27.0,
+        transcript_confidence=-0.18,
+        duration_s=4.0,
+        active_app="Finder",
+        visual_context={
+            "updated_at": time.time() - 30.0,
+            "face_present": True,
+            "speaking_likelihood": 0.95,
+        },
+    )
+
+    assert visible_speaker.source == "nearby_visible_speaker"
+    assert "lower_face_motion" in visible_speaker.reasons
+    assert visible_speaker.response_authorized is False
+    assert stale_camera.source != "nearby_visible_speaker"
+
+
+def test_explicit_voice_capture_authorizes_response_without_source_guessing() -> None:
+    from core.senses.audio_attention import classify_audio_attention
+
+    assessment = classify_audio_attention(
+        "Draft a short note from this dictation.",
+        rms_db=-20.0,
+        transcript_confidence=-0.20,
+        duration_s=3.0,
+        active_app="Notes",
+        explicit_command=True,
+    )
+
+    assert assessment.source == "direct_user"
+    assert assessment.response_authorized is True
+    assert assessment.attention_mode == "conversation_candidate"
+
+
+@pytest.mark.asyncio
 async def test_microphone_privacy_enable_starts_live_listener(monkeypatch) -> None:
     from interface.routes import privacy
 

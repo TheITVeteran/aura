@@ -7,11 +7,9 @@ Autonomous perceptions may advise the runtime, but they must not silently bypass
 constitutional routing once the live runtime is up.
 """
 
-from core.runtime.errors import record_degradation
 import asyncio
-import os
 import logging
-from typing import Optional
+import os
 
 try:
     from PIL import Image, ImageChops
@@ -21,6 +19,7 @@ except ImportError:
 
 from core.container import ServiceContainer
 from core.health.degraded_events import record_degraded_event
+from core.runtime.errors import record_degradation
 from core.senses.perceptual_buffer import PerceptualBuffer
 from core.utils.task_tracker import get_task_tracker
 
@@ -48,7 +47,7 @@ class ContinuousPerceptionEngine:
             self.daemon = None
 
         # Vision Delta Tracking
-        self._last_image: Optional[Image.Image] = None
+        self._last_image = None
         self.vision_check_interval = 5.0 # seconds
         self.visual_delta_threshold = 0.15 # 15% difference triggers an analysis
         self.enable_proactive_vision = os.getenv("AURA_ENABLE_PROACTIVE_VISION", "0") == "1"
@@ -75,7 +74,8 @@ class ContinuousPerceptionEngine:
             self._computer_use_skill = None
 
     async def start(self):
-        if self.running: return
+        if self.running:
+            return
         self.running = True
         logger.info("📡 Continuous Perception Engine: ONLINE")
 
@@ -96,9 +96,12 @@ class ContinuousPerceptionEngine:
 
     async def stop(self):
         self.running = False
-        if self._audio_task: self._audio_task.cancel()
-        if self._vision_task: self._vision_task.cancel()
-        if self._ambient_task: self._ambient_task.cancel()
+        if self._audio_task:
+            self._audio_task.cancel()
+        if self._vision_task:
+            self._vision_task.cancel()
+        if self._ambient_task:
+            self._ambient_task.cancel()
         logger.info("📡 Continuous Perception Engine: OFFLINE")
 
     async def _continuous_audio_loop(self):
@@ -110,28 +113,33 @@ class ContinuousPerceptionEngine:
 
         def _on_ambient_listen(text: str):
             text = text.lower().strip()
-            if not text: return
-            
-            if any(w in text for w in self.wake_words):
-                logger.info("🎧 Wake word detected in ambient audio: '%s'", text)
-                self.buffer.append("audio", f"Wake word detected: {text}")
-                if getattr(self, "daemon", None):
-                    self.daemon.register_moment("audio", f"Wake word detected: {text}")
-                self._dispatch_spontaneous_intent(text, source="audio_wake")
-            elif "turn on" in text or "watch this" in text:
-                logger.info("🎧 Implicit direct command detected: '%s'", text)
-                self.buffer.append("audio", f"Implicit command: {text}")
-                if getattr(self, "daemon", None):
-                    self.daemon.register_moment("audio", f"Implicit command: {text}")
-                self._dispatch_spontaneous_intent(text, source="audio_implicit")
-            else:
-                self.buffer.append("audio", text[:50])
-                if getattr(self, "daemon", None):
-                    self.daemon.register_moment("audio", text[:50])
+            if not text:
+                return
+
+            assessment = dict(
+                getattr(ears._engine, "_last_audio_source_assessment", {}) or {}
+            )
+            source = str(assessment.get("source") or "unknown_speech")
+            attention = str(assessment.get("attention_mode") or "observe")
+            content = f"{source}/{attention}: {text[:120]}"
+            self.buffer.append("audio", content, metadata=assessment)
+            if getattr(self, "daemon", None):
+                self.daemon.register_moment(
+                    "audio",
+                    content,
+                    metadata={
+                        **assessment,
+                        "conversation_dispatched": False,
+                    },
+                )
 
         # Register callback ONCE (Issue 12)
         if getattr(ears, "_engine", None) and hasattr(ears._engine, "on_transcript"):
-            ears._engine.on_transcript(_on_ambient_listen, key="continuous_perception")
+            ears._engine.on_transcript(
+                _on_ambient_listen,
+                key="continuous_perception",
+                candidate_safe=True,
+            )
             logger.info("📡 Continuous audio listener registered.")
 
         while self.running:

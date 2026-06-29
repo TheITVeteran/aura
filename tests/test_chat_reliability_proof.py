@@ -1104,6 +1104,35 @@ def test_bare_numbered_list_marker_is_treated_as_truncated_tail():
     assert _looks_truncated_tail(draft) is True
 
 
+def test_unterminated_quote_is_rejected_as_truncated_user_reply():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "What phrase did I ask you to remember?",
+        'You asked me to remember that "the blue lantern is under the desk.',
+    )
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert "truncated_tail" in assessment.reasons
+
+
+def test_numbering_fused_to_previous_sentence_is_rejected():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes.chat import _looks_truncated_tail
+
+    draft = 'Open the export menu and select "Download As" or "Export."7.'
+    assessment = assess_user_facing_reply(
+        "Give me a practical multi-step export plan.",
+        draft,
+    )
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert "truncated_tail" in assessment.reasons
+    assert _looks_truncated_tail(draft) is True
+
+
 def test_autonomous_follow_through_has_safe_specific_floor():
     from core.conversation.response_reliability import assess_user_facing_reply
     from core.synthesis import deterministic_user_facing_floor

@@ -15,6 +15,7 @@ from pathlib import Path
 from core.brain.llm.mlx_worker import (
     _apply_surface_generation_controls,
     _build_user_surface_quality_retry_prompt,
+    _expand_user_surface_retry_budget,
     _extract_expected_strict_value,
     _messages_with_user_surface_retry,
     _normalize_strict_value_response,
@@ -229,6 +230,14 @@ def test_worker_keeps_complete_plan_before_clipped_tail():
 
     assert repaired.endswith("confirm the PDF exists.")
     assert "Record the verified path" not in repaired
+
+
+def test_worker_expands_only_structurally_truncated_live_reply_budget():
+    kwargs = {"max_tokens": 896}
+
+    assert _expand_user_surface_retry_budget(kwargs, ["truncated_tail"]) is True
+    assert kwargs["max_tokens"] == 1792
+    assert _expand_user_surface_retry_budget(kwargs, ["off_topic_self_reflection_reply"]) is False
 
 
 def test_live_user_surface_quality_gate_accepts_concise_capability_inventory():

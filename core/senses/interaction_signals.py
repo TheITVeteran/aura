@@ -1,7 +1,4 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-from core.utils.task_tracker import get_task_tracker
 
 import asyncio
 import base64
@@ -9,9 +6,11 @@ import logging
 import math
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any
 
+from core.runtime.errors import record_degradation
 from core.utils.queues import BackpressuredQueue
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Senses.InteractionSignals")
 
@@ -74,6 +73,8 @@ class VisionSignalState:
     head_pose: str = "unknown"
     attention_available: float = 0.0
     eyes_detected: int = 0
+    mouth_motion_score: float = 0.0
+    speaking_likelihood: float = 0.0
     method: str = "haar_cascade_pupil_threshold"
     reliability: str = "rough_attention_indicator"
 
@@ -117,6 +118,7 @@ class InteractionSignalsEngine:
         self._eye_cascade = None
         self._vision_backend_ready = False
         self._vision_backend_reason = ""
+        self._previous_mouth_roi = None
 
     async def ensure_started(self) -> None:
         if self._started:
@@ -137,15 +139,15 @@ class InteractionSignalsEngine:
             task.cancel()
         self._tasks.clear()
 
-    async def publish_typing(self, payload: Dict[str, Any]) -> None:
+    async def publish_typing(self, payload: dict[str, Any]) -> None:
         await self.ensure_started()
         await self._typing_queue.put(dict(payload), timeout=0.1)
 
-    async def publish_voice(self, payload: Dict[str, Any]) -> None:
+    async def publish_voice(self, payload: dict[str, Any]) -> None:
         await self.ensure_started()
         await self._voice_queue.put(dict(payload), timeout=0.1)
 
-    async def publish_vision_frame(self, jpeg_bytes: bytes, metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def publish_vision_frame(self, jpeg_bytes: bytes, metadata: dict[str, Any] | None = None) -> None:
         await self.ensure_started()
         await self._vision_queue.put(
             {
@@ -156,7 +158,7 @@ class InteractionSignalsEngine:
             timeout=0.1,
         )
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         fused = self._compute_fused_state()
         return {
             "typing": asdict(self._typing),
@@ -242,7 +244,7 @@ class InteractionSignalsEngine:
             finally:
                 self._vision_queue.task_done()
 
-    def _update_typing_state(self, payload: Dict[str, Any]) -> TypingSignalState:
+    def _update_typing_state(self, payload: dict[str, Any]) -> TypingSignalState:
         updated_at = _safe_float(payload.get("timestamp"), time.time())
         session_ms = max(1.0, _safe_float(payload.get("session_ms"), 0.0))
         message_chars = max(0, int(_safe_float(payload.get("message_chars"), 0.0)))
@@ -285,7 +287,7 @@ class InteractionSignalsEngine:
             label=label,
         )
 
-    def _update_voice_state(self, payload: Dict[str, Any]) -> VoiceSignalState:
+    def _update_voice_state(self, payload: dict[str, Any]) -> VoiceSignalState:
         updated_at = _safe_float(payload.get("timestamp"), time.time())
         speech_ratio = _clamp01(_safe_float(payload.get("speech_ratio"), 0.0))
         rms = max(0.0, _safe_float(payload.get("rms_avg"), 0.0))
@@ -331,7 +333,7 @@ class InteractionSignalsEngine:
             label=label,
         )
 
-    def _update_vision_state(self, payload: Dict[str, Any]) -> VisionSignalState:
+    def _update_vision_state(self, payload: dict[str, Any]) -> VisionSignalState:
         return VisionSignalState(
             updated_at=_safe_float(payload.get("updated_at"), time.time()),
             face_present=bool(payload.get("face_present", False)),
@@ -341,6 +343,14 @@ class InteractionSignalsEngine:
             head_pose=str(payload.get("head_pose") or "unknown"),
             attention_available=round(_clamp01(_safe_float(payload.get("attention_available"), 0.0)), 4),
             eyes_detected=max(0, int(_safe_float(payload.get("eyes_detected"), 0.0))),
+            mouth_motion_score=round(
+                _clamp01(_safe_float(payload.get("mouth_motion_score"), 0.0)),
+                4,
+            ),
+            speaking_likelihood=round(
+                _clamp01(_safe_float(payload.get("speaking_likelihood"), 0.0)),
+                4,
+            ),
             method=str(payload.get("method") or "haar_cascade_pupil_threshold"),
             reliability=str(payload.get("reliability") or "rough_attention_indicator"),
         )
@@ -464,7 +474,7 @@ class InteractionSignalsEngine:
             self._vision_backend_reason = str(exc)
             return False
 
-    def _analyze_vision_frame_sync(self, jpeg_bytes: bytes, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def _analyze_vision_frame_sync(self, jpeg_bytes: bytes, metadata: dict[str, Any]) -> dict[str, Any]:
         if not jpeg_bytes:
             return {"updated_at": time.time()}
         if not self._ensure_vision_backend():
@@ -488,6 +498,7 @@ class InteractionSignalsEngine:
                 minSize=(56, 56),
             )
             if len(faces) == 0:
+                self._previous_mouth_roi = None
                 return {
                     "updated_at": time.time(),
                     "face_present": False,
@@ -495,6 +506,8 @@ class InteractionSignalsEngine:
                     "attention_available": 0.28,
                     "gaze_direction": "absent",
                     "head_pose": "absent",
+                    "mouth_motion_score": 0.0,
+                    "speaking_likelihood": 0.0,
                     "method": "haar_cascade_pupil_threshold",
                     "reliability": "rough_attention_indicator",
                 }
@@ -502,6 +515,19 @@ class InteractionSignalsEngine:
             x, y, w, h = max(faces, key=lambda item: int(item[2]) * int(item[3]))
             face_roi = gray[y : y + h, x : x + w]
             upper_face = face_roi[: max(1, int(h * 0.62)), :]
+            lower_face = face_roi[max(0, int(h * 0.55)) :, :]
+            mouth_motion_score = 0.0
+            if lower_face.size:
+                mouth_roi = cv2.resize(lower_face, (64, 32))
+                previous_mouth = self._previous_mouth_roi
+                if previous_mouth is not None and previous_mouth.shape == mouth_roi.shape:
+                    mouth_motion_score = float(
+                        cv2.absdiff(previous_mouth, mouth_roi).mean() / 255.0
+                    )
+                self._previous_mouth_roi = mouth_roi
+            speaking_likelihood = _clamp01(
+                max(0.0, mouth_motion_score - 0.012) / 0.10
+            )
             eyes = self._eye_cascade.detectMultiScale(
                 upper_face,
                 scaleFactor=1.12,
@@ -579,6 +605,8 @@ class InteractionSignalsEngine:
                 "head_pose": head_pose,
                 "attention_available": round(_clamp01(attention_available), 4),
                 "eyes_detected": int(len(eyes)),
+                "mouth_motion_score": round(_clamp01(mouth_motion_score), 4),
+                "speaking_likelihood": round(speaking_likelihood, 4),
                 "width": int(metadata.get("width") or frame_w),
                 "height": int(metadata.get("height") or frame_h),
                 "method": "haar_cascade_pupil_threshold",

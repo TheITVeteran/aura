@@ -1946,6 +1946,18 @@ class CognitiveEngine:
             or context.get("grounded_runtime_status_contract", False)
         )
         capability_inventory_contract = bool(context.get("capability_inventory_contract", False))
+        prompt_shape = context.get("prompt_shape")
+        if not isinstance(prompt_shape, dict):
+            prompt_shape = {}
+        extended_full_mind_reply = bool(
+            context.get("require_full_foreground_mind_reply", False)
+            and (
+                context.get("bounded_planning_contract", False)
+                or prompt_shape.get("prefers_extended_answer", False)
+                or prompt_shape.get("requires_single_reply_coverage", False)
+                or int(prompt_shape.get("question_parts", 0) or 0) >= 2
+            )
+        )
         canonical_memory_state_evidence = str(
             context.get("canonical_memory_state_evidence") or ""
         ).strip()
@@ -1963,8 +1975,10 @@ class CognitiveEngine:
             max_tokens = max(128, min(max_tokens, 256))
         elif capability_inventory_contract:
             max_tokens = max(160, min(max_tokens, 220))
+        elif extended_full_mind_reply:
+            max_tokens = max(1024, min(max_tokens, 2048))
         else:
-            max_tokens = max(384, min(max_tokens, 1024))
+            max_tokens = max(256, min(max_tokens, 1024))
         request_timeout = max(12.0, min(max(12.0, float(timeout_s or 32.0) - 5.0), 180.0))
         if memory_state_contract or runtime_fact_status_contract:
             request_timeout = min(request_timeout, 45.0)
@@ -2242,6 +2256,17 @@ class CognitiveEngine:
                 "Answer in this exact order: practical categories including the exact phrase browser/web research; governance/Will/Authority/permissions; "
                 "receipts or effect verification; one hypothetical chain plus the boundary that you are "
                 "not executing tools in this turn. Keep the answer complete and under 120 words."
+            )
+        bounded_plan_evidence = str(context.get("bounded_planning_reply") or "").strip()
+        if bool(context.get("bounded_planning_contract")) and bounded_plan_evidence:
+            grounding_blocks.append(
+                "[GOVERNED PLANNING OUTLINE]\n"
+                f"{bounded_plan_evidence}\n"
+                "Treat this as verified workflow structure, not text to copy mechanically. "
+                "Answer the current request in one natural paragraph of four to six complete "
+                "sentences under 180 words. Cover the goal, authorization boundary, action "
+                "sequence, effect verification, and bounded recovery. Do not use a numbered "
+                "list unless the user explicitly asks for one."
             )
         self_claim_evidence = str(
             context.get("evidence_bound_self_claim_context") or ""
