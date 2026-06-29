@@ -133,13 +133,17 @@ def test_registered_mitigation_handler_is_invoked(immune):
 
 
 def test_failed_handler_does_not_crash_defense(immune):
-    def _boom(ev):
+    failures = []
+
+    def _failing_handler(ev):
+        failures.append(ev.threat_id)
         raise RuntimeError("enforcement backend down")
 
-    immune.register_mitigation("isolate", _boom)
+    immune.register_mitigation("isolate", _failing_handler)
     # must still return a response, not raise
     resp = immune.assess_and_respond("detector", "exploit", severity=0.9, origin="x", targeted_vuln="v")
     assert resp is not None
+    assert failures
 
 
 def test_singleton_stable():

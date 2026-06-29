@@ -8,7 +8,7 @@ Generated: `0.0`
 
 - Subsystems: 146
 - Python files: 2039
-- Python lines: 571175
+- Python lines: 571441
 - Dependency edges: 865
 - ServiceContainer `.get()` calls: 1660
 - ServiceContainer registrations: 409
@@ -18,9 +18,9 @@ Generated: `0.0`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>113 files, 27262 lines"]
+    runtime["runtime<br/>113 files, 27298 lines"]
     utils["utils<br/>44 files, 5993 lines"]
-    brain["brain<br/>154 files, 59763 lines"]
+    brain["brain<br/>154 files, 59854 lines"]
     memory["memory<br/>93 files, 21891 lines"]
     consciousness["consciousness<br/>139 files, 65172 lines"]
     resilience["resilience<br/>54 files, 12606 lines"]
@@ -38,15 +38,15 @@ graph TD
     security["security<br/>27 files, 5583 lines"]
     executive["executive<br/>11 files, 3034 lines"]
     perception["perception<br/>21 files, 6104 lines"]
-    orchestrator["orchestrator<br/>43 files, 19533 lines"]
+    orchestrator["orchestrator<br/>43 files, 19557 lines"]
     organism["organism<br/>8 files, 1875 lines"]
     world_model["world_model<br/>11 files, 3278 lines"]
     continuity["continuity<br/>7 files, 238 lines"]
     conversation["conversation<br/>10 files, 7275 lines"]
     being["being<br/>25 files, 5782 lines"]
     learning["learning<br/>28 files, 7592 lines"]
-    phases["phases<br/>29 files, 19386 lines"]
-    reasoning["reasoning<br/>11 files, 4891 lines"]
+    phases["phases<br/>29 files, 19422 lines"]
+    reasoning["reasoning<br/>11 files, 4970 lines"]
     skills["skills<br/>81 files, 23135 lines"]
     social["social<br/>19 files, 5145 lines"]
     tasks["tasks<br/>3 files, 451 lines"]
@@ -1036,13 +1036,13 @@ graph TD
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | consciousness | 139 | 65172 | 2757472 | 41 | 31 |
-| brain | 154 | 59763 | 2563717 | 43 | 48 |
+| brain | 154 | 59854 | 2567899 | 43 | 48 |
 | core_root | 177 | 56388 | 2303115 | 100 | 0 |
-| runtime | 113 | 27262 | 976624 | 46 | 126 |
+| runtime | 113 | 27298 | 977858 | 46 | 126 |
 | skills | 81 | 23135 | 960143 | 32 | 7 |
 | memory | 93 | 21891 | 890572 | 21 | 34 |
-| orchestrator | 43 | 19533 | 864153 | 133 | 9 |
-| phases | 29 | 19386 | 879810 | 35 | 7 |
+| orchestrator | 43 | 19557 | 865238 | 133 | 9 |
+| phases | 29 | 19422 | 881653 | 35 | 7 |
 | agency | 43 | 16301 | 663081 | 33 | 19 |
 | adaptation | 27 | 12670 | 506593 | 22 | 14 |
 | resilience | 54 | 12606 | 509722 | 17 | 27 |
@@ -1062,7 +1062,7 @@ graph TD
 | cognition | 16 | 5391 | 226608 | 11 | 6 |
 | social | 19 | 5145 | 221975 | 9 | 7 |
 | capabilities | 13 | 5105 | 197118 | 9 | 5 |
-| reasoning | 11 | 4891 | 196045 | 3 | 7 |
+| reasoning | 11 | 4970 | 199413 | 3 | 7 |
 | coordinators | 9 | 4274 | 200623 | 36 | 5 |
 | affect | 10 | 3852 | 176223 | 14 | 16 |
 | voice | 9 | 3832 | 169898 | 11 | 5 |
@@ -1500,8 +1500,8 @@ Review candidates:
 
 ## Degradation Handling
 
-- Total `record_degradation()` calls: 3300
-- Log-and-limp candidates: 2974
+- Total `record_degradation()` calls: 3301
+- Log-and-limp candidates: 2975
 - Nearby fail-closed candidates: 326
 
 Top limp-on files:

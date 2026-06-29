@@ -1,14 +1,18 @@
-
-import sys
 import os
-import time
+import sys
 
 # Add project root to path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, '..'))
+project_root = os.path.abspath(os.path.join(current_dir, ".."))
 sys.path.insert(0, project_root)
 
-from core.resilience.resilience.resilience.degradation import degradation_manager, FailureEvent, FailureType, SystemState
+from core.resilience.degradation import (  # noqa: E402
+    FailureEvent,
+    FailureType,
+    SystemState,
+    degradation_manager,
+)
+
 
 def test_degradation_logic():
     print("🧪 Testing Degradation Manager...")

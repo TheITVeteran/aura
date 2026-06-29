@@ -246,6 +246,13 @@ async def api_security_status(request: Request):
     except _SUBSYSTEM_ROUTE_ERRORS as e:
         record_degradation('subsystems', e)
         result["recognition"] = {"error": str(e)}
+    try:
+        from core.security.defensive_runtime import defensive_status
+
+        result["defensive_runtime"] = defensive_status()
+    except _SUBSYSTEM_ROUTE_ERRORS as e:
+        record_degradation('subsystems', e)
+        result["defensive_runtime"] = {"error": str(e)}
     return JSONResponse(result)
 
 

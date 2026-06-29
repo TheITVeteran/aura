@@ -22,9 +22,19 @@ import shutil
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 logger = logging.getLogger("Security.Enforcement")
+_ENFORCEMENT_ERRORS = (
+    AttributeError,
+    ImportError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 
 class AppLayerFirewall:
@@ -32,10 +42,10 @@ class AppLayerFirewall:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._blocked: Set[str] = set()
-        self._blocked_at: Dict[str, float] = {}
+        self._blocked: set[str] = set()
+        self._blocked_at: dict[str, float] = {}
 
-    def block(self, origin: str, *, now: Optional[float] = None) -> None:
+    def block(self, origin: str, *, now: float | None = None) -> None:
         if not origin or origin in {"unknown", "local"}:
             return
         with self._lock:
@@ -53,7 +63,7 @@ class AppLayerFirewall:
             self._blocked.discard(origin)
             self._blocked_at.pop(origin, None)
 
-    def blocked(self) -> List[str]:
+    def blocked(self) -> list[str]:
         with self._lock:
             return sorted(self._blocked)
 
@@ -65,14 +75,14 @@ class AppLayerFirewall:
         if not re.match(r"^[0-9a-fA-F:.]+$", origin):  # only IP-ish origins to pfctl
             return
         try:
-            from core.runtime.subprocess_gateway import get_subprocess_gateway
             from core.governance_context import local_internal_governed_scope
+            from core.runtime.subprocess_gateway import get_subprocess_gateway
             with local_internal_governed_scope("security.enforcement.pf_block", domain="tool_execution"):
                 get_subprocess_gateway().run(
                     ["pfctl", "-t", "aura_block", "-T", "add", origin],
                     read_only=False, timeout=3.0, source="security.enforcement",
                 )
-        except Exception as exc:  # noqa: BLE001 - pf is best-effort; app-layer block stands
+        except _ENFORCEMENT_ERRORS as exc:
             logger.debug("pf block unavailable for %s: %s", origin, exc)
 
 
@@ -83,6 +93,12 @@ class ProcessGuard:
     def terminate(pid: int) -> bool:
         try:
             import psutil
+        except ImportError as exc:
+            logger.debug("Process terminate unavailable for %s: %s", pid, exc)
+            return False
+
+        process_errors = (psutil.Error, *_ENFORCEMENT_ERRORS)
+        try:
             p = psutil.Process(int(pid))
             # Only ever act on processes owned by the same user as Aura.
             if p.uids().real != os.getuid():  # type: ignore[attr-defined]
@@ -91,10 +107,10 @@ class ProcessGuard:
             p.terminate()
             try:
                 p.wait(timeout=2.0)
-            except Exception:  # noqa: BLE001
+            except psutil.TimeoutExpired:
                 p.kill()
             return True
-        except Exception as exc:  # noqa: BLE001
+        except process_errors as exc:
             logger.debug("Process terminate failed for %s: %s", pid, exc)
             return False
 
@@ -102,7 +118,7 @@ class ProcessGuard:
 class Quarantine:
     """Moves a suspect file out of harm's way into an isolated, restorable store."""
 
-    def __init__(self, quarantine_dir: Optional[Path] = None) -> None:
+    def __init__(self, quarantine_dir: Path | None = None) -> None:
         if quarantine_dir is None:
             try:
                 from core.config import config
@@ -112,7 +128,7 @@ class Quarantine:
         self._dir = Path(quarantine_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
 
-    def isolate(self, path: str) -> Optional[str]:
+    def isolate(self, path: str) -> str | None:
         try:
             src = Path(path)
             if not src.exists():
@@ -138,20 +154,26 @@ class ResourceMonitor:
         self._mem_high = mem_high
         self._disk_high = disk_high
 
-    def sample(self) -> Dict[str, float]:
+    def sample(self) -> dict[str, float]:
         try:
             import psutil
+        except ImportError as exc:
+            logger.debug("Resource sample unavailable: %s", exc)
+            return {}
+
+        process_errors = (psutil.Error, *_ENFORCEMENT_ERRORS)
+        try:
             return {
                 "cpu": float(psutil.cpu_percent(interval=0.0)),
                 "mem": float(psutil.virtual_memory().percent),
                 "disk": float(psutil.disk_usage("/").percent),
                 "procs": float(len(psutil.pids())),
             }
-        except Exception as exc:  # noqa: BLE001
+        except process_errors as exc:
             logger.debug("Resource sample failed: %s", exc)
             return {}
 
-    def check_and_report(self) -> Optional[Dict[str, Any]]:
+    def check_and_report(self) -> dict[str, Any] | None:
         s = self.sample()
         if not s:
             return None
@@ -166,15 +188,15 @@ class ResourceMonitor:
             return None
         worst = max(breaches, key=lambda kv: kv[1])
         try:
-            from core.security.immune_system import get_immune_system, ThreatClass
+            from core.security.immune_system import ThreatClass, get_immune_system
             get_immune_system().assess(
                 "resource_monitor", f"resource strain: {worst[0]} at {worst[1]:.0f}%",
                 severity=min(0.9, worst[1] / 100.0), origin="host",
                 targeted_vuln="resource_exhaustion", vector="compute",
                 threat_class=ThreatClass.RESOURCE_EXHAUSTION, evidence=s,
             )
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            pass
+        except _ENFORCEMENT_ERRORS as exc:
+            logger.debug("Resource monitor immune report failed: %s", exc)
         return {"breaches": dict(breaches), "sample": s}
 
 
@@ -183,12 +205,12 @@ class ResourceMonitor:
 _ARP_LINE = re.compile(r"^(?P<host>[^\s(]+)?\s*\((?P<ip>[0-9.]+)\)\s+at\s+(?P<mac>[0-9a-fA-F:]+)")
 
 
-def arp_scan() -> List[Any]:
+def arp_scan() -> list[Any]:
     """Enumerate the local network from the ARP table (unprivileged, own network only)."""
-    devices: List[Any] = []
+    devices: list[Any] = []
     try:
-        from core.security.network_sentinel import Device
         from core.runtime.subprocess_gateway import get_subprocess_gateway
+        from core.security.network_sentinel import Device
         proc = get_subprocess_gateway().run(
             ["/usr/sbin/arp", "-a"], read_only=True, timeout=4.0, source="security.enforcement.arp",
         )
@@ -200,15 +222,15 @@ def arp_scan() -> List[Any]:
             if mac and mac != "(incomplete)":
                 devices.append(Device(fingerprint=mac, name=m.group("host") or m.group("ip"),
                                       kind="network_host"))
-    except Exception as exc:  # noqa: BLE001
+    except _ENFORCEMENT_ERRORS as exc:
         logger.debug("ARP scan failed: %s", exc)
     return devices
 
 
 # ── installation: wire the backends into the seams ──────────────────────────
 
-_firewall: Optional[AppLayerFirewall] = None
-_quarantine: Optional[Quarantine] = None
+_firewall: AppLayerFirewall | None = None
+_quarantine: Quarantine | None = None
 _installed = False
 _install_lock = threading.Lock()
 
@@ -220,7 +242,7 @@ def get_firewall() -> AppLayerFirewall:
     return _firewall
 
 
-def install_default_enforcement() -> Dict[str, Any]:
+def install_default_enforcement() -> dict[str, Any]:
     """Register the real enforcement backends into the immune system + network sentinel."""
     global _installed, _quarantine
     with _install_lock:
@@ -229,20 +251,20 @@ def install_default_enforcement() -> Dict[str, Any]:
         fw = get_firewall()
         _quarantine = Quarantine()
 
-        from core.security.immune_system import get_immune_system, ThreatEvent
+        from core.security.immune_system import ThreatEvent, get_immune_system
         immune = get_immune_system()
 
-        def _block(ev: "ThreatEvent") -> Optional[str]:
+        def _block(ev: ThreatEvent) -> str | None:
             fw.block(ev.origin)
             return f"unblock-{ev.origin}"
 
-        def _quarantine_handler(ev: "ThreatEvent") -> Optional[str]:
+        def _quarantine_handler(ev: ThreatEvent) -> str | None:
             path = ev.evidence.get("path") if isinstance(ev.evidence, dict) else None
             if path:
                 return _quarantine.isolate(str(path))
             return None
 
-        def _rate_limit(ev: "ThreatEvent") -> Optional[str]:
+        def _rate_limit(ev: ThreatEvent) -> str | None:
             fw.block(ev.origin)   # at the app layer, rate-limit a flood == block the source
             return f"unblock-{ev.origin}"
 

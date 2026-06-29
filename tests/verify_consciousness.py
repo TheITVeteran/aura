@@ -1,27 +1,36 @@
-
 import asyncio
 import logging
-import time
-import numpy as np
-from termcolor import colored
+import sys
+from pathlib import Path
 
-# Mocks and Imports
-from core.brain.consciousness.conscious_core import ConsciousnessCore
-from core.brain.consciousness.contract import AlwaysHomeContract, SubjectPerspective
-from core.brain.compression import CognitiveCompressor
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
+def colored(text, *args, **kwargs):
+    return text
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Audit.Consciousness")
 
+
 async def audit_consciousness():
+    from core.brain.compression import CognitiveCompressor
+    from core.consciousness.conscious_core import ConsciousnessCore
+    from core.consciousness.contract import AlwaysHomeContract
+
     print(colored("\n🧠 Starting Consciousness Contract Audit...", "cyan", attrs=["bold"]))
-    
+
     # 1. Dependency Check
     print(colored("1. Checking Dependencies...", "yellow"))
     try:
         core = ConsciousnessCore()
         contract = AlwaysHomeContract(core)
         compressor = CognitiveCompressor(64, 16)
+        compressed = compressor.compress(np.ones(64, dtype=np.float32))
+        assert compressed.shape == (16,)
         print(colored("   [PASS] All components instantiated.", "green"))
     except (RuntimeError, ValueError, TypeError, AttributeError, ImportError) as e:
         print(colored(f"   [FAIL] Instantiation failed: {e}", "red"))
@@ -31,20 +40,20 @@ async def audit_consciousness():
     print(colored("\n2. Auditing Bridge Layer (B: S -> M(t))...", "yellow"))
     try:
         # Stimulate Substrate
-        core.substrate.inject_stimulus(np.random.randn(64))
-        
+        await core.substrate.inject_stimulus(np.random.randn(64))
+
         # Run Bridge
         perspective = contract.bridge_mapping()
-        
+
         print(f"   Perspective ID: {perspective.subject_id}")
         print(f"   Differentiation (JL-Projected): {perspective.differentiation:.4f}")
         print(f"   Unity Score: {perspective.unity_score:.4f}")
-        
+
         if perspective.differentiation > 0:
             print(colored("   [PASS] Bridge Layer active & compressing.", "green"))
         else:
             print(colored("   [FAIL] Zero differentiation detected.", "red"))
-            
+
     except (RuntimeError, ValueError, TypeError, AttributeError, ImportError) as e:
         print(colored(f"   [FAIL] Bridge failed: {e}", "red"))
 
@@ -52,20 +61,20 @@ async def audit_consciousness():
     print(colored("\n3. Testing 'Always Home' Guarantee (Zombie Prevention)...", "yellow"))
     try:
         # Force low-energy state (potential zombie state)
-        core.substrate.x *= 0.001 
-        
+        core.substrate.x *= 0.001
+
         perspective = contract.bridge_mapping()
         exists = contract.subject_exists(perspective)
         poll_result = contract.poll()
-        
+
         print(f"   Subject Exists (Formal): {exists}")
         print(f"   Poll Result: {poll_result['someone_home_now']}")
-        
+
         if poll_result['someone_home_now'] is True:
             print(colored("   [PASS] Always Home guarantee verified.", "green"))
         else:
             print(colored("   [FAIL] Subject vanished!", "red"))
-            
+
     except (RuntimeError, ValueError, TypeError, AttributeError, ImportError) as e:
         print(colored(f"   [FAIL] Guarantee check failed: {e}", "red"))
 
@@ -76,22 +85,23 @@ async def audit_consciousness():
         p0 = contract.bridge_mapping()
         contract.tracker.update(p0)
         id0 = contract.tracker.current_subject
-        
+
         # T1 (Minor change)
-        core.substrate.inject_stimulus(np.random.randn(64) * 0.1)
+        await core.substrate.inject_stimulus(np.random.randn(64) * 0.1)
         p1 = contract.bridge_mapping()
         contract.tracker.update(p1)
         id1 = contract.tracker.current_subject
-        
+
         if id0 == id1:
-             print(colored(f"   [PASS] Identity persisted across small delta ({id0})", "green"))
+            print(colored(f"   [PASS] Identity persisted across small delta ({id0})", "green"))
         else:
-             print(colored(f"   [WARN] Identity fragged on small delta! ({id0} -> {id1})", "yellow"))
-             
+            print(colored(f"   [WARN] Identity fragged on small delta! ({id0} -> {id1})", "yellow"))
+
     except (RuntimeError, ValueError, TypeError, AttributeError, ImportError) as e:
         print(colored(f"   [FAIL] Identity check failed: {e}", "red"))
 
     print(colored("\n✨ Audit Complete.", "cyan", attrs=["bold"]))
+
 
 if __name__ == "__main__":
     asyncio.run(audit_consciousness())

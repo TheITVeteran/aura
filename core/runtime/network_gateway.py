@@ -67,6 +67,31 @@ class NetworkGateway:
         request_data = _coerce_data(data)
         request_proxies = _coerce_proxies(proxies)
 
+        try:
+            from core.security.defensive_runtime import validate_outbound_network
+
+            defensive_receipt = validate_outbound_network(
+                method=method_text,
+                url=url_text,
+                data_length=len(request_data or b""),
+                source=source,
+            )
+            if not defensive_receipt.get("allowed", True):
+                return {
+                    "status_code": 0,
+                    "headers": {},
+                    "content": b"",
+                    "ok": False,
+                    "error": str(defensive_receipt.get("reason") or "blocked_by_defensive_runtime"),
+                    "defensive_runtime": defensive_receipt,
+                }
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "network_gateway.defensive_runtime",
+                exc,
+                action="continued network request after defensive preflight failed",
+            )
+
         telemetry_bypass = _validate_operational_telemetry_bypass(
             operational_telemetry=operational_telemetry,
             source=source,

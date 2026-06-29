@@ -184,10 +184,20 @@ class SecureSandbox:
 
         binary_path = Path(cmd[0])
         binary = binary_path.name  # Basename only
-        if self.allowed_commands is not None and binary not in self.allowed_commands:
-            raise SecurityViolationError(
-                f"Command '{binary}' not in allowlist: {self.allowed_commands}"
-            )
+        is_python_executable = (
+            binary == os.path.basename(sys.executable)
+            or (binary.startswith("python") and all(c.isdigit() or c == "." for c in binary[6:]))
+        )
+        allowed_list = self.allowed_commands
+        if allowed_list is not None:
+            is_allowed = binary in allowed_list
+            if not is_allowed and ("python" in allowed_list or "python3" in allowed_list):
+                if is_python_executable:
+                    is_allowed = True
+            if not is_allowed:
+                raise SecurityViolationError(
+                    f"Command '{binary}' not in allowlist: {self.allowed_commands}"
+                )
 
         if self.security_level != SecurityLevel.PRIVILEGED and binary_path.parent != Path("."):
             self._validate_canonical_binary(binary_path, binary)

@@ -4,24 +4,22 @@ Extracted from server.py — shared authentication, authorization,
 rate-limiting, and session management utilities used across route files.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import base64
 import hashlib
 import hmac
 import json
 import logging
-import os
 import secrets
 import threading
 import time
 from http.cookies import CookieError, SimpleCookie
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import Header, HTTPException, Request
 
 from core.config import config
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Server.Auth")
 
@@ -45,7 +43,7 @@ def _is_trusted_local_host(host: str) -> bool:
     return host in ("127.0.0.1", "::1", "localhost")
 
 
-def _extract_request_token(request: Request) -> Optional[str]:
+def _extract_request_token(request: Request) -> str | None:
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         return auth_header[7:]
@@ -93,7 +91,7 @@ def _require_internal(request: Request) -> None:
 
 # ── Token verification ───────────────────────────────────────
 
-def _verify_token(request: Request, x_api_token: Optional[str] = Header(default=None)) -> None:
+def _verify_token(request: Request, x_api_token: str | None = Header(default=None)) -> None:
     """Bearer-token check. Ensures fail-closed unless running in strict internal_only_mode."""
     expected = config.api_token
     internal_only = getattr(config.security, "internal_only_mode", False)
@@ -125,7 +123,7 @@ def _verify_token(request: Request, x_api_token: Optional[str] = Header(default=
 
 # ── Cookie management ────────────────────────────────────────
 
-_CHEAT_CODE_COOKIE_SECRET: Optional[bytes] = None
+_CHEAT_CODE_COOKIE_SECRET: bytes | None = None
 _COOKIE_SECRET_RECOVERABLE_ERRORS = (
     ImportError,
     AttributeError,
@@ -157,7 +155,7 @@ _CHEAT_CODE_RECOVERABLE_ERRORS = (
 def _get_cheat_code_cookie_secret() -> bytes:
     global _CHEAT_CODE_COOKIE_SECRET
     if _CHEAT_CODE_COOKIE_SECRET is None:
-        secret_value: Optional[str] = None
+        secret_value: str | None = None
         try:
             from core.zenith_secrets import get_secret
 
@@ -187,7 +185,7 @@ def _encode_owner_session_cookie() -> str:
     return f"{encoded}.{signature}"
 
 
-def _decode_owner_session_cookie(token: Optional[str]) -> Optional[Dict[str, Any]]:
+def _decode_owner_session_cookie(token: str | None) -> dict[str, Any] | None:
     if not token or "." not in token:
         return None
     encoded, signature = token.rsplit(".", 1)
@@ -210,7 +208,7 @@ def _decode_owner_session_cookie(token: Optional[str]) -> Optional[Dict[str, Any
     return payload
 
 
-def _restore_owner_session_from_request(request: Optional[Request]) -> bool:
+def _restore_owner_session_from_request(request: Request | None) -> bool:
     if request is None:
         return False
     token = None
@@ -253,7 +251,7 @@ def _restore_owner_session_from_request(request: Optional[Request]) -> bool:
         return False
 
 
-def _activate_cheat_code_for_request(code: Optional[str], *, silent: bool, source: str) -> Optional[Dict[str, Any]]:
+def _activate_cheat_code_for_request(code: str | None, *, silent: bool, source: str) -> dict[str, Any] | None:
     if not code:
         return None
     try:
@@ -277,7 +275,7 @@ class _RateLimiter:
     def __init__(self, max_requests: int = 30, window_seconds: float = 60.0):
         self._max = max_requests
         self._window = window_seconds
-        self._clients: Dict[str, List[float]] = {}
+        self._clients: dict[str, list[float]] = {}
         self._lock = threading.Lock()
         self._last_cleanup = time.time()
 
@@ -320,4 +318,17 @@ def _check_rate_limit(request: Request) -> None:
         return
 
     if not _rate_limiter.check(client_ip):
+        try:
+            from core.security.defensive_runtime import observe_rate_limit_violation
+
+            observe_rate_limit_violation(client_ip, route=str(getattr(request.url, "path", "") or "unknown"))
+        except (
+            ImportError,
+            AttributeError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            record_degradation("auth.rate_limit_defense", exc)
+            logger.debug("Rate-limit defensive reporting skipped: %s", exc)
         raise HTTPException(status_code=429, detail="Too many requests")

@@ -5,17 +5,16 @@ Connects Liquid Substrate (Existence), Global Workspace (Awareness), and Predict
 Implements 'Attractor Volition' - autonomous will emerges from substrate dynamics.
 """
 
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import json
 import logging
-import threading
 import time
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
+
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 from .global_workspace import GlobalWorkspace
 from .liquid_substrate import LiquidSubstrate
@@ -39,13 +38,18 @@ class AttractorVolitionEngine:
 
         # Define attractors as regions in state space
         # For simplicity, we map them to VAD (Valence, Arousal, Dominance) regions
-        self.attractors: Dict[str, Dict[str, float]] = {
+        self.attractors: dict[str, dict[str, float]] = {
             "curiosity": {"arousal_min": 0.5, "valence_min": 0.1},
             "boredom":   {"arousal_max": -0.2, "valence_max": -0.1},
             "reflection": {"dominance_min": 0.4, "arousal_max": 0.1}
         }
 
-    async def check_for_impulse(self) -> Optional[str]:
+    async def check_for_impulse(
+        self,
+        *,
+        dt: float | None = None,
+        extra_signals: dict[str, float] | None = None,
+    ) -> str | None:
         """Check if current state warrants an action.
 
         Prefers the drive-integration engine (temporal accumulation + competition + hysteresis)
@@ -58,11 +62,14 @@ class AttractorVolitionEngine:
         try:
             from core.consciousness.drive_integration import get_drive_integration_engine
             engine = get_drive_integration_engine()
-            signals = engine.gather_signals({
+            base_signals = {
                 "valence": v, "arousal": a, "dominance": d,
                 "novelty": float(state.get("novelty", 0.0) or 0.0),
-            })
-            decision = engine.step(signals)
+            }
+            if extra_signals:
+                base_signals.update(extra_signals)
+            signals = engine.gather_signals(base_signals)
+            decision = engine.step(signals, dt=dt)
             if decision.action:
                 self.last_action_time = time.time()
             return decision.action
@@ -106,7 +113,7 @@ class ConsciousnessCore:
         self.qualia: QualiaSynthesizer = QualiaSynthesizer()
         self.volition: AttractorVolitionEngine = AttractorVolitionEngine(self.substrate)
 
-        self.monitor_task: Optional[asyncio.Task] = None
+        self.monitor_task: asyncio.Task | None = None
         self.running: bool = False
         self.orchestrator_ref: Any = None # Will be injected
 
@@ -114,7 +121,15 @@ class ConsciousnessCore:
 
     def start(self):
         """Wake up"""
-        self.substrate.start()
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.substrate.start())
+        except RuntimeError:
+            try:
+                asyncio.run(self.substrate.start())
+            except (RuntimeError, OSError, TypeError, ValueError) as exc:
+                record_degradation("conscious_core.substrate_start", exc)
+                logger.debug("Failed to run substrate start synchronously: %s", exc)
         self.running = True
 
         # Start the Volition Monitor (The "Will" task)
@@ -123,7 +138,7 @@ class ConsciousnessCore:
                 self.monitor_task = get_task_tracker().create_task(
                     self._volition_loop(),
                     name="conscious_core.volition_loop",
-                )
+                    )
             except RuntimeError as exc:
                 record_degradation("conscious_core", exc)
                 logger.debug("ConsciousCore: volition loop not started: %s", exc)
@@ -131,8 +146,16 @@ class ConsciousnessCore:
     def stop(self):
         """Sleep"""
         self.running = False
-        self.substrate.stop()
-        if hasattr(self, 'monitor_task'):
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.substrate.stop())
+        except RuntimeError:
+            try:
+                asyncio.run(self.substrate.stop())
+            except (RuntimeError, OSError, TypeError, ValueError) as exc:
+                record_degradation("conscious_core.substrate_stop", exc)
+                logger.debug("Failed to run substrate stop synchronously: %s", exc)
+        if hasattr(self, 'monitor_task') and self.monitor_task:
             self.monitor_task.cancel()
 
     async def _volition_loop(self):
@@ -145,48 +168,50 @@ class ConsciousnessCore:
                 current_state = self.substrate.x
                 surprise = self.predictive.compare_and_learn(current_state)
 
-                # If high surprise, spike arousal!
+                # If high surprise, spike arousal. Volition still runs every
+                # tick below; otherwise low-surprise boredom/reflection basins
+                # become unreachable during stable states.
                 if surprise > 0.1:
                     await self.substrate.inject_stimulus(np.ones(64) * surprise, weight=0.5)
 
-                    # 2. Volition Step
-                    substrate_state = await self.substrate.get_state_summary()
-                    predictive_metrics = self.predictive.get_surprise_metrics()
+                # 2. Volition Step
+                substrate_state = await self.substrate.get_state_summary()
+                predictive_metrics = self.predictive.get_surprise_metrics()
 
-                    # Synthesize Qualia Vector
-                    q_norm = self.qualia.synthesize(substrate_state['qualia_metrics'], predictive_metrics)
+                # Synthesize Qualia Vector
+                q_norm = self.qualia.synthesize(substrate_state['qualia_metrics'], predictive_metrics)
 
-                    impulse = await self.volition.check_for_impulse()
+                impulse = await self.volition.check_for_impulse()
 
-                    if impulse and self.orchestrator_ref:
-                        logger.info("⚡ VOLITION TRIGGERED: %s (q_norm=%.2f)", impulse, q_norm)
+                if impulse and self.orchestrator_ref:
+                    logger.info("⚡ VOLITION TRIGGERED: %s (q_norm=%.2f)", impulse, q_norm)
 
-                        # v6.3: Causal Telemetry
-                        state = await self.substrate.get_state_summary()
-                        telemetry_data: Dict[str, Any] = {
-                            "timestamp": time.time(),
-                            "valence": state['valence'],
-                            "arousal": state['arousal'],
-                            "dominance": state['dominance'],
-                            "q_norm": q_norm,
-                            "impulse_type": impulse,
-                            "causal_link": "qualia_attractor"
-                        }
+                    # v6.3: Causal Telemetry
+                    state = await self.substrate.get_state_summary()
+                    telemetry_data: dict[str, Any] = {
+                        "timestamp": time.time(),
+                        "valence": state['valence'],
+                        "arousal": state['arousal'],
+                        "dominance": state['dominance'],
+                        "q_norm": q_norm,
+                        "impulse_type": impulse,
+                        "causal_link": "qualia_attractor"
+                    }
 
-                        # Log for prove_coupling.py to analyze
-                        self._log_causal_telemetry(telemetry_data)
+                    # Log for prove_coupling.py to analyze
+                    self._log_causal_telemetry(telemetry_data)
 
-                        # Dispatch to Orchestrator via async loop
-                        try:
-                            loop = self.orchestrator_ref.loop
-                            if loop and loop.is_running():
-                                asyncio.run_coroutine_threadsafe(
-                                    self.orchestrator_ref.handle_impulse(impulse),
-                                    loop
-                                )
-                        except (RuntimeError, AttributeError, TypeError, ValueError) as dispatch_error:
-                            record_degradation('conscious_core', dispatch_error)
-                            logger.error("Failed to dispatch impulse: %s", dispatch_error)
+                    # Dispatch to Orchestrator via async loop
+                    try:
+                        loop = self.orchestrator_ref.loop
+                        if loop and loop.is_running():
+                            asyncio.run_coroutine_threadsafe(
+                                self.orchestrator_ref.handle_impulse(impulse),
+                                loop
+                            )
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as dispatch_error:
+                        record_degradation('conscious_core', dispatch_error)
+                        logger.error("Failed to dispatch impulse: %s", dispatch_error)
             except asyncio.CancelledError:
                 break
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
@@ -194,7 +219,7 @@ class ConsciousnessCore:
                 logger.error("CRITICAL error in Consciousness _volition_loop: %s", e)
                 await asyncio.sleep(5.0) # Backoff on error
 
-    def _log_causal_telemetry(self, data: Dict[str, Any]):
+    def _log_causal_telemetry(self, data: dict[str, Any]):
         """Write causal telemetry to a dedicated log for analysis."""
         from core.config import config
         log_path = config.paths.data_dir / "telemetry" / "causal_behavior.jsonl"
@@ -218,7 +243,7 @@ class ConsciousnessCore:
         stimulus = np.random.randn(64) * 0.5 # Simplified embedding
         get_task_tracker().create_task(self.substrate.inject_stimulus(stimulus))
 
-    def get_state(self) -> Dict[str, Any]:
+    def get_state(self) -> dict[str, Any]:
         """API Payload for Qualia Explorer"""
         # Fix: get_state_summary is async — use sync get_substrate_affect() instead
         sub_state = self.substrate.get_substrate_affect()

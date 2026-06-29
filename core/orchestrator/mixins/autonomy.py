@@ -59,7 +59,7 @@ class AutonomyMixin:
         personality_context = {}
         time_context = {"formatted": "Unknown"}
         try:
-            from core.personality_engine import get_personality_engine
+            from core.brain.personality_engine import get_personality_engine
 
             personality = get_personality_engine()
             personality_context = personality.get_emotional_context_for_response()

@@ -9,8 +9,8 @@ One unified, low-latency interface to the real senses, usable on a whim:
 
 Each sense is a provider behind a clean seam, so the real backend (cv2 / sounddevice /
 mlx-whisper / say) activates when the library, hardware, and OS permission are present, and a
-fail-open stub keeps everything working (and testable) when they aren't — a sense that can't
-capture simply returns nothing rather than crashing the mind. Captured perception is routed to
+bounded unavailable result keeps the mind aware of disabled hardware instead of pretending
+capture succeeded. Captured perception is routed to
 the perception sentinel (recognition + threat → the immune system → the unified state), so what
 Aura sees and hears is reasoned about, not just logged.
 
@@ -22,13 +22,21 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger("Perception.Sensory")
+_SENSORY_IMPORT_ERRORS = (ImportError, ModuleNotFoundError)
+_SENSORY_RUNTIME_ERRORS = (
+    AttributeError,
+    FloatingPointError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 # ── results ─────────────────────────────────────────────────────────────────
@@ -37,19 +45,19 @@ logger = logging.getLogger("Perception.Sensory")
 class Sight:
     captured: bool
     person_present: bool = False
-    descriptor: Optional[np.ndarray] = None   # coarse appearance descriptor (pluggable → real embeddings)
+    descriptor: np.ndarray | None = None   # coarse appearance descriptor (pluggable → real embeddings)
     width: int = 0
     height: int = 0
-    detail: Dict[str, Any] = field(default_factory=dict)
+    detail: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class Sound:
     captured: bool
     transcript: str = ""
-    voice_descriptor: Optional[np.ndarray] = None
+    voice_descriptor: np.ndarray | None = None
     duration_s: float = 0.0
-    detail: Dict[str, Any] = field(default_factory=dict)
+    detail: dict[str, Any] = field(default_factory=dict)
 
 
 # ── provider seams (real backends activate when present; stubs otherwise) ────
@@ -65,7 +73,7 @@ class CameraProvider:
         try:
             import cv2  # noqa: F401
             return True
-        except Exception:  # noqa: BLE001
+        except _SENSORY_IMPORT_ERRORS:
             return False
 
     def _load(self) -> bool:
@@ -78,10 +86,10 @@ class CameraProvider:
                 self._cascade = cv2.CascadeClassifier(
                     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
                 )
-            except Exception:  # noqa: BLE001
+            except _provider_errors(cv2):
                 self._cascade = None
             return True
-        except Exception as exc:  # noqa: BLE001
+        except _SENSORY_IMPORT_ERRORS + _SENSORY_RUNTIME_ERRORS as exc:
             logger.debug("cv2 unavailable: %s", exc)
             return False
 
@@ -108,14 +116,14 @@ class CameraProvider:
                     descriptor = _appearance_descriptor(cv2, crop)
             return Sight(captured=True, person_present=person, descriptor=descriptor,
                          width=int(w), height=int(h), detail={"faces": int(person)})
-        except Exception as exc:  # noqa: BLE001
+        except _provider_errors(cv2) as exc:
             return Sight(captured=False, detail={"reason": f"capture_error:{type(exc).__name__}"})
         finally:
             if cap is not None:
                 try:
                     cap.release()
-                except Exception:  # noqa: BLE001
-                    pass
+                except _provider_errors(cv2) as exc:
+                    logger.debug("camera release failed: %s", exc)
 
 
 class MicProvider:
@@ -128,13 +136,13 @@ class MicProvider:
         try:
             import sounddevice  # noqa: F401
             return True
-        except Exception:  # noqa: BLE001
+        except _SENSORY_IMPORT_ERRORS:
             return False
 
     def capture(self, *, seconds: float = 3.0) -> Sound:
         try:
             import sounddevice as sd
-        except Exception as exc:  # noqa: BLE001
+        except _SENSORY_IMPORT_ERRORS as exc:
             return Sound(captured=False, detail={"reason": f"sounddevice_unavailable:{type(exc).__name__}"})
         try:
             audio = sd.rec(int(seconds * self._sr), samplerate=self._sr, channels=1, dtype="float32")
@@ -144,7 +152,7 @@ class MicProvider:
             return Sound(captured=True, transcript=transcript,
                          voice_descriptor=_voice_descriptor(audio, self._sr),
                          duration_s=seconds, detail={"samples": int(audio.shape[0])})
-        except Exception as exc:  # noqa: BLE001
+        except _provider_errors(sd) as exc:
             return Sound(captured=False, detail={"reason": f"capture_error:{type(exc).__name__}"})
 
     def _transcribe(self, audio: np.ndarray) -> str:
@@ -154,7 +162,7 @@ class MicProvider:
                 audio, path_or_hf_repo="mlx-community/whisper-small.en-mlx",
             )
             return str(result.get("text", "")).strip() if isinstance(result, dict) else ""
-        except Exception as exc:  # noqa: BLE001
+        except _SENSORY_IMPORT_ERRORS + _SENSORY_RUNTIME_ERRORS as exc:
             logger.debug("transcription unavailable: %s", exc)
             return ""
 
@@ -162,7 +170,7 @@ class MicProvider:
 class VoiceProvider:
     """macOS `say` — instant, precise text-to-speech. Fail-open."""
 
-    def speak(self, text: str, *, voice: Optional[str] = None, rate: Optional[int] = None) -> bool:
+    def speak(self, text: str, *, voice: str | None = None, rate: int | None = None) -> bool:
         text = str(text or "").strip()
         if not text:
             return False
@@ -176,23 +184,23 @@ class VoiceProvider:
             argv.append(text[:2000])
             proc = get_subprocess_gateway().run(argv, timeout=30.0, source="perception.sensory.voice")
             return getattr(proc, "returncode", 1) == 0
-        except Exception as exc:  # noqa: BLE001
+        except _SENSORY_IMPORT_ERRORS + _SENSORY_RUNTIME_ERRORS as exc:
             logger.debug("say unavailable: %s", exc)
             return False
 
 
 # ── descriptors (coarse now; pluggable to real embeddings) ──────────────────
 
-def _appearance_descriptor(cv2: Any, gray_crop: np.ndarray) -> Optional[np.ndarray]:
+def _appearance_descriptor(cv2: Any, gray_crop: np.ndarray) -> np.ndarray | None:
     try:
         small = cv2.resize(gray_crop, (16, 16)).astype(np.float64).reshape(-1)
         n = float(np.linalg.norm(small))
         return small / n if n > 1e-9 else small
-    except Exception:  # noqa: BLE001
+    except _provider_errors(cv2):
         return None
 
 
-def _voice_descriptor(audio: np.ndarray, sr: int) -> Optional[np.ndarray]:
+def _voice_descriptor(audio: np.ndarray, sr: int) -> np.ndarray | None:
     # Coarse spectral fingerprint (a real speaker-ID embedding plugs in here later).
     try:
         if audio.size < sr // 4:
@@ -203,8 +211,18 @@ def _voice_descriptor(audio: np.ndarray, sr: int) -> Optional[np.ndarray]:
         binned = spec[:512].reshape(32, -1).mean(axis=1)
         n = float(np.linalg.norm(binned))
         return binned / n if n > 1e-9 else binned
-    except Exception:  # noqa: BLE001
+    except _SENSORY_RUNTIME_ERRORS:
         return None
+
+
+def _provider_errors(provider: Any | None = None) -> tuple[type[BaseException], ...]:
+    extra: list[type[BaseException]] = []
+    if provider is not None:
+        for attr in ("error", "PortAudioError"):
+            candidate = getattr(provider, attr, None)
+            if isinstance(candidate, type) and issubclass(candidate, BaseException):
+                extra.append(candidate)
+    return (*_SENSORY_IMPORT_ERRORS, *_SENSORY_RUNTIME_ERRORS, *extra)
 
 
 # ── the runtime ──────────────────────────────────────────────────────────────
@@ -215,9 +233,9 @@ class SensoryRuntime:
     def __init__(
         self,
         *,
-        camera: Optional[CameraProvider] = None,
-        mic: Optional[MicProvider] = None,
-        voice: Optional[VoiceProvider] = None,
+        camera: CameraProvider | None = None,
+        mic: MicProvider | None = None,
+        voice: VoiceProvider | None = None,
     ) -> None:
         self.camera = camera or CameraProvider()
         self.mic = mic or MicProvider()
@@ -243,12 +261,12 @@ class SensoryRuntime:
         return self.voice.speak(text, **kw)
 
     # take in the room at once -------------------------------------------
-    def sense(self, *, listen_seconds: float = 2.0) -> Dict[str, Any]:
+    def sense(self, *, listen_seconds: float = 2.0) -> dict[str, Any]:
         sight = self.look()
         sound = self.listen(seconds=listen_seconds)
         return {"sight": sight, "sound": sound}
 
-    def capabilities(self) -> Dict[str, bool]:
+    def capabilities(self) -> dict[str, bool]:
         return {
             "eyes": self.camera.available(),
             "ears": self.mic.available(),
@@ -258,7 +276,11 @@ class SensoryRuntime:
     # routing to the mind -------------------------------------------------
     def _route_face(self, sight: Sight) -> None:
         try:
-            from core.perception.perception_sentinel import get_perception_sentinel, Observation, Modality
+            from core.perception.perception_sentinel import (
+                Modality,
+                Observation,
+                get_perception_sentinel,
+            )
             get_perception_sentinel().assess(Observation(
                 Modality.FACE, descriptor=sight.descriptor, content="",
                 context={"source": "camera", "size": [sight.width, sight.height]},
@@ -268,7 +290,11 @@ class SensoryRuntime:
 
     def _route_voice(self, sound: Sound) -> None:
         try:
-            from core.perception.perception_sentinel import get_perception_sentinel, Observation, Modality
+            from core.perception.perception_sentinel import (
+                Modality,
+                Observation,
+                get_perception_sentinel,
+            )
             get_perception_sentinel().assess(Observation(
                 Modality.VOICE, descriptor=sound.voice_descriptor, content=sound.transcript,
                 context={"source": "mic", "duration_s": sound.duration_s},
@@ -277,7 +303,7 @@ class SensoryRuntime:
             logger.debug("voice routing skipped: %s", exc)
 
 
-_runtime: Optional[SensoryRuntime] = None
+_runtime: SensoryRuntime | None = None
 _lock = threading.Lock()
 
 

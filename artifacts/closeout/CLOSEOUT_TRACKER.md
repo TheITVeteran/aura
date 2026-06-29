@@ -728,3 +728,80 @@ Estimate update:
 
 - Overall closeout: 86%
 - Remaining consolidated checkpoints: 3 total
+
+## Checkpoint 2026-06-29-13: Defensive Runtime And Integrity Restore
+
+Status: verified locally, ready for commit; live launched demo proof remains open.
+
+Why:
+
+- The closeout target requires Aura to protect her own live runtime, host
+  resources, governed tool surfaces, and authorized local environment without
+  collapsing into broad exception logging or reporting false health.
+- Security must be active on the same path Bryan uses, not only in backend
+  proof runners.
+- Requested camera/mic/screen access must remain legitimate and governed:
+  owner grants can enable capture, but macOS TCC/privacy controls must not be
+  bypassed or weakened.
+
+What changed:
+
+- Added a canonical `defensive_runtime` service and materialized it during
+  normal service registration.
+- Routed live `/api/chat` ingress through defensive inspection before the
+  cognitive path. Remote hostile ingress can be blocked; trusted local hostile
+  content is marked as untrusted data and still handled by the mind path rather
+  than a canned answer.
+- Routed outbound network requests through defensive egress preflight for
+  disabled-network policy, blocked destinations, high-volume exfiltration, and
+  secret-egress patterns.
+- Fed interface rate-limit violations into the immune system and app-layer
+  firewall.
+- Exposed defensive runtime state through `/security/status`.
+- Gave `IntegrityGuardian` a governed auto-restore path for critical monitored
+  files: read `git HEAD` blobs through `SubprocessGateway`, preserve tampered
+  bytes into forensic backups, and restore through `FileWriteGateway`. Active
+  dev worktree edits are skipped.
+- Replaced broad exception handling with explicit exception boundaries in the
+  touched sensory, enforcement, immune, and integrity surfaces.
+- Restored substrate-to-volition coupling for stable low-surprise states:
+  ConsciousCore now checks volition every tick instead of only after high
+  predictive surprise, so boredom/reflection basins remain causally reachable.
+- Repaired the standalone coupling verifier so it is deterministic, bounded,
+  emits a telemetry receipt, and fails if no real impulse emerges.
+- Added an honest local-media fallback: Diffusers remains the high-quality lazy
+  path, while missing Torch/Diffusers now generates a real local procedural PNG
+  with degraded metadata instead of printing a failure and exiting zero.
+
+Evidence:
+
+- `python -m pytest -q tests/test_defensive_runtime.py tests/test_immune_system.py tests/test_enforcement.py tests/test_deletion_guard.py tests/test_network_sentinel.py tests/test_perception_sentinel.py tests/test_sensory_runtime.py tests/test_threat_detectors.py tests/test_security_stress.py tests/test_feedback_audit_fixes.py::test_integrity_guardian_auto_restores_missing_file_when_enabled tests/test_feedback_audit_fixes.py::test_integrity_guardian_auto_restores_tampered_file_when_enabled tests/test_feedback_audit_fixes.py::test_integrity_guardian_skips_restore_in_dev_if_modified tests/test_feedback_audit_fixes.py::test_integrity_guardian_restores_from_head_blob_with_forensic_backup tests/test_boot_sensory_runtime_contract.py tests/test_runtime_health_contract.py tests/test_boot_smoke.py tests/test_drive_integration.py tests/verify_autonomy_loop.py`
+- Result: `174 passed`
+- `python tests/verify_coupling.py`
+- Result: passed; `seek_novelty` from boredom basin, 100% causal
+  correlation.
+- `python tests/verify_consciousness.py`, `python tests/verify_degradation.py`,
+  and `python tests/verify_system_health.py`
+- Result: passed.
+- `python tests/verify_local_media.py`
+- Result: passed; created a real PNG through `procedural_fallback` because
+  Diffusers/Torch is not installed in this runtime.
+- Ruff passed on touched security, sensory, runtime, service-registration,
+  route, and test files.
+- `make enterprise-gate`: passed.
+- `make production-gate`: passed.
+
+Honest boundary:
+
+- This checkpoint does not claim successful live voice/demo execution. It
+  hardens the always-on defensive runtime and integrity-recovery surfaces that
+  the live desktop proof depends on.
+- Aura still must pass the launched 32B full-mind conversation proof, visible
+  multi-app general computer-use proof, final replay/final-proof bundle, and
+  final clean-worktree closure before the ultimate prompt can be called done.
+
+Estimate update:
+
+- Overall closeout: 98.8%
+- Remaining consolidated checkpoints: 1 total
+- Remaining smaller sub-checkpoints: 2-4 total

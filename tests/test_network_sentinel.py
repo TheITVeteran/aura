@@ -63,10 +63,14 @@ def test_sweep_assesses_each_device(net):
 
 
 def test_enumerate_failopen_on_broken_scanner(net):
-    def _boom():
+    attempts = []
+
+    def _failing_scanner():
+        attempts.append("called")
         raise RuntimeError("scan failed")
-    net.register_scanner(_boom)
+    net.register_scanner(_failing_scanner)
     assert net.enumerate() == []   # never raises
+    assert attempts == ["called"]
 
 
 def test_recovery_plan_reports_restore_points(net):

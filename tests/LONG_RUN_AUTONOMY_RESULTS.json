@@ -1,13 +1,16 @@
 {
-  "elapsed_seconds": 2.625,
+  "elapsed_seconds": 2.069,
   "modules_touched": {
     "adaptive_mood": 1000,
     "emergent_goals": 1000,
     "lineage": 4,
+    "lineage_errors": 0,
     "mesh_cognition": 1000,
+    "phi_errors": 0,
     "resource_stakes": 1000,
     "self_awareness": 1000,
-    "structural_mutator": 6
+    "structural_mutator": 6,
+    "structural_mutator_errors": 0
   },
   "passed": true,
   "per_tick": [
@@ -19,7 +22,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.3662
+      "viability": 0.3322
     },
     {
       "action_diversity": 0.375,
@@ -29,7 +32,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.366
+      "viability": 0.332
     },
     {
       "action_diversity": 0.375,
@@ -39,7 +42,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.3658
+      "viability": 0.3318
     },
     {
       "action_diversity": 0.375,
@@ -48,8 +51,8 @@
       "memory_integrity": 1.0,
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
-      "report_consistency": 0.5,
-      "viability": 0.3656
+      "report_consistency": 1.0,
+      "viability": 0.3316
     },
     {
       "action_diversity": 0.375,
@@ -59,7 +62,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.3654
+      "viability": 0.3314
     },
     {
       "action_diversity": 0.375,
@@ -69,7 +72,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.3652
+      "viability": 0.3312
     },
     {
       "action_diversity": 0.375,
@@ -79,7 +82,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.365
+      "viability": 0.331
     },
     {
       "action_diversity": 0.375,
@@ -89,7 +92,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.3648
+      "viability": 0.3308
     },
     {
       "action_diversity": 0.375,
@@ -99,7 +102,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.3646
+      "viability": 0.3306
     },
     {
       "action_diversity": 0.375,
@@ -109,7 +112,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.3644
+      "viability": 0.3304
     },
     {
       "action_diversity": 0.375,
@@ -119,7 +122,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.3642
+      "viability": 0.3302
     },
     {
       "action_diversity": 0.375,
@@ -129,7 +132,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.364
+      "viability": 0.33
     },
     {
       "action_diversity": 0.375,
@@ -139,7 +142,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.3638
+      "viability": 0.3298
     },
     {
       "action_diversity": 0.375,
@@ -148,8 +151,8 @@
       "memory_integrity": 1.0,
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
-      "report_consistency": 0.5,
-      "viability": 0.3636
+      "report_consistency": 1.0,
+      "viability": 0.3296
     },
     {
       "action_diversity": 0.375,
@@ -159,7 +162,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.3634
+      "viability": 0.3294
     },
     {
       "action_diversity": 0.375,
@@ -169,7 +172,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.3632
+      "viability": 0.3292
     },
     {
       "action_diversity": 0.375,
@@ -179,7 +182,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.363
+      "viability": 0.329
     },
     {
       "action_diversity": 0.375,
@@ -189,7 +192,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.3628
+      "viability": 0.3288
     },
     {
       "action_diversity": 0.375,
@@ -198,8 +201,8 @@
       "memory_integrity": 1.0,
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
-      "report_consistency": 0.5,
-      "viability": 0.3626
+      "report_consistency": 1.0,
+      "viability": 0.3286
     },
     {
       "action_diversity": 0.375,
@@ -209,7 +212,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.3624
+      "viability": 0.3284
     },
     {
       "action_diversity": 0.375,
@@ -219,7 +222,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.3622
+      "viability": 0.3282
     },
     {
       "action_diversity": 0.375,
@@ -229,7 +232,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.362
+      "viability": 0.328
     },
     {
       "action_diversity": 0.375,
@@ -239,7 +242,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.3618
+      "viability": 0.3278
     },
     {
       "action_diversity": 0.375,
@@ -249,7 +252,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.3616
+      "viability": 0.3276
     },
     {
       "action_diversity": 0.375,
@@ -259,7 +262,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.3614
+      "viability": 0.3274
     },
     {
       "action_diversity": 0.375,
@@ -268,8 +271,8 @@
       "memory_integrity": 1.0,
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
-      "report_consistency": 0.5,
-      "viability": 0.3612
+      "report_consistency": 1.0,
+      "viability": 0.3272
     },
     {
       "action_diversity": 0.375,
@@ -279,7 +282,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.361
+      "viability": 0.327
     },
     {
       "action_diversity": 0.375,
@@ -289,7 +292,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.3608
+      "viability": 0.3268
     },
     {
       "action_diversity": 0.375,
@@ -299,7 +302,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 1.0,
-      "viability": 0.3606
+      "viability": 0.3266
     },
     {
       "action_diversity": 0.375,
@@ -309,7 +312,7 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.3604
+      "viability": 0.3264
     },
     {
       "action_diversity": 0.375,
@@ -318,8 +321,8 @@
       "memory_integrity": 1.0,
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
-      "report_consistency": 0.5,
-      "viability": 0.3602
+      "report_consistency": 1.0,
+      "viability": 0.3262
     },
     {
       "action_diversity": 0.375,
@@ -329,14 +332,14 @@
       "planning_depth": 1.7651,
       "recovery_time_ms": 0.0,
       "report_consistency": 0.5,
-      "viability": 0.36
+      "viability": 0.326
     }
   ],
   "reasons": [],
   "summary": {
     "action_diversity": {
       "max": 0.375,
-      "mean": 0.3736,
+      "mean": 0.3739,
       "min": 0.125,
       "p50": 0.375
     },
@@ -365,22 +368,22 @@
       "p50": 1.7941
     },
     "recovery_time_ms": {
-      "max": 0.0,
-      "mean": 0.0,
+      "max": 0.6353,
+      "mean": 0.003,
       "min": 0.0,
       "p50": 0.0
     },
     "report_consistency": {
       "max": 1.0,
-      "mean": 0.743,
+      "mean": 0.797,
       "min": 0.5,
-      "p50": 0.5
+      "p50": 1.0
     },
     "viability": {
-      "max": 0.8192,
-      "mean": 0.5288,
-      "min": 0.36,
-      "p50": 0.4942
+      "max": 0.3752,
+      "mean": 0.3478,
+      "min": 0.326,
+      "p50": 0.3472
     }
   },
   "ticks": 1000

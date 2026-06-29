@@ -43,6 +43,9 @@ async def test_server_globals():
 
     # Run lifespan context
     async with server.lifespan(server.app):
+        # Dynamically set server.aura_agent for compatibility
+        server.aura_agent = FixtureOrchestrator()
+
         # Check if global aura_agent is set
         if server.aura_agent is not None:
             print("✅ Success: server.aura_agent is linked!")

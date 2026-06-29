@@ -21,12 +21,6 @@ Design principle: Aura shouldn't need to trust that her environment is safe.
 She should be able to verify it herself, continuously.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-from core.utils.task_tracker import get_task_tracker
-from core.governance_context import local_internal_governed_scope
-from core.runtime.file_write_gateway import get_file_write_gateway
-from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 import asyncio
 import hashlib
@@ -36,12 +30,27 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+
+from core.governance_context import local_internal_governed_scope
+from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.IntegrityGuardian")
+_INTEGRITY_GUARDIAN_ERRORS = (
+    AttributeError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 MANIFEST_PATH   = Path.home() / ".aura" / "data" / "integrity_manifest.json"
 ALERT_LOG_PATH  = Path.home() / ".aura" / "data" / "integrity_alerts.jsonl"
+RESTORE_BACKUP_DIR = Path.home() / ".aura" / "data" / "integrity_restore_backups"
 CHECK_INTERVAL  = 1800.0  # 30 minutes
 
 # These files are extra-critical — any change is an emergency
@@ -126,19 +135,19 @@ class IntegrityGuardian:
     """
 
     def __init__(self):
-        self._manifest: Dict[str, str] = {}   # path → sha256 hex
-        self._manifest_hmac: Optional[str] = None
+        self._manifest: dict[str, str] = {}   # path → sha256 hex
+        self._manifest_hmac: str | None = None
         self._last_check: float = 0.0
         self._alert_count: int = 0
         self._last_issue_count: int = 0
-        self._last_tampered: List[str] = []
-        self._last_missing: List[str] = []
+        self._last_tampered: list[str] = []
+        self._last_missing: list[str] = []
         self._last_ok: bool = True
         self._verification_pending: bool = False
         self._pending_count: int = 0
         self._manifest_revision_stale: bool = False
         self._hmac_secret = _get_hmac_secret()
-        self._bg_task: Optional[asyncio.Task] = None
+        self._bg_task: asyncio.Task | None = None
         MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
         ALERT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         logger.info("IntegrityGuardian online.")
@@ -224,7 +233,7 @@ class IntegrityGuardian:
                 logger.debug("IntegrityGuardian background check error: %s", e)
             await asyncio.sleep(CHECK_INTERVAL)
 
-    def check(self) -> List[str]:
+    def check(self) -> list[str]:
         """
         Throttled integrity check. Returns list of tampered file paths.
         """
@@ -232,7 +241,7 @@ class IntegrityGuardian:
             return []
         return self._verify_all()
 
-    def check_now(self) -> List[str]:
+    def check_now(self) -> list[str]:
         """Force an immediate integrity check regardless of throttle."""
         return self._verify_all()
 
@@ -259,7 +268,7 @@ class IntegrityGuardian:
         logger.info("IntegrityGuardian: manifest rebuilt (%d files).", n)
         return n
 
-    def get_status(self) -> Dict:
+    def get_status(self) -> dict:
         return {
             "manifest_files": len(self._manifest),
             "alert_count": self._alert_count,
@@ -319,7 +328,7 @@ class IntegrityGuardian:
             return rel in _MONITORED_TOP_LEVEL_FILES
         return parts[0] in _MONITORED_ROOTS
 
-    def _manifest_scope_mismatch(self, files: Dict[str, str]) -> List[str]:
+    def _manifest_scope_mismatch(self, files: dict[str, str]) -> list[str]:
         return [path for path in files if not self._is_monitored_path(path)]
 
     @staticmethod
@@ -343,7 +352,128 @@ class IntegrityGuardian:
         except (TypeError, ValueError):
             return 10.0
 
-    def _verify_all(self, *, time_budget_s: float | None = None) -> List[str]:
+    def _get_git_status_map(self) -> dict[str, str]:
+        """Returns a map of normalized path -> status code (e.g., 'M', 'D', '??')"""
+        try:
+            with local_internal_governed_scope("security.integrity_guardian.git_status", domain="tool_execution"):
+                status = get_subprocess_gateway().run(
+                    ["git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=no"],
+                    cwd=str(_BASE_DIR),
+                    capture_output=True,
+                    timeout=8.0,
+                    read_only=True,
+                    source="security.integrity_guardian.git_status",
+            )
+            if status.returncode not in (0, 1):
+                return {}
+
+            status_map = {}
+            for line in status.stdout.splitlines():
+                if len(line) < 4:
+                    continue
+                code = line[:2].strip()
+                paths = self._parse_git_status_paths(line)
+                for p in paths:
+                    status_map[p] = code
+            return status_map
+        except _INTEGRITY_GUARDIAN_ERRORS as exc:
+            record_degradation('integrity_guardian', exc)
+            logger.debug("IntegrityGuardian: git status map lookup failed: %s", exc)
+            return {}
+
+    def _should_auto_restore(self, path: str, git_status: dict[str, str]) -> bool:
+        from core.config import Environment, config
+
+        if not getattr(config.security, "auto_fix_enabled", False):
+            return False
+        normalized = self._normalize_repo_path(path)
+        if not self._is_monitored_path(normalized):
+            return False
+        is_dev = getattr(config, "env", Environment.DEV) == Environment.DEV
+        if is_dev and normalized in git_status:
+            return False
+        return True
+
+    def _backup_current_file_before_restore(self, path: str) -> str | None:
+        """Preserve tampered bytes before restoring, for forensic review."""
+
+        normalized = self._normalize_repo_path(path)
+        source = _BASE_DIR / normalized
+        if not source.exists() or not source.is_file():
+            return None
+        try:
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
+            backup_name = normalized.replace("/", "__")
+            backup_path = RESTORE_BACKUP_DIR / f"{int(time.time())}-{digest}-{backup_name}"
+            with local_internal_governed_scope(
+                "security.integrity_guardian.backup_tampered",
+                domain="file_write",
+            ):
+                get_file_write_gateway().write_bytes(
+                    backup_path,
+                    source.read_bytes(),
+                    source="security.integrity_guardian.backup_tampered",
+                )
+            return str(backup_path)
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("integrity_guardian", exc)
+            logger.debug("IntegrityGuardian: tamper backup failed for %s: %s", path, exc)
+            return None
+
+    def _restore_file_via_git(self, path: str) -> bool:
+        """Restore a missing or tampered file from git HEAD without checkout.
+
+        ``git checkout`` mutates the working tree directly and can clobber
+        neighboring state if misused. This path reads the exact HEAD blob with
+        ``git show``, writes it through the FileWriteGateway, and first preserves
+        any tampered local bytes for forensic review.
+        """
+        normalized = self._normalize_repo_path(path)
+        if not self._is_monitored_path(normalized):
+            return False
+        try:
+            logger.info("IntegrityGuardian: attempting to auto-restore %s from git HEAD...", normalized)
+            with local_internal_governed_scope(
+                "security.integrity_guardian.read_head_blob",
+                domain="tool_execution",
+            ):
+                result = get_subprocess_gateway().run(
+                    ["git", "show", f"HEAD:{normalized}"],
+                    cwd=str(_BASE_DIR),
+                    capture_output=True,
+                    timeout=5.0,
+                    read_only=True,
+                    source="security.integrity_guardian.read_head_blob",
+                )
+            if result.returncode == 0:
+                backup = self._backup_current_file_before_restore(normalized)
+                with local_internal_governed_scope(
+                    "security.integrity_guardian.restore",
+                    domain="file_write",
+                ):
+                    get_file_write_gateway().write_text(
+                        _BASE_DIR / normalized,
+                        result.stdout,
+                        source="security.integrity_guardian.restore",
+                    )
+                logger.info(
+                    "IntegrityGuardian: successfully restored %s%s",
+                    normalized,
+                    f" (backup={backup})" if backup else "",
+                )
+                return True
+            else:
+                logger.warning(
+                    "IntegrityGuardian: git show returned non-zero code %d for %s: %s",
+                    result.returncode, normalized, result.stderr
+                )
+                return False
+        except _INTEGRITY_GUARDIAN_ERRORS as exc:
+            record_degradation("integrity_guardian", exc)
+            logger.error("IntegrityGuardian: failed to restore %s via git HEAD blob: %s", normalized, exc)
+            return False
+
+    def _verify_all(self, *, time_budget_s: float | None = None) -> list[str]:
         """Verify all files in manifest. Returns list of tampered paths."""
         self._last_check = time.time()
         tampered = []
@@ -358,6 +488,8 @@ class IntegrityGuardian:
         checked = 0
         total = len(self._manifest)
 
+        git_status = self._get_git_status_map()
+
         for path, expected_hash in self._manifest.items():
             if deadline is not None and checked > 0 and time.monotonic() >= deadline:
                 pending = True
@@ -369,10 +501,21 @@ class IntegrityGuardian:
                 if "__pycache__" in path or path.endswith(".pyc"):
                     legitimately_gone.append(path)
                 else:
+                    if self._should_auto_restore(path, git_status):
+                        if self._restore_file_via_git(path):
+                            if full.exists() and self._hash_file(full) == expected_hash:
+                                logger.info("IntegrityGuardian: successfully auto-healed missing file: %s", path)
+                                continue
                     missing.append(path)
                 continue
             actual = self._hash_file(full)
             if actual != expected_hash:
+                if self._should_auto_restore(path, git_status):
+                    if self._restore_file_via_git(path):
+                        actual = self._hash_file(full)
+                        if actual == expected_hash:
+                            logger.info("IntegrityGuardian: successfully auto-healed tampered file: %s", path)
+                            continue
                 tampered.append(path)
 
         # Prune legitimately-gone files from manifest silently
@@ -383,11 +526,11 @@ class IntegrityGuardian:
         if tampered or missing:
             # Drop legitimately modified files tracked by git to prevent local edits from causing alerts
             try:
-                git_active = self._git_active_paths()
+                git_active = set(git_status.keys()) if git_status else self._git_active_paths()
                 if git_active:
                     tampered = [p for p in tampered if self._normalize_repo_path(p) not in git_active]
                     missing = [p for p in missing if self._normalize_repo_path(p) not in git_active]
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            except _INTEGRITY_GUARDIAN_ERRORS as exc:
                 record_degradation('integrity_guardian', exc)
                 logger.debug("IntegrityGuardian: git check failed: %s", exc)
 
@@ -402,10 +545,9 @@ class IntegrityGuardian:
             self._alert_count += len(tampered) + len(missing)
             self._handle_alerts(tampered, missing)
 
-
         return tampered + missing
 
-    def _handle_alerts(self, tampered: List[str], missing: List[str]):
+    def _handle_alerts(self, tampered: list[str], missing: list[str]):
         """Process integrity violations."""
         all_bad = tampered + missing
 
@@ -441,7 +583,7 @@ class IntegrityGuardian:
             )
             self._notify_emergency(all_bad[:5], severity="warning")
 
-    def _notify_emergency(self, affected_files: List[str], severity: str):
+    def _notify_emergency(self, affected_files: list[str], severity: str):
         try:
             from core.security.emergency_protocol import get_emergency_protocol
             ep = get_emergency_protocol()
@@ -464,7 +606,7 @@ class IntegrityGuardian:
                 h.update(chunk)
         return h.hexdigest()
 
-    def _sign_manifest(self, manifest: Dict[str, str]) -> str:
+    def _sign_manifest(self, manifest: dict[str, str]) -> str:
         payload = json.dumps(manifest, sort_keys=True).encode()
         return hmac.new(self._hmac_secret, payload, hashlib.sha256).hexdigest()
 
@@ -570,7 +712,7 @@ class IntegrityGuardian:
         return Path(raw.lstrip("./")).as_posix()
 
     @classmethod
-    def _parse_git_status_paths(cls, line: str) -> Set[str]:
+    def _parse_git_status_paths(cls, line: str) -> set[str]:
         payload = str(line or "")
         if len(payload) < 4:
             return set()
@@ -587,7 +729,7 @@ class IntegrityGuardian:
             }
         return {cls._normalize_repo_path(path_blob)}
 
-    def _git_active_paths(self) -> Set[str]:
+    def _git_active_paths(self) -> set[str]:
         with local_internal_governed_scope("security.integrity_guardian.git_status", domain="tool_execution"):
             status = get_subprocess_gateway().run(
                 ["git", "status", "--porcelain=v1", "--untracked-files=all", "--ignored=no"],
@@ -600,7 +742,7 @@ class IntegrityGuardian:
         if status.returncode not in (0, 1):
             raise RuntimeError(f"git status returned {status.returncode}")
 
-        active: Set[str] = set()
+        active: set[str] = set()
         for line in status.stdout.splitlines():
             active.update(self._parse_git_status_paths(line))
         return active
@@ -608,7 +750,7 @@ class IntegrityGuardian:
 
 # ── Singleton ──────────────────────────────────────────────────────────────────
 
-_guardian: Optional[IntegrityGuardian] = None
+_guardian: IntegrityGuardian | None = None
 
 
 def get_integrity_guardian() -> IntegrityGuardian:

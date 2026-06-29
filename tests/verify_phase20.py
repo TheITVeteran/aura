@@ -18,7 +18,7 @@ class KnowledgeGraphProbe:
     def __init__(self):
         self.sparse_nodes = ["Quantum Entanglement"]
 
-    def get_sparse_nodes(self):
+    def get_sparse_nodes(self, *args, **kwargs):
         return list(self.sparse_nodes)
 
 
@@ -92,7 +92,7 @@ class TestPhase20(unittest.IsolatedAsyncioTestCase):
         topic = curiosity._get_next()
         self.assertIsNotNone(topic)
         self.assertIn("Quantum Entanglement", topic.topic)
-        self.assertEqual(topic.reason, "knowledge graph novelty search")
+        self.assertEqual(topic.reason, "sparse region of persistent knowledge")
 
     async def test_singularity_heartbeat(self):
         """Verify that SingularityMonitor enables acceleration."""

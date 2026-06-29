@@ -6,7 +6,6 @@ import pytest
 
 from core.orchestrator import RobustOrchestrator
 
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("TestAutonomy")
 
@@ -34,6 +33,7 @@ class CallRecorder:
 @pytest.mark.asyncio
 async def test_autonomy_loop(monkeypatch):
     """Autonomous thought should fall back to the direct autonomous brain."""
+    monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "0")
     orchestrator = RobustOrchestrator()
     brain_think = AsyncCallRecorder(
         result={

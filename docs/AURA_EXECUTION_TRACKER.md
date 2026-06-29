@@ -2225,6 +2225,70 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
 - Remaining closeout estimate remains about 98.6% until the full committed
   12-turn/restart/desktop-action run and visible multi-app proof pass.
 
+## Sub-checkpoint: 2026-06-29 Defensive Runtime + Integrity Restore Hardening
+
+- Aura now has a canonical app-layer defensive runtime materialized during
+  service registration, not only during a proof runner or optional status call.
+- General runtime changes:
+  - Live `/api/chat` ingress is inspected before entering the cognitive path.
+    Hostile remote ingress is blocked; trusted local suspicious content is
+    marked as untrusted data and still routed through the normal full mind path.
+  - Outbound network requests go through a defensive preflight for runtime
+    network policy, blocked destinations, high-volume exfiltration signatures,
+    and secret-egress patterns before the existing network gateway executes.
+  - Interface rate-limit violations now feed the immune system and local
+    app-layer firewall instead of remaining isolated HTTP failures.
+  - `/security/status` exposes defensive runtime status: immune system,
+    app-layer firewall, detectors, deletion guard, network sentinel, sensory
+    capability state, and continuous-sensing policy.
+  - IntegrityGuardian can auto-restore critical missing or tampered monitored
+    files from the git HEAD blob through governed subprocess/file-write
+    gateways, while preserving tampered bytes in a forensic backup and skipping
+    active dev worktree edits.
+  - Local media generation no longer silently exits when Diffusers/Torch is
+    unavailable. The high-quality diffusion path remains lazy, and a
+    deterministic local PNG generator provides an honest degraded fallback with
+    `generation_mode=procedural_fallback`.
+  - Sensory runtime and security enforcement paths now use explicit exception
+    boundaries instead of broad exception swallowing in the touched surfaces.
+  - ConsciousCore volition now checks substrate-driven impulses every tick
+    instead of only after high predictive surprise. This restores stable-state
+    boredom/reflection coupling and keeps autonomous low-surprise drives
+    reachable.
+  - The standalone substrate-coupling verifier is bounded and deterministic:
+    it forces the substrate into a controlled boredom basin, drives the real
+    volition integrator, emits a causal telemetry receipt, and fails if no
+    impulse emerges.
+- Boundary:
+  - This is defensive and owner-local. It does not bypass macOS TCC, weaken
+    privacy settings, scan unauthorized networks, retaliate, self-propagate, or
+    install beacons on other devices. Camera/mic/screen use remains governed by
+    explicit OS/user grants.
+- Evidence:
+  - Targeted defensive/security/perception/runtime/autonomy tests: `174
+    passed`.
+  - `python tests/verify_coupling.py`: passed with `seek_novelty` and 100%
+    causal correlation for the boredom basin.
+  - `python tests/verify_consciousness.py`: passed.
+  - `python tests/verify_degradation.py`: passed.
+  - `python tests/verify_system_health.py`: passed as a partial synchronous
+    setup verifier, with `defensive_runtime` online.
+  - `python tests/verify_local_media.py`: passed and generated a real PNG
+    artifact through `procedural_fallback` because Diffusers/Torch is not
+    installed in this runtime.
+  - Ruff passed on touched security, sensory, runtime, service-registration,
+    route, and test files.
+  - `make enterprise-gate`: passed.
+  - `make production-gate`: passed.
+- Closeout tracker:
+  - Estimated closeout completion after this checkpoint: about 98.8%.
+  - Remaining total checkpoints: 1 consolidated checkpoint / 2-4 smaller
+    sub-checkpoints.
+  - Remaining work: real launched desktop full-mind conversation proof, visible
+    general computer-use demo proof, final replay/proof artifact normalization,
+    longer soak/final-proof pass, claims calibration, and final clean-worktree
+    closure.
+
 1. **R-001**: AGENTS.md, AURA_MASTER_SPEC.md, docs/AURA_MASTER_SPEC.md,
    docs/RUNTIME_INVARIANTS.md, docs/PRODUCTION_HARDENING_PLAN.md,
    docs/SKILL_CERTIFICATION_MATRIX.md, docs/DEPTH_AUDIT.md,

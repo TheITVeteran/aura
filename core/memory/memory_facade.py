@@ -4,19 +4,19 @@ Ensures episodic and semantic sub-systems work in harmony.
 Welfare integration stamps trace evidence into memory metadata and defers
 high-integrity-risk writes before persistence.
 """
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
-import logging
 import asyncio
 import inspect
 import json
+import logging
 import os
 import re
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Memory")
 
@@ -87,13 +87,13 @@ class MemoryFacade:
         "heartfelt", "sincere", "vulnerable", "deeper", "intimate",
         # Joint endeavors/promises
         "travel", "ship", "adventure", "explore", "discover", "future",
-        "together", "journey", "quest", "mission", "starship",
+        "journey", "quest", "mission", "starship",
         # Personal significance
         "dream", "wish", "hope", "aspiration", "goal", "wish for",
         "meaningful", "significant", "important", "matters",
     }
     
-    def __init__(self, orchestrator: Optional[Any] = None):
+    def __init__(self, orchestrator: Any | None = None):
         """
         Initialize the facade.
         :param orchestrator: Optional reference to the orchestrator (legacy).
@@ -110,7 +110,7 @@ class MemoryFacade:
         self._vault = None
         self._cold = None
         self._last_commit_time = None
-        self._last_add_memory_status: Dict[str, Any] = {"ok": True, "reason": "not_attempted"}
+        self._last_add_memory_status: dict[str, Any] = {"ok": True, "reason": "not_attempted"}
         self._repo_root = Path(__file__).resolve().parents[2]
 
     def _refresh_subsystems(self) -> None:
@@ -258,7 +258,7 @@ class MemoryFacade:
     def cold(self): return self._cold
 
     @staticmethod
-    def _safe_metadata(raw: Any) -> Dict[str, Any]:
+    def _safe_metadata(raw: Any) -> dict[str, Any]:
         """Coerce metadata to a dict — handles JSON TEXT from SQLite rows."""
         if isinstance(raw, dict):
             return raw
@@ -277,10 +277,10 @@ class MemoryFacade:
         self,
         *,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         memory_id: str = "",
-        score: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        score: float | None = None,
+    ) -> dict[str, Any]:
         payload = {
             "id": memory_id,
             "text": content,
@@ -291,7 +291,7 @@ class MemoryFacade:
             payload["score"] = score
         return payload
 
-    def _extract_candidate_path(self, metadata: Dict[str, Any], content: str) -> Optional[str]:
+    def _extract_candidate_path(self, metadata: dict[str, Any], content: str) -> str | None:
         for key in self.FILE_METADATA_KEYS:
             raw_value = str(metadata.get(key) or "").strip()
             if raw_value:
@@ -317,7 +317,7 @@ class MemoryFacade:
 
     def _resolve_memory_write_source(
         self,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         *,
         fallback: str = "memory_facade",
     ) -> str:
@@ -331,7 +331,7 @@ class MemoryFacade:
     def _should_degrade_add_memory_block(
         self,
         reason: Any,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         *,
         source: str,
     ) -> bool:
@@ -365,7 +365,7 @@ class MemoryFacade:
     def _should_store_semantic_interaction(
         self,
         *,
-        metadata: Optional[Dict[str, Any]],
+        metadata: dict[str, Any] | None,
         success: bool,
         importance: float,
         action: str,
@@ -379,7 +379,7 @@ class MemoryFacade:
             return True
         return str(action or "").startswith(("conversation", "execute_tool("))
 
-    def _current_unity_metadata(self) -> Dict[str, Any]:
+    def _current_unity_metadata(self) -> dict[str, Any]:
         try:
             unity_state = ServiceContainer.get("unity_state", default=None)
             unity_report = ServiceContainer.get("unity_fragmentation_report", default=None)
@@ -397,7 +397,7 @@ class MemoryFacade:
         chosen_id = str(draft_bindings[0].draft_id) if draft_bindings else ""
         suppressed = [str(item.draft_id) for item in draft_bindings[1:]]
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "unity_id": str(getattr(unity_state, "unity_id", "") or ""),
             "unity_level": str(getattr(unity_state, "level", "unknown") or "unknown"),
             "unity_score": float(getattr(unity_state, "unity_score", 0.0) or 0.0),
@@ -416,14 +416,14 @@ class MemoryFacade:
             payload["unity_top_causes"] = list(getattr(unity_report, "top_causes", []) or [])
         return payload
 
-    def _merge_unity_metadata(self, metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def _merge_unity_metadata(self, metadata: dict[str, Any] | None) -> dict[str, Any]:
         payload = dict(metadata or {})
         for key, value in self._current_unity_metadata().items():
             payload.setdefault(key, value)
         return payload
 
     @staticmethod
-    def _unity_requires_write_deferral(metadata: Dict[str, Any]) -> bool:
+    def _unity_requires_write_deferral(metadata: dict[str, Any]) -> bool:
         mode = str(metadata.get("unity_memory_commit_mode", "clean") or "clean")
         if mode != "defer":
             return False
@@ -437,7 +437,7 @@ class MemoryFacade:
         context: str,
         action: str,
         outcome: str,
-        metadata: Optional[Dict[str, Any]],
+        metadata: dict[str, Any] | None,
     ) -> str:
         payload = dict(metadata or {})
         objective = str(payload.get("objective") or context or "").strip()
@@ -457,7 +457,7 @@ class MemoryFacade:
             f"Outcome: {outcome_text[:900]}"
         ).strip()
 
-    def _resolve_candidate_path(self, raw_path: Optional[str]) -> Optional[Path]:
+    def _resolve_candidate_path(self, raw_path: str | None) -> Path | None:
         cleaned = str(raw_path or "").strip().strip("`\"'")
         if not cleaned:
             return None
@@ -470,7 +470,7 @@ class MemoryFacade:
             return candidate
         return (self._repo_root / candidate).resolve()
 
-    def _extract_candidate_signature(self, metadata: Dict[str, Any], content: str) -> Optional[str]:
+    def _extract_candidate_signature(self, metadata: dict[str, Any], content: str) -> str | None:
         for key in self.SIGNATURE_METADATA_KEYS:
             raw_value = str(metadata.get(key) or "").strip()
             if raw_value:
@@ -481,7 +481,7 @@ class MemoryFacade:
                 return match.group(1)
         return None
 
-    def _looks_technical_memory(self, metadata: Dict[str, Any], content: str) -> bool:
+    def _looks_technical_memory(self, metadata: dict[str, Any], content: str) -> bool:
         if self._extract_candidate_path(metadata, content):
             return True
         meta_blob = " ".join(
@@ -491,7 +491,7 @@ class MemoryFacade:
         combined = f"{meta_blob} {content or ''}".lower()
         return any(hint in combined for hint in self.TECHNICAL_HINTS)
 
-    async def _verify_memory_result(self, item: Dict[str, Any]) -> Dict[str, Any]:
+    async def _verify_memory_result(self, item: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(item)
         metadata = self._safe_metadata(normalized.get("metadata"))
         content = str(normalized.get("content") or normalized.get("text") or "").strip()
@@ -536,7 +536,7 @@ class MemoryFacade:
         normalized["metadata"] = metadata
         return normalized
 
-    def _parse_memory_query(self, query: str) -> tuple[str, Optional[str], str]:
+    def _parse_memory_query(self, query: str) -> tuple[str, str | None, str]:
         raw = str(query or "").strip()
         if ":" not in raw:
             return "", None, raw
@@ -547,7 +547,7 @@ class MemoryFacade:
             return key, value, ""
         return "", None, raw
 
-    async def _search_gateway_records(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    async def _search_gateway_records(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """Search strict-runtime MemoryWriteGateway records.
 
         Strict runtime persists facade writes through ``MemoryWriteGateway`` for
@@ -559,7 +559,7 @@ class MemoryFacade:
         if not query_text:
             return []
 
-        def _scan() -> List[Dict[str, Any]]:
+        def _scan() -> list[dict[str, Any]]:
             try:
                 from core.memory.memory_write_gateway import get_memory_write_gateway
 
@@ -580,7 +580,7 @@ class MemoryFacade:
                 for term in re.findall(r"[a-z0-9_'-]{3,}", query_text.lower())
                 if term not in {"what", "that", "this", "with", "from", "about", "memory", "remember"}
             ][:12]
-            candidates: list[tuple[float, float, Dict[str, Any]]] = []
+            candidates: list[tuple[float, float, dict[str, Any]]] = []
             paths = sorted(
                 (path for path in root.glob("*/*.json") if path.is_file()),
                 key=_mtime,
@@ -633,13 +633,13 @@ class MemoryFacade:
 
     def _filter_vector_records(
         self,
-        records: List[Dict[str, Any]],
+        records: list[dict[str, Any]],
         *,
         filter_key: str,
-        filter_value: Optional[str],
+        filter_value: str | None,
         limit: int,
-    ) -> List[Dict[str, Any]]:
-        normalized: List[Dict[str, Any]] = []
+    ) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
         if not records:
             return normalized
 
@@ -669,9 +669,9 @@ class MemoryFacade:
         query: str,
         *,
         filter_key: str,
-        filter_value: Optional[str],
+        filter_value: str | None,
         limit: int,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if not self.vector:
             return []
 
@@ -721,7 +721,7 @@ class MemoryFacade:
             limit=limit,
         )
 
-    async def search_by_entity_mention(self, entity_name: str, limit: int = 5) -> List[Dict[str, Any]]:
+    async def search_by_entity_mention(self, entity_name: str, limit: int = 5) -> list[dict[str, Any]]:
         """Search for memories mentioning a specific entity by name.
         
         Args:
@@ -841,7 +841,7 @@ class MemoryFacade:
             return await result
         return result
 
-    def _extract_and_track_entity_mentions(self, interaction_text: str, metadata: Dict[str, Any]) -> None:
+    def _extract_and_track_entity_mentions(self, interaction_text: str, metadata: dict[str, Any]) -> None:
         """Extract named entity mentions from interaction text and add to metadata.
         
         This enables proper tracking and recall of specific entities mentioned
@@ -891,7 +891,7 @@ class MemoryFacade:
                                  success: bool,
                                  emotional_valence: float = 0.0,
                                  importance: float = 0.5,
-                                 metadata: Optional[Dict[str, Any]] = None):
+                                 metadata: dict[str, Any] | None = None):
         """Unified commit for an interaction across all relevant systems."""
         metadata = self._merge_unity_metadata(metadata)
 
@@ -927,8 +927,8 @@ class MemoryFacade:
         resolved_source = self._resolve_memory_write_source(metadata)
         governance_decision = None
         try:
-            from core.container import ServiceContainer
             from core.constitution import get_constitutional_core, unpack_governance_result
+            from core.container import ServiceContainer
 
             approved, reason, governance_decision = unpack_governance_result(
                 await get_constitutional_core(self._orchestrator).approve_memory_write(
@@ -958,7 +958,7 @@ class MemoryFacade:
 
         self._last_commit_time = datetime.now()
 
-        async def _commit_interaction_effects() -> Optional[Any]:
+        async def _commit_interaction_effects() -> Any | None:
             if os.environ.get("AURA_STRICT_RUNTIME", "1") == "1":
                 from core.memory.memory_write_gateway import get_memory_write_gateway
                 from core.runtime.gateways import MemoryWriteRequest
@@ -1061,7 +1061,7 @@ class MemoryFacade:
                 return await _commit_interaction_effects()
         return await _commit_interaction_effects()
 
-    async def get_hot_memory(self, limit: int = 5) -> Dict[str, Any]:
+    async def get_hot_memory(self, limit: int = 5) -> dict[str, Any]:
         """Retrieve recent interaction history and context for active thought."""
         hot = {
             "recent_episodes": [],
@@ -1090,9 +1090,9 @@ class MemoryFacade:
 
         return hot
 
-    async def search(self, query: str, limit: int = 5) -> List[Any]:
+    async def search(self, query: str, limit: int = 5) -> list[Any]:
         """Search across all memory systems for relevance."""
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         seen: set[str] = set()
 
         def _append(item: Any) -> None:
@@ -1147,7 +1147,7 @@ class MemoryFacade:
         for item in await self._search_gateway_records(query, limit=limit):
             _append(item)
 
-        verified_results: List[Dict[str, Any]] = []
+        verified_results: list[dict[str, Any]] = []
         for order, item in enumerate(results):
             try:
                 normalized = await self._verify_memory_result(item)
@@ -1174,10 +1174,18 @@ class MemoryFacade:
             item.pop("_retrieval_order", None)
         return verified_results[:limit]
 
+    async def search_memories(self, query: str, limit: int = 5) -> list[Any]:
+        """Wrapper for search() to support legacy compatibility."""
+        return await self.search(query, limit=limit)
+
+    async def retrieve_unified_context(self, query: str, limit: int = 5) -> list[Any]:
+        """Wrapper for search() to support unified context retrieval."""
+        return await self.search(query, limit=limit)
+
     async def add_memory(
         self,
         text: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool:
         """Compatibility API for legacy callers expecting async long-term memory writes."""
         payload = self._merge_unity_metadata(metadata)
@@ -1236,8 +1244,8 @@ class MemoryFacade:
             return False
 
         try:
-            from core.container import ServiceContainer
             from core.constitution import get_constitutional_core, unpack_governance_result
+            from core.container import ServiceContainer
 
             approved, reason, governance_decision = unpack_governance_result(
                 await get_constitutional_core(self._orchestrator).approve_memory_write(
@@ -1344,7 +1352,7 @@ class MemoryFacade:
     async def remember(
         self,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         **metadata_fields: Any,
     ) -> bool:
         """Canonical compatibility entry point for memory writes.
@@ -1358,7 +1366,7 @@ class MemoryFacade:
         payload.update(metadata_fields)
         return await self.add_memory(content, payload)
 
-    async def query_memory(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    async def query_memory(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """Compatibility API for legacy narrative/semantic recall callers."""
         filter_key, filter_value, semantic_query = self._parse_memory_query(query)
 
@@ -1424,9 +1432,12 @@ class MemoryFacade:
         logger.warning("☣️ Wiping ALL memories...")
         
         tasks = []
-        if self._episodic: tasks.append(self._episodic.wipe())
-        if self._vector: tasks.append(self._vector.wipe())
-        if self._graph: tasks.append(self._graph.wipe())
+        if self._episodic:
+            tasks.append(self._episodic.wipe())
+        if self._vector:
+            tasks.append(self._vector.wipe())
+        if self._graph:
+            tasks.append(self._graph.wipe())
         
         if tasks:
             await asyncio.gather(*tasks)
@@ -1434,7 +1445,7 @@ class MemoryFacade:
         logger.info("✓ Memory wipe complete.")
         return True
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return a compact sync-friendly status payload for health checks and tests."""
         return {
             "episodic": self._episodic is not None,
@@ -1453,15 +1464,15 @@ class MemoryFacade:
     # Welfare Integration (causal welfare architecture)
     # ------------------------------------------------------------------
 
-    def _stamp_welfare_context(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def _stamp_welfare_context(self, metadata: dict[str, Any]) -> dict[str, Any]:
         """Stamp available welfare state into memory metadata."""
         payload = metadata if isinstance(metadata, dict) else {}
         existing = self._safe_metadata(payload.get("welfare_context"))
         if existing.get("status") == "ok":
             return payload
         try:
-            from core.being.welfare_state import WelfareState
             from core.being.body_state_service import BodyStateService
+            from core.being.welfare_state import WelfareState
 
             welfare = WelfareState.get()
             body_svc = BodyStateService.get()
@@ -1494,7 +1505,7 @@ class MemoryFacade:
 
         return payload
 
-    def _welfare_should_block_write(self, metadata: Dict[str, Any]) -> Optional[str]:
+    def _welfare_should_block_write(self, metadata: dict[str, Any]) -> str | None:
         """Return a welfare block reason, or mark uncertain writes contested."""
         welfare_ctx = self._safe_metadata(metadata.get("welfare_context"))
         if not welfare_ctx:
@@ -1530,7 +1541,7 @@ class MemoryFacade:
         return None
 
     @staticmethod
-    def _metadata_float(metadata: Dict[str, Any], key: str, default: float) -> float:
+    def _metadata_float(metadata: dict[str, Any], key: str, default: float) -> float:
         try:
             return float(metadata.get(key, default))
         except (TypeError, ValueError):

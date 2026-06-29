@@ -1,12 +1,13 @@
 """Drive-integration volition: temporal accumulation, competition, hysteresis (not VAD thresholds)."""
 from __future__ import annotations
 
+import asyncio
+
 from core.consciousness.drive_integration import (
     Drive,
     DriveIntegrationEngine,
     get_drive_integration_engine,
 )
-
 
 # ── the Drive leaky-integrator primitive ────────────────────────────────────
 
@@ -119,6 +120,34 @@ def test_gather_signals_fills_defaults():
     sig = eng.gather_signals({"valence": 0.5})
     assert sig["valence"] == 0.5
     assert "pain" in sig and "arousal" in sig
+
+
+def test_attractor_volition_reads_substrate_boredom_basin():
+    """The conscious-core volition path must not make boredom unreachable."""
+
+    async def _run() -> str | None:
+        from core.consciousness import drive_integration as drive_module
+        from core.consciousness.conscious_core import ConsciousnessCore
+
+        previous = drive_module._instance
+        drive_module._instance = drive_module.DriveIntegrationEngine()
+        try:
+            core = ConsciousnessCore()
+            with core.substrate.sync_lock:
+                core.substrate.x[:] = 0.0
+                core.substrate.x[core.substrate.idx_valence] = -0.75
+                core.substrate.x[core.substrate.idx_arousal] = -0.80
+                core.substrate.x[core.substrate.idx_dominance] = 0.0
+            action = None
+            for _ in range(20):
+                action = await core.volition.check_for_impulse(dt=1.0, extra_signals={"pain": 0.0})
+                if action:
+                    break
+            return action
+        finally:
+            drive_module._instance = previous
+
+    assert asyncio.run(_run()) == "seek_novelty"
 
 
 def test_custom_drive_can_be_added():

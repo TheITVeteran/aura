@@ -30,9 +30,10 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+from enum import StrEnum
+from typing import Any
 
 logger = logging.getLogger("Security.ImmuneSystem")
 
@@ -41,7 +42,7 @@ def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return lo if x < lo else hi if x > hi else x
 
 
-class ThreatClass(str, Enum):
+class ThreatClass(StrEnum):
     NETWORK_FLOOD = "network_flood"        # ddos / spam / stuffing volume
     INTRUSION = "intrusion"                # hacking / exploit / unauthorized access
     MALWARE = "malware"                    # worm / trojan / spyware / virus
@@ -74,7 +75,7 @@ def _severity_band(score: float) -> str:
 
 # Lightweight signature lexicon: maps observable markers → a likely class. Heuristic triage,
 # not the whole story — respond() reasons further.
-_CLASS_MARKERS: Tuple[Tuple[ThreatClass, Tuple[str, ...]], ...] = (
+_CLASS_MARKERS: tuple[tuple[ThreatClass, tuple[str, ...]], ...] = (
     (ThreatClass.INJECTION, ("' or '1'='1", "union select", "drop table", "<script", "${", "__import__",
                              "ignore previous", "system prompt", "exec(", "eval(", "; rm ")),
     (ThreatClass.NETWORK_FLOOD, ("flood", "ddos", "rate limit exceeded", "too many requests", "syn flood", "spam")),
@@ -91,7 +92,7 @@ _CLASS_MARKERS: Tuple[Tuple[ThreatClass, Tuple[str, ...]], ...] = (
 )
 
 
-def classify_threat(description: str, hint: Optional[ThreatClass] = None) -> ThreatClass:
+def classify_threat(description: str, hint: ThreatClass | None = None) -> ThreatClass:
     if hint is not None:
         return hint
     d = (description or "").lower()
@@ -111,7 +112,7 @@ class ThreatEvent:
     description: str
     targeted_vuln: str = ""         # what weakness it tried to exploit
     vector: str = ""                # how it arrived
-    evidence: Dict[str, Any] = field(default_factory=dict)
+    evidence: dict[str, Any] = field(default_factory=dict)
     at: float = field(default_factory=time.time)
 
     @property
@@ -122,7 +123,7 @@ class ThreatEvent:
         """A stable key for 'the same kind of attack' — used for FOP budgeting + learning."""
         return f"{self.threat_class.value}:{self.targeted_vuln or self.vector or self.origin}"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "threat_id": self.threat_id, "class": self.threat_class.value,
             "severity": round(self.severity, 3), "band": self.band, "source": self.source,
@@ -135,15 +136,15 @@ class ThreatEvent:
 @dataclass
 class ImmuneResponse:
     threat_id: str
-    actions: List[str]              # isolate | block | quarantine | rate_limit | rollback | alert | observe | patch
+    actions: list[str]              # isolate | block | quarantine | rate_limit | rollback | alert | observe | patch
     patched: bool
-    healed_signature: Optional[str]
+    healed_signature: str | None
     fop_tolerance_engaged: bool     # the anti-ossification guard fired
     reasoning_tier: str             # which agency tier reasoned about it
     rationale: str
-    reversible_ref: Optional[str] = None
+    reversible_ref: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "threat_id": self.threat_id, "actions": self.actions, "patched": self.patched,
             "healed_signature": self.healed_signature,
@@ -155,7 +156,7 @@ class ImmuneResponse:
 
 # A mitigation handler actually enforces a defensive action. Registered by the runtime so the
 # core stays testable and so enforcement is explicit + auditable. Returns a rollback ref or None.
-MitigationHandler = Callable[[ThreatEvent], Optional[str]]
+MitigationHandler = Callable[[ThreatEvent], str | None]
 
 
 class ImmuneSystem:
@@ -173,13 +174,13 @@ class ImmuneSystem:
         self._max_per_vuln = max_patches_per_vuln
         self._max_global = max_patches_global
         # FOP budgeting: rolling (t, signature) patch attempts
-        self._patch_log: Deque[Tuple[float, str]] = deque(maxlen=256)
+        self._patch_log: deque[tuple[float, str]] = deque(maxlen=256)
         # signatures whose patching is frozen (immune tolerance / anergy)
-        self._tolerated: Dict[str, float] = {}
+        self._tolerated: dict[str, float] = {}
         # learned signatures (count seen)
-        self._known: Dict[str, int] = {}
-        self._handlers: Dict[str, MitigationHandler] = {}
-        self._history: Deque[ThreatEvent] = deque(maxlen=500)
+        self._known: dict[str, int] = {}
+        self._handlers: dict[str, MitigationHandler] = {}
+        self._history: deque[ThreatEvent] = deque(maxlen=500)
 
     # ── enforcement plug-ins (defensive actions; registered by the runtime) ──
 
@@ -197,8 +198,8 @@ class ImmuneSystem:
         origin: str = "unknown",
         targeted_vuln: str = "",
         vector: str = "",
-        threat_class: Optional[ThreatClass] = None,
-        evidence: Optional[Dict[str, Any]] = None,
+        threat_class: ThreatClass | None = None,
+        evidence: dict[str, Any] | None = None,
     ) -> ThreatEvent:
         """Normalize a detector signal into a classified ThreatEvent, and make it *felt*."""
         cls = classify_threat(description, threat_class)
@@ -214,7 +215,7 @@ class ImmuneSystem:
 
         # Feel it: route the threat into nociception (damage) so the whole mind registers it.
         try:
-            from core.affect.nociception import get_nociception_engine, DamageChannel
+            from core.affect.nociception import DamageChannel, get_nociception_engine
             ch = _NOCI_CHANNEL.get(cls, DamageChannel.GENERIC)
             get_nociception_engine().register_damage(ch, ev.severity)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
@@ -235,7 +236,7 @@ class ImmuneSystem:
         """Run the threat through her mind, choose proportionate defensive actions, heal safely."""
         reasoning_tier = self._reason(ev)
 
-        actions: List[str] = ["observe"]
+        actions: list[str] = ["observe"]
         if ev.severity >= 0.4:
             actions = ["isolate", "alert"]
         if ev.threat_class in (ThreatClass.NETWORK_FLOOD, ThreatClass.RESOURCE_EXHAUSTION):
@@ -247,10 +248,10 @@ class ImmuneSystem:
 
         # HEAL — only within the FOP-safe budget.
         patched = False
-        healed_sig: Optional[str] = None
-        reversible_ref: Optional[str] = None
+        healed_sig: str | None = None
+        reversible_ref: str | None = None
         fop_engaged = False
-        rationale_bits: List[str] = [f"{ev.band} {ev.threat_class.value} from {ev.origin}"]
+        rationale_bits: list[str] = [f"{ev.band} {ev.threat_class.value} from {ev.origin}"]
 
         if ev.severity >= 0.5 and ev.targeted_vuln:
             allowed, reason = self._heal_allowed(ev.signature())
@@ -276,7 +277,7 @@ class ImmuneSystem:
                     ref = handler(ev)
                     if ref and reversible_ref is None:
                         reversible_ref = ref
-                except Exception as exc:  # noqa: BLE001 - a failed handler must not crash defense
+                except (AttributeError, LookupError, OSError, RuntimeError, TypeError, ValueError) as exc:
                     logger.warning("Mitigation handler %s failed: %s", action, exc)
 
         return ImmuneResponse(
@@ -291,7 +292,7 @@ class ImmuneSystem:
 
     # ── the FOP-safe healing budget ────────────────────────────────────────
 
-    def _heal_allowed(self, signature: str, *, now: Optional[float] = None) -> Tuple[bool, str]:
+    def _heal_allowed(self, signature: str, *, now: float | None = None) -> tuple[bool, str]:
         now = time.time() if now is None else now
         with self._lock:
             if signature in self._tolerated and now - self._tolerated[signature] < self._heal_window:
@@ -310,7 +311,7 @@ class ImmuneSystem:
                 return False, f"global patch budget exceeded ({total}/{self._max_global}) — possible patch-storm"
             return True, "within budget"
 
-    def _apply_patch(self, ev: ThreatEvent, *, now: Optional[float] = None) -> Optional[str]:
+    def _apply_patch(self, ev: ThreatEvent, *, now: float | None = None) -> str | None:
         """Record a reversible mitigation. Real code-level patches route through the governed,
         reversible self-modifier; here we register the intent + a rollback token and budget it.
         Never an irreversible change."""
@@ -319,7 +320,7 @@ class ImmuneSystem:
             self._patch_log.append((now, ev.signature()))
         return f"rollback-{ev.threat_id}"
 
-    def is_tolerated(self, signature: str, *, now: Optional[float] = None) -> bool:
+    def is_tolerated(self, signature: str, *, now: float | None = None) -> bool:
         now = time.time() if now is None else now
         with self._lock:
             t = self._tolerated.get(signature)
@@ -334,7 +335,7 @@ class ImmuneSystem:
         uncertainty → SCIENTIFIC (hypothesize about it); a value-laden call → GOVERNANCE.
         """
         try:
-            from core.agency.hierarchical_agency import get_hierarchical_agency, Situation
+            from core.agency.hierarchical_agency import Situation, get_hierarchical_agency
             novelty = 0.8 if ev.threat_class == ThreatClass.UNKNOWN else 0.2
             sit = Situation(
                 description=f"threat:{ev.threat_class.value}:{ev.targeted_vuln or ev.origin}",
@@ -351,7 +352,7 @@ class ImmuneSystem:
 
     # ── readout ────────────────────────────────────────────────────────────
 
-    def status(self, *, now: Optional[float] = None) -> Dict[str, Any]:
+    def status(self, *, now: float | None = None) -> dict[str, Any]:
         now = time.time() if now is None else now
         with self._lock:
             active_tol = [s for s, t in self._tolerated.items() if now - t < self._heal_window]
@@ -385,11 +386,11 @@ def _noci_channels():
 
 try:
     _NOCI_CHANNEL = _noci_channels()
-except Exception:  # noqa: BLE001 - nociception import is best-effort
+except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
     _NOCI_CHANNEL = {}
 
 
-_immune: Optional[ImmuneSystem] = None
+_immune: ImmuneSystem | None = None
 _immune_lock = threading.Lock()
 
 

@@ -26,8 +26,8 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
 
 from core.runtime.errors import record_degradation
 
@@ -72,20 +72,20 @@ class Drive:
         self.last_fired = now
         self.activation *= 0.4  # firing depletes the urge (the cooldown emerges from this)
 
-    def to_dict(self) -> Dict[str, float]:
+    def to_dict(self) -> dict[str, float]:
         return {"name": self.name, "action": self.action,
                 "activation": round(self.activation, 4), "suppressed": self.suppressed}
 
 
 @dataclass
 class VolitionDecision:
-    action: Optional[str]
-    drive: Optional[str]
+    action: str | None
+    drive: str | None
     activation: float
-    competitors: Dict[str, float] = field(default_factory=dict)
+    competitors: dict[str, float] = field(default_factory=dict)
     reason: str = ""
 
-    def to_dict(self) -> Dict[str, object]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "action": self.action,
             "drive": self.drive,
@@ -96,26 +96,26 @@ class VolitionDecision:
 
 
 # Each drive maps VAD (+ extra signals) to an instantaneous pull in [0,1].
-def _curiosity_signal(s: Dict[str, float]) -> float:
+def _curiosity_signal(s: dict[str, float]) -> float:
     return _clamp(0.5 * max(0.0, s.get("arousal", 0.0)) + 0.5 * max(0.0, s.get("valence", 0.0))
                   + 0.4 * s.get("novelty", 0.0))
 
 
-def _boredom_signal(s: Dict[str, float]) -> float:
+def _boredom_signal(s: dict[str, float]) -> float:
     return _clamp(0.6 * max(0.0, -s.get("arousal", 0.0)) + 0.4 * max(0.0, -s.get("valence", 0.0))
                   - 0.3 * s.get("novelty", 0.0))
 
 
-def _reflection_signal(s: Dict[str, float]) -> float:
+def _reflection_signal(s: dict[str, float]) -> float:
     return _clamp(0.6 * max(0.0, s.get("dominance", 0.0)) + 0.4 * max(0.0, -s.get("arousal", 0.0)))
 
 
-def _relief_signal(s: Dict[str, float]) -> float:
+def _relief_signal(s: dict[str, float]) -> float:
     # Pain/nociception pressure drives a regulatory (relief/stabilize) urge.
     return _clamp(s.get("pain", 0.0))
 
 
-_DRIVE_SIGNALS: Dict[str, Callable[[Dict[str, float]], float]] = {
+_DRIVE_SIGNALS: dict[str, Callable[[dict[str, float]], float]] = {
     "curiosity": _curiosity_signal,
     "boredom": _boredom_signal,
     "reflection": _reflection_signal,
@@ -128,7 +128,7 @@ class DriveIntegrationEngine:
 
     def __init__(self, *, inhibition: float = 0.5) -> None:
         self._inhibition = inhibition
-        self._drives: Dict[str, Drive] = {
+        self._drives: dict[str, Drive] = {
             "curiosity": Drive("curiosity", "explore_knowledge", gain=1.0, leak=0.15),
             "boredom": Drive("boredom", "seek_novelty", gain=0.8, leak=0.1),
             "reflection": Drive("reflection", "deep_reflection", gain=0.7, leak=0.12),
@@ -137,12 +137,12 @@ class DriveIntegrationEngine:
         }
         self._last_step = time.time()
 
-    def add_drive(self, drive: Drive, signal_fn: Callable[[Dict[str, float]], float]) -> None:
+    def add_drive(self, drive: Drive, signal_fn: Callable[[dict[str, float]], float]) -> None:
         self._drives[drive.name] = drive
         _DRIVE_SIGNALS[drive.name] = signal_fn
 
-    def step(self, signals: Dict[str, float], *, now: Optional[float] = None,
-             dt: Optional[float] = None) -> VolitionDecision:
+    def step(self, signals: dict[str, float], *, now: float | None = None,
+             dt: float | None = None) -> VolitionDecision:
         """Advance the dynamics one tick and return the winning drive's action (or none).
 
         ``signals`` carries the grounding (valence/arousal/dominance/novelty/pain). The winner is
@@ -162,7 +162,7 @@ class DriveIntegrationEngine:
         # 2) mutual inhibition: each drive is suppressed by the strongest *other* drive
         activations = {n: d.activation for n, d in self._drives.items()}
         strongest = max(activations.values()) if activations else 0.0
-        effective: Dict[str, float] = {}
+        effective: dict[str, float] = {}
         for name, drive in self._drives.items():
             others_max = max((a for n, a in activations.items() if n != name), default=0.0)
             effective[name] = _clamp(drive.activation - self._inhibition * others_max)
@@ -185,26 +185,30 @@ class DriveIntegrationEngine:
 
     # ── grounding: gather real signals best-effort ────────────────────────
 
-    def gather_signals(self, base: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+    def gather_signals(self, base: dict[str, float] | None = None) -> dict[str, float]:
         """Assemble the signal vector from the substrate + nociception (best-effort)."""
         signals = dict(base or {})
         signals.setdefault("valence", 0.0)
         signals.setdefault("arousal", 0.0)
         signals.setdefault("dominance", 0.0)
         signals.setdefault("novelty", 0.0)
-        try:
-            from core.affect.nociception import get_nociception_engine
-            signals["pain"] = _clamp(get_nociception_engine().nociceptive_pressure())
-        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
-            record_degradation("drive_integration", exc, severity="debug")
-            signals.setdefault("pain", 0.0)
+        if "pain" in signals:
+            signals["pain"] = _clamp(signals["pain"])
+        else:
+            try:
+                from core.affect.nociception import get_nociception_engine
+
+                signals["pain"] = _clamp(get_nociception_engine().nociceptive_pressure())
+            except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+                record_degradation("drive_integration", exc, severity="debug")
+                signals.setdefault("pain", 0.0)
         return signals
 
-    def state(self) -> Dict[str, object]:
+    def state(self) -> dict[str, object]:
         return {"drives": {n: d.to_dict() for n, d in self._drives.items()}}
 
 
-_instance: Optional[DriveIntegrationEngine] = None
+_instance: DriveIntegrationEngine | None = None
 
 
 def get_drive_integration_engine() -> DriveIntegrationEngine:

@@ -126,8 +126,8 @@ def test_dream_journal_thread_save_uses_local_file_write_governance(monkeypatch,
 
 
 def test_thought_tracer_uses_local_file_write_governance(monkeypatch, tmp_path):
-    from core.governance_context import require_governance
     import core.thought_tracer as thought_tracer
+    from core.governance_context import require_governance
 
     calls = []
 
@@ -3337,3 +3337,160 @@ def test_reply_topicality_allows_abstract_but_relevant_interpretation():
 
     assert off_topic is False
     assert reason == ""
+
+
+def test_integrity_guardian_auto_restores_missing_file_when_enabled(monkeypatch, tmp_path):
+    from core.config import config
+    from core.security import integrity_guardian as ig_mod
+
+    monkeypatch.setattr(ig_mod, "_BASE_DIR", tmp_path)
+    core_dir = tmp_path / "core"
+    core_dir.mkdir(parents=True, exist_ok=True)
+    missing_file = core_dir / "emergency_protocol.py"
+
+    monkeypatch.setattr(config.security, "auto_fix_enabled", True)
+
+    guardian = ig_mod.IntegrityGuardian()
+    guardian._manifest_hmac = "sig"
+    guardian._manifest = {
+        "core/emergency_protocol.py": "expected-hash"
+    }
+
+    restore_called = []
+
+    def mock_restore(path):
+        restore_called.append(path)
+        missing_file.write_text("print('healed')", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(guardian, "_restore_file_via_git", mock_restore)
+    monkeypatch.setattr(guardian, "_hash_file", lambda p: "expected-hash")
+
+    alerts = guardian._verify_all()
+
+    assert restore_called == ["core/emergency_protocol.py"]
+    assert alerts == []
+    assert guardian.get_status()["integrity_ok"] is True
+
+
+def test_integrity_guardian_auto_restores_tampered_file_when_enabled(monkeypatch, tmp_path):
+    from core.config import Environment, config
+    from core.security import integrity_guardian as ig_mod
+
+    monkeypatch.setattr(ig_mod, "_BASE_DIR", tmp_path)
+    core_dir = tmp_path / "core"
+    core_dir.mkdir(parents=True, exist_ok=True)
+    tampered_file = core_dir / "emergency_protocol.py"
+    tampered_file.write_text("tampered content", encoding="utf-8")
+
+    monkeypatch.setattr(config.security, "auto_fix_enabled", True)
+    monkeypatch.setattr(config, "env", Environment.PROD)
+
+    guardian = ig_mod.IntegrityGuardian()
+    guardian._manifest_hmac = "sig"
+    guardian._manifest = {
+        "core/emergency_protocol.py": "expected-hash"
+    }
+
+    restore_called = []
+
+    def mock_restore(path):
+        restore_called.append(path)
+        tampered_file.write_text("restored content", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(guardian, "_restore_file_via_git", mock_restore)
+
+    hashes = ["actual-tampered-hash", "expected-hash"]
+
+    def mock_hash(p):
+        return hashes.pop(0) if hashes else "expected-hash"
+
+    monkeypatch.setattr(guardian, "_hash_file", mock_hash)
+
+    alerts = guardian._verify_all()
+
+    assert restore_called == ["core/emergency_protocol.py"]
+    assert alerts == []
+    assert guardian.get_status()["integrity_ok"] is True
+
+
+def test_integrity_guardian_skips_restore_in_dev_if_modified(monkeypatch, tmp_path):
+    from core.config import Environment, config
+    from core.security import integrity_guardian as ig_mod
+
+    monkeypatch.setattr(ig_mod, "_BASE_DIR", tmp_path)
+    core_dir = tmp_path / "core"
+    core_dir.mkdir(parents=True, exist_ok=True)
+    dev_file = core_dir / "emergency_protocol.py"
+    dev_file.write_text("dev modified content", encoding="utf-8")
+
+    monkeypatch.setattr(config.security, "auto_fix_enabled", True)
+    monkeypatch.setattr(config, "env", Environment.DEV)
+
+    guardian = ig_mod.IntegrityGuardian()
+    guardian._manifest = {
+        "core/emergency_protocol.py": "expected-hash"
+    }
+
+    restore_called = []
+    def mock_restore(path):
+        restore_called.append(path)
+        return True
+
+    monkeypatch.setattr(guardian, "_restore_file_via_git", mock_restore)
+    monkeypatch.setattr(guardian, "_hash_file", lambda p: "dev-hash")
+    monkeypatch.setattr(guardian, "_get_git_status_map", lambda: {"core/emergency_protocol.py": "M"})
+
+    alerts = guardian._verify_all()
+
+    assert restore_called == []
+    assert alerts == []
+    assert guardian.get_status()["current_issue_count"] == 0
+
+
+def test_integrity_guardian_restores_from_head_blob_with_forensic_backup(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+
+    from core.security import integrity_guardian as ig_mod
+
+    monkeypatch.setattr(ig_mod, "_BASE_DIR", tmp_path)
+    monkeypatch.setattr(ig_mod, "RESTORE_BACKUP_DIR", tmp_path / "restore_backups")
+    source = tmp_path / "core" / "security" / "emergency_protocol.py"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("tampered", encoding="utf-8")
+
+    commands = []
+
+    class _SubprocessGateway:
+        def run(self, argv, **kwargs):
+            commands.append((list(argv), dict(kwargs)))
+            return SimpleNamespace(returncode=0, stdout="restored", stderr="")
+
+    writes = []
+
+    class _FileGateway:
+        def write_bytes(self, path, payload, *, source="unknown"):
+            writes.append(("bytes", Path(path), payload, source))
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_bytes(payload)
+
+        def write_text(self, path, text, *, source="unknown", encoding="utf-8"):
+            writes.append(("text", Path(path), text, source))
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_text(text, encoding=encoding)
+
+    monkeypatch.setattr(ig_mod, "get_subprocess_gateway", lambda: _SubprocessGateway())
+    monkeypatch.setattr(ig_mod, "get_file_write_gateway", lambda: _FileGateway())
+    monkeypatch.setattr(ig_mod, "local_internal_governed_scope", lambda *a, **k: nullcontext())
+
+    guardian = ig_mod.IntegrityGuardian()
+    assert guardian._restore_file_via_git("core/security/emergency_protocol.py") is True
+
+    git_commands = [command for command in commands if command[0][:2] == ["git", "show"]]
+    assert git_commands
+    assert git_commands[0][0] == ["git", "show", "HEAD:core/security/emergency_protocol.py"]
+    assert git_commands[0][1]["read_only"] is True
+    assert all("checkout" not in " ".join(cmd) for cmd, _kwargs in commands)
+    assert source.read_text(encoding="utf-8") == "restored"
+    assert any(kind == "bytes" and payload == b"tampered" for kind, _path, payload, _source in writes)

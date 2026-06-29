@@ -11,12 +11,20 @@ import threading
 
 import pytest
 
-from core.security.immune_system import ImmuneSystem, ThreatClass
 from core.security.deletion_guard import DeletionGuard
+from core.security.immune_system import ImmuneSystem, ThreatClass
 from core.security.threat_detectors import (
     BruteForceDetector,
     InjectionDetector,
     RateAnomalyDetector,
+)
+
+_STRESS_WORKER_ERRORS = (
+    AssertionError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
 )
 
 
@@ -26,7 +34,7 @@ def test_sustained_flood_stays_up_and_bounded():
     immune = ImmuneSystem(heal_window_s=5.0, max_patches_per_vuln=3, max_patches_global=10)
     # 10k hostile events with the same vuln — must not crash, must not patch itself to death
     patched = 0
-    for i in range(10_000):
+    for _i in range(10_000):
         r = immune.assess_and_respond(
             "flood", "exploit attempt", severity=0.8, origin="botnet", targeted_vuln="v",
         )
@@ -57,11 +65,11 @@ def test_concurrent_hammering_is_threadsafe():
 
     def worker(wid):
         try:
-            for i in range(500):
+            for _i in range(500):
                 immune.assess_and_respond(
                     "w", "exploit", severity=0.7, origin=f"src{wid}", targeted_vuln=f"v{wid}",
                 )
-        except Exception as e:  # noqa: BLE001
+        except _STRESS_WORKER_ERRORS as e:
             errors.append(e)
 
     threads = [threading.Thread(target=worker, args=(w,)) for w in range(8)]
@@ -83,7 +91,7 @@ def test_concurrent_deletion_guard_is_threadsafe(tmp_path):
                 f = tmp_path / f"f_{wid}_{i}.txt"
                 f.write_text("data")
                 guard.guard_delete(str(f))
-        except Exception as e:  # noqa: BLE001
+        except _STRESS_WORKER_ERRORS as e:
             errors.append(e)
 
     threads = [threading.Thread(target=worker, args=(w,)) for w in range(6)]
@@ -120,7 +128,6 @@ def test_mixed_attack_campaign_all_detected():
 # ── no crying wolf: benign activity interleaved with attacks ────────────────
 
 def test_benign_activity_not_flagged_under_mixed_load():
-    immune = ImmuneSystem()
     inj = InjectionDetector()
     bf = BruteForceDetector(window_s=60.0, threshold=8)
 

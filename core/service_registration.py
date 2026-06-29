@@ -127,15 +127,36 @@ def register_all_services(is_proxy: bool = False):
         lifetime=ServiceLifetime.SINGLETON,
         required=False,
     )
+
+    def _create_defensive_runtime():
+        from core.security.defensive_runtime import ensure_defensive_runtime_active
+
+        return ensure_defensive_runtime_active()
+
+    container.register(
+        'defensive_runtime',
+        _create_defensive_runtime,
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+        required_for="live runtime defense",
+        failure_policy="degrade_with_receipt",
+    )
+    try:
+        container.get("defensive_runtime")
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation("service_registration.defensive_runtime", exc)
+
     def _create_immune_system():
         from core.security.immune_system import get_immune_system
+
         immune = get_immune_system()
         # Install the real enforcement backends (firewall/quarantine/process/resource/arp) so the
         # immune system's decisions actually act on the host. Best-effort; the decision layer
         # works regardless.
         try:
-            from core.security.enforcement import install_default_enforcement
-            install_default_enforcement()
+            from core.security.defensive_runtime import ensure_defensive_runtime_active
+
+            ensure_defensive_runtime_active()
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             pass
         return immune
@@ -379,8 +400,9 @@ def register_all_services(is_proxy: bool = False):
 
     # 2.2 Digital Organism Extensions (2026 Phase)
     def _create_self_model():
-        from core.self_model import SelfModel
         from uuid import uuid4
+
+        from core.self_model import SelfModel
         return SelfModel(id=str(uuid4()))
 
     def _create_canonical_self_engine():

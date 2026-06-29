@@ -1,8 +1,6 @@
 """Enforcement backends: real defensive actions behind the immune seams."""
 from __future__ import annotations
 
-import pytest
-
 from core.security.enforcement import (
     AppLayerFirewall,
     Quarantine,
@@ -10,7 +8,6 @@ from core.security.enforcement import (
     arp_scan,
     install_default_enforcement,
 )
-
 
 # ── app-layer firewall ──────────────────────────────────────────────────────
 
@@ -105,9 +102,11 @@ def test_arp_scan_parses_devices(monkeypatch):
 def test_arp_scan_failopen(monkeypatch):
     import core.runtime.subprocess_gateway as sg
 
-    def _boom():
-        raise RuntimeError("no arp")
-    monkeypatch.setattr(sg, "get_subprocess_gateway", _boom)
+    monkeypatch.setattr(
+        sg,
+        "get_subprocess_gateway",
+        lambda: (_ for _ in ()).throw(RuntimeError("no arp")),
+    )
     assert arp_scan() == []
 
 

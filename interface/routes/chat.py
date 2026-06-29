@@ -12406,6 +12406,32 @@ async def api_chat(
     if len(body.message.encode('utf-8', errors='replace')) > MAX_CHAT_MESSAGE_BYTES:
         raise HTTPException(status_code=413, detail="Message too large (max 64KB)")
 
+    _request_origin = request.client.host if request.client else "unknown"
+    _trusted_local_origin = _request_origin in {"127.0.0.1", "::1", "localhost"}
+    _defensive_context = ""
+    try:
+        from core.security.defensive_runtime import inspect_chat_ingress
+
+        _defensive_decision = inspect_chat_ingress(
+            body.message,
+            origin=_request_origin,
+            trusted_local=_trusted_local_origin,
+            surface="api_chat",
+        )
+        if not _defensive_decision.allowed:
+            return JSONResponse(
+                {
+                    "error": _defensive_decision.action,
+                    "message": "Request blocked by Aura's defensive runtime.",
+                    "reasons": _defensive_decision.reasons,
+                },
+                status_code=_defensive_decision.status_code,
+            )
+        _defensive_context = _defensive_decision.cognitive_context
+    except _CHAT_RECOVERABLE_ERRORS as _defensive_exc:
+        record_degradation("chat.defensive_runtime", _defensive_exc)
+        logger.debug("Chat defensive preflight skipped: %s", _defensive_exc)
+
     is_benchmark = request.headers.get("X-Aura-Benchmark") == "true"
     chat_origin = "benchmark" if is_benchmark else "user"
     desktop_requires_cognitive_engine, request_surface = _request_requires_cognitive_engine(
@@ -12426,6 +12452,8 @@ async def api_chat(
     _original_user_message: str = body.message
     _resume_prefix_for_response: str = ""
     _grounded_recall_context: str = ""
+    if _defensive_context and not is_benchmark:
+        body.message = f"{_defensive_context}{body.message}"
     try:
         from core.conversation.chat_preflight import (
             build_file_context_block,
