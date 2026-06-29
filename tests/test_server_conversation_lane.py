@@ -3698,8 +3698,8 @@ async def test_api_chat_desktop_objective_requires_cognitive_planning(monkeypatc
     assert payload["conversation_lane"]["governed_action_status"] == "desktop_objective_completed"
     assert "Desktop task completed 2/2 governed computer-use steps" in payload["response"]
     assert skill_calls and skill_calls[0]["skill_name"] == "desktop_task"
-    assert cognitive_calls
-    assert "Planned local file body." in skill_calls[0]["extra_context"]["desktop_task_document_body"]
+    assert not cognitive_calls
+    assert skill_calls[0]["extra_context"]["desktop_task_document_body"] == ""
     assert output_receipts
 
 

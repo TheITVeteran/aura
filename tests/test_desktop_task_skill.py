@@ -152,10 +152,21 @@ async def test_desktop_task_executes_bounded_steps_through_capability_engine(mon
             calls.append((skill_name, params, context or {}))
             return _fake_computer_use_result(params)
 
+    class HiddenRouter:
+        async def generate(self, **kwargs):
+            pytest.fail("desktop artifact fallback must not allocate hidden model synthesis")
+
+    def fake_get(name, default=None):
+        if name == "capability_engine":
+            return FakeCapabilityEngine()
+        if name == "llm_router":
+            return HiddenRouter()
+        return default
+
     monkeypatch.setattr(
         ServiceContainer,
         "get",
-        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+        fake_get,
     )
 
     skill = DesktopTaskSkill()

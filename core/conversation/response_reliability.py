@@ -1438,12 +1438,6 @@ def _semantic_coverage_reasons(user_message: Any, reply_text: Any) -> list[str]:
         explicit_boundary = bool(
             re.search(r"\b(?:(?:cannot|can't)\s+guarantee|should\s+not\s+promise)\b", reply)
         )
-        grounded_persistence = bool(
-            re.search(
-                r"\b(?:durable|persist(?:ent|ed|s)?|stored|memory\s+(?:write|gateway|store))\b",
-                reply,
-            )
-        )
         if unsupported_guarantee and not explicit_boundary:
             reasons.append("unsupported_memory_guarantee")
         future_answered = bool(
@@ -1668,7 +1662,6 @@ def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
         if word_repaired:
             return word_repaired
 
-    requested_bullets = _requested_count(_BULLET_REQUEST_RE, user)
     requested_numbered = _requested_count(_NUMBERED_LIST_REQUEST_RE, user)
     requested_numbered_sentences = _requested_count(_NUMBERED_SENTENCE_REQUEST_RE, user)
     requested_list_items = _requested_list_item_count(user)
@@ -2895,6 +2888,8 @@ def _has_truncated_tail(reply_text: Any) -> bool:
         if len(terminal_word) <= 2 and terminal_word not in _ALLOWED_SHORT_TAIL_WORDS:
             return True
     if body.endswith(("...", "…")):
+        return True
+    if re.search(r"(?:^|\n)\s*(?:[-*]|\d+[.)])\s*$", body):
         return True
     if body.endswith((".", "!", "?", "\"", "'", "”", "’", ")", "]")):
         return False

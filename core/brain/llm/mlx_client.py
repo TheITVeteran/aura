@@ -3555,6 +3555,7 @@ class MLXLocalClient:
             "stop_sequences": list(kwargs.get("stop_sequences") or []),
             "strict_answer_contract": bool(kwargs.get("strict_answer_contract", False)),
             "strict_value_contract": bool(kwargs.get("strict_value_contract", False)),
+            "expected_strict_value": str(kwargs.get("expected_strict_value") or ""),
             "proof_evaluation_contract": bool(kwargs.get("proof_evaluation_contract", False)),
             "operator_evidence_contract": bool(kwargs.get("operator_evidence_contract", False)),
             "health_probe": bool(kwargs.get("health_probe", False)),

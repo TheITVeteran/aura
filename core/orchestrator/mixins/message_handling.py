@@ -638,51 +638,75 @@ class MessageHandlingMixin:
 
             return await self._process_message_pipeline(message, origin=origin)
 
-        # Use Semaphore, not Global Lock
-        async with self._user_input_semaphore:
+        foreground_lease = None
+        if self._is_user_facing_origin(origin):
             try:
-                # Use a specific timeout to prevent indefinite hangs
-                async with asyncio.timeout(timeout_sec):
-                    if self._is_user_facing_origin(origin):
-                        self._last_user_interaction_time = time.time()
-                    current_task = asyncio.current_task()
-                    in_flight = getattr(self, "_current_thought_task", None)
-                    if (
-                        self._is_user_facing_origin(origin)
-                        and in_flight is not None
-                        and in_flight != current_task
-                        and not in_flight.done()
-                    ):
-                        replaceable = (
-                            getattr(self, "_current_task_is_autonomous", True)
-                            or getattr(self, "_current_origin", "") == "voice"
-                        )
-                        if replaceable:
-                            logger.info(
-                                "🛑 Cancelling stale %s task for direct user input...",
-                                getattr(self, "_current_origin", "background"),
-                            )
-                            in_flight.cancel()
-                            try:
-                                await in_flight
-                            except asyncio.CancelledError:
-                                logger.debug("Autonomous task cancelled successfully.")
-                    return await self._process_user_input_core(message, origin)
-            except TimeoutError:
-                logger.error("⌛ Priority processing TIMEOUT for: %s...", message[:50])
-                if self._is_user_facing_origin(origin):
-                    return _user_visible_live_timeout(timeout_sec)
-                # Background/internal callers still use an empty result as a retry/escalation signal.
-                return ""
-            except _MESSAGE_HANDLING_RECOVERABLE_ERRORS as e:
-                _record_message_degradation(
-                    e,
-                    action="returned empty priority response so caller can retry or escalate",
-                    severity="error",
+                from core.runtime.foreground_guard import (
+                    begin_foreground_turn,
+                    notify_user_spoke,
                 )
-                logger.error("❌ Priority processing FAILED: %s", e)
-                # [STABILITY v55] Return empty so chat.py can retry/escalate.
-                return ""
+
+                notify_user_spoke(message)
+                foreground_lease = begin_foreground_turn(
+                    owner="orchestrator_priority",
+                    source=f"process_user_input_priority:{origin}",
+                )
+            except _MESSAGE_HANDLING_RECOVERABLE_ERRORS as _fg_err:
+                _record_message_degradation(
+                    _fg_err,
+                    action="continued priority user input without foreground repair lease",
+                    severity="warning",
+                )
+
+        try:
+            # Use Semaphore, not Global Lock
+            async with self._user_input_semaphore:
+                try:
+                    # Use a specific timeout to prevent indefinite hangs
+                    async with asyncio.timeout(timeout_sec):
+                        if self._is_user_facing_origin(origin):
+                            self._last_user_interaction_time = time.time()
+                        current_task = asyncio.current_task()
+                        in_flight = getattr(self, "_current_thought_task", None)
+                        if (
+                            self._is_user_facing_origin(origin)
+                            and in_flight is not None
+                            and in_flight != current_task
+                            and not in_flight.done()
+                        ):
+                            replaceable = (
+                                getattr(self, "_current_task_is_autonomous", True)
+                                or getattr(self, "_current_origin", "") == "voice"
+                            )
+                            if replaceable:
+                                logger.info(
+                                    "🛑 Cancelling stale %s task for direct user input...",
+                                    getattr(self, "_current_origin", "background"),
+                                )
+                                in_flight.cancel()
+                                try:
+                                    await in_flight
+                                except asyncio.CancelledError:
+                                    logger.debug("Autonomous task cancelled successfully.")
+                        return await self._process_user_input_core(message, origin)
+                except TimeoutError:
+                    logger.error("⌛ Priority processing TIMEOUT for: %s...", message[:50])
+                    if self._is_user_facing_origin(origin):
+                        return _user_visible_live_timeout(timeout_sec)
+                    # Background/internal callers still use an empty result as a retry/escalation signal.
+                    return ""
+                except _MESSAGE_HANDLING_RECOVERABLE_ERRORS as e:
+                    _record_message_degradation(
+                        e,
+                        action="returned empty priority response so caller can retry or escalate",
+                        severity="error",
+                    )
+                    logger.error("❌ Priority processing FAILED: %s", e)
+                    # [STABILITY v55] Return empty so chat.py can retry/escalate.
+                    return ""
+        finally:
+            if foreground_lease is not None:
+                foreground_lease.close()
 
     async def _process_user_input_unlocked(
         self,

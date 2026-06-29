@@ -1,7 +1,7 @@
-import json
-import sys
 import asyncio
+import json
 import multiprocessing as multiprocessing_module
+import sys
 from types import SimpleNamespace
 
 from tools.agi import run_dnu_agi_proof_battery as dnu_runner
@@ -46,7 +46,8 @@ def test_dnu_proof_health_wait_requires_actual_recovery(monkeypatch):
     def fake_collect(**_kwargs):
         return snapshots.pop(0)
 
-    def fake_blockers(snapshot):
+    def fake_blockers(snapshot, *, allow_important_only_degraded=False):
+        assert allow_important_only_degraded is False
         return [] if snapshot["runtime_health_contract"]["healthy"] else ["runtime health status is degraded"]
 
     monkeypatch.setattr(dnu_runner, "collect_proof_resource_snapshot", fake_collect)
@@ -66,6 +67,53 @@ def test_dnu_proof_health_wait_requires_actual_recovery(monkeypatch):
         "runtime health status is degraded"
     ]
     assert snapshot["runtime_health_recovery"]["recovered"] is True
+
+
+def test_dnu_health_allows_nonprimary_important_only_degraded_runtime():
+    snapshot = {
+        "runtime_health_contract": {
+            "healthy": False,
+            "status": "degraded",
+            "required_probes": {"all_passed": True},
+            "failures": {
+                "critical": [],
+                "important": [{"container_key": "unified_runtime_pressure"}],
+            },
+        }
+    }
+
+    assert dnu_runner.proof_runtime_health_blockers(snapshot) == [
+        "runtime health status is degraded"
+    ]
+    assert (
+        dnu_runner.proof_runtime_health_blockers(
+            snapshot,
+            allow_important_only_degraded=True,
+        )
+        == []
+    )
+
+
+def test_dnu_health_never_allows_required_probe_failure_as_important_degraded():
+    snapshot = {
+        "runtime_health_contract": {
+            "healthy": False,
+            "status": "critical",
+            "required_probes": {
+                "inference": {"ok": False},
+                "all_passed": False,
+            },
+            "failures": {"critical": [], "important": []},
+        }
+    }
+
+    blockers = dnu_runner.proof_runtime_health_blockers(
+        snapshot,
+        allow_important_only_degraded=True,
+    )
+
+    assert "runtime health status is critical" in blockers
+    assert "required health probes failed: ['inference']" in blockers
 
 
 def test_dnu_claims_canonical_runtime_lock_before_boot():
@@ -143,14 +191,44 @@ def test_primary_dnu_proof_memory_envelope_disables_desktop_safe_boot():
     assert env["AURA_LAUNCHED_FROM_APP"] == "0"
     assert env["AURA_EXTERNAL_GUI_OWNER"] == "0"
     assert env["AURA_HEADLESS"] == "1"
-    assert env["AURA_PROCESS_RSS_LIMIT_GB"] == "38"
-    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "36"
-    assert env["AURA_MLX_WORKER_RSS_LIMIT_GB"] == "36"
-    assert env["AURA_METAL_CACHE_CAP_GB"] == "12"
+    assert env["AURA_PROCESS_RSS_LIMIT_GB"] == "36"
+    assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "28"
+    assert env["AURA_MLX_WORKER_RSS_LIMIT_GB"] == "28"
+    assert env["AURA_METAL_CACHE_CAP_GB"] == "10"
     assert env["AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB"] == "20"
     assert report["desktop_safe_boot_disabled_for_proof"] is True
     assert report["app_launch_context_disabled_for_proof"] is True
     assert report["inherited"]["AURA_PROCESS_RSS_LIMIT_GB"] == "36"
+
+
+def test_primary_dnu_proof_memory_envelope_honors_lower_caller_caps():
+    env = {
+        "AURA_PROCESS_RSS_LIMIT_GB": "32",
+        "AURA_MLX_MEMORY_LIMIT_GB": "26",
+        "AURA_MLX_WORKER_RSS_LIMIT_GB": "28",
+        "AURA_METAL_CACHE_CAP_GB": "10",
+    }
+
+    report = dnu_runner.configure_dnu_proof_memory_envelope("primary", env=env)
+
+    assert report["process_rss_limit_gb"] == "32"
+    assert report["mlx_memory_limit_gb"] == "26"
+    assert report["worker_rss_limit_gb"] == "28"
+    assert report["metal_cache_cap_gb"] == "10"
+
+
+def test_primary_dnu_specific_caps_override_general_caps_within_bounds():
+    env = {
+        "AURA_PROCESS_RSS_LIMIT_GB": "32",
+        "AURA_MLX_MEMORY_LIMIT_GB": "26",
+        "AURA_DNU_PRIMARY_PROCESS_RSS_LIMIT_GB": "38",
+        "AURA_DNU_PRIMARY_MLX_MEMORY_LIMIT_GB": "36",
+    }
+
+    report = dnu_runner.configure_dnu_proof_memory_envelope("primary", env=env)
+
+    assert report["process_rss_limit_gb"] == "38"
+    assert report["mlx_memory_limit_gb"] == "36"
 
 
 def test_primary_dnu_proof_memory_envelope_clamps_unsafe_overrides():
@@ -182,11 +260,18 @@ def test_tertiary_dnu_proof_memory_envelope_stays_lightweight():
 
     assert env["AURA_SAFE_BOOT_DESKTOP"] == "0"
     assert env["AURA_HEADLESS"] == "1"
-    assert report["process_rss_limit_gb"] == "24"
-    assert report["mlx_memory_limit_gb"] == "18"
+    assert report["process_rss_limit_gb"] == "32"
+    assert report["mlx_memory_limit_gb"] == "28"
     assert report["worker_rss_limit_gb"] == "12"
     assert report["metal_cache_cap_gb"] == "8"
     assert report["mlx_32b_load_min_available_gb"] is None
+
+
+def test_shutdown_proof_runtime_uses_bounded_call_timeout_keyword():
+    source = dnu_runner.Path(dnu_runner.__file__).read_text(encoding="utf-8")
+
+    assert "timeout=orchestrator_shutdown_timeout_s" not in source
+    assert "timeout_s=orchestrator_shutdown_timeout_s" in source
 
 
 def test_dnu_model_recycle_rewarms_requested_lane(tmp_path):
@@ -413,7 +498,7 @@ def test_dnu_orphan_cleanup_reaps_descendant_keep_awake(monkeypatch):
             return [parent, keep_awake]
 
         @staticmethod
-        def Process(pid):
+        def Process(pid):  # noqa: N802 - fake psutil API method
             return {101: parent, 202: keep_awake}[pid]
 
         @staticmethod
@@ -470,7 +555,7 @@ def test_dnu_shutdown_reaper_preserves_python_resource_tracker(monkeypatch):
         ZombieProcess = RuntimeError
 
         @staticmethod
-        def Process(pid):
+        def Process(pid):  # noqa: N802 - fake psutil API method
             return FakeParent([resource_tracker, worker])
 
         @staticmethod

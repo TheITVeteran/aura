@@ -5823,6 +5823,8 @@ def _looks_truncated_tail(text: str) -> bool:
         pass
     if body.endswith(("...", "…")):
         return True
+    if re.search(r"(?:^|\n)\s*(?:[-*]|\d+[.)])\s*$", body):
+        return True
     if body.endswith((".", "!", "?", "\"", "'", "”", "’", ")", "]")):
         return False
     if re.search(r"(?:^|\n)\s*\d+\.\s+\S+", body) or re.search(r"\*\*[^*\n]{2,80}:\*\*", body):
@@ -11666,13 +11668,6 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
     try:
         from core.skills.desktop_task import DesktopTaskSkill
 
-        # Original prose and source synthesis are cognitive work. They must not
-        # use the pre-cognition mechanical shortcut merely because desktop_task
-        # has a deterministic emergency body composer.
-        if DesktopTaskSkill._objective_requests_self_summary(text):
-            return False
-        if DesktopTaskSkill._objective_requests_research_document(text):
-            return False
         steps = DesktopTaskSkill()._derive_steps_from_objective(text, {})
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return False
@@ -11683,6 +11678,30 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
     prose_actions = {"set_clipboard", "write_text_file", "render_text_pdf", "type"}
     if not (actions & prose_actions):
         return True
+    local_artifact_actions = {
+        "create_folder",
+        "write_text_file",
+        "render_text_pdf",
+        "move_file",
+        "read_menu_clock",
+    }
+    if actions <= local_artifact_actions and (
+        DesktopTaskSkill._objective_requests_self_summary(text)
+        or DesktopTaskSkill._objective_requests_written_artifact(text)
+    ):
+        # A bounded local artifact can be authored and verified inside
+        # desktop_task without first asking the foreground model to narrate an
+        # action that has not happened yet. Interactive app typing, research
+        # synthesis, essays, and long-form creative writing still stay on the
+        # full cognitive draft path below.
+        return True
+    # Original prose and source synthesis are cognitive work. They must not use
+    # the pre-cognition mechanical shortcut merely because desktop_task has a
+    # deterministic emergency body composer.
+    if DesktopTaskSkill._objective_requests_self_summary(text):
+        return False
+    if DesktopTaskSkill._objective_requests_research_document(text):
+        return False
     explicit_content_markers = (
         "essay",
         "letter",

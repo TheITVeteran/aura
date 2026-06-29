@@ -53,6 +53,7 @@ from core.runtime.proof_policy import (
     is_strict_proof_answer_prompt,
     mlx_strict_answer_contract_enabled,
     proof_model_tier,
+    proof_run_active,
 )
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.structured_input import analyze_prompt_shape
@@ -1832,6 +1833,12 @@ class InferenceGate:
         tertiary tier.  Rate-limited to one attempt per 3s.
         """
         if not self._mlx_client:
+            return
+        if proof_run_active(origin="cortex_recovery") and proof_model_tier() != "primary":
+            logger.debug(
+                "Primary cortex recovery skipped during non-primary proof lane (%s).",
+                proof_model_tier(),
+            )
             return
         if not hasattr(self._mlx_client, "is_alive"):
             return

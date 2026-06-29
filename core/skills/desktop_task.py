@@ -1295,7 +1295,7 @@ class DesktopTaskSkill(BaseSkill):
         return "\n\n".join(part for part in parts if part).strip()[:4000]
 
     @staticmethod
-    def _allow_research_model_synthesis(context: dict[str, Any] | None) -> bool:
+    def _allow_desktop_task_model_synthesis(context: dict[str, Any] | None) -> bool:
         context = context or {}
         # Visible desktop work must not allocate a hidden second foreground
         # model by default. The default path composes from search evidence
@@ -1318,7 +1318,11 @@ class DesktopTaskSkill(BaseSkill):
                 action="allowed desktop research model synthesis despite memory safety probe failure",
                 severity="warning",
             )
-            return True
+        return True
+
+    @staticmethod
+    def _allow_research_model_synthesis(context: dict[str, Any] | None) -> bool:
+        return DesktopTaskSkill._allow_desktop_task_model_synthesis(context)
 
     async def _collect_research_context(
         self,
@@ -3124,7 +3128,7 @@ class DesktopTaskSkill(BaseSkill):
         document_provenance = "cognitive_context"
         if self._objective_requests_self_summary(objective):
             authored = self._self_summary_from_context(task_context)
-            if not authored:
+            if not authored and self._allow_desktop_task_model_synthesis(task_context):
                 authored = await self._synthesize_self_summary_document(
                     objective=objective,
                     context=task_context,
@@ -3132,11 +3136,11 @@ class DesktopTaskSkill(BaseSkill):
                 if authored:
                     task_context["desktop_task_document_body"] = authored
                     document_provenance = "local_cortex_synthesis"
-                else:
-                    task_context["desktop_task_document_body"] = self._compose_self_summary_body(
-                        objective
-                    )
-                    document_provenance = "runtime_substrate_synthesis"
+            if not authored:
+                task_context["desktop_task_document_body"] = self._compose_self_summary_body(
+                    objective
+                )
+                document_provenance = "runtime_substrate_synthesis"
         elif task_context.get("desktop_task_research_synthesis"):
             document_provenance = (
                 "local_cortex_research_synthesis"

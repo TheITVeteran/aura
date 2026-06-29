@@ -2622,14 +2622,27 @@ def test_proof_ablation_guard_blocks_only_proof_runs(monkeypatch: pytest.MonkeyP
     assert structured_proof_solver_enabled(origin="api") is True
 
 
-def test_dnu_ablation_validation_rejects_equal_performance_lesions():
+def test_dnu_ablation_validation_records_equal_performance_scope():
     root = Path(__file__).resolve().parents[1]
-    runner_source = (root / "tools" / "agi" / "run_dnu_agi_proof_battery.py").read_text(encoding="utf-8")
     validator_source = (root / "tools" / "agi" / "validate_dnu_final_bundle.py").read_text(encoding="utf-8")
     message_source = (root / "core" / "orchestrator" / "mixins" / "message_handling.py").read_text(encoding="utf-8")
+    from tools.agi.run_dnu_agi_proof_battery import build_ablation_report_entry
 
-    assert "behavior_degraded = pass_rate < 1.0" in runner_source
-    assert "and behavior_degraded" in runner_source
+    entry = build_ablation_report_entry(
+        ablation_name="no_persistent_memory",
+        pass_rate=1.0,
+        services_requested=["memory_facade", "memory_coordinator"],
+        services_disabled={"memory_facade", "memory_coordinator"},
+        lesion_verified=True,
+        dnu_behavior_degraded=False,
+    )
+
+    assert entry["lesion_run_verified"] is True
+    assert entry["dnu_behavior_degraded"] is False
+    assert entry["lesion_effect_verified_in_this_battery"] is False
+    assert entry["lesion_effect_verification_scope"] == "delegated_to_dedicated_cert_chain"
+    assert entry["dependency_evidence_required_elsewhere"] is True
+    assert "unified_system_scenario.memory_continuity_check" in entry["expected_dependency_evidence"]
     assert '"ablation",' in validator_source
     assert '"outperform",' in validator_source
     assert "active_proof_ablation_services(origin=origin)" in message_source

@@ -2982,6 +2982,24 @@ async def test_cortex_recovery_does_not_spawn_under_memory_pressure(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_cortex_recovery_skips_primary_spawn_during_nonprimary_proof_lane(monkeypatch):
+    gate = InferenceGate()
+    client = _LaneWarmupClient()
+    client.is_alive = CallProbe(return_value=False)
+    gate._mlx_client = client
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    monkeypatch.setenv("AURA_PROOF_MODEL_TIER", "tertiary")
+    monkeypatch.setattr(InferenceGate, "_foreground_user_turn_active", staticmethod(lambda: False))
+    monkeypatch.setattr(InferenceGate, "_foreground_owner_active", staticmethod(lambda: False))
+
+    await gate._ensure_cortex_recovery()
+
+    client.warmup.assert_not_awaited()
+    assert gate._cortex_recovery_in_progress is False
+    assert gate._cortex_recovery_attempts == 0
+
+
+@pytest.mark.asyncio
 async def test_cortex_recovery_does_not_report_deferred_warmup_as_ready(monkeypatch):
     gate = InferenceGate()
     client = _LaneWarmupClient()

@@ -15,11 +15,13 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
+from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.NonParametricIngest")
@@ -40,7 +42,7 @@ class Encoder(Protocol):
 
 
 def _pair_hash(context: str, answer: str) -> str:
-    return hashlib.sha256(f"{context}\x00{answer}".encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(f"{context}\x00{answer}".encode()).hexdigest()[:16]
 
 
 def collect_trusted_pairs(
@@ -174,6 +176,6 @@ class NonParametricIngestor:
             self._dedup_path.parent.mkdir(parents=True, exist_ok=True)
             # keep the dedup ledger bounded
             seen = list(self._seen)[-50_000:]
-            self._dedup_path.write_text(json.dumps({"seen": seen}), encoding="utf-8")
+            atomic_write_text(self._dedup_path, json.dumps({"seen": seen}), encoding="utf-8")
         except (OSError, ValueError, TypeError) as exc:
             record_degradation("nonparametric_ingest_save_seen", exc)

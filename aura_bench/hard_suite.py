@@ -22,6 +22,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from core.runtime.atomic_writer import atomic_write_text
+
 _NUM_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 # Imports a grader-run script must never contain (defense-in-depth; tasks are pure).
 _FORBIDDEN_IMPORTS = {"os", "sys", "subprocess", "socket", "shutil", "pathlib", "ctypes", "requests"}
@@ -159,7 +161,7 @@ def _grade_code(answer: str, task: HardTask, *, timeout: float = 10.0) -> float:
     script = code + "\n\n" + "\n".join(task.tests) + "\nprint('ALL_TESTS_PASSED')\n"
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "grade.py"
-        path.write_text(script, encoding="utf-8")
+        atomic_write_text(path, script, encoding="utf-8")
         try:
             proc = subprocess.run(
                 [sys.executable, "-I", "-B", str(path)],

@@ -6,12 +6,74 @@ remains open.
 
 ## Current Estimate
 
-- Overall closeout: 98.3%
+- Overall closeout: 98.5%
 - Remaining checkpoints: 1 consolidated checkpoint, likely 1-2 smaller
   sub-checkpoints
-- Current phase: final replay/proof closure and artifact cleanup after live
-  visible desktop/voice demo proofs, CRSM closure, CAA closure, and
-  recurrent-failure repair routing verification passed
+- Current phase: final proof-purification, replay/final-proof coverage, artifact
+  cleanup, clean worktree, commit, and push after live visible desktop/voice
+  demo proofs, CRSM closure, CAA closure, recurrent-failure repair routing, and
+  DNU lifecycle hardening passed
+
+## Checkpoint 2026-06-29-03: DNU Proof Lifecycle / Model-Lane Hardening
+
+Status: verified locally, not yet committed.
+
+Why:
+
+- The full DNU bundle validated, but the proof-step wrapper could still remain
+  failed/stale because the Python process hung during interpreter finalization
+  after the actual proof artifacts were complete.
+- The proof memory envelope could silently widen above lower caller safety caps,
+  which is unacceptable after the live desktop memory-spike failures.
+- Tertiary smoke proof runs were failing for unrelated primary Cortex recovery:
+  the requested 7B lane passed, then health polling tried to load the 32B lane
+  under a 24GB process cap and marked the smoke proof failed.
+- Strict proof value probes needed to prove the requested model lane actually
+  returned the exact value, not a fallback assistant prompt.
+
+What changed:
+
+- `tools/agi/run_dnu_agi_proof_battery.py` now performs bounded proof shutdown,
+  reaps proof child processes, flushes streams, and exits cleanly at the script
+  boundary.
+- DNU proof memory caps now inherit lower general safety limits unless
+  DNU-specific override variables are set.
+- MLX strict-value requests now forward `expected_strict_value` from client to
+  worker, render exact-value prompts, and keep retries on the exact-value path.
+- `InferenceGate` skips primary Cortex recovery during explicit non-primary
+  proof runs so the proof runner does not evict the requested lower-tier worker.
+- DNU runtime health checks now distinguish required-probe failures from
+  important-only degraded pressure for non-primary proof lanes.
+- Ablation reporting records equal DNU scores honestly as delegated to
+  dedicated certification-chain lesion evidence rather than score-delta proof.
+
+Evidence:
+
+- Full bundle validator:
+  `python tools/agi/validate_dnu_final_bundle.py artifacts/current/agi_live`
+  returned `VALIDATION_STATUS: PASS`.
+- Full DNU artifacts show 100/100 tasks complete, 100% score, lower baselines,
+  governance pass, leakage pass, and claim-bounded final verdict.
+- Tertiary smoke wrapper:
+  `artifacts/current/proof_steps/dnu_smoke_exit_check.json`, rc=0 in about 17s.
+- Tertiary smoke `MODEL_LANE_PROBE.json`: endpoint `Brainstem`, tier
+  `local_fast`, strict value pass, non-empty model text pass, local lane pass.
+- DNU lifecycle tests: `22 passed`.
+- Strict MLX contract tests: `18 passed`.
+- Combined affected regression suite: `50 passed`.
+- Ruff and py_compile on touched runtime/proof surfaces: passed.
+- Post-run process scan found no stale DNU/Aura/sentinel/proof-step/pytest
+  processes.
+
+Still open:
+
+- Prompt-derived strict proof repair remains visible for at least one
+  unique-assignment smoke task. This is not hidden-answer leakage, but it is
+  proof-shape dependence and needs purification.
+- DNU ablations are honestly marked as delegated to cert-chain probes, but DNU
+  itself still does not demonstrate score deltas from lesions.
+- Final `make final-proof`, replay package, claims/artifact consistency, clean
+  worktree, commit, and push remain open.
 
 ## Checkpoint 2026-06-29-02: CRSM / CAA / Immune Closure Verification
 

@@ -17,6 +17,93 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest DNU Proof Lifecycle / Model-Lane Hardening (2026-06-29)
+
+### Gaps Addressed
+
+- **The DNU full bundle was revalidated from current artifacts**:
+  `tools/agi/validate_dnu_final_bundle.py artifacts/current/agi_live` reports
+  `VALIDATION_STATUS: PASS`; `RUN_STATUS.json` records 100/100 tasks complete,
+  `SCORECARD.json` records 100% overall, baselines remain lower, governance and
+  leakage reports pass, and `FINAL_VERDICT.txt` correctly remains claim-bounded
+  as `DNU AGI NOT PROVEN`.
+- **Finished proof runs no longer hang at Python interpreter finalization**:
+  `run_dnu_agi_proof_battery.py` now does bounded shutdown cleanup, reaps proof
+  child processes, flushes streams, and exits via the script boundary after
+  cleanup. This fixes the stale proof-step wrapper failure where the actual DNU
+  bundle was complete but `tools/run_proof_step.py` never observed process exit.
+- **DNU proof memory envelopes now respect lower caller safety caps**:
+  primary/tertiary proof runs inherit lower `AURA_PROCESS_RSS_LIMIT_GB`,
+  `AURA_MLX_MEMORY_LIMIT_GB`, worker RSS, and Metal cache caps unless an
+  explicit DNU-specific cap is set. This prevents proof runners from silently
+  widening memory ceilings above the live desktop safety envelope.
+- **Strict proof-value generation is now a real model-lane contract**:
+  the MLX client forwards `expected_strict_value`, and the worker keeps exact
+  strict-value prompts and retries on the exact-value path instead of falling
+  back to a normal assistant/chat prompt. The live tertiary lane smoke now
+  verifies the requested model produced the strict value.
+- **Non-primary proof lanes no longer evict their requested proof worker by
+  trying to recover 32B**: `InferenceGate` skips primary Cortex recovery during
+  explicit non-primary proof runs, and the DNU runner records important-only
+  degraded pressure as evidence rather than a hard failure when all required
+  probes pass for the requested non-primary lane.
+- **DNU ablation reporting is now more honest**: equal DNU scores under lesions
+  are recorded as delegated to dedicated certification-chain probes rather than
+  misrepresented as DNU score-delta evidence.
+
+### Latest Commands Run
+
+```bash
+python tools/agi/validate_dnu_final_bundle.py artifacts/current/agi_live
+env AURA_MLX_MEMORY_LIMIT_GB=18 AURA_PROCESS_RSS_LIMIT_GB=24 AURA_MLX_WORKER_RSS_LIMIT_GB=18 AURA_METAL_CACHE_CAP_GB=8 AURA_ALLOW_UNSAFE_MEMORY_LIMITS=0 python tools/run_proof_step.py --name dnu_smoke_exit_check --timeout 900 --artifact artifacts/current/proof_steps/dnu_smoke_exit_check.json -- python tools/agi/run_dnu_agi_proof_battery.py --smoke --model-tier tertiary --stop-existing-runtime --out artifacts/current/agi_smoke_exit_check
+python -m pytest -q tests/test_dnu_runner_lifecycle.py tests/test_strict_contract_steering_clamp.py tests/test_inference_gate_tiering.py::test_cortex_recovery_skips_primary_spawn_during_nonprimary_proof_lane tests/test_runtime_stability_edges.py::TestSelfHealingLoopSafety tests/test_live_runtime_surface_regressions.py::test_priority_input_holds_foreground_guard_during_processing tests/test_chat_reliability_proof.py::test_bare_numbered_list_marker_is_treated_as_truncated_tail tests/test_enterprise_hardening_fixes.py::test_dnu_ablation_validation_records_equal_performance_scope tests/test_enterprise_hardening_fixes.py::test_dnu_comparison_sample_is_stratified
+python -m ruff check aura_bench/hard_suite.py core/brain/inference_gate.py core/brain/llm/mlx_client.py core/brain/llm/mlx_worker.py core/brain/nonparametric_ingest.py core/bus/local_pipe_bus.py core/conversation/response_reliability.py core/orchestrator/mixins/message_handling.py core/runtime/self_healing.py core/skills/desktop_task.py interface/routes/chat.py tools/agi/run_dnu_agi_proof_battery.py tests/test_chat_reliability_proof.py tests/test_desktop_task_skill.py tests/test_dnu_runner_lifecycle.py tests/test_enterprise_hardening_fixes.py tests/test_inference_gate_tiering.py tests/test_live_runtime_surface_regressions.py tests/test_local_pipe_bus_backpressure.py tests/test_runtime_stability_edges.py tests/test_server_conversation_lane.py tests/test_strict_contract_steering_clamp.py
+```
+
+### Evidence
+
+- Full DNU bundle validator: **PASS**.
+- DNU full run artifacts: **100/100 tasks complete**, **100% score**, lower
+  baselines, governance pass, leakage pass, final verdict claim-bounded.
+- Tertiary DNU smoke wrapper:
+  `artifacts/current/proof_steps/dnu_smoke_exit_check.json`, **rc=0** in about
+  17s.
+- Tertiary smoke model lane probe:
+  `MODEL_LANE_PROBE.json`, **pass**, endpoint `Brainstem`, tier `local_fast`,
+  strict value pass, non-empty model text pass, local lane pass.
+- Combined regression suite for DNU lifecycle, strict MLX contracts, inference
+  recovery, self-healing, desktop route, and ablation reporting: **50 passed**.
+- Focused DNU lifecycle tests after health-gate changes: **22 passed**.
+- Focused strict-contract tests: **18 passed**.
+- Focused non-primary proof Cortex recovery regression: **passed**.
+- Ruff and py_compile on touched runtime/proof surfaces: **passed**.
+- Post-run process scan found no stale DNU, Aura, sentinel, proof-step, or
+  pytest processes.
+
+### Closeout Position
+
+- Functional closeout estimate: about **98.5%**. DNU is now much stronger as a
+  lifecycle/proof artifact: current full bundle validates, wrapper exit is
+  proven, strict model-lane checks are live, and the proof runner respects
+  live-memory safety caps.
+- Estimated remaining work: **1 consolidated checkpoint**, likely **1-2 smaller
+  sub-checkpoints**:
+  1. Proof-purify remaining prompt-derived proof-task repair paths so DNU-style
+     tasks cannot lean on task-shape solvers where the model should reason.
+  2. Run final `enterprise-gate`, `production-gate`, final-proof/replay/claims
+     coverage, normalize generated artifacts, clean the worktree, commit, and
+     push.
+
+### Still Open
+
+- Prompt-derived strict proof repair remains visible in smoke traces for at
+  least one unique-assignment task. It is not hidden-answer leakage, but it is
+  proof-shape dependence and remains a proof-purification item.
+- DNU ablations still do not show DNU score deltas; lesion evidence is delegated
+  to dedicated cert-chain probes. That is honest reporting, not complete
+  architecture-dependence proof inside DNU itself.
+- Full `make final-proof` has not yet been rerun from this exact worktree.
+
 ## Latest CRSM / CAA / Immune Closure Verification (2026-06-29)
 
 ### Gaps Addressed

@@ -570,6 +570,8 @@ class LocalPipeBus:
         try:
             # Pre-flight check to avoid BrokenPipeError hangs
             if (
+                not self._is_running
+                or
                 self.write_conn.closed
                 or getattr(self, '_pipe_broken', False)
                 or time.monotonic() < getattr(self, "_write_suppressed_until", 0.0)
@@ -642,10 +644,11 @@ class LocalPipeBus:
         except (BrokenPipeError, EOFError, OSError, ConnectionResetError) as e:
             if not getattr(self, '_pipe_broken', False):
                 self._pipe_broken = True
-                self._mark_transport_degraded(
-                    e,
-                    "pipe closed during fire-and-forget send; transport marked unhealthy",
-                )
+                if self._is_running:
+                    self._mark_transport_degraded(
+                        e,
+                        "pipe closed during fire-and-forget send; transport marked unhealthy",
+                    )
                 logger.info("📡 Bus pipe closed (normal shutdown): %s", str(e)[:60])
             self._safe_close_connection(self.write_conn)
         except (ImportError, AttributeError, RuntimeError) as e:

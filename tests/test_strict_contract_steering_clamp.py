@@ -10,10 +10,14 @@ get a near-off alpha, while normal conversational turns keep full steering.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from core.brain.llm.mlx_worker import (
     _apply_surface_generation_controls,
     _build_user_surface_quality_retry_prompt,
+    _extract_expected_strict_value,
     _messages_with_user_surface_retry,
+    _normalize_strict_value_response,
     _repair_live_user_surface_self_claims,
     _repair_live_user_surface_truncated_tail,
     _restore_surface_generation_controls,
@@ -49,6 +53,53 @@ def test_strict_contract_steering_is_near_off():
     assert alpha <= 0.1
     alpha_v = _surface_control_alpha({"strict_value_contract": True}, 5.0)
     assert alpha_v <= 0.1
+
+
+def test_strict_value_contract_keeps_explicit_literal_when_model_adds_boilerplate():
+    messages = [
+        {
+            "role": "user",
+            "content": "Output exactly these two lowercase letters and nothing else: ok",
+        }
+    ]
+
+    expected = _extract_expected_strict_value(messages, None)
+    normalized = _normalize_strict_value_response(
+        "okI output the letters you requested. Let me know if you need anything else.",
+        expected_value=expected,
+    )
+
+    assert expected == "ok"
+    assert normalized == "ok"
+
+
+def test_strict_value_contract_does_not_repair_wrong_literal():
+    messages = [
+        {
+            "role": "user",
+            "content": "Output exactly these two lowercase letters and nothing else: ok",
+        }
+    ]
+
+    expected = _extract_expected_strict_value(messages, None)
+    normalized = _normalize_strict_value_response(
+        "noI output the wrong letters.",
+        expected_value=expected,
+    )
+
+    assert normalized == "noI output the wrong letters."
+
+
+def test_strict_value_expected_literal_is_forwarded_to_worker():
+    root = Path(__file__).resolve().parents[1]
+    client_source = (root / "core/brain/llm/mlx_client.py").read_text(encoding="utf-8")
+    worker_source = (root / "core/brain/llm/mlx_worker.py").read_text(encoding="utf-8")
+    dnu_source = (root / "tools/agi/run_dnu_agi_proof_battery.py").read_text(encoding="utf-8")
+
+    assert '"expected_strict_value": str(kwargs.get("expected_strict_value") or "")' in client_source
+    assert "Rendering exact strict-value prompt" in worker_source
+    assert "Native strict-value template" not in worker_source
+    assert 'expected_strict_value="ok"' in dnu_source
 
 
 def test_operator_evidence_and_prose_alphas_unchanged():

@@ -176,18 +176,47 @@ class SelfHealing:
             age = now - w.last_heartbeat_at
             if age <= w.expected_interval_s * 2.5:
                 continue
-            if self._foreground_runtime_busy():
+            defer_reason = self._healing_defer_reason()
+            if defer_reason:
                 w.last_heartbeat_at = now
                 await self._append_record_async(
                     {
                         "when": now,
                         "name": w.name,
                         "stale_for_s": age,
-                        "result": "deferred_foreground_busy",
+                        "result": self._deferred_result(defer_reason),
                     }
                 )
                 continue
             await self._heal(w, age)
+
+    @staticmethod
+    def _deferred_result(reason: str) -> str:
+        if reason == "foreground_busy":
+            return "deferred_foreground_busy"
+        return f"deferred_{reason}"
+
+    def _healing_defer_reason(self) -> str:
+        if is_shutdown_requested():
+            return "shutdown_requested"
+
+        try:
+            from core.runtime.proof_policy import proof_headless_run
+
+            if proof_headless_run():
+                return "proof_run_active"
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation(
+                "self_healing",
+                exc,
+                action="deferred healing because proof policy was unavailable",
+                receipt_required=True,
+            )
+            return "proof_policy_unavailable"
+
+        if self._foreground_runtime_busy():
+            return "foreground_busy"
+        return ""
 
     def _foreground_runtime_busy(self) -> bool:
         try:
@@ -243,6 +272,13 @@ class SelfHealing:
             "restart_count": w.restarts,
         }
         try:
+            defer_reason = self._healing_defer_reason()
+            if defer_reason:
+                record["result"] = self._deferred_result(defer_reason)
+                w.last_heartbeat_at = time.time()
+                await self._append_record_async(record)
+                return
+
             if w.restarts >= 3:
                 module_path = await asyncio.to_thread(self._module_path_for_watch, w)
                 block_reason = _deep_repair_block_reason("self_healing_watchdog_deep_repair")

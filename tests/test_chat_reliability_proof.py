@@ -1086,6 +1086,24 @@ def test_numbered_list_without_terminal_punctuation_is_treated_as_truncated_tail
     assert not assess_user_facing_reply(prompt, repaired).retryable
 
 
+def test_bare_numbered_list_marker_is_treated_as_truncated_tail():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes.chat import _looks_truncated_tail
+
+    prompt = "Give a practical multi-step desktop task you could execute."
+    draft = (
+        "Sure, here's a practical multi-step task:1. Scan the local network for active devices.\n"
+        "2. For each device, ping it to check availability and record response time.\n"
+        "3."
+    )
+
+    assessment = assess_user_facing_reply(prompt, draft)
+
+    assert assessment.retryable
+    assert assessment.reasons == ("truncated_tail",)
+    assert _looks_truncated_tail(draft) is True
+
+
 def test_autonomous_follow_through_has_safe_specific_floor():
     from core.conversation.response_reliability import assess_user_facing_reply
     from core.synthesis import deterministic_user_facing_floor

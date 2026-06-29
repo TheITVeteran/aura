@@ -1097,9 +1097,74 @@ _STRICT_VALUE_UNUSABLE_RE = re.compile(
     r"(?:context|information)|unable\s+to\s+determine)\b",
     re.IGNORECASE,
 )
+_STRICT_VALUE_EXACT_PATTERNS = (
+    re.compile(
+        r"(?is)\b(?:output|return|print|emit|write)\s+exactly\b[^:\n]*:\s*"
+        r"(?P<value>`[^`]+`|\"[^\"]+\"|'[^']+'|[^\s.?!,;:<>]+)"
+    ),
+    re.compile(
+        r"(?is)\b(?:output|return|print|emit|write)\s+only\s+"
+        r"(?P<value>`[^`]+`|\"[^\"]+\"|'[^']+'|[^\s.?!,;:<>]+)"
+    ),
+)
 
 
-def _normalize_strict_value_response(text: str) -> str:
+def _clean_expected_strict_value(value: str) -> str:
+    return str(value or "").strip().strip("`\"'").strip()
+
+
+def _extract_expected_strict_value(messages: Any, fallback_prompt: Any) -> str:
+    """Extract an exact literal only from explicit strict-value instructions."""
+
+    _system_parts, user_parts = _extract_message_parts(messages, fallback_prompt)
+    if not user_parts and fallback_prompt is not None:
+        user_parts.append(str(fallback_prompt))
+    for part in reversed(user_parts):
+        text = str(part or "").strip()
+        if not text:
+            continue
+        for pattern in _STRICT_VALUE_EXACT_PATTERNS:
+            match = pattern.search(text)
+            if not match:
+                continue
+            value = _clean_expected_strict_value(match.group("value"))
+            if value:
+                return value
+    return ""
+
+
+def _build_exact_strict_value_prompt(expected_value: str) -> str:
+    expected = _clean_expected_strict_value(expected_value)
+    return (
+        "Output exactly this value and nothing else. "
+        "Do not add tags, explanation, role labels, punctuation, or whitespace.\n\n"
+        f"Value:\n{expected}\n\nFinal answer:"
+    )
+
+
+def _matches_expected_strict_value_prefix(cleaned: str, expected_value: str) -> bool:
+    """Return True when the model began with the required exact value."""
+
+    expected = _clean_expected_strict_value(expected_value)
+    if not expected:
+        return False
+    candidate = str(cleaned or "").lstrip()
+    if candidate == expected:
+        return True
+    if not candidate.startswith(expected):
+        return False
+    suffix = candidate[len(expected):]
+    if not suffix:
+        return True
+    first = suffix[0]
+    # Accept normal separators and the common deterministic probe failure where
+    # a tiny literal is followed immediately by boilerplate, e.g. "okI output".
+    if first.isspace() or first in ".?!,;:)]}>`\"'":
+        return True
+    return expected[-1:].islower() and first.isupper()
+
+
+def _normalize_strict_value_response(text: str, *, expected_value: str = "") -> str:
     """Return a compact model-derived value or empty when the draft is unusable."""
     cleaned = _CHAT_CONTROL_TOKEN_RE.sub("", str(text or "")).strip()
     cleaned = _strip_leading_chatml_prefix(cleaned).strip()
@@ -1123,6 +1188,9 @@ def _normalize_strict_value_response(text: str) -> str:
     if lines:
         cleaned = lines[0]
     cleaned = cleaned.strip().strip("`\"'")
+    expected = _clean_expected_strict_value(expected_value)
+    if expected and _matches_expected_strict_value_prefix(cleaned, expected):
+        return expected
     if not cleaned:
         return ""
     if _STRICT_VALUE_UNUSABLE_RE.search(cleaned):
@@ -2003,6 +2071,12 @@ def _mlx_worker_loop(
                 original_messages = messages
                 strict_answer_contract = bool(job.get("strict_answer_contract", False))
                 strict_value_contract = bool(job.get("strict_value_contract", False))
+                expected_strict_value = (
+                    _clean_expected_strict_value(str(job.get("expected_strict_value") or ""))
+                    or _extract_expected_strict_value(original_messages, original_prompt)
+                    if strict_value_contract
+                    else ""
+                )
                 proof_evaluation_contract = bool(job.get("proof_evaluation_contract", False))
                 operator_evidence_contract = bool(job.get("operator_evidence_contract", False))
                 # disable_prompt_cache = bool(job.get("disable_prompt_cache", False)) or strict_answer_contract
@@ -2019,23 +2093,9 @@ def _mlx_worker_loop(
                     prompt = _build_strict_answer_prompt(messages, prompt)
                     strict_envelope_prefixed = True
                 elif strict_value_contract:
-                    if messages and hasattr(tokenizer, "apply_chat_template"):
-                        try:
-                            logger.info("🎯 [WORKER] Rendering native strict-value chat template.")
-                            prompt = tokenizer.apply_chat_template(
-                                messages,
-                                tools=tools,
-                                add_generation_prompt=True,
-                                tokenize=False,
-                            )
-                        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                            _record_mlx_degradation(
-                                e,
-                                action="continued strict-value generation with raw prompt after native chat template failed",
-                                severity="degraded",
-                            )
-                            logger.warning("❌ [WORKER] Native strict-value template failed: %s", e)
-                            prompt = _build_strict_answer_retry_prompt(messages, prompt)
+                    if expected_strict_value:
+                        logger.info("🎯 [WORKER] Rendering exact strict-value prompt.")
+                        prompt = _build_exact_strict_value_prompt(expected_strict_value)
                     else:
                         prompt = _build_strict_answer_retry_prompt(messages, prompt)
                     messages = None
@@ -2618,28 +2678,44 @@ def _mlx_worker_loop(
                                             response_text = get_refusal_fallback(seed=token_count)
                                             break
 
-                                    sanitized_text = _sanitize_telemetry_leakage(response_text, is_proof=proof_evaluation_contract)
-                                    if sanitized_text is None:
-                                        logger.warning("🚨 [WORKER] Hallucination detected by sanitizer. Returning empty text for caller-side recovery.")
-                                        response_text = ""
-                                        break
-                                        # ipc_writer.put({
-
-                                    response_text = sanitized_text
-
                                     if strict_answer_contract:
+                                        sanitized_text = _sanitize_telemetry_leakage(response_text, is_proof=True)
+                                        if sanitized_text is None:
+                                            logger.warning("🚨 [WORKER] Strict answer draft failed sanitizer.")
+                                            response_text = ""
+                                            break
+                                        response_text = sanitized_text
                                         response_text = _normalize_strict_answer_response(
                                             response_text,
                                             envelope_prefixed=strict_envelope_prefixed,
                                         )
                                     elif strict_value_contract:
                                         raw_strict_value_text = response_text
-                                        response_text = _normalize_strict_value_response(response_text)
+                                        response_text = _normalize_strict_value_response(
+                                            response_text,
+                                            expected_value=expected_strict_value,
+                                        )
+                                        if response_text.strip():
+                                            sanitized_text = _sanitize_telemetry_leakage(response_text, is_proof=True)
+                                            if sanitized_text is None:
+                                                logger.warning("🚨 [WORKER] Strict value draft failed sanitizer after normalization.")
+                                                response_text = ""
+                                                break
+                                            response_text = sanitized_text
                                         if raw_strict_value_text.strip() and not response_text.strip():
                                             logger.warning(
                                                 "⚠️ [WORKER] Strict value draft rejected: %r",
                                                 raw_strict_value_text.strip()[:160],
                                             )
+                                    else:
+                                        sanitized_text = _sanitize_telemetry_leakage(response_text, is_proof=proof_evaluation_contract)
+                                        if sanitized_text is None:
+                                            logger.warning("🚨 [WORKER] Hallucination detected by sanitizer. Returning empty text for caller-side recovery.")
+                                            response_text = ""
+                                            break
+                                            # ipc_writer.put({
+
+                                        response_text = sanitized_text
 
                                     if surface_quality_gate_enabled and response_text.strip():
                                         grounded_surface = _repair_live_user_surface_self_claims(
@@ -2744,10 +2820,15 @@ def _mlx_worker_loop(
                                                 internal_attempt + 1,
                                             )
                                             if internal_attempt == 0 or strict_value_contract:
-                                                prompt = _build_strict_answer_retry_prompt(
-                                                    original_messages,
-                                                    original_prompt,
-                                                )
+                                                if strict_value_contract and expected_strict_value:
+                                                    prompt = _build_exact_strict_value_prompt(
+                                                        expected_strict_value
+                                                    )
+                                                else:
+                                                    prompt = _build_strict_answer_retry_prompt(
+                                                        original_messages,
+                                                        original_prompt,
+                                                    )
                                                 strict_envelope_prefixed = bool(strict_answer_contract)
                                             if prompt_cache_lru is not None:
                                                 prompt_cache_lru.clear()

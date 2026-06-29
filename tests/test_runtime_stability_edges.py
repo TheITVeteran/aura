@@ -570,6 +570,43 @@ class TestSelfHealingLoopSafety(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(append_record.await_args.args[0]["result"], "deferred_foreground_busy")
         self.assertGreater(watch.last_heartbeat_at, time.time() - 1.0)
 
+    async def test_headless_proof_run_defers_healing_restart(self):
+        from core.runtime.self_healing import SelfHealing
+
+        healer = SelfHealing()
+        restart = _AsyncCallRecorder()
+        healer.watch("proof_watch", expected_interval_s=0.01, restart_async=restart)
+        watch = healer._watches["proof_watch"]
+        watch.last_heartbeat_at = time.time() - 10
+
+        append_record = _AsyncCallRecorder()
+        with swap.dict(os.environ, {"AURA_PROOF_RUN": "1"}, clear=False), \
+             swap.object(healer, "_append_record_async", new=append_record):
+            await healer._tick()
+
+        self.assertEqual(restart.await_count, 0)
+        self.assertEqual(append_record.await_count, 1)
+        self.assertEqual(append_record.await_args.args[0]["result"], "deferred_proof_run_active")
+        self.assertGreater(watch.last_heartbeat_at, time.time() - 1.0)
+
+    async def test_heal_rechecks_defer_reason_before_restart(self):
+        from core.runtime.self_healing import SelfHealing
+
+        healer = SelfHealing()
+        restart = _AsyncCallRecorder()
+        healer.watch("raced_watch", expected_interval_s=0.01, restart_async=restart)
+        watch = healer._watches["raced_watch"]
+        append_record = _AsyncCallRecorder()
+
+        with swap.object(healer, "_healing_defer_reason", return_value="shutdown_requested"), \
+             swap.object(healer, "_append_record_async", new=append_record):
+            await healer._heal(watch, 10.0)
+
+        self.assertEqual(restart.await_count, 0)
+        self.assertEqual(append_record.await_count, 1)
+        self.assertEqual(append_record.await_args.args[0]["result"], "deferred_shutdown_requested")
+        self.assertGreater(watch.last_heartbeat_at, time.time() - 1.0)
+
     async def test_module_path_resolution_is_offloaded_for_deep_repair(self):
         from core.runtime.self_healing import SelfHealing
 

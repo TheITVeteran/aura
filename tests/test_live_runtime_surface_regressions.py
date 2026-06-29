@@ -133,6 +133,42 @@ def test_priority_input_timeout_returns_honest_live_status():
     assert_no_live_reset_boilerplate(response)
 
 
+def test_priority_input_holds_foreground_guard_during_processing():
+    from core.orchestrator.mixins.message_handling import MessageHandlingMixin
+    from core.runtime import foreground_guard
+
+    seen_reasons: list[str] = []
+
+    class ProbeForegroundOrchestrator(MessageHandlingMixin):
+        def __init__(self):
+            self._user_input_semaphore = asyncio.Semaphore(1)
+
+        @staticmethod
+        def _is_user_facing_origin(origin):
+            return origin in {"api", "user"}
+
+        async def _process_user_input_core(self, message, origin="user"):
+            del message, origin
+            seen_reasons.append(foreground_guard.foreground_activity_reason())
+            await asyncio.sleep(0)
+            return "ok"
+
+    foreground_guard._reset_for_tests()
+    try:
+        response = asyncio.run(
+            ProbeForegroundOrchestrator().process_user_input_priority(
+                "answer the live prompt",
+                origin="user",
+                timeout_sec=1.0,
+            )
+        )
+    finally:
+        foreground_guard._reset_for_tests()
+
+    assert response == "ok"
+    assert seen_reasons == ["foreground_chat_active"]
+
+
 def test_lock_watchdog_start_failure_is_observable(monkeypatch):
     from core.resilience.lock_watchdog import get_lock_watchdog
 
@@ -2477,6 +2513,12 @@ def test_desktop_self_sufficient_classifier_distinguishes_status_report_from_pro
         "Use my computer to click a Calculator equation, copy the equation body, "
         "put it into Notes, produce a PDF, move that PDF into a Desktop proof folder, "
         "and report the paths."
+    )
+    assert _desktop_objective_self_sufficient_without_cognitive_text(
+        "Please create a folder named 'Aura Live Proof' in my Documents folder "
+        "and write a file inside it called live_proof.txt with one sentence about "
+        "who you are and the current timestamp. Use your desktop tools and confirm "
+        "exactly what you did."
     )
     assert not _desktop_objective_self_sufficient_without_cognitive_text(
         "Open Notes and write a report about quantum mechanics."

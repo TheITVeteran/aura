@@ -133,6 +133,29 @@ def test_fire_and_forget_pipe_timeout_suppresses_future_writes(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_fire_and_forget_send_after_shutdown_drops_without_degradation(monkeypatch):
+    async def scenario():
+        from core.bus import local_pipe_bus as module
+
+        records = []
+        monkeypatch.setattr(module, "record_degradation", lambda *args, **kwargs: records.append((args, kwargs)))
+        read_conn = _FakeConnection()
+        write_conn = _FakeConnection(fail_send=True)
+        bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=False)
+        bus._is_running = False
+
+        try:
+            await bus._send_local("telemetry", {"value": 1})
+        finally:
+            bus._shutdown_executor()
+
+        assert records == []
+        assert write_conn.sent == []
+        assert bus.get_status()["degraded"] is False
+
+    asyncio.run(scenario())
+
+
 def test_local_pipe_bus_health_requires_running_transport():
     read_conn = _FakeConnection()
     write_conn = _FakeConnection()
@@ -266,8 +289,8 @@ def test_stop_treats_task_cancellation_as_normal_shutdown(monkeypatch):
             lambda *args, **kwargs: records.append((args, kwargs)),
         )
 
-        async def fake_wait_for(_task, timeout):
-            assert timeout == 1.0
+        async def fake_wait_for(_task, **kwargs):
+            assert kwargs["timeout"] == 1.0
             raise asyncio.CancelledError()
 
         monkeypatch.setattr(module.asyncio, "wait_for", fake_wait_for)
@@ -298,8 +321,8 @@ def test_stop_records_shutdown_timeouts_as_degradation(monkeypatch):
             lambda *args, **kwargs: records.append((args, kwargs)),
         )
 
-        async def fake_wait_for(_task, timeout):
-            assert timeout == 1.0
+        async def fake_wait_for(_task, **kwargs):
+            assert kwargs["timeout"] == 1.0
             raise TimeoutError("shutdown wait timed out")
 
         monkeypatch.setattr(module.asyncio, "wait_for", fake_wait_for)

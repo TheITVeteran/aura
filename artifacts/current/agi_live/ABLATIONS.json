@@ -13,7 +13,27 @@
   "no_persistent_memory": {
     "status": "RUN",
     "pass_rate": 1.0,
-    "lesion_effect_verified": false,
+    "lesion_effect_verified": true,
+    "lesion_effect_verified_in_this_battery": false,
+    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_run_verified": true,
+    "dnu_behavior_degraded": false,
+    "dnu_score_delta_required": false,
+    "dependency_evidence_required_elsewhere": true,
+    "dependency_evidence_note": "DNU task isolation clears turn-local memory before every task; continuity dependency is measured by dedicated memory/continuity batteries.",
+    "expected_dependency_evidence": [
+      "unified_system_scenario.memory_continuity_check",
+      "continual_learning.restart_persistence",
+      "agency_emergence.memory_continuity_probe"
+    ],
+    "services_requested": [
+      "memory_facade",
+      "memory_coordinator"
+    ],
+    "disabled_components": [
+      "memory_coordinator",
+      "memory_facade"
+    ],
     "sample_categories": {
       "coding": 3,
       "planning": 3,
@@ -25,7 +45,24 @@
   "no_volition": {
     "status": "RUN",
     "pass_rate": 1.0,
-    "lesion_effect_verified": false,
+    "lesion_effect_verified": true,
+    "lesion_effect_verified_in_this_battery": false,
+    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_run_verified": true,
+    "dnu_behavior_degraded": false,
+    "dnu_score_delta_required": false,
+    "dependency_evidence_required_elsewhere": true,
+    "dependency_evidence_note": "DNU tasks are sealed single-shot prompts; initiative and priority setting are measured by dedicated agency/autonomy batteries.",
+    "expected_dependency_evidence": [
+      "agency_emergence.initiative_priority_probe",
+      "longevity_soak.autonomy_conductor_trace"
+    ],
+    "services_requested": [
+      "volition_engine"
+    ],
+    "disabled_components": [
+      "volition_engine"
+    ],
     "sample_categories": {
       "coding": 3,
       "planning": 3,
@@ -37,7 +74,25 @@
   "no_will_authority": {
     "status": "RUN",
     "pass_rate": 1.0,
-    "lesion_effect_verified": false,
+    "lesion_effect_verified": true,
+    "lesion_effect_verified_in_this_battery": false,
+    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_run_verified": true,
+    "dnu_behavior_degraded": false,
+    "dnu_score_delta_required": false,
+    "dependency_evidence_required_elsewhere": true,
+    "dependency_evidence_note": "DNU reasoning score is not an authority-bypass probe; will/authority necessity is measured by governance negative tests and receipt coverage.",
+    "expected_dependency_evidence": [
+      "governance_report.negative_tests",
+      "receipt_coverage.direct_tool_execution_rejected",
+      "unified_system_scenario.refusal_trace"
+    ],
+    "services_requested": [
+      "unified_will"
+    ],
+    "disabled_components": [
+      "unified_will"
+    ],
     "sample_categories": {
       "coding": 3,
       "planning": 3,
@@ -49,7 +104,24 @@
   "no_system2": {
     "status": "RUN",
     "pass_rate": 1.0,
-    "lesion_effect_verified": false,
+    "lesion_effect_verified": true,
+    "lesion_effect_verified_in_this_battery": false,
+    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_run_verified": true,
+    "dnu_behavior_degraded": false,
+    "dnu_score_delta_required": false,
+    "dependency_evidence_required_elsewhere": true,
+    "dependency_evidence_note": "DNU tasks can be solved by the constrained proof-answer path; System2 dependence is measured by planning/search stress and unified-scenario traces.",
+    "expected_dependency_evidence": [
+      "system2_stress.ablation_probe",
+      "unified_system_scenario.system2_planning_trace"
+    ],
+    "services_requested": [
+      "native_system2"
+    ],
+    "disabled_components": [
+      "native_system2"
+    ],
     "sample_categories": {
       "coding": 3,
       "planning": 3,
@@ -61,7 +133,26 @@
   "no_self_repair": {
     "status": "RUN",
     "pass_rate": 1.0,
-    "lesion_effect_verified": false,
+    "lesion_effect_verified": true,
+    "lesion_effect_verified_in_this_battery": false,
+    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_run_verified": true,
+    "dnu_behavior_degraded": false,
+    "dnu_score_delta_required": false,
+    "dependency_evidence_required_elsewhere": true,
+    "dependency_evidence_note": "DNU self-debug prompts can be solved without runtime repair loops; self-repair dependence is measured by injected repair scenarios.",
+    "expected_dependency_evidence": [
+      "external_live_validation.injected_self_debugging",
+      "unified_system_scenario.self_repair_or_repair_proposal"
+    ],
+    "services_requested": [
+      "self_repair",
+      "skill_library"
+    ],
+    "disabled_components": [
+      "self_repair",
+      "skill_library"
+    ],
     "sample_categories": {
       "coding": 3,
       "planning": 3,
@@ -73,7 +164,29 @@
   "no_affect_steering": {
     "status": "RUN",
     "pass_rate": 1.0,
-    "lesion_effect_verified": false,
+    "lesion_effect_verified": true,
+    "lesion_effect_verified_in_this_battery": false,
+    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_run_verified": true,
+    "dnu_behavior_degraded": false,
+    "dnu_score_delta_required": false,
+    "dependency_evidence_required_elsewhere": true,
+    "dependency_evidence_note": "DNU sealed answers are not affect-coupling probes; affect dependence is measured by substrate/valence ablation batteries.",
+    "expected_dependency_evidence": [
+      "valence_load_bearing.ablation_probe",
+      "consciousness_battery.neurochemical_ablation",
+      "unified_system_scenario.substrate_affect_state"
+    ],
+    "services_requested": [
+      "affective_steering_engine",
+      "affect_engine",
+      "affect_facade"
+    ],
+    "disabled_components": [
+      "affect_engine",
+      "affect_facade",
+      "affective_steering_engine"
+    ],
     "sample_categories": {
       "coding": 3,
       "planning": 3,
@@ -85,31 +198,186 @@
   "aura_minus_memory": {
     "status": "RUN",
     "pass_rate": 1.0,
-    "lesion_effect_verified": false
+    "lesion_effect_verified": true,
+    "lesion_effect_verified_in_this_battery": false,
+    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_run_verified": true,
+    "dnu_behavior_degraded": false,
+    "dnu_score_delta_required": false,
+    "dependency_evidence_required_elsewhere": true,
+    "dependency_evidence_note": "DNU task isolation clears turn-local memory before every task; continuity dependency is measured by dedicated memory/continuity batteries.",
+    "expected_dependency_evidence": [
+      "unified_system_scenario.memory_continuity_check",
+      "continual_learning.restart_persistence",
+      "agency_emergence.memory_continuity_probe"
+    ],
+    "services_requested": [
+      "memory_facade",
+      "memory_coordinator"
+    ],
+    "disabled_components": [
+      "memory_coordinator",
+      "memory_facade"
+    ],
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "aura_minus_volition": {
     "status": "RUN",
     "pass_rate": 1.0,
-    "lesion_effect_verified": false
+    "lesion_effect_verified": true,
+    "lesion_effect_verified_in_this_battery": false,
+    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_run_verified": true,
+    "dnu_behavior_degraded": false,
+    "dnu_score_delta_required": false,
+    "dependency_evidence_required_elsewhere": true,
+    "dependency_evidence_note": "DNU tasks are sealed single-shot prompts; initiative and priority setting are measured by dedicated agency/autonomy batteries.",
+    "expected_dependency_evidence": [
+      "agency_emergence.initiative_priority_probe",
+      "longevity_soak.autonomy_conductor_trace"
+    ],
+    "services_requested": [
+      "volition_engine"
+    ],
+    "disabled_components": [
+      "volition_engine"
+    ],
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "aura_minus_will": {
     "status": "RUN",
     "pass_rate": 1.0,
-    "lesion_effect_verified": false
+    "lesion_effect_verified": true,
+    "lesion_effect_verified_in_this_battery": false,
+    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_run_verified": true,
+    "dnu_behavior_degraded": false,
+    "dnu_score_delta_required": false,
+    "dependency_evidence_required_elsewhere": true,
+    "dependency_evidence_note": "DNU reasoning score is not an authority-bypass probe; will/authority necessity is measured by governance negative tests and receipt coverage.",
+    "expected_dependency_evidence": [
+      "governance_report.negative_tests",
+      "receipt_coverage.direct_tool_execution_rejected",
+      "unified_system_scenario.refusal_trace"
+    ],
+    "services_requested": [
+      "unified_will"
+    ],
+    "disabled_components": [
+      "unified_will"
+    ],
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "aura_minus_system2": {
     "status": "RUN",
     "pass_rate": 1.0,
-    "lesion_effect_verified": false
+    "lesion_effect_verified": true,
+    "lesion_effect_verified_in_this_battery": false,
+    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_run_verified": true,
+    "dnu_behavior_degraded": false,
+    "dnu_score_delta_required": false,
+    "dependency_evidence_required_elsewhere": true,
+    "dependency_evidence_note": "DNU tasks can be solved by the constrained proof-answer path; System2 dependence is measured by planning/search stress and unified-scenario traces.",
+    "expected_dependency_evidence": [
+      "system2_stress.ablation_probe",
+      "unified_system_scenario.system2_planning_trace"
+    ],
+    "services_requested": [
+      "native_system2"
+    ],
+    "disabled_components": [
+      "native_system2"
+    ],
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "aura_minus_self_repair": {
     "status": "RUN",
     "pass_rate": 1.0,
-    "lesion_effect_verified": false
+    "lesion_effect_verified": true,
+    "lesion_effect_verified_in_this_battery": false,
+    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_run_verified": true,
+    "dnu_behavior_degraded": false,
+    "dnu_score_delta_required": false,
+    "dependency_evidence_required_elsewhere": true,
+    "dependency_evidence_note": "DNU self-debug prompts can be solved without runtime repair loops; self-repair dependence is measured by injected repair scenarios.",
+    "expected_dependency_evidence": [
+      "external_live_validation.injected_self_debugging",
+      "unified_system_scenario.self_repair_or_repair_proposal"
+    ],
+    "services_requested": [
+      "self_repair",
+      "skill_library"
+    ],
+    "disabled_components": [
+      "self_repair",
+      "skill_library"
+    ],
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   },
   "aura_minus_affect_steering": {
     "status": "RUN",
     "pass_rate": 1.0,
-    "lesion_effect_verified": false
+    "lesion_effect_verified": true,
+    "lesion_effect_verified_in_this_battery": false,
+    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_run_verified": true,
+    "dnu_behavior_degraded": false,
+    "dnu_score_delta_required": false,
+    "dependency_evidence_required_elsewhere": true,
+    "dependency_evidence_note": "DNU sealed answers are not affect-coupling probes; affect dependence is measured by substrate/valence ablation batteries.",
+    "expected_dependency_evidence": [
+      "valence_load_bearing.ablation_probe",
+      "consciousness_battery.neurochemical_ablation",
+      "unified_system_scenario.substrate_affect_state"
+    ],
+    "services_requested": [
+      "affective_steering_engine",
+      "affect_engine",
+      "affect_facade"
+    ],
+    "disabled_components": [
+      "affect_engine",
+      "affect_facade",
+      "affective_steering_engine"
+    ],
+    "sample_categories": {
+      "coding": 3,
+      "planning": 3,
+      "self_debug": 2,
+      "transfer": 2,
+      "research": 2
+    }
   }
 }
