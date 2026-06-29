@@ -341,6 +341,22 @@ class ConversationalDynamicsPhase(Phase):
                 )
                 logger.debug("ConversationalDynamics: narrative memory skipped: %s", exc)
 
+            # Autobiographical mythos: durable dream/identity continuity artifact
+            try:
+                from core.container import ServiceContainer
+
+                dream_journal = ServiceContainer.get("dream_journal", default=None)
+                if dream_journal and hasattr(dream_journal, "get_autobiographical_mythos_block"):
+                    mythos_block = dream_journal.get_autobiographical_mythos_block()
+                    if mythos_block:
+                        new_state.response_modifiers["autobiographical_mythos"] = mythos_block
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                _record_conversational_degradation(
+                    exc,
+                    action="continued without autobiographical mythos context for this turn",
+                )
+                logger.debug("ConversationalDynamics: autobiographical mythos skipped: %s", exc)
+
             # Natural Follow-up: whether Aura should ask a follow-up, make a statement, or stay quiet
             try:
                 from core.container import ServiceContainer

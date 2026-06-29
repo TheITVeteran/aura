@@ -578,6 +578,7 @@ class ContextAssembler:
                 ("metacognitive_strategy", "REASONING STRATEGY"),
                 ("credit_assignment", "OUTCOME AWARENESS"),
                 ("narrative_context", "AUTOBIOGRAPHICAL NARRATIVE"),
+                ("autobiographical_mythos", "AUTOBIOGRAPHICAL MYTHOS"),
                 ("agency_comparator", "SENSE OF AGENCY"),
                 ("higher_order_thought", "HIGHER-ORDER AWARENESS"),
                 ("intersubjectivity", "INTERSUBJECTIVE AWARENESS"),

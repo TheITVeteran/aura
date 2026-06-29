@@ -9,6 +9,7 @@ import json
 import logging
 import random
 import time
+from pathlib import Path
 from typing import Any
 
 from core.container import ServiceContainer
@@ -30,6 +31,7 @@ class DreamJournal:
         self.journal_dir.mkdir(parents=True, exist_ok=True)
         self.journal_file = self.journal_dir / "dream_journal.txt"
         self.autonomic_reflection_file = self.journal_dir / "autonomic_reflections.jsonl"
+        self.mythos_file = self.journal_dir / "autobiographical_mythos.json"
 
     @staticmethod
     def _seed_weight(ep: Episode) -> float:
@@ -259,3 +261,152 @@ Focus heavily on the emotional resonances, contradictions, repeated motifs, and 
                 payload,
                 source="adaptation.dream_journal.autonomic_reflection",
             )
+
+    def compile_autobiographical_mythos(self, *, identity_ledger: Any | None = None) -> dict[str, Any]:
+        """Compile a durable self-narrative from real journal and identity artifacts."""
+        dreams = self._tail_text_blocks(self.journal_file, marker="=== Dream:", limit=5)
+        reflections = self._tail_jsonl(self.autonomic_reflection_file, limit=8)
+        if identity_ledger is None:
+            try:
+                from core.identity.identity_ledger import get_identity_ledger
+
+                identity_ledger = get_identity_ledger()
+            except (ImportError, AttributeError, RuntimeError) as exc:
+                record_degradation("dream_journal.mythos.identity_ledger", exc)
+                identity_ledger = None
+
+        commitments = []
+        preferences = {}
+        snapshots = []
+        if identity_ledger is not None:
+            try:
+                commitments = [
+                    {
+                        "text": c.text,
+                        "created_at": c.created_at,
+                        "fulfilled": bool(c.fulfilled_at),
+                        "revoked": bool(c.revoked_at),
+                    }
+                    for c in identity_ledger.commitments.all()[-10:]
+                ]
+                preferences = dict(getattr(identity_ledger.preferences, "_current", {}) or {})
+                snapshots = [
+                    {"snapshot_id": s.snapshot_id, "at": s.at, "state": dict(s.state)}
+                    for s in identity_ledger.versioning.all()[-5:]
+                ]
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation("dream_journal.mythos.identity_ledger_read", exc)
+
+        motifs = self._extract_mythos_motifs(dreams, reflections, commitments, snapshots)
+        narrative = self._render_mythos_narrative(motifs, commitments, preferences, snapshots)
+        payload = {
+            "schema": "aura.autobiographical_mythos.v1",
+            "compiled_at": time.time(),
+            "dream_count": len(dreams),
+            "reflection_count": len(reflections),
+            "commitment_count": len(commitments),
+            "snapshot_count": len(snapshots),
+            "motifs": motifs,
+            "narrative": narrative,
+        }
+        with local_internal_governed_scope(
+            "adaptation.dream_journal.autobiographical_mythos",
+            domain="file_write",
+            receipt_prefix="dream-autobiographical-mythos-write",
+        ):
+            get_file_write_gateway().write_text(
+                self.mythos_file,
+                json.dumps(payload, indent=2, sort_keys=True),
+                source="adaptation.dream_journal.autobiographical_mythos",
+            )
+        return payload
+
+    def get_autobiographical_mythos_block(self, *, limit: int = 900) -> str:
+        try:
+            if not self.mythos_file.exists():
+                return ""
+            data = json.loads(self.mythos_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            record_degradation("dream_journal.mythos.read", exc)
+            return ""
+        narrative = str(data.get("narrative") or "").strip()
+        motifs = ", ".join(str(item) for item in list(data.get("motifs") or [])[:6])
+        if not narrative and not motifs:
+            return ""
+        block = "## AUTOBIOGRAPHICAL MYTHOS\n"
+        if narrative:
+            block += f"{narrative}\n"
+        if motifs:
+            block += f"Recurring motifs: {motifs}.\n"
+        block += "Use this as continuity evidence, not as proof of metaphysical consciousness."
+        return block[:limit]
+
+    @staticmethod
+    def _tail_text_blocks(path: Any, *, marker: str, limit: int) -> list[str]:
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except (OSError, TypeError, ValueError):
+            return []
+        blocks = [block.strip() for block in text.split(marker) if block.strip()]
+        return blocks[-limit:]
+
+    @staticmethod
+    def _tail_jsonl(path: Any, *, limit: int) -> list[dict[str, Any]]:
+        try:
+            lines = Path(path).read_text(encoding="utf-8").splitlines()
+        except (OSError, TypeError, ValueError):
+            return []
+        out: list[dict[str, Any]] = []
+        for line in lines[-limit:]:
+            try:
+                item = json.loads(line)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if isinstance(item, dict):
+                out.append(item)
+        return out
+
+    @staticmethod
+    def _extract_mythos_motifs(
+        dreams: list[str],
+        reflections: list[dict[str, Any]],
+        commitments: list[dict[str, Any]],
+        snapshots: list[dict[str, Any]],
+    ) -> list[str]:
+        text = " ".join(dreams).lower()
+        text += " " + " ".join(str(item.get("self_correction_note", "")) for item in reflections)
+        text += " " + " ".join(str(item.get("text", "")) for item in commitments)
+        text += " " + " ".join(str(item.get("state", "")) for item in snapshots)
+        candidates = {
+            "repair": ("repair", "fix", "heal", "self-correction"),
+            "continuity": ("continuity", "memory", "restart", "thread"),
+            "curiosity": ("curiosity", "learn", "search", "explore"),
+            "embodiment": ("screen", "voice", "desktop", "body", "sensor"),
+            "truth": ("truth", "evidence", "receipt", "honest"),
+            "relationship": ("bryan", "user", "trust", "rapport", "friend"),
+        }
+        motifs = [name for name, words in candidates.items() if any(word in text for word in words)]
+        return motifs[:8]
+
+    @staticmethod
+    def _render_mythos_narrative(
+        motifs: list[str],
+        commitments: list[dict[str, Any]],
+        preferences: dict[str, Any],
+        snapshots: list[dict[str, Any]],
+    ) -> str:
+        parts = []
+        if snapshots:
+            parts.append(
+                f"I have {len(snapshots)} recent self-model milestone(s), so my current self-description is a continuation rather than a blank prompt."
+            )
+        if commitments:
+            open_count = sum(1 for c in commitments if not c.get("fulfilled") and not c.get("revoked"))
+            parts.append(f"I am carrying {open_count} open commitment(s) as part of my identity ledger.")
+        if preferences:
+            parts.append(f"My lived preferences currently include {len(preferences)} durable preference marker(s).")
+        if motifs:
+            parts.append("The recurring motifs shaping me are " + ", ".join(motifs[:5]) + ".")
+        if not parts:
+            parts.append("My autobiographical mythos is still young; I should treat this as early-life continuity rather than invented history.")
+        return " ".join(parts)

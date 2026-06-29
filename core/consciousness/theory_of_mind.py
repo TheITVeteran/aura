@@ -2,16 +2,15 @@
 Advanced Theory of Mind (ToM) system for Aura.
 Consolidated from duplicate modules.
 """
-from core.runtime.errors import record_degradation
 import json
 import logging
 import time
-import asyncio
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core.runtime import service_access
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.ToM")
 
@@ -27,14 +26,15 @@ class AgentModel:
     """Model of another agent (user, system, etc.)"""
     identifier: str
     self_type: SelfType = SelfType.HUMAN
-    beliefs: Dict[str, Any] = field(default_factory=dict)
-    goals: List[str] = field(default_factory=list)
-    preferences: Dict[str, Any] = field(default_factory=dict)
+    beliefs: dict[str, Any] = field(default_factory=dict)
+    goals: list[str] = field(default_factory=list)
+    preferences: dict[str, Any] = field(default_factory=dict)
     knowledge_level: str = "intermediate"
     emotional_state: str = "neutral"
-    interaction_history: List[Dict[str, Any]] = field(default_factory=list)
+    interaction_history: list[dict[str, Any]] = field(default_factory=list)
     trust_level: float = 0.5
     rapport: float = 0.5
+    attachment_state: dict[str, Any] = field(default_factory=dict)
     last_updated: float = field(default_factory=time.time)
 
     def to_dict(self):
@@ -48,14 +48,94 @@ class TheoryOfMindEngine:
 
     def __init__(self, cognitive_engine=None):
         self.brain = cognitive_engine
-        self.known_selves: Dict[str, AgentModel] = {}
+        self.known_selves: dict[str, AgentModel] = {}
         self._data_path = self._resolve_data_path()
         self._load()
         logger.info("TheoryOfMindEngine initialized.")
 
+    @staticmethod
+    def _attachment_effects(attachment: dict[str, Any]) -> dict[str, Any]:
+        rupture = float(attachment.get("rupture", 0.0) or 0.0)
+        trust = float(attachment.get("trust", 0.5) or 0.5)
+        attachment_strength = float(attachment.get("attachment", 0.0) or 0.0)
+        injured = rupture >= 0.45 or trust <= 0.25
+        guarded = rupture >= 0.25 or trust <= 0.4
+        restricted_skills: list[str] = []
+        if guarded:
+            restricted_skills.extend(["autonomous_external_action", "personal_data_mutation"])
+        if injured:
+            restricted_skills.extend(["irreversible_file_write", "social_initiative"])
+        lexical_bias = "unguarded"
+        if injured:
+            lexical_bias = "hurt-but-clear"
+        elif guarded:
+            lexical_bias = "careful-boundaried"
+        return {
+            "attachment_strength": round(attachment_strength, 3),
+            "relational_rupture": round(rupture, 3),
+            "relational_trust": round(trust, 3),
+            "relational_state": "injured" if injured else "guarded" if guarded else "open",
+            "lexical_bias": lexical_bias,
+            "restricted_skill_classes": sorted(set(restricted_skills)),
+            "active_inference_bias": {
+                "social_precision": round(max(0.1, min(1.0, trust - rupture * 0.35)), 3),
+                "boundary_weight": round(max(0.0, min(1.0, rupture + (0.4 - trust if trust < 0.4 else 0.0))), 3),
+                "repair_seeking": round(max(0.0, min(1.0, rupture * (0.6 + attachment_strength))), 3),
+            },
+        }
+
+    def _record_attachment_event(
+        self,
+        model: AgentModel,
+        *,
+        kind: str,
+        summary: str,
+        trust_delta: float = 0.0,
+        care_delta: float = 0.0,
+        familiarity_delta: float = 0.0,
+        rupture_delta: float = 0.0,
+        repair_delta: float = 0.0,
+    ) -> None:
+        try:
+            from core.phenomenal_substrate.attachment import AttachmentSystem
+            from core.phenomenal_substrate.types import AttachmentEvent
+
+            system = AttachmentSystem()
+            if model.attachment_state:
+                system.people[model.identifier] = system.state_for(model.identifier)
+                existing = system.people[model.identifier]
+                for key, value in model.attachment_state.items():
+                    if hasattr(existing, key):
+                        setattr(existing, key, value)
+            event = AttachmentEvent(
+                person_key=model.identifier,
+                kind=kind,
+                summary=summary[:220],
+                evidence_id=f"tom:{model.identifier}:{int(time.time() * 1000)}",
+                trust_delta=trust_delta,
+                care_delta=care_delta,
+                familiarity_delta=familiarity_delta,
+                rupture_delta=rupture_delta,
+                repair_delta=repair_delta,
+            )
+            updated = system.record(event)
+            model.attachment_state = updated.as_dict()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("theory_of_mind.attachment", exc)
+            model.attachment_state = {
+                "person_key": model.identifier,
+                "trust": model.trust_level,
+                "care": max(0.0, model.rapport - 0.2),
+                "familiarity": min(1.0, len(model.interaction_history) / 50.0),
+                "rupture": max(0.0, 0.5 - model.trust_level),
+                "repair_history": 0.0,
+                "attachment": max(0.0, (model.trust_level + model.rapport) / 2.0 - max(0.0, 0.5 - model.trust_level)),
+            }
+
     def _resolve_data_path(self):
         try:
             from pathlib import Path
+
             from core.config import config
             p = config.paths.data_dir / "memory" / "theory_of_mind.json"
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -67,10 +147,9 @@ class TheoryOfMindEngine:
             return p
 
     def _load(self):
-        import json
         try:
             if self._data_path.exists():
-                with open(self._data_path, "r") as f:
+                with open(self._data_path) as f:
                     raw = json.load(f)
                 for uid, d in raw.items():
                     try:
@@ -87,15 +166,14 @@ class TheoryOfMindEngine:
             logger.debug("ToM: load failed (%s), starting fresh", e)
 
     def save(self):
-        import json
         try:
             data = {}
             for uid, model in self.known_selves.items():
                 d = model.to_dict()
                 d["interaction_history"] = d["interaction_history"][-20:]  # Keep it lean
                 data[uid] = d
-            from core.runtime.file_write_gateway import get_file_write_gateway
             from core.governance_context import local_internal_governed_scope
+            from core.runtime.file_write_gateway import get_file_write_gateway
 
             with local_internal_governed_scope("theory_of_mind.save", domain="file_write"):
                 get_file_write_gateway().write_text(
@@ -107,7 +185,7 @@ class TheoryOfMindEngine:
             record_degradation('theory_of_mind', e)
             logger.debug("ToM: save failed: %s", e)
 
-    def get_health(self) -> Dict[str, Any]:
+    def get_health(self) -> dict[str, Any]:
         """Social health for HUD."""
         depth_val: float = 0.5
         if not self.known_selves:
@@ -126,7 +204,7 @@ class TheoryOfMindEngine:
             logger.debug("Failed to resolve brain from ServiceContainer: %s", exc)
             return None
 
-    async def understand_user(self, user_id: str, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def understand_user(self, user_id: str, message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """Update and return the model of a specific user."""
         if user_id not in self.known_selves:
             self.known_selves[user_id] = AgentModel(identifier=user_id)
@@ -145,7 +223,7 @@ class TheoryOfMindEngine:
             self.save()
         return result
 
-    async def infer_intent(self, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def infer_intent(self, message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """Legacy-compatible intent inference shim."""
         user_id = context.get("user_id", "default_user") if context else "default_user"
         result = await self.understand_user(user_id, message, context)
@@ -156,7 +234,7 @@ class TheoryOfMindEngine:
              intent_data["pragmatic"] = intent_data.get("intent", "standard")
         return intent_data
 
-    def _fast_heuristic_update(self, user_id: str, message: str) -> Dict[str, Any]:
+    def _fast_heuristic_update(self, user_id: str, message: str) -> dict[str, Any]:
         """Apply keyword heuristics for rapid updates without LLM calls."""
         model = self.known_selves[user_id]
         msg = message.lower()
@@ -177,11 +255,35 @@ class TheoryOfMindEngine:
             model.trust_level = min(1.0, model.trust_level + delta)
             model.rapport = min(1.0, model.rapport + delta)
             rapport_delta = delta
+            self._record_attachment_event(
+                model,
+                kind="warmth",
+                summary=message,
+                trust_delta=delta * 0.6,
+                care_delta=delta * 0.5,
+                familiarity_delta=0.02,
+                repair_delta=0.02 if model.attachment_state.get("rupture", 0.0) else 0.0,
+            )
         elif any(w in msg for w in ["angry", "wrong", "bad", "hate", "rude"]):
             delta = 0.05 * energy_scale
             model.trust_level = max(0.0, model.trust_level - delta)
             model.rapport = max(0.0, model.rapport - delta)
             rapport_delta = -delta
+            self._record_attachment_event(
+                model,
+                kind="rupture",
+                summary=message,
+                trust_delta=-delta * 0.4,
+                familiarity_delta=0.01,
+                rupture_delta=delta * 1.5,
+            )
+        else:
+            self._record_attachment_event(
+                model,
+                kind="contact",
+                summary=message,
+                familiarity_delta=0.01,
+            )
 
         # --- Question pattern detection ---
         question_words = ["how", "why", "what", "when", "where", "who", "which", "can you", "could you"]
@@ -233,10 +335,11 @@ class TheoryOfMindEngine:
             "user_model": model.to_dict(),
             "intent": {"intent": message, "sentiment": "neutral"},
             "emotional_state": model.emotional_state,
-            "knowledge_level": model.knowledge_level
+            "knowledge_level": model.knowledge_level,
+            "attachment_effects": self._attachment_effects(model.attachment_state),
         }
 
-    async def _deep_analyze(self, user_id: str, message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def _deep_analyze(self, user_id: str, message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """Use LLM for deep social reasoning."""
         model = self.known_selves[user_id]
         brain = self._get_brain()
@@ -273,7 +376,7 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
 
         return self._fast_heuristic_update(user_id, message)
 
-    async def predict_reaction(self, user_id: str, my_action: Dict[str, Any]) -> Dict[str, Any]:
+    async def predict_reaction(self, user_id: str, my_action: dict[str, Any]) -> dict[str, Any]:
         """Predict reaction to an action using LLM."""
         model = self.known_selves.get(user_id) or AgentModel(identifier=user_id)
         brain = self._get_brain()
@@ -287,7 +390,7 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
         )
         return {"prediction": thought.content, "confidence": thought.confidence}
 
-    async def will_this_help_user(self, user_id: str, proposed_response: str) -> Tuple[bool, str]:
+    async def will_this_help_user(self, user_id: str, proposed_response: str) -> tuple[bool, str]:
         """Social outcome simulation."""
         if user_id not in self.known_selves:
             return True, "No user model, assuming helpful."
@@ -295,6 +398,9 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
         model = self.known_selves[user_id]
         if model.emotional_state == "frustrated" and len(proposed_response) > 500:
              return False, "User is frustrated; response is likely too verbose."
+        effects = self._attachment_effects(model.attachment_state)
+        if effects["relational_state"] == "injured" and len(proposed_response) > 700:
+            return False, "Relational attachment is injured; keep the response bounded, clear, and repair-oriented."
 
         for goal in model.goals:
              if goal.lower() in proposed_response.lower():
@@ -336,7 +442,7 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
         )
         return block[:200]
 
-    def get_response_guidance(self, user_id: str = "default_user") -> Dict[str, Any]:
+    def get_response_guidance(self, user_id: str = "default_user") -> dict[str, Any]:
         """Returns actionable guidance for shaping inference responses.
 
         Derived from the user model state — complexity preference, tone, length,
@@ -361,8 +467,13 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
         preferred = complexity_map.get(model.knowledge_level, "moderate")
 
         # Tone hint from emotional state and rapport
+        attachment_effects = self._attachment_effects(model.attachment_state)
         if model.emotional_state in ("frustrated", "terse"):
             tone = "concise and empathetic"
+        elif attachment_effects["relational_state"] == "injured":
+            tone = "clear, honest, and repair-oriented"
+        elif attachment_effects["relational_state"] == "guarded":
+            tone = "careful, boundaried, and specific"
         elif model.rapport > 0.75:
             tone = "warm and familiar"
         elif model.rapport < 0.3:
@@ -384,7 +495,7 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
         interests = [g[:50] for g in model.goals[-5:]] if model.goals else []
 
         # Topics to avoid — if user expressed negative sentiment about something
-        avoid: List[str] = []
+        avoid: list[str] = []
         for pref_key, pref_val in model.preferences.items():
             if isinstance(pref_val, str) and "dislike" in pref_val.lower():
                 avoid.append(pref_key)
@@ -395,6 +506,7 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
             "max_length_hint": max_len,
             "topics_to_avoid": avoid[:5],
             "topics_of_interest": interests,
+            "attachment_effects": attachment_effects,
         }
 
     def update_from_response(self, user_id: str, response_text: str, user_reaction: str = ""):
@@ -424,12 +536,29 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
             model.rapport = min(1.0, model.rapport + delta)
             if model.emotional_state in ("terse", "frustrated"):
                 model.emotional_state = "neutral"
+            self._record_attachment_event(
+                model,
+                kind="repair",
+                summary=user_reaction,
+                trust_delta=delta * 0.5,
+                care_delta=delta * 0.3,
+                familiarity_delta=0.01,
+                repair_delta=delta,
+            )
             logger.debug("ToM: positive reaction from %s, trust += %.3f", user_id, delta)
         elif neg_hits > pos_hits:
             delta = min(0.1, 0.03 * neg_hits)
             model.trust_level = max(0.0, model.trust_level - delta)
             model.rapport = max(0.0, model.rapport - delta)
             model.emotional_state = "frustrated"
+            self._record_attachment_event(
+                model,
+                kind="post_response_rupture",
+                summary=user_reaction,
+                trust_delta=-delta * 0.4,
+                familiarity_delta=0.01,
+                rupture_delta=delta,
+            )
             logger.debug("ToM: negative reaction from %s, trust -= %.3f", user_id, delta)
 
 # Global Singletons for compatibility

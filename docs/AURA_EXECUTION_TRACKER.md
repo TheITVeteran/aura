@@ -1778,6 +1778,48 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
 
 ## Unresolved Failures / Known Backlog
 
+## Checkpoint: 2026-06-29 Continuous Sensing + Causal Inner-Life Integration
+
+- Scope: fold the latest closeout additions into live runtime machinery rather
+  than adding task-specific scripts or prompt-only claims.
+- Root issues fixed:
+  - `AmbientDeveloperStream` now samples bounded local directory changes,
+    recent logs, terminal buffers, socket status counts, and resource
+    interrupts. It still avoids packet capture and destructive probes.
+  - `NativeMultimodalBridge` now binds ambient stream frames and connectivity
+    status into `AuraState.world.recent_percepts`, `world.facts`, and
+    `response_modifiers`, making background sensory evidence causal for the
+    canonical state path.
+  - `ConnectivityProbe` provides a cached online/offline signal. Offline mode
+    no longer needs a canned "no internet" reply; response generation receives
+    evidence that web/browser actions are unavailable and can answer in Aura's
+    normal voice without fabricating live sources.
+  - `GlobalWorkspace` now has a bounded `SomaticNoiseInjector`. Rare impulses
+    can compete in the workspace as normal candidates, giving Aura a controlled
+    capacity for non-optimal whim while preserving inhibition, backpressure, and
+    downstream Will/Authority gates.
+  - `TheoryOfMindEngine` now records relational attachment state, not only
+    trust/rapport floats. Rupture and repair affect lexical posture, skill
+    restrictions, and active-inference/social bias via `attachment_effects`.
+  - `DreamJournal` now compiles an `autobiographical_mythos` artifact from real
+    dream entries, autonomic reflections, identity-ledger commitments,
+    preferences, and self-model snapshots. `ConversationalDynamicsPhase` and
+    `ContextAssembler` now carry that mythos into the standard response path.
+- Evidence:
+  - Ruff on touched sensing, workspace, ToM, dream journal, context assembler,
+    connectivity, and tests passed.
+  - Focused tests passed: `tests/test_ambient_autonomic_stream.py`,
+    `tests/test_connectivity_runtime.py`,
+    `tests/test_relational_attachment_tom.py`,
+    `tests/test_somatic_noise_workspace.py`.
+- Closeout tracker:
+  - Estimated closeout completion after this checkpoint: about 98.4%.
+  - Remaining total checkpoints: 2 consolidated checkpoints / 4-6 smaller
+    sub-checkpoints.
+  - Remaining work: live launched desktop full-mind proof, visible multi-app
+    demo proof, semantic review ledger closure, final replay/proof bundle,
+    longer soak validation, and clean-worktree closure.
+
 1. **R-001**: AGENTS.md, AURA_MASTER_SPEC.md, docs/AURA_MASTER_SPEC.md,
    docs/RUNTIME_INVARIANTS.md, docs/PRODUCTION_HARDENING_PLAN.md,
    docs/SKILL_CERTIFICATION_MATRIX.md, docs/DEPTH_AUDIT.md,

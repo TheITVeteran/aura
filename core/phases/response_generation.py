@@ -18,6 +18,7 @@ from core.phases.dialogue_policy import enforce_dialogue_contract
 from core.phases.executive_guard import get_executive_guard
 from core.phases.response_contract import build_response_contract
 from core.runtime import background_policy, response_policy
+from core.runtime.connectivity import render_connectivity_prompt_block
 from core.runtime.conversation_support import (
     record_shared_ground_callbacks,
     update_conversational_intelligence,
@@ -616,6 +617,12 @@ class ResponseGenerationPhase(BasePhase):
                 messages[0]["content"] = (
                     f"{messages[0]['content']}\n\n{contract.to_prompt_block().strip()}"
                 )
+            connectivity_block = render_connectivity_prompt_block(
+                getattr(state, "response_modifiers", {}).get("connectivity")
+                or getattr(getattr(state, "world", None), "facts", {}).get("connectivity")
+            )
+            if connectivity_block and messages and messages[0].get("role") == "system":
+                messages[0]["content"] = f"{messages[0]['content']}\n\n{connectivity_block}"
             if not is_background and not is_test_run:
                 reliability_block = conversation_reliability_system_block(objective)
                 runtime_context = kwargs.get("context")

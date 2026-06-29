@@ -1643,11 +1643,76 @@ class NativeMultimodalBridge(Phase):
 
     def __init__(self, kernel: AuraKernel):
         self.kernel = kernel
+        self._last_ambient_frame_id: int | None = None
+
+    def _ingest_ambient_developer_frame(self, state: AuraState) -> None:
+        """Bind continuous ambient sensing into the canonical world state.
+
+        The ambient stream is intentionally collected outside foreground turns,
+        but it must still become causal state. This keeps terminal/log/resource
+        evidence available to planning and response generation without turning
+        it into a prompt-only decoration.
+        """
+        try:
+            from core.perception.ambient_developer_stream import get_ambient_developer_stream
+
+            stream = get_ambient_developer_stream()
+            frame = getattr(stream, "latest_frame", None)
+            if frame is None:
+                return
+            frame_id = int(getattr(frame, "frame_id", 0) or 0)
+            if frame_id and frame_id == self._last_ambient_frame_id:
+                return
+            summary = str(getattr(frame, "summary", "") or "").strip()
+            if not summary:
+                return
+            percept = {
+                "role": "ambient_developer_stream",
+                "content": summary,
+                "timestamp": float(getattr(frame, "timestamp", time.time()) or time.time()),
+                "frame_id": frame_id,
+                "event_count": int(getattr(frame, "event_count", 0) or 0),
+                "repair_candidates": list(getattr(frame, "repair_candidates", ()) or ())[:6],
+                "resource_interrupts": [
+                    interrupt.to_dict() if hasattr(interrupt, "to_dict") else dict(interrupt)
+                    for interrupt in list(getattr(frame, "resource_interrupts", ()) or ())[:6]
+                ],
+                "network_events": [
+                    event.to_dict() if hasattr(event, "to_dict") else dict(event)
+                    for event in list(getattr(frame, "network_events", ()) or ())[:6]
+                ],
+            }
+            state.world.recent_percepts.append(percept)
+            if hasattr(state.world, "trim_percepts"):
+                state.world.trim_percepts()
+            self._last_ambient_frame_id = frame_id
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+            _record_upgrades_degradation(
+                e,
+                action="continued native multimodal tick without ambient developer percept",
+            )
+
+    def _ingest_connectivity_status(self, state: AuraState) -> None:
+        try:
+            from core.runtime.connectivity import get_connectivity_status
+
+            status = get_connectivity_status()
+            data = status.to_dict()
+            state.world.facts["connectivity"] = data
+            state.response_modifiers["connectivity"] = data
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as e:
+            _record_upgrades_degradation(
+                e,
+                action="continued native multimodal tick without connectivity status",
+            )
 
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
         # Handle optional objective from the kernel.
         if objective is None:
             objective = getattr(state.cognition, "current_objective", "Perception")
+
+        self._ingest_ambient_developer_frame(state)
+        self._ingest_connectivity_status(state)
 
         if not objective:
             return state

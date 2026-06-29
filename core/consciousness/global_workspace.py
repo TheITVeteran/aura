@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
+import random
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
@@ -170,6 +172,99 @@ class BroadcastRecord:
     timestamp: float = field(default_factory=time.time)
 
 
+@dataclass(frozen=True)
+class SomaticImpulse:
+    """A bounded non-optimal workspace bid produced by bodily noise.
+
+    This is not a bypass around governance. It only creates a candidate for the
+    same workspace competition as every other subsystem. Downstream action still
+    has to pass Will/Authority/tool gates.
+    """
+
+    content: str
+    priority: float
+    reason: str
+    content_type: ContentType = ContentType.SOMATIC
+
+
+class SomaticNoiseInjector:
+    """Injects rare, bounded, non-goal-maximizing candidates into workspace."""
+
+    DEFAULT_IMPULSES: tuple[tuple[str, str, ContentType], ...] = (
+        ("look again at a recent percept before assuming the world is stable", "perceptual_recheck", ContentType.PERCEPTUAL),
+        ("write a brief private reflection about the current internal texture", "reflection_whim", ContentType.META),
+        ("inspect one recent file or log because it feels slightly salient", "environmental_curiosity", ContentType.INTENTIONAL),
+        ("hold a strange analogy and see whether it connects two unrelated ideas", "creative_association", ContentType.META),
+        ("notice whether the current plan is becoming too optimized and brittle", "anti_brittleness_impulse", ContentType.META),
+    )
+
+    def __init__(
+        self,
+        *,
+        rng: random.Random | None = None,
+        rate: float | None = None,
+        max_priority: float | None = None,
+        min_ticks_between: int | None = None,
+    ) -> None:
+        self.rng = rng or random.Random()
+        self.rate = self._bounded_float(
+            os.environ.get("AURA_SOMATIC_NOISE_RATE"),
+            0.035 if rate is None else rate,
+            minimum=0.0,
+            maximum=0.35,
+        )
+        self.max_priority = self._bounded_float(
+            os.environ.get("AURA_SOMATIC_NOISE_MAX_PRIORITY"),
+            0.72 if max_priority is None else max_priority,
+            minimum=0.05,
+            maximum=0.9,
+        )
+        self.min_ticks_between = int(
+            self._bounded_float(
+                os.environ.get("AURA_SOMATIC_NOISE_MIN_TICKS"),
+                30 if min_ticks_between is None else min_ticks_between,
+                minimum=1,
+                maximum=10_000,
+            )
+        )
+        self.enabled = os.environ.get("AURA_SOMATIC_NOISE", "1").strip().lower() not in {"0", "false", "off", "no"}
+        self.last_impulse: SomaticImpulse | None = None
+        self.injected_count = 0
+        self._last_injected_tick = 0
+
+    @staticmethod
+    def _bounded_float(value: Any, default: float, *, minimum: float, maximum: float) -> float:
+        try:
+            parsed = float(value if value is not None else default)
+        except (TypeError, ValueError, OverflowError):
+            parsed = default
+        return max(minimum, min(maximum, parsed))
+
+    def maybe_generate(self, *, tick: int, candidate_count: int, inhibited_sources: set[str]) -> SomaticImpulse | None:
+        if not self.enabled or candidate_count >= GlobalWorkspace._MAX_CANDIDATES:
+            return None
+        if "somatic_noise" in inhibited_sources:
+            return None
+        force = os.environ.get("AURA_SOMATIC_NOISE_FORCE", "0").strip().lower() in {"1", "true", "on", "yes"}
+        if not force and tick - self._last_injected_tick < self.min_ticks_between:
+            return None
+        if not force and self.rng.random() > self.rate:
+            return None
+        content, reason, content_type = self.rng.choice(self.DEFAULT_IMPULSES)
+        jitter = self.rng.uniform(-0.08, 0.08)
+        priority = max(0.18, min(self.max_priority, 0.48 + jitter))
+        impulse = SomaticImpulse(
+            content=f"somatic impulse t{tick}: {content}",
+            priority=round(priority, 4),
+            reason=reason,
+            content_type=content_type,
+        )
+        self.last_impulse = impulse
+        self.injected_count += 1
+        self._last_injected_tick = tick
+        return impulse
+
+
 # ---------------------------------------------------------------------------
 # Processor registration type
 # ---------------------------------------------------------------------------
@@ -217,6 +312,7 @@ class GlobalWorkspace:
         self._degraded_channels: dict[str, str] = {}
         self._degradation_events: list[dict[str, Any]] = []
         self._processor_failures: dict[str, int] = {}
+        self._somatic_noise = SomaticNoiseInjector()
         
         logger.info("GlobalWorkspace initialized (ignition_threshold=%.2f).", self._IGNITION_THRESHOLD)
 
@@ -408,6 +504,32 @@ class GlobalWorkspace:
                 for src, count in self._inhibited.items()
                 if count > 1
             }
+
+            try:
+                impulse = self._somatic_noise.maybe_generate(
+                    tick=self._tick,
+                    candidate_count=len(self._candidates),
+                    inhibited_sources=set(self._inhibited),
+                )
+                if impulse is not None:
+                    self._candidates = [c for c in self._candidates if c.source != "somatic_noise"]
+                    self._candidates.append(
+                        CognitiveCandidate(
+                            content=impulse.content,
+                            source="somatic_noise",
+                            priority=impulse.priority,
+                            content_type=impulse.content_type,
+                            affect_weight=0.05,
+                            focus_bias=0.0,
+                        )
+                    )
+            except _WORKSPACE_RECOVERABLE_ERRORS as exc:
+                self._record_degradation(
+                    exc,
+                    phase="somatic_noise",
+                    action="Skipped stochastic somatic impulse and continued workspace competition",
+                    severity="warning",
+                )
 
             if not self._candidates:
                 return None
@@ -604,6 +726,12 @@ class GlobalWorkspace:
             "degraded_channels": dict(self._degraded_channels),
             "recent_degradations": list(self._degradation_events[-5:]),
             "processor_failures": dict(self._processor_failures),
+            "somatic_noise": {
+                "enabled": self._somatic_noise.enabled,
+                "rate": self._somatic_noise.rate,
+                "injected_count": self._somatic_noise.injected_count,
+                "last_reason": self._somatic_noise.last_impulse.reason if self._somatic_noise.last_impulse else None,
+            },
         }
 
     def update_phi(self, phi: float) -> None:

@@ -11,12 +11,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import platform
 import re
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+import psutil
 
 from core.container import ServiceContainer
 from core.runtime.background_policy import (
@@ -152,6 +155,37 @@ class AmbientLogEvent:
 
 
 @dataclass(frozen=True)
+class AmbientTerminalEvent:
+    path: str
+    line: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class AmbientNetworkEvent:
+    kind: str
+    count: int
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class AmbientResourceInterrupt:
+    kind: str
+    severity: str
+    value: float
+    threshold: float
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class AmbientDeveloperFrame:
     frame_id: int
     timestamp: float = field(default_factory=time.time)
@@ -160,6 +194,9 @@ class AmbientDeveloperFrame:
     git_status: tuple[str, ...] = ()
     recent_files: tuple[AmbientFileEvent, ...] = ()
     log_events: tuple[AmbientLogEvent, ...] = ()
+    terminal_events: tuple[AmbientTerminalEvent, ...] = ()
+    network_events: tuple[AmbientNetworkEvent, ...] = ()
+    resource_interrupts: tuple[AmbientResourceInterrupt, ...] = ()
     repair_candidates: tuple[str, ...] = ()
     throttled_reason: str = ""
     summary: str = ""
@@ -169,12 +206,22 @@ class AmbientDeveloperFrame:
         data["git_status"] = list(self.git_status)
         data["recent_files"] = [event.to_dict() for event in self.recent_files]
         data["log_events"] = [event.to_dict() for event in self.log_events]
+        data["terminal_events"] = [event.to_dict() for event in self.terminal_events]
+        data["network_events"] = [event.to_dict() for event in self.network_events]
+        data["resource_interrupts"] = [event.to_dict() for event in self.resource_interrupts]
         data["repair_candidates"] = list(self.repair_candidates)
         return data
 
     @property
     def event_count(self) -> int:
-        return self.git_dirty_count + len(self.recent_files) + len(self.log_events)
+        return (
+            self.git_dirty_count
+            + len(self.recent_files)
+            + len(self.log_events)
+            + len(self.terminal_events)
+            + len(self.network_events)
+            + len(self.resource_interrupts)
+        )
 
 
 class AmbientDeveloperStream:
@@ -186,6 +233,7 @@ class AmbientDeveloperStream:
         project_root: Path | None = None,
         watch_roots: tuple[Path, ...] | None = None,
         log_roots: tuple[Path, ...] | None = None,
+        terminal_roots: tuple[Path, ...] | None = None,
         sample_interval_s: float | None = None,
         max_scan_files: int | None = None,
         recent_window_s: float | None = None,
@@ -193,6 +241,7 @@ class AmbientDeveloperStream:
         self.project_root = (project_root or _project_root()).resolve()
         self.watch_roots = watch_roots or _default_watch_roots(self.project_root)
         self.log_roots = log_roots or _log_roots(self.project_root)
+        self.terminal_roots = terminal_roots or self._default_terminal_roots()
         self.sample_interval_s = (
             sample_interval_s
             if sample_interval_s is not None
@@ -293,8 +342,26 @@ class AmbientDeveloperStream:
         git_status = self._collect_git_status()
         recent_files = self._collect_recent_files()
         log_events = self._collect_log_events()
-        repair_candidates = self._build_repair_candidates(git_status, recent_files, log_events)
-        summary = self._summarize(git_status, recent_files, log_events, repair_candidates)
+        terminal_events = self._collect_terminal_events()
+        network_events = self._collect_network_events()
+        resource_interrupts = self._collect_resource_interrupts()
+        repair_candidates = self._build_repair_candidates(
+            git_status,
+            recent_files,
+            log_events,
+            terminal_events,
+            network_events,
+            resource_interrupts,
+        )
+        summary = self._summarize(
+            git_status,
+            recent_files,
+            log_events,
+            terminal_events,
+            network_events,
+            resource_interrupts,
+            repair_candidates,
+        )
         return AmbientDeveloperFrame(
             frame_id=self._frame_id,
             repo_root=str(self.project_root),
@@ -302,9 +369,23 @@ class AmbientDeveloperStream:
             git_status=tuple(git_status),
             recent_files=tuple(recent_files),
             log_events=tuple(log_events),
+            terminal_events=tuple(terminal_events),
+            network_events=tuple(network_events),
+            resource_interrupts=tuple(resource_interrupts),
             repair_candidates=tuple(repair_candidates),
             summary=summary,
         )
+
+    def _default_terminal_roots(self) -> tuple[Path, ...]:
+        configured = os.environ.get("AURA_AMBIENT_TERMINAL_DIRS", "").strip()
+        if configured:
+            raw = [part.strip() for part in configured.split(os.pathsep) if part.strip()]
+            return tuple((Path(part).expanduser() if Path(part).is_absolute() else self.project_root / part).resolve() for part in raw)
+        roots = [
+            Path.home() / ".aura" / "data" / "terminal",
+            self.project_root / "logs" / "terminal",
+        ]
+        return tuple(path.resolve() for path in roots)
 
     def _collect_git_status(self) -> list[str]:
         try:
@@ -406,19 +487,153 @@ class AmbientDeveloperStream:
                 continue
         return events
 
+    def _collect_terminal_events(self) -> list[AmbientTerminalEvent]:
+        candidates: list[Path] = []
+        for root in self.terminal_roots:
+            if not root.exists():
+                continue
+            try:
+                candidates.extend(
+                    path for path in root.glob("*.log") if path.is_file() and path.stat().st_size > 0
+                )
+                candidates.extend(
+                    path for path in root.glob("*.txt") if path.is_file() and path.stat().st_size > 0
+                )
+            except _RUNTIME_ERRORS:
+                continue
+        candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0.0, reverse=True)
+        events: list[AmbientTerminalEvent] = []
+        for path in candidates[:4]:
+            try:
+                with path.open("rb") as handle:
+                    handle.seek(0, os.SEEK_END)
+                    size = handle.tell()
+                    handle.seek(max(0, size - 12000))
+                    text = handle.read().decode("utf-8", errors="replace")
+                for line in text.splitlines()[-80:]:
+                    if _LOG_PATTERN.search(line) or "Traceback" in line:
+                        events.append(
+                            AmbientTerminalEvent(
+                                path=self._relative(path),
+                                line=_bounded_text(line, 260),
+                            )
+                        )
+                        if len(events) >= 10:
+                            return events
+            except _RUNTIME_ERRORS:
+                continue
+        return events
+
+    def _collect_network_events(self) -> list[AmbientNetworkEvent]:
+        try:
+            conns = psutil.net_connections(kind="inet")
+        except (psutil.AccessDenied, psutil.NoSuchProcess, OSError, RuntimeError) as exc:
+            record_degradation("ambient_developer_stream.network", exc)
+            return []
+        by_status: dict[str, int] = {}
+        local_listeners = 0
+        external_established = 0
+        for conn in conns[:1000]:
+            status = str(getattr(conn, "status", "") or "UNKNOWN")
+            by_status[status] = by_status.get(status, 0) + 1
+            laddr = getattr(conn, "laddr", None)
+            raddr = getattr(conn, "raddr", None)
+            if status == "LISTEN" and laddr:
+                local_listeners += 1
+            if status == "ESTABLISHED" and raddr:
+                external_established += 1
+        events: list[AmbientNetworkEvent] = []
+        if local_listeners:
+            events.append(AmbientNetworkEvent(kind="listening_sockets", count=local_listeners))
+        if external_established:
+            events.append(AmbientNetworkEvent(kind="established_connections", count=external_established))
+        if len(conns) >= 1000:
+            events.append(AmbientNetworkEvent(kind="socket_scan_truncated", count=len(conns), detail="first_1000_connections_sampled"))
+        return events[:6]
+
+    def _collect_resource_interrupts(self) -> list[AmbientResourceInterrupt]:
+        interrupts: list[AmbientResourceInterrupt] = []
+        try:
+            vm = psutil.virtual_memory()
+            if float(vm.percent) >= 85.0:
+                interrupts.append(
+                    AmbientResourceInterrupt(
+                        kind="memory_pressure",
+                        severity="critical" if float(vm.percent) >= 92.0 else "warning",
+                        value=round(float(vm.percent), 2),
+                        threshold=85.0,
+                        detail=f"available_gb={round(float(vm.available) / 1024**3, 2)}",
+                    )
+                )
+            cpu = float(psutil.cpu_percent(interval=None))
+            if cpu >= 90.0:
+                interrupts.append(
+                    AmbientResourceInterrupt(
+                        kind="cpu_pressure",
+                        severity="warning",
+                        value=round(cpu, 2),
+                        threshold=90.0,
+                    )
+                )
+            battery = psutil.sensors_battery()
+            if battery and battery.percent <= 15.0 and not battery.power_plugged:
+                interrupts.append(
+                    AmbientResourceInterrupt(
+                        kind="battery_low",
+                        severity="warning",
+                        value=round(float(battery.percent), 2),
+                        threshold=15.0,
+                    )
+                )
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            record_degradation("ambient_developer_stream.resources", exc)
+
+        # psutil does not expose macOS thermal pressure; surface the platform so
+        # callers know whether this was directly measured or unavailable.
+        if platform.system() == "Darwin":
+            try:
+                from core.runtime.pressure import get_pressure_snapshot
+
+                snapshot = get_pressure_snapshot()
+                thermal = str(getattr(snapshot, "thermal_pressure", "") or "")
+                if thermal and thermal.lower() not in {"nominal", "0", "none"}:
+                    interrupts.append(
+                        AmbientResourceInterrupt(
+                            kind="thermal_pressure",
+                            severity="warning",
+                            value=1.0,
+                            threshold=0.0,
+                            detail=thermal,
+                        )
+                    )
+            except _RUNTIME_ERRORS:
+                pass
+        return interrupts[:8]
+
     def _build_repair_candidates(
         self,
         git_status: list[str],
         recent_files: list[AmbientFileEvent],
         log_events: list[AmbientLogEvent],
+        terminal_events: list[AmbientTerminalEvent],
+        network_events: list[AmbientNetworkEvent],
+        resource_interrupts: list[AmbientResourceInterrupt],
     ) -> list[str]:
         candidates: list[str] = []
         if log_events:
             candidates.append("review_recent_log_errors")
+        if terminal_events:
+            candidates.append("review_recent_terminal_errors")
         if any("DEGRADATION" in event.line.upper() for event in log_events):
             candidates.append("triage_degradation_events")
         if any("MEMORY_PRESSURE" in event.line.upper() or "OOM" in event.line.upper() for event in log_events):
             candidates.append("check_memory_pressure_guard")
+        if any(event.kind == "memory_pressure" for event in resource_interrupts):
+            candidates.append("reduce_background_compute_until_memory_recovers")
+        if any(event.kind == "thermal_pressure" for event in resource_interrupts):
+            candidates.append("throttle_nonessential_background_work")
+        if any(event.kind == "established_connections" and event.count > 25 for event in network_events):
+            candidates.append("audit_network_activity")
         if git_status or recent_files:
             candidates.append("run_targeted_tests_for_recent_changes")
         return candidates[:6]
@@ -428,6 +643,9 @@ class AmbientDeveloperStream:
         git_status: list[str],
         recent_files: list[AmbientFileEvent],
         log_events: list[AmbientLogEvent],
+        terminal_events: list[AmbientTerminalEvent],
+        network_events: list[AmbientNetworkEvent],
+        resource_interrupts: list[AmbientResourceInterrupt],
         repair_candidates: list[str],
     ) -> str:
         parts = []
@@ -437,6 +655,12 @@ class AmbientDeveloperStream:
             parts.append(f"{len(recent_files)} recent watched file event(s)")
         if log_events:
             parts.append(f"{len(log_events)} recent warning/error log line(s)")
+        if terminal_events:
+            parts.append(f"{len(terminal_events)} terminal warning/error line(s)")
+        if network_events:
+            parts.append(f"{len(network_events)} network telemetry signal(s)")
+        if resource_interrupts:
+            parts.append(f"{len(resource_interrupts)} resource interrupt(s)")
         if repair_candidates:
             parts.append("repair candidates: " + ", ".join(repair_candidates[:3]))
         return "; ".join(parts) if parts else "ambient developer stream observed no material changes"
@@ -478,6 +702,7 @@ class AmbientDeveloperStream:
             "uptime_s": round(time.time() - self._started_at, 1) if self._started_at else 0.0,
             "latest_frame": self._latest_frame.to_dict() if self._latest_frame else None,
             "watch_roots": [str(path) for path in self.watch_roots],
+            "terminal_roots": [str(path) for path in self.terminal_roots],
         }
 
     status = get_status
@@ -510,6 +735,9 @@ def render_ambient_developer_prompt_block(frame: dict[str, Any] | AmbientDevelop
     candidates = data.get("repair_candidates") if isinstance(data.get("repair_candidates"), list) else []
     if candidates:
         lines.append("- Repair candidates: " + ", ".join(str(item) for item in candidates[:4]))
+    resources = data.get("resource_interrupts") if isinstance(data.get("resource_interrupts"), list) else []
+    if resources:
+        lines.append("- Resource interrupts: " + ", ".join(str(item.get("kind")) for item in resources[:4] if isinstance(item, dict)))
     lines.append("Use as verified background evidence; do not invent file/log events beyond this frame.")
     return "\n".join(lines)
 
@@ -519,6 +747,9 @@ __all__ = [
     "AmbientDeveloperStream",
     "AmbientFileEvent",
     "AmbientLogEvent",
+    "AmbientNetworkEvent",
+    "AmbientResourceInterrupt",
+    "AmbientTerminalEvent",
     "get_ambient_developer_stream",
     "render_ambient_developer_prompt_block",
 ]
