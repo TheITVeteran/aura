@@ -230,6 +230,7 @@ def run_fuse_publish(args: argparse.Namespace, *, started_at: str) -> int:
         str(TRAIN_AND_FUSE),
         "--skip-dataset",
         "--skip-train",
+        "--mark-crsm-consumed",
     ]
     if args.base_model:
         cmd += ["--base-model", args.base_model]

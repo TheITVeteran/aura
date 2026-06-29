@@ -365,6 +365,8 @@ def test_live_boot_proof_desktop_mode_mirrors_packaged_launcher(monkeypatch):
     assert env["AURA_AUTO_LISTEN"] == "1"
     assert env["AURA_EAGER_CORTEX_WARMUP"] == "0"
     assert env["AURA_DEFERRED_CORTEX_PREWARM"] == "1"
+    assert env["AURA_AMBIENT_STREAM_INTERVAL_S"] == "5"
+    assert env["AURA_AUTONOMIC_REFLECTION_INTERVAL_S"] == "30"
 
 
 def test_live_boot_proof_preserves_operator_mlx_limit(monkeypatch):
@@ -418,6 +420,8 @@ def test_live_boot_proof_uses_readiness_heartbeat_contract():
     assert "perceptual_pump" in source
     assert "cognitive_situation" in source
     assert "imagination_engine" in source
+    assert "ambient_developer_stream" in source
+    assert "autonomic_reflection_loop" in source
     assert "exercise_cognitive_organ_participation" in source
     assert "started_monotonic" in source
     assert "duration_budget_s" in source
@@ -455,6 +459,16 @@ def test_live_boot_proof_requires_cognitive_organ_participation(monkeypatch, tmp
                         ],
                     },
                 },
+                "ambient_developer_stream": {
+                    "running": True,
+                    "frames": 1,
+                    "latest_frame": {"summary": "ambient developer stream observed no material changes"},
+                },
+                "autonomic_reflection_loop": {
+                    "running": True,
+                    "reflections_written": 0,
+                    "errors": 0,
+                },
             }
         }
     }
@@ -486,6 +500,8 @@ def test_live_boot_proof_requires_cognitive_organ_participation(monkeypatch, tmp
     assert proof.exercise_cognitive_organ_participation() is True
     assert proof.steps[-1]["organs"]["cognitive_situation"]["participated"] is True
     assert proof.steps[-1]["organs"]["timescale_bridge"]["participated"] is True
+    assert proof.steps[-1]["organs"]["ambient_developer_stream"]["participated"] is True
+    assert proof.steps[-1]["organs"]["autonomic_reflection_loop"]["participated"] is True
 
     payload["full_runtime"]["components"]["imagination_engine"]["frames_built"] = 0
     payload["full_runtime"]["components"]["imagination_engine"]["latest"] = None
@@ -501,6 +517,18 @@ def test_live_boot_proof_requires_cognitive_organ_participation(monkeypatch, tmp
 
     assert proof.exercise_cognitive_organ_participation() is False
     assert proof.steps[-1]["blockers"] == ["timescale_bridge"]
+
+    payload["full_runtime"]["components"]["timescale_bridge"]["last_reconciliation"] = {
+        "idle_gap_s": 0.2,
+        "summary": "recent apps: Aura Zenith",
+        "directives": [
+            "Anchor the reply to the user's current message and verified recent conversation."
+        ],
+    }
+    payload["full_runtime"]["components"]["ambient_developer_stream"]["latest_frame"] = None
+
+    assert proof.exercise_cognitive_organ_participation() is False
+    assert proof.steps[-1]["blockers"] == ["ambient_developer_stream"]
 
 
 def test_live_boot_proof_runtime_stream_scan_fails_failure_markers(monkeypatch, tmp_path):

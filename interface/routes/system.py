@@ -210,6 +210,16 @@ def _collect_full_runtime_status(
             "get_status",
             "status",
         ),
+        "ambient_developer_stream": _runtime_component_status(
+            "ambient_developer_stream",
+            "get_status",
+            "status",
+        ),
+        "autonomic_reflection_loop": _runtime_component_status(
+            "autonomic_reflection_loop",
+            "get_status",
+            "status",
+        ),
     }
     resource_guard = desktop_resource_guard_enabled()
     expected = (
@@ -237,6 +247,8 @@ def _collect_full_runtime_status(
         "cognitive_situation",
         "imagination_engine",
         "timescale_bridge",
+        "ambient_developer_stream",
+        "autonomic_reflection_loop",
     )
     blockers = [name for name in required if not components[name].get("running", False)]
     return {

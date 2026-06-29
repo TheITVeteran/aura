@@ -4,19 +4,18 @@ Phase 3: Qualia-Driven Dream Journaling (Artificial Creativity)
 Extracts emotionally charged episodic memories and forces the Swarm
 or CognitiveEngine to synthesize them into creative, philosophical metaphors.
 """
-from core.runtime.errors import record_degradation
 import asyncio
+import json
 import logging
-import os
 import random
 import time
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from core.dual_memory import DualMemorySystem, Episode
 from core.container import ServiceContainer
+from core.dual_memory import DualMemorySystem, Episode
 from core.governance_context import local_internal_governed_scope
 from core.health.degraded_events import record_degraded_event
+from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.DreamJournal")
@@ -30,6 +29,7 @@ class DreamJournal:
         self.journal_dir = config.paths.data_dir / "dreams"
         self.journal_dir.mkdir(parents=True, exist_ok=True)
         self.journal_file = self.journal_dir / "dream_journal.txt"
+        self.autonomic_reflection_file = self.journal_dir / "autonomic_reflections.jsonl"
 
     @staticmethod
     def _seed_weight(ep: Episode) -> float:
@@ -61,7 +61,7 @@ class DreamJournal:
         )
 
     @classmethod
-    def _build_seed_context(cls, seeds: List[Episode]) -> tuple[str, str]:
+    def _build_seed_context(cls, seeds: list[Episode]) -> tuple[str, str]:
         described = [cls._describe_seed(seed) for seed in seeds]
         fragments_text = "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(described))
 
@@ -75,7 +75,7 @@ class DreamJournal:
         )
         return fragments_text, emotional_profile
 
-    async def retrieve_dream_seeds(self) -> List[Episode]:
+    async def retrieve_dream_seeds(self) -> list[Episode]:
         """Pull highly salient episodic memories to act as dream seeds."""
         if hasattr(self.memory, 'episodic'):
             salient_episodes = self.memory.episodic.get_salient_memories(top_n=3)
@@ -119,7 +119,7 @@ class DreamJournal:
                 
         return salient_episodes
 
-    async def synthesize_dream(self) -> Optional[Dict[str, Any]]:
+    async def synthesize_dream(self) -> dict[str, Any] | None:
         """Generate a novel subconscious metaphor based on recent resonant memory."""
         logger.info("🌌 Entering Deep REM: Dreaming from qualitative experience...")
         
@@ -157,7 +157,7 @@ Focus heavily on the emotional resonances, contradictions, repeated motifs, and 
         try:
             from core.brain.cognitive_engine import ThinkingMode
             dream_content = ""
-            last_exc: Optional[Exception] = None
+            last_exc: Exception | None = None
             for mode in (ThinkingMode.CREATIVE, ThinkingMode.DEEP, ThinkingMode.FAST):
                 try:
                     res = await self.brain.think(
@@ -201,7 +201,8 @@ Focus heavily on the emotional resonances, contradictions, repeated motifs, and 
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
                 h = mycelium.get_hypha("memory", "consciousness")
-                if h: h.pulse(success=True)
+                if h:
+                    h.pulse(success=True)
 
             logger.info("🌌 Dream realized and journaled (Length: %d characters).", len(dream_content))
             return {
@@ -222,7 +223,7 @@ Focus heavily on the emotional resonances, contradictions, repeated motifs, and 
             logger.error("🌌 Dream syntax failed: %s", e)
             return None
 
-    def _save_dream(self, content: str, seeds: List[Episode]):
+    def _save_dream(self, content: str, seeds: list[Episode]):
         """Persist to the text journal."""
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         seed_desc = " | ".join([e.description[:30] + "..." for e in seeds])
@@ -243,4 +244,18 @@ Focus heavily on the emotional resonances, contradictions, repeated motifs, and 
                 self.journal_file,
                 entry,
                 source="adaptation.dream_journal.journal",
+            )
+
+    def append_autonomic_reflection(self, reflection: dict[str, Any]) -> None:
+        """Persist an autonomic reflection into the dream journal namespace."""
+        payload = json.dumps(dict(reflection or {}), sort_keys=True) + "\n"
+        with local_internal_governed_scope(
+            "adaptation.dream_journal.autonomic_reflection",
+            domain="file_write",
+            receipt_prefix="dream-autonomic-reflection-append",
+        ):
+            get_file_write_gateway().append_text(
+                self.autonomic_reflection_file,
+                payload,
+                source="adaptation.dream_journal.autonomic_reflection",
             )

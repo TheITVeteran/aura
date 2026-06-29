@@ -64,6 +64,19 @@ def test_run_unattended_accepts_resume_and_preflight_only_flags():
     assert args.tag == "crsm-closeout"
 
 
+def test_run_unattended_resume_fuse_publish_marks_crsm_consumed(monkeypatch):
+    commands = []
+    monkeypatch.setattr(run_unattended, "update_state", lambda **_kwargs: {})
+    monkeypatch.setattr(run_unattended, "_spawn", lambda cmd, *, started_at: commands.append(cmd) or 0)
+    args = run_unattended.parse_args(["--tag", "crsm-closeout"])
+
+    rc = run_unattended.run_fuse_publish(args, started_at="now")
+
+    assert rc == 0
+    assert commands
+    assert "--mark-crsm-consumed" in commands[0]
+
+
 def test_run_unattended_memory_guard_blocks_process_tree_rss(monkeypatch):
     monkeypatch.setenv("AURA_TRAINING_MAX_PROCESS_TREE_RSS_GB", "12")
     monkeypatch.setattr(run_unattended, "_process_tree_rss_gb", lambda _pid: 12.5)

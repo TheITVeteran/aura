@@ -567,6 +567,16 @@ class BootAutonomyMixin:
                 dj = DreamJournal(memory_nexus, brain)
                 ServiceContainer.register_instance("dream_journal", dj)
                 logger.info("🌌 DreamJournal online — subconscious creativity active.")
+                from core.autonomic.reflection_loop import get_autonomic_reflection_loop
+
+                reflection_loop = get_autonomic_reflection_loop()
+                await reflection_loop.start()
+                ServiceContainer.register_instance(
+                    "autonomic_reflection_loop",
+                    reflection_loop,
+                    required=False,
+                )
+                logger.info("🌌 AutonomicReflectionLoop online — ambient self-correction journal active.")
         except _BOOT_AUTONOMY_BOUNDARY_ERRORS as e:
             _record_boot_autonomy_degradation(
                 e, "Boot autonomy optional subsystem failed; continuing degraded boot: %s"

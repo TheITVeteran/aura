@@ -17,6 +17,66 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Continuous Sensory / Autonomic Runtime Checkpoint (2026-06-28)
+
+### Gaps Addressed
+
+- **Aura now has a bounded ambient developer-environment sensory stream**:
+  `AmbientDeveloperStream` samples watched source directories, repo status,
+  and recent runtime log warnings under hard file-count, byte, timeout, and
+  interval bounds. It publishes compact frames into `WorldState` and
+  `TimescaleBridge` instead of becoming another disconnected dashboard metric.
+- **The dialogue-speed bridge now accepts multiple live sources correctly**:
+  `TimescaleBridge` now samples by source, so the 10Hz perceptual pump cannot
+  starve slower ambient developer observations. Foreground turns can receive
+  verified ambient summaries and repair candidates without inventing idle-time
+  narrative events.
+- **Aura now has a governed autonomic reflection tick**:
+  `AutonomicReflectionLoop` consumes ambient frames and writes structured
+  dream-journal reflections with repair candidates through the canonical file
+  write gateway and local internal governance. It records self-correction
+  intent without directly mutating source code outside the self-modification
+  approval path.
+- **False full-runtime health is narrower**: `/api/health` full-runtime
+  readiness and `tools/live_boot_proof.py` now include
+  `ambient_developer_stream` and `autonomic_reflection_loop` alongside
+  perceptual pump, timescale bridge, cognitive situation, and imagination.
+- **CRSM resume/fuse closure can now write the consumed marker**:
+  `training/run_unattended.py` passes `--mark-crsm-consumed` to
+  `training/train_and_fuse.py` during the resume/fuse/publish phase, so a real
+  resume-training run can close the CRSM loop after fuse/verify/publish even
+  though training happened in the separate resume worker.
+
+### Latest Commands Run
+
+```bash
+python -m ruff check core/perception/ambient_developer_stream.py core/autonomic/reflection_loop.py core/runtime/timescale_bridge.py core/adaptation/dream_journal.py core/orchestrator/mixins/boot/boot_cognitive.py core/orchestrator/mixins/boot/boot_autonomy.py interface/routes/system.py tools/live_boot_proof.py tests/test_ambient_autonomic_stream.py tests/test_full_desktop_runtime_contract.py tests/test_boot_runtime_safety.py training/train_and_fuse.py training/run_unattended.py tests/test_crsm_training_preflight.py
+python -m pytest -q tests/test_ambient_autonomic_stream.py tests/test_timescale_bridge.py tests/test_full_desktop_runtime_contract.py tests/test_boot_runtime_safety.py tests/test_crsm_training_preflight.py tests/test_crsm_training_dataset_gate.py tests/test_crsm_loop_monitor.py
+make enterprise-gate
+make production-gate
+```
+
+### Evidence
+
+- Focused runtime/proof/CRSM tests: **78 passed**.
+- Ruff on touched runtime, proof, boot, and training surfaces: **passed**.
+- `make enterprise-gate`: **passed**.
+- `make production-gate`: **passed**, all 37 readiness checks true.
+
+### Closeout Position
+
+- Functional closeout estimate: about **97%**. The live runtime now has a
+  continuous ambient developer stream and an always-on autonomic reflection
+  path in normal full desktop launches, and the CRSM resume path can now close
+  its consumed marker after successful train/fuse/publish.
+- Estimated remaining work: **2 consolidated checkpoints**, likely **3-4
+  smaller sub-checkpoints**:
+  1. Run guarded CRSM train/fuse/publish under the memory watchdog; verify
+     active manifest update, fused model load, and consumed marker closure.
+  2. Run the final live desktop proof stack: visible multi-app/voice path,
+     conversation soak, DNU/Aletheia/final-proof replay as configured,
+     longevity/claims/artifact cleanup, clean worktree, final commit/push.
+
 ## Latest CRSM Corpus Integrity / Training Safety Checkpoint (2026-06-28)
 
 ### Gaps Addressed

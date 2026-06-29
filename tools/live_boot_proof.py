@@ -105,6 +105,8 @@ LIVE_DESKTOP_FULL_RUNTIME_COMPONENTS = (
     "cognitive_situation",
     "imagination_engine",
     "timescale_bridge",
+    "ambient_developer_stream",
+    "autonomic_reflection_loop",
 )
 
 LIVE_CONVERSATION_SOAK_PROMPTS = (
@@ -179,6 +181,8 @@ def build_safe_boot_env(
         env["AURA_AUTO_LISTEN"] = "1"
         env.setdefault("AURA_EAGER_CORTEX_WARMUP", "0")
         env.setdefault("AURA_DEFERRED_CORTEX_PREWARM", "1")
+        env.setdefault("AURA_AMBIENT_STREAM_INTERVAL_S", "5")
+        env.setdefault("AURA_AUTONOMIC_REFLECTION_INTERVAL_S", "30")
     else:
         env.setdefault("AURA_SAFE_BOOT_DESKTOP", "1")
         env.setdefault("AURA_HEADLESS", "1")
@@ -974,11 +978,46 @@ class LiveProof:
             }
             if not timescale_ok:
                 blockers.append("timescale_bridge")
+            ambient_status = components.get("ambient_developer_stream")
+            ambient_status = ambient_status if isinstance(ambient_status, dict) else {}
+            latest_ambient = ambient_status.get("latest_frame")
+            latest_ambient = latest_ambient if isinstance(latest_ambient, dict) else {}
+            ambient_frames = int(ambient_status.get("frames") or 0)
+            ambient_ok = bool(
+                ambient_status.get("running") is True
+                and ambient_frames > 0
+                and latest_ambient
+            )
+            evidence["ambient_developer_stream"] = {
+                "running": ambient_status.get("running") is True,
+                "frames": ambient_frames,
+                "latest_summary": str(latest_ambient.get("summary") or ""),
+                "participated": ambient_ok,
+            }
+            if not ambient_ok:
+                blockers.append("ambient_developer_stream")
+
+            reflection_status = components.get("autonomic_reflection_loop")
+            reflection_status = reflection_status if isinstance(reflection_status, dict) else {}
+            reflection_errors = int(reflection_status.get("errors") or 0)
+            reflections_written = int(reflection_status.get("reflections_written") or 0)
+            reflection_ok = bool(
+                reflection_status.get("running") is True
+                and reflection_errors == 0
+            )
+            evidence["autonomic_reflection_loop"] = {
+                "running": reflection_status.get("running") is True,
+                "reflections_written": reflections_written,
+                "errors": reflection_errors,
+                "participated": reflection_ok,
+            }
+            if not reflection_ok:
+                blockers.append("autonomic_reflection_loop")
             return self.record(
                 "chat_cognitive_organs",
                 not blockers,
                 summary=(
-                    "semantic, imagination, and timescale organs processed live turns"
+                    "semantic, imagination, timescale, ambient, and autonomic organs processed live turns"
                     if not blockers
                     else f"missing live participation: {', '.join(blockers)}"
                 ),

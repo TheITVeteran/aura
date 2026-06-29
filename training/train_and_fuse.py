@@ -388,6 +388,15 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument(
+        "--mark-crsm-consumed",
+        action="store_true",
+        help=(
+            "Mark CRSM captures consumed after fuse/publish even when --skip-train "
+            "is used. Intended for run_unattended resume_training.py, where the "
+            "training step happened in a separate process before this fuse call."
+        ),
+    )
+    parser.add_argument(
         "--base-model",
         default=os.environ.get("AURA_LORA_BASE_MODEL", str(DEFAULT_BASE_MODEL)),
     )
@@ -422,7 +431,7 @@ def main() -> None:
     fused_path = fuse_adapter(base_model=base_model, tag=args.tag)
     verify_load(fused_path)
     publish_manifest(fused_path, tag=args.tag, base_model=base_model)
-    if not args.skip_train:
+    if not args.skip_train or args.mark_crsm_consumed:
         mark_crsm_loop_consumed_after_training(fused_path)
 
 

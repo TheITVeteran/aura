@@ -72,6 +72,16 @@ def _full_services():
             observations=2,
             last_reconciliation={"foreground_anchor_required": False},
         ),
+        "ambient_developer_stream": _status_service(
+            running=True,
+            frames=1,
+            latest_frame={"summary": "ambient developer stream observed no material changes"},
+        ),
+        "autonomic_reflection_loop": _status_service(
+            running=True,
+            reflections_written=1,
+            latest_reflection={"ambient_summary": "ambient developer stream observed no material changes"},
+        ),
     }
 
 
@@ -110,6 +120,8 @@ def test_full_desktop_runtime_reports_every_canonical_background_organ(monkeypat
     assert status["components"]["cognitive_situation"]["running"] is True
     assert status["components"]["imagination_engine"]["running"] is True
     assert status["components"]["timescale_bridge"]["running"] is True
+    assert status["components"]["ambient_developer_stream"]["running"] is True
+    assert status["components"]["autonomic_reflection_loop"]["running"] is True
 
 
 def test_full_desktop_runtime_fails_readiness_when_background_organ_is_missing(monkeypatch):
@@ -206,6 +218,38 @@ def test_full_desktop_runtime_fails_readiness_when_timescale_bridge_missing(monk
 
     assert status["ready"] is False
     assert "timescale_bridge" in status["blockers"]
+
+
+def test_full_desktop_runtime_fails_readiness_when_ambient_stream_missing(monkeypatch):
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    monkeypatch.setenv("AURA_DESKTOP_RESOURCE_GUARD", "1")
+    monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_BACKGROUND_COGNITION", raising=False)
+    services = _full_services()
+    services.pop("ambient_developer_stream")
+    _install_services(monkeypatch, services)
+
+    status = _collect_full_runtime_status({"online": True}, {"online": True})
+
+    assert status["ready"] is False
+    assert "ambient_developer_stream" in status["blockers"]
+
+
+def test_full_desktop_runtime_fails_readiness_when_autonomic_reflection_loop_missing(monkeypatch):
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    monkeypatch.setenv("AURA_DESKTOP_RESOURCE_GUARD", "1")
+    monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_BACKGROUND_COGNITION", raising=False)
+    services = _full_services()
+    services.pop("autonomic_reflection_loop")
+    _install_services(monkeypatch, services)
+
+    status = _collect_full_runtime_status({"online": True}, {"online": True})
+
+    assert status["ready"] is False
+    assert "autonomic_reflection_loop" in status["blockers"]
 
 
 def test_full_desktop_runtime_fails_readiness_when_initiative_loop_is_missing(monkeypatch):

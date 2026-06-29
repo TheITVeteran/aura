@@ -55,9 +55,14 @@ class TimescaleObservation:
     social: float = 0.0
     voice_activity: bool = False
     screen_changed: bool = False
+    ambient_event_count: int = 0
+    ambient_summary: str = ""
+    ambient_repair_candidates: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["ambient_repair_candidates"] = list(self.ambient_repair_candidates)
+        return data
 
 
 @dataclass(frozen=True)
@@ -77,6 +82,9 @@ class TimescaleReconciliation:
     foreground_anchor_required: bool = False
     memory_grounding_bias: float = 0.0
     sensory_grounding_bias: float = 0.0
+    ambient_event_count: int = 0
+    ambient_summaries: tuple[str, ...] = ()
+    ambient_repair_candidates: tuple[str, ...] = ()
     summary: str = ""
     directives: tuple[str, ...] = ()
 
@@ -84,6 +92,8 @@ class TimescaleReconciliation:
         data = asdict(self)
         data["observed_apps"] = list(self.observed_apps)
         data["observed_windows"] = list(self.observed_windows)
+        data["ambient_summaries"] = list(self.ambient_summaries)
+        data["ambient_repair_candidates"] = list(self.ambient_repair_candidates)
         data["directives"] = list(self.directives)
         return data
 
@@ -120,18 +130,27 @@ class TimescaleBridge:
         )
         self._observations: deque[TimescaleObservation] = deque(maxlen=max(8, max_observations))
         self._last_sample_at = 0.0
+        self._last_sample_at_by_source: dict[str, float] = {}
         self._last_user_turn_at = 0.0
         self._last_reconciliation: TimescaleReconciliation | None = None
         self._frames_ingested = 0
         self._registered_at = time.time()
 
+    def _should_sample_source(self, source: str, now: float) -> bool:
+        key = _bounded_text(source, 80) or "unknown"
+        previous = self._last_sample_at_by_source.get(key, 0.0)
+        if (now - previous) < self.sample_interval_s:
+            return False
+        self._last_sample_at_by_source[key] = now
+        self._last_sample_at = now
+        return True
+
     def ingest_perceptual_frame(self, frame: Any, *, source: str = "perceptual_pump") -> None:
         """Summarize a perceptual frame without retaining raw sensory payloads."""
 
         now = float(getattr(frame, "timestamp", 0.0) or time.time())
-        if (now - self._last_sample_at) < self.sample_interval_s:
+        if not self._should_sample_source(source, now):
             return
-        self._last_sample_at = now
         self._frames_ingested += 1
 
         screen = getattr(frame, "screen", None)
@@ -169,6 +188,39 @@ class TimescaleBridge:
             )
         )
 
+    def ingest_ambient_developer_frame(
+        self,
+        frame: Any,
+        *,
+        source: str = "ambient_developer_stream",
+    ) -> None:
+        """Summarize ambient developer/runtime evidence into the dialogue bridge."""
+
+        now = float(getattr(frame, "timestamp", 0.0) or time.time())
+        if not self._should_sample_source(source, now):
+            return
+        self._frames_ingested += 1
+
+        data = frame.to_dict() if hasattr(frame, "to_dict") else dict(frame or {})
+        repair_candidates = tuple(
+            _bounded_text(item, 80)
+            for item in data.get("repair_candidates", [])[:6]
+            if str(item or "").strip()
+        )
+        self._observations.append(
+            TimescaleObservation(
+                timestamp=now,
+                source=_bounded_text(source, 80),
+                novelty=0.25 if data.get("git_dirty_count") or data.get("recent_files") else 0.05,
+                threat=0.35 if data.get("log_events") else 0.0,
+                ambient_event_count=int(data.get("git_dirty_count", 0) or 0)
+                + len(data.get("recent_files", []) or [])
+                + len(data.get("log_events", []) or []),
+                ambient_summary=_bounded_text(data.get("summary", ""), 220),
+                ambient_repair_candidates=repair_candidates,
+            )
+        )
+
     def reconcile_foreground_turn(
         self,
         user_message: str,
@@ -188,6 +240,16 @@ class TimescaleBridge:
         max_cpu = max((obs.cpu_percent for obs in recent), default=0.0)
         max_threat = max((obs.threat for obs in recent), default=0.0)
         max_novelty = max((obs.novelty for obs in recent), default=0.0)
+        ambient_recent = [obs for obs in recent if obs.ambient_event_count or obs.ambient_summary]
+        ambient_event_count = sum(obs.ambient_event_count for obs in ambient_recent)
+        ambient_summaries = tuple(
+            obs.ambient_summary for obs in ambient_recent[-3:] if obs.ambient_summary
+        )
+        ambient_repair_candidates = tuple(
+            item
+            for obs in ambient_recent[-6:]
+            for item in obs.ambient_repair_candidates
+        )[:8]
         user_returned = idle_gap >= self.idle_anchor_threshold_s
         low_observation_density = len(recent) < 2
         drift_risk = 0.0
@@ -208,6 +270,8 @@ class TimescaleBridge:
             directives.append("Prefer compact foreground reasoning and avoid discretionary background expansion.")
         if low_observation_density:
             directives.append("If sensory evidence is sparse, say less about the external world rather than filling gaps.")
+        if ambient_event_count:
+            directives.append("Use ambient developer stream facts only as verified background evidence, not as invented user intent.")
 
         apps = tuple(app for app, _ in app_counts.most_common(4))
         windows = tuple(title for title, _ in window_counts.most_common(3))
@@ -218,6 +282,8 @@ class TimescaleBridge:
             summary_parts.append("recent apps: " + ", ".join(apps))
         if max_memory or max_cpu:
             summary_parts.append(f"peak load: cpu {max_cpu:.0f}%, memory {max_memory:.0f}%")
+        if ambient_summaries:
+            summary_parts.append("ambient: " + ambient_summaries[-1])
         if not summary_parts:
             summary_parts.append("no significant idle bridge observations")
 
@@ -236,6 +302,9 @@ class TimescaleBridge:
             foreground_anchor_required=bool(user_returned or drift_risk >= 0.35),
             memory_grounding_bias=round(0.35 + min(0.4, drift_risk), 3),
             sensory_grounding_bias=round(0.25 + min(0.45, max_novelty + max_threat), 3),
+            ambient_event_count=int(ambient_event_count),
+            ambient_summaries=ambient_summaries,
+            ambient_repair_candidates=ambient_repair_candidates,
             summary="; ".join(summary_parts),
             directives=tuple(directives),
         )
@@ -267,6 +336,7 @@ class TimescaleBridge:
     def reset_for_tests(self) -> None:
         self._observations.clear()
         self._last_sample_at = 0.0
+        self._last_sample_at_by_source.clear()
         self._last_user_turn_at = 0.0
         self._last_reconciliation = None
         self._frames_ingested = 0
@@ -289,6 +359,16 @@ def render_timescale_prompt_block(reconciliation: dict[str, Any] | TimescaleReco
     directives = data.get("directives") if isinstance(data.get("directives"), list) else []
     for directive in directives[:4]:
         lines.append(f"- {directive}")
+    ambient_summaries = data.get("ambient_summaries") if isinstance(data.get("ambient_summaries"), list) else []
+    if ambient_summaries:
+        lines.append("- Ambient developer stream: " + "; ".join(str(item) for item in ambient_summaries[:2]))
+    repair_candidates = (
+        data.get("ambient_repair_candidates")
+        if isinstance(data.get("ambient_repair_candidates"), list)
+        else []
+    )
+    if repair_candidates:
+        lines.append("- Background repair candidates: " + ", ".join(str(item) for item in repair_candidates[:4]))
     lines.append(
         "Use this to reconcile continuous background state with the current user turn; "
         "do not recite it as telemetry."
