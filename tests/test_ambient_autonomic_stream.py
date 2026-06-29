@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
+import psutil
 import pytest
 
 from core.autonomic.reflection_loop import AutonomicReflectionLoop
@@ -120,6 +122,28 @@ async def test_ambient_developer_stream_collects_repo_logs_and_feeds_timescale(
         assert "Resource interrupts" in prompt_block
     finally:
         ServiceContainer.clear()
+
+
+def test_ambient_network_permission_boundary_is_observed_without_degradation(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(
+        "core.perception.ambient_developer_stream.psutil.net_connections",
+        Mock(side_effect=psutil.AccessDenied()),
+    )
+    stream = AmbientDeveloperStream(
+        project_root=tmp_path,
+        watch_roots=(),
+        log_roots=(),
+        terminal_roots=(),
+    )
+
+    events = stream._collect_network_events()
+
+    assert len(events) == 1
+    assert events[0].kind == "socket_visibility_unavailable"
+    assert events[0].count == 0
 
 
 def test_timescale_bridge_samples_perceptual_and_ambient_sources_independently():

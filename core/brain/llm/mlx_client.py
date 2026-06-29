@@ -3935,7 +3935,12 @@ class MLXLocalClient:
                             request_is_background=request_is_background,
                             foreground_request=foreground_request,
                             owner_label=owner_name,
-                            max_tokens=3,
+                            # Three tokens is not enough for trained models that
+                            # emit a short latent/reasoning prefix before visible
+                            # text. Keep the probe bounded, but give it enough
+                            # room to prove a surfaced answer without falsely
+                            # recycling a healthy 32B worker.
+                            max_tokens=16,
                             temp=0.0,
                             top_p=1.0,
                             min_p=0.0,

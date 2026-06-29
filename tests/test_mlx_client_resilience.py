@@ -1206,7 +1206,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         readiness_kwargs = probe.await_args_list[1].kwargs
         self.assertTrue(readiness_kwargs["health_probe"])
         self.assertTrue(readiness_kwargs["disable_prompt_cache"])
-        self.assertEqual(readiness_kwargs["max_tokens"], 3)
+        self.assertEqual(readiness_kwargs["max_tokens"], 16)
 
     async def test_warmup_returns_false_when_worker_start_is_deferred(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)

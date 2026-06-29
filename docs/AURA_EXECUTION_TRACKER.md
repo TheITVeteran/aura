@@ -1858,6 +1858,25 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
     semantic review ledger closure, final replay/proof bundle, longer soak
     validation, claims calibration, and clean-worktree closure.
 
+## Sub-checkpoint: 2026-06-29 Desktop Warmup + Ambient Sensor Repair
+
+- A real `aura_main.py --desktop` proof loaded the active CRSM-fused 32B worker
+  within the bounded memory envelope, then exposed two pre-chat failures.
+- Root fixes:
+  - The visible readiness probe now allows 16 bounded output tokens instead of
+    three. The old ceiling could expire inside a trained model's latent prefix,
+    falsely classify a healthy worker as non-speaking, recycle it, and escalate
+    the deferred prewarm through the fail-closed inference service.
+  - macOS denial of process-wide socket enumeration is now represented as a
+    `socket_visibility_unavailable` percept rather than a degradation. Aura's
+    own connectivity remains independently probed; missing host-wide socket
+    privilege no longer poisons health, nociception, or the neural stream.
+- Evidence before rerun:
+  - Focused warmup and ambient stream tests: `8 passed`.
+  - Ruff, enterprise gate, and production gate passed.
+- Next action: rerun the same committed desktop proof under the 26 GB MLX,
+  32 GB process, and 34 GB external-abort bounds.
+
 1. **R-001**: AGENTS.md, AURA_MASTER_SPEC.md, docs/AURA_MASTER_SPEC.md,
    docs/RUNTIME_INVARIANTS.md, docs/PRODUCTION_HARDENING_PLAN.md,
    docs/SKILL_CERTIFICATION_MATRIX.md, docs/DEPTH_AUDIT.md,

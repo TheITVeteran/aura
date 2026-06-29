@@ -527,7 +527,19 @@ class AmbientDeveloperStream:
     def _collect_network_events(self) -> list[AmbientNetworkEvent]:
         try:
             conns = psutil.net_connections(kind="inet")
-        except (psutil.AccessDenied, psutil.NoSuchProcess, OSError, RuntimeError) as exc:
+        except psutil.AccessDenied:
+            # macOS can deny process-wide socket enumeration even when Aura's
+            # own network access is healthy. That is a sensor capability
+            # boundary, not a degraded runtime. Preserve the fact in the
+            # perceptual stream without poisoning health or nociception.
+            return [
+                AmbientNetworkEvent(
+                    kind="socket_visibility_unavailable",
+                    count=0,
+                    detail="host denied process-wide socket enumeration",
+                )
+            ]
+        except (psutil.NoSuchProcess, OSError, RuntimeError) as exc:
             record_degradation("ambient_developer_stream.network", exc)
             return []
         by_status: dict[str, int] = {}
