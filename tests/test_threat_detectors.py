@@ -85,9 +85,9 @@ def test_injection_detector_quiet_on_benign(benign):
 def test_suite_singleton_and_wired_to_immune():
     suite = get_threat_detectors()
     assert isinstance(suite, ThreatDetectorSuite)
-    # an injection scan flows through to the immune system's history
-    from core.security.immune_system import get_immune_system
-    before = get_immune_system().status()["threats_seen"]
-    suite.injection.scan("' OR '1'='1")
-    after = get_immune_system().status()["threats_seen"]
-    assert after > before
+    # an injection scan flows through to the immune system: it returns the ThreatEvent the
+    # immune system created (proves wiring without depending on the global history counter,
+    # which is bounded/saturates under a full-suite run).
+    ev = suite.injection.scan("' OR '1'='1")
+    assert ev is not None and ev.threat_class == ThreatClass.INJECTION
+    assert ev.threat_id.startswith("thr-")   # minted by ImmuneSystem.assess
