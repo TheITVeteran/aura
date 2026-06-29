@@ -169,6 +169,12 @@ def register_all_services(is_proxy: bool = False):
         required=False,
     )
     container.register(
+        'sensory_runtime',
+        lambda: __import__('core.perception.sensory_runtime', fromlist=['get_sensory_runtime']).get_sensory_runtime(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
+    container.register(
         'other_agent_model',
         lambda: __import__('core.social.other_agent_model', fromlist=['get_other_agent_model']).get_other_agent_model(),
         lifetime=ServiceLifetime.SINGLETON,
