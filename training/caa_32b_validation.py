@@ -11,6 +11,7 @@ extraction runs.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from dataclasses import dataclass
@@ -34,6 +35,28 @@ class LoadedVector:
     layer: int
     path: str
     vector: np.ndarray
+    source: str = "unknown"
+    extracted: bool = False
+    model_path: str | None = None
+    model_config_sha256: str | None = None
+
+
+def _sha256_file(path: Path) -> str | None:
+    try:
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def _model_config_sha256(model_path: str) -> str | None:
+    cfg = Path(model_path).expanduser() / "config.json"
+    if not cfg.exists():
+        return None
+    return _sha256_file(cfg)
 
 
 class CAA32BValidator:
@@ -47,10 +70,26 @@ class CAA32BValidator:
         vectors = self._load_vectors()
         activation_vectors = [v for v in vectors if v.layer >= 0]
         fallback_vectors = [v for v in vectors if v.layer < 0]
-        geometry = self._geometry(activation_vectors)
+        active_model_config_sha256 = _model_config_sha256(self.model_path)
+        production_activation_vectors = self._active_model_bound_vectors(
+            activation_vectors,
+            active_model_config_sha256=active_model_config_sha256,
+        )
+        production_vector_ids = {id(vector) for vector in production_activation_vectors}
+        stale_activation_vectors = [
+            vector for vector in activation_vectors if id(vector) not in production_vector_ids
+        ]
+        geometry = self._geometry(production_activation_vectors)
         behavioral = self._load_behavioral_results(behavioral_results)
         prompt_controls = self._prompt_control_schema()
-        pass_conditions = self._pass_conditions(activation_vectors, geometry, behavioral)
+        pass_conditions = self._pass_conditions(
+            production_activation_vectors,
+            geometry,
+            behavioral,
+            active_model_config_sha256=active_model_config_sha256,
+            total_activation_vectors=len(activation_vectors),
+            stale_activation_vectors=len(stale_activation_vectors),
+        )
         return {
             "generated_at": time.time(),
             "model_path": self.model_path,
@@ -58,7 +97,10 @@ class CAA32BValidator:
             "vectors_dir": str(self.vectors_dir),
             "vector_count": len(vectors),
             "activation_vector_count": len(activation_vectors),
+            "production_activation_vector_count": len(production_activation_vectors),
+            "stale_or_unbound_activation_vector_count": len(stale_activation_vectors),
             "fallback_prior_count": len(fallback_vectors),
+            "active_model_config_sha256": active_model_config_sha256,
             "dimensions": sorted({v.dimension for v in vectors}),
             "layers": sorted({v.layer for v in vectors if v.layer >= 0}),
             "geometry": geometry,
@@ -69,13 +111,27 @@ class CAA32BValidator:
             "passed": all(item["passed"] for item in pass_conditions.values()),
         }
 
+    @staticmethod
+    def _active_model_bound_vectors(
+        vectors: list[LoadedVector],
+        *,
+        active_model_config_sha256: str | None,
+    ) -> list[LoadedVector]:
+        if not active_model_config_sha256:
+            return [vector for vector in vectors if vector.extracted]
+        return [
+            vector
+            for vector in vectors
+            if vector.extracted and vector.model_config_sha256 == active_model_config_sha256
+        ]
+
     def _load_vectors(self) -> list[LoadedVector]:
         vectors: list[LoadedVector] = []
         if not self.vectors_dir.exists():
             return vectors
         for path in sorted([*self.vectors_dir.glob("*.npy"), *self.vectors_dir.glob("*.npz")]):
             try:
-                arr = self._read_array(path)
+                arr, metadata = self._read_array(path)
             except _VECTOR_LOAD_RECOVERABLE_ERRORS as exc:
                 self._vector_load_errors.append(
                     {
@@ -92,20 +148,42 @@ class CAA32BValidator:
             norm = np.linalg.norm(vec)
             if norm > 0:
                 vec = vec / norm
-            vectors.append(LoadedVector(dimension=dimension, layer=layer, path=str(path), vector=vec))
+            vectors.append(
+                LoadedVector(
+                    dimension=dimension,
+                    layer=layer,
+                    path=str(path),
+                    vector=vec,
+                    source=str(metadata.get("source") or "unknown"),
+                    extracted=bool(metadata.get("extracted", False)),
+                    model_path=metadata.get("model_path"),
+                    model_config_sha256=metadata.get("model_config_sha256"),
+                )
+            )
         return vectors
 
     @staticmethod
-    def _read_array(path: Path) -> np.ndarray | None:
+    def _read_array(path: Path) -> tuple[np.ndarray | None, dict[str, Any]]:
         if path.suffix == ".npy":
-            return np.load(path)
+            return np.load(path), {}
         data = np.load(path)
+        metadata: dict[str, Any] = {}
+        for key in ("source", "extracted", "model_path", "model", "model_config_sha256"):
+            if key not in data:
+                continue
+            value = data[key]
+            if key == "model" and "model_path" not in metadata:
+                metadata["model_path"] = str(value)
+            elif key == "extracted":
+                metadata[key] = bool(value)
+            else:
+                metadata[key] = str(value)
         for key in ("vector", "direction", "arr_0"):
             if key in data:
-                return data[key]
+                return data[key], metadata
         if data.files:
-            return data[data.files[0]]
-        return None
+            return data[data.files[0]], metadata
+        return None, metadata
 
     @staticmethod
     def _parse_name(stem: str) -> tuple[str, int]:
@@ -141,10 +219,13 @@ class CAA32BValidator:
         }
         if not group_reports:
             return {"available": False, "reason": "insufficient_same_space_vectors", "dims": sorted(groups)}
+        semantic_dimension_count = len({v.dimension for v in vectors})
         return {
             "available": True,
             "groups": group_reports,
-            "group_count": len(group_reports),
+            "same_space_group_count": len(group_reports),
+            "group_count": semantic_dimension_count,
+            "semantic_dimension_count": semantic_dimension_count,
             "dims": sorted(groups),
             "layers": sorted({v.layer for v in vectors}),
             "mean_cross_dimension_abs_cosine": float(np.mean([g["cross_dimension_abs_cosine_mean"] for g in group_reports.values()])),
@@ -298,6 +379,10 @@ class CAA32BValidator:
         vectors: list[LoadedVector],
         geometry: dict[str, Any],
         behavioral: dict[str, Any],
+        *,
+        active_model_config_sha256: str | None,
+        total_activation_vectors: int,
+        stale_activation_vectors: int,
     ) -> dict[str, dict[str, Any]]:
         geometry_ok = bool(
             geometry.get("available")
@@ -305,9 +390,21 @@ class CAA32BValidator:
             and geometry.get("mean_cross_dimension_abs_cosine", 1.0) < 0.95
             and geometry.get("mean_pca_top1", 0.0) > 0.20
         )
+        if active_model_config_sha256:
+            binding_ok = len(vectors) >= 10
+            binding_value: Any = {
+                "bound": len(vectors),
+                "total_activation_vectors": total_activation_vectors,
+                "stale_or_unbound_activation_vectors": stale_activation_vectors,
+                "active_model_config_sha256": active_model_config_sha256,
+            }
+        else:
+            binding_ok = True
+            binding_value = "not_fingerprintable"
         return {
             "production_32b_model": {"passed": "32b" in self.model_path.lower(), "value": self.model_path},
             "activation_vectors_present": {"passed": len(vectors) >= 10, "value": len(vectors)},
+            "active_model_vector_binding": {"passed": binding_ok, "value": binding_value},
             "geometry_coherent": {"passed": geometry_ok, "value": geometry},
             "behavioral_ab_generalizes": {"passed": bool(behavioral.get("passed", False)), "value": behavioral},
         }

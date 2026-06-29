@@ -15,6 +15,7 @@ surfaced fact instead of a guess.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -30,6 +31,27 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # Estimated steering capacity (alpha fraction of design) per readiness level.
 _CAPACITY = {"bootstrap": 0.3, "mixed": 0.6, "validated": 0.85, "production": 1.0}
+
+
+def _sha256_file(path: Path) -> str | None:
+    try:
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError as exc:
+        record_degradation("caa_readiness_report", exc)
+        return None
+
+
+def _config_sha256(model_path: str | None) -> str | None:
+    if not model_path:
+        return None
+    cfg = Path(model_path) / "config.json"
+    if not cfg.exists():
+        return None
+    return _sha256_file(cfg)
 
 
 def _parse_vector_stem(stem: str) -> tuple[str, int]:
@@ -92,6 +114,8 @@ def scan_vector_files(vectors_dir: Path) -> dict[str, Any]:
                 is_extracted = bool(d["extracted"]) if "extracted" in d else False
                 derived_at = float(d["derived_at"]) if "derived_at" in d else 0.0
                 vector_dim = int(np.asarray(d["v"] if "v" in d else d[d.files[0]]).reshape(-1).shape[0]) if d.files else 0
+                recorded_model_path = str(d["model_path"]) if "model_path" in d else str(d["model"]) if "model" in d else None
+                model_config_sha256 = str(d["model_config_sha256"]) if "model_config_sha256" in d else None
             except (OSError, ValueError, KeyError) as exc:
                 record_degradation("caa_readiness_report", exc)
                 continue
@@ -104,6 +128,8 @@ def scan_vector_files(vectors_dir: Path) -> dict[str, Any]:
                     "extracted": is_extracted,
                     "derived_at": derived_at,
                     "vector_dim": vector_dim,
+                    "model_path": recorded_model_path,
+                    "model_config_sha256": model_config_sha256,
                 }
             )
             by_source[source] = by_source.get(source, 0) + 1
@@ -138,10 +164,33 @@ def _active_model(fused_model_dir: Path) -> dict[str, Any]:
             return {
                 "path": data.get("active_model_path"),
                 "fused_at": float(data.get("fused_at", 0.0) or 0.0),
+                "model_config_sha256": _config_sha256(data.get("active_model_path")),
             }
     except (OSError, ValueError, TypeError) as exc:
         record_degradation("caa_readiness_report", exc)
-    return {"path": None, "fused_at": 0.0}
+    return {"path": None, "fused_at": 0.0, "model_config_sha256": None}
+
+
+def _matches_active_model(item: dict[str, Any], active: dict[str, Any]) -> bool:
+    """Return true only when a vector can be tied to the active local model.
+
+    If the active model is not fingerprintable (for example a remote model ID in
+    a unit test), fall back to path equality when present and otherwise keep the
+    older provenance behavior. A local active model with a config hash must match
+    that hash; missing vector provenance is not production-ready.
+    """
+    active_hash = active.get("model_config_sha256")
+    active_path = str(active.get("path") or "")
+    item_hash = str(item.get("model_config_sha256") or "")
+    item_path = str(item.get("model_path") or "")
+    if active_hash:
+        return item_hash == active_hash
+    if active_path and item_path:
+        try:
+            return Path(item_path).expanduser().resolve() == Path(active_path).expanduser().resolve()
+        except OSError:
+            return item_path == active_path
+    return True
 
 
 def verify_readiness(
@@ -170,7 +219,17 @@ def verify_readiness(
         for item in expected_files
         if item.get("extracted") and str(item.get("source", "")).startswith("extracted")
     ]
-    expected_ratio = (len(expected_extracted) / expected_total) if expected_total else 0.0
+    expected_extracted_active = [
+        item
+        for item in expected_extracted
+        if _matches_active_model(item, active)
+    ]
+    stale_expected = [
+        item
+        for item in expected_extracted
+        if not _matches_active_model(item, active)
+    ]
+    expected_ratio = (len(expected_extracted_active) / expected_total) if expected_total else 0.0
     missing_expected = []
     present_pairs = {(item.get("dimension"), item.get("layer")) for item in expected_files}
     for key in expected_keys:
@@ -183,22 +242,22 @@ def verify_readiness(
         if item.get("dimension") not in expected_keys or item.get("layer") not in expected_layers
     ]
 
-    if expected_total and len(expected_extracted) == expected_total:
-        level, detail = "production", "all runtime target vectors extracted from the active model"
+    if expected_total and len(expected_extracted_active) == expected_total:
+        level, detail = "production", "all runtime target vectors extracted from and bound to the active model"
         readiness_ratio = 1.0
     elif expected_total and expected_files:
         readiness_ratio = expected_ratio
         if expected_ratio < 0.5:
             level = "bootstrap"
             detail = (
-                f"{len(expected_extracted)}/{expected_total} runtime target vectors extracted; "
-                "runtime steering will still rely on derived/nearest vectors"
+                f"{len(expected_extracted_active)}/{expected_total} runtime target vectors extracted "
+                "and bound to the active model; runtime steering will still rely on derived/nearest vectors"
             )
         else:
             level = "mixed"
             detail = (
-                f"{len(expected_extracted)}/{expected_total} runtime target vectors extracted; "
-                "missing exact production coverage"
+                f"{len(expected_extracted_active)}/{expected_total} runtime target vectors extracted "
+                "and bound to the active model; missing exact production coverage"
             )
     elif total == 0:
         level, detail = "bootstrap", "no steering vectors present"
@@ -230,9 +289,11 @@ def verify_readiness(
             "expected_keys": expected_keys,
             "expected_layers": expected_layers,
             "expected_total": expected_total,
-            "expected_extracted": len(expected_extracted),
+            "expected_extracted": len(expected_extracted_active),
+            "expected_extracted_unbound": len(stale_expected),
             "missing_expected": missing_expected,
             "ignored_file_count": len(ignored_files),
+            "active_model_config_sha256": active.get("model_config_sha256"),
         },
         "vectors": scan,
     }

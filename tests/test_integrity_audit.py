@@ -16,7 +16,10 @@ def test_caa_and_crsm_are_advisory_not_health_blocking():
     report = ia.run_integrity_audit(log=False)
     # Operational proof facts surface as ADVISORY when they remain open, never
     # as runtime-health concerns, so they cannot make launch report "degraded".
-    assert any("CRSM" in c for c in report["advisory"])
+    if report["crsm_loop"].get("state") == "open":
+        assert any("CRSM" in c for c in report["advisory"])
+    else:
+        assert not any("CRSM" in c for c in report["advisory"])
     assert report["caa_readiness"]["level"] in {"production", "validated", "mixed", "bootstrap"}
     if report["caa_readiness"].get("below_design_capacity"):
         assert any("CAA steering" in c for c in report["advisory"])

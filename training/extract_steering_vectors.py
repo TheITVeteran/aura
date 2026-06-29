@@ -31,6 +31,7 @@ Requires MLX and mlx-lm.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import sys
@@ -62,6 +63,29 @@ TARGET_LAYER_FRACTION = (0.40, 0.65)
 
 # Explicit fallback layers for a 64-layer model
 DEFAULT_TARGET_LAYERS = list(range(13, 22))  # layers 13-21 inclusive
+
+
+def _sha256_file(path: Path) -> str | None:
+    try:
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def _model_identity(model_path: str) -> dict[str, Any]:
+    path = Path(model_path).expanduser()
+    resolved = str(path.resolve()) if path.exists() else str(model_path)
+    cfg = path / "config.json"
+    return {
+        "model_path": resolved,
+        "model_path_input": str(model_path),
+        "model_config_sha256": _sha256_file(cfg) if cfg.exists() else None,
+        "model_config_path": str(cfg.resolve()) if cfg.exists() else None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +401,7 @@ def extract_steering_vectors(
 
     # -- Load model ----------------------------------------------------------
     logger.info("Loading model: %s", model_path)
+    identity = _model_identity(model_path)
     load_kwargs: dict[str, Any] = {}
     if adapter_path and Path(adapter_path).exists():
         logger.info("With LoRA adapter: %s", adapter_path)
@@ -500,6 +525,10 @@ def extract_steering_vectors(
                 dimension=dim_key,
                 layer=lidx,
                 model=model_path,
+                model_path=identity["model_path"],
+                model_path_input=identity["model_path_input"],
+                model_config_sha256=identity["model_config_sha256"] or "",
+                model_config_path=identity["model_config_path"] or "",
                 derived_at=time.time(),
             )
             logger.info(
@@ -522,6 +551,7 @@ def extract_steering_vectors(
     meta = {
         "method": "contrastive_activation_addition",
         "model": model_path,
+        "model_identity": identity,
         "adapter": adapter_path,
         "n_model_layers": n_layers,
         "target_layers": target_layers,

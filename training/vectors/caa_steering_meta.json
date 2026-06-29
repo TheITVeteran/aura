@@ -1,7 +1,13 @@
 {
   "method": "contrastive_activation_addition",
-  "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-20260510-151144",
-  "adapter": "/Users/bryan/.aura/live-source/training/adapters/aura-personality",
+  "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-20260628-181638",
+  "model_identity": {
+    "model_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-20260628-181638",
+    "model_path_input": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-20260628-181638",
+    "model_config_sha256": "a4054d0840b87c2feabea6fb2014bcd5b672500b2ec4dfec6f63a31d7a6ed785",
+    "model_config_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-20260628-181638/config.json"
+  },
+  "adapter": "",
   "n_model_layers": 64,
   "target_layers": [
     25,
@@ -75,5 +81,5 @@
     }
   ],
   "total_vectors": 15,
-  "timestamp": "2026-06-28T22:00:30Z"
+  "timestamp": "2026-06-29T02:32:47Z"
 }

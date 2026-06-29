@@ -1732,6 +1732,50 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
     gates, claims purification, longer live/soak validation, and clean-worktree
     closure.
 
+## Checkpoint: 2026-06-28 CAA Active-Model Steering Closure
+
+- Scope: close the activation-steering proof gap after the CRSM-fused 32B model
+  became the active live model.
+- Root issue fixed:
+  - CAA readiness previously trusted `source=extracted_caa` plus key/layer
+    coverage. That allowed stale steering vectors from a prior active model to
+    keep reporting `production` after a model swap.
+  - `core/consciousness/caa/readiness_report.py` now requires runtime target
+    vectors to be extracted and bound to the current active model's config hash
+    before CAA can report production design capacity.
+  - `training/extract_steering_vectors.py` now stamps every extracted vector
+    with the resolved model path and model `config.json` SHA-256.
+  - `training/caa_32b_validation.py` now reports active-model binding,
+    production-bound vector count, and stale/unbound vector count separately.
+- Live extraction run:
+  `AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 python training/extract_steering_vectors.py --model-path /Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-20260628-181638 --adapter-path "" --output-dir training/vectors --dimensions valence_positive,arousal,curiosity,frustration,energy --layers 25,30,35`.
+- Result:
+  - Extracted 15 production runtime vectors from the active CRSM-fused 32B model:
+    5 runtime dimensions across layers 25, 30, and 35.
+  - The active model config hash is
+    `a4054d0840b87c2feabea6fb2014bcd5b672500b2ec4dfec6f63a31d7a6ed785`.
+  - Readiness now reports `level=production`, `below_design_capacity=false`,
+    `expected_extracted=15`, `expected_extracted_unbound=0`.
+  - The validator still reports older runtime-derived/stale vector drift
+    separately (`stale_or_unbound_activation_vector_count=20`) instead of
+    pretending those files are production proof.
+  - `artifacts/proof_bundle/CAA_32B_RESULTS.json` passed against the active
+    CRSM-fused model with active-model vector binding enabled.
+  - `run_integrity_audit(log=False)` is now clean for this slice:
+    `healthy=true`, `concerns=[]`, `advisory=[]`, `crsm_loop.state=closed`,
+    `caa_readiness.level=production`.
+- Evidence:
+  - Ruff on touched CAA/training/test files passed.
+  - Focused CAA + integrity tests: `24 passed`.
+  - `make enterprise-gate`: passed.
+  - `make production-gate`: passed.
+- Closeout tracker:
+  - Estimated closeout completion after this checkpoint: about 98%.
+  - Remaining total checkpoints: 2 consolidated checkpoints / 2-3 smaller
+    sub-checkpoints.
+  - Remaining work: final replay/proof gates, claims purification, longer live
+    desktop/soak validation, and clean-worktree closure.
+
 ## Unresolved Failures / Known Backlog
 
 1. **R-001**: AGENTS.md, AURA_MASTER_SPEC.md, docs/AURA_MASTER_SPEC.md,
