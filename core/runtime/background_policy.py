@@ -43,32 +43,22 @@ def foreground_only_runtime() -> bool:
 
 
 def background_cognition_disabled_reason(*, allow_desktop_safe_boot: bool = False) -> str:
-    """Return why optional background cognition must stay offline.
+    """Return why optional background cognition must stay offline — almost never.
 
-    Normal desktop launches run the complete background runtime under resource
-    admission. Only the explicit recovery safe-boot profile suppresses these
-    loops. Operators may also disable them deliberately with
-    ``AURA_ENABLE_BACKGROUND_COGNITION=0``.
+    Background cognition is part of the full, live Aura, not an optional extra: a normal
+    launch AND a protected/safe boot both run the complete background runtime under resource
+    admission. A "safe boot" is a resource-protection posture (memory guards, process
+    ownership, tighter admission), NOT a lesser mind — so it no longer suppresses cognition.
+
+    The ONLY thing that takes background cognition offline is an explicit operator override,
+    ``AURA_ENABLE_BACKGROUND_COGNITION=0``, kept as a deliberate last-resort kill-switch for
+    genuine crash-loop recovery. Everything else keeps the whole mind live.
     """
+    del allow_desktop_safe_boot  # safe/protected boot no longer reduces cognition
 
     configured = str(os.getenv("AURA_ENABLE_BACKGROUND_COGNITION", "") or "").strip().lower()
     if configured in {"0", "false", "no", "off"}:
         return "background_cognition_disabled"
-    if configured in {"1", "true", "yes", "on"}:
-        return ""
-    try:
-        from core.runtime.desktop_boot_safety import desktop_safe_boot_enabled
-
-        if desktop_safe_boot_enabled() and not allow_desktop_safe_boot:
-            return "desktop_background_disabled"
-    except (ImportError, AttributeError, RuntimeError) as _exc:
-        record_degradation(
-            "background_policy",
-            _exc,
-                action="blocked background cognition because recovery-profile detection failed",
-        )
-        logger.warning("Background cognition recovery-profile probe failed: %s", _exc)
-        return "desktop_safe_boot_probe_unavailable"
     return ""
 
 

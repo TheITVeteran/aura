@@ -455,8 +455,14 @@ def test_patch_artifact_failure_returns_execution_report(tmp_path, monkeypatch):
     )
 
 
-def test_behavioral_rule_artifact_defers_during_foreground_turn(tmp_path):
+def test_behavioral_rule_artifact_defers_during_foreground_turn(tmp_path, monkeypatch):
     from core.runtime import foreground_guard
+
+    # Pin the maintenance environment so desktop-safe-boot (set via setdefault at import by
+    # core/architect/safe_boot_harness.py, which leaks across a broad run) can't mask the
+    # foreground-deferral reason this test asserts.
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "0")
+    monkeypatch.setenv("AURA_ENABLE_BACKGROUND_COGNITION", "1")
 
     immune = AdaptiveImmuneSystem(state_dir=tmp_path, rng_seed=21)
     antigen = _test_antigen(subsystem="runtime_engine")

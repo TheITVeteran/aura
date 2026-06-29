@@ -1397,7 +1397,9 @@ def test_background_policy_blocks_when_memory_probe_fails(monkeypatch):
     assert reason == "memory_probe_unavailable"
 
 
-def test_background_loop_start_blocks_during_desktop_safe_boot_by_default(monkeypatch):
+def test_background_loop_runs_during_desktop_safe_boot(monkeypatch):
+    # A safe/protected boot is NOT a lesser Aura: background cognition stays live. Only an
+    # explicit operator kill-switch (AURA_ENABLE_BACKGROUND_COGNITION=0) takes it offline.
     from core.runtime import background_policy
 
     monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
@@ -1405,21 +1407,25 @@ def test_background_loop_start_blocks_during_desktop_safe_boot_by_default(monkey
     monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
     monkeypatch.setattr("core.runtime.proof_policy.proof_run_active", lambda *args, **kwargs: False)
 
+    # safe-boot alone no longer blocks background — the full mind stays live (other legit
+    # gates like the boot-grace window are orthogonal and unaffected).
+    assert background_policy.background_loop_start_reason(origin="subconscious_loop") == ""
+    # specifically, the safe-boot reason is NOT what blocks it anymore
+    assert background_policy.background_activity_reason(
+        SimpleNamespace(
+            is_busy=False,
+            _suppress_unsolicited_proactivity_until=0.0,
+            _foreground_user_quiet_until=0.0,
+            _last_user_interaction_time=0.0,
+        ),
+        allow_no_user_anchor=True,
+    ) != "desktop_background_disabled"
+
+    # the deliberate operator kill-switch still takes background offline (crash-loop recovery)
+    monkeypatch.setenv("AURA_ENABLE_BACKGROUND_COGNITION", "0")
     assert (
         background_policy.background_loop_start_reason(origin="subconscious_loop")
-        == "desktop_background_disabled"
-    )
-    assert (
-        background_policy.background_activity_reason(
-            SimpleNamespace(
-                is_busy=False,
-                _suppress_unsolicited_proactivity_until=0.0,
-                _foreground_user_quiet_until=0.0,
-                _last_user_interaction_time=0.0,
-            ),
-            allow_no_user_anchor=True,
-        )
-        == "desktop_background_disabled"
+        == "background_cognition_disabled"
     )
 
 
@@ -1434,7 +1440,7 @@ def test_background_loop_start_allows_explicit_desktop_background_cognition(monk
     assert background_policy.background_loop_start_reason(origin="subconscious_loop") == ""
 
 
-def test_orchestrator_background_quiescence_honors_desktop_safe_boot(monkeypatch):
+def test_orchestrator_background_runs_under_safe_boot_but_honors_explicit_disable(monkeypatch):
     from core.orchestrator import main as orchestrator_main
 
     monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
@@ -1442,11 +1448,13 @@ def test_orchestrator_background_quiescence_honors_desktop_safe_boot(monkeypatch
     monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
     monkeypatch.setattr("core.runtime.proof_policy.proof_run_active", lambda *args, **kwargs: False)
 
-    assert orchestrator_main._background_quiescent_runtime("pneuma_background") is True
-
-    monkeypatch.setenv("AURA_ENABLE_BACKGROUND_COGNITION", "1")
-
+    # safe/protected boot keeps the background runtime LIVE (not quiescent) — full Aura
     assert orchestrator_main._background_quiescent_runtime("pneuma_background") is False
+
+    # only the explicit operator kill-switch quiesces background cognition
+    monkeypatch.setenv("AURA_ENABLE_BACKGROUND_COGNITION", "0")
+
+    assert orchestrator_main._background_quiescent_runtime("pneuma_background") is True
 
 
 @pytest.mark.asyncio

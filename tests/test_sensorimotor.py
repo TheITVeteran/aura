@@ -96,8 +96,15 @@ def test_immune_executor_requires_authorized_context_before_actuation():
     assert model.get_entity("Port_West").load == west_before
 
 
-def test_immune_executor_defers_maintenance_rule_during_foreground_turn():
+def test_immune_executor_defers_maintenance_rule_during_foreground_turn(monkeypatch):
     from core.runtime import foreground_guard
+
+    # Pin the maintenance environment so the higher-precedence desktop-safe-boot policy can't
+    # mask the foreground reason this test asserts. core/architect/safe_boot_harness.py does
+    # os.environ.setdefault("AURA_SAFE_BOOT_DESKTOP", "1") at import time, which leaks into a
+    # broad test run; this makes the foreground-deferral path deterministic regardless.
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "0")
+    monkeypatch.setenv("AURA_ENABLE_BACKGROUND_COGNITION", "1")
 
     foreground_guard._reset_for_tests()
     lease = foreground_guard.begin_foreground_turn(owner="test", source="chat_api")
