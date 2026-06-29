@@ -34,8 +34,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from tools.journal_demo_proof import (  # noqa: E402
     _SELF_TOKENS,
-    _TIMESTAMP_RE,
     JournalDemoProof,
+    _has_fresh_timestamp,
     _pdf_has_image,
     _pdf_text,
 )
@@ -121,12 +121,24 @@ class VisibleJournalProof(JournalDemoProof):
 
         text = _pdf_text(pdf) if pdf else ""
         lowered = text.lower()
-        has_timestamp = bool(_TIMESTAMP_RE.search(text))
+        has_timestamp = _has_fresh_timestamp(text, step_started)
         has_self = any(tok in lowered for tok in _SELF_TOKENS) and len(text) > 120
         has_image = _pdf_has_image(pdf) if pdf else False
         staging = _visible_staging_evidence(
             payload.get("data"), pdf.name if pdf else ""
         )
+        lane_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        desktop_result = (
+            lane_data.get("desktop_result")
+            if isinstance(lane_data.get("desktop_result"), dict)
+            else {}
+        )
+        document_provenance = str(desktop_result.get("document_provenance") or "")
+        cognitively_authored = document_provenance in {
+            "cognitive_context",
+            "local_cortex_synthesis",
+            "runtime_substrate_synthesis",
+        }
 
         verified = bool(
             ok
@@ -139,6 +151,7 @@ class VisibleJournalProof(JournalDemoProof):
             and staging["paste_frontmost_notes"]
             and staging["notes_refocused_before_paste"]
             and staging["receipt_matches_disk"]
+            and cognitively_authored
         )
         return self.record(
             "visible_journal_chain",
@@ -149,6 +162,7 @@ class VisibleJournalProof(JournalDemoProof):
                     f"PDF {pdf.name} ({pdf.stat().st_size // 1024}KB) "
                     f"text={len(text)}ch ts={has_timestamp} self={has_self} "
                     f"image={has_image} staging={staging}"
+                    f" provenance={document_provenance}"
                     if pdf
                     else f"NO FRESH PDF (staging={staging})"
                 )
@@ -165,6 +179,8 @@ class VisibleJournalProof(JournalDemoProof):
             has_self_description=has_self,
             has_embedded_image=has_image,
             staging_evidence=staging,
+            document_provenance=document_provenance,
+            cognitively_authored=cognitively_authored,
         )
 
     def run(self) -> int:  # noqa: D102 - sequence mirrors JournalDemoProof.run

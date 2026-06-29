@@ -391,6 +391,30 @@ class ComputerUseSkill(BaseSkill):
             expected_name,
         )
 
+    def _frontmost_or_prior_verified(
+        self,
+        front_app: str,
+        expected_frontmost: str,
+        context: dict[str, Any],
+    ) -> tuple[str, bool]:
+        """Use prior foreground proof only when the live probe is unavailable.
+
+        A blank frontmost-app probe usually means System Events timed out or
+        returned no value after a native app shortcut. If the desktop task
+        immediately prior verified the same target app, keep moving. If the
+        probe reports a different app, fail closed.
+        """
+        observed = str(front_app or "").strip()
+        expected = str(expected_frontmost or "").strip()
+        if observed or not expected:
+            return observed, False
+        if not bool(context.get("desktop_task_allow_unavailable_frontmost_from_prior")):
+            return observed, False
+        prior = str(context.get("desktop_task_prior_verified_frontmost_app") or "").strip()
+        if prior and self._frontmost_app_matches(prior, expected):
+            return expected, True
+        return observed, False
+
     async def _wait_for_frontmost_app(self, expected: str) -> tuple[bool, str]:
         last_seen = ""
         for attempt in range(10):
@@ -696,6 +720,28 @@ end tell
             f'tell application "System Events" to {stroke}{using}', timeout=8
         )
         return f"system_events:{stroke}{using}"
+
+    @staticmethod
+    def _send_hotkey_pyautogui(pyautogui: Any, keys: list[str]) -> str:
+        """Fallback keyboard dispatch for native apps when System Events stalls.
+
+        This is only used after Accessibility preflight has passed and
+        System Events times out rather than refuses permission. It is not used
+        as proof by itself; the regular hotkey receipt verification below still
+        decides whether the action counts.
+        """
+        aliases = {
+            "cmd": "command",
+            "control": "ctrl",
+            "return": "enter",
+            "escape": "esc",
+        }
+        normalized = [aliases.get(str(key or "").strip().lower(), str(key or "").strip().lower()) for key in keys]
+        normalized = [key for key in normalized if key]
+        if not normalized:
+            raise RuntimeError("unsupported empty hotkey combination")
+        pyautogui.hotkey(*normalized, interval=0.05)
+        return f"pyautogui:{'+'.join(normalized)}"
 
     @staticmethod
     def _normalize_open_url_target(target: str) -> str:
@@ -1885,6 +1931,11 @@ end tell
                 expected_frontmost = str(
                     context.get("desktop_task_expected_frontmost_app") or ""
                 ).strip()
+                front_app, frontmost_from_prior = self._frontmost_or_prior_verified(
+                    front_app,
+                    expected_frontmost,
+                    context,
+                )
                 if expected_frontmost and not self._frontmost_app_matches(
                     front_app,
                     expected_frontmost,
@@ -2010,6 +2061,8 @@ end tell
                     "attempts": attempt,
                     "effect_verified": effect_verified,
                     "verification": verification_note,
+                    "frontmost_app_before": front_app,
+                    "frontmost_app_from_prior_receipt": frontmost_from_prior,
                 }
 
             elif action == "hotkey":
@@ -2018,11 +2071,38 @@ end tell
                 # System Events busy so long the keystroke itself timed out).
                 # Read only AXFocusedUIElement there; dispatch alone is not
                 # evidence that the web editor accepted the shortcut.
-                front_app = await asyncio.to_thread(self._frontmost_app_name)
-                browser_surface = front_app in _ALLOWED_URL_BROWSERS
                 expected_frontmost = str(
                     context.get("desktop_task_expected_frontmost_app") or ""
                 ).strip()
+                frontmost_from_prior = False
+                front_app = ""
+                prior_frontmost = str(
+                    context.get("desktop_task_prior_verified_frontmost_app") or ""
+                ).strip()
+                if (
+                    expected_frontmost
+                    and bool(context.get("desktop_task_allow_unavailable_frontmost_from_prior"))
+                    and self._frontmost_app_matches(prior_frontmost, expected_frontmost)
+                    and expected_frontmost not in _ALLOWED_URL_BROWSERS
+                ):
+                    try:
+                        await self._activate_app(expected_frontmost)
+                    except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                        logger.debug(
+                            "Prior verified foreground re-activation failed for %s: %s",
+                            expected_frontmost,
+                            exc,
+                        )
+                    front_app = expected_frontmost
+                    frontmost_from_prior = True
+                else:
+                    front_app = await asyncio.to_thread(self._frontmost_app_name)
+                    front_app, frontmost_from_prior = self._frontmost_or_prior_verified(
+                        front_app,
+                        expected_frontmost,
+                        context,
+                    )
+                browser_surface = front_app in _ALLOWED_URL_BROWSERS
                 if expected_frontmost and not self._frontmost_app_matches(
                     front_app,
                     expected_frontmost,
@@ -2043,6 +2123,8 @@ end tell
                     }
                 if browser_surface:
                     pre_state = await asyncio.to_thread(self._focused_element_snapshot)
+                elif frontmost_from_prior:
+                    pre_state = ""
                 else:
                     pre_state = ""
                     try:
@@ -2093,7 +2175,36 @@ end tell
                     dispatch_receipt = await asyncio.to_thread(
                         self._send_hotkey_system_events, keys
                     )
-                except (TimeoutError, RuntimeError) as exc:
+                except TimeoutError as exc:
+                    if browser_surface:
+                        return {
+                            "ok": False,
+                            "action": "hotkey",
+                            "hotkey": params.target,
+                            "frontmost_app_before": front_app,
+                            "effect_verified": False,
+                            "error": f"keystroke dispatch failed: {exc}",
+                        }
+                    try:
+                        fallback_receipt = await asyncio.to_thread(
+                            self._send_hotkey_pyautogui,
+                            pyautogui,
+                            keys,
+                        )
+                        dispatch_receipt = f"system_events_timeout:{exc};{fallback_receipt}"
+                    except (AttributeError, RuntimeError, OSError, TypeError, ValueError) as fallback_exc:
+                        return {
+                            "ok": False,
+                            "action": "hotkey",
+                            "hotkey": params.target,
+                            "frontmost_app_before": front_app,
+                            "effect_verified": False,
+                            "error": (
+                                "keystroke dispatch failed: "
+                                f"{exc}; fallback dispatch failed: {fallback_exc}"
+                            ),
+                        }
+                except RuntimeError as exc:
                     return {
                         "ok": False,
                         "action": "hotkey",
@@ -2103,9 +2214,15 @@ end tell
                         "error": f"keystroke dispatch failed: {exc}",
                     }
                 await asyncio.sleep(0.4)
-                post_front_app = await asyncio.to_thread(self._frontmost_app_name)
+                post_front_app = (
+                    front_app
+                    if frontmost_from_prior and not browser_surface
+                    else await asyncio.to_thread(self._frontmost_app_name)
+                )
                 if browser_surface:
                     post_state = await asyncio.to_thread(self._focused_element_snapshot)
+                elif frontmost_from_prior:
+                    post_state = ""
                 else:
                     post_state = ""
                     try:
@@ -2211,6 +2328,7 @@ end tell
                     "frontmost_app_before": front_app,
                     "frontmost_app_after": post_front_app,
                     "expected_frontmost_app": expected_frontmost,
+                    "frontmost_app_from_prior_receipt": frontmost_from_prior,
                     "write_target_app_verified": expected_app_verified,
                     "effect_verified": effect_verified,
                     "dispatch": dispatch_receipt,

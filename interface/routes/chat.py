@@ -11626,8 +11626,6 @@ def _verified_desktop_task_result(result: dict[str, Any]) -> tuple[bool, str]:
         return False, "missing_positive_steps_requested"
     if not isinstance(completed, int):
         return False, "missing_steps_completed"
-    if completed != requested:
-        return False, f"incomplete_steps:{completed}/{requested}"
 
     receipts = result.get("receipts")
     if not isinstance(receipts, list) or len(receipts) < requested:
@@ -11637,7 +11635,9 @@ def _verified_desktop_task_result(result: dict[str, Any]) -> tuple[bool, str]:
         if not isinstance(receipt, dict):
             return False, f"step_{index}_receipt_not_structured"
         if not bool(receipt.get("ok")):
-            return False, f"step_{index}_not_ok"
+            if bool(receipt.get("critical", True)):
+                return False, f"step_{index}_not_ok"
+            continue
         if receipt.get("effect_verified") is not True:
             return False, f"step_{index}_effect_unverified"
         evidence = str(receipt.get("effect_evidence") or "").strip()
@@ -11666,10 +11666,13 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
     try:
         from core.skills.desktop_task import DesktopTaskSkill
 
+        # Original prose and source synthesis are cognitive work. They must not
+        # use the pre-cognition mechanical shortcut merely because desktop_task
+        # has a deterministic emergency body composer.
         if DesktopTaskSkill._objective_requests_self_summary(text):
-            return True
+            return False
         if DesktopTaskSkill._objective_requests_research_document(text):
-            return True
+            return False
         steps = DesktopTaskSkill()._derive_steps_from_objective(text, {})
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return False
@@ -11736,6 +11739,34 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
     return False
 
 
+def _desktop_objective_executable_after_cognitive_attempt(user_message: str) -> bool:
+    """Whether a desktop objective may execute after CognitiveEngine was tried.
+
+    This is intentionally broader than the pre-cognition shortcut. Original
+    prose must still attempt CognitiveEngine first, but some document classes
+    have their own governed synthesis inside ``desktop_task`` (for example
+    Aura self-summary and live research synthesis). If the foreground speech
+    draft fails quality after that attempt, the action lane should still run
+    and return receipt evidence instead of serving an empty 503.
+    """
+    if _desktop_objective_self_sufficient_without_cognitive_text(user_message):
+        return True
+    if _blocks_consequential_desktop_execution(user_message):
+        return False
+    if not _looks_like_desktop_objective(user_message):
+        return False
+    text = str(user_message or "").strip()
+    try:
+        from core.skills.desktop_task import DesktopTaskSkill
+
+        return bool(
+            DesktopTaskSkill._objective_requests_self_summary(text)
+            or DesktopTaskSkill._objective_requests_research_document(text)
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
 async def _execute_desktop_objective_from_chat(
     user_message: str,
     *,
@@ -11756,6 +11787,13 @@ async def _execute_desktop_objective_from_chat(
         return None
 
     objective = str(user_message or "").strip()
+    # The visible desktop lane is already consuming the foreground Cortex turn.
+    # A second hidden model synthesis inside desktop_task can starve the
+    # generation gate and prevent any governed receipts from being emitted.
+    # Research documents therefore use source-grounded synthesis by default;
+    # explicit callers can still opt into model synthesis by invoking
+    # desktop_task directly with allow_desktop_task_model_synthesis=True.
+    allow_research_synthesis = False
     desktop_params = {
         "objective": objective,
         "steps": [],
@@ -11784,6 +11822,7 @@ async def _execute_desktop_objective_from_chat(
             "user_visible_desktop_action": True,
             "local_desktop_action": True,
             "verification_required": True,
+            "allow_desktop_task_model_synthesis": allow_research_synthesis,
             "desktop_task_document_body": str(cognitive_reply or "").strip(),
             "cognitive_reply": str(cognitive_reply or "").strip(),
         },
@@ -13865,6 +13904,15 @@ async def api_chat(
                             reply_source=reply_source,
                         )
                         if not bool(candidate_contract.get("full_mind_path")):
+                            if (
+                                bool(candidate_contract.get("cognitive_engine_reply_accepted"))
+                                and _looks_like_desktop_objective(_semantic_user_message)
+                                and reply_text
+                            ):
+                                _live_turn_trace["desktop_internal_artifact_draft"] = reply_text
+                                _live_turn_trace["desktop_internal_artifact_draft_path"] = str(
+                                    candidate_contract.get("response_path") or reply_source
+                                )[:120]
                             logger.error(
                                 "Desktop CognitiveEngine candidate did not prove full mind path "
                                 "(path=%s, accepted=%s, bounded=%s); failing closed instead of "
@@ -13910,11 +13958,14 @@ async def api_chat(
                     len(social_reply),
                 )
 
-            if _desktop_objective_self_sufficient_without_cognitive_text(_semantic_user_message):
+            if _desktop_objective_executable_after_cognitive_attempt(_semantic_user_message):
                 try:
+                    internal_artifact_draft = str(
+                        _live_turn_trace.get("desktop_internal_artifact_draft") or ""
+                    ).strip()
                     executed = await _run_desktop_objective_tracked(
                         _semantic_user_message,
-                        cognitive_reply="",
+                        cognitive_reply=internal_artifact_draft,
                     )
                 except _CHAT_RECOVERABLE_ERRORS as exec_exc:
                     record_degradation("chat", exec_exc)

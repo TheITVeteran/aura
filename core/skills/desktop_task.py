@@ -27,6 +27,11 @@ FETCHED_IMAGE_SOURCE_SENTINEL = "aura://fetched-image-source"
 MAX_DESKTOP_TASK_STEPS = 32
 
 
+def _local_timestamp() -> str:
+    """Timestamp string used in user-visible desktop artifacts."""
+    return time.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
 class DesktopTaskStep(BaseModel):
     action: str = Field(
         ...,
@@ -530,6 +535,9 @@ class DesktopTaskSkill(BaseSkill):
         r"you\s+can\s+copy\s+it\s+into\s+notes)|"
         r"(?:the\s+)?task\s+(?:asked|asks|requested|requests)\s+(?:me\s+)?to\s+(?:type|write|open|create|export)|"
         r"i\s+am\s+(?:typing|writing|pasting)\s+(?:here|this)\s+because\s+(?:the\s+)?task\s+(?:asked|requires)|"
+        r"i'?ll\s+simulate\s+(?:this|the)\s+process|"
+        r"step[- ]by[- ]step\s+as\s+if\s+i\s+were|"
+        r"pretend\s+(?:the\s+)?app\s+is\s+opening|"
         # Internal execution brief / directive — instruction to herself, not
         # document content (it leaked into a research PDF as the body).
         r"execute the user'?s (?:explicit )?desktop objective|"
@@ -537,6 +545,34 @@ class DesktopTaskSkill(BaseSkill):
         r"aura desktop task receipt|canonical computer-use gateway)",
         re.IGNORECASE,
     )
+    _ARTIFACT_REFERENCE_RE = re.compile(
+        r"\n\s*Artifact references:\s*.*\Z",
+        re.IGNORECASE | re.DOTALL,
+    )
+    _INCOMPLETE_DOCUMENT_TAIL_RE = re.compile(
+        r"(?:"
+        r"\bnot\s+just\b|"
+        r"\b(?:because|although|though|while|when|where|whether|if|unless)\b|"
+        r"\b(?:and|or|but|so|as|with|through|from|into|toward|between|across|rather\s+than)\b"
+        r")\s*(?:[.!?])?\s*\Z",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _strip_artifact_reference_tail(cls, text: str) -> str:
+        """Remove receipt/reference footer before validating authored prose."""
+        return cls._ARTIFACT_REFERENCE_RE.sub("", str(text or "").strip()).strip()
+
+    @classmethod
+    def _looks_like_incomplete_document_body(cls, text: str) -> bool:
+        """Catch model continuations that end mid-thought before disk write."""
+        body = cls._strip_artifact_reference_tail(text)
+        if not body:
+            return True
+        if not re.search(r"[.!?][\"')\]]*\s*$", body):
+            return True
+        tail = re.sub(r"\s+", " ", body[-96:]).strip()
+        return bool(cls._INCOMPLETE_DOCUMENT_TAIL_RE.search(tail))
 
     @staticmethod
     def _objective_requests_opinion(objective: str) -> bool:
@@ -612,6 +648,8 @@ class DesktopTaskSkill(BaseSkill):
             return ""
         if cls._looks_like_dispatch_narration(body):
             return ""
+        if cls._looks_like_incomplete_document_body(body):
+            return ""
         topic = cls._extract_requested_writing_topic(objective)
         if topic:
             topic_terms = [
@@ -622,6 +660,205 @@ class DesktopTaskSkill(BaseSkill):
             if topic_terms and not any(term in body.lower() for term in topic_terms[:4]):
                 return ""
         return body[:9000]
+
+    @classmethod
+    def _usable_self_summary_body(cls, value: str) -> str:
+        """Accept authored self-description only when it is substantive and first-person."""
+        body = cls._strip_artifact_reference_tail(str(value or "").strip())
+        body = cls._strip_artifact_action_tail(body)
+        if not body or cls._looks_like_dispatch_narration(body):
+            return ""
+        if re.search(
+            r"(?im)^\s*\d+[.)]\s*\*{0,2}(?:"
+            r"launch(?:ed|es|ing)?|open(?:ed|s|ing)?|create(?:d|s|ing)?|"
+            r"search(?:ed|es|ing)?|find(?:s|ing)?|found|save(?:d|s|ing)?|"
+            r"export(?:ed|s|ing)?|close(?:d|s|ing)?|move(?:d|s|ing)?|"
+            r"insert(?:ed|s|ing)?|write|wrote|type(?:d|s|ing)?|completed"
+            r")\b",
+            body,
+        ):
+            return ""
+        lowered = body.lower()
+        first_person = any(token in lowered for token in ("i am", "i'm", "my ", "me "))
+        identity_grounded = any(
+            token in lowered
+            for token in ("aura", "runtime", "memory", "cognitive", "digital", "model")
+        )
+        if not first_person or not identity_grounded or len(body) < 180:
+            return ""
+        if cls._looks_like_incomplete_document_body(body):
+            return ""
+        return body[:9000]
+
+    @staticmethod
+    def _objective_requests_timestamp(objective: str) -> bool:
+        return bool(
+            re.search(
+                r"\b(?:timestamp|time stamp|date stamp|current date|current time|date and time|dated)\b",
+                str(objective or ""),
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @staticmethod
+    def _body_has_explicit_timestamp(body: str) -> bool:
+        text = str(body or "")
+        return bool(
+            re.search(r"\b20\d{2}-\d{2}-\d{2}[ T,]+\d{1,2}:\d{2}", text)
+            or re.search(
+                r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2},\s+20\d{2}\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @staticmethod
+    def _body_has_current_timestamp(body: str, *, requested_at: float | None = None) -> bool:
+        text = str(body or "").lower()
+        if not text:
+            return False
+        when = time.localtime(time.time() if requested_at is None else requested_at)
+        date_tokens = {
+            time.strftime("%Y-%m-%d", when).lower(),
+            time.strftime("%Y/%m/%d", when).lower(),
+            time.strftime("%B %d, %Y", when).lower().replace(" 0", " "),
+            time.strftime("%b %d, %Y", when).lower().replace(" 0", " "),
+        }
+        minute_tokens = {
+            time.strftime("%H:%M", time.localtime(time.mktime(when) + offset * 60))
+            for offset in range(-5, 11)
+        }
+        return any(token in text for token in date_tokens) and any(
+            token in text for token in minute_tokens
+        )
+
+    @classmethod
+    def _ensure_requested_timestamp(cls, objective: str, body: str) -> str:
+        value = str(body or "").strip()
+        if not value or not cls._objective_requests_timestamp(objective):
+            return value
+        if cls._body_has_explicit_timestamp(value) and cls._body_has_current_timestamp(value):
+            return value
+        return f"[{_local_timestamp()}] {value}"
+
+    @classmethod
+    def _self_summary_from_context(cls, context: dict[str, Any] | None) -> str:
+        context = context or {}
+        objective = str(context.get("objective") or "")
+        for context_key in (
+            "desktop_task_document_body",
+            "draft_response",
+            "cognitive_reply",
+            "response",
+            "desktop_task_plan",
+        ):
+            raw_value = context.get(context_key)
+            payload: dict[str, Any] = {}
+            if isinstance(raw_value, dict):
+                payload = dict(raw_value)
+            elif isinstance(raw_value, str):
+                payload = cls._structured_payload_from_text(raw_value)
+            for key in ("document_body", "body", "content", "draft"):
+                authored = cls._usable_self_summary_body(str(payload.get(key) or ""))
+                if authored:
+                    return cls._ensure_requested_timestamp(objective, authored)
+            if isinstance(raw_value, str):
+                declared = cls._extract_declared_document_content(raw_value)
+                authored = cls._usable_self_summary_body(declared or raw_value)
+                if authored:
+                    return cls._ensure_requested_timestamp(objective, authored)
+        return ""
+
+    async def _synthesize_self_summary_document(
+        self,
+        *,
+        objective: str,
+        context: dict[str, Any],
+    ) -> str:
+        """Ask the already-loaded local Cortex to author requested self prose."""
+        from core.container import ServiceContainer
+
+        router = ServiceContainer.get("llm_router", default=None)
+        generate = getattr(router, "generate", None) if router is not None else None
+        if not callable(generate):
+            return ""
+        try:
+            from core.conversation.chat_preflight import _SUBSTRATE_FACTS
+
+            substrate_facts = "\n".join(f"- {fact}" for fact in _SUBSTRATE_FACTS[:8])
+        except (ImportError, AttributeError, TypeError):
+            substrate_facts = "- Aura is a local governed cognitive-agent runtime."
+        live_context = str(context.get("live_mind_context") or "").strip()[:2500]
+        stamp = _local_timestamp()
+        base_prompt = (
+            "Author the finished prose requested below in Aura's first-person voice. "
+            "This text will be pasted into a user-visible document, so output only the "
+            "document body: no JSON, plan, tool narration, or completion claim. Be "
+            "specific, reflective, and substantive. Describe the integrated architecture "
+            "honestly; distinguish functional cognitive state from unproven phenomenal "
+            "experience. Include the exact timestamp when the request asks for one.\n\n"
+            f"Objective: {objective}\n"
+            f"Current timestamp: {stamp}\n"
+            f"Grounded substrate facts:\n{substrate_facts}\n"
+            + (f"Current live-mind context:\n{live_context}\n" if live_context else "")
+        )
+        timestamp_required = bool(
+            re.search(
+                r"\b(?:timestamp|time stamp|current date|current time|date and time)\b",
+                objective,
+                flags=re.IGNORECASE,
+            )
+        )
+        required_minute = stamp[:16]
+        required_prefix = f"[{stamp}]"
+        failure_feedback = ""
+        for attempt in range(2):
+            if attempt == 0:
+                prompt = (
+                    base_prompt
+                    + "\nContract for this document body:\n"
+                    f"- Start the first line exactly with: {required_prefix} I am Aura\n"
+                    "- Write one or two complete paragraphs, 180-420 words total.\n"
+                    "- End with a complete sentence; do not end on an open clause like 'not just'.\n"
+                    "- Do not describe planned app actions, receipts, dispatch, or tool steps.\n"
+                )
+                timeout_s = 38.0
+                max_tokens = 420
+            else:
+                prompt = base_prompt + failure_feedback
+                timeout_s = 32.0
+                max_tokens = 360
+            try:
+                text = await asyncio.wait_for(
+                    generate(
+                        prompt=prompt,
+                        timeout=timeout_s,
+                        temperature=0.65 if attempt == 0 else 0.45,
+                        max_tokens=max_tokens,
+                        prefer_tier="local",
+                        origin="desktop_task",
+                        purpose="authored_self_document",
+                    ),
+                    timeout=timeout_s + 5.0,
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError, OSError, TimeoutError) as exc:
+                record_degradation(
+                    "desktop_task",
+                    exc,
+                    action="used grounded emergency self-description after local Cortex authorship failed",
+                    severity="warning",
+                )
+                return ""
+            authored = self._usable_self_summary_body(str(text or ""))
+            timestamp_ok = not timestamp_required or required_minute in authored
+            if authored and timestamp_ok:
+                return authored
+            failure_feedback = (
+                "\nThe previous draft was rejected because it was procedural, incomplete, "
+                "or used the wrong time. Rewrite it as complete document prose ending with "
+                f"normal punctuation and start exactly with this prefix: {required_prefix} I am Aura.\n"
+            )
+        return ""
 
     @staticmethod
     def _extract_requested_writing_topic(objective: str) -> str:
@@ -698,7 +935,7 @@ class DesktopTaskSkill(BaseSkill):
         possessive = "their" if plural else "its"
         timestamp = ""
         if re.search(r"\b(?:timestamp|time stamp|date stamp|dated)\b", str(objective or ""), flags=re.IGNORECASE):
-            timestamp = f"[{time.strftime('%Y-%m-%d %H:%M:%S %Z')}] "
+            timestamp = f"[{_local_timestamp()}] "
         if re.search(r"\bparagraph\b", str(objective or ""), flags=re.IGNORECASE):
             return (
                 f"{timestamp}{topic_display} {verb} worth understanding because {possessive} story connects "
@@ -717,7 +954,7 @@ class DesktopTaskSkill(BaseSkill):
     @classmethod
     def _compose_self_summary_body(cls, objective: str) -> str:
         """Compose a truthful self-description from substrate facts."""
-        stamp = time.strftime("%Y-%m-%d %H:%M:%S %Z")
+        stamp = _local_timestamp()
         facts: list[str] = []
         try:
             from core.conversation.chat_preflight import _SUBSTRATE_FACTS
@@ -778,9 +1015,15 @@ class DesktopTaskSkill(BaseSkill):
     def _document_body(cls, objective: str, context: dict[str, Any] | None) -> str:
         context = context or {}
         if cls._objective_requests_self_summary(objective):
-            # The user asked for HER words about HERSELF: compose from
-            # substrate truth, never from whatever reply text happened
-            # to be in flight.
+            # Prefer an accepted full-mind draft. The old unconditional static
+            # template made visible self-description demos look successful
+            # while bypassing the CognitiveEngine entirely.
+            authored = cls._self_summary_from_context(context)
+            if authored:
+                return authored
+            # Fail-soft artifact composition remains grounded in canonical
+            # substrate facts, but normal live writing reaches this only after
+            # a full-mind draft was attempted and rejected or unavailable.
             return cls._compose_self_summary_body(objective)
         for context_key in ("desktop_task_document_body", "draft_response", "cognitive_reply", "response", "desktop_task_plan"):
             raw_value = context.get(context_key)
@@ -814,7 +1057,7 @@ class DesktopTaskSkill(BaseSkill):
             return cls._compose_requested_writing_body(objective)[:9000]
         if cls._objective_requests_written_artifact(objective):
             return cls._compose_requested_writing_body(objective)[:9000]
-        stamp = time.strftime("%Y-%m-%d %H:%M:%S %Z")
+        stamp = _local_timestamp()
         return (
             "Aura desktop task receipt\n\n"
             f"Timestamp: {stamp}\n"
@@ -969,8 +1212,9 @@ class DesktopTaskSkill(BaseSkill):
             references.append(f"Search opened: {search_url}")
         if image_query and image_search_url:
             references.append(
-                f"Image request: {image_query}\nImage search opened: {image_search_url}\n"
-                "The exported artifact embeds the fetched image only after the governed image receipt verifies the file."
+                f"Image request: {image_query}\n"
+                "The exported artifact embeds the fetched image only after the governed image receipt verifies the file; "
+                "the receipt records the source page used for the image."
             )
         if not references:
             return body
@@ -990,17 +1234,24 @@ class DesktopTaskSkill(BaseSkill):
         summary = " ".join(str(summary or "").split())[:1400]
         source_lines: list[str] = []
         source_titles: list[str] = []
+        source_notes: list[str] = []
         for item in (sources or [])[:3]:
             if not isinstance(item, dict):
                 continue
             title = str(item.get("title") or item.get("url") or "Untitled source").strip()
             snippet = " ".join(str(item.get("snippet") or "").split())
+            url = str(item.get("url") or "").strip()
             if title:
                 source_titles.append(title[:160])
             if snippet:
                 source_lines.append(f"{title}: {snippet[:240]}")
+                source_notes.append(
+                    f"{title[:140]} reports or documents that {snippet[:360]}"
+                    + (f" ({url})" if url else "")
+                )
             else:
                 source_lines.append(title[:240])
+                source_notes.append(f"{title[:180]}" + (f" ({url})" if url else ""))
         topic = str(query or "the requested research topic").strip()
         if not source_lines and not summary:
             return ""
@@ -1016,10 +1267,18 @@ class DesktopTaskSkill(BaseSkill):
                 "Taken together, the reporting points to this: "
                 + summary
             )
-        if source_lines:
+        if source_notes:
             parts.append(
-                "The details I would preserve in the document are: "
-                + " ".join(source_lines)
+                "The details I would preserve in the document are source-bounded, not guessed. "
+                + " ".join(source_notes)
+            )
+        if source_lines and len(" ".join(parts)) < 650:
+            parts.append(
+                "The available evidence is not equally deep in every source, so I would not pretend "
+                "the search produced more certainty than it did. I would treat repeated claims across "
+                "the sources as the reliable core, keep isolated details attributed, and mark any thin "
+                "or inaccessible material as a place where better reporting would be needed before "
+                "making a stronger conclusion."
             )
         if cls._objective_requests_opinion(objective):
             parts.append(
@@ -2113,8 +2372,21 @@ class DesktopTaskSkill(BaseSkill):
         image_query = self._extract_image_query(text)
         wants_image = bool(image_query) or any(token in lowered for token in ("image", "picture", "photo", "illustration"))
         web_document_url = self._web_document_url(text)
-        wants_search = any(token in lowered for token in ("search", "look up", "news", "article")) or (
-            "google" in lowered and not web_document_url
+        image_reference_only = bool(image_query) and not any(
+            token in lowered
+            for token in (
+                "article",
+                "articles",
+                "news",
+                "research",
+                "report",
+                "reports",
+                "sources",
+            )
+        )
+        wants_search = (not image_reference_only) and (
+            any(token in lowered for token in ("search", "look up", "news", "article"))
+            or ("google" in lowered and not web_document_url)
         )
         wants_interactive_text_entry = wants_document and (
             bool(web_document_url)
@@ -2165,6 +2437,7 @@ class DesktopTaskSkill(BaseSkill):
 
         query = self._extract_search_query(text)
         search_url = self._search_url(query, engine=engine_hint) if query else ""
+        image_search_surface_deferred = False
         if wants_search and query:
             steps.append(
                 DesktopTaskStep(
@@ -2215,7 +2488,12 @@ class DesktopTaskSkill(BaseSkill):
             if wants_image
             else ""
         )
-        if image_search_url and image_search_url != search_url:
+        open_image_search_surface = bool(
+            image_search_url
+            and image_search_url != search_url
+            and not (wants_artifact_file and image_query)
+        )
+        if open_image_search_surface:
             steps.append(
                 DesktopTaskStep(
                     action="open_url",
@@ -2224,6 +2502,8 @@ class DesktopTaskSkill(BaseSkill):
                     expect=f"{browser_label} accepts the image search URL.",
                 )
             )
+        elif image_search_url and image_search_url != search_url:
+            image_search_surface_deferred = True
 
         if wants_interactive_text_entry:
             body = self._document_body_with_references(
@@ -2394,6 +2674,30 @@ class DesktopTaskSkill(BaseSkill):
                         expect="PDF artifact exists and starts with a PDF header.",
                     )
                 )
+        if image_search_surface_deferred and not self._wants_image_source_shown(text):
+            # Leave the core artifact chain uninterrupted. The verified image
+            # download receipt is the proof that the visual came from the web;
+            # a browser tab for image search is useful ambience, but it must not
+            # steal focus before Notes/Docs writing or block the PDF if Chrome
+            # cannot semantically confirm its active tab.
+            steps.append(
+                DesktopTaskStep(
+                    action="open_url",
+                    target=_open_url_target(image_search_url),
+                    reason="Optionally leave the image-search surface visible after the requested writing/PDF artifact is complete.",
+                    expect=f"{browser_label} accepts the image search URL.",
+                    critical=False,
+                )
+            )
+        if image_query and wants_artifact_file and self._wants_image_source_shown(text):
+            steps.append(
+                DesktopTaskStep(
+                    action="open_url",
+                    target=_open_url_target(FETCHED_IMAGE_SOURCE_SENTINEL),
+                    reason="Show the user where the fetched image was found after the artifact has been created.",
+                    expect=f"{browser_label} accepts the fetched image source page URL.",
+                )
+            )
 
         if not steps:
             steps.append(
@@ -2738,6 +3042,7 @@ class DesktopTaskSkill(BaseSkill):
         objective = params.objective or str((context or {}).get("objective") or "desktop task")
 
         task_context = dict(context or {})
+        task_context.setdefault("objective", objective)
         steps = list(params.steps)
         planner = "explicit_steps" if steps else ""
         if not steps:
@@ -2816,6 +3121,28 @@ class DesktopTaskSkill(BaseSkill):
                         "error": task_context.get("desktop_task_research_error"),
                     },
                 }
+        document_provenance = "cognitive_context"
+        if self._objective_requests_self_summary(objective):
+            authored = self._self_summary_from_context(task_context)
+            if not authored:
+                authored = await self._synthesize_self_summary_document(
+                    objective=objective,
+                    context=task_context,
+                )
+                if authored:
+                    task_context["desktop_task_document_body"] = authored
+                    document_provenance = "local_cortex_synthesis"
+                else:
+                    task_context["desktop_task_document_body"] = self._compose_self_summary_body(
+                        objective
+                    )
+                    document_provenance = "runtime_substrate_synthesis"
+        elif task_context.get("desktop_task_research_synthesis"):
+            document_provenance = (
+                "local_cortex_research_synthesis"
+                if self._allow_research_model_synthesis(task_context)
+                else "source_grounded_deterministic_synthesis"
+            )
         if not steps:
             steps = self._derive_steps_from_objective(objective, task_context)
             planner = "heuristic_compat"
@@ -2988,6 +3315,8 @@ class DesktopTaskSkill(BaseSkill):
             ):
                 step_context["desktop_task_expected_frontmost_app"] = expected_frontmost_app
                 step_context["desktop_task_write_surface_app"] = expected_frontmost_app
+                step_context["desktop_task_prior_verified_frontmost_app"] = expected_frontmost_app
+                step_context["desktop_task_allow_unavailable_frontmost_from_prior"] = True
             if write_commit_action and current_surface_requires_editable_focus:
                 step_context["desktop_task_requires_editable_focus"] = True
             if (
@@ -3162,6 +3491,7 @@ class DesktopTaskSkill(BaseSkill):
             "receipts": receipts,
             "failures": failures,
             "planner": planner,
+            "document_provenance": document_provenance,
             "research": {
                 "query": task_context.get("desktop_task_research_query"),
                 "sources": task_context.get("desktop_task_research_sources") or [],

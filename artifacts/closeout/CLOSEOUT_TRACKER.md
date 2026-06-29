@@ -6,10 +6,64 @@ remains open.
 
 ## Current Estimate
 
-- Overall closeout: 86%
-- Remaining checkpoints: 3 total
-- Current phase: live desktop runtime reliability and full-mind conversation
-  path hardening
+- Overall closeout: 98%
+- Remaining checkpoints: 1 consolidated checkpoint, likely 2-3 smaller
+  sub-checkpoints
+- Current phase: final CRSM/final-proof closure and artifact cleanup after
+  live visible desktop/voice demo proofs passed
+
+## Checkpoint 2026-06-29-01: Visible Desktop Demo Reliability
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- Bryan's daily demo path had to work through the same launched desktop lane he
+  uses: wake-word/voice, Notes, Chrome, Google Docs staging, PDF artifacts,
+  image/source evidence, wallpaper control, receipts, shutdown, and bounded RAM.
+- Prior runs passed backend checks but still failed live UX with URL-bar pastes,
+  stale procedural artifact text, hidden model synthesis timeouts, false
+  wake-command failures, and voice subprocess governance errors.
+
+What changed:
+
+- Native writing surfaces now reuse prior verified foreground evidence, refocus
+  before paste, and recover native hotkey timeouts with bounded `pyautogui`
+  fallback.
+- Self-summary artifacts reject procedural/stale draft text and refresh
+  requested timestamps to the current local time.
+- Visible research desktop tasks use source-grounded synthesis by default
+  instead of a hidden second foreground Cortex generation.
+- Voice playback keeps governance active for both temporary audio file writes
+  and `afplay` subprocess spawning.
+- Wake-word dispatch gives explicit desktop objectives a long-running
+  conversation-lane timeout so successful desktop tasks do not emit false
+  "Voice command failed" neural-stream events.
+
+Evidence:
+
+- `python -m ruff check ...` on touched desktop/runtime/proof/wake surfaces:
+  passed.
+- `python -m pytest -q tests/test_hardened_computer_use.py tests/test_desktop_task_skill.py tests/test_server_conversation_lane.py tests/test_live_runtime_surface_regressions.py tests/test_wake_word_conversation_lane.py`
+- Result: `465 passed`.
+- Visible journal proof:
+  `artifacts/live_proof/live_proof_20260629_054439_verdict.json`, passed.
+- Browser research proof:
+  `artifacts/live_proof/live_proof_20260629_063016_verdict.json`, passed.
+- Combined voice-wake visible proof after wake/voice fixes:
+  `artifacts/live_proof/live_proof_20260629_065226_verdict.json`, passed.
+- `make enterprise-gate`: passed.
+- `make production-gate`: passed.
+- Patched-run stdout scan found no recurrence of wake-word conversation timeout,
+  false voice-command failure, voice-engine governance violation, Cortex
+  no-text, high event-loop stall, or no-acceptable-reply markers.
+
+Still open:
+
+- Guarded CRSM train/fuse/publish and manifest/consumed-marker closure.
+- Final DNU/Aletheia/final-proof replay and claim/artifact cleanup.
+- Normalize or intentionally commit remaining generated artifact deltas, then
+  finish with a clean worktree and final commit/push.
 
 ## Checkpoint 2026-06-27-01: Live Desktop Full-Mind Path
 

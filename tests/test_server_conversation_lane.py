@@ -604,9 +604,8 @@ async def test_self_sufficient_desktop_objective_skips_foreground_model_allocati
     )
 
     objective = (
-        "Please create a folder named 'Aura Live Proof' in my Documents folder "
-        "and write a file inside it called live_proof.txt with one sentence "
-        "about who you are and the current timestamp."
+        "Please open Calculator, copy the displayed equation, paste it into Notes, "
+        "and report the saved path."
     )
     reply = await chat_routes._run_cognitive_engine_chat_turn(
         objective,
@@ -3390,6 +3389,7 @@ async def test_api_chat_desktop_surface_plans_with_cognitive_engine_before_execu
         "user_visible_desktop_action": True,
         "local_desktop_action": True,
         "verification_required": True,
+        "allow_desktop_task_model_synthesis": False,
         "desktop_task_document_body": skill_calls[0]["extra_context"]["cognitive_reply"],
         "cognitive_reply": skill_calls[0]["extra_context"]["cognitive_reply"],
     }
@@ -3469,6 +3469,55 @@ async def test_chat_desktop_objective_uses_capability_engine_without_agency_wrap
     assert calls[0]["context"]["foreground_request"] is True
     assert calls[0]["context"]["user_explicitly_authorized"] is True
     assert calls[0]["context"]["allow_heuristic_desktop_plan"] is True
+    assert calls[0]["context"]["allow_desktop_task_model_synthesis"] is False
+
+
+@pytest.mark.asyncio
+async def test_chat_desktop_research_objective_does_not_enable_hidden_model_synthesis(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append(
+                {
+                    "skill_name": skill_name,
+                    "params": dict(params),
+                    "context": dict(context or {}),
+                }
+            )
+            return {
+                "ok": True,
+                "summary": "Desktop task completed 4/4 governed computer-use steps.",
+                "steps_requested": 4,
+                "steps_completed": 4,
+                "receipts": _verified_desktop_receipts(4),
+            }
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                _FakeCapabilityEngine() if name == "capability_engine" else default
+            )
+        ),
+    )
+
+    result = await chat_routes._execute_desktop_objective_from_chat(
+        (
+            "Open Google, find three articles about climate change, summarize them "
+            "in a Google Doc, and export the summary as a PDF."
+        ),
+        cognitive_reply="A source-grounded draft may be composed by the desktop task.",
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert calls and calls[0]["skill_name"] == "desktop_task"
+    assert calls[0]["context"]["route"] == "chat.desktop_objective"
+    assert calls[0]["context"]["allow_desktop_task_model_synthesis"] is False
 
 
 @pytest.mark.asyncio
@@ -3508,6 +3557,35 @@ async def test_chat_desktop_objective_rejects_success_without_effect_receipts(mo
     assert result["result"]["error"] == "missing_step_receipts"
     assert "did not complete" in result["response"]
     assert "not claiming" in result["response"]
+
+
+def test_desktop_task_verifier_allows_noncritical_warning_receipts():
+    from interface.routes import chat as chat_routes
+
+    receipts = _verified_desktop_receipts(3)
+    receipts.append(
+        {
+            "index": 4,
+            "action": "open_url",
+            "critical": False,
+            "ok": False,
+            "effect_verified": False,
+            "effect_evidence": "Operation took too long",
+            "result": {"ok": False, "error": "Operation took too long"},
+        }
+    )
+
+    verified, reason = chat_routes._verified_desktop_task_result(
+        {
+            "ok": True,
+            "steps_requested": 4,
+            "steps_completed": 3,
+            "receipts": receipts,
+        }
+    )
+
+    assert verified is True
+    assert reason == "verified"
 
 
 @pytest.mark.asyncio
@@ -4293,9 +4371,8 @@ async def test_api_chat_desktop_no_reply_executes_self_sufficient_objective(monk
     response = await server_module.api_chat(
         server_module.ChatRequest(
             message=(
-                "Please create a folder named 'Aura Live Proof' in my Documents folder "
-                "and write a file inside it called live_proof.txt with one sentence "
-                "about who you are and the current timestamp."
+                "Please open Calculator, copy the displayed equation, paste it into Notes, "
+                "and report the saved path."
             )
         ),
         SimpleNamespace(
@@ -4316,6 +4393,110 @@ async def test_api_chat_desktop_no_reply_executes_self_sufficient_objective(monk
     assert skill_calls and skill_calls[0]["skill_name"] == "desktop_task"
     assert skill_calls[0]["params"]["allow_heuristic_desktop_plan"] is True
     assert skill_calls[0]["extra_context"]["allow_heuristic_desktop_plan"] is True
+    assert completed_exchanges
+    assert output_receipts
+
+
+@pytest.mark.asyncio
+async def test_api_chat_desktop_no_reply_executes_self_summary_after_cognitive_attempt(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    skill_calls = []
+    output_receipts = []
+    completed_exchanges = []
+
+    class _ForbiddenKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            pytest.fail("desktop objective must not use kernel fallback")
+
+    async def _no_cognitive_reply(*_args, **_kwargs):
+        return None
+
+    async def _fake_execute_governed_live_skill(skill_name, params, *, objective, extra_context=None):
+        skill_calls.append(
+            {
+                "skill_name": skill_name,
+                "params": dict(params),
+                "objective": objective,
+                "extra_context": dict(extra_context or {}),
+            }
+        )
+        return {
+            "ok": True,
+            "status": "completed",
+            "summary": "Desktop task completed 6/6 governed computer-use steps.",
+            "steps_requested": 6,
+            "steps_completed": 6,
+            "receipts": _verified_desktop_receipts(6),
+            "document_provenance": "local_cortex_synthesis",
+        }
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-self-summary"
+
+    async def _fake_complete_exchange(*args, **kwargs):
+        completed_exchanges.append((args, kwargs))
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
+    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _ForbiddenKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message=(
+                "Please open up my Notes app and write a short journal entry in your "
+                "own words describing who and what you are. Include the current date "
+                "and time and export it as a PDF in Aura's Journal."
+            )
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["status"] == "desktop_objective_completed"
+    assert "Desktop task completed 6/6 governed computer-use steps" in payload["response"]
+    assert skill_calls and skill_calls[0]["skill_name"] == "desktop_task"
+    assert skill_calls[0]["extra_context"]["desktop_task_document_body"] == ""
+    assert skill_calls[0]["extra_context"]["allow_desktop_task_model_synthesis"] is False
     assert completed_exchanges
     assert output_receipts
 

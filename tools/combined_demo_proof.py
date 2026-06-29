@@ -107,7 +107,12 @@ class CombinedDemoProof(VoiceWakeJournalProof):
         return audio_path
 
     def exercise_combined_chain(self) -> bool:
-        from tools.journal_demo_proof import _SELF_TOKENS, _TIMESTAMP_RE, _pdf_has_image, _pdf_text
+        from tools.journal_demo_proof import (
+            _SELF_TOKENS,
+            _has_fresh_timestamp,
+            _pdf_has_image,
+            _pdf_text,
+        )
 
         journal_dir = Path.home() / "Documents" / "Aura's Journal"
         step_started = time.time()
@@ -132,7 +137,7 @@ class CombinedDemoProof(VoiceWakeJournalProof):
 
         text = _pdf_text(pdf) if pdf else ""
         lowered = text.lower()
-        has_timestamp = bool(_TIMESTAMP_RE.search(text))
+        has_timestamp = _has_fresh_timestamp(text, step_started)
         has_self = any(tok in lowered for tok in _SELF_TOKENS) and len(text) > 120
         has_image = _pdf_has_image(pdf) if pdf else False
         log_markers = self._stdout_log_markers()

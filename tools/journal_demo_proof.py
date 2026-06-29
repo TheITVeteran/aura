@@ -55,6 +55,38 @@ _TIMESTAMP_RE = re.compile(
 _SELF_TOKENS = ("i am", "i'm", "my ", "aura")
 
 
+def _has_fresh_timestamp(text: str, requested_at: float) -> bool:
+    """Require a timestamp from the proof date, not merely any date-shaped text."""
+    local = time.localtime(requested_at)
+    date_tokens = {
+        time.strftime("%Y-%m-%d", local).lower(),
+        time.strftime("%Y/%m/%d", local).lower(),
+        time.strftime("%B %d, %Y", local).lower().replace(" 0", " "),
+        time.strftime("%b %d, %Y", local).lower().replace(" 0", " "),
+    }
+    lowered = str(text or "").lower()
+    explicit_zones = {
+        token.lower()
+        for token in re.findall(
+            r"\b(?:utc|gmt|pdt|pst|edt|est|cdt|cst|mdt|mst)\b",
+            str(text or ""),
+            flags=re.IGNORECASE,
+        )
+    }
+    local_zone = time.strftime("%Z", local).lower()
+    if explicit_zones and local_zone and local_zone not in explicit_zones:
+        return False
+    minute_tokens: set[str] = set()
+    for offset_minutes in range(-5, 11):
+        sample = time.localtime(requested_at + offset_minutes * 60)
+        minute_tokens.add(time.strftime("%H:%M", sample))
+    return (
+        bool(_TIMESTAMP_RE.search(text))
+        and any(token in lowered for token in date_tokens)
+        and any(token in lowered for token in minute_tokens)
+    )
+
+
 def _pdf_text(path: Path) -> str:
     """Extract text via macOS PDFKit (PyObjC) — no extra dependencies."""
     try:
@@ -133,7 +165,7 @@ class JournalDemoProof(LiveProof):
 
         text = _pdf_text(pdf) if pdf else ""
         lowered = text.lower()
-        has_timestamp = bool(_TIMESTAMP_RE.search(text))
+        has_timestamp = _has_fresh_timestamp(text, step_started)
         has_self = any(tok in lowered for tok in _SELF_TOKENS) and len(text) > 120
         has_image = _pdf_has_image(pdf) if pdf else False
 

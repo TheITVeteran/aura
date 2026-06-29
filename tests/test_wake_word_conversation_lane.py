@@ -361,6 +361,10 @@ class PlayLocallyGovernanceTest(unittest.TestCase):
 
         class SpawnRecorder:
             def spawn(self, argv, *, source=""):
+                from core.governance_context import get_active_governance
+
+                seen["spawn_governed"] = get_active_governance() is not None
+                seen["spawn_source"] = source
                 return FakeProc()
 
         engine = object.__new__(SovereignVoiceEngine)
@@ -379,6 +383,26 @@ class PlayLocallyGovernanceTest(unittest.TestCase):
         asyncio.run(scenario())
         self.assertTrue(seen.get("governed"), f"write was not governed: {seen}")
         self.assertEqual(seen.get("source"), "core.senses.voice_engine.play_locally")
+        self.assertTrue(seen.get("spawn_governed"), f"spawn was not governed: {seen}")
+        self.assertEqual(seen.get("spawn_source"), "core.senses.voice_engine.play_locally")
+
+
+class VoiceCommandTimeoutBudgetTest(unittest.TestCase):
+    def test_desktop_objectives_get_longer_conversation_lane_timeout(self):
+        detector = WakeWordDetector()
+        detector.COMMAND_TIMEOUT_S = 120.0
+        detector.DESKTOP_COMMAND_TIMEOUT_S = 660.0
+
+        self.assertEqual(
+            detector._conversation_lane_timeout("Are you there?"),
+            120.0,
+        )
+        self.assertEqual(
+            detector._conversation_lane_timeout(
+                "Open Notes, write a paragraph, export it as a PDF, and save it."
+            ),
+            660.0,
+        )
 
 
 class SpokenReplyTest(unittest.TestCase):

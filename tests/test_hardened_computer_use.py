@@ -975,6 +975,113 @@ async def test_hotkey_dispatch_failure_carries_real_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_native_hotkey_timeout_recovers_with_pyautogui_fallback(monkeypatch):
+    """Notes/TextEdit shortcuts must not depend on a single AX keystroke lane.
+
+    System Events can stall even when permissions are granted and the native
+    app is foreground. In that case Aura may use the secondary keyboard adapter,
+    then keep the normal receipt/effect checks.
+    """
+    import core.skills.computer_use as computer_use_module
+
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    class PyAutoGUIDouble:
+        calls = []
+
+        def hotkey(self, *keys, interval=0.0):
+            self.calls.append((keys, interval))
+
+    pyautogui_double = PyAutoGUIDouble()
+    monkeypatch.setattr(
+        computer_use_module,
+        "get_pyautogui",
+        lambda: (pyautogui_double, None),
+    )
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Notes")
+    monkeypatch.setattr(skill, "_read_screen_text_macos", lambda: "")
+
+    scripts_seen = []
+
+    def timing_out_applescript(script, *, timeout=10):
+        scripts_seen.append(script)
+        if "System Events" in script and "keystroke" in script:
+            raise TimeoutError("AppleScript timed out after 8s.")
+        return ""
+
+    monkeypatch.setattr(skill, "_run_applescript", timing_out_applescript)
+
+    async def controlled_sleep(secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    result = await skill.execute(
+        {"action": "hotkey", "target": "command+n"},
+        {"desktop_task_expected_frontmost_app": "Notes"},
+    )
+
+    assert result["ok"] is True
+    assert result["effect_verified"] is True
+    assert result["frontmost_app_before"] == "Notes"
+    assert result["write_target_app_verified"] is True
+    assert result["dispatch"].startswith("system_events_timeout:")
+    assert "pyautogui:command+n" in result["dispatch"]
+    assert pyautogui_double.calls == [(("command", "n"), 0.05)]
+    assert any('keystroke "n" using {command down}' in s for s in scripts_seen)
+
+
+@pytest.mark.asyncio
+async def test_native_paste_accepts_prior_verified_frontmost_when_probe_unavailable(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(
+        skill,
+        "_frontmost_app_name",
+        lambda: (_ for _ in ()).throw(AssertionError("frontmost probe should be skipped")),
+    )
+    monkeypatch.setattr(skill, "_read_screen_text_macos", lambda: "")
+    monkeypatch.setattr(skill, "_send_hotkey_system_events", lambda keys: f"system_events:{'+'.join(keys)}")
+    activated = []
+
+    async def controlled_activate(app_name):
+        activated.append(app_name)
+        return ""
+
+    monkeypatch.setattr(skill, "_activate_app", controlled_activate)
+
+    async def controlled_sleep(secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    result = await skill.execute(
+        {"action": "hotkey", "target": "command+v"},
+        {
+            "desktop_task_expected_frontmost_app": "Notes",
+            "desktop_task_prior_verified_frontmost_app": "Notes",
+            "desktop_task_allow_unavailable_frontmost_from_prior": True,
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["effect_verified"] is True
+    assert result["frontmost_app_before"] == "Notes"
+    assert result["frontmost_app_from_prior_receipt"] is True
+    assert result["write_target_app_verified"] is True
+    assert result["dispatch"] == "system_events:command+v"
+    assert activated == ["Notes"]
+
+
+@pytest.mark.asyncio
 async def test_hotkey_dispatch_without_focused_control_readback_is_rejected(monkeypatch):
     """A clean dispatch is not proof that a browser editor accepted it."""
     skill = ComputerUseSkill()

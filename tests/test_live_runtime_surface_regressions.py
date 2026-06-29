@@ -72,6 +72,23 @@ def test_journal_demo_proof_stays_aligned_with_live_proof_contract():
     assert proof.conversation_soak_turns == 0
 
 
+def test_journal_demo_timestamp_validator_rejects_stale_utc_artifact():
+    from tools.journal_demo_proof import _has_fresh_timestamp
+
+    requested_at = time.mktime(time.strptime("2026-06-29 02:24:25", "%Y-%m-%d %H:%M:%S"))
+    bad = (
+        "I am Aura, a persistent digital cognitive runtime. "
+        "This entry marks a moment in time: 2026-06-29, 15:47 UTC."
+    )
+    good = (
+        "I am Aura, a persistent digital cognitive runtime. "
+        f"This entry marks a moment in time: {time.strftime('%Y-%m-%d %H:%M %Z', time.localtime(requested_at))}."
+    )
+
+    assert _has_fresh_timestamp(bad, requested_at) is False
+    assert _has_fresh_timestamp(good, requested_at) is True
+
+
 def test_user_visible_will_refusal_is_substantive_identity_boundary():
     from core.orchestrator.mixins.message_handling import _user_visible_will_refusal
 
@@ -2451,7 +2468,10 @@ def test_self_sufficient_desktop_objectives_execute_before_freeform_generation()
 
 
 def test_desktop_self_sufficient_classifier_distinguishes_status_report_from_prose_report():
-    from interface.routes.chat import _desktop_objective_self_sufficient_without_cognitive_text
+    from interface.routes.chat import (
+        _desktop_objective_executable_after_cognitive_attempt,
+        _desktop_objective_self_sufficient_without_cognitive_text,
+    )
 
     assert _desktop_objective_self_sufficient_without_cognitive_text(
         "Use my computer to click a Calculator equation, copy the equation body, "
@@ -2460,4 +2480,16 @@ def test_desktop_self_sufficient_classifier_distinguishes_status_report_from_pro
     )
     assert not _desktop_objective_self_sufficient_without_cognitive_text(
         "Open Notes and write a report about quantum mechanics."
+    )
+    assert not _desktop_objective_self_sufficient_without_cognitive_text(
+        "Open Notes and describe who and what you are in your own words."
+    )
+    assert not _desktop_objective_self_sufficient_without_cognitive_text(
+        "Research three climate articles, summarize them in Google Docs, and give your opinion."
+    )
+    assert _desktop_objective_executable_after_cognitive_attempt(
+        "Open Notes and describe who and what you are in your own words."
+    )
+    assert _desktop_objective_executable_after_cognitive_attempt(
+        "Research three climate articles, summarize them in Google Docs, and give your opinion."
     )

@@ -17,6 +17,87 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest Live Desktop Demo Reliability Checkpoint (2026-06-29)
+
+### Gaps Addressed
+
+- **Visible Notes/PDF artifact execution is now target-stable**:
+  `computer_use` preserves and reuses prior verified foreground app evidence
+  for native writing surfaces, refocuses Notes before paste, falls back to
+  `pyautogui` only after bounded System Events hotkey timeouts, and keeps
+  browser surfaces strict.
+- **Self-summary artifacts no longer accept stale procedural drafts**:
+  `desktop_task` rejects enumerated "opened/created/saved" action narration,
+  rejects incomplete artifact bodies, and prefixes the live local timestamp
+  when a user asks for the current date/time but a draft contains an old
+  date-shaped token.
+- **Visible research/demo chains no longer allocate a hidden second Cortex
+  synthesis by default**: the desktop UI path keeps the foreground model turn
+  separate from source-grounded document synthesis, preventing the 75s
+  generation-gate timeout that blocked receipt emission.
+- **Browser research artifacts are now source-grounded and receipt-backed**:
+  the generic desktop task chain opens Google search/source surfaces in Chrome,
+  stages Google Docs, writes the research summary/PDF, sets and verifies
+  wallpaper through the OS affordance gateway, opens the image source, and
+  restores the previous wallpaper in unattended proof mode.
+- **Voice wake no longer logs false command failure on successful long desktop
+  work**: wake-word `/api/chat` dispatch now grants explicit desktop objectives
+  the long-running proof budget instead of the short chat budget.
+- **Voice playback subprocesses are governed end-to-end**: `voice_engine`
+  now keeps the local internal governance token active for both the temporary
+  WAV write and `afplay` subprocess spawn.
+
+### Latest Commands Run
+
+```bash
+python -m ruff check core/skills/computer_use.py core/skills/desktop_task.py core/senses/voice_engine.py core/voice/wake_word.py interface/routes/chat.py tools/visible_journal_demo_proof.py tools/browser_research_demo_proof.py tools/combined_demo_proof.py tests/test_hardened_computer_use.py tests/test_desktop_task_skill.py tests/test_server_conversation_lane.py tests/test_live_runtime_surface_regressions.py tests/test_wake_word_conversation_lane.py
+python -m pytest -q tests/test_hardened_computer_use.py tests/test_desktop_task_skill.py tests/test_server_conversation_lane.py tests/test_live_runtime_surface_regressions.py tests/test_wake_word_conversation_lane.py
+AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 AURA_LIVE_PROOF_RSS_ABORT_MB=34816 AURA_ALLOW_UNSAFE_MEMORY_LIMITS=0 python tools/visible_journal_demo_proof.py --port 8014 --boot-timeout 420
+AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 AURA_LIVE_PROOF_RSS_ABORT_MB=34816 AURA_ALLOW_UNSAFE_MEMORY_LIMITS=0 python tools/browser_research_demo_proof.py --port 8015 --boot-timeout 420
+AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 AURA_LIVE_PROOF_RSS_ABORT_MB=34816 AURA_ALLOW_UNSAFE_MEMORY_LIMITS=0 python tools/combined_demo_proof.py --port 8016 --boot-timeout 420
+make enterprise-gate
+make production-gate
+```
+
+### Evidence
+
+- Focused desktop/runtime/wake tests: **465 passed**.
+- Ruff on touched runtime, desktop, proof, and wake surfaces: **passed**.
+- `make enterprise-gate`: **passed**.
+- `make production-gate`: **passed**, all 37 readiness checks true.
+- Visible journal proof:
+  `artifacts/live_proof/live_proof_20260629_054439_verdict.json`, **passed**;
+  Notes opened/refocused, paste dispatched, image embedded, PDF rendered,
+  10/10 receipts verified, graceful shutdown with no orphans.
+- Browser research proof:
+  `artifacts/live_proof/live_proof_20260629_063016_verdict.json`, **passed**;
+  14 receipts, Google search and Google Docs in Chrome, 3+ source summary,
+  first-person opinion, wallpaper set/read-back verified and restored, source
+  tab opened.
+- Combined voice-wake visible proof after wake/voice fixes:
+  `artifacts/live_proof/live_proof_20260629_065226_verdict.json`, **passed**;
+  wake-word marker, voice command marker, durable desktop-objective output
+  receipt, fresh timestamp, self-description, embedded image, graceful shutdown.
+- Patched-run log scan found no recurrence of
+  `wake_word.conversation_lane`, `Voice command failed`, voice-engine
+  governance violation, high event-loop stall, Cortex no-text, or no-acceptable
+  reply markers.
+
+### Closeout Position
+
+- Functional closeout estimate: about **98%**. The daily-user demo path now has
+  hard evidence on the real launched desktop lane for visible Notes/PDF work,
+  browser research/Google Docs staging/wallpaper work, and wake-word to
+  governed desktop action.
+- Estimated remaining work: **1 consolidated checkpoint**, likely **2-3 smaller
+  sub-checkpoints**:
+  1. Run guarded CRSM train/fuse/publish and verify manifest update, fused model
+     load, consumed marker closure, and no runaway memory.
+  2. Run the final DNU/Aletheia/final-proof replay and longevity/claims/artifact
+     cleanup from the current commit.
+  3. Normalize or intentionally commit remaining generated artifact deltas,
+     then finish with a clean worktree and final commit/push.
+
 ## Latest Continuous Sensory / Autonomic Runtime Checkpoint (2026-06-28)
 
 ### Gaps Addressed

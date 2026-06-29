@@ -19,8 +19,8 @@ import logging
 import os
 import re
 import time
-from enum import Enum
-from typing import Any, Dict, Optional
+from enum import StrEnum
+from typing import Any
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
@@ -29,7 +29,7 @@ from core.runtime.task_ownership import create_tracked_task
 logger = logging.getLogger("Aura.WakeWord")
 
 
-class WakeState(str, Enum):
+class WakeState(StrEnum):
     IDLE = "idle"               # Passive listening for wake word
     LISTENING = "listening"     # Wake word detected, accumulating command
     PROCESSING = "processing"   # Command received, decomposing into task
@@ -74,12 +74,15 @@ class WakeWordDetector:
     # Voice commands can trigger multi-step desktop chains; the lane call
     # is bounded so a wedged turn cannot strand the detector forever.
     COMMAND_TIMEOUT_S = float(os.environ.get("AURA_VOICE_COMMAND_TIMEOUT_S", "240") or 240)
+    DESKTOP_COMMAND_TIMEOUT_S = float(
+        os.environ.get("AURA_VOICE_DESKTOP_COMMAND_TIMEOUT_S", "660") or 660
+    )
     SPEAK_TIMEOUT_S = 60.0
     SPOKEN_REPLY_CHAR_BUDGET = 600
 
     def __init__(self) -> None:
         self.state = WakeState.IDLE
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._dispatch_task: asyncio.Task | None = None
         self._session_start: float = 0.0
         self._last_speech: float = 0.0
@@ -153,8 +156,9 @@ class WakeWordDetector:
 
         # Try audio service directly
         try:
-            from pathlib import Path
             import json
+            from pathlib import Path
+
             audio_path = Path(__file__).resolve().parent.parent.parent / "sensory_audio.json"
             if audio_path.exists() and (time.time() - audio_path.stat().st_mtime) < 10:
                 data = json.loads(audio_path.read_text(encoding="utf-8"))
@@ -167,7 +171,7 @@ class WakeWordDetector:
 
         return ""
 
-    async def _verify_user_voice_print(self, transcript: str) -> Dict[str, Any]:
+    async def _verify_user_voice_print(self, transcript: str) -> dict[str, Any]:
         """Verify the speaker through a registered voice-identity service.
 
         Wake-word text is not identity proof. If no verifier is registered,
@@ -415,6 +419,7 @@ class WakeWordDetector:
             port = int(os.environ.get("AURA_SERVER_PORT", "8000") or 8000)
         except ValueError:
             port = 8000
+        timeout_s = self._conversation_lane_timeout(command)
         with local_internal_governed_scope(
             "wake_word.conversation_lane", domain="tool_execution"
         ):
@@ -428,7 +433,7 @@ class WakeWordDetector:
                 data=json.dumps(
                     {"message": command, "session_id": "voice-wake"}
                 ).encode("utf-8"),
-                timeout=self.COMMAND_TIMEOUT_S,
+                timeout=timeout_s,
                 source="wake_word:conversation_lane",
             )
         if not response.get("ok") or int(response.get("status_code") or 0) != 200:
@@ -445,6 +450,26 @@ class WakeWordDetector:
             return False, "conversation lane returned an unreadable payload"
         reply = str(payload.get("response") or "").strip()
         return bool(reply), reply
+
+    def _conversation_lane_timeout(self, command: str) -> float:
+        """Choose a bounded wait budget for the voice->chat request.
+
+        Normal conversation stays snappy, but explicit desktop objectives can
+        legitimately keep the HTTP request open while governed tools execute
+        and receipts are collected. A short voice timeout makes the neural
+        stream report "Voice command failed" even though the action later
+        succeeds, so desktop objectives get the same long-running budget as
+        the live proof path.
+        """
+        base = max(1.0, float(self.COMMAND_TIMEOUT_S or 240.0))
+        try:
+            from core.runtime.desktop_objective_intent import looks_like_desktop_objective
+
+            if looks_like_desktop_objective(command):
+                return max(base, float(self.DESKTOP_COMMAND_TIMEOUT_S or 660.0))
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return base
+        return base
 
     async def _speak_reply(self, reply: str) -> None:
         """Speak a bounded portion of the reply if a voice engine is live."""
@@ -474,7 +499,7 @@ class WakeWordDetector:
         self.state = WakeState.IDLE
         self._accumulated_transcript = ""
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "running": bool(self._started and self._task and not self._task.done()),
             "state": self.state.value,
@@ -484,7 +509,7 @@ class WakeWordDetector:
         }
 
 
-_instance: Optional[WakeWordDetector] = None
+_instance: WakeWordDetector | None = None
 
 
 def get_wake_word_detector() -> WakeWordDetector:

@@ -1134,18 +1134,17 @@ class SovereignVoiceEngine:
                 # run_in_executor does not propagate contextvars, so even a
                 # governed caller loses its scope crossing into the pool.
                 with local_internal_governed_scope(
-                    "voice_engine.play_locally", domain="file_write"
+                    "voice_engine.play_locally", domain="tool_execution"
                 ):
                     get_file_write_gateway().write_bytes(
                         temp_wav,
                         audio_data,
                         source="core.senses.voice_engine.play_locally",
                     )
-
-                self._current_afplay = get_subprocess_gateway().spawn(
-                    ["afplay", str(temp_wav)],
-                    source="core.senses.voice_engine.play_locally",
-                )
+                    self._current_afplay = get_subprocess_gateway().spawn(
+                        ["afplay", str(temp_wav)],
+                        source="core.senses.voice_engine.play_locally",
+                    )
                 while self._current_afplay.poll() is None:
                     if hasattr(self, 'interrupt_flag') and self.interrupt_flag.is_set():
                         self._current_afplay.terminate()
@@ -1381,9 +1380,8 @@ class SovereignVoiceEngine:
         self.microphone_enabled = True
         self.speaking_enabled = True
         # Issue 36: Schedule via create_task for async start_listening
-        loop = None
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             get_task_tracker().create_task(
                 self.start_listening(),
                 name="voice_engine.start_listening",

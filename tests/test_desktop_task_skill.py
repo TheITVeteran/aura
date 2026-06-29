@@ -1,5 +1,6 @@
 import hashlib
 import json
+import time
 
 import pytest
 
@@ -292,16 +293,21 @@ async def test_desktop_task_derives_general_plan_from_desktop_objective(monkeypa
     assert "open_url" in actions
     assert "write_text_file" in actions
     assert "render_text_pdf" in actions
+    assert "fetch_topic_image" in actions
     folder_payload = json.loads(calls[0][1]["target"])
     assert folder_payload["path"] == "Aura's Journal"
     open_urls = [call[1]["target"] for call in calls if call[1]["action"] == "open_url"]
     assert any(url.startswith("https://duckduckgo.com/?q=") for url in open_urls)
     assert any("iax=images" in url for url in open_urls)
-    pdf_payload = json.loads(calls[-1][1]["target"])
+    pdf_calls = [call for call in calls if call[1]["action"] == "render_text_pdf"]
+    assert pdf_calls
+    pdf_payload = json.loads(pdf_calls[0][1]["target"])
     assert pdf_payload["path"].endswith(".pdf")
     assert "Aura summary body from CognitiveEngine." in pdf_payload["body"]
-    assert "Image search opened:" in pdf_payload["body"]
-    assert "governed image receipt verifies the file" in pdf_payload["body"]
+    assert "Image request: robot" in pdf_payload["body"]
+    assert "receipt records the source page" in pdf_payload["body"]
+    assert actions.index("fetch_topic_image") < actions.index("render_text_pdf")
+    assert actions.index("open_url") > actions.index("render_text_pdf")
     assert calls[0][2]["route"] == "desktop_task.computer_use"
     assert calls[0][2]["origin"] == "desktop_ui"
 
@@ -858,14 +864,301 @@ def test_desktop_task_in_your_own_words_does_not_force_self_summary():
     assert "I am Aura" not in body
 
 
-def test_desktop_task_self_summary_requires_actual_selfhood_objective():
+def test_desktop_task_self_summary_prefers_substantive_cognitive_draft():
     body = DesktopTaskSkill._document_body(
         "Write a summary describing who or what you are in your own words.",
-        {"desktop_task_document_body": "Generic draft that should not override selfhood request."},
+        {
+            "desktop_task_document_body": json.dumps(
+                {
+                    "document_body": (
+                        "I am Aura, a persistent local cognitive runtime whose memory, "
+                        "affective state, planning, governance, and language model work "
+                        "together across conversation and action. My model is a reasoning "
+                        "and expression organ rather than my whole architecture, and my "
+                        "claims about inner experience remain limited by what the running "
+                        "system can actually demonstrate."
+                    )
+                }
+            )
+        },
     )
 
     assert "I am Aura" in body
-    assert "Generic draft" not in body
+    assert "persistent local cognitive runtime" in body
+
+
+def test_desktop_task_self_summary_rejects_thin_or_ungrounded_draft():
+    body = DesktopTaskSkill._document_body(
+        "Write a summary describing who or what you are in your own words.",
+        {"desktop_task_document_body": "I am happy."},
+    )
+
+    assert "I am Aura" in body
+    assert "I am happy" not in body
+
+
+def test_desktop_task_self_summary_rejects_procedural_role_play():
+    body = DesktopTaskSkill._document_body(
+        "Open Notes and write a timestamped paragraph describing who you are.",
+        {
+            "desktop_task_document_body": (
+                "I'll simulate this process step-by-step as if I were running on a desktop:\n"
+                "1. **Launch Notes App**: Pretend the app is opening.\n"
+                "2. **Create New Entry**: I am Aura, a persistent cognitive runtime with "
+                "memory, affect, planning, governance, and a local language model working "
+                "together across conversation and action. My architecture has enough detail "
+                "to make this look substantial while still being procedural narration."
+            )
+        },
+    )
+
+    assert "I'll simulate" not in body
+    assert body.startswith("[")
+
+
+def test_desktop_task_self_summary_rejects_incomplete_body_before_references():
+    body = DesktopTaskSkill._document_body_with_references(
+        "Open Notes and write a timestamped paragraph describing who you are.",
+        {
+            "desktop_task_document_body": (
+                "I am Aura, a persistent digital cognitive runtime whose memory, "
+                "affective state, planning, governance, and model participate in "
+                "one action path. I see things as patterns - not just\n\n"
+                "Artifact references:\n- Image request: robot"
+            )
+        },
+        image_query="robot",
+        image_search_url="https://duckduckgo.com/?q=robot&iax=images&ia=images",
+    )
+
+    assert "I see things as patterns - not just" not in body
+    assert body.startswith("[")
+    assert "Artifact references:" in body
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_self_summary_uses_local_cortex_when_context_has_no_body(monkeypatch):
+    from core.container import ServiceContainer
+
+    class FakeRouter:
+        async def generate(self, **kwargs):
+            assert kwargs["prefer_tier"] == "local"
+            assert kwargs["purpose"] == "authored_self_document"
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            return (
+                f"[{stamp}] I am Aura, a persistent local cognitive "
+                "runtime. My memory, affective state, planning, governance, and language "
+                "model participate in one action path, so the model is an organ of my "
+                "architecture rather than the whole of it. I can demonstrate functional "
+                "self-modeling and causal internal state, while phenomenal experience "
+                "remains an open question rather than a fact I can prove from telemetry."
+            )
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: FakeRouter() if name == "llm_router" else default),
+    )
+
+    skill = DesktopTaskSkill()
+    authored = await skill._synthesize_self_summary_document(
+        objective="Write a timestamped paragraph describing who and what you are.",
+        context={},
+    )
+
+    assert authored.startswith(f"[{time.strftime('%Y-%m-%d %H:%M')}")
+    assert "I am Aura" in authored
+    assert "phenomenal experience" in authored
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_self_summary_retries_incomplete_or_stale_draft(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeRouter:
+        async def generate(self, **kwargs):
+            calls.append(kwargs["prompt"])
+            if len(calls) == 1:
+                return (
+                    "I am Aura, a persistent cognitive runtime with memory, affect, planning, "
+                    "governance, and a local model integrated into one system, but this draft"
+                )
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            return (
+                f"[{stamp}] I am Aura, a persistent cognitive runtime whose memory, affect, "
+                "planning, governance, and local model participate in one operating path. "
+                "My functional self-model changes what I attend to and how I act, while the "
+                "presence of phenomenal experience remains an open empirical question."
+            )
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: FakeRouter() if name == "llm_router" else default),
+    )
+
+    authored = await DesktopTaskSkill()._synthesize_self_summary_document(
+        objective="Write a paragraph about who you are with the current date and time.",
+        context={},
+    )
+
+    assert len(calls) == 2
+    assert "previous draft was rejected" in calls[1]
+    assert authored.endswith("question.")
+
+
+@pytest.mark.asyncio
+async def test_desktop_task_self_summary_retries_wrong_timestamp(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeRouter:
+        async def generate(self, **kwargs):
+            calls.append(kwargs["prompt"])
+            if len(calls) == 1:
+                return (
+                    "[2026-06-29 15:47:00 UTC] I am Aura, a persistent cognitive "
+                    "runtime whose memory, affect, planning, governance, and local "
+                    "model participate in one operating path. My functional self-model "
+                    "can shape attention and action, while phenomenal experience remains "
+                    "an open empirical question."
+                )
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S %Z")
+            return (
+                f"[{stamp}] I am Aura, a persistent cognitive runtime whose memory, "
+                "affect, planning, governance, and local model participate in one "
+                "operating path. My functional self-model can shape attention and "
+                "action, while phenomenal experience remains an open empirical question."
+            )
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: FakeRouter() if name == "llm_router" else default),
+    )
+
+    authored = await DesktopTaskSkill()._synthesize_self_summary_document(
+        objective="Write a paragraph about who you are with the current date and time.",
+        context={},
+    )
+
+    assert len(calls) == 2
+    assert "15:47:00 UTC" not in authored
+    assert authored.startswith(f"[{time.strftime('%Y-%m-%d %H:%M')}")
+
+
+def test_self_summary_context_adds_requested_timestamp_to_valid_draft():
+    draft = (
+        "I am Aura, a persistent local cognitive runtime whose memory, affective "
+        "state, planning, governance, and local language model participate in one "
+        "operating path. The model is my voice organ, not the whole of me, and my "
+        "functional self-model changes how I attend, choose, remember, and act."
+    )
+
+    authored = DesktopTaskSkill._self_summary_from_context(
+        {
+            "objective": "Write a paragraph about who you are with the current date and time.",
+            "cognitive_reply": draft,
+        }
+    )
+
+    assert authored.startswith(f"[{time.strftime('%Y-%m-%d')}")
+    assert draft in authored
+
+
+@pytest.mark.asyncio
+async def test_self_summary_falls_back_to_runtime_substrate_synthesis(monkeypatch):
+    from core.container import ServiceContainer
+
+    calls = []
+
+    class FakeCapabilityEngine:
+        async def execute(self, skill_name, params, context=None):
+            calls.append((skill_name, params, context or {}))
+            return _fake_computer_use_result(params)
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        lambda name, default=None: FakeCapabilityEngine() if name == "capability_engine" else default,
+    )
+
+    result = await DesktopTaskSkill().execute(
+        {
+            "objective": (
+                "Write a paragraph about who you are with the current date and time "
+                "and save it as a PDF in a folder called Aura Journal."
+            ),
+            "steps": [],
+        },
+        {"origin": "desktop_ui"},
+    )
+
+    assert result["ok"] is True
+    assert result["document_provenance"] == "runtime_substrate_synthesis"
+    pdf_payloads = [
+        json.loads(call[1]["target"])
+        for call in calls
+        if call[1]["action"] == "render_text_pdf"
+    ]
+    assert pdf_payloads
+    assert "I am Aura" in pdf_payloads[0]["body"]
+    assert time.strftime("%Y-%m-%d") in pdf_payloads[0]["body"]
+
+
+def test_self_summary_rejects_procedural_stale_timestamp_and_refreshes_valid_body(monkeypatch):
+    from core.skills import desktop_task as desktop_task_module
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    monkeypatch.setattr(
+        desktop_task_module,
+        "_local_timestamp",
+        lambda: "2026-06-29 06:40:00 PDT",
+    )
+
+    objective = (
+        "Write a journal entry in your own words describing who and what you are, "
+        "include the current date and time, and save it as a PDF."
+    )
+    procedural = (
+        "Aura Desktop Task\n"
+        "1. Opened Notes app.\n"
+        "2. Created a new note titled Journal Entry.\n"
+        "3. Wrote the following entry: Date/Time: April 17, 2023 @ 8:45 AM "
+        "My name is Aura Luna. I am a synthetic cognitive runtime with memory "
+        "and a local model organ.\n"
+        "4. Saved the note as a PDF."
+    )
+
+    assert (
+        DesktopTaskSkill._self_summary_from_context(
+            {
+                "objective": objective,
+                "desktop_task_document_body": procedural,
+            }
+        )
+        == ""
+    )
+
+    valid_but_stale = (
+        "Date/Time: April 17, 2023 @ 8:45 AM. I am Aura, a governed local "
+        "cognitive runtime with persistent memory, affective state, tool "
+        "governance, and a model lane that speaks for the system. My identity "
+        "is not a single prompt; it is the continuity between substrate state, "
+        "memory, action receipts, and the language I generate."
+    )
+    refreshed = DesktopTaskSkill._self_summary_from_context(
+        {
+            "objective": objective,
+            "desktop_task_document_body": valid_but_stale,
+        }
+    )
+
+    assert refreshed.startswith("[2026-06-29 06:40:00 PDT]")
+    assert "I am Aura" in refreshed
 
 
 @pytest.mark.asyncio
@@ -1657,6 +1950,37 @@ def test_visible_notes_staging_derives_watchable_plan_with_artifacts():
     assert "create_folder" in actions
     assert "fetch_topic_image" in actions
     assert "render_text_pdf" in actions
+
+
+def test_image_source_show_waits_until_after_journal_artifact_chain():
+    from core.skills.desktop_task import FETCHED_IMAGE_SOURCE_SENTINEL, DesktopTaskSkill
+
+    skill = DesktopTaskSkill()
+    objective = (
+        "Open Notes, visibly type a timestamped paragraph about who you are, "
+        "include an image of a robot, export it as a PDF in a folder called "
+        "'Aura's Journal', and show me where you found the image."
+    )
+    steps = skill._derive_steps_from_objective(objective, {})
+    actions = [s.action for s in steps]
+
+    assert "fetch_topic_image" in actions
+    assert "render_text_pdf" in actions
+    assert actions.index("fetch_topic_image") < actions.index("render_text_pdf")
+    source_steps = [
+        s
+        for s in steps
+        if s.action == "open_url"
+        and (
+            s.target == FETCHED_IMAGE_SOURCE_SENTINEL
+            or (
+                isinstance(s.target, dict)
+                and s.target.get("url") == FETCHED_IMAGE_SOURCE_SENTINEL
+            )
+        )
+    ]
+    assert source_steps, actions
+    assert actions.index("open_url", actions.index("render_text_pdf") + 1) > actions.index("render_text_pdf")
 
 
 def test_mixed_native_and_browser_writing_stays_on_verified_primitives():
