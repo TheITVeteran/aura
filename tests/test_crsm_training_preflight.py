@@ -106,6 +106,28 @@ def test_run_unattended_passes_crsm_delta_to_train_and_fuse(monkeypatch):
     assert "--crsm-delta" in commands[0]
 
 
+def test_run_unattended_crsm_delta_ignores_historical_partial_run(monkeypatch):
+    calls = []
+    monkeypatch.setattr(run_unattended, "_install_signal_handlers", lambda _started_at: None)
+    monkeypatch.setattr(run_unattended, "update_state", lambda **_kwargs: {})
+    monkeypatch.setattr(run_unattended, "has_partial_run", lambda: True)
+    monkeypatch.setattr(
+        run_unattended,
+        "run_resume",
+        lambda *, started_at: (_ for _ in ()).throw(AssertionError("resume should not run")),
+    )
+    monkeypatch.setattr(
+        run_unattended,
+        "run_train_and_fuse",
+        lambda args, *, started_at: calls.append(args.crsm_delta) or 0,
+    )
+
+    rc = run_unattended.main(["--crsm-delta", "--tag", "crsm-closeout"])
+
+    assert rc == 0
+    assert calls == [True]
+
+
 def test_build_crsm_delta_train_command_uses_real_resume_adapter(tmp_path):
     command = train_and_fuse.build_crsm_delta_train_command(
         base_model=tmp_path / "Qwen2.5-32B-Instruct-4bit",

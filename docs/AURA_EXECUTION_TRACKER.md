@@ -1673,6 +1673,9 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
   - Changed `CRSMLoopMonitor.next_action` to recommend the bounded
     `python training/train_and_fuse.py --crsm-delta --tag crsm-closeout` path
     once the CRSM corpus is current.
+  - Guarded `training/run_unattended.py --crsm-delta` so existing historical
+    checkpoints cannot divert the bounded path back into the multi-hour resume
+    pipeline.
   - Preserved the full unattended pipeline for complete long training, but no
     longer requires that path for CRSM capture consumption proof.
 - Evidence:

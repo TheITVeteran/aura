@@ -299,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
         update_state(started_at=started_at, phase="preflight_done", last_pipeline_rc=rc)
         return rc
 
-    if has_partial_run() and not args.skip_train:
+    if has_partial_run() and not args.skip_train and not args.crsm_delta:
         print("[orch] partial run detected — resuming via resume_training.py")
         rc = run_resume(started_at=started_at)
         # If resume_training.py fails to find a valid resume state (rc=1 typically),
