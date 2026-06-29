@@ -16,8 +16,6 @@ All external lookups are wrapped in try/except so the governor itself
 never crashes the kernel.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import asyncio
 import gc
@@ -25,7 +23,9 @@ import logging
 import os
 import sqlite3
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.ResourceGovernor")
 
@@ -84,10 +84,10 @@ class ResourceGovernor:
     # Main entry point
     # ------------------------------------------------------------------
 
-    async def govern(self) -> Dict[str, Any]:
+    async def govern(self) -> dict[str, Any]:
         """Run all governance checks.  Returns a report dict."""
         t0 = time.monotonic()
-        report: Dict[str, Any] = {
+        report: dict[str, Any] = {
             "run": self._run_count,
             "timestamp": time.time(),
             "items_freed": 0,
@@ -297,10 +297,19 @@ class ResourceGovernor:
         """Evict lowest-confidence beliefs if above cap."""
         try:
             from core.container import ServiceContainer
-            wm = ServiceContainer.get("world_model", default=None)
-            if wm is None:
+
+            belief_owner = ServiceContainer.get("belief_graph", default=None)
+            if belief_owner is None:
+                candidate = ServiceContainer.get("world_model", default=None)
+                if hasattr(candidate, "beliefs"):
+                    belief_owner = candidate
+            if belief_owner is None:
                 return 0
-            beliefs = wm.beliefs
+            beliefs = getattr(belief_owner, "beliefs", None)
+            if beliefs is None and hasattr(belief_owner, "get_beliefs"):
+                beliefs = belief_owner.get_beliefs()
+            if not isinstance(beliefs, dict):
+                return 0
             if len(beliefs) <= _BELIEFS_MAX:
                 return 0
 
@@ -315,8 +324,10 @@ class ResourceGovernor:
             if removed > 0:
                 logger.info("ResourceGovernor: trimmed %d low-confidence beliefs", removed)
                 # Persist the trimmed set
-                if hasattr(wm, "_save_beliefs"):
-                    wm._save_beliefs()
+                if hasattr(belief_owner, "_save_beliefs"):
+                    belief_owner._save_beliefs()
+                elif hasattr(belief_owner, "save"):
+                    belief_owner.save()
             return removed
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('resource_governor', e)
@@ -425,9 +436,9 @@ class ResourceGovernor:
     # 3. System memory monitoring
     # ------------------------------------------------------------------
 
-    def _check_memory_pressure(self) -> Dict[str, Any]:
+    def _check_memory_pressure(self) -> dict[str, Any]:
         """Check RSS vs system RAM.  Trigger cleanup if thresholds exceeded."""
-        result: Dict[str, Any] = {"status": "unknown"}
+        result: dict[str, Any] = {"status": "unknown"}
 
         try:
             import psutil
@@ -540,7 +551,7 @@ class ResourceGovernor:
     # 4. Background task cleanup
     # ------------------------------------------------------------------
 
-    def _cleanup_background_tasks(self, tasks: List) -> int:
+    def _cleanup_background_tasks(self, tasks: list) -> int:
         """Remove completed/cancelled tasks from a task list.  Returns count removed."""
         if not tasks:
             return 0
@@ -579,7 +590,7 @@ class ResourceGovernor:
     # Introspection
     # ------------------------------------------------------------------
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return governor status for diagnostics."""
         return {
             "run_count": self._run_count,

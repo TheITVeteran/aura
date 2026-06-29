@@ -26,6 +26,10 @@ _HYPERVISOR_PROBE_ERRORS = (
 )
 
 
+def _monotonic_now() -> float:
+    return time.monotonic()
+
+
 class Hypervisor:
     def __init__(self, lag_threshold_s: float = 1.5):
         self._lag_threshold = lag_threshold_s
@@ -170,10 +174,12 @@ class Hypervisor:
 
     async def _watchdog_loop(self):
         while self._running:
-            start = time.time()
+            # Wall time jumps across macOS sleep/wake and previously turned a
+            # normal resume into a false multi-minute event-loop stall.
+            start = _monotonic_now()
             # Simple async sleep to measure lag
             await asyncio.sleep(1.0)
-            actual_sleep = time.time() - start
+            actual_sleep = _monotonic_now() - start
             lag = actual_sleep - 1.0
             self._last_lag = lag
 

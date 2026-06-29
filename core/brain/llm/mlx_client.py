@@ -1124,6 +1124,8 @@ class MLXLocalClient:
         self._foreground_generation_watchdog: _threading.Timer | None = None
         self._recurrent_depth_status: dict[str, Any] = {"active": False, "config": None}
         self._last_surface_control_receipt: dict[str, Any] = {}
+        self._clock_sample_wall = time.time()
+        self._clock_sample_monotonic = time.monotonic()
 
         # The state repository's SharedMemoryTransport may be backed by mmap on
         # restricted/macOS paths. mmap handles are not picklable under the
@@ -1141,6 +1143,45 @@ class MLXLocalClient:
 
     def _mark_progress(self) -> None:
         self._last_progress_at = time.time()
+
+    def _rebase_after_system_sleep(self) -> float:
+        """Rebase active wall-clock anchors after host sleep/wake.
+
+        macOS wall time advances while the monotonic clock used by asyncio and
+        request deadlines pauses. Without rebasing, a healthy generation in
+        flight at sleep is misclassified as a token or heartbeat stall on wake.
+        """
+        now_wall = time.time()
+        now_monotonic = time.monotonic()
+        wall_delta = max(0.0, now_wall - self._clock_sample_wall)
+        monotonic_delta = max(0.0, now_monotonic - self._clock_sample_monotonic)
+        self._clock_sample_wall = now_wall
+        self._clock_sample_monotonic = now_monotonic
+        sleep_gap = wall_delta - monotonic_delta
+        threshold = float(os.environ.get("AURA_SYSTEM_SLEEP_GAP_THRESHOLD_S", "5"))
+        if sleep_gap <= max(1.0, threshold):
+            return 0.0
+
+        stale_cutoff = now_wall - max(2.0, sleep_gap * 0.5)
+        for attr in (
+            "_current_request_started_at",
+            "_current_request_progress_baseline_at",
+            "_current_first_token_at",
+            "_last_token_progress_at",
+            "_last_heartbeat",
+            "_last_progress_at",
+            "_last_ready_at",
+            "_lane_transition_at",
+            "_request_lock_acquired_at",
+        ):
+            value = float(getattr(self, attr, 0.0) or 0.0)
+            if 0.0 < value < stale_cutoff:
+                setattr(self, attr, value + sleep_gap)
+        logger.info(
+            "🌙 [MLX] Host resume detected; rebased active inference clocks by %.1fs.",
+            sleep_gap,
+        )
+        return sleep_gap
 
     def get_last_surface_control_receipt(self) -> dict[str, Any]:
         return dict(self._last_surface_control_receipt)
@@ -2871,6 +2912,8 @@ class MLXLocalClient:
             except TimeoutError:
                 if future.done():
                     return future.result()
+
+                self._rebase_after_system_sleep()
 
                 try:
                     memory_snapshot = get_memory_pressure_snapshot()

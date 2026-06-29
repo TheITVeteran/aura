@@ -1,6 +1,4 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import logging
 import os
@@ -9,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.health.degraded_events import get_unified_failure_state
+from core.runtime.errors import record_degradation
 
 try:  # module-local so tests and diagnostics can patch the exact host probe.
     import psutil
@@ -16,6 +15,7 @@ except ImportError:  # pragma: no cover - production hosts should carry psutil.
     psutil = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+_PROCESS_STARTED_AT = time.time()
 
 
 def _env_float(name: str, default: float) -> float:
@@ -233,7 +233,7 @@ def _read_memory_pressure_snapshot() -> _MemoryPressureSnapshot:
     host_percent: float | None = None
     if psutil is not None:
         memory = psutil.virtual_memory()
-        host_percent = float(getattr(memory, "percent"))
+        host_percent = float(memory.percent)
 
     try:
         from core.utils.memory_monitor import get_memory_pressure_snapshot
@@ -480,17 +480,23 @@ def _runtime_uptime_seconds(orchestrator: Any = None) -> float:
         return 0.0
 
     candidates = [
+        _PROCESS_STARTED_AT,
         getattr(orchestrator, "start_time", None),
         getattr(getattr(orchestrator, "status", None), "start_time", None),
     ]
+    valid_starts: list[float] = []
     for candidate in candidates:
         try:
             start = float(candidate or 0.0)
         except (TypeError, ValueError):
             continue
         if start > 0.0:
-            return max(0.0, time.time() - start)
-    return 0.0
+            valid_starts.append(start)
+    if not valid_starts:
+        return 0.0
+    # Snapshots may restore historical organism uptime. Optional background
+    # work must still honor the current process incarnation's boot grace.
+    return max(0.0, time.time() - max(valid_starts))
 
 
 def _foreground_activity_reason() -> str:

@@ -207,15 +207,16 @@ def test_boot_health_contract_reports_booting_before_runtime_ready():
 
 
 def test_background_policy_defers_work_during_boot_grace(monkeypatch):
-    from core.runtime.background_policy import background_activity_reason
+    from core.runtime import background_policy
 
     monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
     monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
     monkeypatch.delenv("AURA_TESTING", raising=False)
     monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "300")
+    monkeypatch.setattr(background_policy, "_PROCESS_STARTED_AT", time.time() - 300)
     orch = SimpleNamespace(status=SimpleNamespace(start_time=time.time() - 42))
 
-    assert background_activity_reason(orch) == "boot_grace_42s"
+    assert background_policy.background_activity_reason(orch) == "boot_grace_42s"
 
 
 def test_research_background_policy_requires_long_desktop_quiet_window(monkeypatch):

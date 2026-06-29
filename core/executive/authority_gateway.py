@@ -482,7 +482,7 @@ class AuthorityGateway:
 
         # 0. Contextual Authenticity Gate (Disclosure Policy)
         try:
-            from core.constitution.disclosure_policy import DisclosurePolicy, SocialContext
+            from core.governance.disclosure_policy import DisclosurePolicy, SocialContext
             is_public = "reddit" in tool_name
             context = SocialContext(
                 is_trusted_channel="email" in tool_name and "bryan" in str(args).lower(),

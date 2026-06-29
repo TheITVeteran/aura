@@ -1877,6 +1877,37 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
 - Next action: rerun the same committed desktop proof under the 26 GB MLX,
   32 GB process, and 34 GB external-abort bounds.
 
+## Sub-checkpoint: 2026-06-29 Sleep/Resume + Startup Isolation Repair
+
+- The committed short desktop proof passed: active CRSM-fused 32B Cortex,
+  recurrent depth active, all required probes healthy, continuity recall and
+  three conversation turns green, cognitive organs participating, peak RSS
+  `19604.1 MB`, clean shutdown, and no runtime-stream failure markers.
+- The subsequent 12-turn/restart run exposed a host sleep/wake boundary. Wall
+  time advanced by roughly 57 minutes while active execution advanced about
+  eight minutes. Aura interpreted resume as 929/455-second event-loop and token
+  stalls, failed turn 11, and then blocked restart-memory setup.
+- Root fixes:
+  - Hypervisor lag measurement now uses the monotonic clock rather than wall
+    time, so host sleep is not misclassified as event-loop starvation.
+  - MLX foreground generation detects wall/monotonic divergence and rebases
+    active request, token-progress, heartbeat, and lane clocks after resume.
+    Recent post-wake heartbeats are left untouched.
+  - Background boot grace now includes the current process incarnation; a
+    restored historical orchestrator start time cannot trigger email/Reddit or
+    other optional work during Cortex startup.
+  - ResourceGovernor now trims the canonical belief owner when available and
+    treats the unified world-model facade as a facade rather than assuming a
+    mutable `beliefs` dictionary.
+  - Social disclosure governance moved to an unambiguous module path under
+    `core.governance`, removing the `core/constitution.py` versus
+    `core/constitution/` import collision that repeatedly degraded Authority.
+- Evidence before live rerun:
+  - Focused sleep, warmup, startup, resource, governance, health, and MLX tests:
+    `229 passed`.
+- Remaining closeout estimate remains about 98.6% until the full committed
+  12-turn/restart/desktop-action run and visible multi-app proof pass.
+
 1. **R-001**: AGENTS.md, AURA_MASTER_SPEC.md, docs/AURA_MASTER_SPEC.md,
    docs/RUNTIME_INVARIANTS.md, docs/PRODUCTION_HARDENING_PLAN.md,
    docs/SKILL_CERTIFICATION_MATRIX.md, docs/DEPTH_AUDIT.md,
