@@ -1820,6 +1820,44 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
     demo proof, semantic review ledger closure, final replay/proof bundle,
     longer soak validation, and clean-worktree closure.
 
+## Checkpoint: 2026-06-29 Governed Mutation Isolation + Plasticity Handoff
+
+- Scope: close the self-modification verification gaps without granting Aura
+  uncontrolled cloud spend, arbitrary imports, or direct live base-weight
+  mutation.
+- Root issues fixed:
+  - `DistributedSandboxGateway` now owns opt-in local, Docker, and remote
+    validation policy. Worker count and monetary cost are bounded; Docker runs
+    without network access and with CPU/memory/read-only constraints; requested
+    unavailable providers fail closed instead of silently using weaker proof.
+  - `SafeModificationHarness` can require repeated scale-out validation against
+    the exact candidate workspace after local compile/pytest checks pass. The
+    ordinary repair path retains its existing bounded local gate unless policy
+    explicitly requires scale-out.
+  - `VerifiedModificationPlasticityBridge` records a training candidate only
+    when harness, behavioral, retention, rollback, governance, risk-tier, and
+    verifier-score evidence all pass. It queues work with the canonical LoRA
+    owner; it neither edits base weights nor calls a queued example a completed
+    weight update.
+  - `RepairImportPolicy` replaces the AST healer's permanently static-only
+    import map with a durable governance-approved extension policy. Unknown
+    imports remain blocked, and process, filesystem, network, native-code, and
+    dynamic-import capability roots cannot be auto-injected.
+- Evidence:
+  - Ruff passed on all touched runtime and test files.
+  - Focused self-modification, sandbox, repair-recovery, import-policy, and
+    plasticity tests: `168 passed` (plus one expected deprecation warning from
+    the legacy compatibility module).
+  - `make enterprise-gate`: passed.
+  - `make production-gate`: passed.
+- Closeout tracker:
+  - Estimated closeout completion after this checkpoint: about 98.6%.
+  - Remaining total checkpoints: 2 consolidated checkpoints / 3-5 smaller
+    sub-checkpoints.
+  - Remaining work: real launched desktop full-mind and visible multi-app proof,
+    semantic review ledger closure, final replay/proof bundle, longer soak
+    validation, claims calibration, and clean-worktree closure.
+
 1. **R-001**: AGENTS.md, AURA_MASTER_SPEC.md, docs/AURA_MASTER_SPEC.md,
    docs/RUNTIME_INVARIANTS.md, docs/PRODUCTION_HARDENING_PLAN.md,
    docs/SKILL_CERTIFICATION_MATRIX.md, docs/DEPTH_AUDIT.md,

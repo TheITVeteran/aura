@@ -12,6 +12,7 @@ Checks:
   5. Resource delta check (memory/CPU)
   6. Rollback drill (backup → apply → restore → fingerprint match)
 """
+
 from __future__ import annotations
 
 import ast
@@ -31,6 +32,11 @@ from typing import Any
 
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.self_modification.distributed_sandbox_gateway import (
+    DistributedSandboxGateway,
+    SandboxSweepRequest,
+)
+from core.self_modification.mutation_tiers import classify_mutation_path
 
 logger = logging.getLogger("SelfModification.SafeHarness")
 
@@ -45,31 +51,35 @@ BANNED_CALL_NAMES = frozenset({"eval", "exec", "__import__", "compile"})
 
 BANNED_IMPORT_MODULES = frozenset({"socket", "http.client", "urllib.request", "ftplib", "smtplib"})
 
-ALLOWED_SUBPROCESS_CALLERS = frozenset({
-    "core/self_modification/safe_modification_harness.py",
-    "core/self_modification/code_repair.py",  # ruff mechanical repair only
-    "core/architect/ghost_boot.py",
-})
+ALLOWED_SUBPROCESS_CALLERS = frozenset(
+    {
+        "core/self_modification/safe_modification_harness.py",
+        "core/self_modification/code_repair.py",  # ruff mechanical repair only
+        "core/architect/ghost_boot.py",
+    }
+)
 
-_WORKSPACE_EXCLUDED_PARTS = frozenset({
-    ".git",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-    ".venv_aura",
-    "__pycache__",
-    "artifacts",
-    "build",
-    "data",
-    "dist",
-    "logs",
-    "model_weights",
-    "models",
-    "node_modules",
-    "scratch",
-    "venv",
-})
+_WORKSPACE_EXCLUDED_PARTS = frozenset(
+    {
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        ".venv_aura",
+        "__pycache__",
+        "artifacts",
+        "build",
+        "data",
+        "dist",
+        "logs",
+        "model_weights",
+        "models",
+        "node_modules",
+        "scratch",
+        "venv",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -97,6 +107,8 @@ class SafeModificationHarness:
         *,
         patch_content: dict[str, str] | None = None,
         extra_test_targets: list[str] | None = None,
+        require_distributed_sandbox: bool | None = None,
+        distributed_gateway: DistributedSandboxGateway | None = None,
     ) -> HarnessResult:
         """Run all safety checks on the given changed files.
 
@@ -129,7 +141,12 @@ class SafeModificationHarness:
                     checks["files_exist"] = False
 
         if not file_contents:
-            return HarnessResult(passed=False, checks={"files_exist": False}, errors=errors, duration_s=time.monotonic() - started)
+            return HarnessResult(
+                passed=False,
+                checks={"files_exist": False},
+                errors=errors,
+                duration_s=time.monotonic() - started,
+            )
 
         checks["files_exist"] = True
 
@@ -142,6 +159,13 @@ class SafeModificationHarness:
         compile_ok, compile_errors = await asyncio.to_thread(self._check_py_compile, file_contents)
         checks["py_compile"] = compile_ok
         errors.extend(compile_errors)
+
+        distributed_required = (
+            require_distributed_sandbox
+            if require_distributed_sandbox is not None
+            else os.getenv("AURA_REQUIRE_DISTRIBUTED_SANDBOX", "0").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
 
         # Check 3: pytest against the exact candidate bytes in an isolated
         # workspace. Running tests in the live tree would exercise the old
@@ -171,6 +195,33 @@ class SafeModificationHarness:
                     test_errors = ["candidate overlay verification failed"]
                 checks["pytest"] = test_ok
                 errors.extend(test_errors)
+                if overlay_ok and test_ok and distributed_required:
+                    targets = tuple(
+                        self._related_test_files(
+                            changed_files,
+                            candidate_root,
+                            extra_test_targets or [],
+                        )
+                    )
+                    max_tier = max(int(classify_mutation_path(path).tier) for path in changed_files)
+                    gateway = distributed_gateway or DistributedSandboxGateway()
+                    sweep = await gateway.validate(
+                        SandboxSweepRequest(
+                            candidate_root=candidate_root,
+                            test_targets=targets,
+                            risk_tier=max_tier,
+                            requested_workers=2 if max_tier >= 2 else 1,
+                            max_cost_usd=0.0,
+                        ),
+                        local_runner=self._run_sandbox_attempt,
+                    )
+                    checks["distributed_sandbox"] = sweep.passed
+                    errors.extend(sweep.errors)
+                elif distributed_required:
+                    checks["distributed_sandbox"] = False
+                    errors.append(
+                        "distributed sandbox skipped because local candidate validation failed"
+                    )
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             checks["candidate_overlay"] = False
             checks["pytest"] = False
@@ -182,7 +233,9 @@ class SafeModificationHarness:
         errors.extend(resource_errors)
 
         # Check 5: Rollback drill
-        rollback_ok, rollback_errors = await asyncio.to_thread(self._check_rollback_drill, changed_files)
+        rollback_ok, rollback_errors = await asyncio.to_thread(
+            self._check_rollback_drill, changed_files
+        )
         checks["rollback_drill"] = rollback_ok
         errors.extend(rollback_errors)
 
@@ -195,7 +248,9 @@ class SafeModificationHarness:
         passed = all(checks.values())
         duration = time.monotonic() - started
 
-        result = HarnessResult(passed=passed, checks=checks, errors=errors, duration_s=round(duration, 4))
+        result = HarnessResult(
+            passed=passed, checks=checks, errors=errors, duration_s=round(duration, 4)
+        )
         logger.info("%s (%.2fs)", result.summary(), duration)
         return result
 
@@ -221,7 +276,9 @@ class SafeModificationHarness:
                     if func_name in BANNED_CALL_NAMES:
                         # Allow if this file is in the allowed list
                         if fpath not in ALLOWED_SUBPROCESS_CALLERS:
-                            errors.append(f"Banned call '{func_name}' in {fpath}:{getattr(node, 'lineno', '?')}")
+                            errors.append(
+                                f"Banned call '{func_name}' in {fpath}:{getattr(node, 'lineno', '?')}"
+                            )
 
                 # Check dangerous imports
                 if isinstance(node, ast.Import):
@@ -230,7 +287,9 @@ class SafeModificationHarness:
                             errors.append(f"Banned import '{alias.name}' in {fpath}:{node.lineno}")
                 if isinstance(node, ast.ImportFrom):
                     if node.module and node.module in BANNED_IMPORT_MODULES:
-                        errors.append(f"Banned import from '{node.module}' in {fpath}:{node.lineno}")
+                        errors.append(
+                            f"Banned import from '{node.module}' in {fpath}:{node.lineno}"
+                        )
 
         return len(errors) == 0, errors
 
@@ -285,16 +344,14 @@ class SafeModificationHarness:
                     return [
                         self.codebase_root / relative
                         for relative in result.stdout.split("\0")
-                        if relative
-                        and self._workspace_path_allowed(Path(relative))
+                        if relative and self._workspace_path_allowed(Path(relative))
                     ]
             except (OSError, RuntimeError, subprocess.SubprocessError):
                 pass
         return [
             path
             for path in self.codebase_root.rglob("*")
-            if path.is_file()
-            and self._workspace_path_allowed(path.relative_to(self.codebase_root))
+            if path.is_file() and self._workspace_path_allowed(path.relative_to(self.codebase_root))
         ]
 
     @staticmethod
@@ -366,29 +423,9 @@ class SafeModificationHarness:
     ) -> tuple[bool, list[str]]:
         """Run related pytest files against the isolated candidate workspace."""
         errors: list[str] = []
-        test_files: list[str] = []
-
-        for fpath in changed_files:
-            path = Path(fpath)
-            if (
-                path.suffix == ".py"
-                and len(path.parts) >= 2
-                and path.parts[0] == "tests"
-                and path.name.startswith("test_")
-            ):
-                test_files.append(fpath)
-
-            # Find related test files
-            base = path.stem
-            test_candidates = [
-                f"tests/{'/'.join(path.parts[:-1])}/test_{base}.py",
-                f"tests/test_{base}.py",
-            ]
-            for tc in test_candidates:
-                if (candidate_root / tc).exists():
-                    test_files.append(tc)
-
-        test_files.extend(self._resolve_extra_test_targets(candidate_root, extra_test_targets or []))
+        test_files = self._related_test_files(
+            changed_files, candidate_root, extra_test_targets or []
+        )
         if not test_files:
             preview = ", ".join(changed_files[:5])
             if len(changed_files) > 5:
@@ -400,7 +437,9 @@ class SafeModificationHarness:
         try:
             env = dict(os.environ)
             existing_pp = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = str(candidate_root) + (os.pathsep + existing_pp if existing_pp else "")
+            env["PYTHONPATH"] = str(candidate_root) + (
+                os.pathsep + existing_pp if existing_pp else ""
+            )
             env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
             env["AURA_TEST_MODE"] = "1"
             result = await get_subprocess_gateway().run_async(
@@ -420,7 +459,9 @@ class SafeModificationHarness:
                 source="core.self_modification.safe_modification_harness.pytest",
             )
             if result.returncode != 0:
-                errors.append(f"pytest failed: stdout={result.stdout[-500:]} stderr={result.stderr[-500:]}")
+                errors.append(
+                    f"pytest failed: stdout={result.stdout[-500:]} stderr={result.stderr[-500:]}"
+                )
                 return False, errors
         except subprocess.TimeoutExpired:
             errors.append("pytest timed out (60s)")
@@ -434,6 +475,53 @@ class SafeModificationHarness:
 
         return True, []
 
+    def _related_test_files(
+        self,
+        changed_files: list[str],
+        candidate_root: Path,
+        extra_test_targets: list[str],
+    ) -> list[str]:
+        test_files: list[str] = []
+        for fpath in changed_files:
+            path = Path(fpath)
+            if (
+                path.suffix == ".py"
+                and len(path.parts) >= 2
+                and path.parts[0] == "tests"
+                and path.name.startswith("test_")
+            ):
+                test_files.append(fpath)
+            base = path.stem
+            for candidate in (
+                f"tests/{'/'.join(path.parts[:-1])}/test_{base}.py",
+                f"tests/test_{base}.py",
+            ):
+                if (candidate_root / candidate).exists():
+                    test_files.append(candidate)
+        test_files.extend(self._resolve_extra_test_targets(candidate_root, extra_test_targets))
+        return sorted(set(test_files))
+
+    async def _run_sandbox_attempt(
+        self,
+        candidate_root: Path,
+        targets: tuple[str, ...],
+        timeout_s: int,
+    ) -> tuple[bool, str]:
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(candidate_root)
+        env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+        env["AURA_TEST_MODE"] = "1"
+        result = await get_subprocess_gateway().run_async(
+            [sys.executable, "-m", "pytest", "-p", "pytest_asyncio.plugin", "-x", *targets],
+            capture_output=True,
+            timeout=timeout_s,
+            cwd=candidate_root,
+            env=env,
+            source="core.self_modification.safe_modification_harness.distributed_attempt",
+        )
+        detail = (result.stdout or "") + "\n" + (result.stderr or "")
+        return result.returncode == 0, detail
+
     @staticmethod
     def _resolve_extra_test_targets(candidate_root: Path, targets: list[str]) -> list[str]:
         resolved: list[str] = []
@@ -445,7 +533,9 @@ class SafeModificationHarness:
             path_part = target.split("::", 1)[0]
             if ".py" in path_part and (candidate_root / path_part).exists():
                 try:
-                    source = (candidate_root / path_part).read_text(encoding="utf-8", errors="ignore")
+                    source = (candidate_root / path_part).read_text(
+                        encoding="utf-8", errors="ignore"
+                    )
                 except OSError:
                     source = ""
                 if SafeModificationHarness._is_recursive_self_mod_test(source):
@@ -472,12 +562,8 @@ class SafeModificationHarness:
     @staticmethod
     def _is_recursive_self_mod_test(source: str) -> bool:
         text = str(source or "")
-        return (
-            "AutonomousSelfModificationEngine" in text
-            and ".apply_fix(" in text
-        ) or (
-            "SafeModificationHarness" in text
-            and ".run(" in text
+        return ("AutonomousSelfModificationEngine" in text and ".apply_fix(" in text) or (
+            "SafeModificationHarness" in text and ".run(" in text
         )
 
     def _current_rss_mb(self) -> float:
@@ -501,7 +587,9 @@ class SafeModificationHarness:
         if baseline_rss_mb > 0.0 and current_rss_mb > 0.0:
             delta_mb = current_rss_mb - baseline_rss_mb
             if delta_mb > 512:
-                errors.append(f"High memory delta: {delta_mb:.0f}MB (baseline={baseline_rss_mb:.0f}MB current={current_rss_mb:.0f}MB)")
+                errors.append(
+                    f"High memory delta: {delta_mb:.0f}MB (baseline={baseline_rss_mb:.0f}MB current={current_rss_mb:.0f}MB)"
+                )
                 return False, errors
         return True, []
 

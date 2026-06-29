@@ -11,9 +11,9 @@ and applies patches — but ONLY after governance approval.
 GOVERNANCE CONTRACT:
     - Every file write MUST pass through _check_governance()
     - Only files within the codebase root can be modified
-    - Only imports from a known-safe allowlist can be injected
-    - The safe list explicitly EXCLUDES dangerous modules (os, subprocess,
-      shutil, socket, ctypes, etc.)
+    - Only built-in-safe or governance-approved repair imports can be injected
+    - Capability-bearing modules (process, filesystem, network, native code,
+      and dynamic imports) cannot be auto-injected
     - All repair attempts are logged with before/after content hashes
 
 This module is named "shadow" because it operates in the background
@@ -31,6 +31,7 @@ from typing import Any
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.self_modification.mutation_tiers import MutationTier, classify_mutation_path
+from core.self_modification.repair_import_policy import RepairImportPolicy
 
 logger = logging.getLogger("Aura.ShadowHealer")
 
@@ -61,25 +62,14 @@ class ShadowASTHealer:
     (fail-closed, not fail-open).
     """
 
-    # Known-safe imports that can be auto-injected. This list explicitly
-    # EXCLUDES modules that provide filesystem, network, or process access.
-    # Adding to this list requires a deliberate decision.
-    _SAFE_IMPORTS = {
-        "asyncio": "import asyncio",
-        "json": "import json",
-        "logging": "import logging",
-        "time": "import time",
-        "math": "import math",
-        "re": "import re",
-        "Path": "from pathlib import Path",
-        "Any": "from typing import Any",
-        "Dict": "from typing import Dict",
-        "List": "from typing import List",
-        "Optional": "from typing import Optional",
-    }
-
-    def __init__(self, codebase_root: Path | None = None):
+    def __init__(
+        self,
+        codebase_root: Path | None = None,
+        *,
+        import_policy: RepairImportPolicy | None = None,
+    ):
         self.root = (codebase_root or Path.cwd()).resolve()
+        self.import_policy = import_policy or RepairImportPolicy()
 
     def _check_governance(self, file_path: Path, action: str) -> bool:
         """Check with governance before modifying a file.
@@ -239,15 +229,15 @@ class ShadowASTHealer:
     def _inject_missing_import(self, tree: ast.AST, name: str) -> bool:
         """Injects a common missing import into the AST.
 
-        Only imports from the known-safe allowlist are permitted. Dangerous
-        modules (os, subprocess, shutil, socket, ctypes, etc.) are explicitly
-        excluded and cannot be auto-injected.
+        Only built-in-safe or governance-approved imports are permitted.
+        Capability-bearing modules are excluded and cannot be auto-injected.
         """
-        if name in self._SAFE_IMPORTS:
-            import_node = ast.parse(self._SAFE_IMPORTS[name]).body[0]
+        statement = self.import_policy.resolve(name)
+        if statement:
+            import_node = ast.parse(statement).body[0]
             tree.body.insert(0, import_node)
             return True
-        logger.debug("ShadowHealer: '%s' not in safe import allowlist — skipping", name)
+        logger.debug("ShadowHealer: '%s' has no governed repair-import approval — skipping", name)
         return False
 
     def validate_syntax(self, file_path: Path) -> bool:

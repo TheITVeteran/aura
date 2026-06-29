@@ -1,4 +1,5 @@
 """Tests for the authoritative self-modification safety harness."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import core.self_modification.safe_modification_harness as harness_mod
+from core.self_modification.distributed_sandbox_gateway import DistributedSandboxGateway
 from core.self_modification.safe_modification_harness import SafeModificationHarness
 
 
@@ -14,9 +16,7 @@ def test_harness_rejects_patch_without_related_pytest(tmp_path: Path) -> None:
     source.parent.mkdir(parents=True)
     source.write_text("VALUE = 1\n", encoding="utf-8")
 
-    result = asyncio.run(
-        SafeModificationHarness(tmp_path).run(["core/uncovered_runtime_patch.py"])
-    )
+    result = asyncio.run(SafeModificationHarness(tmp_path).run(["core/uncovered_runtime_patch.py"]))
 
     assert result.passed is False
     assert result.checks["pytest"] is False
@@ -33,9 +33,7 @@ def test_harness_runs_related_pytest_before_passing(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     tests.write_text(
-        "from pkg.calculator import add\n\n"
-        "def test_add():\n"
-        "    assert add(2, 3) == 5\n",
+        "from pkg.calculator import add\n\ndef test_add():\n    assert add(2, 3) == 5\n",
         encoding="utf-8",
     )
 
@@ -45,6 +43,28 @@ def test_harness_runs_related_pytest_before_passing(tmp_path: Path) -> None:
     assert result.checks["pytest"] is True
     assert result.checks["candidate_overlay"] is True
     assert result.checks["source_immutable"] is True
+
+
+def test_harness_runs_requested_scale_out_gate_against_candidate(tmp_path: Path) -> None:
+    source = tmp_path / "pkg" / "calculator.py"
+    tests = tmp_path / "tests" / "test_calculator.py"
+    source.parent.mkdir(parents=True)
+    tests.parent.mkdir(parents=True)
+    source.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    tests.write_text(
+        "from pkg.calculator import add\n\ndef test_add():\n    assert add(2, 3) == 5\n",
+        encoding="utf-8",
+    )
+
+    result = asyncio.run(
+        SafeModificationHarness(tmp_path).run(
+            ["pkg/calculator.py"],
+            require_distributed_sandbox=True,
+            distributed_gateway=DistributedSandboxGateway(provider="local", max_workers=1),
+        )
+    )
+    assert result.passed is True
+    assert result.checks["distributed_sandbox"] is True
 
 
 def test_harness_runs_pytest_against_candidate_bytes(tmp_path: Path) -> None:
@@ -57,9 +77,7 @@ def test_harness_runs_pytest_against_candidate_bytes(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     tests.write_text(
-        "from pkg.calculator import add\n\n"
-        "def test_add():\n"
-        "    assert add(2, 3) == 5\n",
+        "from pkg.calculator import add\n\ndef test_add():\n    assert add(2, 3) == 5\n",
         encoding="utf-8",
     )
 
@@ -91,7 +109,9 @@ def test_harness_treats_changed_test_file_as_coverage(tmp_path: Path) -> None:
     assert result.checks["pytest"] is True
 
 
-def test_harness_routes_temp_compile_and_pytest_through_gateways(tmp_path: Path, monkeypatch) -> None:
+def test_harness_routes_temp_compile_and_pytest_through_gateways(
+    tmp_path: Path, monkeypatch
+) -> None:
     source = tmp_path / "pkg" / "calculator.py"
     tests = tmp_path / "tests" / "test_calculator.py"
     source.parent.mkdir(parents=True)
@@ -101,9 +121,7 @@ def test_harness_routes_temp_compile_and_pytest_through_gateways(tmp_path: Path,
         encoding="utf-8",
     )
     tests.write_text(
-        "from pkg.calculator import add\n\n"
-        "def test_add():\n"
-        "    assert add(2, 3) == 5\n",
+        "from pkg.calculator import add\n\ndef test_add():\n    assert add(2, 3) == 5\n",
         encoding="utf-8",
     )
     file_write_sources: list[str] = []
