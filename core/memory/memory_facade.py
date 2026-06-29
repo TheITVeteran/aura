@@ -547,6 +547,88 @@ class MemoryFacade:
             return key, value, ""
         return "", None, raw
 
+    @staticmethod
+    def _normalize_search_limit(
+        limit: int | None = None,
+        *,
+        top_k: int | None = None,
+        default: int = 5,
+    ) -> int:
+        raw_limit = top_k if top_k is not None else limit
+        try:
+            return max(1, min(100, int(raw_limit if raw_limit is not None else default)))
+        except (TypeError, ValueError, OverflowError):
+            return default
+
+    def _search_gateway_records_sync(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+        query_text = str(query or "").strip()
+        if not query_text:
+            return []
+
+        try:
+            from core.memory.memory_write_gateway import get_memory_write_gateway
+
+            root = Path(get_memory_write_gateway().root)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            root = Path.home() / ".aura" / "memory"
+        if not root.exists():
+            return []
+
+        def _mtime(path: Path) -> float:
+            try:
+                return float(path.stat().st_mtime)
+            except OSError:
+                return 0.0
+
+        terms = [
+            term
+            for term in re.findall(r"[a-z0-9_'-]{3,}", query_text.lower())
+            if term not in {"what", "that", "this", "with", "from", "about", "memory", "remember"}
+        ][:12]
+        candidates: list[tuple[float, float, dict[str, Any]]] = []
+        paths = sorted(
+            (path for path in root.glob("*/*.json") if path.is_file()),
+            key=_mtime,
+            reverse=True,
+        )[:2000]
+        for path in paths:
+            try:
+                mtime = _mtime(path)
+                envelope = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            payload = envelope.get("payload") if isinstance(envelope, dict) else {}
+            if not isinstance(payload, dict):
+                continue
+            content = str(payload.get("content") or "").strip()
+            metadata = self._safe_metadata(payload.get("metadata"))
+            if not content:
+                continue
+            haystack = f"{content}\n{json.dumps(metadata, sort_keys=True, default=str)}".lower()
+            if terms:
+                hits = sum(1 for term in terms if term in haystack)
+                if hits <= 0:
+                    continue
+                score = hits / max(1, len(terms))
+            else:
+                score = 0.1
+            if metadata.get("session_memory_pin") or metadata.get("explicit_memory_request"):
+                score += 0.25
+            candidates.append(
+                (
+                    min(1.0, score),
+                    float(payload.get("written_at") or mtime),
+                    self._normalize_memory_result(
+                        content=content,
+                        metadata=metadata,
+                        memory_id=path.stem,
+                        score=min(1.0, score),
+                    ),
+                )
+            )
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [item[2] for item in candidates[:limit]]
+
     async def _search_gateway_records(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """Search strict-runtime MemoryWriteGateway records.
 
@@ -555,77 +637,8 @@ class MemoryFacade:
         those records, so recall has to include the gateway store directly.
         """
 
-        query_text = str(query or "").strip()
-        if not query_text:
-            return []
-
-        def _scan() -> list[dict[str, Any]]:
-            try:
-                from core.memory.memory_write_gateway import get_memory_write_gateway
-
-                root = Path(get_memory_write_gateway().root)
-            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-                root = Path.home() / ".aura" / "memory"
-            if not root.exists():
-                return []
-
-            def _mtime(path: Path) -> float:
-                try:
-                    return float(path.stat().st_mtime)
-                except OSError:
-                    return 0.0
-
-            terms = [
-                term
-                for term in re.findall(r"[a-z0-9_'-]{3,}", query_text.lower())
-                if term not in {"what", "that", "this", "with", "from", "about", "memory", "remember"}
-            ][:12]
-            candidates: list[tuple[float, float, dict[str, Any]]] = []
-            paths = sorted(
-                (path for path in root.glob("*/*.json") if path.is_file()),
-                key=_mtime,
-                reverse=True,
-            )[:2000]
-            for path in paths:
-                try:
-                    mtime = _mtime(path)
-                    envelope = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-                    continue
-                payload = envelope.get("payload") if isinstance(envelope, dict) else {}
-                if not isinstance(payload, dict):
-                    continue
-                content = str(payload.get("content") or "").strip()
-                metadata = self._safe_metadata(payload.get("metadata"))
-                if not content:
-                    continue
-                haystack = f"{content}\n{json.dumps(metadata, sort_keys=True, default=str)}".lower()
-                if terms:
-                    hits = sum(1 for term in terms if term in haystack)
-                    if hits <= 0:
-                        continue
-                    score = hits / max(1, len(terms))
-                else:
-                    score = 0.1
-                if metadata.get("session_memory_pin") or metadata.get("explicit_memory_request"):
-                    score += 0.25
-                candidates.append(
-                    (
-                        min(1.0, score),
-                        float(payload.get("written_at") or mtime),
-                        self._normalize_memory_result(
-                            content=content,
-                            metadata=metadata,
-                            memory_id=path.stem,
-                            score=min(1.0, score),
-                        ),
-                    )
-                )
-            candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-            return [item[2] for item in candidates[:limit]]
-
         try:
-            return await asyncio.to_thread(_scan)
+            return await asyncio.to_thread(self._search_gateway_records_sync, query, limit)
         except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
             record_degradation("memory_facade", exc)
             logger.debug("MemoryWriteGateway search failed: %s", exc)
@@ -1090,8 +1103,16 @@ class MemoryFacade:
 
         return hot
 
-    async def search(self, query: str, limit: int = 5) -> list[Any]:
+    async def search(
+        self,
+        query: str,
+        limit: int | None = 5,
+        *,
+        top_k: int | None = None,
+        **_: Any,
+    ) -> list[Any]:
         """Search across all memory systems for relevance."""
+        limit = self._normalize_search_limit(limit, top_k=top_k)
         results: list[dict[str, Any]] = []
         seen: set[str] = set()
 
@@ -1174,13 +1195,80 @@ class MemoryFacade:
             item.pop("_retrieval_order", None)
         return verified_results[:limit]
 
-    async def search_memories(self, query: str, limit: int = 5) -> list[Any]:
-        """Wrapper for search() to support legacy compatibility."""
-        return await self.search(query, limit=limit)
+    def search_sync(
+        self,
+        query: str,
+        limit: int | None = 5,
+        *,
+        top_k: int | None = None,
+        **_: Any,
+    ) -> list[Any]:
+        """Synchronous recall for governance and other non-async runtime paths."""
+        limit = self._normalize_search_limit(limit, top_k=top_k)
+        filter_key, filter_value, semantic_query = self._parse_memory_query(query)
+        results: list[dict[str, Any]] = []
+        seen: set[str] = set()
 
-    async def retrieve_unified_context(self, query: str, limit: int = 5) -> list[Any]:
+        def _append(item: Any) -> None:
+            if isinstance(item, dict):
+                content = str(item.get("content") or item.get("text") or "").strip()
+                metadata = self._safe_metadata(item.get("metadata"))
+                normalized = self._normalize_memory_result(
+                    content=content,
+                    metadata=metadata,
+                    memory_id=str(item.get("id", "") or ""),
+                    score=item.get("score"),
+                )
+            else:
+                normalized = self._normalize_memory_result(content=str(item or "").strip())
+            key = f"{normalized.get('id', '')}::{normalized['content']}".lower()
+            if not normalized["content"] or key in seen:
+                return
+            seen.add(key)
+            results.append(normalized)
+
+        try:
+            for item in self._query_vector_memory_sync(
+                semantic_query,
+                filter_key=filter_key,
+                filter_value=filter_value,
+                limit=limit,
+            ):
+                _append(item)
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            record_degradation("memory_facade.search_sync", exc)
+            logger.debug("Synchronous vector recall failed: %s", exc)
+
+        try:
+            for item in self._search_gateway_records_sync(query, limit=limit):
+                _append(item)
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            record_degradation("memory_facade.search_sync", exc)
+            logger.debug("Synchronous gateway recall failed: %s", exc)
+
+        return results[:limit]
+
+    async def search_memories(
+        self,
+        query: str,
+        limit: int | None = 5,
+        *,
+        top_k: int | None = None,
+        **kwargs: Any,
+    ) -> list[Any]:
+        """Wrapper for search() to support legacy compatibility."""
+        return await self.search(query, limit=limit, top_k=top_k, **kwargs)
+
+    async def retrieve_unified_context(
+        self,
+        query: str,
+        limit: int | None = 5,
+        *,
+        top_k: int | None = None,
+        **kwargs: Any,
+    ) -> list[Any]:
         """Wrapper for search() to support unified context retrieval."""
-        return await self.search(query, limit=limit)
+        return await self.search(query, limit=limit, top_k=top_k, **kwargs)
 
     async def add_memory(
         self,

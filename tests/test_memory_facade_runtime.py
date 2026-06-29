@@ -151,6 +151,45 @@ async def test_memory_facade_search_reads_strict_gateway_records(monkeypatch, tm
 
 
 @pytest.mark.asyncio
+async def test_memory_facade_compat_search_accepts_top_k_and_sync(monkeypatch, tmp_path):
+    record_path = tmp_path / "episodic" / "compat-pin.json"
+    atomic_write_json(
+        record_path,
+        {
+            "content": "Aura should recall the compatibility blue lantern memory.",
+            "metadata": {
+                "source": "chat_api",
+                "session_memory_pin": True,
+                "explicit_memory_request": True,
+            },
+            "cause": "memory_facade.add_memory",
+            "written_at": 12346.0,
+        },
+        schema_version=1,
+        schema_name="memory.episodic",
+    )
+    monkeypatch.setattr(
+        "core.memory.memory_write_gateway.get_memory_write_gateway",
+        lambda: SimpleNamespace(root=tmp_path),
+    )
+
+    facade = MemoryFacade()
+
+    async_results = await facade.search_memories("compatibility blue lantern", top_k=1)
+    unified_results = await facade.retrieve_unified_context(
+        "compatibility blue lantern",
+        top_k=1,
+        future_arg_is_ignored=True,
+    )
+    sync_results = facade.search_sync("compatibility blue lantern", top_k=1)
+
+    assert len(async_results) == 1
+    assert len(unified_results) == 1
+    assert len(sync_results) == 1
+    assert async_results[0]["content"] == sync_results[0]["content"]
+
+
+@pytest.mark.asyncio
 async def test_memory_facade_commit_interaction_supports_sync_vector_and_ledger(monkeypatch):
     monkeypatch.setenv("AURA_STRICT_RUNTIME", "0")
     facade = MemoryFacade()
