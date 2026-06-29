@@ -134,6 +134,30 @@ def register_all_services(is_proxy: bool = False):
         required=False,
     )
     container.register(
+        'deletion_guard',
+        lambda: __import__('core.security.deletion_guard', fromlist=['get_deletion_guard']).get_deletion_guard(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
+    container.register(
+        'threat_detectors',
+        lambda: __import__('core.security.threat_detectors', fromlist=['get_threat_detectors']).get_threat_detectors(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
+    container.register(
+        'perception_sentinel',
+        lambda: __import__('core.perception.perception_sentinel', fromlist=['get_perception_sentinel']).get_perception_sentinel(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
+    container.register(
+        'network_sentinel',
+        lambda: __import__('core.security.network_sentinel', fromlist=['get_network_sentinel']).get_network_sentinel(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
+    container.register(
         'other_agent_model',
         lambda: __import__('core.social.other_agent_model', fromlist=['get_other_agent_model']).get_other_agent_model(),
         lifetime=ServiceLifetime.SINGLETON,
