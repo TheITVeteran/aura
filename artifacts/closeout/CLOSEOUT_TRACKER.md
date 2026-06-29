@@ -6,11 +6,64 @@ remains open.
 
 ## Current Estimate
 
-- Overall closeout: 98%
-- Remaining checkpoints: 1 consolidated checkpoint, likely 2-3 smaller
+- Overall closeout: 98.3%
+- Remaining checkpoints: 1 consolidated checkpoint, likely 1-2 smaller
   sub-checkpoints
-- Current phase: final CRSM/final-proof closure and artifact cleanup after
-  live visible desktop/voice demo proofs passed
+- Current phase: final replay/proof closure and artifact cleanup after live
+  visible desktop/voice demo proofs, CRSM closure, CAA closure, and
+  recurrent-failure repair routing verification passed
+
+## Checkpoint 2026-06-29-02: CRSM / CAA / Immune Closure Verification
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- The closeout tracker still treated CRSM/CAA as open even though the current
+  active model and integrity audit showed the CRSM-fused 32B lane was already
+  published.
+- A focused test exposed that CRSM marker publication could ignore monkeypatched
+  or runtime-updated manifest paths because the manifest default was bound at
+  import time.
+- Desktop full-mind failures must train immunity and escalate recurrent faults
+  through governed repair, not stop at a static failure message.
+
+What changed:
+
+- `training/train_and_fuse.py` now resolves the CRSM integration manifest at
+  call time before marking captures consumed after a successful train/fuse.
+- Current CRSM artifacts were re-verified from `CRSMLoopMonitor`:
+  `state=closed`, `unconsumed=0`, 600 eligible captures trained, 400 retired by
+  the safety gate, and active model
+  `training/fused-model/Aura-32B-crsm-closeout-20260628-181638`.
+- Current CAA artifacts were re-verified from `verify_readiness()`:
+  `level=production`, `steering_capacity_pct=100.0`, 15/15 runtime target
+  vectors bound to the active model config hash, and no missing/unbound target
+  vectors.
+- Current integrity audit was re-verified: healthy, no concerns, no advisory.
+- Adaptive immunity, open-ended immune evolution, self-repair ladder, desktop
+  cognitive failure-to-repair routing, and degradation repair contracts were
+  re-run and passed.
+
+Evidence:
+
+- CRSM/CAA/integrity tests: `23 passed`.
+- Adaptive immunity and open-ended immune evolution: `15 passed`.
+- Self-repair ladder: `11 passed`.
+- Desktop cognitive failure-to-repair routing: `2 passed`.
+- Degradation/repair contracts: `11 passed`.
+- CRSM-delta preflight through both `train_and_fuse.py` and
+  `run_unattended.py`: passed without launching heavy training.
+- `python -m ruff check ...` on touched CRSM/immune/repair/chat surfaces:
+  passed.
+- `make enterprise-gate`: passed.
+- `make production-gate`: passed.
+
+Still open:
+
+- Final DNU/Aletheia/final-proof replay and claim/artifact cleanup.
+- Normalize or intentionally commit remaining generated artifact deltas, then
+  finish with a clean worktree and final commit/push.
 
 ## Checkpoint 2026-06-29-01: Visible Desktop Demo Reliability
 
@@ -60,7 +113,6 @@ Evidence:
 
 Still open:
 
-- Guarded CRSM train/fuse/publish and manifest/consumed-marker closure.
 - Final DNU/Aletheia/final-proof replay and claim/artifact cleanup.
 - Normalize or intentionally commit remaining generated artifact deltas, then
   finish with a clean worktree and final commit/push.

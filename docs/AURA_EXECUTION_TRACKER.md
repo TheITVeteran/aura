@@ -17,6 +17,91 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest CRSM / CAA / Immune Closure Verification (2026-06-29)
+
+### Gaps Addressed
+
+- **CRSM closure was re-verified from current artifacts, not notes**:
+  `CRSMLoopMonitor.loop_state()` reports `state=closed`, `unconsumed=0`, active
+  model
+  `training/fused-model/Aura-32B-crsm-closeout-20260628-181638`, 600 eligible
+  captures trained, and 400 captures retired by the training safety gate.
+- **CAA is production-bound to the active CRSM-fused 32B model**:
+  `verify_readiness()` reports `level=production`,
+  `below_design_capacity=false`, 15/15 runtime target vectors extracted and
+  bound to the active model config hash, with no missing or unbound target
+  vectors.
+- **The integrity audit slice is clean**:
+  `run_integrity_audit(log=False)` reports `healthy=true`, no concerns, no
+  advisory entries, CRSM closed, and CAA production.
+- **CRSM marker publication no longer depends on stale Python default
+  arguments**: `training/train_and_fuse.py` now resolves
+  `CRSM_INTEGRATION_MANIFEST` at call time in
+  `mark_crsm_loop_consumed_after_training()`. This prevents tests or runtime
+  overrides from being ignored after import.
+- **Autonomous repair/immune routing was verified**:
+  first desktop full-mind failures train adaptive immunity; recurrent failures
+  schedule one governed `SelfHealing` deep repair through cooldown-protected
+  recurrence pressure rather than firing a patch on the first incident.
+
+### Latest Commands Run
+
+```bash
+python - <<'PY'
+from core.consciousness.crsm_loop_monitor import get_crsm_loop_monitor
+m = get_crsm_loop_monitor()
+print(m.loop_state())
+print(m.next_action())
+PY
+python - <<'PY'
+from core.consciousness.caa.readiness_report import verify_readiness
+print(verify_readiness())
+PY
+python - <<'PY'
+from core.runtime.integrity_audit import run_integrity_audit
+print(run_integrity_audit(log=False))
+PY
+AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 AURA_TRAINING_MAX_PROCESS_TREE_RSS_GB=48 AURA_TRAINING_MAX_HOST_MEMORY_PERCENT=88 python training/train_and_fuse.py --crsm-delta --preflight-only --tag crsm-closeout
+AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 AURA_TRAINING_MAX_PROCESS_TREE_RSS_GB=48 AURA_TRAINING_MAX_HOST_MEMORY_PERCENT=88 python training/run_unattended.py --crsm-delta --preflight-only --tag crsm-closeout
+python -m pytest -q tests/test_crsm_loop_monitor.py tests/test_crsm_training_dataset_gate.py tests/test_caa_readiness_report.py tests/test_integrity_audit.py
+python -m pytest -q tests/test_adaptive_immune_system.py tests/test_open_ended_evolution.py
+python -m pytest -q tests/test_server_runtime_hardening.py -k "self_repair_ladder"
+python -m pytest -q tests/test_server_conversation_lane.py -k "desktop_cognitive_failure"
+python -m pytest -q tests/test_degradation_repair_contract.py tests/test_code_repair_sandbox_validation.py tests/test_repair_import_policy.py
+python -m ruff check training/train_and_fuse.py tests/test_crsm_training_dataset_gate.py core/runtime/self_healing.py core/adaptation/adaptive_immunity.py interface/routes/chat.py core/runtime/self_repair_ladder.py tests/test_adaptive_immune_system.py tests/test_server_conversation_lane.py
+make enterprise-gate
+make production-gate
+```
+
+### Evidence
+
+- CRSM monitor: `state=closed`, `unconsumed=0`, `next_action.required=false`.
+- CAA readiness: `level=production`, `steering_capacity_pct=100.0`,
+  `expected_extracted=15`, `expected_extracted_unbound=0`.
+- Integrity audit: `healthy=true`, `concerns=[]`, `advisory=[]`.
+- CRSM/CAA/integrity tests: **23 passed**.
+- Adaptive immunity and open-ended immune evolution tests: **15 passed**.
+- Self-repair ladder tests: **11 passed**.
+- Desktop cognitive failure-to-repair routing tests: **2 passed**.
+- Degradation/repair contract tests: **11 passed**.
+- Ruff on touched training, repair, immune, and chat surfaces: **passed**.
+- CRSM-delta training preflight: **passed** with no live Aura blockers, about
+  32GB available memory, and no dataset/train/fuse/publish actions launched.
+- `make enterprise-gate`: **passed**.
+- `make production-gate`: **passed**, all 37 readiness checks true.
+
+### Closeout Position
+
+- Functional closeout estimate: about **98.3%**. CRSM, CAA, integrity, live
+  desktop demo proof, and the recurrent failure-to-repair bridge are now
+  verified from current artifacts and tests.
+- Estimated remaining work: **1 consolidated checkpoint**, likely **1-2 smaller
+  sub-checkpoints**:
+  1. Run final replay/proof coverage from the current commit, including DNU,
+     Aletheia where practical, final-proof/longevity/claims/artifact cleanup.
+  2. Normalize or intentionally commit remaining generated artifact deltas,
+     finish with a clean worktree, and push the final closeout checkpoint.
+
 ## Latest Live Desktop Demo Reliability Checkpoint (2026-06-29)
 
 ### Gaps Addressed
@@ -91,11 +176,9 @@ make production-gate
   governed desktop action.
 - Estimated remaining work: **1 consolidated checkpoint**, likely **2-3 smaller
   sub-checkpoints**:
-  1. Run guarded CRSM train/fuse/publish and verify manifest update, fused model
-     load, consumed marker closure, and no runaway memory.
-  2. Run the final DNU/Aletheia/final-proof replay and longevity/claims/artifact
+  1. Run the final DNU/Aletheia/final-proof replay and longevity/claims/artifact
      cleanup from the current commit.
-  3. Normalize or intentionally commit remaining generated artifact deltas,
+  2. Normalize or intentionally commit remaining generated artifact deltas,
      then finish with a clean worktree and final commit/push.
 
 ## Latest Continuous Sensory / Autonomic Runtime Checkpoint (2026-06-28)

@@ -653,10 +653,11 @@ def _read_json(path: Path) -> dict:
 def mark_crsm_loop_consumed_after_training(
     fused_path: Path,
     *,
-    manifest_path: Path = CRSM_INTEGRATION_MANIFEST,
+    manifest_path: Path | None = None,
     source: str = "training.train_and_fuse",
 ) -> None:
     """Close the CRSM→LoRA monitor only after real train/fuse evidence exists."""
+    manifest_path = manifest_path or CRSM_INTEGRATION_MANIFEST
     if not CRSM_DATASET.exists():
         return
     manifest = _read_json(manifest_path)
