@@ -46,6 +46,11 @@ NetHack strategy in shared code.
   `training/train_and_fuse.py` during the resume/fuse/publish phase, so a real
   resume-training run can close the CRSM loop after fuse/verify/publish even
   though training happened in the separate resume worker.
+- **CRSM resume logs are parseable again**: `training/resume_training.py` now
+  writes remaining-iteration evidence in the log line it later parses and still
+  understands older target-total log lines. The resume path can continue from
+  a later saved resume checkpoint instead of falling back to stale filesystem
+  discovery.
 
 ### Latest Commands Run
 
@@ -54,11 +59,16 @@ python -m ruff check core/perception/ambient_developer_stream.py core/autonomic/
 python -m pytest -q tests/test_ambient_autonomic_stream.py tests/test_timescale_bridge.py tests/test_full_desktop_runtime_contract.py tests/test_boot_runtime_safety.py tests/test_crsm_training_preflight.py tests/test_crsm_training_dataset_gate.py tests/test_crsm_loop_monitor.py
 make enterprise-gate
 make production-gate
+python -m ruff check training/resume_training.py tests/test_crsm_training_preflight.py training/run_unattended.py training/train_and_fuse.py
+python -m pytest -q tests/test_crsm_training_preflight.py tests/test_crsm_training_dataset_gate.py tests/test_crsm_loop_monitor.py
+make enterprise-gate && make production-gate
 ```
 
 ### Evidence
 
 - Focused runtime/proof/CRSM tests: **78 passed**.
+- Focused CRSM resume/preflight/monitor tests after the resume parser fix:
+  **19 passed**.
 - Ruff on touched runtime, proof, boot, and training surfaces: **passed**.
 - `make enterprise-gate`: **passed**.
 - `make production-gate`: **passed**, all 37 readiness checks true.

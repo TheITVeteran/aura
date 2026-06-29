@@ -40,7 +40,10 @@ TRAINING_CONFIG_PATH = ADAPTER_PATH / "training_config.json"
 
 TOTAL_ITERS_FALLBACK = 90153
 SAVE_RE = re.compile(r"Iter (\d+): Saved adapter weights .*?/([0-9]+_adapters\.safetensors)")
-RESUME_RE = re.compile(r"--- Resume from ([^,]+), (\d+) iters")
+RESUME_RE = re.compile(
+    r"--- Resume(?: Zenith)? from ([^,]+), "
+    r"(?:(\d+) iters remaining|(\d+) iters|targeting (\d+) total iters)"
+)
 _TRAINING_CONFIG_RECOVERABLE_ERRORS = (
     OSError,
     UnicodeDecodeError,
@@ -110,7 +113,15 @@ def _resume_state_from_log() -> tuple[Path, int] | None:
         resume_match = RESUME_RE.search(line)
         if resume_match:
             last_resume_file = resume_match.group(1).strip()
-            remaining_at_resume = int(resume_match.group(2))
+            if resume_match.group(4):
+                target_total = int(resume_match.group(4))
+                try:
+                    completed_at_resume = int(Path(last_resume_file).stem.split("_", 1)[0])
+                except (TypeError, ValueError, IndexError):
+                    completed_at_resume = 0
+                remaining_at_resume = max(0, target_total - completed_at_resume)
+            else:
+                remaining_at_resume = int(resume_match.group(2) or resume_match.group(3))
             saves = [] # Reset saves for this resume session
             continue
 
@@ -187,7 +198,8 @@ def main() -> int:
     print(f"Resuming Zenith v3.3 from {resume_file.name}, {remaining_iters} iters remaining.")
     with LOG_PATH.open("a") as log:
         log.write(
-            f"\n--- Resume Zenith from {resume_file.name}, targeting 90153 total iters, seq=4096 ---\n"
+            f"\n--- Resume Zenith from {resume_file.name}, {remaining_iters} iters remaining, "
+            f"target_total={remaining_iters + int(resume_file.stem.split('_', 1)[0])}, seq=4096 ---\n"
         )
         log.flush()
         process = get_subprocess_gateway().spawn(

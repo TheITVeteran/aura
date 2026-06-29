@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from training import run_unattended, train_and_fuse
+from training import resume_training, run_unattended, train_and_fuse
 
 GIB = 1024**3
 
@@ -75,6 +75,30 @@ def test_run_unattended_resume_fuse_publish_marks_crsm_consumed(monkeypatch):
     assert rc == 0
     assert commands
     assert "--mark-crsm-consumed" in commands[0]
+
+
+def test_resume_training_parses_zenith_resume_log(monkeypatch, tmp_path):
+    adapter_dir = tmp_path / "adapter"
+    adapter_dir.mkdir()
+    base = adapter_dir / "0066000_adapters.safetensors"
+    later = adapter_dir / "0066500_adapters.safetensors"
+    base.write_text("base", encoding="utf-8")
+    later.write_text("later", encoding="utf-8")
+    log_path = tmp_path / "train.log"
+    log_path.write_text(
+        "\n--- Resume Zenith from 0066000_adapters.safetensors, "
+        "24153 iters remaining, target_total=90153, seq=4096 ---\n"
+        "Iter 500: Saved adapter weights to "
+        f"{later}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(resume_training, "ADAPTER_PATH", adapter_dir)
+    monkeypatch.setattr(resume_training, "LOG_PATH", log_path)
+
+    checkpoint, remaining = resume_training._resume_state_from_log()
+
+    assert checkpoint == later
+    assert remaining == 23653
 
 
 def test_run_unattended_memory_guard_blocks_process_tree_rss(monkeypatch):
