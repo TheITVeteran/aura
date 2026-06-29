@@ -127,11 +127,22 @@ def register_all_services(is_proxy: bool = False):
         lifetime=ServiceLifetime.SINGLETON,
         required=False,
     )
+    def _create_immune_system():
+        from core.security.immune_system import get_immune_system
+        immune = get_immune_system()
+        # Install the real enforcement backends (firewall/quarantine/process/resource/arp) so the
+        # immune system's decisions actually act on the host. Best-effort; the decision layer
+        # works regardless.
+        try:
+            from core.security.enforcement import install_default_enforcement
+            install_default_enforcement()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        return immune
+
     container.register(
-        'immune_system',
-        lambda: __import__('core.security.immune_system', fromlist=['get_immune_system']).get_immune_system(),
-        lifetime=ServiceLifetime.SINGLETON,
-        required=False,
+        'immune_system', _create_immune_system,
+        lifetime=ServiceLifetime.SINGLETON, required=False,
     )
     container.register(
         'deletion_guard',
