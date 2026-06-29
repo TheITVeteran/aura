@@ -154,8 +154,9 @@ def test_open_state_reports_current_manifest_and_train_fuse_next_action(tmp_path
     assert state["integration_manifest"]["accepted"] == 80
     assert state["integration_manifest"]["output_integrity"]["corpus_current"] is True
     assert state["training_state"]["last_iter"] == 66000
-    assert state["next_action"]["phase"] == "train_fuse_publish"
-    assert "training/run_unattended.sh" in " ".join(state["next_action"]["command"])
+    assert state["next_action"]["phase"] == "crsm_delta_train_fuse_publish"
+    assert "training/train_and_fuse.py" in " ".join(state["next_action"]["command"])
+    assert "--crsm-delta" in state["next_action"]["command"]
 
 
 def test_restored_training_corpus_invalidates_current_manifest(tmp_path):

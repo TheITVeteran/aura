@@ -1650,6 +1650,48 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
     proof-battery/replay/final-proof pass, claims purification, longer soak,
     final clean-worktree checkpoint.
 
+## Checkpoint: 2026-06-28 CRSM Delta Training Path Repair
+
+- Scope: CRSM-to-LoRA closure mechanics, not a marker-only closure and not a
+  weakened proof gate.
+- Root issue addressed: the CRSM monitor correctly detected 1000 captures
+  integrated into the LoRA corpus but unconsumed by the active fused model, yet
+  its next action pointed at the historical unattended resume pipeline. That
+  path tried to finish a large 32B run with 23,833 remaining iterations,
+  projected at many hours, even though the immediate closeout proof needed a
+  bounded real update over the current CRSM captures.
+- General fixes landed:
+  - Added `training/train_and_fuse.py --crsm-delta`, which builds a
+    provenance-rich CRSM delta dataset from eligible runtime captures plus
+    retention examples, trains from the current adapter into a separate delta
+    adapter directory, fuses that adapter into a versioned model, verifies load,
+    publishes the active manifest, and only then marks the CRSM dataset
+    consumed.
+  - Added CRSM delta dataset hashes, source capture counts, accepted/rejected
+    counts, retention counts, and output train/valid hashes so the proof can be
+    audited instead of inferred.
+  - Changed `CRSMLoopMonitor.next_action` to recommend the bounded
+    `python training/train_and_fuse.py --crsm-delta --tag crsm-closeout` path
+    once the CRSM corpus is current.
+  - Preserved the full unattended pipeline for complete long training, but no
+    longer requires that path for CRSM capture consumption proof.
+- Evidence:
+  - Ruff on touched CRSM/training/test files passed.
+  - Focused CRSM monitor and training-preflight tests: `20 passed`.
+  - Live preflight command:
+    `python training/train_and_fuse.py --crsm-delta --preflight-only --tag crsm-closeout`.
+  - Preflight result: passed on the 32B lane with 38.53GB available RAM,
+    39.8% memory pressure, no live Aura processes, and 811.4GB free disk.
+  - Monitor result: CRSM remains honestly `open`, but `next_action.phase` is
+    now `crsm_delta_train_fuse_publish` with the bounded delta command.
+- Closeout tracker:
+  - Estimated closeout completion after this checkpoint: about 97%.
+  - Remaining total checkpoints: 2 consolidated checkpoints / 3-5 smaller
+    sub-checkpoints.
+  - Remaining work: run the bounded CRSM delta train/fuse/publish to close the
+    marker, close CAA extraction/steering proof, run final replay/proof gates,
+    complete claims purification, and run a longer live/soak validation.
+
 ## Unresolved Failures / Known Backlog
 
 1. **R-001**: AGENTS.md, AURA_MASTER_SPEC.md, docs/AURA_MASTER_SPEC.md,

@@ -1,6 +1,7 @@
 """Safety checks for CRSM LoRA train/fuse execution."""
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from training import resume_training, run_unattended, train_and_fuse
@@ -32,6 +33,20 @@ def test_training_preflight_passes_with_headroom(monkeypatch, tmp_path):
     assert report["requirements"]["min_available_gb"] == 28.0
 
 
+def test_training_preflight_reports_crsm_delta_mode(monkeypatch, tmp_path):
+    _patch_resources(monkeypatch)
+    monkeypatch.setattr(train_and_fuse, "_live_aura_processes", lambda: [])
+
+    report = train_and_fuse.training_preflight(
+        base_model=tmp_path / "Qwen2.5-32B-Instruct-4bit",
+        skip_train=False,
+        crsm_delta=True,
+    )
+
+    assert report["passed"] is True
+    assert report["mode"] == "crsm_delta_train_fuse_publish"
+
+
 def test_training_preflight_blocks_low_memory(monkeypatch, tmp_path):
     _patch_resources(monkeypatch, available_gb=9.0, percent=91.0)
     monkeypatch.setattr(train_and_fuse, "_live_aura_processes", lambda: [])
@@ -57,10 +72,11 @@ def test_training_preflight_blocks_live_aura_unless_explicitly_allowed(monkeypat
 
 
 def test_run_unattended_accepts_resume_and_preflight_only_flags():
-    args = run_unattended.parse_args(["--resume", "--preflight-only", "--tag", "crsm-closeout"])
+    args = run_unattended.parse_args(["--resume", "--preflight-only", "--crsm-delta", "--tag", "crsm-closeout"])
 
     assert args.resume is True
     assert args.preflight_only is True
+    assert args.crsm_delta is True
     assert args.tag == "crsm-closeout"
 
 
@@ -75,6 +91,80 @@ def test_run_unattended_resume_fuse_publish_marks_crsm_consumed(monkeypatch):
     assert rc == 0
     assert commands
     assert "--mark-crsm-consumed" in commands[0]
+
+
+def test_run_unattended_passes_crsm_delta_to_train_and_fuse(monkeypatch):
+    commands = []
+    monkeypatch.setattr(run_unattended, "update_state", lambda **_kwargs: {})
+    monkeypatch.setattr(run_unattended, "_spawn", lambda cmd, *, started_at: commands.append(cmd) or 0)
+    args = run_unattended.parse_args(["--crsm-delta", "--tag", "crsm-closeout"])
+
+    rc = run_unattended.run_train_and_fuse(args, started_at="now")
+
+    assert rc == 0
+    assert commands
+    assert "--crsm-delta" in commands[0]
+
+
+def test_build_crsm_delta_train_command_uses_real_resume_adapter(tmp_path):
+    command = train_and_fuse.build_crsm_delta_train_command(
+        base_model=tmp_path / "Qwen2.5-32B-Instruct-4bit",
+        data_dir=tmp_path / "delta_data",
+        adapter_dir=tmp_path / "delta_adapter",
+        resume_adapter_file=tmp_path / "source_adapter" / "adapters.safetensors",
+        iters=125,
+        max_seq_length=1024,
+        lora_config_path=tmp_path / "source_adapter" / "lora_config.yaml",
+    )
+
+    joined = " ".join(command)
+    assert "mlx_lm lora" in joined
+    assert "--resume-adapter-file" in command
+    assert str(tmp_path / "source_adapter" / "adapters.safetensors") in command
+    assert command[command.index("--iters") + 1] == "125"
+    assert command[command.index("--max-seq-length") + 1] == "1024"
+
+
+def test_build_crsm_delta_dataset_adds_retention_and_provenance(monkeypatch, tmp_path):
+    dataset = tmp_path / "synthetic" / "lora_dataset.jsonl"
+    dataset.parent.mkdir()
+    dataset.write_text(
+        "\n".join(
+            json.dumps({"text": f"User: remembered event {idx}\nAura: I integrated that event into future behavior."})
+            for idx in range(4)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    data_dir = tmp_path / "training_data"
+    data_dir.mkdir()
+    retention = {
+        "messages": [
+            {"role": "system", "content": "Aura"},
+            {"role": "user", "content": "keep skill"},
+            {"role": "assistant", "content": "I keep the skill active."},
+        ]
+    }
+    (data_dir / "train.jsonl").write_text(json.dumps(retention) + "\n", encoding="utf-8")
+    (data_dir / "valid.jsonl").write_text(json.dumps(retention) + "\n", encoding="utf-8")
+    monkeypatch.setattr(train_and_fuse, "CRSM_DATASET", dataset)
+    monkeypatch.setattr(train_and_fuse, "DATA_DIR", data_dir)
+    monkeypatch.setattr(train_and_fuse, "CRSM_DELTA_MANIFEST", data_dir / "crsm_delta_manifest.json")
+
+    manifest = train_and_fuse.build_crsm_delta_dataset(
+        output_dir=data_dir / "delta",
+        max_crsm_examples=4,
+        retention_examples=1,
+        seed=7,
+    )
+
+    assert manifest["delta_mode"] is True
+    assert manifest["accepted"] == 4
+    assert manifest["output"]["crsm_examples"] == 4
+    assert manifest["output"]["retention_examples"] == 1
+    assert manifest["output"]["train"]["lines"] > 0
+    assert manifest["output"]["valid"]["lines"] > 0
+    assert (data_dir / "crsm_delta_manifest.json").exists()
 
 
 def test_resume_training_parses_zenith_resume_log(monkeypatch, tmp_path):

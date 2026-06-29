@@ -207,6 +207,8 @@ def run_train_and_fuse(args: argparse.Namespace, *, started_at: str) -> int:
         cmd.append("--skip-dataset")
     if args.skip_train:
         cmd.append("--skip-train")
+    if getattr(args, "crsm_delta", False):
+        cmd.append("--crsm-delta")
     if getattr(args, "resume", False):
         cmd.append("--resume")
     if getattr(args, "preflight_only", False):
@@ -269,6 +271,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--base-model", default="")
     p.add_argument("--skip-dataset", action="store_true")
     p.add_argument("--skip-train", action="store_true")
+    p.add_argument("--crsm-delta", action="store_true")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--preflight-only", action="store_true")
     return p.parse_args(argv)

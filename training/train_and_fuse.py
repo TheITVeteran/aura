@@ -27,8 +27,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import random
 import shutil
 import sys
 import time
@@ -49,6 +51,8 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 DATA_DIR = TRAINING_DIR / "data"
 ADAPTER_DIR = TRAINING_DIR / "adapters" / "aura-personality"
+CRSM_DELTA_DATA_DIR = DATA_DIR / "crsm_delta"
+CRSM_DELTA_MANIFEST = DATA_DIR / "crsm_delta_manifest.json"
 FUSED_BASE_DIR = TRAINING_DIR / "fused-model"
 ACTIVE_MANIFEST = FUSED_BASE_DIR / "active.json"
 CRSM_DATASET = REPO_DIR / "data" / "synthetic_training" / "lora_dataset.jsonl"
@@ -119,6 +123,310 @@ def train_lora(*, base_model: Path, resume: bool = False) -> None:
         sys.exit(f"LoRA fine-tune failed (exit {result.returncode}).")
 
 
+def _env_int(name: str, default: int, *, minimum: int = 0, maximum: int | None = None) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def _jsonl_file_stats(path: Path) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    lines = 0
+    with path.open("rb") as fh:
+        for raw in fh:
+            lines += 1
+            digest.update(raw)
+    stat = path.stat()
+    return {
+        "path": str(path),
+        "lines": lines,
+        "size": stat.st_size,
+        "mtime": stat.st_mtime,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _example_key(example: dict[str, Any]) -> str:
+    try:
+        messages = example.get("messages") if isinstance(example, dict) else None
+        if not isinstance(messages, list):
+            return ""
+        parts: list[str] = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "").strip().lower()
+            content = " ".join(str(message.get("content") or "").split()).lower()
+            parts.append(f"{role}:{content}")
+        return "\n".join(parts)
+    except (AttributeError, TypeError, ValueError):
+        return ""
+
+
+def _reservoir_sample_jsonl(
+    path: Path,
+    *,
+    count: int,
+    rng: random.Random,
+    exclude_keys: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Sample retention examples without loading the full corpus into memory."""
+    if count <= 0 or not path.exists():
+        return []
+    exclude_keys = exclude_keys or set()
+    sample: list[dict[str, Any]] = []
+    seen = 0
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                example = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(example, dict) or not isinstance(example.get("messages"), list):
+                continue
+            key = _example_key(example)
+            if not key or key in exclude_keys:
+                continue
+            seen += 1
+            if len(sample) < count:
+                sample.append(example)
+                continue
+            idx = rng.randrange(seen)
+            if idx < count:
+                sample[idx] = example
+    return sample
+
+
+def _write_jsonl(path: Path, examples: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        for example in examples:
+            fh.write(json.dumps(example, ensure_ascii=False) + "\n")
+
+
+def _selection_digest(examples: list[dict[str, Any]]) -> str:
+    digest = hashlib.sha256()
+    for example in examples:
+        digest.update(json.dumps(example, sort_keys=True, ensure_ascii=False).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def build_crsm_delta_dataset(
+    *,
+    output_dir: Path = CRSM_DELTA_DATA_DIR,
+    max_crsm_examples: int | None = None,
+    retention_examples: int | None = None,
+    valid_fraction: float = 0.1,
+    seed: int = 20260628,
+) -> dict[str, Any]:
+    """Create a bounded, provenance-rich dataset for CRSM incremental LoRA.
+
+    This is deliberately not a marker shortcut. It extracts the eligible CRSM
+    captures through the same production gate as the full corpus, adds a small
+    retention sample from the existing training data, writes a standalone
+    MLX-compatible dataset, and records hashes proving exactly what trained.
+    """
+    from training.build_dataset_v3 import build_crsm_experience_examples
+
+    max_crsm_examples = (
+        _env_int("AURA_CRSM_DELTA_MAX_EXAMPLES", 600, minimum=1, maximum=5000)
+        if max_crsm_examples is None
+        else max(1, int(max_crsm_examples))
+    )
+    retention_examples = (
+        _env_int("AURA_CRSM_DELTA_RETENTION_EXAMPLES", 512, minimum=0, maximum=5000)
+        if retention_examples is None
+        else max(0, int(retention_examples))
+    )
+    rng = random.Random(seed)
+
+    crsm_examples, crsm_manifest = build_crsm_experience_examples(
+        CRSM_DATASET,
+        max_examples=max_crsm_examples,
+    )
+    if not crsm_examples:
+        sys.exit("CRSM delta dataset build failed: no eligible CRSM captures after safety filtering.")
+
+    crsm_keys = {_example_key(example) for example in crsm_examples}
+    retention_pool = _reservoir_sample_jsonl(
+        DATA_DIR / "train.jsonl",
+        count=retention_examples,
+        rng=rng,
+        exclude_keys=crsm_keys,
+    )
+    if len(retention_pool) < retention_examples:
+        retention_pool.extend(
+            _reservoir_sample_jsonl(
+                DATA_DIR / "valid.jsonl",
+                count=retention_examples - len(retention_pool),
+                rng=rng,
+                exclude_keys=crsm_keys | {_example_key(example) for example in retention_pool},
+            )
+        )
+
+    selected = [*crsm_examples, *retention_pool]
+    rng.shuffle(selected)
+    valid_count = max(1, min(len(selected) - 1, int(round(len(selected) * valid_fraction))))
+    valid = selected[:valid_count]
+    train = selected[valid_count:]
+
+    if not train or not valid:
+        sys.exit("CRSM delta dataset build failed: train/valid split would be empty.")
+
+    train_path = output_dir / "train.jsonl"
+    valid_path = output_dir / "valid.jsonl"
+    _write_jsonl(train_path, train)
+    _write_jsonl(valid_path, valid)
+
+    manifest = {
+        **crsm_manifest,
+        "builder": "training/train_and_fuse.py:build_crsm_delta_dataset",
+        "delta_mode": True,
+        "seed": seed,
+        "retention_examples": len(retention_pool),
+        "selection_sha256": _selection_digest(selected),
+        "output": {
+            "builder": "training/train_and_fuse.py",
+            "total_examples": len(selected),
+            "crsm_examples": len(crsm_examples),
+            "retention_examples": len(retention_pool),
+            "train": _jsonl_file_stats(train_path),
+            "valid": _jsonl_file_stats(valid_path),
+        },
+    }
+    CRSM_DELTA_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
+    CRSM_DELTA_MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    print("\nBuilt CRSM delta dataset:")
+    print(json.dumps(manifest["output"], indent=2, sort_keys=True))
+    return manifest
+
+
+def _latest_adapter_file(adapter_dir: Path = ADAPTER_DIR) -> Path | None:
+    primary = adapter_dir / "adapters.safetensors"
+    if primary.exists():
+        return primary
+    checkpoints = sorted(adapter_dir.glob("[0-9]*_adapters.safetensors"))
+    return checkpoints[-1] if checkpoints else None
+
+
+def build_crsm_delta_train_command(
+    *,
+    base_model: Path,
+    data_dir: Path,
+    adapter_dir: Path,
+    resume_adapter_file: Path,
+    iters: int,
+    max_seq_length: int,
+    lora_config_path: Path,
+    save_every: int | None = None,
+    steps_per_eval: int | None = None,
+    steps_per_report: int = 10,
+) -> list[str]:
+    save_every = save_every or max(25, min(100, iters))
+    steps_per_eval = steps_per_eval or max(25, min(100, iters))
+    return [
+        sys.executable,
+        "-m",
+        "mlx_lm",
+        "lora",
+        "--model",
+        str(base_model),
+        "--train",
+        "--data",
+        str(data_dir),
+        "--adapter-path",
+        str(adapter_dir),
+        "--resume-adapter-file",
+        str(resume_adapter_file),
+        "--iters",
+        str(iters),
+        "--num-layers",
+        "-1",
+        "--batch-size",
+        "1",
+        "--learning-rate",
+        "5e-6",
+        "--save-every",
+        str(save_every),
+        "--steps-per-eval",
+        str(steps_per_eval),
+        "--steps-per-report",
+        str(steps_per_report),
+        "--max-seq-length",
+        str(max_seq_length),
+        "--grad-checkpoint",
+        "-c",
+        str(lora_config_path),
+    ]
+
+
+def train_crsm_delta_lora(
+    *,
+    base_model: Path,
+    data_dir: Path = CRSM_DELTA_DATA_DIR,
+    adapter_dir: Path | None = None,
+    iters: int | None = None,
+    max_seq_length: int | None = None,
+) -> Path:
+    """Run a real bounded LoRA update from current CRSM captures."""
+    resume_adapter = _latest_adapter_file()
+    if resume_adapter is None:
+        sys.exit(f"CRSM delta training failed: no source adapter found under {ADAPTER_DIR}.")
+
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    adapter_dir = adapter_dir or (ADAPTER_DIR.parent / f"aura-personality-crsm-delta-{timestamp}")
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+
+    lora_config_path = ADAPTER_DIR / "lora_config.yaml"
+    if not lora_config_path.exists():
+        lora_config_path = ADAPTER_DIR / "lora_config.json"
+    if not lora_config_path.exists():
+        sys.exit(f"CRSM delta training failed: missing LoRA config under {ADAPTER_DIR}.")
+
+    iters = (
+        _env_int("AURA_CRSM_DELTA_ITERS", 600, minimum=25, maximum=5000)
+        if iters is None
+        else max(1, int(iters))
+    )
+    max_seq_length = (
+        _env_int("AURA_CRSM_DELTA_MAX_SEQ_LENGTH", 2048, minimum=512, maximum=4096)
+        if max_seq_length is None
+        else max(128, int(max_seq_length))
+    )
+    cmd = build_crsm_delta_train_command(
+        base_model=base_model,
+        data_dir=data_dir,
+        adapter_dir=adapter_dir,
+        resume_adapter_file=resume_adapter,
+        iters=iters,
+        max_seq_length=max_seq_length,
+        lora_config_path=lora_config_path,
+    )
+    print(f"\n$ {' '.join(cmd)}", flush=True)
+    result = get_subprocess_gateway().run(
+        cmd,
+        cwd=REPO_DIR,
+        timeout=TRAINING_COMMAND_TIMEOUT_S,
+        capture_output=False,
+        offline_tooling=True,
+        source="training_tooling:crsm_delta_lora",
+    )
+    if result.returncode != 0:
+        sys.exit(f"CRSM delta LoRA fine-tune failed (exit {result.returncode}).")
+    if not (adapter_dir / "adapters.safetensors").exists():
+        sys.exit(f"CRSM delta LoRA fine-tune ended without {adapter_dir / 'adapters.safetensors'}.")
+    return adapter_dir
+
+
 def _model_size_tag(base_model: Path) -> str:
     """Derive a short size tag from the base-model directory name ('32B',
     '72B', '14B', '7B'). Falls back to 'model' when no size token matches."""
@@ -180,7 +488,7 @@ def _live_aura_processes() -> list[dict[str, Any]]:
     return found
 
 
-def training_preflight(*, base_model: Path, skip_train: bool) -> dict[str, Any]:
+def training_preflight(*, base_model: Path, skip_train: bool, crsm_delta: bool = False) -> dict[str, Any]:
     size_tag = _model_size_tag(base_model)
     default_min_available_gb, default_min_free_disk_gb = _default_training_headroom_gb(
         size_tag,
@@ -221,7 +529,13 @@ def training_preflight(*, base_model: Path, skip_train: bool) -> dict[str, Any]:
 
     return {
         "passed": not blockers,
-        "mode": "fuse_publish" if skip_train else "train_fuse_publish",
+        "mode": (
+            "crsm_delta_train_fuse_publish"
+            if crsm_delta and not skip_train
+            else "fuse_publish"
+            if skip_train
+            else "train_fuse_publish"
+        ),
         "base_model": str(base_model),
         "size": size_tag,
         "requirements": {
@@ -237,8 +551,8 @@ def training_preflight(*, base_model: Path, skip_train: bool) -> dict[str, Any]:
     }
 
 
-def enforce_training_preflight(*, base_model: Path, skip_train: bool) -> dict[str, Any]:
-    report = training_preflight(base_model=base_model, skip_train=skip_train)
+def enforce_training_preflight(*, base_model: Path, skip_train: bool, crsm_delta: bool = False) -> dict[str, Any]:
+    report = training_preflight(base_model=base_model, skip_train=skip_train, crsm_delta=crsm_delta)
     print("\nTraining preflight:")
     print(json.dumps(report, indent=2, sort_keys=True))
     if not report["passed"]:
@@ -246,11 +560,11 @@ def enforce_training_preflight(*, base_model: Path, skip_train: bool) -> dict[st
     return report
 
 
-def fuse_adapter(*, base_model: Path, tag: str) -> Path:
+def fuse_adapter(*, base_model: Path, tag: str, adapter_dir: Path = ADAPTER_DIR) -> Path:
     """mlx_lm fuse base_model + adapter → versioned fused-model dir."""
-    if not (ADAPTER_DIR / "adapters.safetensors").exists():
+    if not (adapter_dir / "adapters.safetensors").exists():
         sys.exit(
-            f"No adapter found at {ADAPTER_DIR}/adapters.safetensors — "
+            f"No adapter found at {adapter_dir}/adapters.safetensors — "
             "run training first or pass --skip-train only after a previous train."
         )
 
@@ -273,7 +587,7 @@ def fuse_adapter(*, base_model: Path, tag: str) -> Path:
             "--model",
             str(base_model),
             "--adapter-path",
-            str(ADAPTER_DIR),
+            str(adapter_dir),
             "--save-path",
             str(fused_path),
         ],
@@ -336,15 +650,20 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
-def mark_crsm_loop_consumed_after_training(fused_path: Path) -> None:
+def mark_crsm_loop_consumed_after_training(
+    fused_path: Path,
+    *,
+    manifest_path: Path = CRSM_INTEGRATION_MANIFEST,
+    source: str = "training.train_and_fuse",
+) -> None:
     """Close the CRSM→LoRA monitor only after real train/fuse evidence exists."""
     if not CRSM_DATASET.exists():
         return
-    manifest = _read_json(CRSM_INTEGRATION_MANIFEST)
+    manifest = _read_json(manifest_path)
     if not manifest:
         print(
             "\nCRSM loop not marked consumed: missing "
-            f"{CRSM_INTEGRATION_MANIFEST}. Rebuild the dataset before training."
+            f"{manifest_path}. Rebuild the dataset before training."
         )
         return
 
@@ -372,8 +691,8 @@ def mark_crsm_loop_consumed_after_training(fused_path: Path) -> None:
         lines_consumed=source_lines,
         accepted_lines=accepted,
         rejected_lines=rejected,
-        manifest_path=str(CRSM_INTEGRATION_MANIFEST),
-        source="training.train_and_fuse",
+        manifest_path=str(manifest_path),
+        source=source,
     )
     print(
         "\nMarked CRSM captures handled after successful train/fuse: "
@@ -397,6 +716,38 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--crsm-delta",
+        action="store_true",
+        help=(
+            "Run a bounded real LoRA update over the current CRSM captures plus "
+            "retention examples, fuse it, publish it, and then mark CRSM consumed."
+        ),
+    )
+    parser.add_argument(
+        "--crsm-delta-iters",
+        type=int,
+        default=None,
+        help="Override AURA_CRSM_DELTA_ITERS for the bounded CRSM LoRA update.",
+    )
+    parser.add_argument(
+        "--crsm-delta-max-examples",
+        type=int,
+        default=None,
+        help="Maximum eligible CRSM examples to include in the bounded delta dataset.",
+    )
+    parser.add_argument(
+        "--crsm-delta-retention-examples",
+        type=int,
+        default=None,
+        help="Retention examples sampled from the existing corpus for the bounded delta dataset.",
+    )
+    parser.add_argument(
+        "--crsm-delta-max-seq-length",
+        type=int,
+        default=None,
+        help="Override AURA_CRSM_DELTA_MAX_SEQ_LENGTH for the bounded CRSM LoRA update.",
+    )
+    parser.add_argument(
         "--base-model",
         default=os.environ.get("AURA_LORA_BASE_MODEL", str(DEFAULT_BASE_MODEL)),
     )
@@ -416,23 +767,51 @@ def main() -> None:
     print(f"  tag:        {args.tag or '(none)'}")
     print("=" * 60)
 
+    if args.crsm_delta and args.skip_train:
+        sys.exit("--crsm-delta requires a real training step; refusing --skip-train shortcut.")
+
     if not _env_flag("AURA_TRAINING_BYPASS_PREFLIGHT"):
-        enforce_training_preflight(base_model=base_model, skip_train=args.skip_train)
+        enforce_training_preflight(
+            base_model=base_model,
+            skip_train=args.skip_train,
+            crsm_delta=args.crsm_delta,
+        )
     else:
         print("\nTraining preflight bypassed by AURA_TRAINING_BYPASS_PREFLIGHT=1.")
     if args.preflight_only:
         print("\nPreflight-only mode complete; no dataset, training, fuse, or publish actions executed.")
         return
 
-    if not args.skip_dataset:
+    adapter_dir = ADAPTER_DIR
+    crsm_marker_manifest = CRSM_INTEGRATION_MANIFEST
+    crsm_marker_source = "training.train_and_fuse"
+
+    if args.crsm_delta:
+        build_crsm_delta_dataset(
+            max_crsm_examples=args.crsm_delta_max_examples,
+            retention_examples=args.crsm_delta_retention_examples,
+        )
+        adapter_dir = train_crsm_delta_lora(
+            base_model=base_model,
+            data_dir=CRSM_DELTA_DATA_DIR,
+            iters=args.crsm_delta_iters,
+            max_seq_length=args.crsm_delta_max_seq_length,
+        )
+        crsm_marker_manifest = CRSM_DELTA_MANIFEST
+        crsm_marker_source = "training.train_and_fuse.crsm_delta"
+    elif not args.skip_dataset:
         build_dataset()
-    if not args.skip_train:
+    if not args.crsm_delta and not args.skip_train:
         train_lora(base_model=base_model, resume=args.resume)
-    fused_path = fuse_adapter(base_model=base_model, tag=args.tag)
+    fused_path = fuse_adapter(base_model=base_model, tag=args.tag, adapter_dir=adapter_dir)
     verify_load(fused_path)
     publish_manifest(fused_path, tag=args.tag, base_model=base_model)
-    if not args.skip_train or args.mark_crsm_consumed:
-        mark_crsm_loop_consumed_after_training(fused_path)
+    if args.crsm_delta or not args.skip_train or args.mark_crsm_consumed:
+        mark_crsm_loop_consumed_after_training(
+            fused_path,
+            manifest_path=crsm_marker_manifest,
+            source=crsm_marker_source,
+        )
 
 
 if __name__ == "__main__":

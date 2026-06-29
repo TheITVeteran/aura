@@ -319,14 +319,16 @@ class CRSMLoopMonitor:
         manifest = manifest if manifest is not None else self.integration_manifest_state()
         training_state = training_state if training_state is not None else self.training_state()
         command = [
-            "bash",
-            "training/run_unattended.sh",
+            "python",
+            "training/train_and_fuse.py",
+            "--crsm-delta",
             "--tag",
             "crsm-closeout",
         ]
         preflight_command = [
             "python",
             "training/train_and_fuse.py",
+            "--crsm-delta",
             "--preflight-only",
             "--tag",
             "crsm-closeout",
@@ -342,12 +344,13 @@ class CRSMLoopMonitor:
             }
         return {
             "required": True,
-            "phase": "train_fuse_publish",
+            "phase": "crsm_delta_train_fuse_publish",
             "command": command,
             "preflight_command": preflight_command,
             "reason": (
                 "Current CRSM captures are in the LoRA corpus, but proof closure "
-                "requires a successful train/fuse marker from training/train_and_fuse.py"
+                "requires a bounded real CRSM delta train/fuse marker from "
+                "training/train_and_fuse.py"
             ),
             "last_training_phase": training_state.get("phase"),
             "last_training_rc": training_state.get("last_pipeline_rc"),
