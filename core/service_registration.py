@@ -128,6 +128,12 @@ def register_all_services(is_proxy: bool = False):
         required=False,
     )
     container.register(
+        'immune_system',
+        lambda: __import__('core.security.immune_system', fromlist=['get_immune_system']).get_immune_system(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
+    container.register(
         'other_agent_model',
         lambda: __import__('core.social.other_agent_model', fromlist=['get_other_agent_model']).get_other_agent_model(),
         lifetime=ServiceLifetime.SINGLETON,
