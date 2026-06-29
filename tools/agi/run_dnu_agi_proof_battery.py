@@ -4253,6 +4253,16 @@ python -m pytest tests/agi/live/test_dnu_agi_proof_battery.py -q
             total_tasks=len(all_tasks),
         )
 
+    if args.smoke and scorecard.get("total_pass", 0) != scorecard.get("total_tasks", 0):
+        print("\n[!] Smoke run failed: live task path did not pass. Review FAILURES.jsonl.")
+        await shutdown_proof_runtime(orch)
+        return fail_run_status(
+            phase="smoke_live_task_path",
+            error="smoke_live_task_path_failed",
+            tasks_completed=len(results),
+            total_tasks=len(all_tasks),
+        )
+
     await shutdown_proof_runtime(orch)
     print("\n[+] DNU AGI Proof Battery: COMPLETE")
     return 0

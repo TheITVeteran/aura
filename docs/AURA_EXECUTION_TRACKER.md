@@ -17,6 +17,72 @@ capability matrix in `core/environment/capability_matrix.py` is executable
 and covers the live organs required for NetHack-scale runs without encoding
 NetHack strategy in shared code.
 
+## Latest DNU Proof Purification / 32B Strict Lane (2026-06-29)
+
+### Gaps Addressed
+
+- **Prompt-derived strict proof repair is no longer active on default DNU/live
+  proof paths**: `response_generation_unitary.py` now gates symbolic
+  prompt-derived proof repair behind `structured_proof_solver_enabled()`.
+  Standard DNU smoke/full proof lanes must rely on model/runtime answers.
+- **Strict proof repair remains useful without leaking answers**: failed
+  candidates now receive bounded validator critique and up to two model repair
+  attempts, but the runtime does not reveal a derived answer to the model.
+- **DNU smoke mode can no longer report process success after live task-path
+  failure**: smoke now exits nonzero when `total_pass != total_tasks`, even
+  when the artifact bundle is complete.
+- **Primary 32B strict proof lane was validated on the fused live model**:
+  the model lane probe passed through Cortex with recurrent depth active and
+  `structured_proof_solver_enabled=false`.
+- **Strict-value normalization now handles repeated exact literals**: the MLX
+  worker accepts outputs like `okok...` only when the repeated prefix is the
+  expected literal, while wrong literals remain unrepaired.
+
+### Latest Commands Run
+
+```bash
+env AURA_MLX_MEMORY_LIMIT_GB=18 AURA_PROCESS_RSS_LIMIT_GB=24 AURA_MLX_WORKER_RSS_LIMIT_GB=18 AURA_METAL_CACHE_CAP_GB=8 AURA_ALLOW_UNSAFE_MEMORY_LIMITS=0 python tools/run_proof_step.py --name dnu_smoke_failure_exit_policy --timeout 900 --artifact artifacts/current/proof_steps/dnu_smoke_failure_exit_policy.json -- python tools/agi/run_dnu_agi_proof_battery.py --smoke --model-tier tertiary --stop-existing-runtime --out artifacts/current/agi_smoke_failure_exit_policy
+env AURA_MLX_MEMORY_LIMIT_GB=34 AURA_PROCESS_RSS_LIMIT_GB=46 AURA_MLX_WORKER_RSS_LIMIT_GB=36 AURA_METAL_CACHE_CAP_GB=6 AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB=16 AURA_ALLOW_UNSAFE_MEMORY_LIMITS=0 python tools/run_proof_step.py --name dnu_smoke_primary_strict_no_solver_2 --timeout 1200 --artifact artifacts/current/proof_steps/dnu_smoke_primary_strict_no_solver_2.json -- python tools/agi/run_dnu_agi_proof_battery.py --smoke --model-tier primary --stop-existing-runtime --out artifacts/current/agi_smoke_primary_strict_no_solver_2
+python -m pytest -q tests/test_dnu_runner_lifecycle.py::test_dnu_smoke_fails_process_when_live_task_path_fails tests/test_dnu_runner_lifecycle.py::test_dnu_health_allows_nonprimary_important_only_degraded_runtime tests/test_enterprise_hardening_fixes.py::test_strict_proof_solver_solves_unique_assignment_without_fixture_answers tests/test_enterprise_hardening_fixes.py::test_strict_proof_response_path_symbolically_rejects_contradictions tests/test_enterprise_hardening_fixes.py::test_strict_proof_live_lane_stays_exact_and_prompt_derived tests/test_strict_contract_steering_clamp.py::test_strict_value_contract_keeps_explicit_literal_when_model_adds_boilerplate tests/test_strict_contract_steering_clamp.py::test_strict_value_contract_keeps_repeated_literal_before_boilerplate tests/test_strict_contract_steering_clamp.py::test_strict_value_contract_does_not_repair_wrong_literal
+python -m ruff check core/phases/response_generation_unitary.py core/reasoning/proof_answer_solver.py core/brain/llm/mlx_worker.py tools/agi/run_dnu_agi_proof_battery.py tests/test_dnu_runner_lifecycle.py tests/test_enterprise_hardening_fixes.py tests/test_strict_contract_steering_clamp.py
+```
+
+### Evidence
+
+- Tertiary no-solver smoke now fails honestly when the 7B lane cannot solve the
+  strict proof task: `dnu_smoke_failure_exit_policy.json`, **rc=1**.
+- Primary 32B no-solver smoke:
+  `artifacts/current/proof_steps/dnu_smoke_primary_strict_no_solver_2.json`,
+  **rc=0** in about 39s.
+- Primary 32B smoke scorecard: **1/1 passed**, **100% smoke pass rate**.
+- Primary model lane probe: endpoint `Cortex`, tier `local`,
+  `strict_answer_ok=true`, `structured_proof_solver_enabled=false`,
+  recurrent depth **active** with `n_loops=2`, and active fused model
+  `training/fused-model/Aura-32B-crsm-closeout-20260628-181638`.
+- R001 trace answered `<answer>Alice</answer>` with
+  `structured_proof_solver=null`, so the smoke answer came from the
+  model/runtime path rather than the prompt-derived solver.
+
+### Closeout Position
+
+- Functional closeout estimate: about **98.7%**. The proof path is now more
+  honest: weaker lanes can fail, failure exits are real, the default DNU/live
+  strict path does not use prompt-derived solver rescue, and the intended 32B
+  lane has a current passing smoke with recurrent depth active.
+- Estimated remaining work: **1 consolidated checkpoint**, likely **1-2 smaller
+  sub-checkpoints**:
+  1. Rerun final enterprise/production/final-proof/replay/claims coverage from
+     this exact worktree.
+  2. Normalize generated artifacts, clean the worktree, commit, and push.
+
+### Still Open
+
+- DNU full run has not yet been rerun after default prompt-derived strict proof
+  repair was disabled.
+- Full `make final-proof` has not yet been rerun from this exact worktree.
+- DNU ablations still delegate architecture-dependence proof to dedicated
+  cert-chain probes rather than demonstrating score deltas inside DNU itself.
+
 ## Latest DNU Proof Lifecycle / Model-Lane Hardening (2026-06-29)
 
 ### Gaps Addressed

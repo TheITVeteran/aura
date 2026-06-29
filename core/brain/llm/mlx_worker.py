@@ -1153,6 +1153,8 @@ def _matches_expected_strict_value_prefix(cleaned: str, expected_value: str) -> 
         return True
     if not candidate.startswith(expected):
         return False
+    while candidate.startswith(expected * 2):
+        candidate = candidate[len(expected):]
     suffix = candidate[len(expected):]
     if not suffix:
         return True

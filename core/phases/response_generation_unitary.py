@@ -4476,8 +4476,8 @@ class UnitaryResponsePhase(Phase):
                             "🌐 Browser returned no content. Trying lightweight HTTP fallback..."
                         )
                         try:
-                            import json as _json
                             import html
+                            import json as _json
                             from html.parser import HTMLParser
 
                             from core.governance_context import GovernanceViolation
@@ -5605,6 +5605,10 @@ class UnitaryResponsePhase(Phase):
                     raise RuntimeError("benchmark_artifact_contract_validation_failed") from contract_exc
 
             if strict_proof_answer_request:
+                prompt_derived_strict_solver_enabled = structured_proof_solver_enabled(
+                    origin=routing_origin
+                )
+
                 async def _repair_symbolically_rejected_answer(
                     current_envelope: str,
                     *,
@@ -5699,20 +5703,68 @@ class UnitaryResponsePhase(Phase):
                         )
                     )
                     solver = self._response_contract_attr(validation, "solver", None)
+                    candidate_preview = self._normalize_text(current_value, 160)
                     logger.warning(
-                        "UnitaryResponse: rejected strict proof candidate from %s via %s validator (%s).",
+                        "UnitaryResponse: rejected strict proof candidate from %s via %s validator (%s): %r.",
                         stage,
                         solver or "symbolic",
                         reason,
+                        candidate_preview,
                     )
-                    prompt_derived_repair = self._strict_symbolic_repair_envelope(
-                        objective,
-                        validation,
-                    )
-                    if prompt_derived_repair:
-                        repaired_value = self._strict_answer_value_from_envelope(
-                            prompt_derived_repair
+                    if prompt_derived_strict_solver_enabled:
+                        prompt_derived_repair = self._strict_symbolic_repair_envelope(
+                            objective,
+                            validation,
                         )
+                        if prompt_derived_repair:
+                            repaired_value = self._strict_answer_value_from_envelope(
+                                prompt_derived_repair
+                            )
+                            repaired_validation = self._validate_strict_answer_symbolically(
+                                objective,
+                                repaired_value,
+                            )
+                            repaired_verdict = self._response_contract_attr(
+                                repaired_validation,
+                                "valid",
+                                None,
+                            )
+                            if repaired_verdict is True:
+                                new_state.response_modifiers[
+                                    "strict_proof_symbolic_validation"
+                                ] = {
+                                    "stage": f"{stage}_prompt_derived_repair",
+                                    "solver": self._response_contract_attr(
+                                        repaired_validation,
+                                        "solver",
+                                        None,
+                                    ),
+                                    "reason": self._response_contract_attr(
+                                        repaired_validation,
+                                        "reason",
+                                        "",
+                                    ),
+                                }
+                                logger.info(
+                                    "UnitaryResponse: repaired strict proof candidate from %s via prompt-derived %s solver.",
+                                    stage,
+                                    self._response_contract_attr(repaired_validation, "solver", None)
+                                    or solver
+                                    or "symbolic",
+                                )
+                                return prompt_derived_repair
+
+                    repair_seed = current_envelope
+                    repair_reason = reason
+                    for repair_index in range(2):
+                        repaired_envelope = await _repair_symbolically_rejected_answer(
+                            repair_seed,
+                            stage=f"{stage}_repair_{repair_index + 1}",
+                            reason=repair_reason,
+                        )
+                        if not repaired_envelope:
+                            break
+                        repaired_value = self._strict_answer_value_from_envelope(repaired_envelope)
                         repaired_validation = self._validate_strict_answer_symbolically(
                             objective,
                             repaired_value,
@@ -5722,9 +5774,27 @@ class UnitaryResponsePhase(Phase):
                             "valid",
                             None,
                         )
+                        if repaired_verdict is False:
+                            repair_reason = str(
+                                self._response_contract_attr(
+                                    repaired_validation,
+                                    "reason",
+                                    "candidate_conflicts_with_prompt_constraints",
+                                )
+                            )
+                            logger.error(
+                                "UnitaryResponse: strict proof symbolic repair %s still contradicted %s validator (%s): %r.",
+                                repair_index + 1,
+                                self._response_contract_attr(repaired_validation, "solver", None)
+                                or "symbolic",
+                                repair_reason,
+                                self._normalize_text(repaired_value, 160),
+                            )
+                            repair_seed = repaired_envelope
+                            continue
                         if repaired_verdict is True:
                             new_state.response_modifiers["strict_proof_symbolic_validation"] = {
-                                "stage": f"{stage}_prompt_derived_repair",
+                                "stage": f"{stage}_repair_{repair_index + 1}",
                                 "solver": self._response_contract_attr(
                                     repaired_validation,
                                     "solver",
@@ -5736,42 +5806,8 @@ class UnitaryResponsePhase(Phase):
                                     "",
                                 ),
                             }
-                            logger.info(
-                                "UnitaryResponse: repaired strict proof candidate from %s via prompt-derived %s solver.",
-                                stage,
-                                self._response_contract_attr(repaired_validation, "solver", None)
-                                or solver
-                                or "symbolic",
-                            )
-                            return prompt_derived_repair
-
-                    repaired_envelope = await _repair_symbolically_rejected_answer(
-                        current_envelope,
-                        stage=stage,
-                        reason=reason,
-                    )
-                    if not repaired_envelope:
-                        raise RuntimeError("strict_proof_symbolic_validation_failed")
-                    repaired_value = self._strict_answer_value_from_envelope(repaired_envelope)
-                    repaired_validation = self._validate_strict_answer_symbolically(
-                        objective,
-                        repaired_value,
-                    )
-                    repaired_verdict = self._response_contract_attr(repaired_validation, "valid", None)
-                    if repaired_verdict is False:
-                        logger.error(
-                            "UnitaryResponse: strict proof symbolic repair still contradicted %s validator.",
-                            self._response_contract_attr(repaired_validation, "solver", None)
-                            or "symbolic",
-                        )
-                        raise RuntimeError("strict_proof_symbolic_validation_failed")
-                    if repaired_verdict is True:
-                        new_state.response_modifiers["strict_proof_symbolic_validation"] = {
-                            "stage": f"{stage}_repair",
-                            "solver": self._response_contract_attr(repaired_validation, "solver", None),
-                            "reason": self._response_contract_attr(repaired_validation, "reason", ""),
-                        }
-                    return repaired_envelope
+                        return repaired_envelope
+                    raise RuntimeError("strict_proof_symbolic_validation_failed")
 
                 strict_envelope = self._coerce_strict_answer_envelope(response_text)
                 if not strict_envelope:

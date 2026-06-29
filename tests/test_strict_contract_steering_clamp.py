@@ -73,6 +73,24 @@ def test_strict_value_contract_keeps_explicit_literal_when_model_adds_boilerplat
     assert normalized == "ok"
 
 
+def test_strict_value_contract_keeps_repeated_literal_before_boilerplate():
+    messages = [
+        {
+            "role": "user",
+            "content": "Output exactly these two lowercase letters and nothing else: ok",
+        }
+    ]
+
+    expected = _extract_expected_strict_value(messages, None)
+    normalized = _normalize_strict_value_response(
+        "okokYou said to output exactly that value and nothing else.",
+        expected_value=expected,
+    )
+
+    assert expected == "ok"
+    assert normalized == "ok"
+
+
 def test_strict_value_contract_does_not_repair_wrong_literal():
     messages = [
         {

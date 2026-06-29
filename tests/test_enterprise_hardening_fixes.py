@@ -575,10 +575,17 @@ def test_strict_proof_solver_solves_unique_assignment_without_fixture_answers():
     assert solved.answer == "Alice"
     assert solved.solver == "unique_assignment"
     assert validate_strict_proof_answer(prompt, "Alice").valid is True
+    assert validate_strict_proof_answer(prompt, "Alice owns the dog.").valid is True
+    assert validate_strict_proof_answer(prompt, "The dog is owned by Alice.").valid is True
     rejected = validate_strict_proof_answer(prompt, "Bob")
     assert rejected.valid is False
-    assert rejected.reason == "candidate_conflicts_with_prompt_constraints"
+    assert rejected.reason == "candidate_violates_negative_clue:Bob_does_not_own_dog"
     assert rejected.solver == "unique_assignment"
+    assert validate_strict_proof_answer(prompt, "Bob, not Alice").valid is False
+    assert (
+        validate_strict_proof_answer(prompt, "Carol").reason
+        == "candidate_violates_positive_clue:Carol_owns_parrot_not_dog"
+    )
 
     joined = solve_strict_proof_prompt(
         "Return the lowercase token formed by joining 'o' and 'k'. "
@@ -612,6 +619,8 @@ def test_strict_proof_response_path_symbolically_rejects_contradictions():
     source = inspect.getsource(UnitaryResponsePhase.execute)
     assert "_ensure_symbolic_consistency(" in source
     assert "strict_proof_answer_symbolic_repair" in source
+    assert "prompt_derived_strict_solver_enabled = structured_proof_solver_enabled(" in source
+    assert "if prompt_derived_strict_solver_enabled:" in source
     assert "_strict_symbolic_repair_envelope(" in source
     assert "prompt_derived_repair" in source
     assert "strict_proof_symbolic_validation_failed" in source

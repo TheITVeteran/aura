@@ -10,9 +10,8 @@ from __future__ import annotations
 import itertools
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
-
 
 _NAME_RE = re.compile(r"\b[A-Z][a-z]+\b")
 _UNIQUE_ASSIGNMENT_RE = re.compile(
@@ -82,6 +81,82 @@ def _normalize_answer_value(value: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
+def _canonicalize_candidate_for_solved_prompt(
+    prompt: str,
+    candidate_answer: str,
+    solved: ProofAnswer,
+) -> str:
+    """Normalize answer-shaped text without giving the candidate a new answer.
+
+    The validator may derive the expected answer from the prompt, but it should
+    not require the model to emit that value in exactly the same surface form.
+    For example, a "who owns the dog?" answer of "Alice owns the dog" is the
+    same candidate as "Alice"; "Bob, not Alice" must still remain Bob.
+    """
+
+    candidate = str(candidate_answer or "").strip()
+    if not candidate:
+        return ""
+    candidate = re.sub(
+        r"<answer>\s*(.*?)\s*</answer>",
+        r"\1",
+        candidate,
+        flags=re.IGNORECASE | re.DOTALL,
+    ).strip()
+    if solved.solver == "unique_assignment" and _WHO_OWNS_RE.search(prompt):
+        owner_match = re.match(
+            r"^([A-Za-z][A-Za-z0-9_' -]{0,80}?)\s+"
+            r"(?:owns?|has|holds|keeps|possesses|is|was|are|were)\b",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        if owner_match:
+            subject = owner_match.group(1).strip(" \t\r\n\"'`.,;:")
+            if subject and not re.match(r"^(?:the|a|an)\b", subject, flags=re.IGNORECASE):
+                return subject
+        passive_match = re.search(
+            r"\bby\s+([A-Za-z][A-Za-z0-9_' -]{0,80})\b",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        if passive_match:
+            return passive_match.group(1).strip(" \t\r\n\"'`.,;:")
+    return candidate
+
+
+def _unique_assignment_rejection_reason(prompt: str, candidate_answer: str) -> str:
+    match = _UNIQUE_ASSIGNMENT_RE.search(prompt)
+    query = _WHO_OWNS_RE.search(prompt)
+    if not match or not query:
+        return "candidate_conflicts_with_prompt_constraints"
+
+    names = _split_names(match.group("names"))
+    items = _split_items(match.group("items"))
+    if not names or not items:
+        return "candidate_conflicts_with_prompt_constraints"
+
+    target_item = _matches_known_item(query.group("item"), items)
+    candidate_name = str(candidate_answer or "").strip(" \t\r\n\"'`.,;:")
+    if candidate_name not in names or not target_item:
+        return "candidate_owner_not_supported_by_prompt_entities"
+
+    for clue in _NEGATIVE_OWN_RE.finditer(prompt):
+        name = clue.group("name")
+        item = _matches_known_item(clue.group("item"), items)
+        if name == candidate_name and item == target_item:
+            return f"candidate_violates_negative_clue:{name}_does_not_own_{item}"
+
+    for clue in _POSITIVE_OWN_RE.finditer(prompt):
+        name = clue.group("name")
+        item = _matches_known_item(clue.group("item"), items)
+        if name == candidate_name and item and item != target_item:
+            return f"candidate_violates_positive_clue:{name}_owns_{item}_not_{target_item}"
+        if item == target_item and name != candidate_name:
+            return f"candidate_conflicts_with_positive_owner_clue:{name}_owns_{item}"
+
+    return "candidate_conflicts_with_prompt_constraints"
+
+
 def validate_strict_proof_answer(prompt: str, candidate_answer: str) -> ProofAnswerValidation:
     """Validate a candidate exact answer against prompt-derived constraints.
 
@@ -109,7 +184,8 @@ def validate_strict_proof_answer(prompt: str, candidate_answer: str) -> ProofAns
             reason="unknown_prompt_shape",
         )
 
-    candidate_norm = _normalize_answer_value(candidate)
+    canonical_candidate = _canonicalize_candidate_for_solved_prompt(prompt, candidate, solved)
+    candidate_norm = _normalize_answer_value(canonical_candidate)
     expected_norm = _normalize_answer_value(solved.answer)
     if candidate_norm and candidate_norm == expected_norm:
         return ProofAnswerValidation(
@@ -120,12 +196,15 @@ def validate_strict_proof_answer(prompt: str, candidate_answer: str) -> ProofAns
             reason="prompt_constraints_satisfied",
         )
 
+    reason = "candidate_conflicts_with_prompt_constraints"
+    if solved.solver == "unique_assignment":
+        reason = _unique_assignment_rejection_reason(prompt, canonical_candidate)
     return ProofAnswerValidation(
         valid=False,
         solver=solved.solver,
         candidate_answer=candidate,
         derived_answer=solved.answer,
-        reason="candidate_conflicts_with_prompt_constraints",
+        reason=reason,
     )
 
 
@@ -226,7 +305,7 @@ def _solve_unique_assignment(prompt: str) -> ProofAnswer | None:
 
     valid_assignments: list[dict[str, str]] = []
     for permuted_items in itertools.permutations(items):
-        assignment = dict(zip(names, permuted_items))
+        assignment = dict(zip(names, permuted_items, strict=True))
         if any(assignment.get(name) != item for name, item in positives):
             continue
         if any(assignment.get(name) == item for name, item in negatives):
@@ -327,10 +406,10 @@ def _solve_numeric_sequence(prompt: str) -> ProofAnswer | None:
         return None
     if all(nums[i] == nums[i - 1] + nums[i - 2] for i in range(2, len(nums))):
         return ProofAnswer(answer=str(nums[-1] + nums[-2]), solver="numeric_sequence")
-    diffs = [b - a for a, b in zip(nums, nums[1:])]
+    diffs = [b - a for a, b in zip(nums, nums[1:], strict=True)]
     if len(set(diffs)) == 1:
         return ProofAnswer(answer=str(nums[-1] + diffs[-1]), solver="numeric_sequence")
-    second = [b - a for a, b in zip(diffs, diffs[1:])]
+    second = [b - a for a, b in zip(diffs, diffs[1:], strict=True)]
     if second and len(set(second)) == 1:
         return ProofAnswer(answer=str(nums[-1] + diffs[-1] + second[-1]), solver="numeric_sequence")
     return None

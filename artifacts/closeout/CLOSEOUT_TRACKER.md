@@ -6,13 +6,73 @@ remains open.
 
 ## Current Estimate
 
-- Overall closeout: 98.5%
+- Overall closeout: 98.7%
 - Remaining checkpoints: 1 consolidated checkpoint, likely 1-2 smaller
   sub-checkpoints
 - Current phase: final proof-purification, replay/final-proof coverage, artifact
   cleanup, clean worktree, commit, and push after live visible desktop/voice
   demo proofs, CRSM closure, CAA closure, recurrent-failure repair routing, and
-  DNU lifecycle hardening passed
+  DNU lifecycle/proof-purification hardening passed
+
+## Checkpoint 2026-06-29-04: DNU Proof Purification / 32B Strict Lane
+
+Status: verified locally, not yet committed.
+
+Why:
+
+- The prior DNU lifecycle checkpoint still allowed a deterministic
+  prompt-derived strict proof repair path in the default runtime. That was not
+  fixture-answer leakage, but it did let proof-shaped tasks get rescued by
+  symbolic prompt parsing instead of forcing the model/runtime lane to answer.
+- DNU smoke mode could write failure artifacts while still exiting with process
+  success, which made the wrapper look healthier than the live task path.
+- The primary 32B proof lane needed a current validation run after strict-value
+  normalization and recurrent-depth checks, because the 7B tertiary lane is not
+  the live lane Bryan intends to use.
+
+What changed:
+
+- `response_generation_unitary.py` now only permits prompt-derived strict proof
+  solver repair when `structured_proof_solver_enabled()` explicitly allows it.
+  Default DNU/live proof paths keep that off.
+- Strict proof rejection now emits bounded diagnostic reasons and permits a
+  small critique-guided model repair loop without revealing the derived answer.
+- `proof_answer_solver.py` now validates sentence-shaped correct answers for
+  unique-assignment tasks and reports non-answer rejection reasons such as
+  violated positive or negative clues.
+- DNU smoke mode now exits nonzero if the live task path fails, even when
+  artifacts are written successfully.
+- The MLX strict-value normalizer now accepts repeated exact literals before
+  assistant boilerplate, fixing the observed `okok...` 32B strict-probe failure
+  without repairing wrong literals.
+
+Evidence:
+
+- Tertiary no-solver smoke now fails honestly when the 7B lane cannot solve the
+  strict reasoning task:
+  `artifacts/current/proof_steps/dnu_smoke_failure_exit_policy.json`, rc=1.
+- Primary 32B no-solver smoke passed:
+  `artifacts/current/proof_steps/dnu_smoke_primary_strict_no_solver_2.json`,
+  rc=0 in about 39s.
+- Primary 32B smoke artifacts:
+  `artifacts/current/agi_smoke_primary_strict_no_solver_2/SCORECARD.json`,
+  `1/1` task passed, `overall_pass_rate=1.0`.
+- Primary model lane probe:
+  `MODEL_LANE_PROBE.json`, endpoint `Cortex`, tier `local`,
+  `strict_answer_ok=true`, `structured_proof_solver_enabled=false`,
+  `recurrent_depth.active=true`, `n_loops=2`, model path
+  `training/fused-model/Aura-32B-crsm-closeout-20260628-181638`.
+- Task trace shows R001 answered from model/runtime:
+  `<answer>Alice</answer>`, `structured_proof_solver=null`.
+- Focused strict proof and DNU lifecycle tests passed locally before tracker
+  update; final bundled verification remains to be rerun before commit.
+
+Still open:
+
+- Rerun the touched-file ruff/test bundle after tracker update.
+- Run final enterprise/production gates for this checkpoint.
+- Final `make final-proof`, replay package, claims/artifact consistency, clean
+  worktree, commit, and push remain open.
 
 ## Checkpoint 2026-06-29-03: DNU Proof Lifecycle / Model-Lane Hardening
 

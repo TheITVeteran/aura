@@ -20,6 +20,14 @@ def test_dnu_standard_copy_includes_lifecycle_artifacts():
     assert "LIFECYCLE_EVENTS.jsonl" in dnu_runner.DNU_STANDARD_COPY_ARTIFACTS
 
 
+def test_dnu_smoke_fails_process_when_live_task_path_fails():
+    source = dnu_runner.Path(dnu_runner.__file__).read_text(encoding="utf-8")
+
+    assert 'if args.smoke and scorecard.get("total_pass", 0) != scorecard.get("total_tasks", 0):' in source
+    assert 'error="smoke_live_task_path_failed"' in source
+    assert 'phase="smoke_live_task_path"' in source
+
+
 def test_dnu_artifact_manifest_never_hashes_itself(tmp_path):
     (tmp_path / "SCORECARD.json").write_text("{}", encoding="utf-8")
     (tmp_path / "MANIFEST.json").write_text('{"old": true}', encoding="utf-8")
