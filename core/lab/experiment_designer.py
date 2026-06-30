@@ -1,11 +1,14 @@
 """core/lab/experiment_designer.py — Experiment Designer.
 
-Designs execution/simulation scripts to test generated hypotheses.
+Designs a concrete, *checkable* experiment for a hypothesis. The experiment is the
+exact claim to be falsified (carried in the ``claim`` field), which the SimulationRunner
+hands to the Frontier Discovery Engine's verifier. If a checkable claim is supplied
+explicitly it is used verbatim; otherwise the hypothesis statement is the claim.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from core.lab.hypothesis_engine import Hypothesis
 
@@ -13,34 +16,35 @@ logger = logging.getLogger("Aura.ExperimentDesigner")
 
 
 class ExperimentDesigner:
-    """Creates concrete experiment plans to validate hypotheses."""
+    """Creates concrete, falsifiable experiment plans for hypotheses."""
 
     def design_experiment(
         self,
         hypothesis: Hypothesis,
         mined_facts: List[Dict[str, Any]],
+        *,
+        claim: Optional[str] = None,
     ) -> Dict[str, Any]:
-        logger.info("🧪 Designing experiment to test: '%s'", hypothesis.statement)
-
-        # Design parameters based on mined benchmarks
-        control_value = 1.0
-        if mined_facts:
-            control_value = mined_facts[0].get("value", 1.0)
+        # The experiment's substance is the exact claim to falsify — prefer an explicit
+        # checkable claim, then the hypothesis's own claim attr, then its statement.
+        falsifiable_claim = str(
+            claim or getattr(hypothesis, "claim", None) or hypothesis.statement or ""
+        ).strip()
+        logger.info("🧪 Designing falsification experiment for: '%s'", falsifiable_claim[:80])
 
         return {
             "name": f"exp_test_{hypothesis.hypothesis_id}",
             "hypothesis_id": hypothesis.hypothesis_id,
+            "claim": falsifiable_claim,
+            "hypothesis_statement": hypothesis.statement,
             "independent_variable": hypothesis.variables.get("independent", "x"),
             "dependent_variable": hypothesis.variables.get("dependent", "y"),
+            "method": "exact_falsification",
             "steps": [
-                "Initialize test environment baseline",
-                f"Apply independent variable stimulus ({hypothesis.variables.get('independent')})",
-                "Measure dependent variable output",
-                "Perform statistical verification against baseline",
+                "Reduce the hypothesis to a checkable claim",
+                "Run the claim through the exact falsifier (Frontier Discovery Engine)",
+                "Record proven / supported / refuted / inconclusive verdict",
+                "Commit only verified survivors to belief; never fabricate validation",
             ],
-            "parameters": {
-                "runs": 5,
-                "control_value": control_value,
-                "stimulus_multiplier": 2.0,
-            }
+            "mined_facts": list(mined_facts or []),
         }

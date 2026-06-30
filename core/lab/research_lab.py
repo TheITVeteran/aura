@@ -85,24 +85,36 @@ class ResearchLab:
             ])
             logger.info("📖 Mined %d facts from prior literature", len(cycle.mined_facts))
 
-            # 3. DESIGN: Design experiment
+            # 3. DESIGN: Design a falsifiable experiment. The topic itself is passed as
+            # the checkable claim so a verifiable topic ("is n^5 - n divisible by 30?")
+            # is actually tested, not paraphrased into a template.
             cycle.stage = ResearchStage.DESIGN
-            cycle.experiment_spec = self.designer.design_experiment(cycle.hypothesis, cycle.mined_facts)
+            cycle.experiment_spec = self.designer.design_experiment(
+                cycle.hypothesis, cycle.mined_facts, claim=topic
+            )
             logger.info("🧪 Designed experiment: '%s'", cycle.experiment_spec.get("name"))
 
-            # 4. SIMULATION: Run simulation/code
+            # 4. SIMULATION: Run the experiment as a REAL exact falsification (no fabrication).
             cycle.stage = ResearchStage.SIMULATION
             cycle.simulation_result = await self.simulator.run_sim(cycle.experiment_spec)
-            logger.info("🎲 Simulation completed: score=%.2f", cycle.simulation_result.get("score", 0.0))
+            logger.info(
+                "🔬 Experiment verdict: status=%s validated=%s refuted=%s",
+                cycle.simulation_result.get("status"),
+                cycle.simulation_result.get("validated"),
+                cycle.simulation_result.get("refuted"),
+            )
 
-            # 5. INTERPRET: Interpret results
+            # 5. INTERPRET: Map the exact verdict to a conclusion (can now refute).
             cycle.stage = ResearchStage.INTERPRETATION
             cycle.conclusion = self.interpreter.interpret(cycle.hypothesis, cycle.simulation_result)
             logger.info("🎯 Interpretation: hypothesis_validated=%s", cycle.conclusion.get("validated"))
 
-            # 6. BELIEF UPDATE
+            # 6. BELIEF UPDATE — only verified survivors are committed into beliefs; an
+            # inconclusive/refuted result is never laundered into a "validated" belief.
             cycle.stage = ResearchStage.BELIEF_UPDATE
             self.memory.save_research_outcome(cycle.cycle_id, cycle.conclusion)
+            if cycle.conclusion.get("validated"):
+                self._commit_validated_belief(topic, cycle.conclusion, cycle.simulation_result)
 
             # 7. PROPOSE NEXT STEP
             cycle.next_step = f"Investigate variables affecting {cycle.hypothesis.variables.get('independent', 'target')}"
@@ -117,7 +129,36 @@ class ResearchLab:
             "ok": cycle.stage == ResearchStage.COMPLETED,
             "cycle_id": cycle.cycle_id,
             "hypothesis": cycle.hypothesis.statement if cycle.hypothesis else None,
+            "status": cycle.conclusion.get("status") if cycle.conclusion else None,
             "validated": cycle.conclusion.get("validated", False) if cycle.conclusion else False,
+            "refuted": cycle.conclusion.get("refuted", False) if cycle.conclusion else False,
+            "fabricated": False,
+            "conclusion": cycle.conclusion.get("conclusion") if cycle.conclusion else None,
             "next_step": cycle.next_step,
             "error": cycle.error,
         }
+
+    def _commit_validated_belief(
+        self, topic: str, conclusion: dict, simulation_result: dict
+    ) -> None:
+        """Fold a verified research result into beliefs via the ScientificEngine.
+
+        Causal integration: the same exact-falsification verdict that validated the
+        claim becomes a confidence-weighted belief (form_hypothesis→run_experiment→
+        observe), so a real research finding is visible to the rest of cognition.
+        """
+        try:
+            from core.cognition.scientific_engine import get_scientific_engine
+
+            sci = get_scientific_engine()
+            claim = str(simulation_result.get("evidence") or topic)
+            hyp_id = sci.form_hypothesis(
+                f"research_finding: {claim}",
+                predicted_observable="verifier_holds",
+                expected=1.0,
+                prior_confidence=float(conclusion.get("new_confidence", 0.7) or 0.7),
+            )
+            sci.run_experiment(hyp_id)
+            sci.observe(hyp_id, observed=1.0, note=f"research_lab:{conclusion.get('status')}")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("ResearchLab belief commit skipped: %s", exc)

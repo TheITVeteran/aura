@@ -66,6 +66,7 @@ class BeingRuntime:
         self._last_body_snapshot: Any | None = None
         self._last_causal_self_vector: Any | None = None
         self._last_causal_valenced_workspace: Any | None = None
+        self._last_unified_felt: Any | None = None
         self._lesion_controller_registered = False
 
     def start(self, *, hz: float = 20.0) -> None:
@@ -292,8 +293,28 @@ class BeingRuntime:
         self._last_blind_report = blind_report
         self._last_body_snapshot = body_snapshot
         self._refresh_causal_self_vector(now)
+        self._refresh_unified_felt_state(state, now, welfare_outputs)
         self._publish(now)
         return now
+
+    def _refresh_unified_felt_state(self, state: Any, now: AuraNow, welfare_outputs: Any) -> None:
+        """Reconcile the kernel affect/phi track with this being track into one
+        authoritative felt-state, and measure their coherence. Best-effort: a failure
+        here must never break a sample (the felt-state is additive to existing gates)."""
+        try:
+            from core.being.unified_felt_state import get_unified_felt_state
+
+            self._last_unified_felt = get_unified_felt_state().reconcile(
+                kernel_state=state, aura_now=now, welfare=welfare_outputs
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "being_runtime",
+                exc,
+                severity="debug",
+                action="continued without unified felt-state reconciliation this sample",
+            )
+            self._last_unified_felt = None
 
     def action_policy(
         self,
@@ -450,6 +471,16 @@ class BeingRuntime:
             constraints.append("aura_now_no_workspace_broadcast")
             defers.append("no_workspace_broadcast_for_consequential_action")
 
+        # Felt-state coherence gate: if the kernel and being felt tracks have diverged
+        # (Aura's action-regulating state and her reasoning/speech state disagree), that
+        # is an internal model mismatch. Acting consequentially on an incoherent self is
+        # exactly when to be conservative — defer until the felt-state is reconciled.
+        unified = getattr(self, "_last_unified_felt", None)
+        if unified is not None and not unified.coherent:
+            constraints.append(f"aura_now_felt_incoherent: coherence={unified.coherence:.3f}")
+            if consequential and not repair_lane:
+                defers.append("felt_state_incoherent_resolve_before_action")
+
         if explicit_foreground_desktop_tool and defers and not blocks:
             desktop_soft_defers = {
                 "action_controllability_too_low",
@@ -509,6 +540,7 @@ class BeingRuntime:
                 "welfare_recovery_drive": round(welfare.recovery_drive, 4) if welfare else 0.0,
                 "welfare_self_report_confidence": round(welfare.self_report_confidence, 4) if welfare else 0.5,
                 "body_fatigue": round(body_fatigue, 4),
+                "felt_coherence": round(unified.coherence, 4) if unified is not None else 1.0,
             },
         }
         causal_vector = self._refresh_causal_self_vector(now, action_policy=policy)
