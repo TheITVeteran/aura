@@ -142,8 +142,27 @@ class InitiativeArbiter:
         best.rationale = "; ".join(rationale_parts)
 
         self._selection_history.append(best)
+        self._record_choice_for_learning(best, scored)
         self._log_selection(best)
         return best
+
+    def _record_choice_for_learning(self, best: ScoredInitiative, scored: List[ScoredInitiative]) -> None:
+        """Register this choice with the preference learner so its outcome can later
+        author her weighting. Best-effort: never let learning capture break selection."""
+        try:
+            from core.agency.decision_preference_learner import (
+                get_decision_preference_learner,
+            )
+
+            get_decision_preference_learner().record_choice(
+                chosen_scores=best.scores,
+                pool_scores=[s.scores for s in scored],
+                goal=_goal(best.initiative),
+                weights_used=dict(self._weights),
+                expected_value=best.scores.get("expected_value", 0.5),
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Decision-preference capture skipped: %s", exc)
 
     def _log_selection(self, best: ScoredInitiative) -> None:
         signature = _goal(best.initiative)
@@ -202,6 +221,18 @@ class InitiativeArbiter:
                         effective_weights[dim] = effective_weights[dim] + boost
         except (ImportError, AttributeError, RuntimeError):
             pass  # degrade gracefully
+
+        # Self-authored preference: apply weight multipliers learned from the outcomes of
+        # her own past choices, so the dimensions that have served her are weighted up and
+        # the ones that disappointed are weighted down — within a clamped band.
+        try:
+            from core.agency.decision_preference_learner import (
+                get_decision_preference_learner,
+            )
+
+            effective_weights = get_decision_preference_learner().effective_weights(effective_weights)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass  # degrade gracefully — learned preferences are additive
 
         total_weight = 0.0
         weighted_sum = 0.0
