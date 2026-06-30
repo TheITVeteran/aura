@@ -198,6 +198,30 @@ def test_reliability_gate_allows_grounded_project_continuation():
     assert "unsupported_context_continuation_claim" not in assessment.reasons
 
 
+def test_reliability_gate_allows_concise_memory_pin_receipt():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Remember this note for later in this conversation: codeword amber-28756.",
+        "Codeword confirmed and pinned: amber-28756.",
+    )
+
+    assert assessment.ok
+    assert not assessment.retryable
+
+
+def test_reliability_gate_rejects_generic_memory_pin_acknowledgement():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Remember this note for later in this conversation: codeword amber-28756.",
+        "Okay, I will remember it.",
+    )
+
+    assert assessment.retryable
+    assert not assessment.ok
+
+
 def test_reliability_gate_rejects_question_back_non_answer_for_live_probe():
     from core.conversation.response_reliability import assess_user_facing_reply
 

@@ -2114,6 +2114,72 @@ def _matches_strict_answer_tag_request(user_message: Any, reply_text: Any) -> bo
     return True
 
 
+_MEMORY_PIN_CONFIRMATION_WORDS = {
+    "captured",
+    "confirmed",
+    "held",
+    "logged",
+    "noted",
+    "pinned",
+    "recorded",
+    "remembered",
+    "saved",
+    "stored",
+}
+_MEMORY_PIN_STOPWORDS = {
+    "conversation",
+    "later",
+    "memory",
+    "note",
+    "remember",
+    "session",
+    "this",
+}
+
+
+def _is_explicit_memory_pin_request(user_message: Any) -> bool:
+    text = _normalize(user_message)
+    if not text:
+        return False
+    return bool(
+        re.search(
+            r"\b(?:remember|pin|save|store|record|keep)\b.{0,80}\b(?:later|conversation|session|memory|note|codeword)\b",
+            text,
+        )
+    )
+
+
+def _memory_pin_payload_terms(user_message: Any) -> set[str]:
+    raw = str(user_message or "")
+    if ":" in raw:
+        raw = raw.split(":", 1)[1]
+    terms: set[str] = set()
+    for word in _WORD_RE.findall(raw.lower()):
+        if len(word) < 4:
+            continue
+        if word in _SUBSTANTIVE_OVERLAP_STOPWORDS or word in _MEMORY_PIN_STOPWORDS:
+            continue
+        terms.add(word)
+    return terms
+
+
+def _matches_memory_pin_confirmation(user_message: Any, reply_text: Any) -> bool:
+    """Allow concise memory-write receipts without allowing generic acknowledgements."""
+
+    if not _is_explicit_memory_pin_request(user_message):
+        return False
+    reply = _normalize(reply_text)
+    if not reply:
+        return False
+    reply_terms = set(_WORD_RE.findall(reply))
+    if not (reply_terms & _MEMORY_PIN_CONFIRMATION_WORDS):
+        return False
+    payload_terms = _memory_pin_payload_terms(user_message)
+    if not payload_terms:
+        return False
+    return bool(payload_terms & reply_terms)
+
+
 def _requires_substantive_reply(user_message: Any) -> bool:
     if _has_exact_reply_request(user_message):
         return False
@@ -3333,6 +3399,7 @@ def assess_user_facing_reply(
     reliability_diagnostic_turn = _requires_reliability_diagnostic(user_message)
     exact_reply = _matches_exact_reply_request(user_message, raw)
     strict_answer_tag_reply = _matches_strict_answer_tag_request(user_message, raw)
+    memory_pin_confirmation = _matches_memory_pin_confirmation(user_message, raw)
     if reliability_turn:
         if _LOW_SIGNAL_REASSURANCE_RE.match(raw):
             reasons.append("low_signal_reliability_reply")
@@ -3367,7 +3434,12 @@ def assess_user_facing_reply(
             or _has_operational_status_substance(user_message, raw)
         ):
             reasons.append("too_thin_for_status_turn")
-    elif not exact_reply and not strict_answer_tag_reply and _requires_substantive_reply(user_message):
+    elif (
+        not exact_reply
+        and not strict_answer_tag_reply
+        and not memory_pin_confirmation
+        and _requires_substantive_reply(user_message)
+    ):
         words = _word_count(raw)
         explicit_brevity = _explicit_brevity_requested(user_message)
         if _LOW_SIGNAL_REASSURANCE_RE.match(raw) or words < 2:
