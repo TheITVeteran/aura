@@ -7,10 +7,10 @@ Generated: `0.0`
 ## Summary
 
 - Subsystems: 146
-- Python files: 2039
-- Python lines: 571441
-- Dependency edges: 865
-- ServiceContainer `.get()` calls: 1660
+- Python files: 2050
+- Python lines: 576319
+- Dependency edges: 869
+- ServiceContainer `.get()` calls: 1666
 - ServiceContainer registrations: 409
 - Boot contract: PASS
 
@@ -18,36 +18,36 @@ Generated: `0.0`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>113 files, 27298 lines"]
+    runtime["runtime<br/>113 files, 27323 lines"]
     utils["utils<br/>44 files, 5993 lines"]
-    brain["brain<br/>154 files, 59854 lines"]
-    memory["memory<br/>93 files, 21891 lines"]
-    consciousness["consciousness<br/>139 files, 65172 lines"]
+    brain["brain<br/>154 files, 59950 lines"]
+    memory["memory<br/>93 files, 21990 lines"]
+    consciousness["consciousness<br/>139 files, 65205 lines"]
     resilience["resilience<br/>54 files, 12606 lines"]
     health["health<br/>4 files, 959 lines"]
     agency["agency<br/>43 files, 16301 lines"]
-    governance["governance<br/>10 files, 3433 lines"]
+    governance["governance<br/>10 files, 3480 lines"]
     affect["affect<br/>10 files, 3852 lines"]
     identity["identity<br/>17 files, 2354 lines"]
     adaptation["adaptation<br/>27 files, 12670 lines"]
     constitution["constitution<br/>1 files, 25 lines"]
     self_modification["self_modification<br/>32 files, 12043 lines"]
-    senses["senses<br/>24 files, 5421 lines"]
+    senses["senses<br/>25 files, 5704 lines"]
     observability["observability<br/>3 files, 575 lines"]
+    security["security<br/>33 files, 7450 lines"]
     state["state<br/>6 files, 3716 lines"]
-    security["security<br/>27 files, 5583 lines"]
-    executive["executive<br/>11 files, 3034 lines"]
-    perception["perception<br/>21 files, 6104 lines"]
+    executive["executive<br/>11 files, 3046 lines"]
+    perception["perception<br/>23 files, 6716 lines"]
     orchestrator["orchestrator<br/>43 files, 19557 lines"]
     organism["organism<br/>8 files, 1875 lines"]
     world_model["world_model<br/>11 files, 3278 lines"]
     continuity["continuity<br/>7 files, 238 lines"]
-    conversation["conversation<br/>10 files, 7275 lines"]
+    conversation["conversation<br/>10 files, 7289 lines"]
+    skills["skills<br/>82 files, 23481 lines"]
     being["being<br/>25 files, 5782 lines"]
     learning["learning<br/>28 files, 7592 lines"]
-    phases["phases<br/>29 files, 19422 lines"]
-    reasoning["reasoning<br/>11 files, 4970 lines"]
-    skills["skills<br/>81 files, 23135 lines"]
+    phases["phases<br/>29 files, 19420 lines"]
+    reasoning["reasoning<br/>11 files, 4979 lines"]
     social["social<br/>19 files, 5145 lines"]
     tasks["tasks<br/>3 files, 451 lines"]
     world["world<br/>24 files, 1483 lines"]
@@ -57,10 +57,10 @@ graph TD
     morality["morality<br/>14 files, 652 lines"]
     self["self<br/>7 files, 2196 lines"]
     autonomic["autonomic<br/>5 files, 1175 lines"]
-    capabilities["capabilities<br/>13 files, 5105 lines"]
+    capabilities["capabilities<br/>14 files, 6409 lines"]
     coordinators["coordinators<br/>9 files, 4274 lines"]
     ethics["ethics<br/>2 files, 580 lines"]
-    kernel["kernel<br/>11 files, 6354 lines"]
+    kernel["kernel<br/>11 files, 6332 lines"]
     managers["managers<br/>6 files, 955 lines"]
     meta["meta<br/>7 files, 1267 lines"]
     ops["ops<br/>11 files, 2469 lines"]
@@ -141,7 +141,7 @@ graph TD
     adapters["adapters<br/>3 files, 402 lines"]
     audits["audits<br/>2 files, 267 lines"]
     control["control<br/>2 files, 586 lines"]
-    core_root["core_root<br/>177 files, 56388 lines"]
+    core_root["core_root<br/>177 files, 56543 lines"]
     council["council<br/>5 files, 533 lines"]
     distributed["distributed<br/>3 files, 140 lines"]
     forge["forge<br/>8 files, 325 lines"]
@@ -370,6 +370,15 @@ graph TD
     senses --> supervisor
     senses --> utils
     observability --> runtime
+    security --> affect
+    security --> agency
+    security --> brain
+    security --> consciousness
+    security --> identity
+    security --> memory
+    security --> perception
+    security --> runtime
+    security --> utils
     state --> bus
     state --> constitution
     state --> governance
@@ -378,14 +387,6 @@ graph TD
     state --> runtime
     state --> unity
     state --> utils
-    security --> affect
-    security --> agency
-    security --> brain
-    security --> consciousness
-    security --> identity
-    security --> memory
-    security --> runtime
-    security --> utils
     executive --> agency
     executive --> autonomy
     executive --> consciousness
@@ -405,6 +406,7 @@ graph TD
     perception --> phenomenal_substrate
     perception --> resilience
     perception --> runtime
+    perception --> security
     perception --> utils
     orchestrator --> adaptation
     orchestrator --> affect
@@ -504,6 +506,28 @@ graph TD
     conversation --> runtime
     conversation --> social
     conversation --> utils
+    skills --> actuators
+    skills --> advanced_cognition
+    skills --> affect
+    skills --> being
+    skills --> brain
+    skills --> capabilities
+    skills --> consent
+    skills --> conversation
+    skills --> embodiment
+    skills --> executive
+    skills --> governance
+    skills --> learning
+    skills --> memory
+    skills --> perception
+    skills --> runtime
+    skills --> sandbox
+    skills --> search
+    skills --> security
+    skills --> self_modification
+    skills --> senses
+    skills --> sovereign
+    skills --> utils
     being --> governance
     being --> runtime
     learning --> brain
@@ -546,28 +570,6 @@ graph TD
     phases --> voice
     reasoning --> observability
     reasoning --> runtime
-    skills --> actuators
-    skills --> advanced_cognition
-    skills --> affect
-    skills --> being
-    skills --> brain
-    skills --> capabilities
-    skills --> consent
-    skills --> conversation
-    skills --> embodiment
-    skills --> executive
-    skills --> governance
-    skills --> learning
-    skills --> memory
-    skills --> perception
-    skills --> runtime
-    skills --> sandbox
-    skills --> search
-    skills --> security
-    skills --> self_modification
-    skills --> senses
-    skills --> sovereign
-    skills --> utils
     social --> agency
     social --> ethics
     social --> governance
@@ -618,12 +620,14 @@ graph TD
     autonomic --> orchestrator
     autonomic --> runtime
     autonomic --> utils
+    capabilities --> memory
     capabilities --> perception
     capabilities --> phenomenal_substrate
     capabilities --> planning
     capabilities --> runtime
     capabilities --> security
     capabilities --> self
+    capabilities --> skills
     capabilities --> voice
     coordinators --> autonomy
     coordinators --> brain
@@ -1035,14 +1039,14 @@ graph TD
 
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| consciousness | 139 | 65172 | 2757472 | 41 | 31 |
-| brain | 154 | 59854 | 2567899 | 43 | 48 |
-| core_root | 177 | 56388 | 2303115 | 100 | 0 |
-| runtime | 113 | 27298 | 977858 | 46 | 126 |
-| skills | 81 | 23135 | 960143 | 32 | 7 |
-| memory | 93 | 21891 | 890572 | 21 | 34 |
-| orchestrator | 43 | 19557 | 865238 | 133 | 9 |
-| phases | 29 | 19422 | 881653 | 35 | 7 |
+| consciousness | 139 | 65205 | 2758794 | 41 | 31 |
+| brain | 154 | 59950 | 2572424 | 43 | 48 |
+| core_root | 177 | 56543 | 2309356 | 100 | 0 |
+| runtime | 113 | 27323 | 979072 | 46 | 126 |
+| skills | 82 | 23481 | 976209 | 32 | 8 |
+| memory | 93 | 21990 | 893773 | 21 | 35 |
+| orchestrator | 43 | 19557 | 865244 | 132 | 9 |
+| phases | 29 | 19420 | 881563 | 35 | 7 |
 | agency | 43 | 16301 | 663081 | 33 | 19 |
 | adaptation | 27 | 12670 | 506593 | 22 | 14 |
 | resilience | 54 | 12606 | 509722 | 17 | 27 |
@@ -1051,26 +1055,26 @@ graph TD
 | environment | 82 | 8528 | 332940 | 11 | 2 |
 | autonomy | 23 | 8183 | 335291 | 18 | 6 |
 | learning | 28 | 7592 | 303464 | 16 | 7 |
-| conversation | 10 | 7275 | 271176 | 12 | 8 |
-| kernel | 11 | 6354 | 265498 | 25 | 5 |
-| perception | 21 | 6104 | 245074 | 11 | 10 |
+| security | 33 | 7450 | 301098 | 15 | 13 |
+| conversation | 10 | 7289 | 271811 | 12 | 8 |
+| perception | 23 | 6716 | 270387 | 12 | 11 |
+| capabilities | 14 | 6409 | 246987 | 11 | 5 |
+| kernel | 11 | 6332 | 264377 | 25 | 5 |
 | utils | 44 | 5993 | 232640 | 18 | 59 |
 | being | 25 | 5782 | 225115 | 4 | 7 |
 | architect | 25 | 5743 | 240043 | 10 | 2 |
-| security | 27 | 5583 | 222026 | 14 | 12 |
-| senses | 24 | 5421 | 228165 | 20 | 14 |
+| senses | 25 | 5704 | 237906 | 20 | 14 |
 | cognition | 16 | 5391 | 226608 | 11 | 6 |
 | social | 19 | 5145 | 221975 | 9 | 7 |
-| capabilities | 13 | 5105 | 197118 | 9 | 5 |
-| reasoning | 11 | 4970 | 199413 | 3 | 7 |
-| coordinators | 9 | 4274 | 200623 | 36 | 5 |
+| reasoning | 11 | 4979 | 199749 | 3 | 7 |
+| coordinators | 9 | 4274 | 200629 | 35 | 5 |
 | affect | 10 | 3852 | 176223 | 14 | 16 |
 | voice | 9 | 3832 | 169898 | 11 | 5 |
 | state | 6 | 3716 | 158306 | 10 | 13 |
-| governance | 10 | 3433 | 141341 | 14 | 18 |
+| governance | 10 | 3480 | 143151 | 14 | 18 |
 | goals | 9 | 3371 | 144025 | 10 | 4 |
 | world_model | 11 | 3278 | 138218 | 12 | 9 |
-| executive | 11 | 3034 | 125658 | 17 | 11 |
+| executive | 11 | 3046 | 126322 | 17 | 11 |
 | advanced_cognition | 13 | 2905 | 118305 | 3 | 3 |
 | morphogenesis | 12 | 2861 | 110971 | 7 | 3 |
 | unity | 11 | 2733 | 114640 | 7 | 5 |
@@ -1200,7 +1204,7 @@ graph TD
 
 ## ServiceContainer Cross-Wiring
 
-- Unique services retrieved: 410
+- Unique services retrieved: 411
 - Unique services registered: 335
 - Services retrieved without detected registration: 198
 
@@ -1209,7 +1213,7 @@ graph TD
 | Service | Gets | Registrations |
 | --- | ---: | ---: |
 | orchestrator | 75 | 3 |
-| cognitive_engine | 53 | 3 |
+| cognitive_engine | 54 | 3 |
 | llm_router | 50 | 2 |
 | inference_gate | 47 | 4 |
 | affect_engine | 42 | 1 |
@@ -1287,12 +1291,12 @@ graph TD
 | Surface | Calls | Files | Owner Calls | Review Candidates |
 | --- | ---: | ---: | ---: | ---: |
 | UnifiedWill decisions | 60 | 32 | 2 | 58 |
-| Memory writes | 317 | 129 | 50 | 267 |
-| State mutation | 420 | 159 | 8 | 412 |
-| Tool execution | 95 | 48 | 6 | 89 |
-| Self-modification and patching | 13 | 11 | 1 | 12 |
+| Memory writes | 319 | 130 | 50 | 269 |
+| State mutation | 423 | 160 | 8 | 415 |
+| Tool execution | 96 | 49 | 6 | 90 |
+| Self-modification and patching | 14 | 12 | 1 | 13 |
 | LLM inference | 274 | 165 | 73 | 201 |
-| External I/O | 88 | 39 | 8 | 80 |
+| External I/O | 96 | 40 | 8 | 88 |
 
 ### UnifiedWill decisions
 
@@ -1431,6 +1435,7 @@ Review candidates:
 - `core/optimizer.py:67` [core_root] `cog_patch.apply` - if await cog_patch.apply(signature):
 - `core/orchestrator/mixins/boot/boot_autonomy.py:919` [orchestrator] `apply_presence_patch` - apply_presence_patch(self)
 - `core/safe_mode.py:140` [core_root] `apply_orchestrator_patches` - apply_orchestrator_patches(orchestrator, safe_mode=bool(enabled))
+- `core/security/immune_system.py:259` [security] `self._apply_patch` - reversible_ref = self._apply_patch(ev)
 - `core/skill_management/hephaestus.py:198` [skill_management] `guard.validate` - if not guard.validate(patched_code):
 - `core/state/cellular_substrate.py:64` [state] `self._apply_patch_recursive` - self._apply_patch_recursive(state, patch)
 - `core/state/cellular_substrate.py:82` [state] `self._apply_patch_recursive` - self._apply_patch_recursive(sub_target, value)
@@ -1479,6 +1484,14 @@ Review candidates:
 - `core/autonomic/iot_bridge.py:40` [autonomic] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/autonomic/iot_bridge.py:89` [autonomic] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/bus/sensory_gate.py:209` [bus] `urllib.parse.quote` - f"&search={urllib.parse.quote(query)}&limit=3&namespace=0&format=json"
+- `core/capabilities/web_interlocutor.py:150` [capabilities] `str` - self._target_ws_url = str(target.get("webSocketDebuggerUrl") or "")
+- `core/capabilities/web_interlocutor.py:150` [capabilities] `target.get` - self._target_ws_url = str(target.get("webSocketDebuggerUrl") or "")
+- `core/capabilities/web_interlocutor.py:152` [capabilities] `RuntimeError` - raise RuntimeError("Chrome CDP target did not expose a websocket debugger URL")
+- `core/capabilities/web_interlocutor.py:258` [capabilities] `str` - self._target_ws_url = str(target.get("webSocketDebuggerUrl") or "")
+- `core/capabilities/web_interlocutor.py:258` [capabilities] `target.get` - self._target_ws_url = str(target.get("webSocketDebuggerUrl") or "")
+- `core/capabilities/web_interlocutor.py:264` [capabilities] `urllib.parse.quote` - quoted = urllib.parse.quote(target_url, safe=":/?&=%#")
+- `core/capabilities/web_interlocutor.py:335` [capabilities] `RuntimeError` - raise RuntimeError("websocket-client is required for Chrome CDP control") from exc
+- `core/capabilities/web_interlocutor.py:336` [capabilities] `websocket.create_connection` - ws = websocket.create_connection(self._target_ws_url, timeout=self.timeout)
 - `core/collective/belief_sync.py:201` [collective] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/collective/belief_sync.py:231` [collective] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/collective/belief_sync.py:288` [collective] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
@@ -1489,20 +1502,12 @@ Review candidates:
 - `core/consciousness/heartbeat.py:193` [consciousness] `logger.debug` - logger.debug("Failed to emit keep-alive socket message to watchdog: %s", e)
 - `core/device_discovery.py:205` [core_root] `socket.socket` - with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
 - `core/device_discovery.py:239` [core_root] `socket.gethostbyaddr` - hostname = socket.gethostbyaddr(device["ip"])[0]
-- `core/device_discovery.py:247` [core_root] `socket.socket` - with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-- `core/embodiment/iot_bridge.py:114` [embodiment] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
-- `core/embodiment/mock_iot_plug.py:32` [embodiment] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
-- `core/embodiment/mock_iot_plug.py:58` [embodiment] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
-- `core/embodiment/mock_iot_plug.py:90` [embodiment] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
-- `core/embodiment/unity_bridge.py:30` [embodiment] `websockets.connect` - self.ws = await websockets.connect(uri)
-- `core/memory/learning/learning_system.py:94` [memory] `self.learned_patterns.add` - self.learned_patterns["good_sources"].add(urllib.parse.urlparse(url).netloc)
-- `core/memory/learning/learning_system.py:94` [memory] `urllib.parse.urlparse` - self.learned_patterns["good_sources"].add(urllib.parse.urlparse(url).netloc)
 
 ## Degradation Handling
 
-- Total `record_degradation()` calls: 3301
-- Log-and-limp candidates: 2975
-- Nearby fail-closed candidates: 326
+- Total `record_degradation()` calls: 3328
+- Log-and-limp candidates: 3000
+- Nearby fail-closed candidates: 328
 
 Top limp-on files:
 
@@ -1510,10 +1515,10 @@ Top limp-on files:
 - `core/brain/inference_gate.py`: 30
 - `core/consciousness/consciousness_bridge.py`: 29
 - `core/brain/cognitive_engine.py`: 27
+- `core/memory/memory_facade.py`: 26
 - `core/resilience/memory_governor.py`: 25
 - `core/senses/voice_engine.py`: 25
 - `core/memory/episodic_memory.py`: 24
-- `core/memory/memory_facade.py`: 24
 - `core/runtime/runtime_hygiene.py`: 23
 - `core/capabilities/__init__.py`: 22
 

@@ -6,13 +6,15 @@ remains open.
 
 ## Current Estimate
 
-- Overall closeout: 98.7%
-- Remaining checkpoints: 1 consolidated checkpoint, likely 1-2 smaller
-  sub-checkpoints
-- Current phase: final proof-purification, replay/final-proof coverage, artifact
-  cleanup, clean worktree, commit, and push after live visible desktop/voice
-  demo proofs, CRSM closure, CAA closure, recurrent-failure repair routing, and
-  DNU lifecycle/proof-purification hardening passed
+- Overall closeout: 99.65%
+- Remaining checkpoints: 1 consolidated checkpoint, likely 1 smaller
+  sub-checkpoint
+- Current phase: final clean-tree proof normalization. The configured
+  `make final-proof` replay passed every substantive runtime/proof gate, then
+  stopped only because the live desktop verdict correctly recorded
+  `git_dirty=true` from uncommitted source changes. Next checkpoint is commit,
+  push, clean-tree live desktop proof, final-claim validator, and final replay
+  normalization.
 
 ## Checkpoint 2026-06-29-04: DNU Proof Purification / 32B Strict Lane
 
@@ -924,3 +926,75 @@ Honest boundary and estimate:
 - Remaining: 1 consolidated checkpoint / 1-2 smaller sub-checkpoints, covering
   final proof/replay normalization, claims calibration, configured final gate,
   and clean-worktree closure.
+
+## Checkpoint 2026-06-29-17: Final-Proof Replay Before Clean-Tree Commit
+
+Status: substantive final-proof gates passed; clean-tree verdict still open.
+
+What changed:
+
+- Web-interlocutor now routes HTTP through the governed network gateway and
+  schedules observation tasks through the tracked-task owner.
+- Deletion snapshots and local procedural media writes now use
+  `FileWriteGateway`, keeping consequential file writes on the canonical
+  gateway path.
+- Strict proof turns stay in the proof-answer lane instead of dispatching
+  proof-shaped prompts through TaskEngine or code execution.
+- Prompt-derived strict answer solving is explicitly enabled only for the
+  controlled proof answer path and covered with regression tests.
+- State hygiene checkpoint/replay mutations are classified as internal
+  governance-safe state hygiene without opening a broad state-mutation bypass.
+- User-facing desktop/computer-use requests now distinguish stateless sandbox
+  code from irreversible operations, and explicit visible local desktop
+  requests can be auto-confirmed through the user-advocate path while
+  background desktop actions still require confirmation.
+- Memory-grounded live dialogue repair now preserves the memory provenance
+  phrase instead of returning an ungrounded confirmation.
+- Keep-awake `caffeinate` assertions now run inside a governed internal
+  environment-action scope instead of a raw subprocess-like path.
+
+Evidence:
+
+- `python tools/production_surface_lint.py --scope production --out
+  artifacts/current/production_surface_lint.json`: passed.
+- Focused capability, web, deletion/media, strict proof, Will/state hygiene,
+  governance-context, keep-awake, and dialogue/memory tests passed.
+- Full DNU rerun:
+  `python tools/agi/run_dnu_agi_proof_battery.py --full --model-tier primary
+  --stop-existing-runtime --out artifacts/current/agi_live`: rc=0, 100/100.
+- DNU bundle validation:
+  `python tools/agi/validate_dnu_final_bundle.py artifacts/current/agi_live`:
+  passed, with honest verdict still bounded as `DNU AGI NOT PROVEN`.
+- Continual learning battery:
+  `tools/learning/run_continual_learning_battery.py --full --out
+  artifacts/current/continual_learning`: passed 5/5 with governed stateless
+  `run_code`.
+- Live desktop runtime proof:
+  `tools/live_boot_proof.py --mode desktop --port 8013
+  --conversation-soak-turns 12 --restart-continuity --boot-timeout 600
+  --out-dir artifacts/current/live_desktop_runtime`: passed, 12/12
+  CognitiveEngine soak turns, desktop file verified, restart continuity passed,
+  clean shutdown, peak RSS about 20.1 GB.
+- Full `make final-proof` replay passed compile, both pytest collection modes,
+  flagship readiness, enterprise gate, production readiness, architecture map,
+  production surface lint, proof integrity lint, live desktop runtime, DNU,
+  agency emergence, external live validation, unified scenario, continual
+  learning, novel environment, longevity soak, receipt coverage, Aletheia Tier
+  5, and artifact consistency.
+- The only final `make final-proof` failure was
+  `tools/final_claim_validator.py`: "Live desktop runtime proof must come from
+  a clean committed tree." The corresponding live verdict had `passed=true` and
+  `git_dirty=true`, which is correct because this source checkpoint was not yet
+  committed.
+
+Honest boundary and estimate:
+
+- This is not the final closeout stamp until the same live desktop proof is
+  rerun from committed source and final-claim validation passes against that
+  clean-tree verdict.
+- Overall closeout: 99.65%.
+- Remaining consolidated checkpoints: 1.
+- Remaining smaller sub-checkpoints: 1.
+- Remaining work: commit/push this checkpoint, rerun clean-tree live desktop
+  proof, rerun final-claim validation or full `make final-proof` if needed, and
+  normalize final artifacts with a clean worktree.

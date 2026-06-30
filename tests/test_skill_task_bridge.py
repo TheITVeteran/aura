@@ -294,6 +294,39 @@ def test_godmode_keeps_benchmark_artifacts_out_of_task_engine(monkeypatch):
     assert dispatch_attempts == []
 
 
+def test_godmode_keeps_strict_proof_code_prompt_out_of_tool_dispatch(monkeypatch):
+    objective = (
+        "Analyze this Python snippet:\n"
+        "```python\n"
+        "d = {}\n"
+        "d[1] = 'A'\n"
+        "d[1.0] = 'B'\n"
+        "print(len(d), d[1])\n"
+        "```\n"
+        "Output your final answer inside <answer>...</answer> tags."
+    )
+    phase = GodModeToolPhase(kernel=SimpleNamespace())
+    state = AuraState.default()
+    monkeypatch.setenv("AURA_PROOF_RUN", "1")
+    state.cognition.current_origin = "user"
+    state.cognition.current_objective = objective
+    state.response_modifiers["intent_type"] = "SKILL"
+    state.response_modifiers["matched_skills"] = ["run_code"]
+    dispatch_attempts = []
+
+    async def _should_not_dispatch(*_args, **_kwargs):
+        dispatch_attempts.append("strict_proof_run_code")
+        raise AssertionError("strict proof prompt entered tool dispatch")
+
+    monkeypatch.setattr(phase, "_dispatch_task_request", _should_not_dispatch)
+
+    new_state = asyncio.run(phase.execute(state, objective=objective))
+
+    assert new_state.response_modifiers["intent_type"] == "CHAT"
+    assert "matched_skills" not in new_state.response_modifiers
+    assert dispatch_attempts == []
+
+
 def test_godmode_keeps_operator_explanation_out_of_task_engine(monkeypatch):
     objective = (
         "Answer this live operator check in one plain paragraph from the normal launch runtime. "

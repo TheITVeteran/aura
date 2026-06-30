@@ -21,7 +21,9 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any
+
+from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Security.DeletionGuard")
 
@@ -43,12 +45,12 @@ class GuardDecision:
     path: str
     risk: float                       # [0,1]
     requires_confirmation: bool
-    version_id: Optional[str]         # restore handle if a snapshot was taken
+    version_id: str | None         # restore handle if a snapshot was taken
     frozen: bool                      # deletion-storm freeze engaged
     reason: str
-    evidence: Dict[str, Any] = field(default_factory=dict)
+    evidence: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "allowed": self.allowed, "path": self.path, "risk": round(self.risk, 3),
             "requires_confirmation": self.requires_confirmation, "version_id": self.version_id,
@@ -61,7 +63,7 @@ class DeletionGuard:
 
     def __init__(
         self,
-        recycle_dir: Optional[Path] = None,
+        recycle_dir: Path | None = None,
         *,
         storm_window_s: float = 10.0,
         storm_threshold: int = 25,
@@ -79,14 +81,14 @@ class DeletionGuard:
         self._window = storm_window_s
         self._storm_threshold = storm_threshold
         self._max_version_bytes = max_version_bytes
-        self._recent: Deque[float] = deque(maxlen=512)
+        self._recent: deque[float] = deque(maxlen=512)
         self._frozen_until: float = 0.0
-        self._versions: Dict[str, Tuple[str, float]] = {}  # version_id -> (original_path, t)
+        self._versions: dict[str, tuple[str, float]] = {}  # version_id -> (original_path, t)
 
     # ── risk classification ────────────────────────────────────────────────
 
     @staticmethod
-    def classify_risk(path: str, *, forced: bool) -> Tuple[float, bool]:
+    def classify_risk(path: str, *, forced: bool) -> tuple[float, bool]:
         p = str(path).lower()
         protected = any(m in p for m in _PROTECTED_MARKERS)
         base = 0.8 if protected else 0.25
@@ -103,7 +105,7 @@ class DeletionGuard:
         forced: bool = False,
         confirmed: bool = False,
         actor: str = "aura",
-        now: Optional[float] = None,
+        now: float | None = None,
     ) -> GuardDecision:
         """Vet a destructive op. Snapshots first (recoverable), gates high-risk, refuses storms."""
         now = time.time() if now is None else now
@@ -144,7 +146,7 @@ class DeletionGuard:
         return GuardDecision(True, str(path), risk, False, version_id, False,
                              "allowed (snapshot taken; recoverable)")
 
-    def _snapshot(self, path: str, now: float) -> Optional[str]:
+    def _snapshot(self, path: str, now: float) -> str | None:
         try:
             src = Path(path)
             if not src.exists() or not src.is_file():
@@ -155,7 +157,11 @@ class DeletionGuard:
             digest = hashlib.sha256(data).hexdigest()[:16]
             version_id = f"ver-{int(now)}-{digest}"
             dest = self._recycle / version_id
-            dest.write_bytes(data)
+            get_file_write_gateway().write_bytes(
+                dest,
+                data,
+                source="deletion_guard.snapshot",
+            )
             with self._lock:
                 self._versions[version_id] = (str(src), now)
             return version_id
@@ -163,7 +169,7 @@ class DeletionGuard:
             logger.debug("Snapshot failed for %s: %s", path, exc)
             return None
 
-    def restore(self, version_id: str, *, to: Optional[str] = None) -> Optional[str]:
+    def restore(self, version_id: str, *, to: str | None = None) -> str | None:
         """Bring back a guarded deletion."""
         with self._lock:
             meta = self._versions.get(version_id)
@@ -186,7 +192,7 @@ class DeletionGuard:
 
     def _flag_immune(self, path: str, severity: float, reason: str, forced: bool) -> None:
         try:
-            from core.security.immune_system import get_immune_system, ThreatClass
+            from core.security.immune_system import ThreatClass, get_immune_system
             get_immune_system().assess(
                 "deletion_guard", f"{reason}: {path}", severity=severity,
                 origin="local", targeted_vuln="unguarded_delete",
@@ -195,7 +201,7 @@ class DeletionGuard:
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             pass
 
-    def status(self, *, now: Optional[float] = None) -> Dict[str, Any]:
+    def status(self, *, now: float | None = None) -> dict[str, Any]:
         now = time.time() if now is None else now
         with self._lock:
             recent = sum(1 for t in self._recent if now - t <= self._window)
@@ -207,7 +213,7 @@ class DeletionGuard:
             }
 
 
-_guard: Optional[DeletionGuard] = None
+_guard: DeletionGuard | None = None
 _guard_lock = threading.Lock()
 
 

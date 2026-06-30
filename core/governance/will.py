@@ -1250,6 +1250,43 @@ class UnifiedWill:
         return bool(user_facing and explicit and bounded)
 
     @staticmethod
+    def _is_internal_state_hygiene_context(context: dict[str, Any]) -> bool:
+        """Allow bounded state bookkeeping during present-state recovery.
+
+        This lane is deliberately narrower than general state mutation. It is
+        for canonical internal continuity/proof/shutdown checkpoints that keep
+        the runtime coherent and auditable; it does not authorize external
+        effects, value edits, memory writes, tools, or self-modification.
+        """
+
+        ctx = dict(context or {})
+        if not bool(ctx.get("internal_state_hygiene")):
+            return False
+        prohibited_markers = {
+            "external_action",
+            "public_action",
+            "social_action",
+            "world_affecting",
+            "file_write",
+            "network_call",
+            "desktop_control",
+            "memory_write",
+            "belief_update",
+            "identity_rewrite",
+            "policy_change",
+            "constitutional_change",
+            "self_modification",
+        }
+        if any(bool(ctx.get(marker)) for marker in prohibited_markers):
+            return False
+        return bool(
+            ctx.get("foreground_continuity_state")
+            or ctx.get("proof_isolation_state")
+            or ctx.get("response_state_checkpoint")
+            or ctx.get("shutdown_state_checkpoint")
+        )
+
+    @staticmethod
     def _state_from_repository(repo: Any) -> Any | None:
         if repo is None:
             return None
@@ -1408,6 +1445,16 @@ class UnifiedWill:
             constraints.append("aura_now_observation_lane:explicit_memory")
             if outcome == WillOutcome.PROCEED:
                 return WillOutcome.CONSTRAIN, "aura_now_observation_lane", constraints
+            return outcome, reason, constraints
+
+        if (
+            policy_outcome == "defer"
+            and domain == ActionDomain.STATE_MUTATION
+            and self._is_internal_state_hygiene_context(dict(context or {}))
+        ):
+            constraints.append("aura_now_state_hygiene_lane")
+            if outcome == WillOutcome.PROCEED:
+                return WillOutcome.CONSTRAIN, "aura_now_state_hygiene_lane", constraints
             return outcome, reason, constraints
 
         if policy_outcome == "refuse" and self._is_consequential_domain(domain):

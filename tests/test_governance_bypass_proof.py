@@ -11,11 +11,34 @@ These tests intentionally try to cheat the authority system:
 
 If any of these succeed, the governance architecture has a hole.
 """
-from dataclasses import dataclass
 import time
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
+
+
+def test_state_mutation_context_marks_only_internal_hygiene_lanes():
+    from core.executive.authority_gateway import AuthorityGateway
+
+    proof = AuthorityGateway._state_mutation_context(
+        "dnu_agi_proof_battery",
+        "task_isolation_reset",
+    )
+    response = AuthorityGateway._state_mutation_context(
+        "UnitaryResponsePhase",
+        "unitary_response",
+    )
+    shutdown = AuthorityGateway._state_mutation_context("system", "shutdown")
+    ordinary = AuthorityGateway._state_mutation_context("system", "policy_change")
+
+    assert proof["internal_state_hygiene"] is True
+    assert proof["proof_isolation_state"] is True
+    assert response["internal_state_hygiene"] is True
+    assert response["response_state_checkpoint"] is True
+    assert shutdown["internal_state_hygiene"] is True
+    assert shutdown["shutdown_state_checkpoint"] is True
+    assert ordinary["internal_state_hygiene"] is False
 
 
 @pytest.fixture
@@ -278,7 +301,7 @@ def test_state_mutation_blocked_without_will_approval_sync(refusing_will):
 
 def test_will_decision_always_has_receipt():
     """Every Will decision MUST produce a receipt with provenance."""
-    from core.will import UnifiedWill, ActionDomain
+    from core.will import ActionDomain, UnifiedWill
 
     will = UnifiedWill()
     decision = will.decide(
@@ -296,7 +319,7 @@ def test_will_decision_always_has_receipt():
 
 def test_will_refuses_when_identity_violated():
     """The Will should refuse actions that violate identity alignment."""
-    from core.will import UnifiedWill, ActionDomain
+    from core.will import ActionDomain, UnifiedWill
 
     will = UnifiedWill()
     # This tests the Will's decision-making — the specific behavior depends

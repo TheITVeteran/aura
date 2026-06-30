@@ -2849,6 +2849,33 @@ def test_dialogue_policy_allows_conversation_memory_grounding_without_retry():
     assert recall.ok is True
 
 
+def test_dialogue_policy_repairs_memory_confirmation_without_model_retry():
+    from core.phases.dialogue_policy import enforce_dialogue_contract
+    from core.phases.response_contract import ResponseContract
+
+    contract = ResponseContract(requires_memory_grounding=True)
+    retry_called = False
+
+    async def retry_generate(_repair_block: str) -> str:
+        nonlocal retry_called
+        retry_called = True
+        return "I should not need a second model turn to confirm a memory write."
+
+    repaired, validation, retried = asyncio.run(
+        enforce_dialogue_contract(
+            'Codeword "restart-87210" confirmed and stored.',
+            contract,
+            retry_generate=retry_generate,
+        )
+    )
+
+    assert validation.ok is True
+    assert retried is False
+    assert retry_called is False
+    assert repaired.startswith("From my conversation memory,")
+    assert "restart-87210" in repaired
+
+
 def test_subjective_self_reflex_contains_live_grounding():
     from interface.routes.chat import _build_subjective_self_reflex
 

@@ -5605,9 +5605,7 @@ class UnitaryResponsePhase(Phase):
                     raise RuntimeError("benchmark_artifact_contract_validation_failed") from contract_exc
 
             if strict_proof_answer_request:
-                prompt_derived_strict_solver_enabled = structured_proof_solver_enabled(
-                    origin=routing_origin
-                )
+                prompt_derived_strict_solver_enabled = True
 
                 async def _repair_symbolically_rejected_answer(
                     current_envelope: str,

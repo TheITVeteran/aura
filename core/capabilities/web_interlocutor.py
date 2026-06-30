@@ -27,12 +27,12 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
-import requests
-
 from core.capabilities.browser_controller import get_browser_controller
 from core.runtime.desktop_action_gateway import get_desktop_action_gateway
 from core.runtime.errors import record_degradation
 from core.runtime.gateways import MemoryWriteRequest
+from core.runtime.network_gateway import get_network_gateway
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.WebInterlocutor")
 
@@ -132,11 +132,15 @@ class ChromeCDPDialogueBrowser:
         self._target_ws_url: str = ""
 
     def is_available(self) -> bool:
-        try:
-            response = requests.get(f"{self.endpoint}/json/version", timeout=self.timeout)
-            return response.ok
-        except requests.RequestException:
-            return False
+        response = get_network_gateway().request(
+            "GET",
+            f"{self.endpoint}/json/version",
+            timeout=self.timeout,
+            read_only=True,
+            source="web_interlocutor.chrome_cdp.version",
+            suppress_degradation=True,
+        )
+        return bool(response.get("ok"))
 
     async def open_or_attach(self, url: str) -> BrowserPageSnapshot:
         if url:
@@ -257,25 +261,56 @@ class ChromeCDPDialogueBrowser:
 
     def _new_target(self, url: str) -> dict[str, Any]:
         target_url = str(url or "about:blank")
-        response = requests.put(
-            f"{self.endpoint}/json/new?{urllib.parse.quote(target_url, safe=':/?&=%#')}",
+        quoted = urllib.parse.quote(target_url, safe=":/?&=%#")
+        response = get_network_gateway().request(
+            "PUT",
+            f"{self.endpoint}/json/new?{quoted}",
             timeout=self.timeout,
+            source="web_interlocutor.chrome_cdp.new_target",
+            suppress_degradation=True,
         )
-        if not response.ok:
-            response = requests.get(
-                f"{self.endpoint}/json/new?{urllib.parse.quote(target_url, safe=':/?&=%#')}",
+        if not response.get("ok"):
+            response = get_network_gateway().request(
+                "GET",
+                f"{self.endpoint}/json/new?{quoted}",
                 timeout=self.timeout,
+                source="web_interlocutor.chrome_cdp.new_target_compat",
+                suppress_degradation=True,
             )
-        response.raise_for_status()
-        return dict(response.json() or {})
+        return dict(self._response_json(response, "Chrome CDP target creation") or {})
 
     def _active_target(self) -> dict[str, Any]:
-        response = requests.get(f"{self.endpoint}/json", timeout=self.timeout)
-        response.raise_for_status()
-        targets = [target for target in response.json() if target.get("type") == "page"]
+        response = get_network_gateway().request(
+            "GET",
+            f"{self.endpoint}/json",
+            timeout=self.timeout,
+            read_only=True,
+            source="web_interlocutor.chrome_cdp.targets",
+            suppress_degradation=True,
+        )
+        targets_payload = self._response_json(response, "Chrome CDP target list")
+        if not isinstance(targets_payload, list):
+            raise RuntimeError("Chrome CDP target list did not return a list")
+        targets = [target for target in targets_payload if isinstance(target, dict) and target.get("type") == "page"]
         if not targets:
             return self._new_target("about:blank")
         return dict(targets[0])
+
+    @staticmethod
+    def _response_json(response: dict[str, Any], action: str) -> Any:
+        if not response.get("ok"):
+            status = response.get("status_code")
+            error = response.get("error") or f"HTTP {status}"
+            raise RuntimeError(f"{action} failed: {error}")
+        content = response.get("content", b"")
+        if isinstance(content, bytes):
+            text = content.decode("utf-8", errors="replace")
+        else:
+            text = str(content or "")
+        try:
+            return json.loads(text or "{}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"{action} did not return JSON: {text[:200]}") from exc
 
     def _evaluate_json_expression(self, expression: str) -> dict[str, Any]:
         payload = self._cdp_call(
@@ -986,11 +1021,7 @@ class WebInterlocutorJobManager:
             finally:
                 job.updated_at = time.time()
 
-        try:
-            tracker = get_task_tracker()  # type: ignore[name-defined]
-            task = tracker.create_task(_runner(), name=f"web_interlocutor.{job_id}")
-        except NameError:
-            task = asyncio.create_task(_runner(), name=f"web_interlocutor.{job_id}")
+        task = create_tracked_task(_runner(), name=f"web_interlocutor.{job_id}")
         self._tasks[job_id] = task
         return {"ok": True, "status": "queued", "job": job.to_dict()}
 
@@ -1129,7 +1160,6 @@ _NON_REPLY_WORDS = {
     "high",
     "image",
     "write",
-    "edit",
     "look",
     "something",
     "anything",

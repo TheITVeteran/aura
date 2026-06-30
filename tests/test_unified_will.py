@@ -754,6 +754,66 @@ class TestActionCoverage:
                         domain=ActionDomain.STATE_MUTATION)
         assert d.is_approved()
 
+    def test_aura_now_defer_allows_internal_state_hygiene(self, will, monkeypatch):
+        def defer_policy(**_kwargs):
+            return {
+                "outcome": "defer",
+                "constraints": ["welfare_recovery_drive=0.700"],
+                "defers": ["welfare_recovery_required_before_action"],
+                "evidence": {
+                    "state_hash": "unit_test_defer",
+                    "tick": 12,
+                    "source": "unit_test",
+                },
+            }
+
+        monkeypatch.setattr(will, "_sample_aura_now_evidence", defer_policy)
+
+        decision = will.decide(
+            content="state_mutation:task_isolation_reset",
+            source="dnu_agi_proof_battery",
+            domain=ActionDomain.STATE_MUTATION,
+            context={
+                "internal_state_hygiene": True,
+                "proof_isolation_state": True,
+                "state_origin": "dnu_agi_proof_battery",
+                "state_cause": "task_isolation_reset",
+            },
+        )
+
+        assert decision.is_approved()
+        assert decision.outcome == WillOutcome.CONSTRAIN
+        assert "aura_now_state_hygiene_lane" in decision.constraints
+
+    def test_aura_now_defer_does_not_allow_state_hygiene_with_external_effects(self, will, monkeypatch):
+        def defer_policy(**_kwargs):
+            return {
+                "outcome": "defer",
+                "constraints": ["welfare_recovery_drive=0.700"],
+                "defers": ["welfare_recovery_required_before_action"],
+                "evidence": {
+                    "state_hash": "unit_test_defer",
+                    "tick": 13,
+                    "source": "unit_test",
+                },
+            }
+
+        monkeypatch.setattr(will, "_sample_aura_now_evidence", defer_policy)
+
+        decision = will.decide(
+            content="state_mutation:task_isolation_reset",
+            source="dnu_agi_proof_battery",
+            domain=ActionDomain.STATE_MUTATION,
+            context={
+                "internal_state_hygiene": True,
+                "proof_isolation_state": True,
+                "external_action": True,
+            },
+        )
+
+        assert decision.outcome == WillOutcome.DEFER
+        assert decision.reason == "aura_now_defer: present-state policy requires stabilization or observation first"
+
     def test_expression_path(self, will):
         d = will.decide(content="I find this fascinating", source="spontaneous",
                         domain=ActionDomain.EXPRESSION)

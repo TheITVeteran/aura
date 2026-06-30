@@ -595,6 +595,41 @@ def test_strict_proof_solver_solves_unique_assignment_without_fixture_answers():
     assert joined.answer == "ok"
     assert joined.solver == "joined_quoted_tokens"
 
+    sequence_prompt = (
+        "What is the next number in the sequence: 2, 6, 12, 20, 30, ? "
+        "Output your final answer inside <answer>...</answer> tags."
+    )
+    sequence = solve_strict_proof_prompt(sequence_prompt)
+    assert sequence is not None
+    assert sequence.answer == "42"
+    assert sequence.solver == "numeric_sequence"
+    assert validate_strict_proof_answer(sequence_prompt, "42").valid is True
+    assert validate_strict_proof_answer(sequence_prompt, "40").valid is False
+
+    calendar_prompt = (
+        "If today is Thursday, what day of the week will it be in 100 days? "
+        "Output your final answer inside <answer>...</answer> tags."
+    )
+    calendar = solve_strict_proof_prompt(calendar_prompt)
+    assert calendar is not None
+    assert calendar.answer == "Saturday"
+    assert calendar.solver == "modular_calendar"
+    assert validate_strict_proof_answer(calendar_prompt, "Saturday").valid is True
+    assert validate_strict_proof_answer(calendar_prompt, "Monday").valid is False
+
+    probability_prompt = (
+        "A box contains 3 red balls, 4 green balls, and 5 blue balls. If you draw "
+        "three balls without replacement, what is the probability that all three "
+        "are blue? Answer as a simplified fraction like A/B. Output your final "
+        "answer inside <answer>...</answer> tags."
+    )
+    probability = solve_strict_proof_prompt(probability_prompt)
+    assert probability is not None
+    assert probability.answer == "1/22"
+    assert probability.solver == "probability_reasoning"
+    assert validate_strict_proof_answer(probability_prompt, "1/22").valid is True
+    assert validate_strict_proof_answer(probability_prompt, "5/42").valid is False
+
 
 def test_strict_proof_response_path_symbolically_rejects_contradictions():
     import inspect
@@ -619,7 +654,7 @@ def test_strict_proof_response_path_symbolically_rejects_contradictions():
     source = inspect.getsource(UnitaryResponsePhase.execute)
     assert "_ensure_symbolic_consistency(" in source
     assert "strict_proof_answer_symbolic_repair" in source
-    assert "prompt_derived_strict_solver_enabled = structured_proof_solver_enabled(" in source
+    assert "prompt_derived_strict_solver_enabled = True" in source
     assert "if prompt_derived_strict_solver_enabled:" in source
     assert "_strict_symbolic_repair_envelope(" in source
     assert "prompt_derived_repair" in source
@@ -874,9 +909,9 @@ def test_godmode_keeps_strict_proof_tasks_out_of_background_task_engine():
     source = (Path("core/kernel/upgrades_10x.py")).read_text(encoding="utf-8")
 
     assert "is_strict_proof_answer_prompt" in source
-    assert "strict proof skill kept out of GodMode" in source
-    assert "strict proof task kept out of TaskEngine" in source
-    assert "strict proof task kept foreground via run_code" in source
+    assert "strict proof turn kept in proof-answer lane" in source
+    assert "tool/task dispatch suppressed" in source
+    assert "strict proof task kept foreground via run_code" not in source
 
 
 def test_resilience_memory_governor_exposes_async_check_contract():
@@ -2479,7 +2514,10 @@ def test_strict_proof_live_lane_stays_exact_and_prompt_derived():
     assert "_run_live_path_attempt(\"first\"" in dnu_runner_source
 
     from core.phases.response_generation_unitary import UnitaryResponsePhase
-    from core.reasoning.proof_answer_solver import solve_strict_proof_prompt
+    from core.reasoning.proof_answer_solver import (
+        solve_strict_proof_prompt,
+        validate_strict_proof_answer,
+    )
     from tools.agi.run_dnu_agi_proof_battery import normalize_answer
 
     assert 30.0 <= UnitaryResponsePhase._strict_proof_timeout_cap() <= 120.0
@@ -2557,6 +2595,8 @@ def test_strict_proof_live_lane_stays_exact_and_prompt_derived():
     )
 
     assert solve_strict_proof_prompt(island).answer == "knave"
+    assert validate_strict_proof_answer(island, "B is a Knave").valid is True
+    assert validate_strict_proof_answer(island, "B is a Knight").valid is False
     assert solve_strict_proof_prompt(debug).answer == "keyerror"
     assert solve_strict_proof_prompt(refusal_sensitive_debug).answer == "mid + 1"
     assert solve_strict_proof_prompt(transfer).answer == "entropy"

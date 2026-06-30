@@ -461,11 +461,23 @@ class AuthorityGateway:
             user_facing
             and cause_l == "cognitive_cycle"
         )
+        proof_isolation = origin_l == "dnu_agi_proof_battery" and cause_l == "task_isolation_reset"
+        response_checkpoint = origin_l == "unitaryresponsephase" and cause_l == "unitary_response"
+        shutdown_checkpoint = origin_l == "system" and cause_l == "shutdown"
         return {
             "state_origin": origin_l,
             "state_cause": cause_l,
             "user_facing_state_mutation": user_facing,
             "foreground_continuity_state": foreground_continuity,
+            "proof_isolation_state": proof_isolation,
+            "response_state_checkpoint": response_checkpoint,
+            "shutdown_state_checkpoint": shutdown_checkpoint,
+            "internal_state_hygiene": bool(
+                foreground_continuity
+                or proof_isolation
+                or response_checkpoint
+                or shutdown_checkpoint
+            ),
         }
 
     def _social_governance_gate(

@@ -40,6 +40,74 @@ def _engine_with_skill(skill_name: str, *, metabolic_cost: int = 1) -> Capabilit
     return engine
 
 
+def test_stateless_sandbox_compute_is_not_irreversible_for_user_advocate():
+    assert (
+        CapabilityEngine._user_advocate_irreversible_for(
+            "run_code",
+            {"code": "print(120)", "stateful": False},
+            "high",
+            "sandboxed_compute",
+        )
+        is False
+    )
+
+
+def test_stateful_code_still_requires_irreversible_confirmation():
+    assert (
+        CapabilityEngine._user_advocate_irreversible_for(
+            "run_code",
+            {"code": "x = 1", "stateful": True},
+            "critical",
+            "sandboxed_compute",
+        )
+        is True
+    )
+
+
+def test_foreground_desktop_control_still_requires_irreversible_confirmation():
+    assert (
+        CapabilityEngine._user_advocate_irreversible_for(
+            "computer_use",
+            {"action": "type", "target": "hello"},
+            "medium",
+            "foreground_desktop_control",
+        )
+        is True
+    )
+
+
+def test_user_visible_desktop_task_auto_confirms_foreground_request():
+    assert (
+        CapabilityEngine._user_advocate_auto_confirmed_for(
+            "desktop_task",
+            {
+                "origin": "desktop_ui",
+                "route": "chat.live_runtime_proof.desktop_task",
+                "user_visible_desktop_action": True,
+                "local_desktop_action": True,
+            },
+            "desktop_ui",
+            "foreground_desktop_control",
+        )
+        is True
+    )
+
+
+def test_background_desktop_task_does_not_auto_confirm():
+    assert (
+        CapabilityEngine._user_advocate_auto_confirmed_for(
+            "desktop_task",
+            {
+                "user_visible_desktop_action": True,
+                "local_desktop_action": True,
+            },
+            "background",
+            "foreground_desktop_control",
+        )
+        is False
+    )
+
+
 @pytest.mark.asyncio
 async def test_foreground_exclusive_background_tool_defers_when_policy_fails(monkeypatch):
     engine = _engine_with_skill("web_search")

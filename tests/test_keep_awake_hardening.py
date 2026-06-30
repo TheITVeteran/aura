@@ -61,12 +61,17 @@ def test_keep_awake_start_uses_injected_launcher():
 
 def test_keep_awake_default_launcher_uses_subprocess_gateway(monkeypatch):
     calls = []
+    active_tokens = []
 
     class _GatewayProcess(_Process):
         pass
 
     class _Gateway:
         def spawn(self, argv, **kwargs):
+            from core.governance_context import get_active_governance
+
+            token = get_active_governance()
+            active_tokens.append(token)
             calls.append((tuple(argv), kwargs))
             return _GatewayProcess(tuple(argv))
 
@@ -87,6 +92,10 @@ def test_keep_awake_default_launcher_uses_subprocess_gateway(monkeypatch):
             },
         )
     ]
+    assert active_tokens
+    assert active_tokens[0] is not None
+    assert active_tokens[0].domain == "environment_action"
+    assert active_tokens[0].source == "core.runtime.keep_awake.caffeinate_assertion"
 
 
 def test_keep_awake_stop_terminates_active_assertion():

@@ -2,20 +2,89 @@
 
 ## Current Phase
 
-Final general infrastructure hardening for arbitrary bounded environments.
-NetHack remains a stress adapter, not a shared-strategy target. The canonical
-environment kernel now includes live observation normalization, belief/spatial
-memory, shared HTN policy, simulation, governance, action gateway, command
-compilation, closed-loop action semantics, action budgets, semantic outcome
-learning, hindsight replay, abstraction discovery, curriculum generation,
-run lifecycle, postmortems, external proof gating, and trace replay.
+Final clean-tree proof normalization. The configured `make final-proof` replay
+has passed every substantive runtime/proof gate on the current source, then
+correctly stopped at final-claim validation because the live desktop verdict
+was generated from an uncommitted source tree. The next checkpoint is commit,
+push, clean-tree live desktop proof, final-claim validation, and final artifact
+normalization.
 
 ## Current Milestone
 
-General infrastructure hardening for arbitrary bounded environments. The
-capability matrix in `core/environment/capability_matrix.py` is executable
-and covers the live organs required for NetHack-scale runs without encoding
-NetHack strategy in shared code.
+Final proof and live-runtime closure. The current worktree contains general
+gateway/governance fixes for web-interlocutor, desktop/user-advocate policy,
+strict proof dispatch, internal state hygiene, keep-awake governance, file
+write governance, and memory-grounded dialogue repair.
+
+## Latest Final-Proof Replay Before Clean-Tree Commit (2026-06-29)
+
+### Gaps Addressed
+
+- **Consequential writes stayed on canonical gateways**: deletion snapshots and
+  local procedural media writes now use `FileWriteGateway`.
+- **Visible web interlocution stayed governed**: web-interlocutor HTTP now uses
+  the network gateway and tracked tasks.
+- **Strict proof prompts no longer escape into tool/task dispatch**: GodMode
+  strict proof requests remain in the answer lane.
+- **State hygiene is explicit**: checkpoint/replay state mutation contexts are
+  treated as constrained internal hygiene rather than broad user-facing state
+  mutation authority.
+- **Desktop user-advocate routing is more precise**: stateless sandbox code is
+  not treated as irreversible, stateful code still is, visible local desktop
+  actions can be auto-confirmed for explicit user requests, and background
+  desktop actions remain unconfirmed.
+- **Live memory confirmations stay grounded**: deterministic memory repair now
+  preserves `From my conversation memory` provenance.
+- **Keep-awake assertions are governed**: `caffeinate` spawns run inside an
+  internal environment-action governance scope.
+
+### Latest Commands Run
+
+```bash
+python tools/production_surface_lint.py --scope production --out artifacts/current/production_surface_lint.json
+python tools/agi/run_dnu_agi_proof_battery.py --full --model-tier primary --stop-existing-runtime --out artifacts/current/agi_live
+python tools/agi/validate_dnu_final_bundle.py artifacts/current/agi_live
+python tools/learning/run_continual_learning_battery.py --full --out artifacts/current/continual_learning
+env AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 AURA_MLX_WORKER_RSS_LIMIT_GB=28 AURA_METAL_CACHE_CAP_GB=6 AURA_ALLOW_UNSAFE_MEMORY_LIMITS=0 AURA_TIMESCALE_BRIDGE_SAMPLE_INTERVAL_S=2 python tools/live_boot_proof.py --mode desktop --port 8013 --conversation-soak-turns 12 --restart-continuity --boot-timeout 600 --out-dir artifacts/current/live_desktop_runtime
+env AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32 AURA_MLX_WORKER_RSS_LIMIT_GB=28 AURA_METAL_CACHE_CAP_GB=6 AURA_ALLOW_UNSAFE_MEMORY_LIMITS=0 AURA_TIMESCALE_BRIDGE_SAMPLE_INTERVAL_S=2 AURA_FINAL_PROOF_LIVE_TIMEOUT_SECONDS=1200 AURA_FINAL_PROOF_LIVE_BOOT_TIMEOUT_SECONDS=600 AURA_FINAL_PROOF_LIVE_SOAK_TURNS=12 AURA_FINAL_PROOF_LIVE_PORT=8013 make final-proof
+```
+
+### Evidence
+
+- Production surface lint passed.
+- Focused capability, web, deletion/media, strict proof, Will/state hygiene,
+  governance-context, keep-awake, and dialogue/memory regressions passed.
+- DNU full proof rerun completed 100/100; bundle validation passed and retained
+  the bounded `DNU AGI NOT PROVEN` verdict.
+- Continual learning passed 5/5 with governed stateless `run_code`.
+- Live desktop runtime proof passed 12/12 CognitiveEngine soak turns, desktop
+  file verification, restart continuity, clean shutdown, and about 20.1 GB
+  peak RSS.
+- Full `make final-proof` passed compile, both pytest collection modes,
+  flagship readiness, enterprise gate, production readiness, architecture map,
+  production surface lint, proof integrity lint, live desktop runtime, DNU,
+  agency emergence, external live validation, unified scenario, continual
+  learning, novel environment, longevity soak, receipt coverage, Aletheia Tier
+  5, and artifact consistency.
+- The only final-proof failure was final-claim validation:
+  `Live desktop runtime proof must come from a clean committed tree.`
+
+### Closeout Position
+
+- Functional closeout estimate: about **99.65%**. The remaining work is no
+  longer a substantive proof-gate failure; it is clean-tree proof normalization
+  and final artifact commit/push.
+- Estimated remaining work: **1 consolidated checkpoint**, likely **1 smaller
+  sub-checkpoint**:
+  1. Commit/push this checkpoint.
+  2. Rerun live desktop proof from committed source and rerun final-claim
+     validation or full `make final-proof` if needed.
+  3. Normalize final artifacts and leave the worktree clean.
+
+### Still Open
+
+- The current live desktop verdict is `passed=true` but `git_dirty=true`.
+- Final claim validation must be rerun after a clean-tree live desktop proof.
 
 ## Latest DNU Proof Purification / 32B Strict Lane (2026-06-29)
 

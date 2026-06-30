@@ -12888,8 +12888,9 @@ async def api_chat(
 
         allow_chat_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
         # Session-memory pin/recall is a canonical memory gateway operation, not
-        # a language-model shortcut. Keep it available on desktop-required
-        # surfaces so live conversation continuity never depends on generation.
+        # a language-model shortcut. Desktop-required surfaces collect/write the
+        # canonical state before generation and bind it into CognitiveEngine
+        # below; non-required API surfaces may answer directly from that gateway.
         allow_memory_state_fastpath = not is_benchmark and not desktop_requires_cognitive_engine
         allow_runtime_status_fastpath = not is_benchmark and not desktop_requires_cognitive_engine
         allow_governed_action_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine

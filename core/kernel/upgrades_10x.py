@@ -1224,33 +1224,11 @@ class GodModeToolPhase(Phase):
                 )
                 logger.debug("GodMode: matched skill refresh skipped: %s", exc)
 
-        if proof_eval_turn and intent_type == "SKILL":
-            if "run_code" in matched_skill_hints and self._looks_like_direct_run_code_request(
-                objective
-            ):
-                state.response_modifiers["matched_skills"] = ["run_code"]
-                matched_skill_hints = ["run_code"]
-                logger.info("⚡ GodMode: strict proof skill kept foreground via run_code.")
-            else:
-                state.response_modifiers["intent_type"] = "CHAT"
-                state.response_modifiers.pop("matched_skills", None)
-                logger.info("⚡ GodMode: strict proof skill kept out of GodMode.")
-                return state
-
-        if proof_eval_turn and intent_type == "TASK":
-            if "run_code" in matched_skill_hints and self._looks_like_direct_run_code_request(
-                objective
-            ):
-                intent_type = "SKILL"
-                state.response_modifiers["intent_type"] = "SKILL"
-                state.response_modifiers["matched_skills"] = ["run_code"]
-                matched_skill_hints = ["run_code"]
-                logger.info("⚡ GodMode: strict proof task kept foreground via run_code.")
-            else:
-                state.response_modifiers["intent_type"] = "CHAT"
-                state.response_modifiers.pop("matched_skills", None)
-                logger.info("⚡ GodMode: strict proof task kept out of TaskEngine.")
-                return state
+        if proof_eval_turn and intent_type in {"SKILL", "TASK"}:
+            state.response_modifiers["intent_type"] = "CHAT"
+            state.response_modifiers.pop("matched_skills", None)
+            logger.info("⚡ GodMode: strict proof turn kept in proof-answer lane; tool/task dispatch suppressed.")
+            return state
 
         if (
             intent_type == "SKILL"

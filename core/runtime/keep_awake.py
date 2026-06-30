@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -101,13 +102,22 @@ class AssertionProcess:
 
 
 def _spawn_assertion_process(command: tuple[str, ...]):
-    return get_subprocess_gateway().spawn(
-        command,
-        stdout_path=os.devnull,
-        stderr_path=os.devnull,
-        start_new_session=True,
-        source="core.runtime.keep_awake.caffeinate_assertion",
-    )
+    with local_internal_governed_scope(
+        "core.runtime.keep_awake.caffeinate_assertion",
+        domain="environment_action",
+        constraints={
+            "maintenance_surface": "keep_awake",
+            "effect": "prevent_idle_sleep",
+            "user_visible": False,
+        },
+    ):
+        return get_subprocess_gateway().spawn(
+            command,
+            stdout_path=os.devnull,
+            stderr_path=os.devnull,
+            start_new_session=True,
+            source="core.runtime.keep_awake.caffeinate_assertion",
+        )
 
 
 def _register_assertion_with_runtime_hygiene(process: Any, command: tuple[str, ...]) -> None:

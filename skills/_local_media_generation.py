@@ -19,6 +19,7 @@ except ImportError:
 
 from core.config import config
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from infrastructure import BaseSkill
 
 logger = logging.getLogger("Skills.LocalMedia")
@@ -56,7 +57,8 @@ class LocalMediaGenerationSkill(BaseSkill):
             )
 
         raw = b"".join(b"\x00" + row for row in rows)
-        path.write_bytes(
+        get_file_write_gateway().write_bytes(
+            path,
             b"".join(
                 [
                     b"\x89PNG\r\n\x1a\n",
@@ -64,7 +66,8 @@ class LocalMediaGenerationSkill(BaseSkill):
                     chunk(b"IDAT", zlib.compress(raw, level=6)),
                     chunk(b"IEND", b""),
                 ]
-            )
+            ),
+            source="local_media_generation.procedural_png",
         )
 
     def _generate_procedural_image(self, prompt: str) -> dict[str, Any]:

@@ -103,6 +103,7 @@ _USER_FACING_CONTEXT_ORIGINS = frozenset(
         "external",
         "desktop",
         "desktop-ui",
+        "desktop_ui",
         "native-shell",
         "tauri",
     }
@@ -2061,6 +2062,67 @@ class CapabilityEngine(AuraBaseModule):
         return "low"
 
     @staticmethod
+    def _user_advocate_irreversible_for(
+        skill_name: str,
+        params: dict[str, Any],
+        risk_level: str,
+        effect_scope: str,
+    ) -> bool:
+        """Return whether a skill needs explicit irreversible-action consent.
+
+        High-risk sandboxed compute is not automatically irreversible. The
+        user advocate should still block stateful code, privileged mutations,
+        and external/user-visible changes without confirmation, but a
+        non-stateful sandbox retention probe is not a destructive act merely
+        because the generic code-execution skill carries elevated risk.
+        """
+
+        if str(risk_level or "").lower() == "critical":
+            return True
+        if skill_name == "run_code":
+            return bool((params or {}).get("stateful", True))
+        scope = str(effect_scope or "").lower()
+        return scope in {
+            "desktop_file_io",
+            "foreground_desktop_control",
+            "privileged_mutation",
+            "state_mutation",
+            "subprocess",
+        }
+
+    @staticmethod
+    def _user_advocate_auto_confirmed_for(
+        skill_name: str,
+        ctx: dict[str, Any],
+        exec_source: str,
+        effect_scope: str,
+    ) -> bool:
+        """Allow explicitly user-visible foreground desktop requests to proceed.
+
+        The desktop_task/computer_use stack is still effect-verified downstream.
+        This only prevents the user-advocate from re-blocking a desktop action
+        that already arrived through the live user/proof foreground lane with
+        visible-local-action metadata.
+        """
+
+        if skill_name not in {"desktop_task", "computer_use"}:
+            return False
+        if str(effect_scope or "").lower() not in {
+            "desktop_file_io",
+            "foreground_desktop_control",
+        }:
+            return False
+        if str(exec_source or "").lower() not in _USER_FACING_CONTEXT_ORIGINS:
+            return False
+        return bool(
+            ctx.get("user_visible_desktop_action")
+            or ctx.get("local_desktop_action")
+            or ctx.get("desktop_task_owned_by")
+            or str(ctx.get("route") or "").startswith(("chat.", "voice."))
+            or ctx.get("proof_evaluation_contract")
+        )
+
+    @staticmethod
     def _input_summary_for(meta: SkillMetadata) -> str:
         schema = meta.schema_def or {}
         props = schema.get("properties", {}) if isinstance(schema, dict) else {}
@@ -3215,11 +3277,9 @@ class CapabilityEngine(AuraBaseModule):
             # indefensible actions, the Minds hold severe worst cases, Tron protects
             # the user, and the Machine enforces least-privilege external scope.
             try:
-                from core.container import ServiceContainer as _SC
-
                 _action_desc = f"{skill_name} {str(params)[:200]}"
                 _risk_hint = risk
-                _kokoro = _SC.get("kokoro", default=None)
+                _kokoro = ServiceContainer.get("kokoro", default=None)
                 _escalate = False
                 if _kokoro is not None:
                     _verdict = _kokoro.quick_check(_action_desc, context={"risk_level": _risk_hint})
@@ -3241,7 +3301,7 @@ class CapabilityEngine(AuraBaseModule):
                             "error": f"Conscience blocked: {_verdict.reasoning}",
                             "status": "blocked_by_conscience",
                         }
-                _minds = _SC.get("culture_mind", default=None)
+                _minds = ServiceContainer.get("culture_mind", default=None)
                 if _minds is not None:
                     # On escalation, run the full model-driven simulation; otherwise the
                     # zero-latency heuristic. Advisory either way.
@@ -3265,7 +3325,7 @@ class CapabilityEngine(AuraBaseModule):
                             "error": reason,
                             "status": "blocked_by_outcome_simulator",
                         }
-                _tron = _SC.get("tron", default=None)
+                _tron = ServiceContainer.get("tron", default=None)
                 if _tron is not None:
                     confirmed = bool(
                         params.get("confirmed")
@@ -3273,6 +3333,12 @@ class CapabilityEngine(AuraBaseModule):
                         or ctx.get("confirmed")
                         or ctx.get("user_confirmed")
                         or (exec_source in _USER_FACING_CONTEXT_ORIGINS and _risk_hint not in ("high", "critical"))
+                        or self._user_advocate_auto_confirmed_for(
+                            skill_name,
+                            ctx,
+                            exec_source,
+                            effect_scope,
+                        )
                     )
                     user_benefit = (
                         str(params.get("user_benefit") or ctx.get("user_benefit") or "").strip()
@@ -3285,7 +3351,12 @@ class CapabilityEngine(AuraBaseModule):
                     )
                     _review = _tron.review_action({
                         "description": _action_desc,
-                        "irreversible": _risk_hint in ("high", "critical"),
+                        "irreversible": self._user_advocate_irreversible_for(
+                            skill_name,
+                            params,
+                            _risk_hint,
+                            effect_scope,
+                        ),
                         "confirmed": confirmed,
                         "user_benefit": user_benefit,
                         "explanation": f"skill {skill_name}",
@@ -3301,7 +3372,7 @@ class CapabilityEngine(AuraBaseModule):
                             "error": f"User advocate blocked: {reason}",
                             "status": "blocked_by_user_advocate",
                         }
-                _machine = _SC.get("the_machine", default=None)
+                _machine = ServiceContainer.get("the_machine", default=None)
                 _scope = str(effect_scope or "").lower()
                 if _machine is not None and _scope in ("external", "network", "online", "public"):
                     _disc = _machine.minimize(

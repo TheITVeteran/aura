@@ -550,7 +550,7 @@ def _ground_live_voice_surface(text: str, contract: object | None) -> str:
 
     grounding = "From my live runtime state, "
     if getattr(contract, "requires_memory_grounding", False):
-        grounding = "From this conversation memory, "
+        grounding = "From my conversation memory, "
     elif getattr(contract, "requires_state_reflection", False):
         grounding = "From my current live state, "
     elif getattr(contract, "requires_reasoned_defense", False):

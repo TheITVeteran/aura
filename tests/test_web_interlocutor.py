@@ -5,8 +5,8 @@ import pytest
 from core.capabilities.web_interlocutor import (
     BrowserPageSnapshot,
     ChromeVisibleDialogueBrowser,
-    WebInterlocutorResult,
     WebInterlocutorJobManager,
+    WebInterlocutorResult,
     WebInterlocutorSession,
     _extract_new_interlocutor_text,
     _url_allows_readability_fallback,

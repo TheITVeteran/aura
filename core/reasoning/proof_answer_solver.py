@@ -121,6 +121,15 @@ def _canonicalize_candidate_for_solved_prompt(
         )
         if passive_match:
             return passive_match.group(1).strip(" \t\r\n\"'`.,;:")
+    if solved.solver == "knights_and_knaves":
+        role_match = re.search(
+            r"\b(?:[AB]\s+is\s+(?:a\s+)?|is\s+(?:a\s+)?|answer\s+is\s+(?:a\s+)?)"
+            r"(?P<role>knight|knave)\b",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        if role_match:
+            return role_match.group("role")
     return candidate
 
 
@@ -406,10 +415,10 @@ def _solve_numeric_sequence(prompt: str) -> ProofAnswer | None:
         return None
     if all(nums[i] == nums[i - 1] + nums[i - 2] for i in range(2, len(nums))):
         return ProofAnswer(answer=str(nums[-1] + nums[-2]), solver="numeric_sequence")
-    diffs = [b - a for a, b in zip(nums, nums[1:], strict=True)]
+    diffs = [b - a for a, b in zip(nums, nums[1:], strict=False)]
     if len(set(diffs)) == 1:
         return ProofAnswer(answer=str(nums[-1] + diffs[-1]), solver="numeric_sequence")
-    second = [b - a for a, b in zip(diffs, diffs[1:], strict=True)]
+    second = [b - a for a, b in zip(diffs, diffs[1:], strict=False)]
     if second and len(set(second)) == 1:
         return ProofAnswer(answer=str(nums[-1] + diffs[-1] + second[-1]), solver="numeric_sequence")
     return None
