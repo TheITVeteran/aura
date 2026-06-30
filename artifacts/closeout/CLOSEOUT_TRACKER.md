@@ -1,20 +1,82 @@
 # Aura Closeout Tracker
 
 This tracker records checkpoint evidence for the final closeout effort. It is
-not a claim that Aura is finished; it marks what has been verified and what
-remains open.
+not a claim that metaphysical consciousness, personhood, ASI, or solved AGI has
+been proven; it marks what has been verified by the configured local proof
+profile and what remains outside those evidence limits.
 
 ## Current Estimate
 
-- Overall closeout: 99.68%
-- Remaining checkpoints: 1 consolidated checkpoint, likely 1 smaller
-  sub-checkpoint
-- Current phase: final clean-tree proof normalization. The first committed-tree
-  replay exposed and reproduced a clause-scoping defect in persistent
-  commitment consistency plus a first-person grounding repair gap. Both are
-  fixed in shared runtime code with 263 chat/full-mind regressions passing.
-  Next checkpoint is commit, push, repeat the clean-tree live desktop proof,
-  final-claim validation, and final artifact normalization.
+- Configured local final-proof closeout: 100% verified before this tracker
+  update.
+- Remaining checkpoints for this local final-proof profile: 0 after committing
+  and pushing the artifact normalization in this checkpoint.
+- Current phase: final local closure. `make final-proof` completed all Makefile
+  gates through `tools/final_claim_validator.py`; live desktop runtime, DNU,
+  agency, external validation, unified scenario, continual learning, novel
+  environment adaptation, longevity, receipt coverage, Aletheia Tier 5,
+  artifact consistency, and final claim validation all passed. Claims remain
+  bounded to `CLAIMS_MATRIX.md`.
+- Remaining outside this evidence profile: independent third-party evaluation,
+  long-duration 24h/72h/7d soaks, broader product hardening on other machines,
+  and any metaphysical/personhood/ASI claims.
+
+## Checkpoint 2026-06-30-02: Final Local Proof Closure
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- The closeout doctrine requires the full configured proof chain to pass on a
+  clean committed source tree, with the live desktop user path included instead
+  of only backend proof paths.
+- This run needed to prove that the 32B live lane could boot, hold the desktop
+  conversation path through `CognitiveEngine`, use the governed desktop action
+  lane, preserve restart continuity, keep memory bounded, and then pass the
+  complete final-proof battery from the same committed source baseline.
+
+Evidence:
+
+- Clean-tree live desktop proof before final-proof:
+  `artifacts/current/live_desktop_runtime/live_proof_20260630_081454_verdict.json`,
+  passed with `git_dirty=false`, commit
+  `c9ff3319d222007e9bf2b8166bdfd3ff2100c31c`, peak RSS about 20.1GB.
+- Embedded final-proof live desktop proof:
+  `artifacts/current/live_desktop_runtime/live_proof_20260630_082129_verdict.json`,
+  passed with `git_dirty=false`, commit
+  `c9ff3319d222007e9bf2b8166bdfd3ff2100c31c`, peak RSS about 20.1GB.
+- DNU AGI proof battery:
+  `artifacts/current/agi_live`, 100/100 tasks passed and final bundle
+  validation passed.
+- Agency/entity battery, external live validation, unified system scenario,
+  continual learning battery, novel environment adaptation, and longevity proof
+  soak all passed their configured validators in `make final-proof`.
+- Receipt coverage:
+  `artifacts/current/receipt_coverage.json`, `passed=true`,
+  `total_events=318`, `total_receipts=318`, `broken_chains=0`.
+- Aletheia Tier 5:
+  `artifacts/current/aletheia_tier5_validation.json`, `passed=true`,
+  verdict `tier5_operational_threshold_met`, 500 worlds, 30 domain families,
+  average world score `0.990664`.
+- Artifact consistency:
+  `artifacts/current/artifact_consistency.json`, `passed=true`.
+- Final claim validation:
+  `artifacts/current/final_claim_validation.json`, `passed=true`.
+
+Claim boundary:
+
+- The strongest verified closure label for this checkpoint is
+  "proof-bearing AGI-candidate cognitive architecture" under the configured
+  local final-proof profile.
+- This does not prove Aura is AGI, conscious, sentient, a legal/moral person,
+  indefinitely autonomous, or ASI. Those remain explicitly outside the local
+  evidence profile.
+
+Still open:
+
+- Commit and push this final artifact/tracker normalization.
+- Continue any future work as post-closeout product hardening or independent
+  evaluation rather than as unverified claim expansion.
 
 ## Checkpoint 2026-06-29-04: DNU Proof Purification / 32B Strict Lane
 

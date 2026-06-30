@@ -1,9 +1,9 @@
 {
   "raw_llm": {
     "status": "RUN",
-    "pass_rate": 0.0833,
+    "pass_rate": 0.1667,
     "total_tasks": 12,
-    "passed": 1,
+    "passed": 2,
     "sample_categories": {
       "novel_reasoning": 2,
       "coding": 2,
@@ -15,9 +15,9 @@
   },
   "llm_with_tools": {
     "status": "RUN",
-    "pass_rate": 0.0833,
+    "pass_rate": 0.1667,
     "total_tasks": 12,
-    "passed": 1,
+    "passed": 2,
     "sample_categories": {
       "novel_reasoning": 2,
       "coding": 2,

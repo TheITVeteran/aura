@@ -8,7 +8,7 @@ Generated: `0.0`
 
 - Subsystems: 146
 - Python files: 2050
-- Python lines: 576326
+- Python lines: 576569
 - Dependency edges: 869
 - ServiceContainer `.get()` calls: 1666
 - ServiceContainer registrations: 409
@@ -18,9 +18,9 @@ Generated: `0.0`
 
 ```mermaid
 graph TD
-    runtime["runtime<br/>113 files, 27323 lines"]
+    runtime["runtime<br/>113 files, 27349 lines"]
     utils["utils<br/>44 files, 5993 lines"]
-    brain["brain<br/>154 files, 59950 lines"]
+    brain["brain<br/>154 files, 60027 lines"]
     memory["memory<br/>93 files, 21990 lines"]
     consciousness["consciousness<br/>139 files, 65205 lines"]
     resilience["resilience<br/>54 files, 12606 lines"]
@@ -42,11 +42,11 @@ graph TD
     organism["organism<br/>8 files, 1875 lines"]
     world_model["world_model<br/>11 files, 3278 lines"]
     continuity["continuity<br/>7 files, 238 lines"]
-    conversation["conversation<br/>10 files, 7289 lines"]
+    conversation["conversation<br/>10 files, 7361 lines"]
     skills["skills<br/>82 files, 23481 lines"]
     being["being<br/>25 files, 5782 lines"]
     learning["learning<br/>28 files, 7592 lines"]
-    phases["phases<br/>29 files, 19427 lines"]
+    phases["phases<br/>29 files, 19495 lines"]
     reasoning["reasoning<br/>11 files, 4979 lines"]
     social["social<br/>19 files, 5145 lines"]
     tasks["tasks<br/>3 files, 451 lines"]
@@ -1040,13 +1040,13 @@ graph TD
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | consciousness | 139 | 65205 | 2758794 | 41 | 31 |
-| brain | 154 | 59950 | 2572424 | 43 | 48 |
+| brain | 154 | 60027 | 2576232 | 43 | 48 |
 | core_root | 177 | 56543 | 2309356 | 100 | 0 |
-| runtime | 113 | 27323 | 979072 | 46 | 126 |
+| runtime | 113 | 27349 | 979924 | 46 | 126 |
 | skills | 82 | 23481 | 976209 | 32 | 8 |
 | memory | 93 | 21990 | 893773 | 21 | 35 |
 | orchestrator | 43 | 19557 | 865244 | 132 | 9 |
-| phases | 29 | 19427 | 881961 | 35 | 7 |
+| phases | 29 | 19495 | 885064 | 35 | 7 |
 | agency | 43 | 16301 | 663081 | 33 | 19 |
 | adaptation | 27 | 12670 | 506593 | 22 | 14 |
 | resilience | 54 | 12606 | 509722 | 17 | 27 |
@@ -1056,7 +1056,7 @@ graph TD
 | autonomy | 23 | 8183 | 335291 | 18 | 6 |
 | learning | 28 | 7592 | 303464 | 16 | 7 |
 | security | 33 | 7450 | 301098 | 15 | 13 |
-| conversation | 10 | 7289 | 271811 | 12 | 8 |
+| conversation | 10 | 7361 | 273639 | 12 | 8 |
 | perception | 23 | 6716 | 270387 | 12 | 11 |
 | capabilities | 14 | 6409 | 246987 | 11 | 5 |
 | kernel | 11 | 6332 | 264377 | 25 | 5 |
