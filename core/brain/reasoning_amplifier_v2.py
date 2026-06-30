@@ -765,6 +765,30 @@ class ReasoningAmplifierV2:
 
         verdicts = await asyncio.gather(*[self._verify(c, problem, context) for c in candidates])
         clean = [c for c, v in zip(candidates, verdicts) if getattr(v, "ok", True)]
+        # Harvest the NEGATIVE signal the SFT-only path discards: verified-correct vs
+        # verified-wrong candidates for the SAME problem become sound DPO preference pairs
+        # (RLVR data, the verifier is the reward). Best-effort; never affects this turn's answer.
+        try:
+            from core.learning.verifiable_preference_harness import (
+                Attempt,
+                get_verifiable_preference_harness,
+            )
+
+            get_verifiable_preference_harness().ingest(
+                problem.objective,
+                [
+                    Attempt(
+                        candidate=c,
+                        verified=bool(getattr(v, "ok", False)),
+                        checked=bool(getattr(v, "checked", False)),
+                        confidence=float(getattr(v, "score", 0.0) or 0.0),
+                    )
+                    for c, v in zip(candidates, verdicts)
+                ],
+                domain=problem.task_type,
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError, ImportError) as exc:
+            record_degradation("amplifier_v2_preference_harvest", exc, severity="debug")
         pool = clean or candidates
         result = await amplify(pool)
         winner = result.answer or pool[0]
