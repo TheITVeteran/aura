@@ -154,6 +154,7 @@ _FOREGROUND_EXCLUSIVE_BACKGROUND_SKILLS = frozenset(
         "search_web",
         "sovereign_browser",
         "sovereign_network",
+        "web_interlocutor",
         "web_search",
     }
 )
@@ -191,6 +192,7 @@ _EXTERNAL_IO_EFFECT_SKILLS = frozenset(
         "grounded_search",
         "sovereign_browser",
         "sovereign_network",
+        "web_interlocutor",
         "web_search",
     }
 )
@@ -217,6 +219,7 @@ _CRITICAL_ACTION_SKILLS = frozenset(
         "self_repair",
         "sovereign_terminal",
         "train_self",
+        "web_interlocutor",
     }
 )
 
@@ -861,6 +864,7 @@ class CapabilityEngine(AuraBaseModule):
             "sovereign_browser",
             "sovereign_terminal",
             "sovereign_network",
+            "web_interlocutor",
             # File & memory
             "file_operation",
             "memory_ops",
@@ -971,6 +975,13 @@ class CapabilityEngine(AuraBaseModule):
                 r"open (?:gmail|youtube|github|reddit|twitter|linkedin)",
                 r"pull up",
                 r"show me (?:the |a )?(?:page|site|website)",
+            ],
+            "web_interlocutor": [
+                r"(?:talk|chat|converse|hold a conversation) with (?:another )?(?:ai|assistant|chatbot|gemini|chatgpt|claude)",
+                r"(?:open|go to).*(?:gemini|chatgpt|claude).*(?:talk|chat|ask|conversation)",
+                r"(?:ask|message) (?:gemini|chatgpt|claude|another ai)",
+                r"(?:learn|bring back|tell me what you learned).*(?:from|after).*(?:gemini|chatgpt|another ai|web chat)",
+                r"(?:wait for|read) (?:their|its|the) repl(?:y|ies).*(?:respond|answer|continue)",
             ],
             # ── Computer / OS Control ────────────────────────────────
             "computer_use": [
@@ -1896,6 +1907,8 @@ class CapabilityEngine(AuraBaseModule):
             return "sandboxed_compute"
         if skill_name == "desktop_task":
             return "foreground_desktop_control"
+        if skill_name == "web_interlocutor":
+            return "foreground_browser_dialogue"
         if skill_name in _EXTERNAL_IO_EFFECT_SKILLS:
             return "external_io"
         if skill_name in _STATEFUL_EFFECT_SKILLS:
@@ -2423,6 +2436,7 @@ class CapabilityEngine(AuraBaseModule):
             "FinalResponse",
             "web_search",
             "sovereign_browser",
+            "web_interlocutor",
             "sovereign_terminal",
             "system_proprioception",
             "file_operation",

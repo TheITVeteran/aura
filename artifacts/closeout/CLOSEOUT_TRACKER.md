@@ -841,3 +841,45 @@ Honest boundary and estimate:
 - Remaining: 1 consolidated checkpoint / 2-3 smaller sub-checkpoints, covering
   visible general computer use, external-AI conversation learning/recall, final
   proof/replay normalization, claims calibration, and clean-worktree closure.
+
+## Checkpoint 2026-06-29-15: Screen, Browser Inspection, And Visible Web Interlocutor
+
+Status: verified locally, ready for checkpoint commit.
+
+Evidence:
+
+- `163 passed` across focused web-interlocutor, screen-perception,
+  hardened-computer-use, and skill-surface contract tests.
+- Compile check passed for the touched runtime/proof modules.
+- Enterprise gate passed.
+- Production gate passed all 37 checks.
+- Local visible-web proof passed:
+  `artifacts/live_proof/web_interlocutor_local/WEB_INTERLOCUTOR_VERDICT.json`
+  with 2 turns and memory record
+  `mem-7ba42c92-f854-404c-99b2-93f9dd5363c2`.
+- Real visible signed-in ChatGPT proof passed:
+  `artifacts/live_proof/web_interlocutor_chatgpt_visible/WEB_INTERLOCUTOR_VERDICT.json`
+  with 1 turn and memory record
+  `mem-16f4910d-eec7-49d1-98b3-af2b5df7207d`.
+
+General runtime changes:
+
+- Aura now has a governed `web_interlocutor` skill/capability for visible
+  browser conversations with another AI or web chat, using CognitiveEngine
+  composition and MemoryWriteGateway persistence.
+- Screen perception can use macOS Vision OCR when Tesseract is missing, and
+  synchronous tool fallbacks can call the same perception stack.
+- `computer_use` exposes general `dismiss_popup` and `inspect_browser_page`
+  actions so planning can recover from overlays and inspect DOM text/links or
+  source on non-private pages.
+- Reply extraction rejects clock/menu/UI noise as proof of an external reply.
+- The visible-web proof harness launches Chrome through SubprocessGateway.
+
+Honest boundary and estimate:
+
+- This is a general navigation/perception/interlocutor checkpoint, not the full
+  multi-app live demo proof.
+- Overall closeout: 99.25%.
+- Remaining: 1 consolidated checkpoint / 2 smaller sub-checkpoints, covering
+  full visible multi-app demo proof, final proof/replay normalization, claims
+  calibration, and clean-worktree closure.

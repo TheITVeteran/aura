@@ -85,6 +85,7 @@ EXPECTED_REGISTERED_SKILLS = {
     "train_self",
     "uplink_local",
     "voice_output",
+    "web_interlocutor",
     "web_search",
     "x_tools",
 }
@@ -195,6 +196,13 @@ def _params_for_skill(skill_name: str, tmp_path: Path) -> dict[str, Any]:
         "test_generator": {"target_file": str(tmp_path / "missing_target.py")},
         "toggle_senses": {"sense": "vision", "action": "off"},
         "voice_output": {"text": ""},
+        "web_interlocutor": {
+            "objective": "Contract probe",
+            "opening_message": "Hello.",
+            "max_turns": 1,
+            "wait_timeout_s": 5,
+            "persist_memory": False,
+        },
         "web_search": {"query": ""},
         "x_tools": {"action": "unknown"},
     }
@@ -212,6 +220,7 @@ def _neutralize_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
     import core.skills.reddit_adapter as reddit_adapter
     import core.skills.social_lurker as social_lurker
     import core.skills.sovereign_browser as sovereign_browser
+    import core.skills.web_interlocutor as web_interlocutor
     import core.skills.vision_actor as vision_actor
     from core.skills.auto_refactor import AutoRefactorSkill
     from core.skills.speak import SpeakSkill
@@ -263,6 +272,22 @@ def _neutralize_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
     )
 
+    async def _fake_web_interlocutor_run(self, **kwargs):
+        from core.capabilities.web_interlocutor import WebInterlocutorResult
+
+        return WebInterlocutorResult(
+            ok=True,
+            objective=str(kwargs.get("objective") or ""),
+            learned_summary="contract sweep learned summary",
+            status="completed",
+        )
+
+    monkeypatch.setattr(
+        web_interlocutor.WebInterlocutorSession,
+        "run",
+        _fake_web_interlocutor_run,
+    )
+
 
 def _disable_governance(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("core.governance_context.require_governance", lambda *args, **kwargs: None)
@@ -275,7 +300,7 @@ def _redirect_runtime_memory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 def test_registered_skill_surface_matches_expected_catalog(skill_registry):
     assert set(skill_registry) == EXPECTED_REGISTERED_SKILLS
-    assert len(skill_registry) == 66
+    assert len(skill_registry) == 67
 
 
 @pytest.mark.asyncio

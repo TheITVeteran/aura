@@ -64,6 +64,14 @@ async def test_computer_use_inspect_screen_falls_back_to_window_tree_on_permissi
         return {"ok": False, "status": "denied", "error": "permission denied by test guard"}
 
     monkeypatch.setattr(skill, "_require_permissions", controlled_permission_denial)
+    monkeypatch.setattr(
+        "core.perception.screen_perception.get_screen_perception",
+        lambda: SimpleNamespace(
+            capture=lambda save_screenshot=True: (_ for _ in ()).throw(
+                RuntimeError("screen perception unavailable")
+            )
+        ),
+    )
     monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Notes")
     monkeypatch.setattr(
         skill,
@@ -79,6 +87,53 @@ async def test_computer_use_inspect_screen_falls_back_to_window_tree_on_permissi
     assert result["active_app"] == "Notes"
     assert "AXTextArea" in result["text"]
     assert result["accessibility_blocked"] is True
+
+
+@pytest.mark.asyncio
+async def test_computer_use_inspect_screen_uses_ocr_before_tree_on_permission_block(monkeypatch, tmp_path):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_denial(capability, *permission_names):
+        return {"ok": False, "status": "denied", "error": "permission denied by test guard"}
+
+    class PerceptionDouble:
+        async def capture(self, *, save_screenshot=False):
+            assert save_screenshot is True
+            return SimpleNamespace(
+                active_app="Google Chrome",
+                window_title="ChatGPT",
+                frontmost_window_bounds="0,25,1440,900",
+                focused_role="",
+                focused_name="",
+                focused_description="",
+                focused_value="",
+                accessibility_text="",
+                screen_text="ChatGPT\nAsk anything\nAura can read the visible screen.",
+                screenshot_path=str(tmp_path / "screen.png"),
+                text_hash="ocrhash",
+                has_modal=False,
+                modal_text="",
+                has_loading=False,
+                timestamp=125.0,
+            )
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_denial)
+    monkeypatch.setattr(
+        "core.perception.screen_perception.get_screen_perception",
+        lambda: PerceptionDouble(),
+    )
+    monkeypatch.setattr(
+        skill,
+        "_query_system_events_window_tree",
+        lambda: (_ for _ in ()).throw(AssertionError("tree fallback should not run")),
+    )
+
+    result = await skill.execute({"action": "inspect_screen", "target": ""}, {})
+
+    assert result["ok"] is True
+    assert result["source"] == "screen_perception_permission_fallback"
+    assert result["accessibility_blocked"] is True
+    assert "Aura can read the visible screen" in result["text"]
 
 
 @pytest.mark.asyncio
@@ -183,6 +238,14 @@ async def test_computer_use_read_screen_text_fallback_on_permission_block(monkey
         return "Process: Finder\n  Window: Desktop\n    Element [AXButton]: Close"
 
     monkeypatch.setattr(skill, "_require_permissions", controlled_permission_denial)
+    monkeypatch.setattr(
+        "core.perception.screen_perception.get_screen_perception",
+        lambda: SimpleNamespace(
+            capture=lambda save_screenshot=True: (_ for _ in ()).throw(
+                RuntimeError("screen perception unavailable")
+            )
+        ),
+    )
     monkeypatch.setattr(skill, "_query_system_events_window_tree", controlled_window_tree)
 
     result = await skill.execute({"action": "read_screen_text", "target": ""}, {})
@@ -190,6 +253,183 @@ async def test_computer_use_read_screen_text_fallback_on_permission_block(monkey
     assert result["source"] == "applescript_window_tree_fallback"
     assert "Finder" in result["text"]
     assert called_tree is True
+
+
+@pytest.mark.asyncio
+async def test_computer_use_read_screen_text_uses_ocr_before_tree_on_permission_block(monkeypatch, tmp_path):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_denial(capability, *permission_names):
+        return {"ok": False, "status": "denied", "error": "permission denied by test guard"}
+
+    class PerceptionDouble:
+        async def capture(self, *, save_screenshot=False):
+            assert save_screenshot is True
+            return SimpleNamespace(
+                active_app="Google Chrome",
+                window_title="ChatGPT",
+                frontmost_window_bounds="0,25,1440,900",
+                focused_role="",
+                focused_name="",
+                focused_description="",
+                focused_value="",
+                accessibility_text="",
+                screen_text="ChatGPT\nAsk anything\nAura can read visible browser replies.",
+                screenshot_path=str(tmp_path / "screen.png"),
+                text_hash="ocrhash",
+                has_modal=False,
+                modal_text="",
+                has_loading=False,
+                timestamp=125.0,
+            )
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_denial)
+    monkeypatch.setattr(
+        "core.perception.screen_perception.get_screen_perception",
+        lambda: PerceptionDouble(),
+    )
+    monkeypatch.setattr(
+        skill,
+        "_query_system_events_window_tree",
+        lambda: (_ for _ in ()).throw(AssertionError("tree fallback should not run")),
+    )
+
+    result = await skill.execute({"action": "read_screen_text", "target": ""}, {})
+
+    assert result["ok"] is True
+    assert result["source"] == "screen_perception_permission_fallback"
+    assert result["accessibility_blocked"] is True
+    assert "browser replies" in result["text"]
+
+
+@pytest.mark.asyncio
+async def test_computer_use_inspect_browser_page_reads_dom_text_and_links(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Google Chrome")
+    monkeypatch.setattr(
+        skill,
+        "_active_browser_location",
+        lambda browser: ("https://example.com/article", "Example Article"),
+    )
+
+    def fake_applescript(script, *, timeout=10):
+        assert "execute javascript" in script
+        return json.dumps(
+            {
+                "ok": True,
+                "url": "https://example.com/article",
+                "title": "Example Article",
+                "text": "A robust article body Aura can inspect before deciding where to navigate.",
+                "links": [{"text": "Next source", "href": "https://example.com/next"}],
+                "editable_count": 1,
+            }
+        )
+
+    monkeypatch.setattr(skill, "_run_applescript", fake_applescript)
+
+    result = await skill.execute({"action": "inspect_browser_page", "target": ""}, {})
+
+    assert result["ok"] is True
+    assert result["source"] == "browser_dom"
+    assert "robust article body" in result["text"]
+    assert result["links"][0]["href"] == "https://example.com/next"
+
+
+@pytest.mark.asyncio
+async def test_computer_use_inspect_browser_page_blocks_private_source(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Google Chrome")
+    monkeypatch.setattr(
+        skill,
+        "_active_browser_location",
+        lambda browser: ("https://chatgpt.com/", "ChatGPT"),
+    )
+    monkeypatch.setattr(
+        skill,
+        "_run_applescript",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("source should be blocked")),
+    )
+
+    result = await skill.execute(
+        {
+            "action": "inspect_browser_page",
+            "target": json.dumps({"browser": "Google Chrome", "mode": "source"}),
+        },
+        {},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "private_source_blocked"
+
+
+@pytest.mark.asyncio
+async def test_computer_use_dismiss_popup_uses_screen_perception_effect_evidence(monkeypatch):
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    class PerceptionDouble:
+        def __init__(self):
+            self.calls = 0
+
+        async def capture(self, *, save_screenshot=False):
+            self.calls += 1
+            return SimpleNamespace(
+                active_app="Google Chrome",
+                window_title="Permission Alert" if self.calls == 1 else "Article",
+                frontmost_window_bounds="",
+                focused_role="",
+                focused_name="",
+                focused_description="",
+                focused_value="",
+                accessibility_text="Allow access?" if self.calls == 1 else "Article body",
+                screen_text="",
+                screenshot_path="",
+                text_hash=f"h{self.calls}",
+                has_modal=self.calls == 1,
+                modal_text="Allow access?" if self.calls == 1 else "",
+                has_loading=False,
+                timestamp=125.0 + self.calls,
+            )
+
+    perception = PerceptionDouble()
+    scripts = []
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+    monkeypatch.setattr(
+        "core.perception.screen_perception.get_screen_perception",
+        lambda: perception,
+    )
+
+    async def controlled_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", controlled_sleep)
+
+    def fake_applescript(script, *, timeout=10):
+        scripts.append(script)
+        return ""
+
+    monkeypatch.setattr(skill, "_run_applescript", fake_applescript)
+
+    result = await skill.execute({"action": "dismiss_popup", "target": ""}, {})
+
+    assert result["ok"] is True
+    assert result["effect_verified"] is True
+    assert result["modal_before"] is True
+    assert result["modal_after"] is False
+    assert any("key code 53" in script for script in scripts)
 
 
 @pytest.mark.asyncio

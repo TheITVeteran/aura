@@ -102,6 +102,7 @@ class ComputerUseParams(BaseModel):
         ...,
         description=(
             "click|type|hotkey|scroll|inspect_screen|read_screen_text|read_menu_clock|open_app|open_url|"
+            "dismiss_popup|inspect_browser_page|"
             "run_command|set_clipboard|get_clipboard|wait|run_applescript|write_text_file|"
             "render_text_pdf|move_file|create_folder|fetch_topic_image|system_control"
         ),
@@ -1663,6 +1664,24 @@ end tell
                 )
                 if blocked:
                     try:
+                        from core.perception.screen_perception import get_screen_perception
+
+                        snapshot = await get_screen_perception().capture(save_screenshot=True)
+                        perception_result = self._screen_snapshot_result(snapshot)
+                        text = str(perception_result.get("text") or "")
+                        if text and not self._screen_text_unavailable(text):
+                            perception_result["accessibility_blocked"] = True
+                            perception_result["permission_result"] = blocked
+                            perception_result["source"] = "screen_perception_permission_fallback"
+                            return perception_result
+                    except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                        _record_computer_use_degradation(
+                            exc,
+                            action="continued screen inspection through AppleScript tree after screenshot/OCR fallback failed",
+                            stage="inspect_screen.permission_screen_perception",
+                            severity="warning",
+                        )
+                    try:
                         front_app = await asyncio.to_thread(self._frontmost_app_name)
                         tree = await asyncio.to_thread(self._query_system_events_window_tree)
                         return {
@@ -1728,7 +1747,28 @@ end tell
                 )
                 if blocked:
                     logger.info(
-                        "Accessibility/automation permission blocked. Attempting AppleScript window tree query fallback."
+                        "Accessibility/automation permission blocked. Attempting screen OCR fallback."
+                    )
+                    try:
+                        from core.perception.screen_perception import get_screen_perception
+
+                        snapshot = await get_screen_perception().capture(save_screenshot=True)
+                        perception_result = self._screen_snapshot_result(snapshot)
+                        text = str(perception_result.get("text") or "")
+                        if text and not self._screen_text_unavailable(text):
+                            perception_result["accessibility_blocked"] = True
+                            perception_result["permission_result"] = blocked
+                            perception_result["source"] = "screen_perception_permission_fallback"
+                            return perception_result
+                    except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                        _record_computer_use_degradation(
+                            exc,
+                            action="continued screen text read through AppleScript tree after screenshot/OCR fallback failed",
+                            stage="read_screen_text.permission_screen_perception",
+                            severity="warning",
+                        )
+                    logger.info(
+                        "Screen OCR fallback unavailable. Attempting AppleScript window tree query fallback."
                     )
                     try:
                         result = await asyncio.to_thread(self._query_system_events_window_tree)
@@ -1858,6 +1898,26 @@ end tell
                         "source": "system_clock_fallback",
                         "error": str(exc),
                     }
+
+            elif action == "dismiss_popup":
+                blocked = await self._require_permissions(
+                    "dismissing a visible desktop or browser interruption",
+                    "ACCESSIBILITY",
+                    "AUTOMATION",
+                )
+                if blocked:
+                    return blocked
+                return await self._dismiss_visible_interruption(params.target)
+
+            elif action == "inspect_browser_page":
+                blocked = await self._require_permissions(
+                    "inspecting the active browser page text and structure",
+                    "ACCESSIBILITY",
+                    "AUTOMATION",
+                )
+                if blocked:
+                    return blocked
+                return await asyncio.to_thread(self._inspect_browser_page, params.target)
 
             elif action == "click":
                 pre_state_text = ""
@@ -2855,6 +2915,200 @@ end tell
         active_url = lines[0] if lines else ""
         active_title = lines[1] if len(lines) > 1 else ""
         return active_url, active_title
+
+    @staticmethod
+    def _browser_source_is_private(url: str) -> bool:
+        lowered = str(url or "").lower()
+        private_markers = (
+            "accounts.google.com",
+            "chatgpt.com",
+            "gemini.google.com",
+            "claude.ai",
+            "mail.google.com",
+            "bank",
+            "password",
+            "login",
+            "signin",
+        )
+        return any(marker in lowered for marker in private_markers)
+
+    def _browser_execute_javascript(self, browser: str, js: str, *, timeout: int = 8) -> str:
+        browser = str(browser or "").strip()
+        if browser in {"Google Chrome", "Arc", "Microsoft Edge"}:
+            script = f'''
+tell application "{browser}"
+    activate
+    if (count of windows) is 0 then return "{{\\"ok\\":false,\\"error\\":\\"no_browser_window\\"}}"
+    tell active tab of front window to execute javascript {self._applescript_string(js)}
+end tell
+'''
+        elif browser == "Safari":
+            script = f'''
+tell application "Safari"
+    activate
+    if (count of windows) is 0 then return "{{\\"ok\\":false,\\"error\\":\\"no_browser_window\\"}}"
+    do JavaScript {self._applescript_string(js)} in current tab of front window
+end tell
+'''
+        else:
+            raise ValueError(f"Browser '{browser}' is not supported for page inspection.")
+        return self._run_applescript(script, timeout=timeout)
+
+    def _inspect_browser_page(self, target: str) -> dict[str, Any]:
+        try:
+            spec = self._target_json(target) if str(target or "").strip().startswith("{") else {}
+        except ValueError:
+            spec = {}
+        browser = str(spec.get("browser") or "").strip()
+        if not browser:
+            browser = self._frontmost_app_name()
+        if browser not in _ALLOWED_URL_BROWSERS:
+            return {
+                "ok": False,
+                "status": "not_browser",
+                "error": f"Frontmost app is not an inspectable browser: {browser or 'unavailable'}.",
+            }
+        mode = str(spec.get("mode") or "text").strip().lower()
+        max_chars = max(500, min(int(spec.get("max_chars") or 12000), 60000))
+        active_url, active_title = self._active_browser_location(browser)
+        wants_source = mode in {"html", "source", "dom", "page_source"}
+        allow_private_source = bool(spec.get("allow_private_source") or spec.get("allow_private"))
+        if wants_source and self._browser_source_is_private(active_url) and not allow_private_source:
+            return {
+                "ok": False,
+                "status": "private_source_blocked",
+                "browser": browser,
+                "url": active_url,
+                "title": active_title,
+                "error": "Page-source inspection is blocked on private or account pages; use text mode unless the user explicitly authorizes source inspection.",
+            }
+        js = f"""
+(() => {{
+  const text = (document.body && document.body.innerText || '').slice(0, {max_chars});
+  const links = Array.from(document.links || []).slice(0, 80).map(link => ({{
+    text: (link.innerText || link.getAttribute('aria-label') || '').trim().slice(0, 180),
+    href: link.href || ''
+  }})).filter(item => item.href || item.text);
+  const payload = {{
+    ok: true,
+    url: location.href,
+    title: document.title || '',
+    text,
+    links,
+    editable_count: document.querySelectorAll('textarea,input[type="text"],input:not([type]),[contenteditable="true"],[role="textbox"]').length
+  }};
+  if ({str(wants_source).lower()}) {{
+    payload.html = (document.documentElement && document.documentElement.outerHTML || '').slice(0, {max_chars});
+  }}
+  return JSON.stringify(payload);
+}})()
+"""
+        try:
+            raw = self._browser_execute_javascript(browser, js, timeout=10)
+            data = json.loads(raw or "{}")
+            if not data.get("ok"):
+                raise RuntimeError(str(data.get("error") or "browser inspection failed"))
+            return {
+                "ok": True,
+                "action": "inspect_browser_page",
+                "source": "browser_dom",
+                "browser": browser,
+                "url": str(data.get("url") or active_url),
+                "title": str(data.get("title") or active_title),
+                "text": str(data.get("text") or "")[:max_chars],
+                "html": str(data.get("html") or "")[:max_chars],
+                "links": list(data.get("links") or [])[:80],
+                "editable_count": int(data.get("editable_count") or 0),
+                "effect_verified": True,
+            }
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            _record_computer_use_degradation(
+                exc,
+                action="used screen perception fallback after browser DOM inspection failed",
+                stage="inspect_browser_page.dom",
+                severity="warning",
+            )
+            try:
+                from core.perception.screen_perception import get_screen_perception
+
+                snapshot = get_screen_perception().capture_sync(save_screenshot=True)
+                payload = self._screen_snapshot_result(snapshot)
+                payload.update(
+                    {
+                        "action": "inspect_browser_page",
+                        "source": "screen_perception_browser_fallback",
+                        "browser": browser,
+                        "url": active_url,
+                        "title": active_title,
+                        "effect_verified": bool(payload.get("text")),
+                    }
+                )
+                return payload
+            except _COMPUTER_USE_RECOVERABLE_ERRORS as fallback_exc:
+                return {
+                    "ok": False,
+                    "status": "unavailable",
+                    "action": "inspect_browser_page",
+                    "browser": browser,
+                    "url": active_url,
+                    "title": active_title,
+                    "error": f"Browser inspection failed and OCR fallback failed: {fallback_exc}",
+                }
+
+    async def _dismiss_visible_interruption(self, target: str) -> dict[str, Any]:
+        try:
+            spec = self._target_json(target) if str(target or "").strip().startswith("{") else {}
+        except ValueError:
+            spec = {}
+        app = str(spec.get("app") or "").strip()
+        if app:
+            try:
+                await self._activate_app(app)
+            except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                logger.debug("Could not activate app before popup dismissal: %s", exc)
+        before: dict[str, Any] = {}
+        after: dict[str, Any] = {}
+        try:
+            from core.perception.screen_perception import get_screen_perception
+
+            before = self._screen_snapshot_result(await get_screen_perception().capture(save_screenshot=False))
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            logger.debug("Popup pre-dismiss screen snapshot failed: %s", exc)
+        script = """
+tell application "System Events"
+    key code 53
+    delay 0.12
+    key code 53
+end tell
+"""
+        output = await asyncio.to_thread(self._run_applescript, script, timeout=5)
+        await asyncio.sleep(0.25)
+        try:
+            from core.perception.screen_perception import get_screen_perception
+
+            after = self._screen_snapshot_result(await get_screen_perception().capture(save_screenshot=False))
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            logger.debug("Popup post-dismiss screen snapshot failed: %s", exc)
+        modal_before = bool(before.get("has_modal"))
+        modal_after = bool(after.get("has_modal"))
+        effect_verified = bool(modal_before and not modal_after)
+        return {
+            "ok": True,
+            "action": "dismiss_popup",
+            "source": "escape_key_visible_interruption",
+            "dispatch": "escape_escape",
+            "output": output,
+            "modal_before": modal_before,
+            "modal_after": modal_after,
+            "before_text_hash": before.get("text_hash", ""),
+            "after_text_hash": after.get("text_hash", ""),
+            "effect_verified": effect_verified,
+            "verification": (
+                "A visible modal/interruption was present and was no longer detected after dismissal."
+                if effect_verified
+                else "Dismissal keys were dispatched; no modal removal was observable from screen perception."
+            ),
+        }
 
     def read_screen_text(self) -> str:
         """Helper for AgencyCore to read screen text directly."""

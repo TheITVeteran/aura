@@ -114,7 +114,53 @@ class ScreenPerception:
             text = pytesseract.image_to_string(img)
             return text.strip()
         except ImportError:
-            return "[OCR not available — install pytesseract for screen text extraction]"
+            pass
+
+        try:
+            return ScreenPerception._ocr_screenshot_with_macos_vision(screenshot_path).strip()
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("macOS Vision OCR failed for %s: %s", screenshot_path, exc)
+            return "[OCR not available — install pytesseract or enable macOS Vision OCR]"
+
+    @staticmethod
+    def _ocr_screenshot_with_macos_vision(screenshot_path: str) -> str:
+        import threading
+
+        import Foundation
+        import Vision
+
+        done = threading.Event()
+        lines: list[str] = []
+        errors: list[str] = []
+
+        def _completion(request: Any, error: Any) -> None:
+            if error is not None:
+                errors.append(str(error))
+            try:
+                for observation in request.results() or []:
+                    candidates = observation.topCandidates_(1)
+                    if candidates:
+                        text = str(candidates[0].string() or "").strip()
+                        if text:
+                            lines.append(text)
+            except (AttributeError, TypeError, ValueError) as exc:
+                errors.append(str(exc))
+            finally:
+                done.set()
+
+        request = Vision.VNRecognizeTextRequest.alloc().initWithCompletionHandler_(_completion)
+        request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+        request.setUsesLanguageCorrection_(True)
+        url = Foundation.NSURL.fileURLWithPath_(str(screenshot_path))
+        handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(url, {})
+        ok, error = handler.performRequests_error_([request], None)
+        if not ok:
+            raise RuntimeError(str(error or "Vision OCR request failed"))
+        if not done.wait(12.0):
+            raise TimeoutError("Vision OCR timed out")
+        if errors and not lines:
+            raise RuntimeError("; ".join(errors))
+        return "\n".join(lines)
 
     @staticmethod
     def _bounded_text(value: str, limit: int = 6000) -> str:
@@ -195,7 +241,20 @@ class ScreenPerception:
         snap = ScreenSnapshot()
         self._capture_count += 1
 
-        summary = await self._frontmost_accessibility_summary()
+        if save_screenshot:
+            active = await self.get_active_window()
+            summary = {
+                "active_app": active.get("app", ""),
+                "window_title": active.get("title", ""),
+                "frontmost_window_bounds": active.get("bounds", ""),
+                "focused_role": "",
+                "focused_name": "",
+                "focused_description": "",
+                "focused_value": "",
+                "accessibility_text": "",
+            }
+        else:
+            summary = await self._frontmost_accessibility_summary()
         snap.active_app = summary.get("active_app", "")
         snap.window_title = summary.get("window_title", "")[:200]
         snap.frontmost_window_bounds = summary.get("frontmost_window_bounds", "")
@@ -228,6 +287,15 @@ class ScreenPerception:
 
         self._last_hash = snap.text_hash
         return snap
+
+    def capture_sync(self, save_screenshot: bool = False) -> ScreenSnapshot:
+        """Synchronous wrapper for tool fallbacks running outside the event loop."""
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.capture(save_screenshot=save_screenshot))
+        raise RuntimeError("capture_sync cannot run inside an active event loop; await capture() instead")
 
     async def _frontmost_accessibility_summary(self) -> dict[str, str]:
         """Return frontmost app, window, focus, bounds, and accessibility text."""

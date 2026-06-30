@@ -2312,29 +2312,30 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
 
 ## Next Exact Task
 
-After this checkpoint, the next high-leverage move is the live launched desktop
-path proof: boot Aura through the same desktop lane Bryan uses, keep memory
-below the safe admission ceiling, verify full-mind chat receipts instead of
-bounded assistant repairs, and only then exercise the visible multi-app demo
-through general computer-use planning and effect verification.
+After this checkpoint, the next high-leverage move is the visible multi-app
+general computer-use proof: boot Aura through the same desktop lane Bryan uses,
+issue the Notes/PDF/browser/Google Docs/wallpaper-style request through the live
+UI, verify she uses general planning and computer-use affordances rather than a
+hardcoded path, and monitor neural stream/terminal memory while she works.
 
 ## Next Exact Continuation Prompt
 
 > Continue Aura closeout from `docs/AURA_EXECUTION_TRACKER.md`. The next target
-> is the real launched desktop path: boot Aura through the user-facing launcher,
-> verify the 32B live mind path is conversation-ready without raw assistant
-> leakage, monitor neural stream/terminal memory and route receipts, and patch
-> only general runtime/OS-control causes of stalls, incoherent replies, or unsafe
-> memory admission.
+> is the real launched visible multi-app proof: boot Aura through the
+> user-facing launcher, send the demo request through the same chat/voice path
+> Bryan uses, verify every desktop/browser/file/PDF/editor/wallpaper action
+> through general computer-use receipts, and patch only general runtime or
+> navigation causes of stalls, wrong-window typing, popup failures, or memory
+> pressure.
 
 ## Exact Stopping Point
 
-Current pass has a green memory-admission checkpoint and is proceeding into the
-real launched desktop path proof.
+Current pass has a green screen/browser-interlocutor checkpoint and is
+proceeding into the visible multi-app desktop proof.
 
 ## Current Git Diff Summary
 
-- This document records the live desktop heavy-lane memory-admission checkpoint.
+- This document records the screen/OCR/browser-interlocutor checkpoint.
 - No successful launched multi-app desktop demo receipt is present yet.
 
 ## Checkpoint 2026-06-29-14: Live Cognition And Audiovisual Arbitration
@@ -2397,3 +2398,63 @@ Estimate update:
 - Remaining work: visible general computer-use proof; general web-interlocutor
   conversation/learning/recall proof; final replay/final-proof artifact pass,
   claims calibration, and clean-worktree closure.
+
+## Checkpoint 2026-06-29-15: Screen, Browser Inspection, And Visible Web Interlocutor
+
+Status: passed locally; ready for checkpoint commit.
+
+What changed:
+
+- Added a governed `web_interlocutor` capability and skill for visible
+  AI-to-AI or web-chat conversations. It opens or attaches to a visible browser,
+  sends substantive CognitiveEngine-derived messages, waits for stable observed
+  replies, summarizes learning, and persists that learning through the
+  `MemoryWriteGateway`.
+- Added a Chrome CDP browser adapter for visible non-default-profile Chrome
+  sessions and retained the normal-profile keyboard/OCR fallback for Bryan's
+  signed-in browser, where Chrome blocks CDP on the default data directory.
+- Added macOS Vision OCR as the screen-reading fallback when Tesseract is not
+  installed, and made screen-perception screenshot/OCR usable from synchronous
+  tool fallbacks.
+- Added general `computer_use` actions for `dismiss_popup` and
+  `inspect_browser_page`. These are reusable navigation affordances, not demo
+  hardcodes: Aura can dismiss visible interruptions, inspect browser DOM text,
+  read links/editable counts, and request page source on non-private pages.
+- Hardened visible reply extraction so menu-bar/clock/UI noise cannot count as
+  an interlocutor reply.
+- Moved the web proof harness Chrome launch through `SubprocessGateway`.
+
+Evidence:
+
+- Focused tests:
+  `python -m pytest -q tests/test_web_interlocutor.py tests/test_screen_perception.py tests/test_hardened_computer_use.py tests/test_skill_surface_contracts.py`
+  result: `163 passed`.
+- Compile check over touched runtime/proof modules: passed.
+- `make enterprise-gate`: passed.
+- `make production-gate`: all 37 checks passed.
+- Local visible-web proof:
+  `python tools/proof/run_web_interlocutor_live_proof.py --out-dir artifacts/live_proof/web_interlocutor_local`
+  result: passed, 2 turns, memory record
+  `mem-7ba42c92-f854-404c-99b2-93f9dd5363c2`.
+- Real visible signed-in ChatGPT proof:
+  `artifacts/live_proof/web_interlocutor_chatgpt_visible/WEB_INTERLOCUTOR_VERDICT.json`
+  result: passed, 1 turn, memory record
+  `mem-16f4910d-eec7-49d1-98b3-af2b5df7207d`.
+
+Honest boundary:
+
+- This proves screen/OCR fallback, browser DOM inspection, popup dismissal as a
+  general computer-use action, local visible-web dialogue, and one real visible
+  signed-in ChatGPT exchange. It does not yet prove the complete multi-app
+  Notes/PDF/Google Docs/wallpaper demo chain in one uninterrupted live run.
+- Page-source inspection intentionally blocks private/account surfaces unless
+  explicitly authorized; normal visible text inspection remains available.
+
+Estimate update:
+
+- Overall closeout: 99.25%.
+- Remaining consolidated checkpoints: 1.
+- Remaining smaller sub-checkpoints: 2.
+- Remaining work: full visible multi-app general computer-use demo proof; final
+  proof/replay artifact normalization, claims calibration, and clean-worktree
+  closure.
