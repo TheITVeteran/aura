@@ -40,6 +40,15 @@ _ABLATION_ALIASES: dict[str, set[str]] = {
         "affect_facade",
         "affectengine",
     },
+    "native_system2": {
+        "native_system2",
+        "proof_answer_solver",
+        "structured_proof_solver",
+        "system_2",
+        "system2",
+        "system2_search",
+        "system2_symbolic_reasoner",
+    },
 }
 
 

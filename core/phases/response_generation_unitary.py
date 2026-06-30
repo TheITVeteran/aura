@@ -354,6 +354,58 @@ class UnitaryResponsePhase(Phase):
             f"<answer>{derived}</answer>",
         )
 
+    @classmethod
+    def _strict_proof_procedure_hints(cls, objective: Any, validation: Any | None = None) -> str:
+        """Return task-shape reasoning hints without deriving or revealing an answer."""
+
+        text = str(objective or "")
+        lower = text.lower()
+        solver = str(cls._response_contract_attr(validation, "solver", "") or "").strip().lower()
+        hints: list[str] = []
+
+        if solver == "modular_calendar" or ("today is" in lower and "days" in lower):
+            hints.append(
+                "For weekday arithmetic, treat the named day as day zero, reduce the "
+                "requested offset modulo seven, then advance by that remainder."
+            )
+        if solver == "probability_reasoning" or (
+            "without replacement" in lower and "probability" in lower
+        ):
+            hints.append(
+                "For without-replacement probability, count combinations: numerator "
+                "is the successful draws, denominator is all possible draws, then "
+                "simplify the fraction."
+            )
+        if solver == "elapsed_interval_reasoning" or "clock strikes" in lower:
+            hints.append(
+                "For strike/interval timing, n strikes create n-1 gaps; compute the "
+                "gap length first, then scale by the target gap count."
+            )
+        if solver == "pigeonhole_reasoning" or "matching pair" in lower:
+            hints.append(
+                "For guarantee/minimum questions, use the worst-case draw sequence "
+                "before the condition becomes unavoidable."
+            )
+        if solver in {"unique_assignment", "knights_and_knaves"} or "knave" in lower:
+            hints.append(
+                "For truth-teller or assignment puzzles, enumerate candidate states "
+                "and eliminate the states that violate a clue."
+            )
+        if solver == "rate_reasoning" or "machines" in lower and "widgets" in lower:
+            hints.append(
+                "For rate problems, keep per-machine throughput constant rather than "
+                "multiplying both time and machine count."
+            )
+        if solver in {"age_equation", "linear_equation"} or "twice as old" in lower:
+            hints.append(
+                "For algebra word problems, name the unknown, write the equation from "
+                "the sentence, solve it, and emit only the resulting value."
+            )
+
+        if not hints:
+            return ""
+        return " Procedure hints: " + " ".join(hints) + " "
+
     @staticmethod
     def _strip_answer_envelope_instruction(text: Any) -> str:
         """Remove XML-envelope formatting instructions before raw model solving.
@@ -5079,17 +5131,17 @@ class UnitaryResponsePhase(Phase):
                     if worker_strict_answer_contract
                     else self._strip_answer_envelope_instruction(objective)
                 )
+                strict_procedure_hints = self._strict_proof_procedure_hints(
+                    strict_user_objective
+                )
                 system_prompt = (
                     "You are Aura's governed proof-answer lane. Solve the user's task exactly. "
-                    "Reason privately before answering: for constraint or truth-teller puzzles, test each assignment and reject contradictions; "
-                    "for sequences, compare differences and infer the generating rule; "
-                    "if the task gives answer options in parentheses, return one of those option values, not the subject label. "
-                    if worker_strict_answer_contract
-                    else "You are Aura's governed proof-answer lane. Solve the user's task exactly. "
-                    "Reason privately before answering: for constraint or truth-teller puzzles, test each assignment and reject contradictions; "
-                    "for sequences, compare differences and infer the generating rule; "
-                    "if the task gives answer options in parentheses, return one of those option values, not the subject label. "
+                    "Reason privately before answering: for constraint or truth-teller puzzles, "
+                    "test each assignment and reject contradictions; for sequences, compare "
+                    "differences and infer the generating rule; if the task gives answer "
+                    "options in parentheses, return one of those option values, not the subject label. "
                 )
+                system_prompt += strict_procedure_hints
                 system_prompt += (
                     "Output the final answer strictly inside <answer>...</answer> tags. "
                     "Keep the tag content minimal and do not include chat filler."
@@ -5605,7 +5657,9 @@ class UnitaryResponsePhase(Phase):
                     raise RuntimeError("benchmark_artifact_contract_validation_failed") from contract_exc
 
             if strict_proof_answer_request:
-                prompt_derived_strict_solver_enabled = True
+                prompt_derived_strict_solver_enabled = structured_proof_solver_enabled(
+                    origin=routing_origin
+                )
 
                 async def _repair_symbolically_rejected_answer(
                     current_envelope: str,
@@ -5614,11 +5668,20 @@ class UnitaryResponsePhase(Phase):
                     reason: str,
                 ) -> str:
                     current_value = self._strict_answer_value_from_envelope(current_envelope)
+                    current_validation = self._validate_strict_answer_symbolically(
+                        objective,
+                        current_value,
+                    )
+                    procedure_hints = self._strict_proof_procedure_hints(
+                        objective,
+                        current_validation,
+                    )
                     repair_system_prompt = (
                         "You are Aura's governed proof-answer repair lane. A prior candidate "
                         "failed a prompt-derived consistency check before emission. Do not "
                         "trust the candidate. Re-solve the original task from scratch, test "
                         "the constraints privately, and return only the final atomic answer "
+                        f"{procedure_hints}"
                         "inside exactly one <answer>...</answer> envelope. No explanation."
                     )
                     repair_messages = [
@@ -5732,6 +5795,7 @@ class UnitaryResponsePhase(Phase):
                                     "strict_proof_symbolic_validation"
                                 ] = {
                                     "stage": f"{stage}_prompt_derived_repair",
+                                    "method": "prompt_derived_symbolic_repair",
                                     "solver": self._response_contract_attr(
                                         repaired_validation,
                                         "solver",
@@ -5809,10 +5873,12 @@ class UnitaryResponsePhase(Phase):
 
                 strict_envelope = self._coerce_strict_answer_envelope(response_text)
                 if not strict_envelope:
+                    repair_procedure_hints = self._strict_proof_procedure_hints(objective)
                     repair_system_prompt = (
                         "You are Aura's governed proof-answer lane. The previous output was "
                         "invalid because it was not exactly one minimal <answer>...</answer> "
                         "envelope. Return only the final atomic answer inside that envelope. "
+                        f"{repair_procedure_hints}"
                         "No explanation, no assessment, no copied prompt text."
                     )
                     repair_messages = [
@@ -5878,12 +5944,14 @@ class UnitaryResponsePhase(Phase):
                         flags=re.DOTALL | re.IGNORECASE,
                     )
                     candidate_answer = candidate_match.group(1).strip() if candidate_match else strict_envelope
+                    verify_procedure_hints = self._strict_proof_procedure_hints(objective)
                     verify_system_prompt = (
                         "You are Aura's governed proof-answer verifier. Check the candidate "
                         "against the original task before final emission. Reason privately. "
                         "For constraint or truth-teller puzzles, test each assignment and reject contradictions; "
                         "for sequences, compare differences and infer the generating rule; "
                         "if the task gives answer options in parentheses, return one of those option values, not the subject label. "
+                        f"{verify_procedure_hints}"
                         "If the candidate is correct, return the same final answer value. "
                         "If it is wrong, return the corrected final answer value. "
                         "Return only the final answer value, with no explanation and no XML tags."

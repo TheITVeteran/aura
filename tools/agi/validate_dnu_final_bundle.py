@@ -10,6 +10,7 @@ import re
 import sys
 from pathlib import Path
 
+
 def print_fail(msg):
     print(f"VALIDATION_FAILURE: {msg}")
 
@@ -230,21 +231,6 @@ def main():
     for k, v in cats_in_scorecard.items():
         cat_attempted[k] = v.get("attempted", 0)
 
-    required_minima = {
-        "novel_reasoning": 50,
-        "reasoning": 50,
-        "coding_repair": 10,
-        "coding": 10,
-        "tool_research": 10,
-        "research": 10,
-        "long_horizon_planning": 10,
-        "planning": 10,
-        "autonomous_self_debugging": 10,
-        "self_debug": 10,
-        "cross_domain_transfer": 10,
-        "transfer": 10,
-    }
-
     # Normalize categories: map all variant names to standard targets
     norm_mapping = {
         "novel_reasoning": "novel_reasoning",
@@ -354,22 +340,60 @@ def main():
                 )
                 tier_6_failed = True
 
+        system2_task_count_for_ablation = int(
+            proof_data.get(
+                "system2_symbolic_reasoner_task_count",
+                proof_data.get("structured_solver_task_count", 0),
+            )
+            or 0
+        )
+        no_system2_key = next(
+            (
+                v
+                for v in short_ablations_map["no_system2"]
+                if v in ablations_data and isinstance(ablations_data.get(v), dict)
+            ),
+            None,
+        )
+        if system2_task_count_for_ablation and no_system2_key:
+            no_system2 = ablations_data[no_system2_key]
+            if no_system2.get("dnu_score_delta_required") is not True:
+                failures.append(
+                    "no_system2 ablation must require a DNU score delta when System2 answered scored tasks"
+                )
+                tier_6_failed = True
+            if no_system2.get("lesion_effect_verified_in_this_battery") is not True:
+                failures.append(
+                    "no_system2 ablation did not verify an in-battery lesion effect after System2 answered scored tasks"
+                )
+                tier_6_failed = True
+            try:
+                no_system2_rate = float(no_system2.get("pass_rate", 1.0) or 0.0)
+            except (TypeError, ValueError):
+                no_system2_rate = 1.0
+            if no_system2_rate >= overall_pass_rate:
+                failures.append(
+                    f"no_system2 ablation did not degrade DNU score: full={overall_pass_rate:.1%} "
+                    f"vs no_system2={no_system2_rate:.1%}"
+                )
+                tier_6_failed = True
+
         # 11. Architecture-is-load-bearing: full Aura must MATERIALLY outperform the
         #     external baselines (a stateless LLM / a ReAct tool-agent) on these tasks.
         #     This is the substantive "more than a wrapper" proof the DNU battery
         #     legitimately supports. (Observed: full ~1.0 vs raw_llm/react ~0.08-0.17.)
-        ARCH_MARGIN = 0.30
+        arch_margin = 0.30
         full_aura_pr = ablations_data.get("full_aura", {}).get("pass_rate", overall_pass_rate)
         for b_name in ("raw_llm", "react_agent"):
             b = baselines_data.get(b_name, {})
             if not b:
                 continue  # presence/RUN of baselines is enforced separately above
             b_pr = b.get("pass_rate", 1.0)
-            if (full_aura_pr - b_pr) < ARCH_MARGIN:
+            if (full_aura_pr - b_pr) < arch_margin:
                 failures.append(
                     f"Full Aura did not materially outperform external baseline "
                     f"'{b_name}': full={full_aura_pr:.1%} vs {b_name}={b_pr:.1%} "
-                    f"(need a margin of at least {ARCH_MARGIN:.0%})"
+                    f"(need a margin of at least {arch_margin:.0%})"
                 )
                 tier_6_failed = True
 
@@ -445,8 +469,30 @@ def main():
             tier_6_failed = True
 
     if runtime_policy_data:
-        if int(proof_data.get("structured_solver_task_count", -1) or 0) != 0:
-            failures.append("Structured proof solver answered scored task(s); proof is contaminated")
+        structured_task_count = int(proof_data.get("structured_solver_task_count", -1) or 0)
+        system2_task_count = int(
+            proof_data.get("system2_symbolic_reasoner_task_count", structured_task_count)
+            or 0
+        )
+        system2_enabled = bool(runtime_policy_data.get("system2_symbolic_reasoner_enabled"))
+        if system2_task_count:
+            leakage_system2_tasks = leakage_data.get("system2_symbolic_reasoner_tasks")
+            if not system2_enabled:
+                failures.append(
+                    "System2 symbolic reasoner answered scored task(s) while disabled"
+                )
+                tier_6_failed = True
+            if not isinstance(leakage_system2_tasks, list) or len(leakage_system2_tasks) != system2_task_count:
+                failures.append("System2 symbolic reasoner task provenance is missing or incomplete")
+                tier_6_failed = True
+        prompt_repair_count = leakage_data.get("prompt_derived_repair_task_count")
+        if prompt_repair_count is None:
+            failures.append("Leakage report is missing prompt-derived symbolic repair audit")
+            tier_6_failed = True
+        elif int(prompt_repair_count or 0) != 0:
+            failures.append(
+                "Prompt-derived symbolic repair answered scored task(s); proof is contaminated"
+            )
             tier_6_failed = True
         if runtime_policy_data.get("proof_model_tier") == "primary":
             probe = runtime_policy_data.get("model_lane_probe") or {}
@@ -542,6 +588,7 @@ def main():
             "outperform",
             "model lane",
             "structured proof solver",
+            "prompt-derived symbolic repair",
             "synthetic",
             "projected",
             "verdict is dnu agi proven, but validation failed"

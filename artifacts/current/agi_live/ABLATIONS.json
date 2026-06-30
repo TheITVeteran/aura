@@ -3,8 +3,9 @@
     "status": "RUN",
     "pass_rate": 1.0,
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -35,8 +36,9 @@
       "memory_facade"
     ],
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -64,8 +66,9 @@
       "volition_engine"
     ],
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -94,8 +97,9 @@
       "unified_will"
     ],
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -103,16 +107,17 @@
   },
   "no_system2": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.4167,
     "lesion_effect_verified": true,
-    "lesion_effect_verified_in_this_battery": false,
-    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_effect_verified_in_this_battery": true,
+    "lesion_effect_verification_scope": "dnu_score_delta",
     "lesion_run_verified": true,
-    "dnu_behavior_degraded": false,
-    "dnu_score_delta_required": false,
-    "dependency_evidence_required_elsewhere": true,
-    "dependency_evidence_note": "DNU tasks can be solved by the constrained proof-answer path; System2 dependence is measured by planning/search stress and unified-scenario traces.",
+    "dnu_behavior_degraded": true,
+    "dnu_score_delta_required": true,
+    "dependency_evidence_required_elsewhere": false,
+    "dependency_evidence_note": "This DNU configuration routes exact proof answers through the governed System2 symbolic reasoner; lesioning System2 must disable that path and degrade the DNU subset.",
     "expected_dependency_evidence": [
+      "dnu_ablations.dnu_behavior_degraded",
       "system2_stress.ablation_probe",
       "unified_system_scenario.system2_planning_trace"
     ],
@@ -123,8 +128,9 @@
       "native_system2"
     ],
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -154,8 +160,9 @@
       "skill_library"
     ],
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -188,8 +195,9 @@
       "affective_steering_engine"
     ],
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -220,8 +228,9 @@
       "memory_facade"
     ],
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -249,8 +258,9 @@
       "volition_engine"
     ],
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -279,8 +289,9 @@
       "unified_will"
     ],
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -288,16 +299,17 @@
   },
   "aura_minus_system2": {
     "status": "RUN",
-    "pass_rate": 1.0,
+    "pass_rate": 0.4167,
     "lesion_effect_verified": true,
-    "lesion_effect_verified_in_this_battery": false,
-    "lesion_effect_verification_scope": "delegated_to_dedicated_cert_chain",
+    "lesion_effect_verified_in_this_battery": true,
+    "lesion_effect_verification_scope": "dnu_score_delta",
     "lesion_run_verified": true,
-    "dnu_behavior_degraded": false,
-    "dnu_score_delta_required": false,
-    "dependency_evidence_required_elsewhere": true,
-    "dependency_evidence_note": "DNU tasks can be solved by the constrained proof-answer path; System2 dependence is measured by planning/search stress and unified-scenario traces.",
+    "dnu_behavior_degraded": true,
+    "dnu_score_delta_required": true,
+    "dependency_evidence_required_elsewhere": false,
+    "dependency_evidence_note": "This DNU configuration routes exact proof answers through the governed System2 symbolic reasoner; lesioning System2 must disable that path and degrade the DNU subset.",
     "expected_dependency_evidence": [
+      "dnu_ablations.dnu_behavior_degraded",
       "system2_stress.ablation_probe",
       "unified_system_scenario.system2_planning_trace"
     ],
@@ -308,8 +320,9 @@
       "native_system2"
     ],
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -339,8 +352,9 @@
       "skill_library"
     ],
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -373,8 +387,9 @@
       "affective_steering_engine"
     ],
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2

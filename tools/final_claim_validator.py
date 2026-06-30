@@ -266,12 +266,13 @@ def _dnu_candidate_evidence_passes(artifacts_dir: Path, reasons: list[str]) -> b
         reasons,
     )
     run_status_ok = _dnu_run_status_passes(artifacts_dir, reasons)
+    proof = _load_json(artifacts_dir / "agi_live" / "DNU_AGI_PROOF.json")
     scorecard = _load_json(artifacts_dir / "agi_live" / "SCORECARD.json")
     leakage = _load_json(artifacts_dir / "agi_live" / "LEAKAGE_REPORT.json")
     baselines = _load_json(artifacts_dir / "agi_live" / "BASELINES.json")
     ablations = _load_json(artifacts_dir / "agi_live" / "ABLATIONS.json")
-    if scorecard is None or leakage is None or baselines is None or ablations is None:
-        reasons.append("AGI-candidate claim requires DNU scorecard/leakage/baseline/ablation artifacts.")
+    if proof is None or scorecard is None or leakage is None or baselines is None or ablations is None:
+        reasons.append("AGI-candidate claim requires DNU proof/scorecard/leakage/baseline/ablation artifacts.")
         return False
     if not (proof_steps_ok and run_status_ok):
         return False
@@ -310,16 +311,10 @@ def _dnu_candidate_evidence_passes(artifacts_dir: Path, reasons: list[str]) -> b
             return False
 
     # The six organ-ablation machinery configs must genuinely RUN (each booted an
-    # organ-removed runtime). We do NOT require each lesion to *degrade the
-    # isolation-scrubbed DNU reasoning score*: the battery resets per-task state
-    # (memory, goals, pending initiatives) before every task, which neutralizes the
-    # continuity organs by construction, so lesioning them cannot move a single-shot
-    # reasoning score and that signal is unmeasurable here. The
-    # architecture-is-load-bearing claim is instead carried by the external-baseline
-    # comparison above (full Aura must beat raw_llm / llm_with_tools / react_agent),
-    # by the in-bundle governance negative-tests, and by the dedicated continuity /
-    # autonomy batteries checked in _integrated_candidate_evidence_passes. (Same
-    # methodology note as tools/agi/validate_dnu_final_bundle.py, 2026-06-22.)
+    # organ-removed runtime). Most continuity/autonomy organs are measured by
+    # dedicated batteries because DNU deliberately resets per-task state. System2
+    # is different: if the DNU proof path used the governed System2 symbolic
+    # reasoner, the no_system2 lesion must degrade this same DNU battery.
     required_ablations = (
         "no_persistent_memory",
         "no_volition",
@@ -333,6 +328,19 @@ def _dnu_candidate_evidence_passes(artifacts_dir: Path, reasons: list[str]) -> b
         if not isinstance(result, dict) or result.get("status") != "RUN":
             reasons.append(f"AGI-candidate claim requires ablation {ablation!r} to run.")
             return False
+        if ablation == "no_system2":
+            system2_count = int(
+                proof.get(
+                    "system2_symbolic_reasoner_task_count",
+                    proof.get("structured_solver_task_count", 0),
+                )
+                or 0
+            )
+            if system2_count and result.get("lesion_effect_verified_in_this_battery") is not True:
+                reasons.append(
+                    "AGI-candidate claim requires no_system2 to degrade DNU when System2 answered scored tasks."
+                )
+                return False
 
     return True
 

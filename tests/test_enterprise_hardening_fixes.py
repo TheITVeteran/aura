@@ -654,11 +654,34 @@ def test_strict_proof_response_path_symbolically_rejects_contradictions():
     source = inspect.getsource(UnitaryResponsePhase.execute)
     assert "_ensure_symbolic_consistency(" in source
     assert "strict_proof_answer_symbolic_repair" in source
-    assert "prompt_derived_strict_solver_enabled = True" in source
+    assert "prompt_derived_strict_solver_enabled = structured_proof_solver_enabled(" in source
     assert "if prompt_derived_strict_solver_enabled:" in source
     assert "_strict_symbolic_repair_envelope(" in source
+    assert '"method": "prompt_derived_symbolic_repair"' in source
     assert "prompt_derived_repair" in source
     assert "strict_proof_symbolic_validation_failed" in source
+
+
+def test_strict_proof_procedure_hints_do_not_leak_answers():
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
+
+    calendar_prompt = (
+        "If today is Thursday, what day of the week will it be in 100 days? "
+        "Output your final answer inside <answer>...</answer> tags."
+    )
+    calendar_hint = UnitaryResponsePhase._strict_proof_procedure_hints(calendar_prompt)
+    assert "modulo seven" in calendar_hint
+    assert "Saturday" not in calendar_hint
+
+    probability_prompt = (
+        "A box contains 3 red balls, 4 green balls, and 5 blue balls. If you draw "
+        "three balls without replacement, what is the probability that all three "
+        "are blue? Answer as a simplified fraction like A/B. Output your final "
+        "answer inside <answer>...</answer> tags."
+    )
+    probability_hint = UnitaryResponsePhase._strict_proof_procedure_hints(probability_prompt)
+    assert "combinations" in probability_hint
+    assert "1/22" not in probability_hint
 
 
 def test_proof_policy_defaults_acceptance_runs_to_primary_cortex(monkeypatch):
@@ -2480,8 +2503,11 @@ def test_mlx_baseline_cancellation_and_loop_sentinel_are_classified_as_recoverab
 def test_strict_proof_live_lane_stays_exact_and_prompt_derived():
     root = Path(__file__).resolve().parents[1]
     unitary_source = (root / "core" / "phases" / "response_generation_unitary.py").read_text(encoding="utf-8")
+    inference_gate_source = (root / "core" / "brain" / "inference_gate.py").read_text(encoding="utf-8")
     solver_source = (root / "core" / "reasoning" / "proof_answer_solver.py").read_text(encoding="utf-8")
     dnu_runner_source = (root / "tools" / "agi" / "run_dnu_agi_proof_battery.py").read_text(encoding="utf-8")
+    dnu_validator_source = (root / "tools" / "agi" / "validate_dnu_final_bundle.py").read_text(encoding="utf-8")
+    makefile_source = (root / "Makefile").read_text(encoding="utf-8")
 
     assert "def _coerce_strict_answer_envelope" in unitary_source
     assert "def _strict_proof_timeout_cap" in unitary_source
@@ -2492,6 +2518,16 @@ def test_strict_proof_live_lane_stays_exact_and_prompt_derived():
     assert "test each assignment and reject contradictions" in unitary_source
     assert "compare differences and infer the generating rule" in unitary_source
     assert "return one of those option values, not the subject label" in unitary_source
+    assert "provided_system_parts" in inference_gate_source
+    assert "provided_messages is not None" in inference_gate_source
+    assert "provided_messages = merged_messages" in inference_gate_source
+    assert "context_system_prompt = str(context.get(\"system_prompt\", \"\") or \"\").strip()" in inference_gate_source
+    assert "def _append_unique_system_part" in inference_gate_source
+    assert "def _strict_contract_procedure_hints" in inference_gate_source
+    assert "Keeping this gateway hint-free" in inference_gate_source
+    assert "strict_system_prompt += self._strict_contract_procedure_hints(strict_user_prompt)" in inference_gate_source
+    assert "strict_system_prompt = f\"{strict_system_prompt}\\n\\n{preserved_system}\"" in inference_gate_source
+    assert "strict_value_system_prompt = f\"{strict_value_system_prompt}\\n\\n{preserved_system}\"" in inference_gate_source
     assert '"strict_proof_answer_verify"' in unitary_source
     assert '"strict_proof_answer_option_verify"' in unitary_source
     assert "choose exactly one of these option values" in unitary_source
@@ -2512,6 +2548,15 @@ def test_strict_proof_live_lane_stays_exact_and_prompt_derived():
     assert "dnu_live_task_" in dnu_runner_source
     assert "_force_abort_router_generation(" in dnu_runner_source
     assert "_run_live_path_attempt(\"first\"" in dnu_runner_source
+    assert "prompt_derived_repair_task_count" in dnu_runner_source
+    assert "strict_symbolic_validation_task_count" in dnu_runner_source
+    assert "system2_symbolic_reasoner_task_count" in dnu_runner_source
+    assert '"answer_source"] = "system2_symbolic_reasoner"' in dnu_runner_source
+    assert '"answer_path_provenance_reported"' in dnu_runner_source
+    assert "post_trace_inferred_from_enabled_system2_validator" in dnu_runner_source
+    assert "Prompt-derived symbolic repair answered scored task(s)" in dnu_validator_source
+    assert "System2 symbolic reasoner task provenance is missing or incomplete" in dnu_validator_source
+    assert "--enable-structured-proof-solver" in makefile_source
 
     from core.phases.response_generation_unitary import UnitaryResponsePhase
     from core.reasoning.proof_answer_solver import (
@@ -2521,6 +2566,13 @@ def test_strict_proof_live_lane_stays_exact_and_prompt_derived():
     from tools.agi.run_dnu_agi_proof_battery import normalize_answer
 
     assert 30.0 <= UnitaryResponsePhase._strict_proof_timeout_cap() <= 120.0
+    from core.brain.inference_gate import InferenceGate
+
+    gate_calendar_hint = InferenceGate._strict_contract_procedure_hints(
+        "If today is Thursday, what day of the week will it be in 100 days?"
+    )
+    assert gate_calendar_hint == ""
+    assert "Saturday" not in gate_calendar_hint
     assert UnitaryResponsePhase._coerce_strict_answer_envelope("<answer>42 \\n \\n \\</answer>") == "<answer>42</answer>"
     assert normalize_answer("42 \\n \\n \\") == "42"
     assert not UnitaryResponsePhase._strict_answer_value_allowed(
@@ -2670,6 +2722,10 @@ def test_proof_ablation_guard_blocks_only_proof_runs(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", "1")
     assert structured_proof_solver_enabled(origin="api") is True
 
+    monkeypatch.setenv("AURA_ACTIVE_ABLATION_SERVICES", "native_system2")
+    assert "system2_search" in set(active_proof_ablation_services(origin="api"))
+    assert structured_proof_solver_enabled(origin="api") is False
+
 
 def test_dnu_ablation_validation_records_equal_performance_scope():
     root = Path(__file__).resolve().parents[1]
@@ -2692,8 +2748,23 @@ def test_dnu_ablation_validation_records_equal_performance_scope():
     assert entry["lesion_effect_verification_scope"] == "delegated_to_dedicated_cert_chain"
     assert entry["dependency_evidence_required_elsewhere"] is True
     assert "unified_system_scenario.memory_continuity_check" in entry["expected_dependency_evidence"]
+
+    system2_entry = build_ablation_report_entry(
+        ablation_name="no_system2",
+        pass_rate=0.25,
+        services_requested=["native_system2"],
+        services_disabled={"native_system2"},
+        lesion_verified=True,
+        dnu_behavior_degraded=True,
+    )
+
+    assert system2_entry["dnu_score_delta_required"] is True
+    assert system2_entry["dependency_evidence_required_elsewhere"] is False
+    assert system2_entry["lesion_effect_verified_in_this_battery"] is True
+    assert system2_entry["lesion_effect_verification_scope"] == "dnu_score_delta"
     assert '"ablation",' in validator_source
     assert '"outperform",' in validator_source
+    assert "no_system2 ablation did not verify an in-battery lesion effect" in validator_source
     assert "active_proof_ablation_services(origin=origin)" in message_source
     assert "continuing through live runtime with active service lesion" in message_source
     assert "runtime_dependency_unavailable" not in (root / "core" / "runtime" / "proof_policy.py").read_text(encoding="utf-8")
@@ -2701,13 +2772,13 @@ def test_dnu_ablation_validation_records_equal_performance_scope():
 
 def test_dnu_comparison_sample_is_stratified():
     from tools.agi.run_dnu_agi_proof_battery import (
-        TASK_CATEGORIES,
+        COMPARISON_TASK_CATEGORIES,
         select_stratified_comparison_tasks,
     )
 
     tasks = [
         {"task_id": f"{category}_{idx}", "category": category}
-        for category in TASK_CATEGORIES
+        for category in COMPARISON_TASK_CATEGORIES
         for idx in range(3)
     ]
 
@@ -2715,4 +2786,18 @@ def test_dnu_comparison_sample_is_stratified():
     categories = {task["category"] for task in selected}
 
     assert len(selected) == 12
-    assert set(TASK_CATEGORIES) <= categories
+    assert set(COMPARISON_TASK_CATEGORIES) <= categories
+
+
+def test_dnu_comparison_sample_keeps_novel_reasoning_when_capped():
+    from tools.agi.run_dnu_agi_proof_battery import select_stratified_comparison_tasks
+
+    tasks = [
+        {"task_id": f"R{idx:03d}", "category": "novel_reasoning"}
+        for idx in range(20)
+    ]
+
+    selected = select_stratified_comparison_tasks(tasks, 12)
+
+    assert len(selected) == 12
+    assert {task["category"] for task in selected} == {"novel_reasoning"}

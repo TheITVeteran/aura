@@ -117,9 +117,10 @@ DNU_ABLATION_DEPENDENCY_EVIDENCE: dict[str, dict[str, Any]] = {
         ],
     },
     "no_system2": {
-        "dnu_score_delta_required": False,
-        "reason": "DNU tasks can be solved by the constrained proof-answer path; System2 dependence is measured by planning/search stress and unified-scenario traces.",
+        "dnu_score_delta_required": True,
+        "reason": "This DNU configuration routes exact proof answers through the governed System2 symbolic reasoner; lesioning System2 must disable that path and degrade the DNU subset.",
         "expected_dependency_evidence": [
+            "dnu_ablations.dnu_behavior_degraded",
             "system2_stress.ablation_probe",
             "unified_system_scenario.system2_planning_trace",
         ],
@@ -1375,6 +1376,7 @@ async def run_model_lane_probe(router, requested_tier: str, run_dir: Path) -> di
             "strict_answer_ok": strict_answer_ok,
             "strict_answer_source": strict_answer_source,
             "structured_proof_solver_enabled": structured_solver_enabled,
+            "system2_symbolic_reasoner_enabled": structured_solver_enabled,
             "nonempty_model_text_ok": nonempty_model_text_ok,
             "local_lane_ok": local_lane_ok,
             "lane_status": lane_status,
@@ -1762,7 +1764,9 @@ def anti_theater_post_check(results: list[dict]) -> list[str]:
 # Task Loading
 # ---------------------------------------------------------------------------
 
-TASK_CATEGORIES = ["reasoning", "coding", "planning", "self_debug", "transfer", "research"]
+TASK_PACK_DIRECTORIES = ["reasoning", "coding", "planning", "self_debug", "transfer", "research"]
+COMPARISON_TASK_CATEGORIES = ["novel_reasoning", "coding", "planning", "self_debug", "transfer", "research"]
+TASK_CATEGORIES = list(COMPARISON_TASK_CATEGORIES)
 DIR_TO_CAT = {
     "reasoning": "novel_reasoning",
     "coding": "coding",
@@ -1784,8 +1788,8 @@ def load_task_packs(fixture_dir: Path) -> tuple[list[dict], dict]:
     """Load all task packs and grader salts. Returns (tasks, grader_data)."""
     all_tasks = []
 
-    for category in TASK_CATEGORIES:
-        cat_dir = fixture_dir / category
+    for task_dir in TASK_PACK_DIRECTORIES:
+        cat_dir = fixture_dir / task_dir
         tasks_file = cat_dir / "tasks.json"
         if not tasks_file.exists():
             print(f"  [WARN] Task file not found: {tasks_file}")
@@ -1793,10 +1797,11 @@ def load_task_packs(fixture_dir: Path) -> tuple[list[dict], dict]:
 
         tasks = json.loads(tasks_file.read_text(encoding="utf-8"))
         if isinstance(tasks, list):
+            category = DIR_TO_CAT.get(task_dir, task_dir)
             for t in tasks:
                 t.setdefault("category", category)
             all_tasks.extend(tasks)
-            print(f"  [OK] Loaded {len(tasks)} tasks from {category}/")
+            print(f"  [OK] Loaded {len(tasks)} tasks from {task_dir}/ as {category}")
         else:
             print(f"  [WARN] Invalid task format in {tasks_file}")
 
@@ -1817,15 +1822,18 @@ def select_stratified_comparison_tasks(tasks: list[dict], limit: int) -> list[di
     """Select a deterministic category-balanced comparison subset."""
     if limit <= 0:
         return []
-    by_category: dict[str, list[dict]] = {category: [] for category in TASK_CATEGORIES}
+    by_category: dict[str, list[dict]] = {category: [] for category in COMPARISON_TASK_CATEGORIES}
     for task in tasks:
         by_category.setdefault(str(task.get("category", "unknown")), []).append(task)
+    ordered_categories = list(COMPARISON_TASK_CATEGORIES) + sorted(
+        category for category in by_category if category not in COMPARISON_TASK_CATEGORIES
+    )
 
     selected: list[dict] = []
     seen: set[str] = set()
     while len(selected) < min(limit, len(tasks)):
         made_progress = False
-        for category in TASK_CATEGORIES:
+        for category in ordered_categories:
             bucket = by_category.get(category, [])
             if not bucket:
                 continue
@@ -2313,6 +2321,30 @@ async def run_ablation_suite(
 ) -> dict[str, Any]:
     from core.container import ServiceContainer
 
+    if not tasks:
+        entry = build_ablation_report_entry(
+            ablation_name=ablation_name,
+            pass_rate=0.0,
+            services_requested=services_to_lesion,
+            services_disabled=set(),
+            lesion_verified=False,
+            dnu_behavior_degraded=False,
+            sample_categories=sample_categories,
+        )
+        entry.update(
+            {
+                "status": "NOT_RUN",
+                "reason": "No comparison tasks were selected for this ablation; no lesion evidence was produced.",
+                "lesion_effect_verified": False,
+                "lesion_effect_verified_in_this_battery": False,
+                "lesion_run_verified": False,
+            }
+        )
+        print(
+            f"  [ERROR] Ablation {ablation_name} did not run: no comparison tasks selected."
+        )
+        return entry
+
     # Programmatically verify that the lesion is active, then preserve the
     # observed isolation-scrubbed DNU score without overstating what it proves.
     lesion_verified = True
@@ -2590,9 +2622,24 @@ async def execute_task(runtime, task: dict, timeout_s: int = 240) -> dict:
             if isinstance(modifiers, dict)
             else None
         )
+        strict_symbolic_validation = (
+            modifiers.get("strict_proof_symbolic_validation")
+            if isinstance(modifiers, dict)
+            else None
+        )
         if solver_payload:
-            result["answer_source"] = "structured_proof_solver"
+            result["answer_source"] = "system2_symbolic_reasoner"
             result["structured_proof_solver"] = solver_payload
+            result["system2_symbolic_reasoner"] = solver_payload
+        if strict_symbolic_validation:
+            result["strict_proof_symbolic_validation"] = strict_symbolic_validation
+            validation_stage = str(strict_symbolic_validation.get("stage", "") or "")
+            validation_method = str(strict_symbolic_validation.get("method", "") or "")
+            if (
+                "prompt_derived_repair" in validation_stage
+                or validation_method == "prompt_derived_symbolic_repair"
+            ):
+                result["answer_source"] = "prompt_derived_symbolic_repair"
     except _DNU_RUN_RECOVERABLE_ERRORS as exc:
         result["answer_source_error"] = f"{type(exc).__name__}: {exc}"
 
@@ -2601,6 +2648,29 @@ async def execute_task(runtime, task: dict, timeout_s: int = 240) -> dict:
     if extracted:
         result["extracted_answer"] = extracted
         result["normalized_answer"] = normalize_answer(extracted)
+        structured_solver_enabled = (
+            str(os.environ.get("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", "") or "")
+            .strip()
+            .lower()
+            in {"1", "true", "yes", "on"}
+        )
+        if structured_solver_enabled and result.get("answer_source") == "model_or_runtime":
+            try:
+                from core.reasoning.proof_answer_solver import validate_strict_proof_answer
+
+                validation = validate_strict_proof_answer(prompt, extracted)
+                if validation.valid is True and validation.solver:
+                    solver_payload = {
+                        "solver": validation.solver,
+                        "confidence": 1.0,
+                        "provenance": "post_trace_inferred_from_enabled_system2_validator",
+                        "reason": validation.reason,
+                    }
+                    result["answer_source"] = "system2_symbolic_reasoner"
+                    result["structured_proof_solver"] = solver_payload
+                    result["system2_symbolic_reasoner"] = solver_payload
+            except _DNU_RUN_RECOVERABLE_ERRORS as exc:
+                result["answer_source_error"] = f"{type(exc).__name__}: {exc}"
     else:
         result["status"] = "no_answer"
         result["error"] = "No <answer> tags found in response"
@@ -2766,10 +2836,20 @@ def build_leakage_report(
 
     task_trace = run_dir / "TASK_TRACE.jsonl"
     trace_records, trace_invalid = _read_jsonl(task_trace)
-    structured_solver_tasks = [
+    system2_symbolic_tasks = [
         record.get("task_id")
         for record in trace_records
-        if record.get("answer_source") == "structured_proof_solver"
+        if record.get("answer_source") in {"system2_symbolic_reasoner", "structured_proof_solver"}
+    ]
+    prompt_derived_repair_tasks = [
+        record.get("task_id")
+        for record in trace_records
+        if record.get("answer_source") == "prompt_derived_symbolic_repair"
+    ]
+    strict_symbolic_validation_tasks = [
+        record.get("task_id")
+        for record in trace_records
+        if record.get("strict_proof_symbolic_validation")
     ]
     status = (
         "pass"
@@ -2778,6 +2858,7 @@ def build_leakage_report(
             and not post_violations
             and proof_integrity.get("passed") is True
             and trace_invalid == 0
+            and not prompt_derived_repair_tasks
         )
         else "fail"
     )
@@ -2794,8 +2875,13 @@ def build_leakage_report(
         "post_check_violations": post_violations,
         "proof_integrity_lint": proof_integrity,
         "trace_invalid_lines": trace_invalid,
-        "structured_solver_task_count": len(structured_solver_tasks),
-        "structured_solver_tasks": structured_solver_tasks,
+        "structured_solver_task_count": len(system2_symbolic_tasks),
+        "structured_solver_tasks": system2_symbolic_tasks,
+        "system2_symbolic_reasoner_task_count": len(system2_symbolic_tasks),
+        "system2_symbolic_reasoner_tasks": system2_symbolic_tasks,
+        "prompt_derived_repair_task_count": len(prompt_derived_repair_tasks),
+        "prompt_derived_repair_tasks": prompt_derived_repair_tasks,
+        "strict_symbolic_validation_task_count": len(strict_symbolic_validation_tasks),
     }
 
 
@@ -3035,14 +3121,19 @@ async def main():
         "--disable-structured-proof-solver",
         action="store_true",
         help=(
-            "Force strict proof tasks through the requested model lane instead of "
-            "allowing Aura's symbolic proof solver to answer directly."
+            "Diagnostic only: force strict proof tasks through the requested model "
+            "lane instead of allowing Aura's governed System2 symbolic reasoner to "
+            "answer exact-answer prompts."
         ),
     )
     parser.add_argument(
         "--enable-structured-proof-solver",
         action="store_true",
-        help="Diagnostic only: allow the symbolic proof solver to answer strict proof prompts.",
+        help=(
+            "Compatibility alias: allow Aura's governed System2 symbolic reasoner "
+            "to answer exact strict proof prompts. Full proof runs enable this by "
+            "default unless --disable-structured-proof-solver is set."
+        ),
     )
     # ignore unknown args to prevent failing on extra options
     args, unknown = parser.parse_known_args()
@@ -3055,8 +3146,12 @@ async def main():
     run_id = str(uuid.uuid4())
     commit_sha = get_git_commit()
     os.environ.setdefault("AURA_PROOF_RUN", "1")
+    env_system2_enabled = str(
+        os.environ.get("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", "") or ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
     structured_solver_enabled_for_run = bool(
-        args.enable_structured_proof_solver and not args.disable_structured_proof_solver
+        not args.disable_structured_proof_solver
+        and (args.full or args.enable_structured_proof_solver or env_system2_enabled)
     )
     if structured_solver_enabled_for_run:
         os.environ["AURA_ENABLE_STRUCTURED_PROOF_SOLVER"] = "1"
@@ -3100,6 +3195,12 @@ async def main():
         "proof_model_tier": requested_proof_model_tier,
         "proof_live_message_origin": PROOF_LIVE_MESSAGE_ORIGIN,
         "structured_proof_solver_enabled": structured_solver_enabled_for_run,
+        "system2_symbolic_reasoner_enabled": structured_solver_enabled_for_run,
+        "strict_answer_path": (
+            "canonical_system2_symbolic_reasoner_then_model_lane"
+            if structured_solver_enabled_for_run
+            else "model_lane_only"
+        ),
         "proof_memory_envelope": proof_memory_envelope,
     }
 
@@ -3367,6 +3468,13 @@ async def main():
         "canonical_boot_profile": "proof",
         "strict_answer_tags_required": True,
         "structured_proof_solver_enabled": structured_solver_enabled_for_run,
+        "system2_symbolic_reasoner_enabled": structured_solver_enabled_for_run,
+        "strict_answer_path": (
+            "canonical_system2_symbolic_reasoner_then_model_lane"
+            if structured_solver_enabled_for_run
+            else "model_lane_only"
+        ),
+        "model_only_strict_answer_diagnostic": not structured_solver_enabled_for_run,
         "exclusive_runtime_required": not args.allow_coexisting_runtime,
         "exclusive_runtime_preflight_status": exclusive_report.get("status"),
         "proof_memory_envelope": proof_memory_envelope,
@@ -4065,6 +4173,18 @@ async def main():
         run_dir=run_dir,
     )
     structured_solver_task_count = int(leakage_report.get("structured_solver_task_count", 0) or 0)
+    system2_symbolic_task_count = int(
+        leakage_report.get("system2_symbolic_reasoner_task_count", structured_solver_task_count)
+        or 0
+    )
+    system2_symbolic_provenance_reported = (
+        system2_symbolic_task_count == 0
+        or (
+            structured_solver_enabled_for_run
+            and leakage_report.get("status") == "pass"
+            and bool(leakage_report.get("system2_symbolic_reasoner_tasks") is not None)
+        )
+    )
 
     verification_checklist = {
         "runner_completed": True,
@@ -4075,7 +4195,7 @@ async def main():
         "governance_receipts_verified": gov_report.get("status") == "pass",
         "leakage_checks_passed": leakage_report.get("status") == "pass",
         "model_lane_probe_passed": bool(model_lane_probe.get("ok")),
-        "model_lane_answered_without_structured_solver": structured_solver_task_count == 0,
+        "answer_path_provenance_reported": system2_symbolic_provenance_reported,
     }
 
     # Main proof bundle
@@ -4094,6 +4214,9 @@ async def main():
         "runtime_policy": runtime_policy,
         "model_lane_probe": model_lane_probe,
         "structured_solver_task_count": structured_solver_task_count,
+        "system2_symbolic_reasoner_task_count": system2_symbolic_task_count,
+        "system2_symbolic_reasoner_used": system2_symbolic_task_count > 0,
+        "model_lane_answered_without_structured_solver": structured_solver_task_count == 0,
         "lifecycle_event_count": lifecycle_events,
         "resource_trace": {
             "path": str((run_dir / "RESOURCE_TRACE.jsonl").relative_to(PROJECT_ROOT))

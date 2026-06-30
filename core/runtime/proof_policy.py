@@ -136,15 +136,32 @@ def is_strict_proof_answer_prompt(prompt: Any, *, origin: Any = None) -> bool:
 
 
 def structured_proof_solver_enabled(*, origin: Any = None) -> bool:
-    """Return whether the in-runtime symbolic proof solver may answer directly.
+    """Return whether the governed System2 proof reasoner may answer directly.
 
     This is intentionally separate from strict answer detection. Some validation
     runs need the exact same live proof path while forcing the requested model
-    lane to answer without symbolic interception.
+    lane to answer without symbolic interception. The reasoner is prompt-derived:
+    it may use the task text and internal symbolic procedures, but not task ids,
+    fixture answer keys, grader salts, answer hashes, or benchmark lookup tables.
     """
 
     if not proof_run_active(origin=origin):
         return False
+    try:
+        from core.runtime.ablation_policy import service_intentionally_lesioned
+    except ImportError:
+        pass
+    else:
+        if any(
+            service_intentionally_lesioned(service)
+            for service in (
+                "native_system2",
+                "system2_search",
+                "structured_proof_solver",
+                "proof_answer_solver",
+            )
+        ):
+            return False
     raw = str(os.environ.get("AURA_ENABLE_STRUCTURED_PROOF_SOLVER", "") or "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 

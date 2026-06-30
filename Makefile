@@ -496,6 +496,7 @@ final-proof:
 	  python tools/agi/run_dnu_agi_proof_battery.py \
 	  --full \
 	  --model-tier primary \
+	  --enable-structured-proof-solver \
 	  --stop-existing-runtime \
 	  --out artifacts/current/agi_live
 	python tools/run_proof_step.py --name dnu_bundle_validate --timeout 600 \

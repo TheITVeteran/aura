@@ -2857,6 +2857,17 @@ class InferenceGate:
         return primary_budget, fallback_budget
 
     @staticmethod
+    def _strict_contract_procedure_hints(prompt: Any) -> str:
+        """Low-level strict contracts do not inject task-shape hints.
+
+        Exact symbolic proof work belongs to the governed System2 proof
+        reasoner. Keeping this gateway hint-free avoids making model-only
+        diagnostics depend on fragile prompt nudges.
+        """
+
+        return ""
+
+    @staticmethod
     def _foreground_retry_schedule(
         primary_attempt_elapsed: float,
         primary_timeout: float,
@@ -5971,7 +5982,19 @@ class InferenceGate:
         provided_messages = context.get("messages")
         if not isinstance(provided_messages, list):
             provided_messages = None
+        context_system_prompt = str(context.get("system_prompt", "") or "").strip()
+
+        def _append_unique_system_part(parts: list[str], content: Any) -> None:
+            text = str(content or "").strip()
+            if not text:
+                return
+            if any(text == existing or text in existing for existing in parts):
+                return
+            parts.append(text)
+
         if strict_answer_contract:
+            provided_system_parts: list[str] = []
+            _append_unique_system_part(provided_system_parts, context_system_prompt)
             strict_system_prompt = (
                 "You are Aura's local reasoning lane, a persistent local cognitive runtime. "
                 "Follow the user's exact output contract. "
@@ -5983,14 +6006,27 @@ class InferenceGate:
                 for msg in reversed(provided_messages):
                     if not isinstance(msg, dict):
                         continue
+                    if str(msg.get("role", "") or "").strip().lower() == "system":
+                        _append_unique_system_part(
+                            provided_system_parts,
+                            msg.get("content", ""),
+                        )
+                        continue
                     if str(msg.get("role", "") or "").strip().lower() == "user":
                         strict_user_prompt = str(msg.get("content", "") or strict_user_prompt)
                         break
+            if provided_system_parts:
+                preserved_system = "\n\n".join(reversed(provided_system_parts)).strip()
+                if preserved_system:
+                    strict_system_prompt = f"{strict_system_prompt}\n\n{preserved_system}"
+            strict_system_prompt += self._strict_contract_procedure_hints(strict_user_prompt)
             provided_messages = [
                 {"role": "system", "content": strict_system_prompt},
                 {"role": "user", "content": strict_user_prompt},
             ]
         elif strict_value_contract:
+            provided_system_parts = []
+            _append_unique_system_part(provided_system_parts, context_system_prompt)
             strict_value_system_prompt = (
                 "You are Aura's local reasoning lane. Solve the task and return only "
                 "the final answer value. Do not explain, do not add role labels, and "
@@ -6001,9 +6037,22 @@ class InferenceGate:
                 for msg in reversed(provided_messages):
                     if not isinstance(msg, dict):
                         continue
+                    if str(msg.get("role", "") or "").strip().lower() == "system":
+                        _append_unique_system_part(
+                            provided_system_parts,
+                            msg.get("content", ""),
+                        )
+                        continue
                     if str(msg.get("role", "") or "").strip().lower() == "user":
                         strict_value_user_prompt = str(msg.get("content", "") or strict_value_user_prompt)
                         break
+            if provided_system_parts:
+                preserved_system = "\n\n".join(reversed(provided_system_parts)).strip()
+                if preserved_system:
+                    strict_value_system_prompt = f"{strict_value_system_prompt}\n\n{preserved_system}"
+            strict_value_system_prompt += self._strict_contract_procedure_hints(
+                strict_value_user_prompt
+            )
             provided_messages = [
                 {"role": "system", "content": strict_value_system_prompt},
                 {"role": "user", "content": strict_value_user_prompt},
@@ -7129,6 +7178,34 @@ class InferenceGate:
         brief = kwargs.pop("brief", None)
         system_prompt_is_brief = bool(kwargs.pop("system_prompt_is_brief", False))
         provided_messages = kwargs.get("messages")
+        if (
+            provided_messages is not None
+            and system_prompt
+            and not system_prompt_is_brief
+        ):
+            system_text = str(system_prompt or "").strip()
+            if system_text:
+                merged_messages: list[Any] = []
+                inserted_system = False
+                for raw_msg in provided_messages if isinstance(provided_messages, list) else []:
+                    msg = dict(raw_msg) if isinstance(raw_msg, dict) else raw_msg
+                    if (
+                        isinstance(msg, dict)
+                        and str(msg.get("role", "") or "").strip().lower() == "system"
+                        and not inserted_system
+                    ):
+                        existing = str(msg.get("content", "") or "").strip()
+                        if existing == system_text or existing.startswith(f"{system_text}\n\n"):
+                            msg["content"] = existing
+                        elif existing:
+                            msg["content"] = f"{system_text}\n\n{existing}"
+                        else:
+                            msg["content"] = system_text
+                        inserted_system = True
+                    merged_messages.append(msg)
+                if not inserted_system:
+                    merged_messages.insert(0, {"role": "system", "content": system_text})
+                provided_messages = merged_messages
 
         context: dict[str, Any] = {}
         if provided_messages is not None:

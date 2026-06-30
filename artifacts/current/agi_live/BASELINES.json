@@ -1,12 +1,13 @@
 {
   "raw_llm": {
     "status": "RUN",
-    "pass_rate": 0.1667,
+    "pass_rate": 0.0833,
     "total_tasks": 12,
-    "passed": 2,
+    "passed": 1,
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -14,12 +15,13 @@
   },
   "llm_with_tools": {
     "status": "RUN",
-    "pass_rate": 0.0,
+    "pass_rate": 0.0833,
     "total_tasks": 12,
-    "passed": 0,
+    "passed": 1,
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
@@ -31,8 +33,9 @@
     "total_tasks": 12,
     "passed": 2,
     "sample_categories": {
-      "coding": 3,
-      "planning": 3,
+      "novel_reasoning": 2,
+      "coding": 2,
+      "planning": 2,
       "self_debug": 2,
       "transfer": 2,
       "research": 2
