@@ -6,15 +6,15 @@ remains open.
 
 ## Current Estimate
 
-- Overall closeout: 99.65%
+- Overall closeout: 99.68%
 - Remaining checkpoints: 1 consolidated checkpoint, likely 1 smaller
   sub-checkpoint
-- Current phase: final clean-tree proof normalization. The configured
-  `make final-proof` replay passed every substantive runtime/proof gate, then
-  stopped only because the live desktop verdict correctly recorded
-  `git_dirty=true` from uncommitted source changes. Next checkpoint is commit,
-  push, clean-tree live desktop proof, final-claim validator, and final replay
-  normalization.
+- Current phase: final clean-tree proof normalization. The first committed-tree
+  replay exposed and reproduced a clause-scoping defect in persistent
+  commitment consistency plus a first-person grounding repair gap. Both are
+  fixed in shared runtime code with 263 chat/full-mind regressions passing.
+  Next checkpoint is commit, push, repeat the clean-tree live desktop proof,
+  final-claim validation, and final artifact normalization.
 
 ## Checkpoint 2026-06-29-04: DNU Proof Purification / 32B Strict Lane
 
@@ -998,3 +998,50 @@ Honest boundary and estimate:
 - Remaining work: commit/push this checkpoint, rerun clean-tree live desktop
   proof, rerun final-claim validation or full `make final-proof` if needed, and
   normalize final artifacts with a clean worktree.
+
+## Checkpoint 2026-06-29-18: Clean-Tree Contract Failure Root Fix
+
+Status: source repair verified locally; clean-tree live rerun pending commit.
+
+Observed clean-tree failure:
+
+- Commit `838b2511` was pushed before the replay, so the live verdict correctly
+  recorded `git_dirty=false`.
+- The replay passed boot, required probes, four conversation soak turns,
+  desktop file execution, graceful shutdown, restart continuity, and final
+  shutdown while staying below 20 GB peak RSS.
+- Soak turn 5 failed closed after a valid CognitiveEngine planning response was
+  mislabeled `commitment_contradiction`. The checker compared the entire reply
+  to every old persistent commitment and let any first-person negation trigger
+  the contradiction.
+- Runtime stream validation also caught a deterministic dialogue repair that
+  still lacked first-person stance because the presence of a grounding noun
+  such as `memory` caused an early return.
+
+Root fixes:
+
+- Commitment consistency now compares only the actual negated clause against
+  stable content terms from each active commitment and requires substantial
+  overlap. Unrelated persistent commitments can no longer poison planning
+  replies, while a direct negation of a real commitment still fails.
+- Live dialogue grounding now accepts an already-grounded surface only when it
+  also contains the explicitly required first-person stance. Otherwise the
+  deterministic repair binds it to `my` memory/runtime/state before validation.
+
+Evidence:
+
+- `tests/test_skill_access_chain.py` covers unrelated persistent-commitment
+  isolation and a genuine clause-local contradiction.
+- `tests/test_response_contract.py` covers deterministic first-person ownership
+  of an otherwise grounded memory reply.
+- Focused response/skill suite: `57 passed`.
+- Shared human-level chat and desktop full-mind suite: `263 passed`.
+- Ruff passed for all four touched runtime/test files.
+
+Honest boundary and estimate:
+
+- The repair is not closed until it passes the same committed-tree 12-turn live
+  desktop proof and final-claim validator.
+- Overall closeout: 99.68%.
+- Remaining consolidated checkpoints: 1.
+- Remaining smaller sub-checkpoints: 1.

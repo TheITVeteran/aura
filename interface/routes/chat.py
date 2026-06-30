@@ -6019,14 +6019,100 @@ _INABILITY_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+_COMMITMENT_NEGATION_CLAUSE = re.compile(
+    r"\bi\s+(?:do\s+not|don['’]t|have\s+not|haven['’]t|did\s+not|didn['’]t|"
+    r"can\s+not|cannot|can['’]t|am\s+not\s+able\s+to|was\s+not\s+able\s+to)\b"
+    r"[^.!?\n]{0,220}",
+    re.IGNORECASE,
+)
+_COMMITMENT_WORD = re.compile(r"[a-z0-9][a-z0-9'-]*", re.IGNORECASE)
+_COMMITMENT_STOPWORDS = {
+    "about",
+    "after",
+    "again",
+    "also",
+    "and",
+    "are",
+    "because",
+    "been",
+    "before",
+    "being",
+    "but",
+    "can",
+    "cannot",
+    "could",
+    "did",
+    "does",
+    "doing",
+    "done",
+    "for",
+    "from",
+    "have",
+    "into",
+    "just",
+    "later",
+    "might",
+    "need",
+    "not",
+    "now",
+    "only",
+    "should",
+    "that",
+    "the",
+    "their",
+    "then",
+    "there",
+    "they",
+    "this",
+    "through",
+    "until",
+    "was",
+    "were",
+    "will",
+    "with",
+    "would",
+    "you",
+    "your",
+}
+
+
+def _commitment_terms(text: str) -> set[str]:
+    """Return stable content terms for clause-local commitment comparison."""
+    return {
+        token
+        for token in (match.group(0).lower() for match in _COMMITMENT_WORD.finditer(text or ""))
+        if len(token) >= 3 and token not in _COMMITMENT_STOPWORDS
+    }
+
+
+def _negated_clause_contradicts_commitment(reply_text: str, description: str) -> bool:
+    """Require a negated clause to refer specifically to the commitment.
+
+    Comparing a whole reply to a persistent commitment made unrelated planning
+    answers fail whenever they contained any first-person negation.  Keep the
+    guard semantic and local: the actual negated clause must substantially
+    overlap the commitment's content terms.
+    """
+    commitment_terms = _commitment_terms(description)
+    if len(commitment_terms) < 2:
+        return False
+    for match in _COMMITMENT_NEGATION_CLAUSE.finditer(reply_text or ""):
+        clause_terms = _commitment_terms(match.group(0))
+        if len(clause_terms) < 2:
+            continue
+        overlap = commitment_terms & clause_terms
+        smaller_side = min(len(commitment_terms), len(clause_terms))
+        required_overlap = 2 if smaller_side <= 3 else 3
+        if len(overlap) >= required_overlap and len(overlap) / smaller_side >= 0.6:
+            return True
+    return False
+
 
 def _check_response_consistency(reply_text: str, user_message: str) -> tuple[bool, str]:
     """Check response against known capabilities and commitments.
 
     Returns (is_consistent, reason).
     """
-    text_lower = (reply_text or "").lower()
-
     # 1. Check for false inability claims — Aura has web access via skills
     if _INABILITY_PATTERNS.search(reply_text or ""):
         try:
@@ -6071,12 +6157,11 @@ def _check_response_consistency(reply_text: str, user_message: str) -> tuple[boo
                     desc = str(commitment.get("description", "") or "").lower()
                 else:
                     desc = str(getattr(commitment, "description", "") or "").lower()
-                # If reply says "I don't" or "I haven't" about something we committed to
-                if desc and len(desc) > 10:
-                    key_words = set(desc.split()) - {"i", "a", "the", "to", "and", "of", "in", "for", "will", "should"}
-                    matching = sum(1 for w in key_words if w in text_lower)
-                    if matching >= 3 and any(neg in text_lower for neg in ("i don't", "i haven't", "i didn't", "i can't")):
-                        return False, "commitment_contradiction"
+                if desc and len(desc) > 10 and _negated_clause_contradicts_commitment(
+                    reply_text,
+                    desc,
+                ):
+                    return False, "commitment_contradiction"
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Commitment contradiction check skipped: %s", exc)

@@ -3,13 +3,18 @@ import pytest
 from core.brain.llm.runtime_wiring import prepare_runtime_payload
 from core.phases.dialogue_policy import (
     contains_corrupted_language,
+    enforce_dialogue_contract,
     repair_dialogue_surface,
     validate_dialogue_response,
 )
 from core.phases.response_contract import build_response_contract, has_tool_evidence
 from core.runtime.turn_analysis import analyze_turn
 from core.state.aura_state import AuraState
-from core.synthesis import cure_personality_leak, stabilize_user_facing_response, strip_role_artifacts
+from core.synthesis import (
+    cure_personality_leak,
+    stabilize_user_facing_response,
+    strip_role_artifacts,
+)
 
 
 def test_response_contract_requires_search_for_specific_lookup():
@@ -416,6 +421,26 @@ def test_dialogue_policy_repairs_generic_closer_without_touching_statement():
     )
 
     assert repaired == "For me it's the ocean."
+
+
+@pytest.mark.asyncio
+async def test_dialogue_policy_owns_grounding_that_lacks_first_person_stance():
+    state = AuraState.default()
+    contract = build_response_contract(
+        state,
+        "What do you remember from this conversation?",
+        is_user_facing=True,
+    )
+
+    repaired, validation, retried = await enforce_dialogue_contract(
+        "Memory indicates that the blue lantern is under the desk.",
+        contract,
+    )
+
+    assert validation.ok is True
+    assert "missing_first_person_stance" not in validation.violations
+    assert repaired.startswith("From my conversation memory,")
+    assert retried is False
 
 
 def test_dialogue_policy_flags_prompt_artifact_label_output():

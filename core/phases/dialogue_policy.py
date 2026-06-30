@@ -545,7 +545,14 @@ def _ground_live_voice_surface(text: str, contract: object | None) -> str:
     body = str(text or "").strip()
     if not body or not _requires_explicit_live_grounding(contract):
         return body
-    if _contains_live_aura_grounding(body):
+    # A grounding noun alone is not an owned stance.  "Memory indicates..."
+    # used to bypass deterministic repair even when the contract required Aura
+    # to speak from her own live perspective.  Require both properties before
+    # accepting an already-grounded surface.
+    if _contains_live_aura_grounding(body) and (
+        not _requires_explicit_first_person_stance(contract)
+        or _contains_first_person_stance(body)
+    ):
         return body
 
     grounding = "From my live runtime state, "

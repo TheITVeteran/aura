@@ -74,3 +74,48 @@ def test_false_desktop_inability_claim_is_flagged(monkeypatch):
 
     assert ok is False
     assert reason == "false_inability_claim"
+
+
+def test_unrelated_persistent_commitment_does_not_poison_planning_reply(monkeypatch):
+    commitment_engine = SimpleNamespace(
+        get_active_commitments=lambda: [
+            SimpleNamespace(
+                description=(
+                    "A long-running microservice has too many open files and needs "
+                    "a code review of resource cleanup and retry behavior"
+                )
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        "core.agency.commitment_engine.get_commitment_engine",
+        lambda: commitment_engine,
+    )
+
+    ok, reason = _check_response_consistency(
+        "I can't export the note before the document exists, so I would create it first.",
+        "Give a concise plan for creating a note and exporting it.",
+    )
+
+    assert ok is True
+    assert reason == ""
+
+
+def test_clause_local_commitment_contradiction_is_still_flagged(monkeypatch):
+    commitment_engine = SimpleNamespace(
+        get_active_commitments=lambda: [
+            SimpleNamespace(description="I will finish the architecture review")
+        ]
+    )
+    monkeypatch.setattr(
+        "core.agency.commitment_engine.get_commitment_engine",
+        lambda: commitment_engine,
+    )
+
+    ok, reason = _check_response_consistency(
+        "I can't finish the architecture review.",
+        "Are you still doing the architecture review?",
+    )
+
+    assert ok is False
+    assert reason == "commitment_contradiction"

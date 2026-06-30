@@ -2,19 +2,52 @@
 
 ## Current Phase
 
-Final clean-tree proof normalization. The configured `make final-proof` replay
-has passed every substantive runtime/proof gate on the current source, then
-correctly stopped at final-claim validation because the live desktop verdict
-was generated from an uncommitted source tree. The next checkpoint is commit,
-push, clean-tree live desktop proof, final-claim validation, and final artifact
-normalization.
+Final clean-tree proof normalization. The first committed-tree replay exposed
+a clause-scoping defect in persistent commitment consistency and a
+first-person grounding repair gap. Both shared runtime defects are fixed with
+263 chat/full-mind regressions passing. The next checkpoint is commit, push,
+repeat the clean-tree live desktop proof, final-claim validation, and final
+artifact normalization.
 
 ## Current Milestone
 
 Final proof and live-runtime closure. The current worktree contains general
-gateway/governance fixes for web-interlocutor, desktop/user-advocate policy,
-strict proof dispatch, internal state hygiene, keep-awake governance, file
-write governance, and memory-grounded dialogue repair.
+clause-local commitment consistency and deterministic first-person grounding
+repairs discovered by the clean-tree live desktop proof.
+
+## Latest Clean-Tree Contract Failure Repair (2026-06-29)
+
+### Failure
+
+- The committed-tree live proof recorded `git_dirty=false` and stayed below
+  20 GB peak RSS.
+- Boot, health, four chat soak turns, desktop execution, restart continuity,
+  and shutdown passed.
+- Turn 5 failed closed because an unrelated persistent commitment caused a
+  valid planning answer to be labeled `commitment_contradiction`.
+- Stream scanning also found a deterministic repair that retained
+  `missing_first_person_stance` after seeing a grounding noun without an owned
+  first-person perspective.
+
+### Root Fix
+
+- Commitment contradiction checks are now clause-local and require substantial
+  semantic term overlap with the actual negated clause.
+- Grounding repair now requires both live grounding and the contractually
+  required first-person stance before accepting a surface unchanged.
+
+### Evidence
+
+- Response/skill regressions: `57 passed`.
+- Human-level chat and desktop full-mind contract suite: `263 passed`.
+- Ruff passed on all touched runtime and test files.
+
+### Remaining
+
+- Commit and push the repair.
+- Repeat the clean-tree 12-turn live desktop proof.
+- Run final-claim validation, normalize final artifacts, and leave the source
+  tree clean.
 
 ## Latest Final-Proof Replay Before Clean-Tree Commit (2026-06-29)
 
