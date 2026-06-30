@@ -116,6 +116,13 @@ class ReasoningStrategies:
         r'explain|calculate|what year|capital of|population)\b',
         re.IGNORECASE
     )
+    # Conjecture / number-theoretic discovery questions. Routed to the Frontier
+    # Discovery Engine, which returns an EXACT, epistemic-status-labeled verdict
+    # (proven / refuted / supported / conjecture) — never a sampled guess.
+    _DISCOVERY_SIGNALS = re.compile(
+        r'(divisible by|closed[ -]?form|conjecture|for (all|every) (integer|n)\b|≡|congruent to)',
+        re.IGNORECASE,
+    )
     _INSTRUCTIONAL_MARKERS = (
         "## intrinsic identity anchor",
         "[sovereign core protocol]",
@@ -303,6 +310,74 @@ class ReasoningStrategies:
 
         return str(os.getenv("AURA_REASONING_AMPLIFIER_V2", "1")).strip().lower() not in {"0", "false", "off", "no"}
 
+    def _should_discover(self, query: str) -> bool:
+        """True if the turn is a verifiable conjecture/number-theory question.
+
+        Narrow on purpose: only divisibility/congruence/closed-form/"for all n" claims
+        qualify, so ordinary arithmetic still flows to the amplifier and casual chat is
+        untouched. The Frontier Discovery Engine answers these by exact falsification.
+        """
+        q = str(query or "")
+        if len(q) < 8 or not self._DISCOVERY_SIGNALS.search(q):
+            return False
+        ql = q.lower()
+        has_n = re.search(r'\bn\b', ql) is not None
+        if "closed form" in ql or "closed-form" in ql or "conjecture" in ql:
+            return True
+        if has_n and ("divisible by" in ql or "≡" in q or "congruent" in ql or "mod" in ql):
+            return True
+        if has_n and ("for all" in ql or "for every" in ql):
+            return True
+        return False
+
+    async def _try_discovery(self, query: str, **kwargs) -> StrategyResult | None:
+        """Route a conjecture question to the Frontier Discovery Engine for an exact verdict."""
+        if kwargs.get("bypass_amplifier") or kwargs.get("bypass_critique") or not self._should_discover(query):
+            return None
+        try:
+            from core.discovery.frontier_discovery_engine import get_frontier_discovery_engine
+
+            assessment = get_frontier_discovery_engine().assess_claim(query)
+        except _REASONING_RECOVERABLE_ERRORS as exc:
+            _record_reasoning_degradation(
+                exc,
+                action="fell back from frontier discovery to legacy reasoning",
+                severity="warning",
+                extra={"query_preview": query[:160]},
+            )
+            return None
+        verdict = assessment.get("verdict", {}) or {}
+        rendered = str(assessment.get("rendered", "") or "")
+        status = str(verdict.get("status", ""))
+        if not rendered:
+            return None
+        # PROVEN/REFUTED are exact verdicts (high confidence); SUPPORTED is hedged;
+        # CONJECTURE is deliberately low — the engine is refusing to assert.
+        confidence = {
+            "proven": 0.98,
+            "refuted": 0.98,
+            "supported": float(verdict.get("confidence", 0.7) or 0.7),
+            "conjecture": 0.25,
+        }.get(status, 0.3)
+        logger.info(
+            "🔭 [FrontierDiscovery-live] status=%s committed=%s form=%s",
+            status, verdict.get("committed"), verdict.get("formal_form"),
+        )
+        return StrategyResult(
+            content=rendered,
+            strategy_used=StrategyType.DIRECT,
+            confidence=confidence,
+            reasoning_steps=[
+                f"Frontier discovery: {status or 'unknown'} via exact falsification "
+                f"({verdict.get('formal_form') or 'no exact form'})."
+            ],
+            metadata={
+                "frontier_discovery": True,
+                "epistemic_status": status,
+                "verdict": verdict,
+            },
+        )
+
     def _should_amplify_v2(self, query: str, strategy: StrategyType, kwargs: dict[str, Any]) -> str | None:
         """Return the task_type to amplify, or None to use legacy strategies."""
         if not self._v2_enabled() or kwargs.get("bypass_amplifier") or kwargs.get("bypass_critique"):
@@ -425,6 +500,16 @@ class ReasoningStrategies:
             strategy = self.classify(query)
 
         logger.info("🧠 Reasoning strategy: %s for query: %s...", strategy.name, query[:60])
+
+        # Frontier Discovery — conjecture / number-theory questions ("is n^5 - n
+        # divisible by 30?", "for all n …") are answered by EXACT falsification with an
+        # epistemic-status label (proven / refuted / supported / conjecture), never a
+        # sampled guess. Sits ahead of the amplifier so a checkable claim is proved or
+        # refuted rather than argued. Falls through on any miss.
+        discovery = await self._try_discovery(query, **kwargs)
+        if discovery is not None:
+            self._track_stats(discovery)
+            return discovery
 
         # Reasoning Amplifier v2 — the canonical hard-task path. For verifiable hard
         # tasks (code / math / repo-audit / architecture / logical checks) route through

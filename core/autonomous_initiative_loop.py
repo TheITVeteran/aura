@@ -160,7 +160,9 @@ class AutonomousInitiativeLoop:
         self._self_dev_task = None
         self._social_task = None
         self._mission_task = None
+        self._discovery_task = None
         self._last_self_dev = 0.0
+        self._last_discovery = 0.0
         self._last_email_check = 0.0
         self._last_reddit_check = 0.0
         self._recent_email_uids: dict[str, float] = {}
@@ -200,6 +202,10 @@ class AutonomousInitiativeLoop:
             self._mission_task = task_tracker.create_task(
                 self._mission_watcher_loop(),
                 name="MissionWatcherLoop",
+            )
+            self._discovery_task = task_tracker.create_task(
+                self._discovery_loop(),
+                name="FrontierDiscoveryLoop",
             )
 
             status = {
@@ -260,7 +266,7 @@ class AutonomousInitiativeLoop:
             logger.info("AutonomousInitiativeLoop stopped.")
 
     def _core_tasks(self) -> tuple[Any, ...]:
-        return (self._world_task, self._knowledge_task, self._self_dev_task, self._social_task, self._mission_task)
+        return (self._world_task, self._knowledge_task, self._self_dev_task, self._social_task, self._mission_task, self._discovery_task)
 
     def _all_tasks(self) -> tuple[Any, ...]:
         return (*self._core_tasks(), self._event_task)
@@ -747,6 +753,70 @@ class AutonomousInitiativeLoop:
         self._queue_visible_update(
             f"I pushed on a self-improvement pass around {file_name}, but the planning step hit friction."
         )
+
+    async def _discovery_loop(self):
+        """Live frontier-discovery lane: during idle windows run one bounded
+        generate→falsify→commit pass and surface any verified new law.
+
+        Sound and non-hallucinated by construction — the engine commits only laws it
+        has exhaustively verified (or that survived exact falsification trials) and files
+        everything else as labeled conjecture. The cycle is CPU-bound, so it is offloaded
+        to a thread and wall-clock bounded; it never blocks the event loop or runs away,
+        and it only fires when the same idle gate the self-development lane uses is open.
+        """
+        while self.running:
+            try:
+                if not _self_development_allowed(self.orchestrator):
+                    await asyncio.sleep(30)
+                    continue
+                now = time.time()
+                if now - self._last_discovery < 300.0:
+                    await asyncio.sleep(30)
+                    continue
+                await self._run_discovery_cycle_once()
+                self._last_discovery = time.time()
+            except asyncio.CancelledError:
+                break
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                _record_initiative_degradation(
+                    exc,
+                    action="continued frontier-discovery loop after a transient cycle failure",
+                    severity="warning",
+                )
+                logger.debug("Frontier discovery loop transient error: %s", exc)
+
+            await asyncio.sleep(60)
+
+    async def _run_discovery_cycle_once(self):
+        """Run one bounded discovery cycle and surface verified survivors to the feed."""
+        try:
+            from core.discovery.frontier_discovery_engine import (
+                get_frontier_discovery_engine,
+            )
+        except ImportError as exc:
+            _record_initiative_degradation(
+                exc, action="skipped frontier discovery (engine unavailable)", severity="debug"
+            )
+            return
+
+        engine = get_frontier_discovery_engine()
+        # CPU-bound + wall-clock bounded; offload so the event loop stays responsive.
+        report = await asyncio.to_thread(engine.run_discovery_cycle, max_time_s=6.0)
+        proven = list(report.proven)
+        supported = list(report.supported)
+        if not proven and not supported:
+            return
+        headline = proven[0].statement if proven else supported[0].statement
+        self._emit_feed(
+            "Frontier Discovery",
+            f"Verified {len(proven)} new law(s) and {len(supported)} supported pattern(s) in an idle "
+            f"discovery pass — committed to belief. e.g. {headline}",
+            category="Discovery",
+        )
+        if proven:
+            self._queue_visible_update(
+                f"During idle time I proved a new result and folded it into my beliefs: {headline}"
+            )
 
     async def trigger_gap_search(self, topic: str):
         """Explicitly triggered when a gap is found."""
