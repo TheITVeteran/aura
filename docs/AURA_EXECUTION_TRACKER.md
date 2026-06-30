@@ -2312,31 +2312,26 @@ Historical full repository result: **4333 passed, 7 skipped, 7 warnings,
 
 ## Next Exact Task
 
-After this checkpoint, the next high-leverage move is the visible multi-app
-general computer-use proof: boot Aura through the same desktop lane Bryan uses,
-issue the Notes/PDF/browser/Google Docs/wallpaper-style request through the live
-UI, verify she uses general planning and computer-use affordances rather than a
-hardcoded path, and monitor neural stream/terminal memory while she works.
+After this checkpoint, the next high-leverage move is final replay/claims
+closure: normalize the proof artifacts, rerun the configured final gates, make
+the claims matrix match the evidence, and leave the worktree clean.
 
 ## Next Exact Continuation Prompt
 
 > Continue Aura closeout from `docs/AURA_EXECUTION_TRACKER.md`. The next target
-> is the real launched visible multi-app proof: boot Aura through the
-> user-facing launcher, send the demo request through the same chat/voice path
-> Bryan uses, verify every desktop/browser/file/PDF/editor/wallpaper action
-> through general computer-use receipts, and patch only general runtime or
-> navigation causes of stalls, wrong-window typing, popup failures, or memory
-> pressure.
+> is final replay/claims closure: rerun the configured final proof gates from
+> the current commit, normalize replay artifacts, verify claims matrix language
+> against actual validator evidence, and patch only real failures or overclaims.
 
 ## Exact Stopping Point
 
-Current pass has a green screen/browser-interlocutor checkpoint and is
-proceeding into the visible multi-app desktop proof.
+Current pass has a green full visible multi-app desktop proof and is proceeding
+into final replay/claims closure.
 
 ## Current Git Diff Summary
 
-- This document records the screen/OCR/browser-interlocutor checkpoint.
-- No successful launched multi-app desktop demo receipt is present yet.
+- This document records the full visible multi-app desktop proof checkpoint.
+- Final proof/replay and claims closure remain open.
 
 ## Checkpoint 2026-06-29-14: Live Cognition And Audiovisual Arbitration
 
@@ -2458,3 +2453,70 @@ Estimate update:
 - Remaining work: full visible multi-app general computer-use demo proof; final
   proof/replay artifact normalization, claims calibration, and clean-worktree
   closure.
+
+## Checkpoint 2026-06-29-16: Full Visible Multi-App Demo Proof
+
+Status: passed on the real launched desktop path after one root-cause fix.
+
+What changed:
+
+- Added `tools/full_visible_multiapp_demo_proof.py`, a hostile verifier for the
+  complete visible multi-app chain in one natural-language `/api/chat` request.
+  The harness boots Aura, sends the objective, and verifies effects; it does
+  not execute the task itself.
+- Fixed a general desktop-planning bug where later phrases such as
+  "the same Aura's Journal folder" failed to inherit the explicitly named
+  destination and fell back to an `Aura Desktop Task ...` temporary folder.
+- Added a regression test proving later PDFs stay inside the shared named
+  destination.
+
+Failure and fix:
+
+- First all-in-one run failed:
+  `artifacts/live_proof/live_proof_20260629_172431_verdict.json`.
+- Root cause: the research summary PDF rendered to
+  `~/Desktop/Aura Desktop Task .../climate_change_summary.pdf` instead of the
+  requested shared Aura's Journal folder. The run still proved Notes, Chrome,
+  Google Docs, source tabs, wallpaper set/readback/restore, and governed
+  receipts; the artifact destination was wrong.
+- Fix: generalized shared-destination inheritance from "same folder" to
+  "same [named] folder" phrasing.
+
+Evidence:
+
+- Regression/focused suite:
+  `python -m pytest -q tests/test_desktop_task_skill.py::test_same_named_folder_reference_keeps_later_pdf_in_shared_destination tests/test_desktop_task_skill.py::test_demo_class_objective_stays_on_verified_primitive_lane tests/test_web_interlocutor.py tests/test_screen_perception.py tests/test_hardened_computer_use.py tests/test_skill_surface_contracts.py`
+  result: `165 passed`.
+- `make enterprise-gate`: passed.
+- `make production-gate`: all 37 checks passed.
+- Separate live browser/Docs/wallpaper proof:
+  `artifacts/live_proof/live_proof_20260629_171434_verdict.json` passed; 14
+  receipts, Google search, Google Docs, 3+ sources, opinion PDF, wallpaper
+  set/readback/restored.
+- Separate live visible journal proof:
+  `artifacts/live_proof/live_proof_20260629_171803_verdict.json` passed; Notes
+  opened, paste frontmost in Notes, fresh timestamped self-description PDF with
+  image, runtime-substrate-synthesis provenance.
+- Full all-in-one proof:
+  `artifacts/live_proof/live_proof_20260629_173257_verdict.json` passed.
+  One request produced 24 governed receipts, two fresh PDFs in
+  `~/Documents/Aura's Journal/`, Notes/Chrome/Google Docs/source tabs verified,
+  wallpaper set/readback/restored, peak RSS under 20 GB, graceful shutdown with
+  no orphans and port free.
+
+Honest boundary:
+
+- This proves the visible demo path for the current machine/profile and one
+  configured topic/objective. It is still empirical proof, not a guarantee that
+  every arbitrary multi-app workflow will succeed without further repairs.
+- The proof uses the live typed chat path. Voice wake remains covered by earlier
+  wake/demo proof harnesses and should be rerun as part of final proof replay.
+
+Estimate update:
+
+- Overall closeout: 99.45%.
+- Remaining consolidated checkpoints: 1.
+- Remaining smaller sub-checkpoints: 1-2.
+- Remaining work: final proof/replay artifact normalization, claims matrix
+  calibration, final `make final-proof` or configured equivalent, and clean
+  worktree closure.

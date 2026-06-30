@@ -883,3 +883,44 @@ Honest boundary and estimate:
 - Remaining: 1 consolidated checkpoint / 2 smaller sub-checkpoints, covering
   full visible multi-app demo proof, final proof/replay normalization, claims
   calibration, and clean-worktree closure.
+
+## Checkpoint 2026-06-29-16: Full Visible Multi-App Demo Proof
+
+Status: passed on the real launched desktop path after one root-cause fix.
+
+Failure and fix:
+
+- First all-in-one run failed at
+  `artifacts/live_proof/live_proof_20260629_172431_verdict.json`.
+- The task executed 25 governed receipts and did the visible work, but the
+  research PDF rendered into a generated `Aura Desktop Task ...` folder instead
+  of the requested shared Aura's Journal folder.
+- Root fix: desktop planning now inherits named shared destinations from
+  phrasings like "same Aura's Journal folder," not just the narrower "same
+  folder" phrase.
+
+Evidence:
+
+- `165 passed` across focused desktop-task, web-interlocutor,
+  screen-perception, hardened-computer-use, and skill-surface tests.
+- Enterprise gate passed.
+- Production gate passed all 37 checks.
+- Separate browser research proof passed:
+  `artifacts/live_proof/live_proof_20260629_171434_verdict.json`.
+- Separate visible journal proof passed:
+  `artifacts/live_proof/live_proof_20260629_171803_verdict.json`.
+- Full all-in-one visible multi-app proof passed:
+  `artifacts/live_proof/live_proof_20260629_173257_verdict.json`.
+  One live desktop chat request produced 24 governed receipts, two fresh PDFs
+  in `~/Documents/Aura's Journal/`, verified Notes/Chrome/Google Docs/source
+  tabs, wallpaper set/readback/restore, peak RSS under 20 GB, and clean
+  shutdown with no orphans.
+
+Honest boundary and estimate:
+
+- This proves the demo class on the current Mac/profile; it is not universal
+  proof that every arbitrary app chain succeeds without future repairs.
+- Overall closeout: 99.45%.
+- Remaining: 1 consolidated checkpoint / 1-2 smaller sub-checkpoints, covering
+  final proof/replay normalization, claims calibration, configured final gate,
+  and clean-worktree closure.

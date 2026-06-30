@@ -2387,6 +2387,37 @@ def test_demo_class_objective_stays_on_verified_primitive_lane():
     assert "eagle" in wallpaper.target["value"]
 
 
+def test_same_named_folder_reference_keeps_later_pdf_in_shared_destination():
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    objective = (
+        "Please open my Notes app and write a paragraph about who you are. "
+        "Create a folder called 'Aura's Journal' in my Documents folder and "
+        "export that note as a PDF there. Then open Chrome, find three recent "
+        "articles about climate change, open a new Google Doc, and write a "
+        "summary. Export that summary as a PDF into the same Aura's Journal folder."
+    )
+    context = {
+        "desktop_task_research_synthesis": "I reviewed the sources.",
+        "desktop_task_research_sources": [
+            {"title": "A", "url": "https://example.test/a"},
+            {"title": "B", "url": "https://example.test/b"},
+            {"title": "C", "url": "https://example.test/c"},
+        ],
+    }
+
+    steps = DesktopTaskSkill()._derive_steps_from_objective(objective, context)
+    pdf_paths = [
+        step.target["path"]
+        for step in steps
+        if step.action == "render_text_pdf" and isinstance(step.target, dict)
+    ]
+
+    assert len(pdf_paths) >= 2
+    assert all(path.startswith("~/Documents/Aura's Journal/") for path in pdf_paths)
+    assert any(path.endswith("climate_change_summary.pdf") for path in pdf_paths)
+
+
 def test_non_image_setting_derives_single_control_step():
     """Dark mode needs no image fetch — just one general system_control step."""
     from core.skills.desktop_task import DesktopTaskSkill

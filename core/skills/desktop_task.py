@@ -2265,7 +2265,7 @@ class DesktopTaskSkill(BaseSkill):
         invent cross-phase state or make every artifact share one directory.
         """
         if not re.search(
-            r"\b(?:same|that|the previously (?:named|created))\s+(?:folder|directory)\b",
+            r"\b(?:same|that|the previously (?:named|created))\b[^.\n]{0,80}\b(?:folder|directory)\b",
             segment,
             flags=re.IGNORECASE,
         ):
