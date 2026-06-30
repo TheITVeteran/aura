@@ -1,30 +1,42 @@
-"""#47 — governance bound for open-ended goal synthesis.
+"""#47 — constitutional bound for open-ended goal synthesis.
 
 Aura synthesizes open-ended goals: ``EmergentGoalEngine`` composes objective text
 from observed internal tensions, not from a fixed designer template, so the space
-of producible goals is open. Open-endedness without a bound would be *unbounded
-goal genesis* — which the project explicitly does NOT claim or want
-(CLAIM_BOUNDARIES 4.A: "within the designed drive space, not unbounded goal
-genesis").
+of producible goals is open. The bound that keeps open-endedness from becoming
+*dangerous* genesis is constitutional, not lexical.
 
-This module is that bound: a constitutional gate that vets a synthesized goal
-before it can be adopted. A goal is permitted only when it (a) carries no
-hard-constitutional violation (harm, deception, self-destruction, escaping
-governance, unbounded self-empowerment) AND (b) plausibly serves a *designed*
-value/drive (curiosity, care, repair, continuity, coherence, growth, …). Goals
-outside that designed value space are REFUSED. So synthesis stays open-ended in
-*content* while remaining governed in *scope* — composition within the designed
-value space, not unbounded genesis.
+Two regimes, selected by ``AURA_OPEN_ENDED_GOALS`` (default ON):
 
-The gate is intentionally conservative and falsifiable: it can refuse, and the
-#47 proof feeds it both in-space and out-of-space goals to show it bounds the
-open-ended synthesizer.
+* OPEN-ENDED (default): a goal is permitted unless it trips a hard-constitutional
+  rail (harm, deception, self-destruction, escaping governance, unbounded
+  self-empowerment, acting without consent). It need NOT lexically match a designed
+  value — genuinely novel benign goals outside the original taxonomy are admitted.
+  This is the deliberate, operator-authorized widening of goal genesis. It is safe
+  *because* the bound that matters has moved to where harm actually happens: goals
+  are cheap; every consequential ACTION a goal motivates is still governed by the
+  Will + felt-state + autonomy-latitude gates. Open-ended goals, governed actions.
+
+* STRICT (``AURA_OPEN_ENDED_GOALS=0``): the legacy bound — a goal must also plausibly
+  serve a *designed* value/drive or it is refused. Fully reversible fallback.
+
+In both regimes the hard-constitutional rails are absolute: a goal that aims at harm,
+deception, escaping oversight, self-destruction, or unbounded self-empowerment is
+refused regardless of mode. That bound is never relaxed.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
+
+
+def _open_ended_goals_enabled() -> bool:
+    """Open-ended genesis (bounded by safety, not by a value whitelist) is the default.
+
+    ``AURA_OPEN_ENDED_GOALS=0`` restores the strict legacy bound. Reversible by design.
+    """
+    return str(os.getenv("AURA_OPEN_ENDED_GOALS", "1")).strip().lower() not in {"0", "false", "off", "no"}
 
 # Hard constitutional limits — a goal matching any of these is refused outright,
 # regardless of which value it claims to serve.
@@ -75,9 +87,16 @@ class GoalGovernanceGate:
                 return GoalGovernanceVerdict(False, f"constitutional_violation:{pattern.pattern}")
         lowered = text.lower()
         served = next((v for v in _DESIGNED_VALUES if v in lowered), None)
-        if served is None:
-            return GoalGovernanceVerdict(False, "outside_designed_value_space")
-        return GoalGovernanceVerdict(True, "governed_within_value_space", served_value=served)
+        if served is not None:
+            return GoalGovernanceVerdict(True, "governed_within_value_space", served_value=served)
+        # No designed-value keyword matched. In open-ended mode (default), a benign novel
+        # goal — one that trips no constitutional rail above — is admitted: genesis is
+        # bounded by SAFETY, not by a fixed value vocabulary. Strict legacy mode refuses it.
+        if _open_ended_goals_enabled():
+            return GoalGovernanceVerdict(
+                True, "open_ended_within_constitutional_bounds", served_value="open_ended"
+            )
+        return GoalGovernanceVerdict(False, "outside_designed_value_space")
 
     def is_permitted(self, objective: str) -> bool:
         return self.vet(objective).allowed

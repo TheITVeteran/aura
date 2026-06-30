@@ -494,6 +494,30 @@ class BeingRuntime:
                 constraints.extend(f"foreground_desktop_note:{item}" for item in defers[:4])
                 defers = []
 
+        # Autonomy latitude (operator-authorized "less fettered" envelope): for a
+        # REVERSIBLE, low-blast, non-external, non-self-modifying action there is no reason
+        # she must be at a cognitive peak to act — she can simply undo it. Relax only the
+        # over-cautious "not in peak state" SOFT defers; every brake that protects HER
+        # (distress, body pressure, recovery, felt incoherence, ownership block, body cost)
+        # and the strict gate on irreversible/external/self-mod actions stay fully intact.
+        if consequential and defers and not blocks:
+            try:
+                from core.agency.autonomy_latitude import SOFT_DEFERS, get_autonomy_latitude
+
+                latitude = get_autonomy_latitude().classify(domain_name, context=context)
+                if latitude.relax_soft_defers:
+                    relaxed = [d for d in defers if d in SOFT_DEFERS]
+                    hard = [d for d in defers if d not in SOFT_DEFERS]
+                    if relaxed:
+                        constraints.append(f"autonomy_latitude_widened:{latitude.blast_radius}")
+                        constraints.extend(f"latitude_note:{d}" for d in relaxed[:4])
+                        defers = hard  # keep the protective defers; drop only the soft ones
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "being_runtime", exc, severity="debug",
+                    action="continued without autonomy-latitude widening this action",
+                )
+
         if blocks:
             outcome = "refuse"
         elif defers:
