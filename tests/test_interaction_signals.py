@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import sys
 import time
 from types import SimpleNamespace
 
@@ -75,6 +76,20 @@ def test_interaction_signals_voice_and_vision_raise_attention_and_engagement():
     assert fused.attention_available > 0.75
     assert "voice" in fused.active_modalities
     assert "vision" in fused.active_modalities
+
+
+def test_interaction_signals_defers_inprocess_cv2_after_pyav_load(monkeypatch):
+    engine = InteractionSignalsEngine()
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "av", SimpleNamespace())
+    monkeypatch.delenv("AURA_ALLOW_INPROCESS_CV2_WITH_STT", raising=False)
+
+    result = engine._analyze_vision_frame_sync(b"not-a-real-jpeg", {})
+
+    assert result["method"] == "vision_backend_deferred"
+    assert result["reason"] == "cv2_blocked_in_main_process_after_pyav_load"
+    assert engine._vision_backend_ready is False
 
 
 @pytest.mark.asyncio

@@ -1164,7 +1164,13 @@ function applyDesktopAccessSummary(summary) {
         )
     ).toLowerCase();
     const blockers = Array.isArray(access.blocking_permissions) ? access.blocking_permissions : [];
+    const direct = !!access.direct_probe_available;
+    const screenPermission = direct ? access.direct_screen_recording : access.screen_recording;
+    const accessibilityPermission = direct ? access.direct_accessibility : access.accessibility;
+    const automationPermission = direct ? access.direct_automation : access.automation;
     const frontmostApp = escText(access.frontmost_app, '');
+    const effectiveIdentity = access.effective_app_identity || {};
+    const signing = effectiveIdentity.code_signature || {};
     const pyautoguiDetail = access.pyautogui_ready
         ? 'PyAutoGUI runtime loaded for mouse and keyboard actions.'
         : escText(access.pyautogui_error, 'PyAutoGUI runtime is unavailable.');
@@ -1181,30 +1187,30 @@ function applyDesktopAccessSummary(summary) {
             : overall === 'claims_only'
                 ? 'Desktop access blocked. macOS direct permission checks do not confirm the permissions Aura needs for live control.'
             : overall === 'blocked'
-                ? 'Desktop access blocked. macOS permissions still prevent Aura from acting beyond her own window.'
+                ? 'Desktop access blocked for the current Aura.app identity. The bridge is reachable, but macOS is denying required grants.'
                 : 'Desktop access is partial. Some desktop capabilities are live, but macOS permissions are still gating parts of the stack.';
 
     const cards = [
         {
             label: 'Screen Recording',
-            tone: desktopAccessTone(access.screen_recording && access.screen_recording.granted, access.screen_recording && access.screen_recording.status),
-            state: access.screen_recording && access.screen_recording.granted ? 'Active' : escText(access.screen_recording && access.screen_recording.status, 'Unknown'),
+            tone: desktopAccessTone(screenPermission && screenPermission.granted, screenPermission && screenPermission.status),
+            state: screenPermission && screenPermission.granted ? 'Active' : escText(screenPermission && screenPermission.status, 'Unknown'),
             meta: 'Needed for screen capture, OCR, and live visual awareness.',
-            detail: compactGuidance(access.screen_recording && access.screen_recording.guidance),
+            detail: compactGuidance(screenPermission && screenPermission.guidance),
         },
         {
             label: 'Accessibility',
-            tone: desktopAccessTone(access.accessibility && access.accessibility.granted, access.accessibility && access.accessibility.status),
-            state: access.accessibility && access.accessibility.granted ? 'Active' : escText(access.accessibility && access.accessibility.status, 'Unknown'),
+            tone: desktopAccessTone(accessibilityPermission && accessibilityPermission.granted, accessibilityPermission && accessibilityPermission.status),
+            state: accessibilityPermission && accessibilityPermission.granted ? 'Active' : escText(accessibilityPermission && accessibilityPermission.status, 'Unknown'),
             meta: 'Needed for mouse, keyboard, and deeper UI inspection.',
-            detail: compactGuidance(access.accessibility && access.accessibility.guidance),
+            detail: compactGuidance(accessibilityPermission && accessibilityPermission.guidance),
         },
         {
             label: 'Automation',
-            tone: desktopAccessTone(access.automation && access.automation.granted, access.automation && access.automation.status),
-            state: access.automation && access.automation.granted ? 'Active' : escText(access.automation && access.automation.status, 'Unknown'),
+            tone: desktopAccessTone(automationPermission && automationPermission.granted, automationPermission && automationPermission.status),
+            state: automationPermission && automationPermission.granted ? 'Active' : escText(automationPermission && automationPermission.status, 'Unknown'),
             meta: 'Needed to query System Events and menu bar content.',
-            detail: compactGuidance(access.automation && access.automation.guidance) || (frontmostApp ? `Frontmost app visible: ${frontmostApp}` : ''),
+            detail: compactGuidance(automationPermission && automationPermission.guidance) || (frontmostApp ? `Frontmost app visible: ${frontmostApp}` : ''),
         },
         {
             label: 'Desktop Control',
@@ -1244,10 +1250,21 @@ function applyDesktopAccessSummary(summary) {
 
     const helperLines = [];
     if (frontmostApp) helperLines.push(`Automation currently sees the frontmost app as ${frontmostApp}.`);
+    const identity = access.process_identity || {};
+    if (effectiveIdentity.bundle_identifier || effectiveIdentity.bridge_executable) {
+        helperLines.push(`Native bridge identity: ${effectiveIdentity.bundle_identifier || effectiveIdentity.bridge_executable}.`);
+    } else if (direct && (identity.bundle_identifier || identity.executable)) {
+        helperLines.push(`macOS is evaluating ${identity.bundle_identifier || identity.executable}, so permissions granted only to a different launcher do not count for this runtime.`);
+    }
+    if (signing && signing.stable_tcc_identity === false) {
+        helperLines.push('This Aura.app build is ad-hoc signed; if permissions still show denied, remove Aura from Screen Recording and Accessibility, add /Applications/Aura.app again, then approve the current build.');
+    }
     helperLines.push(pyautoguiDetail);
     if (blockers.length) {
         helperLines.push(`Blocked permissions: ${blockers.map(name => name.replace(/_/g, ' ')).join(', ')}.`);
     }
+    const diagnosis = Array.isArray(access.desktop_access_diagnosis) ? access.desktop_access_diagnosis : [];
+    diagnosis.slice(0, 3).forEach(line => helperLines.push(String(line || '')));
     help.textContent = helperLines.join(' ');
 }
 

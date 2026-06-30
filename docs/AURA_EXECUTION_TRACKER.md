@@ -1,5 +1,106 @@
 # Aura Execution Tracker
 
+## Post-Closeout Daily Runtime Program (2026-06-30)
+
+The configured local proof profile passed on 2026-06-30, but live use exposed
+additional product/runtime defects that the proof profile did not catch. This
+program is tracked separately so a historical proof pass cannot be mistaken for
+100% daily-user reliability.
+
+### Current Estimate
+
+- Configured local proof profile: **100% passed historically**.
+- Expanded daily-runtime/product closure: **about 63%** based on current live
+  evidence, not documentation.
+- Estimated checkpoints in this expanded program: **9 total**. Checkpoint 1 is
+  in flight and will count only after commit/push; **8 remain after it**.
+
+### Checkpoint 1: Live Conversation Ownership And Launcher Survival
+
+Status: implementation and live verification complete; broad gate, commit, and
+push pending.
+
+- Sealed DNU/proof tasks no longer persist as continuity, commitments, task
+  commitments, active goals, attention, or executive hysteresis.
+- Background dialectic control prompts can no longer become foreground user
+  objectives.
+- The live response gate accepts substantive self-reflection without requiring
+  a narrow list of telemetry words.
+- Conversational recall anchors such as "Remember the uncertainty..." no
+  longer become literal memory writes.
+- Deep live response generation retains the caller's hard token envelope.
+- A conversation-quality failure can no longer make the launcher reboot a
+  system-ready runtime.
+- A missed one-second health poll can no longer spawn a transient second kernel
+  while the orchestrator PID lock is live.
+- The installed app now uses the stable local `Aura Local Code Signing`
+  identity instead of a changing ad-hoc signature.
+- Live desktop evidence: three connected 32B CognitiveEngine turns returned
+  HTTP 200 with `full_mind_path=true`, required subsystems true, recurrent depth
+  active, and coherent context retention. Latencies were 15s, 11s, and 52s; the
+  third turn recovered successfully but remains above the product latency goal.
+
+### Today’s Tracked Work
+
+1. Stabilize the signed macOS TCC identity and revalidate Screen Recording,
+   Accessibility, Automation, microphone, and audio recall without repeated
+   permission prompts.
+2. Eliminate desktop exits, white screens, launcher-triggered replacement, and
+   duplicate kernel/model-spawn attempts under slow foreground inference.
+3. Keep the real 32B/72B desktop lane on CognitiveEngine with full mind controls,
+   context retention, natural voice, bounded retries, and no assistant fallback.
+4. Prove always-on background cognition, curiosity, research, repair, learning,
+   journaling, and governed action without starving foreground chat or RAM.
+5. Replace task-shaped Notes/Docs/PDF/browser heuristics with general perception,
+   planning, actuation, effect verification, recovery, and artifact semantics.
+6. Pass the visible live desktop demo: voice request, native app writing, PDF and
+   folder creation, web research, substantive Google Docs composition, source
+   preservation, image/wallpaper work, and verified completion.
+7. Pass a visible multi-turn ChatGPT/Gemini interlocution with real reading,
+   relevant replies, concurrent task handling, learned-result retention, and
+   no canned objective narration.
+8. Make web search and other autonomous tools retry/reorient through governed
+   execution; failures must update self-model/repair state and be explained in
+   Aura's generated voice rather than a canned terminal response.
+9. Validate microphone/full-duplex voice, source-of-sound attention, camera and
+   screen grounding, OCR, popup recovery, and durable conversational audio recall.
+10. Prove immune/self-repair cells run, patch only validated root causes, avoid
+    repair storms, and produce governed receipts without live `exec` mutation.
+11. Consolidate duplicate mind/runtime ownership, make required mind layers
+    explicit in health, and prevent optional-layer loss from masquerading as a
+    full-mind healthy state.
+12. Close learning debt: current CRSM corpus consumption, validated online LoRA
+    promotion, behavioral holdouts, active memory metabolism, and no heuristic
+    training acceptance without inference validation.
+13. Bound persistent-state growth: tens of thousands of tensions and hundreds of
+    thousands of pending receipts must be compacted, indexed, and retention-tested.
+14. Add quantization-aware LTC/substrate coupling: residual-dtype signal/ULP
+    diagnostics, bounded temporal integration, model-geometry migration for
+    saved states, and a realistic Phi compute budget.
+15. Remove same-model critic self-reference as a sole acceptance gate by adding
+    independent deterministic/evidence validators and quarantined second-opinion
+    paths for high-risk changes.
+16. Validate 32B foreground KV-cache behavior and contrastive amateur-model KV
+    persistence under the live RAM envelope before enabling either by default.
+17. Run clean-machine install/update/rollback/security checks, enterprise and
+    production gates, live desktop soaks, 24h/72h longevity tiers, final proof,
+    claims validation, clean worktree, commit, and push.
+
+### Remaining Checkpoint Map
+
+1. Live conversation ownership, contamination boundaries, launcher survival.
+2. Stable permissions, audio, camera/screen perception, and signed-app identity.
+3. Background autonomy, web/tool retries, immune repair, and state-growth bounds.
+4. General desktop agency plus the visible multi-application demo.
+5. AI interlocution, concurrent objectives, learning, and durable retention.
+6. Mind-layer ownership, causal health contract, learning/LoRA validation, and
+   removal of remaining task-shaped or prompt-only behavior.
+7. LTC/quantization-aware coupling, independent criticism, KV caches, and live
+   32B memory/latency optimization.
+8. Cross-machine packaging, security, update/rollback, failure injection, and
+   long-duration operational soaks.
+9. Clean-tree final proof, claims/artifact normalization, final commit and push.
+
 ## Current Phase
 
 Final clean-tree proof normalization. The first committed-tree replay exposed

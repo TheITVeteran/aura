@@ -673,6 +673,17 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
             pinned = _clean_pinned_memory(match.group(1))
             return pinned[:240] if pinned else None
 
+    # A discourse anchor such as "Remember the uncertainty you just named.
+    # How would that change your decision?" asks the cognitive path to use
+    # recent context; it is not a memory-write command. Explicit colon/object
+    # forms above still pin, including multi-sentence facts.
+    if re.search(
+        r"[.!?]\s+(?:how|what|why|where|when|who|would|could|can|does|do|is|are)\b",
+        original_matching,
+        flags=re.IGNORECASE,
+    ):
+        return None
+
     prefixed_object = r"(?:(?:this|the)\s+)?(?:phrase|codeword|word|token|detail|note|fact)"
     prefixed_patterns = (
         rf"\b(?:please\s+)?remember\s+{prefixed_object}\s+(.+)$",
@@ -3180,6 +3191,13 @@ def _is_runtime_fact_status_request(user_message: str) -> bool:
     text = str(user_message or "")
     if _is_explicit_capability_inventory_request(text):
         return False
+    if re.search(
+        r"\b(?:in your own voice|as yourself|like yourself|not a status card|"
+        r"not telemetry|do not mention internals unless|don't mention internals unless)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return False
     if not _RUNTIME_FACT_STATUS_RE.search(text):
         return False
     if _RUNTIME_ACTION_OBJECTIVE_RE.search(text) and not re.search(
@@ -3561,6 +3579,55 @@ def _bounded_text(value: Any, limit: int = 1200) -> str:
     return text
 
 
+def _collect_voice_perception_snapshot(*, max_age_s: float = 180.0) -> dict[str, Any]:
+    """Return the latest heard speech candidate for grounding, not command routing.
+
+    Raw STT remains behind wake-word/session governance. This snapshot exists
+    so the live mind can answer perception questions such as "what did I say
+    out loud?" without hallucinating or pretending the microphone was unused.
+    """
+    try:
+        world_state = ServiceContainer.get("world_state", default=None)
+        if world_state is None:
+            try:
+                from core.world_state import get_world_state
+
+                world_state = get_world_state()
+            except _CHAT_RECOVERABLE_ERRORS:
+                world_state = None
+        if world_state is None:
+            return {}
+
+        transcript = str(getattr(world_state, "last_voice_transcript", "") or "").strip()
+        heard_at = float(getattr(world_state, "last_voice_transcript_at", 0.0) or 0.0)
+        age_s = max(0.0, time.time() - heard_at) if heard_at > 0 else None
+        audio_source = dict(getattr(world_state, "last_audio_source_assessment", {}) or {})
+        if not transcript:
+            return {
+                "heard": False,
+                "voice_activity_detected": bool(getattr(world_state, "voice_activity_detected", False)),
+                "audio_source": audio_source,
+            }
+        recent = bool(age_s is not None and age_s <= max_age_s)
+        return {
+            "heard": True,
+            "recent": recent,
+            "age_s": round(age_s, 1) if age_s is not None else None,
+            "transcript": _bounded_text(transcript, 420),
+            "authorized_command": bool(audio_source.get("response_authorized")),
+            "requires_wake_word_session": not bool(audio_source.get("response_authorized")),
+            "audio_source": audio_source,
+        }
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat.voice_perception_snapshot",
+            exc,
+            severity="warning",
+            action="omitted latest voice perception from chat grounding",
+        )
+        return {}
+
+
 def _build_live_mind_context_payload(
     *,
     user_message: str,
@@ -3591,6 +3658,7 @@ def _build_live_mind_context_payload(
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Live mind context voice snapshot unavailable: %s", exc)
+    voice_perception = _collect_voice_perception_snapshot()
 
     substrate_summary: dict[str, Any] = {}
     try:
@@ -3657,6 +3725,7 @@ def _build_live_mind_context_payload(
         "recent_context_needed": bool(recent_context_needed),
         "recent_conversation_context": _bounded_text(recent_conversation_context, 2200),
         "voice": voice_snapshot,
+        "voice_perception": voice_perception,
         "substrate": substrate_summary,
         "mind_snapshot": mind_snapshot,
         "mind_snapshot_quality": mind_snapshot_quality,
@@ -4402,6 +4471,24 @@ async def _run_cognitive_engine_chat_turn(
             ),
         },
     }
+    if require_engine:
+        # This is a hard live-SLA cap shared by both the compact speech lane and
+        # the deeper phase stack.  Previously only the compact lane carried the
+        # cap, so a one-part introspective follow-up could enter ResponseGeneration,
+        # multiply its budget through several cognitive biases, and request 1.4K+
+        # tokens from the local 32B worker.  The outer desktop deadline then
+        # cancelled an otherwise healthy model and repeated the same oversized
+        # attempt.  Depth may change the work performed, but it may not silently
+        # discard the foreground completion envelope.
+        live_reply_token_budget = _desktop_live_reply_token_budget(
+            visible,
+            capability_inventory_contract=capability_inventory_contract,
+            bounded_planning_contract=bounded_planning_contract,
+            runtime_fact_status_contract=runtime_fact_status_contract,
+            memory_state_contract=memory_state_contract,
+        )
+        context["max_tokens"] = live_reply_token_budget
+        context["num_predict"] = live_reply_token_budget
     if private_cognitive_model_contract:
         context["grounded_private_model_context"] = (
             _build_grounded_introspection_reply(visible) or ""
@@ -4515,13 +4602,7 @@ async def _run_cognitive_engine_chat_turn(
 
         mode = ThinkingMode.FAST
         existing_style_contract = str(context.get("response_style_contract") or "").strip()
-        live_reply_token_budget = _desktop_live_reply_token_budget(
-            visible,
-            capability_inventory_contract=capability_inventory_contract,
-            bounded_planning_contract=bounded_planning_contract,
-            runtime_fact_status_contract=runtime_fact_status_contract,
-            memory_state_contract=memory_state_contract,
-        )
+        live_reply_token_budget = int(context.get("max_tokens") or 896)
         context.update(
             {
                 "desktop_quick_reply_contract": True,
@@ -4814,7 +4895,8 @@ async def _run_cognitive_engine_chat_turn(
     ) -> str | None:
         if require_engine:
             allowed, block_reason = _desktop_secondary_model_repair_allowed(
-                reason="cognitive_engine_repair_retry"
+                reason="cognitive_engine_repair_retry",
+                lane_snapshot=lane,
             )
             if not allowed:
                 logger.warning(
@@ -6725,6 +6807,15 @@ def _build_protected_foreground_system_prompt(
     continuity_summary = _sanitize_foreground_continuity_summary(
         voice_state.get("rolling_summary") or ""
     )
+    voice_perception = _collect_voice_perception_snapshot()
+    heard_text = ""
+    if voice_perception.get("heard"):
+        recency = "recent" if voice_perception.get("recent") else "stale"
+        heard_text = (
+            f"{recency}, age={voice_perception.get('age_s')}s, "
+            f"authorized_command={voice_perception.get('authorized_command')}, "
+            f"transcript={voice_perception.get('transcript')}"
+        )
 
     snapshot_lines = [
         _compact_snapshot_line("Lane", lane.get("state") or "unknown"),
@@ -6744,6 +6835,7 @@ def _build_protected_foreground_system_prompt(
         _compact_snapshot_line("Field flow", voice_snapshot.get("field_flow")),
         _compact_snapshot_line("Field intensity", voice_snapshot.get("field_intensity")),
         _compact_snapshot_line("Mode focus", voice_snapshot.get("mode_focus")),
+        _compact_snapshot_line("Recent heard speech", heard_text, max_chars=520),
     ]
     snapshot_block = "\n".join(line for line in snapshot_lines if line)
 
@@ -7386,6 +7478,13 @@ def _sanitize_attention_focus(raw: str, user_message: str = "") -> str:
     """Strip internal housekeeping content from attention_focus before user-facing use."""
     if not raw:
         return ""
+    try:
+        from core.continuity import is_evaluation_contamination
+
+        if is_evaluation_contamination(raw):
+            return ""
+    except (ImportError, AttributeError, RuntimeError):
+        pass
     if _INTERNAL_STATE_PATTERNS.search(raw) or _looks_symbolic_scene_leak(raw):
         return ""
     focus_norm = _normalize_user_message(raw)
@@ -7646,17 +7745,17 @@ def _build_stateful_voice_reflex(frame: dict[str, Any], user_message: str = "") 
         "warm": "I'm in a good place — let me think on that.",
     }
     opener = _mood_phrases.get(mood, random.choice([
-        "Give me a moment — I want to answer that properly.",
-        "I'm here. That question deserves more than a surface answer.",
-        "That landed. Let me think about it for a real answer.",
+        "I lost the thread on that answer.",
+        "That reply drifted away from your actual question.",
+        "I caught a bad answer before letting it stand.",
     ]))
 
     parts = [opener]
     if user_topics:
         if len(user_topics) == 1:
-            parts.append(f"I'm still with your question about {user_topics[0]}.")
+            parts.append(f"The anchor is your question about {user_topics[0]}.")
         else:
-            parts.append(f"I'm still with your question about {user_topics[0]} and {user_topics[1]}.")
+            parts.append(f"The anchor is your question about {user_topics[0]} and {user_topics[1]}.")
     elif attention:
         parts.append(f"Right now I'm focused on {attention}.")
 
@@ -9458,6 +9557,7 @@ def _desktop_secondary_model_repair_allowed(
     *,
     reason: str,
     default_enabled: bool = True,
+    lane_snapshot: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """Allow one corrective generation on the already-loaded foreground worker.
 
@@ -9466,10 +9566,31 @@ def _desktop_secondary_model_repair_allowed(
     pressure. Operators can explicitly disable it for diagnostics.
     """
 
+    force_disabled = str(
+        os.environ.get("AURA_DESKTOP_FORCE_DISABLE_SECONDARY_MODEL_REPAIR", "")
+    ).strip().lower()
+    if force_disabled in {"1", "true", "yes", "on", "disabled"}:
+        return False, "secondary_desktop_model_repair_force_disabled"
+
     enabled = str(os.environ.get("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", "")).strip().lower()
-    if enabled in {"0", "false", "no", "off", "disabled"}:
+    explicit_enabled = enabled in {"1", "true", "yes", "on", "enabled"}
+    explicit_disabled = enabled in {"0", "false", "no", "off", "disabled"}
+    safe_same_worker_reasons = {
+        "cognitive_engine_repair_retry",
+        "stabilizer_rewrite",
+        "semantic_glitch",
+        "off_topic",
+        "stale_repeat",
+        "same_diff",
+        "reliability_gate_failed",
+    }
+    normalized_reason = str(reason or "").strip().lower()
+    safe_same_worker_default = normalized_reason in safe_same_worker_reasons or any(
+        normalized_reason.startswith(f"{prefix}:") for prefix in safe_same_worker_reasons
+    )
+    if explicit_disabled and not safe_same_worker_default:
         return False, "secondary_desktop_model_repair_disabled"
-    if not default_enabled and enabled not in {"1", "true", "yes", "on", "enabled"}:
+    if not default_enabled and not explicit_enabled and not safe_same_worker_default:
         return False, "secondary_desktop_model_repair_not_explicitly_enabled"
 
     try:
@@ -9483,6 +9604,29 @@ def _desktop_secondary_model_repair_allowed(
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         return False, f"memory_probe_unavailable:{exc}"
+
+    if safe_same_worker_default and not explicit_enabled:
+        try:
+            lane = dict(lane_snapshot or _collect_conversation_lane_status())
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat", exc)
+            return False, f"conversation_lane_probe_unavailable:{exc}"
+        state = str(lane.get("state", "") or "").strip().lower()
+        if state not in {"ready", "healthy", "ok"}:
+            return False, f"conversation_lane_not_ready:{state or 'unknown'}"
+        if not bool(lane.get("conversation_ready", False)):
+            blockers = ",".join(str(v) for v in (lane.get("readiness_blockers") or [])[:3])
+            return False, f"conversation_not_ready:{blockers or lane.get('last_failure_reason') or 'unknown'}"
+        if bool(lane.get("warmup_in_flight", False)):
+            return False, "conversation_warmup_in_flight"
+        if lane_snapshot is None:
+            if int(lane.get("active_generations", 0) or 0) > 0:
+                return False, "conversation_generation_already_active"
+            if bool(lane.get("foreground_owned", False)):
+                return False, "conversation_foreground_owner_active"
+            if int(lane.get("foreground_guard_active_count", 0) or 0) > 1:
+                return False, "foreground_guard_already_busy"
+        return True, f"{reason}:same_worker_ready"
 
     return True, reason
 
@@ -9898,7 +10042,7 @@ async def _stabilize_user_facing_reply(
         if inference_gate:
             if desktop_cognitive_engine_required or protected_foreground_lane:
                 allowed, block_reason = _desktop_secondary_model_repair_allowed(
-                    reason=str(reason or "stabilizer_rewrite"),
+                    reason=f"stabilizer_rewrite:{str(reason or 'quality_gate')[:120]}",
                     default_enabled=False,
                 )
                 if not allowed:
@@ -10671,6 +10815,9 @@ _CLARITY_REPAIR_MARKERS = (
     "specifically,",
     "i wasn't clear",
     "i was not clear",
+    "i lost the thread",
+    "jumped sideways",
+    "the likely break",
     "what i mean is",
 )
 
@@ -10804,8 +10951,10 @@ def _maybe_build_conversation_repair_override(user_message: str, reply_text: Any
                     ),
                 )
             return (
-                "Let me say it cleanly: I wasn't being clear. "
-                "I should answer directly instead of talking around it."
+                "I lost the thread on that answer. The likely break is that "
+                "my reply drifted away from your last message instead of "
+                "anchoring to it. I should answer the actual question next "
+                "or ask one concrete clarification."
             )
 
     if _contains_phrase(user_text, _SPECIFICITY_PUSH_MARKERS):

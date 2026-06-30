@@ -439,7 +439,7 @@ class SovereignVoiceEngine:
             # 1. Vitality governs base volume and speed
             prosody["volume"] = 0.8 + (float(mods.overall_vitality) * 0.4) # 0.8 to 1.2
             prosody["speed"] = 0.9 + (float(mods.overall_vitality) * 0.2)  # 0.9 to 1.1 baseline
-            
+
         if substrate:
             try:
                 # Use raw substrate activations for high-frequency bypass
@@ -556,7 +556,7 @@ class SovereignVoiceEngine:
             return
         try:
             logger.info("Loading Whisper model: %s...", self.whisper_model_name)
-            
+
             os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
             device = "cpu"
             compute_type = "int8"
@@ -743,7 +743,7 @@ class SovereignVoiceEngine:
 
         # Ensure STT model is ready
         if not self._stt_initialized:
-            self._init_stt()
+            await self.ensure_stt_async()
             if not self._stt_initialized:
                 logger.error("Cannot start listening — STT model failed to load")
                 return False
@@ -753,21 +753,38 @@ class SovereignVoiceEngine:
             from core.resilience.resilience import SmartCircuitBreaker
             if not hasattr(self, "_mic_breaker"):
                 self._mic_breaker = SmartCircuitBreaker("Microphone", failure_threshold=2, base_recovery_timeout=300)
-            
-            async def _mic_payload():
-                # Start the STT worker thread
-                self._is_feeding = True
-                threading.Thread(target=self._stt_worker, daemon=True, name="VoiceSTTWorker").start()
 
-                # Open the mic stream — the callback feeds chunks to the buffer
-                self._mic_stream = sd.InputStream(
+            def _open_and_start_stream():
+                stream = sd.InputStream(
                     samplerate=SAMPLE_RATE,
                     channels=CHANNELS,
                     dtype="int16",
                     blocksize=BLOCK_SIZE,
                     callback=self._mic_callback,
                 )
-                await asyncio.to_thread(self._mic_stream.start)
+                stream.start()
+                return stream
+
+            async def _mic_payload():
+                try:
+                    start_timeout_s = max(
+                        0.05,
+                        float(os.environ.get("AURA_MIC_START_TIMEOUT_S", "6.0")),
+                    )
+                except (TypeError, ValueError):
+                    start_timeout_s = 6.0
+
+                # Opening CoreAudio can block inside PortAudio/TCC on macOS.
+                # Keep it off the boot event loop and bound it so a broken mic
+                # permission path cannot prevent HTTP/chat readiness.
+                self._mic_stream = await asyncio.wait_for(
+                    asyncio.to_thread(_open_and_start_stream),
+                    timeout=start_timeout_s,
+                )
+
+                # Start the STT worker thread only after the stream is live.
+                self._is_feeding = True
+                threading.Thread(target=self._stt_worker, daemon=True, name="VoiceSTTWorker").start()
                 self._mic_listening = True
 
                 self._pulse_hypha("voice_engine", "cognition", success=True)
@@ -786,6 +803,16 @@ class SovereignVoiceEngine:
             )
             return success
 
+        except asyncio.TimeoutError as e:
+            record_degradation("voice_engine", e)
+            logger.warning(
+                "Mic stream startup timed out; voice capture will retry on demand "
+                "without blocking desktop boot."
+            )
+            self._is_feeding = False
+            self._mic_listening = False
+            self._pulse_hypha("voice_engine", "cognition", success=False)
+            return False
         except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as e:
             record_degradation('voice_engine', e)
             logger.error("Failed to start mic capture: %s", e, exc_info=True)
@@ -1113,6 +1140,7 @@ class SovereignVoiceEngine:
             from core.world_state import get_world_state
             ws = get_world_state()
             ws.last_voice_transcript = text
+            ws.last_voice_transcript_at = time.time()
             ws.voice_activity_detected = True
             ws.last_audio_source_assessment = dict(audio_source)
             ws.record_event(

@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import importlib
 import inspect
+import logging
 import os
 import time
 from types import SimpleNamespace
@@ -3202,6 +3203,60 @@ def test_desktop_safe_boot_refuses_explicit_auto_deferred_prewarm_under_pressure
     )
 
     assert InferenceGate._boot_should_schedule_deferred_prewarm() is False
+
+
+def test_explicit_deferred_cortex_prewarm_refusal_is_rate_limited(monkeypatch, caplog):
+    from core.brain import inference_gate as inference_gate_module
+
+    monkeypatch.setenv("AURA_DEFERRED_CORTEX_PREWARM", "1")
+    monkeypatch.delenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", raising=False)
+    monkeypatch.setattr(InferenceGate, "_desktop_safe_boot_enabled", staticmethod(lambda: False))
+    monkeypatch.setattr(
+        InferenceGate,
+        "_cortex_warmup_admission_snapshot",
+        staticmethod(
+            lambda _context: {
+                "can_admit": False,
+                "reason": "memory_pressure:58.2%/26.7GB",
+                "pressure_pct": 58.2,
+                "available_gb": 26.7,
+                "total_gb": 64.0,
+            }
+        ),
+    )
+    ticks = iter([100.0, 101.0, 161.0])
+    monkeypatch.setattr(inference_gate_module.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(inference_gate_module, "_LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_AT", 0.0)
+    monkeypatch.setattr(inference_gate_module, "_LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_REASON", "")
+
+    with caplog.at_level(logging.WARNING, logger="Aura.InferenceGate"):
+        assert InferenceGate._boot_should_schedule_deferred_prewarm() is False
+        assert InferenceGate._boot_should_schedule_deferred_prewarm() is False
+        assert InferenceGate._boot_should_schedule_deferred_prewarm() is False
+
+    warnings = [
+        record
+        for record in caplog.records
+        if "Explicit deferred Cortex prewarm refused to protect RAM" in record.message
+    ]
+    assert len(warnings) == 2
+
+
+def test_live_inference_readiness_does_not_reprobe_prewarm_policy(monkeypatch):
+    gate = InferenceGate()
+    gate._initialized = True
+    gate._mlx_client = SimpleNamespace(is_alive=lambda: True)
+    monkeypatch.setattr(
+        "core.runtime.proof_policy.proof_run_active",
+        lambda **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        InferenceGate,
+        "_boot_should_schedule_deferred_prewarm",
+        staticmethod(lambda: pytest.fail("resident Cortex must bypass prewarm admission")),
+    )
+
+    assert gate.is_inference_ready() is True
 
 
 @pytest.mark.asyncio

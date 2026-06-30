@@ -116,7 +116,10 @@ class PermissionGuard(AuraBaseModule):
         itself can prove the grant for the current process identity. This method
         provides that stricter evidence without mutating the normal cache.
         """
-        if ptype == PermissionType.SCREEN:
+        native_result = await self._native_bridge_permission_result(ptype)
+        if native_result is not None:
+            result = native_result
+        elif ptype == PermissionType.SCREEN:
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, self._screen_preflight_probe)
             if result is None:
@@ -150,6 +153,61 @@ class PermissionGuard(AuraBaseModule):
             direct["guidance"] = self.get_guidance(ptype)
         return direct
 
+    async def _native_bridge_permission_result(
+        self, ptype: PermissionType
+    ) -> dict[str, Any] | None:
+        """Return effective Aura.app permission when the native bridge is trusted.
+
+        Aura's visible desktop app owns the durable macOS TCC grant, while the
+        cognitive runtime commonly runs as a Python child.  For desktop control
+        health, the relevant question is whether Aura can route the action
+        through the trusted app bridge.  This helper keeps that effective grant
+        explicit so the UI no longer reports Python's TCC denial as total
+        desktop failure when the app bridge can act.
+        """
+        native_key = {
+            PermissionType.SCREEN: "screen_recording",
+            PermissionType.ACCESSIBILITY: "accessibility",
+        }.get(ptype, "")
+        if sys.platform != "darwin" or not native_key:
+            return None
+        try:
+            from core.security.native_desktop_bridge import probe_native_desktop_bridge
+
+            native_probe = await asyncio.to_thread(probe_native_desktop_bridge)
+        except _PERMISSION_RECOVERABLE_ERRORS as exc:
+            self.logger.debug("Native Aura.app permission probe unavailable: %s", exc)
+            return None
+        if not native_probe.get("ok"):
+            return None
+        if not native_probe.get(native_key):
+            signature = (
+                native_probe.get("code_signature")
+                if isinstance(native_probe.get("code_signature"), dict)
+                else {}
+            )
+            hint = str(signature.get("tcc_repair_hint") or "").strip()
+            guidance = self.get_guidance(ptype)
+            if hint:
+                guidance = f"{guidance}\n\n{hint}"
+            return {
+                "granted": False,
+                "status": "denied_native_bridge",
+                "guidance": guidance,
+                "native_bridge": True,
+                "bridge_executable": str(native_probe.get("bridge_executable", "") or ""),
+                "bundle_identifier": str(native_probe.get("bundle_identifier", "") or ""),
+                "code_signature": signature,
+            }
+        return {
+            "granted": True,
+            "status": "active_native_bridge",
+            "guidance": "",
+            "native_bridge": True,
+            "bridge_executable": str(native_probe.get("bridge_executable", "") or ""),
+            "bundle_identifier": str(native_probe.get("bundle_identifier", "") or ""),
+        }
+
     _ENV_OVERRIDE_KEYS: dict[PermissionType, str] = {
         PermissionType.SCREEN: "AURA_ASSUME_SCREEN_PERMISSION",
         PermissionType.ACCESSIBILITY: "AURA_ASSUME_ACCESSIBILITY_PERMISSION",
@@ -160,14 +218,30 @@ class PermissionGuard(AuraBaseModule):
 
     def _env_override(self, ptype: PermissionType) -> dict[str, Any] | None:
         """Return a granted result if the user has explicitly asserted the
-        permission via env var. Lets users bypass TCC parent-process
-        inheritance when launching from a non-standard host."""
+        permission via env var.
+
+        Assertions are deliberately disabled unless the operator also enables
+        ``AURA_PERMISSION_ASSERTIONS_ALLOWED``.  A stale ``AURA_ASSUME_*`` in a
+        dotenv file must never make the desktop claim that macOS granted TCC
+        access.  Assertions remain available for isolated tests and unusual
+        parent-process launchers, but production readiness uses direct probes.
+        """
         key = self._ENV_OVERRIDE_KEYS.get(ptype)
         if not key:
             return None
+        assertions_allowed = os.getenv(
+            "AURA_PERMISSION_ASSERTIONS_ALLOWED", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if not assertions_allowed:
+            return None
         if os.getenv(key, "0") != "1":
             return None
-        return {"granted": True, "status": "asserted_env", "guidance": ""}
+        return {
+            "granted": True,
+            "status": "asserted_env",
+            "guidance": "",
+            "assertion_only": True,
+        }
 
     def _screen_preflight_probe(self) -> dict[str, Any] | None:
         """Use Quartz preflight when available so we don't trigger a capture prompt."""
@@ -398,6 +472,9 @@ class PermissionGuard(AuraBaseModule):
 
     async def _check_screen_permission(self) -> dict[str, Any]:
         """Probe screen-recording status without forcing a screenshot during boot."""
+        native_result = await self._native_bridge_permission_result(PermissionType.SCREEN)
+        if native_result is not None:
+            return native_result
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, self._screen_preflight_probe)
         if result is not None:
@@ -471,6 +548,9 @@ class PermissionGuard(AuraBaseModule):
         )
 
     async def _check_accessibility_permission(self) -> dict[str, Any]:
+        native_result = await self._native_bridge_permission_result(PermissionType.ACCESSIBILITY)
+        if native_result is not None:
+            return native_result
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, self._accessibility_preflight_probe)
         if result is not None:

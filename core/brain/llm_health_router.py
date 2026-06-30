@@ -181,6 +181,31 @@ def _oldest_generation_gate_lease_age_s() -> float:
     return max(0.0, time.time() - float(acquired_at))
 
 
+def generation_gate_snapshot() -> dict[str, Any]:
+    """Return a read-only snapshot for schedulers and health probes."""
+
+    with _GENERATION_GATE_STATE_LOCK:
+        active = {
+            int(lease_id): {
+                "age_s": max(0.0, time.time() - float(acquired_at)),
+                "owner": str(owner or "unknown"),
+            }
+            for lease_id, (acquired_at, owner) in _GENERATION_GATE_ACTIVE_LEASES.items()
+        }
+        oldest = None
+        if active:
+            oldest_id = min(active, key=lambda lease_id: active[lease_id]["age_s"])
+            oldest = {"lease_id": oldest_id, **active[oldest_id]}
+        return {
+            "active_count": len(active),
+            "active": active,
+            "oldest": oldest,
+            "last_acquired_at": float(_GENERATION_GATE_LAST_ACQUIRED_AT or 0.0),
+            "last_owner": str(_GENERATION_GATE_LAST_OWNER or ""),
+            "wait_budget_s": float(_GENERATION_GATE_WAIT_S),
+        }
+
+
 def _mark_generation_gate_acquired(owner: str) -> int:
     global _GENERATION_GATE_NEXT_LEASE_ID, _GENERATION_GATE_LAST_ACQUIRED_AT, _GENERATION_GATE_LAST_OWNER
     with _GENERATION_GATE_STATE_LOCK:

@@ -4,7 +4,7 @@ HISTORY / WHY THIS WAS REWRITTEN: this module used to fabricate results. It comp
 ``stimulated = control * stimulus * noise * 1.2  # Simulate a positive effect`` — a
 *guaranteed* positive effect — so the interpreter validated every hypothesis. It could
 not refute anything; it was confirmation theatre that fed false "validated" beliefs
-into the rest of the system. That is the single most damaging kind of stub.
+into the rest of the system. That is the most damaging kind of disconnected implementation.
 
 It now runs a REAL experiment: the hypothesis's checkable claim is falsified by the
 Frontier Discovery Engine's exact verifier (exhaustive residue checking / exact

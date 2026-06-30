@@ -13,6 +13,7 @@ from typing import Any
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.permission_gates import camera_allowed
+from core.media.safe_imports import cv2_main_process_blocked
 from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -154,6 +155,9 @@ class VisionSystem:
         
     def _check_camera(self) -> bool:
         """Check if camera is available (Must be called in thread)."""
+        if cv2_main_process_blocked():
+            logger.debug("OpenCV camera probe deferred to sidecar after PyAV load.")
+            return False
         try:
             import cv2
             cap = cv2.VideoCapture(0)
@@ -177,6 +181,8 @@ class VisionSystem:
             return {"error": "camera_not_available"}
         
         def _do_capture():
+            if cv2_main_process_blocked():
+                return {"error": "cv2_deferred_to_sidecar_after_pyav_load"}
             try:
                 import cv2
                 cap = cv2.VideoCapture(0)

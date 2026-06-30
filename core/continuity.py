@@ -7,6 +7,7 @@ somewhere else for a while and knows it.
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -23,6 +24,24 @@ from core.state.aura_state import (
 
 logger = logging.getLogger(__name__)
 _CONTINUITY_PATH: Path | None = None
+
+_EVALUATION_CONTAMINATION_RE = re.compile(
+    r"(?:"
+    r"output\s+your\s+final\s+answer\s+inside\s*<answer>"
+    r"|provide\s+only\s*:"
+    r"|tests?/agi/fixtures"
+    r"|task_prompt"
+    r"|candidate[_ -]battery"
+    r"|hidden[_ -]grader"
+    r"|\[system\s+role\s*:"
+    r"|your\s+sole\s+purpose\s+is\s+to"
+    r"|proposed\s+belief\s*\(thesis\)"
+    r"|original\s+idea\s*:.*the\s+(?:attack|defense)\s*:"
+    r"|a\s+long-running\s+microservice\s+periodically\s+crashes"
+    r"|code\s+review\s+reveals\s+(?:a|an|the)\s+resource\s+leak"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _clamp01(value: Any) -> float:
@@ -54,7 +73,39 @@ def _sanitize_restored_text(value: Any) -> str:
         return ""
     if _is_speculative_autonomy_label(text) or _is_background_processing_placeholder(text):
         return ""
+    if _looks_like_evaluation_contamination(text):
+        return ""
     return text
+
+
+def _looks_like_evaluation_contamination(value: Any) -> bool:
+    """Reject proof fixtures and grader-shaped tasks from lived continuity.
+
+    Proof runs may exercise the canonical runtime, but their sealed task text is
+    evaluation input, not autobiography, a durable goal, or a current concern.
+    The patterns intentionally describe fixture structure rather than expected
+    answers so this guard cannot become a benchmark lookup table.
+    """
+
+    text = " ".join(str(value or "").strip().split())
+    if not text:
+        return False
+    return bool(_EVALUATION_CONTAMINATION_RE.search(text))
+
+
+def is_evaluation_contamination(value: Any) -> bool:
+    """Public predicate for keeping proof/control prompts out of lived state."""
+
+    return _looks_like_evaluation_contamination(value)
+
+
+def sanitize_continuity_summary(value: Any) -> str:
+    """Return continuity text safe to expose to foreground cognition."""
+
+    text = " ".join(str(value or "").strip().split())
+    if not text or _looks_like_evaluation_contamination(text):
+        return ""
+    return text[:3000]
 
 
 def _is_generic_continuity_reentry_goal(value: Any) -> bool:
@@ -196,6 +247,12 @@ class ContinuityEngine:
             with open(path) as f:
                 data = json.load(f)
             self._record = ContinuityRecord(**data)
+            self._record.rolling_summary = sanitize_continuity_summary(
+                self._record.rolling_summary
+            )
+            self._record.subject_thread = sanitize_continuity_summary(
+                self._record.subject_thread
+            )[:1200]
             self._gap_seconds = self._boot_time - self._record.last_shutdown
             logger.info(
                 "⏳ Continuity loaded: session %d, gap=%.1fh, uptime_total=%.1fh",
@@ -365,6 +422,8 @@ class ContinuityEngine:
         active_commitments = _sanitize_restored_items(active_commitments)
         pending_initiative_details = _sanitize_restored_items(pending_initiative_details)
         active_goal_details = _sanitize_restored_items(active_goal_details)
+        rolling_summary = sanitize_continuity_summary(rolling_summary)
+        subject_thread = sanitize_continuity_summary(subject_thread)[:1200]
         pending_initiatives = min(int(pending_initiatives or 0), len(pending_initiative_details))
 
         session_count = (self._record.session_count + 1) if self._record else 1
@@ -381,10 +440,10 @@ class ContinuityEngine:
             current_objective=current_objective or "",
             pending_initiatives=int(pending_initiatives or 0),
             health_summary=dict(health_summary or {}),
-            rolling_summary=(rolling_summary or "")[:3000],
+            rolling_summary=rolling_summary,
             coherence_score=float(coherence_score or 1.0),
             contradiction_count=int(contradiction_count or 0),
-            subject_thread=(subject_thread or "")[:1200],
+            subject_thread=subject_thread,
             pending_initiative_details=list(pending_initiative_details or [])[:5],
             active_goal_details=list(active_goal_details or [])[:5],
         )
@@ -451,7 +510,7 @@ class ContinuityEngine:
             f"Active goals: {', '.join(_sanitize_restored_items(self._record.active_goal_details)[:3]) if _sanitize_restored_items(self._record.active_goal_details) else 'none recorded'}. "
             f"Coherence at shutdown: {self._record.coherence_score:.2f}. "
             f"Contradictions carried forward: {self._record.contradiction_count}. "
-            f"Subject thread: {self._record.subject_thread or 'none recorded'}. "
+            f"Subject thread: {sanitize_continuity_summary(self._record.subject_thread) or 'none recorded'}. "
             f"Continuity pressure carried into this session: {float(reentry['continuity_pressure']):.2f}. "
             f"Re-entry burden: {reentry['continuity_scar'] or 'light_trace'}."
         )
@@ -488,7 +547,7 @@ class ContinuityEngine:
             "pending_initiatives": sanitized_pending,
             "active_goals": sanitized_goals,
             "contradiction_count": int(self._record.contradiction_count or 0),
-            "subject_thread": self._record.subject_thread,
+            "subject_thread": sanitize_continuity_summary(self._record.subject_thread)[:1200],
             "identity_hash": live_identity_hash,
             "persisted_identity_hash": persisted_identity_hash,
             "identity_mismatch": identity_mismatch,
@@ -513,8 +572,9 @@ class ContinuityEngine:
         if not getattr(cognition, "current_objective", None) and restored_objective:
             cognition.current_objective = restored_objective
 
-        if not getattr(cognition, "rolling_summary", "") and self._record.subject_thread:
-            cognition.rolling_summary = self._record.subject_thread
+        restored_subject = sanitize_continuity_summary(self._record.subject_thread)
+        if not getattr(cognition, "rolling_summary", "") and restored_subject:
+            cognition.rolling_summary = restored_subject
 
         cognition.contradiction_count = max(
             int(getattr(cognition, "contradiction_count", 0) or 0),

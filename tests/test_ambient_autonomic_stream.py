@@ -128,9 +128,15 @@ def test_ambient_network_permission_boundary_is_observed_without_degradation(
     monkeypatch,
     tmp_path,
 ):
+    probe_calls = []
+
+    def _deny_network_visibility(*_args, **_kwargs):
+        probe_calls.append("net_connections")
+        raise psutil.AccessDenied()
+
     monkeypatch.setattr(
         "core.perception.ambient_developer_stream.psutil.net_connections",
-        Mock(side_effect=psutil.AccessDenied()),
+        _deny_network_visibility,
     )
     stream = AmbientDeveloperStream(
         project_root=tmp_path,
@@ -142,6 +148,7 @@ def test_ambient_network_permission_boundary_is_observed_without_degradation(
     events = stream._collect_network_events()
 
     assert len(events) == 1
+    assert probe_calls == ["net_connections"]
     assert events[0].kind == "socket_visibility_unavailable"
     assert events[0].count == 0
 

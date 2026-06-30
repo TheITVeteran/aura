@@ -207,26 +207,23 @@ class BodySchema(AuraBaseModule):
 
     def _discover_senses(self) -> None:
         """Probe hardware sensors via existing modules."""
-        # Camera (cv2 / mss)
-        try:
-            import cv2  # noqa: F401
-            self._register_limb(Limb(
-                name="camera",
-                limb_type=LimbType.SENSOR,
-                description="Camera capture via OpenCV",
-                available=True,
-                source="cv2",
-                cost_cpu=0.10,
-                cost_memory_mb=50.0,
-            ))
-        except ImportError:
-            self._register_limb(Limb(
-                name="camera",
-                limb_type=LimbType.SENSOR,
-                description="Camera capture (unavailable -- cv2 missing)",
-                available=False,
-                source="cv2",
-            ))
+        # Camera (cv2 / mss). Do not import cv2 during discovery on macOS:
+        # OpenCV and PyAV/Whisper can load incompatible AVFoundation symbols in
+        # the same process. Capability discovery only needs availability.
+        cv2_available = importlib.util.find_spec("cv2") is not None
+        self._register_limb(Limb(
+            name="camera",
+            limb_type=LimbType.SENSOR,
+            description=(
+                "Camera capture via OpenCV"
+                if cv2_available
+                else "Camera capture (unavailable -- cv2 missing)"
+            ),
+            available=cv2_available,
+            source="cv2",
+            cost_cpu=0.10 if cv2_available else 0.0,
+            cost_memory_mb=50.0 if cv2_available else 0.0,
+        ))
 
         # Microphone
         try:

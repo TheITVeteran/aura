@@ -9,6 +9,10 @@ profile and what remains outside those evidence limits.
 
 - Configured local final-proof closeout: 100% verified before this tracker
   update.
+- Post-closeout daily-runtime hardening is now tracked in
+  `docs/AURA_EXECUTION_TRACKER.md`; live defects found on 2026-06-30 mean the
+  broader product-reliability target is not 100% and must not inherit this
+  proof-profile percentage.
 - Remaining checkpoints for this local final-proof profile: 0 after committing
   and pushing the artifact normalization in this checkpoint.
 - Current phase: final local closure. `make final-proof` completed all Makefile

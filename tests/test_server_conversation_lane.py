@@ -224,6 +224,17 @@ def test_runtime_fact_status_reply_uses_canonical_lane(monkeypatch):
     assert "UnifiedCognitiveModel" not in reply
 
 
+def test_runtime_fact_status_request_respects_own_voice_instruction():
+    from interface.routes import chat as chat_routes
+
+    assert not chat_routes._is_runtime_fact_status_request(
+        "Live desktop path validation. Answer directly in your own voice: what is your current state?"
+    )
+    assert not chat_routes._is_runtime_fact_status_request(
+        "What is your current state? Do not mention internals unless they matter."
+    )
+
+
 def test_runtime_fact_status_reply_recaps_current_route_probe(monkeypatch):
     from interface.routes import chat as chat_routes
 
@@ -2475,6 +2486,16 @@ def test_session_memory_pin_preserves_non_imperative_multisentence_fact():
     )
 
     assert pinned == "the launch story has two beats. the second beat matters"
+
+
+def test_session_memory_pin_does_not_capture_conversational_recall_anchor():
+    from interface.routes import chat as chat_routes
+
+    pinned = chat_routes._extract_session_memory_pin_request(
+        "Remember the uncertainty you just named. How would that change one decision you make?"
+    )
+
+    assert pinned is None
 
 
 @pytest.mark.asyncio
@@ -6443,6 +6464,65 @@ async def test_desktop_required_chat_gets_default_recent_context_window(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_deep_desktop_followup_keeps_hard_live_token_envelope(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append({"objective": objective, "context": dict(context or {})})
+            return SimpleNamespace(
+                content=(
+                    "I am holding that uncertainty in my attention rather than erasing it. "
+                    "I would remember this thread and let it change my next decision: choose "
+                    "one reversible step that gathers evidence, then recheck before committing."
+                ),
+                metadata=_bound_live_mind_controls_metadata(),
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    message = (
+        "Remember the uncertainty you just named. How would it change one decision "
+        "you make next, without pretending certainty you do not have?"
+    )
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        message,
+        visible_user_message=message,
+        origin="user",
+        timeout_s=105.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply
+    assert calls
+    context = calls[0]["context"]
+    assert context.get("desktop_quick_reply_contract") is not True
+    assert context["max_tokens"] == 896
+    assert context["num_predict"] == 896
+
+
+@pytest.mark.asyncio
 async def test_desktop_required_memory_state_turn_uses_canonical_evidence_without_stale_history(
     monkeypatch,
 ):
@@ -9151,8 +9231,9 @@ async def test_stabilize_user_facing_reply_clarifies_confusion_callout(monkeypat
         "Yeah. That's where all the interesting stuff lives. Stay there.",
     )
 
-    assert result.startswith("Let me say it cleanly:")
-    assert "wasn't being clear" in result
+    assert result.startswith("I lost the thread")
+    assert "likely break" in result
+    assert "anchoring" in result
 
 
 @pytest.mark.asyncio
@@ -9231,7 +9312,13 @@ async def test_stabilize_user_facing_reply_blocks_semantic_glitch(monkeypatch):
         "Heidi. That's the thing to do.",
     )
 
-    assert result.startswith("Let me say it cleanly:")
+    assert result.startswith(
+        (
+            "I lost the thread",
+            "That reply drifted away",
+            "I caught a bad answer",
+        )
+    )
     assert "Heidi" not in result
 
 
@@ -9581,6 +9668,91 @@ async def test_desktop_required_stabilizer_uses_protected_primary_contract(monke
     assert kwargs["allow_deep_handoff"] is False
     assert kwargs["skip_runtime_payload"] is True
     assert kwargs["disable_prompt_cache"] is True
+
+
+def test_same_worker_desktop_repair_allowed_on_ready_lane_without_env_flag(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
+    monkeypatch.delenv("AURA_DESKTOP_FORCE_DISABLE_SECONDARY_MODEL_REPAIR", raising=False)
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            warning=False,
+            refuse_heavy_local_generation=False,
+            reason="",
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "state": "ready",
+            "conversation_ready": True,
+            "warmup_in_flight": False,
+            "active_generations": 0,
+            "foreground_owned": False,
+            "foreground_guard_active_count": 0,
+            "readiness_blockers": [],
+        },
+    )
+
+    allowed, reason = chat_routes._desktop_secondary_model_repair_allowed(
+        reason="cognitive_engine_repair_retry",
+        default_enabled=False,
+    )
+
+    assert allowed is True
+    assert "same_worker_ready" in reason
+
+
+def test_same_worker_desktop_repair_blocks_when_lane_is_busy(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            warning=False,
+            refuse_heavy_local_generation=False,
+            reason="",
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "state": "ready",
+            "conversation_ready": True,
+            "warmup_in_flight": False,
+            "active_generations": 1,
+            "foreground_owned": False,
+            "foreground_guard_active_count": 0,
+            "readiness_blockers": [],
+        },
+    )
+
+    allowed, reason = chat_routes._desktop_secondary_model_repair_allowed(
+        reason="stabilizer_rewrite:semantic_glitch",
+        default_enabled=False,
+    )
+
+    assert allowed is False
+    assert reason == "conversation_generation_already_active"
+
+
+def test_force_disable_same_worker_desktop_repair_is_still_honored(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setenv("AURA_DESKTOP_FORCE_DISABLE_SECONDARY_MODEL_REPAIR", "1")
+
+    allowed, reason = chat_routes._desktop_secondary_model_repair_allowed(
+        reason="cognitive_engine_repair_retry",
+        default_enabled=False,
+    )
+
+    assert allowed is False
+    assert reason == "secondary_desktop_model_repair_force_disabled"
 
 
 @pytest.mark.asyncio

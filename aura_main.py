@@ -74,20 +74,21 @@ except _AURA_MAIN_BOUNDARY_ERRORS as exc:
 if sys.platform == "darwin":
     os.environ["OPENCV_VIDEOIO_AVFOUNDATION_USE_FRAME_RECEIVER"] = "0"
     os.environ["PYAV_SKIP_AVF_FRAME_RECEIVER"] = "1"
+    try:
+        from core.media.safe_imports import install_main_process_cv2_guard
+
+        install_main_process_cv2_guard()
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation("aura_main", exc)
 
     with contextlib.suppress(RuntimeError):
         multiprocessing.set_start_method("spawn", force=True)
 
-    # PyAV's bundled libavdevice and OpenCV's bundled libavdevice both register
-    # the Objective-C classes AVFFrameReceiver / AVFAudioReceiver.  The objc
-    # runtime unconditionally prints a "Class … is implemented in both …"
-    # warning to stderr when this happens, which floods our logs on every boot
-    # (this is the source of the recurring "homebrew" error the user reported).
-    # The conflict is benign in practice — objc keeps the first registration,
-    # and nothing in Aura uses the AVFoundation capture classes — so we
-    # eagerly load both libraries here with stderr muted, which absorbs the
-    # one-shot duplicate-class notice and leaves subsequent transitive imports
-    # silent.
+    # PyAV and OpenCV both bundle libavdevice and register the AVFoundation
+    # Objective-C classes AVFFrameReceiver / AVFAudioReceiver. Do not eager-load
+    # OpenCV in Aura's primary brain process: camera work belongs in the sensory
+    # sidecar or a deferred provider so STT/PyAV and cv2 cannot destabilize the
+    # live desktop runtime.
     native_media_preload = os.environ.get("AURA_PRELOAD_NATIVE_MEDIA", "").strip().lower() in {
         "1",
         "true",
@@ -106,7 +107,6 @@ if sys.platform == "darwin":
             try:
                 os.dup2(_devnull_fd, 2)
                 import av as _av  # noqa: F401  (ordering matters — av first)
-                import cv2 as _cv2  # noqa: F401  (eager load to absorb dup warning)
             finally:
                 os.dup2(_saved_stderr, 2)
                 os.close(_devnull_fd)
@@ -2093,24 +2093,29 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
         except _AURA_MAIN_BOUNDARY_ERRORS as exc:
             record_degradation("aura_main", exc)
 
-        # Acquire Accessibility trust for THIS process identity up front. The
-        # desktop launcher detaches the kernel from its parent (reparenting to
-        # launchd), which strands the TCC trust Aura would otherwise inherit —
-        # so without this, typing/clicking desktop control silently fails no
-        # matter how she was launched. Surfaces the system grant dialog once;
-        # the grant then persists for this executable.
-        try:
-            from core.security.permission_guard import get_permission_guard
+        # Do not prompt for Accessibility on the Python child process during
+        # normal desktop boot. macOS grants live desktop privileges to
+        # Aura.app, and the resident native bridge owns mouse/keyboard/screen
+        # effects. Prompting Python creates duplicate, misleading TCC dialogs
+        # and can still leave the real app grant unused.
+        if str(os.getenv("AURA_REQUEST_PYTHON_ACCESSIBILITY", "0")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            try:
+                from core.security.permission_guard import get_permission_guard
 
-            if get_permission_guard().request_accessibility_trust():
-                logger.info("🖐️ Accessibility trust confirmed — full desktop control available.")
-            else:
-                logger.warning(
-                    "🖐️ Accessibility not yet granted. Approve Aura in System Settings → "
-                    "Privacy & Security → Accessibility to enable typing/clicking desktop control."
-                )
-        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
-            record_degradation("aura_main", exc)
+                if get_permission_guard().request_accessibility_trust():
+                    logger.info("🖐️ Python Accessibility trust confirmed for explicit operator mode.")
+                else:
+                    logger.warning(
+                        "🖐️ Python Accessibility not yet granted. The normal Aura.app native "
+                        "bridge remains the preferred desktop-control authority."
+                    )
+            except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+                record_degradation("aura_main", exc)
 
     # 1. Start API Server (v21: Server now runs in Kernel)
     # [STABILITY] Start API immediately so port 8000 binds while brain thaws.
@@ -3044,6 +3049,12 @@ def main():
         # disable only affects the NeuralMesh). Set AURA_LOCAL_BACKEND=llama_cpp
         # to fall back to the base-model server if the native lane misbehaves.
         os.environ.setdefault("AURA_LOCAL_BACKEND", "mlx")
+        # A normal desktop session is the complete Aura runtime.  Background
+        # cognition stays admitted through the same RAM/foreground gates as
+        # every other local generation; only an explicit recovery profile may
+        # disable it.
+        os.environ.setdefault("AURA_ENABLE_BACKGROUND_COGNITION", "1")
+        os.environ.setdefault("AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM", "1")
         # The resource guard keeps Cortex warmup RAM-admitted while preserving
         # every canonical cognitive organ and governed background worker.
         # Default deferred prewarm ON so the 32B warms in the BACKGROUND shortly

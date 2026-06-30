@@ -178,3 +178,49 @@ def test_live_desktop_context_payload_carries_mind_snapshot(monkeypatch):
     assert payload["substrate"]["affect"]["valence"] == 0.21
     assert payload["mind_snapshot"]["global_workspace"]["last_winner"] == "curiosity"
     assert payload["mind_snapshot"]["phenomenal_engine"]["self_presence"] == 0.81
+
+
+def test_live_desktop_context_payload_carries_recent_voice_perception(monkeypatch):
+    from core.runtime import live_mind_snapshot
+    from interface.routes import chat as chat_routes
+
+    class VoiceWorldState:
+        last_voice_transcript = "Bryan said the sentence about blue glass."
+        last_voice_transcript_at = 1000.0
+        voice_activity_detected = True
+        last_audio_source_assessment = {
+            "source": "near-field_voice",
+            "response_authorized": False,
+            "attention_mode": "listen",
+        }
+
+    RuntimeServices.services["world_state"] = VoiceWorldState()
+    try:
+        monkeypatch.setattr(live_mind_snapshot, "ServiceContainer", RuntimeServices)
+        monkeypatch.setattr(chat_routes, "ServiceContainer", RuntimeServices)
+        monkeypatch.setattr(chat_routes.time, "time", lambda: 1030.0)
+        monkeypatch.setattr(chat_routes, "_resolve_live_voice_state", lambda *args, **kwargs: {})
+        for name in (
+            "_runtime_kernel_available",
+            "_runtime_cognitive_engine_available",
+            "_runtime_memory_available",
+            "_runtime_tool_governance_available",
+            "_runtime_substrate_voice_available",
+        ):
+            monkeypatch.setattr(chat_routes, name, lambda: True)
+        monkeypatch.setattr(chat_routes, "_runtime_inference_available", lambda *args, **kwargs: True)
+
+        payload = chat_routes._build_live_mind_context_payload(
+            user_message="What did I say out loud?",
+            lane={"desired_model": "Cortex (32B)", "conversation_ready": True},
+            require_engine=True,
+        )
+    finally:
+        RuntimeServices.services.pop("world_state", None)
+
+    perception = payload["voice_perception"]
+    assert perception["heard"] is True
+    assert perception["recent"] is True
+    assert perception["authorized_command"] is False
+    assert perception["requires_wake_word_session"] is True
+    assert "blue glass" in perception["transcript"]

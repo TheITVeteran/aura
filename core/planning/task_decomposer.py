@@ -155,6 +155,18 @@ class TaskDecomposer:
         if cognitive_situation and "cognitive_situation_frame" not in context:
             context["cognitive_situation_frame"] = cognitive_situation
 
+        # Lessons from prior episodes: strategies that have failed for this CLASS of goal
+        # are surfaced as structured guidance so the decomposition can steer away from them.
+        # A learned statistic (see PlanFailureMemory), not a heuristic — best-effort.
+        try:
+            from core.planning.plan_failure_memory import get_plan_failure_memory
+
+            _guidance = get_plan_failure_memory().guidance(objective)
+            if _guidance.has_lessons:
+                context["plan_failure_guidance"] = _guidance.to_dict()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
         # Try LLM decomposition first
         steps = await self._llm_decompose(
             objective,

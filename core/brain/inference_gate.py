@@ -61,6 +61,9 @@ from core.utils.deadlines import Deadline, get_deadline
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.InferenceGate")
+_LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_AT = 0.0
+_LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_REASON = ""
+_EXPLICIT_DEFERRED_PREWARM_REFUSAL_LOG_INTERVAL_S = 60.0
 
 _LONG_FORM_REQUEST_RE = re.compile(
     r"\b(?:"
@@ -662,10 +665,26 @@ class InferenceGate:
             if not snapshot["can_admit"] and str(
                 os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")
             ).strip().lower() not in {"1", "true", "yes", "on"}:
-                logger.warning(
-                    "⏸️ Explicit deferred Cortex prewarm refused to protect RAM: %s",
-                    snapshot["reason"],
-                )
+                global _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_AT
+                global _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_REASON
+                now = time.monotonic()
+                reason = str(snapshot["reason"] or "memory_pressure")
+                if (
+                    reason != _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_REASON
+                    or (now - _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_AT)
+                    >= _EXPLICIT_DEFERRED_PREWARM_REFUSAL_LOG_INTERVAL_S
+                ):
+                    _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_AT = now
+                    _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_REASON = reason
+                    logger.warning(
+                        "⏸️ Explicit deferred Cortex prewarm refused to protect RAM: %s",
+                        reason,
+                    )
+                else:
+                    logger.debug(
+                        "Explicit deferred Cortex prewarm still refused to protect RAM: %s",
+                        reason,
+                    )
                 return False
             return True
         if setting in {"0", "false", "no", "off"}:
@@ -7318,14 +7337,34 @@ class InferenceGate:
         if not self._initialized:
             return False
 
+        proof_active = False
         try:
             from core.runtime.proof_policy import proof_run_active
 
-            if not proof_run_active(origin="inference_gate_health"):
-                if self._desktop_safe_boot_enabled() or self._boot_should_schedule_deferred_prewarm():
-                    return self.is_alive()
+            proof_active = bool(proof_run_active(origin="inference_gate_health"))
         except (ImportError, RuntimeError, AttributeError) as exc:
             logger.debug("Inference readiness proof-policy check unavailable: %s", exc)
+
+        # A resident backend is already stronger evidence than a deferred-boot
+        # policy probe.  Checking the policy first caused every health poll to
+        # rerun the RAM-admission calculation after Cortex was loaded, flooding
+        # the neural stream with "deferred prewarm refused" warnings even though
+        # there was nothing left to prewarm. Proof runs retain the stricter
+        # endpoint-specific checks below.
+        if not proof_active:
+            try:
+                if (
+                    self._mlx_client is not None
+                    and hasattr(self._mlx_client, "is_alive")
+                    and self._mlx_client.is_alive()
+                ):
+                    return True
+            except _INFERENCE_RECOVERABLE_ERRORS:
+                pass
+
+        if not proof_active:
+            if self._desktop_safe_boot_enabled() or self._boot_should_schedule_deferred_prewarm():
+                return self.is_alive()
 
         def _client_alive(client: Any) -> bool:
             try:

@@ -121,5 +121,6 @@ def test_user_task_detection():
 
     # Actionable user task
     assert engine._is_user_task("help me write a function", "user")
+    assert not engine._is_user_task("internal dialectic prompt", "dream_processor")
     # Intrinsic self-goal should not count
     assert not engine._is_user_task("", "user")

@@ -1038,12 +1038,54 @@ class StreamOfBeing:
 
             if background_activity_reason(
                 min_idle_seconds=max(60.0, NARRATIVE_MIN_INTERVAL_DURING_CHAT_S),
+                require_conversation_ready=True,
             ):
                 return False
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
             _emit_stream_fault(
                 _exc,
                 action="deferred background narrative because foreground-activity policy was unavailable",
+                severity="debug",
+                stage="background_llm_memory_pressure",
+            )
+            return False
+
+        try:
+            from core.container import ServiceContainer
+
+            gate = ServiceContainer.get("inference_gate", default=None)
+            status_getter = getattr(gate, "get_conversation_status", None)
+            if callable(status_getter):
+                lane = dict(status_getter() or {})
+                if not bool(lane.get("conversation_ready", False)):
+                    return False
+                if bool(lane.get("foreground_owned")):
+                    return False
+                if int(lane.get("active_generations", 0) or 0) > 0:
+                    return False
+                if bool(lane.get("warmup_in_flight")):
+                    return False
+                if str(lane.get("state") or "").strip().lower() not in {"ready", "idle"}:
+                    return False
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+            _emit_stream_fault(
+                _exc,
+                action="deferred background narrative because conversation lane status was unavailable",
+                severity="debug",
+                stage="background_llm_memory_pressure",
+            )
+            return False
+
+        try:
+            from core.brain.llm_health_router import generation_gate_snapshot
+
+            gate_snapshot = generation_gate_snapshot()
+            if int(gate_snapshot.get("active_count", 0) or 0) > 0:
+                return False
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+            _emit_stream_fault(
+                _exc,
+                action="deferred background narrative because generation-gate status was unavailable",
                 severity="debug",
                 stage="background_llm_memory_pressure",
             )

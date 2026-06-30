@@ -12,6 +12,10 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "requestUserAttention" in swift
     assert '--open-gui-window' in swift
     assert "replacementReason(expectedSemver:" in swift
+    assert "if launcherReady || systemReady" in swift
+    assert "recovery owns post-handoff failures" in swift
+    assert "if !forceRelaunch && self.runtimeLockIndicatesLiveProcess()" in swift
+    assert "never spawn a second" in swift
     assert 'split(separator: "-", maxSplits: 1)' in swift
     assert "autoOpenDesktopWindowIfNeeded" in swift
     assert "Aura is awake" in swift
@@ -34,6 +38,10 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "AURA_DESKTOP_RESOURCE_GUARD" in swift
     assert 'env["AURA_DESKTOP_RESOURCE_GUARD"] = "1"' in swift
     assert 'env["AURA_SAFE_BOOT_DESKTOP"]' not in swift
+    assert 'env.removeValue(forKey: "AURA_SAFE_BOOT_DESKTOP")' in swift
+    assert 'env.removeValue(forKey: "AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR")' in swift
+    assert 'env["AURA_ENABLE_BACKGROUND_COGNITION"] = "1"' in swift
+    assert 'env["AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM"] = "1"' in swift
     assert 'env["AURA_EAGER_LOCAL_SENSORY_BOOT"] = "1"' in swift
     assert 'env["AURA_AUTO_LISTEN"] = "1"' in swift
     assert "AURA_EAGER_CORTEX_WARMUP" in swift
@@ -120,6 +128,8 @@ def test_launch_script_supports_gui_window_mode():
     assert "AURA_MLX_72B_PROJECTED_FOOTPRINT_GB:=auto" in shell
     assert "AURA_MLX_72B_PROCESS_RESERVE_GB:=5" in shell
     assert "AURA_FOREGROUND_CHAT_MAX_TOKENS:=2048" in shell
+    assert "unset AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR" in shell
+    assert "AURA_DESKTOP_FORCE_DISABLE_SECONDARY_MODEL_REPAIR" in shell
     assert "resolve_launch_log()" in shell
     assert "ACTIVE_LAUNCH_LOG" in shell
     assert "aura-desktop-launch.log" in shell
@@ -370,13 +380,27 @@ def test_bundle_script_builds_regular_dock_app_and_embeds_version_metadata():
     assert 'ROOT_DIR="$(cd -P "$(dirname "$0")/.." && pwd -P)"' in bundle_script
     assert 'VERSION_FULL_FILE="${RESOURCES_DIR}/aura-version-full"' in bundle_script
     assert 'INSTALL_PATH="${AURA_INSTALL_PATH:-}"' in bundle_script
-    assert 'CODESIGN_IDENTITY="${AURA_CODESIGN_IDENTITY:--}"' in bundle_script
+    assert 'DEFAULT_CODESIGN_IDENTITY="-"' in bundle_script
+    assert "Aura Local Code Signing" in bundle_script
+    assert 'AURA_AUTO_USE_LOCAL_CODESIGN:-0' in bundle_script
+    assert 'CODESIGN_IDENTITY="${AURA_CODESIGN_IDENTITY:-${DEFAULT_CODESIGN_IDENTITY}}"' in bundle_script
     assert 'cp -R "${APP_DIR}" "${INSTALL_PATH}"' in bundle_script
     assert 'CODESIGN_ARGS=(--force --sign "${CODESIGN_IDENTITY}")' in bundle_script
     assert 'codesign "${CODESIGN_ARGS[@]}" "${APP_DIR}"' in bundle_script
     assert 'codesign "${CODESIGN_ARGS[@]}" "${INSTALL_PATH}"' in bundle_script
     assert "CFBundleShortVersionString" in bundle_script
     assert "LSUIElement" not in bundle_script
+
+
+def test_local_codesign_identity_helper_exists_for_stable_tcc_identity():
+    helper = PROJECT_ROOT / "scripts" / "create_local_codesign_identity.sh"
+    source = helper.read_text(encoding="utf-8")
+
+    assert helper.exists()
+    assert "extendedKeyUsage = codeSigning" in source
+    assert "Aura Local Code Signing" in source
+    assert "PBE-SHA1-3DES" in source
+    assert "security import" in source
 
 
 def test_live_shell_assets_are_unversioned_and_service_worker_skips_shell_cache():

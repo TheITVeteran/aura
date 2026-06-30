@@ -1,4 +1,5 @@
 from core.runtime.errors import record_degradation
+from core.media.safe_imports import cv2_main_process_blocked
 import asyncio
 import logging
 import os
@@ -202,6 +203,10 @@ class ContinuousSensoryBuffer:
                         self.frame_buffer.append(("image/png", png_bytes))
 
                 if self.camera_enabled:
+                    if cv2_main_process_blocked():
+                        logger.debug("👁️ [VISION] Camera branch deferred to sidecar after PyAV load.")
+                        await asyncio.sleep(2.0)
+                        continue
                     if self.cap is None or not self.cap.isOpened():
                         import cv2
 

@@ -217,3 +217,57 @@ async def test_overt_action_loop_waits_without_intrinsic_initiative(monkeypatch,
     assert result["status"] == "skipped"
     assert result["error"] == "no_authorized_initiative"
     assert loop.status()["actions_started"] == 0
+
+
+@pytest.mark.asyncio
+async def test_overt_action_loop_failed_action_records_retry_hint(monkeypatch, tmp_path):
+    from core.container import ServiceContainer
+    from core.runtime.overt_action_loop import OvertActionLoop
+    from core.runtime.receipts import ReceiptStore
+    from core.self_model import SelfModel
+
+    monkeypatch.setattr("core.self_model.DATA_FILE", tmp_path / "self_model.json")
+
+    class FakeSynth:
+        async def start(self):
+            return None
+
+        async def synthesize(self, state):
+            return SimpleNamespace(
+                winner={
+                    "goal": "Repair the codebase without disrupting the user",
+                    "source": "test_goal",
+                    "urgency": 0.6,
+                    "metadata": {"required_skills": ["auto_refactor"]},
+                },
+                will_receipt_id="will-test-2",
+            )
+
+    class FakeEngine:
+        async def execute(self, skill_name, params, context=None):
+            return {
+                "ok": False,
+                "status": "blocked_by_user_advocate",
+                "error": "User advocate blocked: missing benefit",
+            }
+
+    ServiceContainer.clear()
+    self_model = SelfModel(id="overt-action-self-model")
+    ServiceContainer.register_instance("self_model", self_model)
+    loop = OvertActionLoop(
+        capability_engine=FakeEngine(),
+        synthesizer=FakeSynth(),
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        state_provider=lambda: SimpleNamespace(cognition=SimpleNamespace(pending_initiatives=[])),
+    )
+    loop._record_life_trace = lambda result, raw: setattr(result, "life_trace_id", "life-test-2")
+
+    result = await loop.run_once(force=True)
+
+    assert result["status"] == "failed"
+    assert result["next_step_hint"] == "retry_with_explicit_user_benefit_and_non_mutating_scope"
+    assert result["autonomy_receipt_id"].startswith("autonomy-")
+    lessons = self_model.beliefs.get("runtime_lessons") or []
+    assert lessons
+    assert lessons[-1]["source"] == "overt_action_loop"
+    assert "retry_with_explicit_user_benefit" in lessons[-1]["lesson"]

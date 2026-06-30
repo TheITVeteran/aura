@@ -586,12 +586,6 @@ def background_activity_reason(
 
     orch = orchestrator
     if orch is not None:
-        boot_grace_s = _env_float("AURA_BACKGROUND_BOOT_GRACE_S", 300.0)
-        uptime_s = _runtime_uptime_seconds(orch)
-        if boot_grace_s > 0.0 and 0.0 < uptime_s < boot_grace_s:
-            return f"boot_grace_{int(uptime_s)}s"
-
-    if orch is not None:
         if bool(getattr(orch, "is_busy", False)):
             return "orchestrator_busy"
 
@@ -677,6 +671,16 @@ def background_activity_reason(
             )
             logger.warning("Background policy conversation readiness probe failed: %s", _exc)
             return "conversation_lane_probe_unavailable"
+
+    if orch is not None:
+        # Boot grace is a coarse resource policy, so report it only after every
+        # specific foreground, pressure, welfare, and readiness blocker above.
+        # That keeps telemetry causally useful while preserving the same
+        # admission behavior.
+        boot_grace_s = _env_float("AURA_BACKGROUND_BOOT_GRACE_S", 300.0)
+        uptime_s = _runtime_uptime_seconds(orch)
+        if boot_grace_s > 0.0 and 0.0 < uptime_s < boot_grace_s:
+            return f"boot_grace_{int(uptime_s)}s"
 
     return ""
 

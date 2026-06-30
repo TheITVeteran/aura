@@ -1983,6 +1983,31 @@ class CapabilityEngine(AuraBaseModule):
                 return "subprocess"
         return None
 
+    @staticmethod
+    def _auto_refactor_effect_scope(params: dict[str, Any]) -> str:
+        """Classify auto-refactor by the concrete operation, not by its name.
+
+        The shipped AutoRefactorSkill is a scanner/proposal emitter by default.
+        Background autonomy must be able to run that safe inspection path, while
+        any future apply/promote/write mode remains privileged and confirmable.
+        """
+
+        params = params or {}
+        mode = str(params.get("mode") or params.get("action") or "scan").strip().lower()
+        mutating = bool(
+            params.get("apply")
+            or params.get("write")
+            or params.get("commit")
+            or params.get("promote")
+            or params.get("allow_mutation")
+            or mode in {"apply", "commit", "promote", "rewrite", "write"}
+        )
+        if mutating:
+            return "privileged_mutation"
+        if bool(params.get("run_tests")):
+            return "sandboxed_compute"
+        return "read_only"
+
     def _effect_scope_for_execution(
         self,
         skill_name: str,
@@ -1995,6 +2020,8 @@ class CapabilityEngine(AuraBaseModule):
             return self._workspace_file_io_scope(params) or base_scope
         if skill_name == "computer_use":
             return self._computer_use_effect_scope(params) or base_scope
+        if skill_name == "auto_refactor":
+            return self._auto_refactor_effect_scope(params)
         return base_scope
 
     @staticmethod
@@ -2049,6 +2076,12 @@ class CapabilityEngine(AuraBaseModule):
             if isinstance(params, dict) and "stateful" in params:
                 stateful = bool(params.get("stateful"))
             return "critical" if stateful else "high"
+        if skill_name == "auto_refactor":
+            if effect_scope == "privileged_mutation":
+                return "critical"
+            if effect_scope == "sandboxed_compute":
+                return "high"
+            return "low"
         if skill_name in _CRITICAL_ACTION_SKILLS:
             return "critical"
         if effect_scope == "subprocess":
@@ -2079,6 +2112,12 @@ class CapabilityEngine(AuraBaseModule):
 
         if str(risk_level or "").lower() == "critical":
             return True
+        if skill_name == "auto_refactor":
+            return str(effect_scope or "").lower() in {
+                "privileged_mutation",
+                "state_mutation",
+                "subprocess",
+            }
         if skill_name == "run_code":
             return bool((params or {}).get("stateful", True))
         scope = str(effect_scope or "").lower()

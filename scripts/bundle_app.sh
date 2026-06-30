@@ -10,7 +10,18 @@ APP_BASENAME="${AURA_APP_NAME:-Aura}"
 APP_NAME="${APP_BASENAME}.app"
 APP_DIR="${DIST_DIR}/${APP_NAME}"
 INSTALL_PATH="${AURA_INSTALL_PATH:-}"
-CODESIGN_IDENTITY="${AURA_CODESIGN_IDENTITY:--}"
+DEFAULT_CODESIGN_IDENTITY="-"
+if [ "${AURA_AUTO_USE_LOCAL_CODESIGN:-0}" = "1" ] && command -v security >/dev/null 2>&1; then
+    LOCAL_AURA_IDENTITY="$(
+        security find-identity -v -p codesigning 2>/dev/null \
+            | sed -n 's/.*"\(Aura Local Code Signing[^"]*\)".*/\1/p' \
+            | head -n 1
+    )"
+    if [ -n "${LOCAL_AURA_IDENTITY}" ]; then
+        DEFAULT_CODESIGN_IDENTITY="${LOCAL_AURA_IDENTITY}"
+    fi
+fi
+CODESIGN_IDENTITY="${AURA_CODESIGN_IDENTITY:-${DEFAULT_CODESIGN_IDENTITY}}"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
@@ -82,6 +93,7 @@ printf '%s\n' "${APP_FULL_VERSION}" > "${VERSION_FULL_FILE}"
 CLANG_MODULE_CACHE_PATH="${TMPDIR:-/tmp}/aura-launcher-clang-cache" xcrun swiftc \
     -O \
     -framework AppKit \
+    -framework CoreGraphics \
     -framework Foundation \
     "${LAUNCHER_SOURCE}" \
     -o "${EXECUTABLE_PATH}"

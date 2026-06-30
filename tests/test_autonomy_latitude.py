@@ -117,9 +117,6 @@ def test_ownership_block_is_never_relaxed():
 def test_singleton_and_registration():
     eng = get_autonomy_latitude()
     assert get_autonomy_latitude() is eng
-    try:
-        from core.container import ServiceContainer
+    from core.container import ServiceContainer
 
-        assert ServiceContainer.has(AutonomyLatitude.SERVICE_NAME)
-    except ImportError:
-        pytest.skip("container unavailable")
+    assert ServiceContainer.has(AutonomyLatitude.SERVICE_NAME)

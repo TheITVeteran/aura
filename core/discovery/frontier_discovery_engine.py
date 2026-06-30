@@ -205,10 +205,33 @@ def _compile_integer_poly(expr: str) -> Callable[[int], int]:
         raise _PolyParseError(f"disallowed syntax: {type(node).__name__}")
 
     _check(tree)
-    code = compile(tree, "<frontier_poly>", "eval")
+    def _evaluate(node: ast.AST, n: int) -> int:
+        if isinstance(node, ast.Expression):
+            return _evaluate(node.body, n)
+        if isinstance(node, ast.Constant):
+            return int(node.value)
+        if isinstance(node, ast.Name):
+            return n
+        if isinstance(node, ast.UnaryOp):
+            operand = _evaluate(node.operand, n)
+            return operand if isinstance(node.op, ast.UAdd) else -operand
+        if isinstance(node, ast.BinOp):
+            left = _evaluate(node.left, n)
+            right = _evaluate(node.right, n)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Pow):
+                return left**right
+            if isinstance(node.op, ast.Mod):
+                return left % right
+        raise _PolyParseError(f"unevaluable syntax: {type(node).__name__}")
 
     def _f(n: int) -> int:
-        return int(eval(code, {"__builtins__": {}}, {"n": int(n)}))  # noqa: S307 — AST allowlisted above
+        return _evaluate(tree, int(n))
 
     return _f
 

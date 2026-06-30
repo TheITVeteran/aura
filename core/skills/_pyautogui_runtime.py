@@ -21,6 +21,18 @@ def get_pyautogui() -> tuple[Any | None, Exception | None]:
         return _PYAUTOGUI_MODULE, _PYAUTOGUI_ERROR
 
     try:
+        from core.security.native_desktop_bridge import get_native_pyautogui
+
+        native = get_native_pyautogui()
+        if native is not None:
+            _PYAUTOGUI_MODULE = native
+            return _PYAUTOGUI_MODULE, None
+    except (ImportError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+        # Native bridge is preferred on macOS because its TCC identity matches
+        # Aura.app.  PyAutoGUI remains the cross-platform fallback.
+        _PYAUTOGUI_ERROR = exc
+
+    try:
         import pyautogui as module
 
         module.FAILSAFE = True
@@ -28,6 +40,7 @@ def get_pyautogui() -> tuple[Any | None, Exception | None]:
         if pause < 0.1:
             module.PAUSE = 0.1
         _PYAUTOGUI_MODULE = module
+        _PYAUTOGUI_ERROR = None
     except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation('_pyautogui_runtime', exc)
         _PYAUTOGUI_MODULE = None

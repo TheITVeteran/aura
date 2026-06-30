@@ -469,13 +469,19 @@ class ContextAssembler:
 
         rolling_summary = ""
         if getattr(state.cognition, "rolling_summary", ""):
+            from core.continuity import sanitize_continuity_summary
+
+            safe_rolling_summary = sanitize_continuity_summary(
+                state.cognition.rolling_summary
+            )
             # Continuity becomes more important as the raw transcript grows.
             # Keep a compact summary at maximum elasticity instead of deleting it.
             cap = 400 if elasticity >= 3 else 600 if elasticity >= 2 else 1800
-            rolling_summary = (
-                "## CONTINUITY SUMMARY\n"
-                f"{str(state.cognition.rolling_summary).strip()[:cap]}\n\n"
-            )
+            if safe_rolling_summary:
+                rolling_summary = (
+                    "## CONTINUITY SUMMARY\n"
+                    f"{safe_rolling_summary[:cap]}\n\n"
+                )
 
         continuity_block = ""
         continuity_obligations = mods.get("continuity_obligations", {}) or {}
@@ -1320,7 +1326,17 @@ class ContextAssembler:
             logger.debug("GoalEngine prompt injection skipped: %s", e)
 
         if (not goal_text) and state.cognition.active_goals:
-            goal_text = "\n## ACTIVE GOALS\n" + "\n".join([g.get("description", str(g)) for g in state.cognition.active_goals])
+            from core.continuity import is_evaluation_contamination
+
+            lived_goals = [
+                g.get("description", str(g))
+                for g in state.cognition.active_goals
+                if not is_evaluation_contamination(
+                    g.get("description", "") if isinstance(g, dict) else g
+                )
+            ]
+            if lived_goals:
+                goal_text = "\n## ACTIVE GOALS\n" + "\n".join(lived_goals)
 
         return (
             f"{mem_text}\n"
@@ -1338,7 +1354,10 @@ class ContextAssembler:
         """
         if objective and hasattr(state, "cognition"):
             try:
-                state.cognition.attention_focus = str(objective)
+                from core.continuity import is_evaluation_contamination
+
+                if not is_evaluation_contamination(objective):
+                    state.cognition.attention_focus = str(objective)
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('context_assembler', exc)
                 logger.debug("ContextAssembler attention focus update skipped: %s", exc)

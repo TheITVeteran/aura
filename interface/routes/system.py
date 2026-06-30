@@ -1094,10 +1094,37 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
         "permission_confidence": "unknown",
         "permission_assumptions": [],
         "process_identity": {},
+        "effective_app_identity": {},
+        "desktop_access_diagnosis": [],
+        "native_bridge_probe": {},
     }
     try:
         from core.security.permission_guard import PermissionType, get_permission_guard
         from core.skills._pyautogui_runtime import get_pyautogui
+
+        if sys.platform == "darwin":
+            try:
+                from core.security.native_desktop_bridge import probe_native_desktop_bridge
+
+                native_probe = await asyncio.wait_for(
+                    asyncio.to_thread(probe_native_desktop_bridge, force=True),
+                    timeout=3.0,
+                )
+                payload["native_bridge_probe"] = (
+                    native_probe if isinstance(native_probe, dict)
+                    else {"ok": False, "error": f"invalid:{type(native_probe).__name__}"}
+                )
+            except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
+                record_degradation(
+                    "system.desktop_access.native_bridge_probe",
+                    exc,
+                    action="continued with Python TCC probes after Aura.app bridge probe failed",
+                    severity="warning",
+                )
+                payload["native_bridge_probe"] = {
+                    "ok": False,
+                    "error": str(exc)[:240] or type(exc).__name__,
+                }
 
         guard = ServiceContainer.get("permission_guard", default=None) or get_permission_guard()
         if guard:
@@ -1121,11 +1148,36 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
             payload["frontmost_app"] = str(automation.get("detail", "") or "")
             direct_probe = getattr(guard, "check_permission_direct", None)
             if callable(direct_probe):
+                async def _bounded_direct_probe(ptype: Any) -> dict[str, Any]:
+                    try:
+                        result = await asyncio.wait_for(direct_probe(ptype), timeout=3.0)
+                        return result if isinstance(result, dict) else {
+                            "granted": False,
+                            "status": "invalid_probe_result",
+                            "guidance": "",
+                            "detail": f"got {type(result).__name__}",
+                            "direct_probe": True,
+                        }
+                    except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
+                        record_degradation(
+                            "system.desktop_access.direct_probe",
+                            exc,
+                            action=f"marked {ptype.name.lower()} direct permission unavailable without discarding other probes",
+                            severity="warning",
+                        )
+                        return {
+                            "granted": False,
+                            "status": "probe_failed",
+                            "guidance": getattr(guard, "get_guidance", lambda _ptype: "")(ptype),
+                            "detail": str(exc)[:240],
+                            "direct_probe": True,
+                        }
+
                 try:
                     direct_screen, direct_accessibility, direct_automation = await asyncio.gather(
-                        asyncio.wait_for(direct_probe(PermissionType.SCREEN), timeout=3.0),
-                        asyncio.wait_for(direct_probe(PermissionType.ACCESSIBILITY), timeout=3.0),
-                        asyncio.wait_for(direct_probe(PermissionType.AUTOMATION), timeout=3.0),
+                        _bounded_direct_probe(PermissionType.SCREEN),
+                        _bounded_direct_probe(PermissionType.ACCESSIBILITY),
+                        _bounded_direct_probe(PermissionType.AUTOMATION),
                     )
                     payload["direct_screen_recording"] = direct_screen
                     payload["direct_accessibility"] = direct_accessibility
@@ -1137,6 +1189,33 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
                         action="continued desktop access summary after direct permission probe failed",
                         severity="warning",
                     )
+
+        native_bridge = payload.get("native_bridge_probe")
+        if isinstance(native_bridge, dict) and native_bridge.get("ok"):
+            payload["effective_app_identity"] = {
+                "bundle_identifier": str(native_bridge.get("bundle_identifier", "") or ""),
+                "bridge_executable": str(native_bridge.get("bridge_executable", "") or ""),
+                "bridge_transport": str(native_bridge.get("bridge_transport", "") or ""),
+                "code_signature": native_bridge.get("code_signature")
+                if isinstance(native_bridge.get("code_signature"), dict)
+                else {},
+            }
+            native_common = {
+                "status": "active_native_bridge",
+                "guidance": "",
+                "native_bridge": True,
+                "bridge_executable": str(native_bridge.get("bridge_executable", "") or ""),
+                "bundle_identifier": str(native_bridge.get("bundle_identifier", "") or ""),
+                "direct_probe": True,
+            }
+            if native_bridge.get("screen_recording"):
+                screen_result = {"granted": True, **native_common}
+                payload["screen_recording"] = screen_result
+                payload["direct_screen_recording"] = screen_result
+            if native_bridge.get("accessibility"):
+                accessibility_result = {"granted": True, **native_common}
+                payload["accessibility"] = accessibility_result
+                payload["direct_accessibility"] = accessibility_result
 
         pyautogui, pyautogui_error = get_pyautogui()
         payload["pyautogui_ready"] = pyautogui is not None
@@ -1264,6 +1343,26 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
             ) else
             "blocked"
         )
+        diagnosis: list[str] = []
+        signature = {}
+        if isinstance(payload.get("effective_app_identity"), dict):
+            signature = payload["effective_app_identity"].get("code_signature") or {}
+        if isinstance(signature, dict) and signature.get("stable_tcc_identity") is False:
+            diagnosis.append(
+                "Aura.app is ad-hoc signed, so macOS permissions can attach to a stale rebuild instead of the currently running app."
+            )
+            hint = str(signature.get("tcc_repair_hint") or "").strip()
+            if hint:
+                diagnosis.append(hint)
+        if isinstance(native_bridge, dict) and native_bridge.get("ok") and payload["blocking_permissions"]:
+            diagnosis.append(
+                "The resident Aura.app bridge is reachable, but macOS denies the requested TCC grants for this exact app identity."
+            )
+        if payload.get("process_identity", {}).get("bundle_identifier") == "org.python.python":
+            diagnosis.append(
+                "The cognitive runtime is a Python child; durable desktop control should route through the resident Aura.app bridge, not Python's own TCC row."
+            )
+        payload["desktop_access_diagnosis"] = diagnosis
     except _SYSTEM_RECOVERABLE_ERRORS as exc:
         record_degradation('system', exc)
         logger.debug("Desktop access summary collection failed: %s", exc)
@@ -1280,6 +1379,32 @@ async def desktop_access_summary() -> dict[str, Any]:
 @router.post("/system/desktop-access/request-screen")
 async def request_screen_access() -> dict[str, Any]:
     try:
+        native_result: dict[str, Any] = {}
+        try:
+            from core.security.native_desktop_bridge import invoke_native_desktop_bridge
+
+            native_result = invoke_native_desktop_bridge(
+                "request_screen",
+                read_only=True,
+                timeout=45.0,
+            )
+        except _SYSTEM_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "system.desktop_access.native_request_screen",
+                exc,
+                action="falling back to Python Screen Recording request",
+                severity="warning",
+            )
+        if native_result:
+            granted = bool(native_result.get("screen_recording"))
+            _desktop_access_cache["captured_at"] = 0.0
+            return {
+                "requested": True,
+                "granted": granted,
+                "native_bridge": native_result,
+                "target": "Aura.app",
+            }
+
         from core.security.permission_guard import get_permission_guard
 
         guard = get_permission_guard()
@@ -1300,6 +1425,32 @@ async def request_screen_access() -> dict[str, Any]:
 @router.post("/system/desktop-access/request-accessibility")
 async def request_accessibility_access() -> dict[str, Any]:
     try:
+        native_result: dict[str, Any] = {}
+        try:
+            from core.security.native_desktop_bridge import invoke_native_desktop_bridge
+
+            native_result = invoke_native_desktop_bridge(
+                "request_accessibility",
+                read_only=True,
+                timeout=45.0,
+            )
+        except _SYSTEM_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "system.desktop_access.native_request_accessibility",
+                exc,
+                action="falling back to Python Accessibility request",
+                severity="warning",
+            )
+        if native_result:
+            granted = bool(native_result.get("accessibility"))
+            _desktop_access_cache["captured_at"] = 0.0
+            return {
+                "requested": True,
+                "granted": granted,
+                "native_bridge": native_result,
+                "target": "Aura.app",
+            }
+
         from core.security.permission_guard import get_permission_guard
 
         guard = get_permission_guard()

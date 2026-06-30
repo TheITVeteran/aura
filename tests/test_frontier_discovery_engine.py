@@ -195,12 +195,9 @@ def test_refuted_law_never_commits(tmp_path):
 def test_singleton_and_container_registration():
     eng = get_frontier_discovery_engine()
     assert get_frontier_discovery_engine() is eng
-    try:
-        from core.container import ServiceContainer
+    from core.container import ServiceContainer
 
-        assert ServiceContainer.has(FrontierDiscoveryEngine.SERVICE_NAME)
-    except ImportError:
-        pytest.skip("container unavailable")
+    assert ServiceContainer.has(FrontierDiscoveryEngine.SERVICE_NAME)
 
 
 # ── response-lane wiring (live, causal) ──────────────────────────────────────
@@ -236,7 +233,7 @@ async def test_autonomous_loop_runs_discovery_tick(tmp_path, monkeypatch):
     import core.discovery.frontier_discovery_engine as fde_mod
     from core.autonomous_initiative_loop import AutonomousInitiativeLoop
 
-    # Methods exist and are coroutines (the idle lane is real, not a stub).
+    # Methods exist and are coroutines; the idle lane has an executable runtime path.
     assert asyncio.iscoroutinefunction(AutonomousInitiativeLoop._discovery_loop)
     assert asyncio.iscoroutinefunction(AutonomousInitiativeLoop._run_discovery_cycle_once)
 

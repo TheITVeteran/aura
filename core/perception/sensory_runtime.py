@@ -22,10 +22,13 @@ from __future__ import annotations
 
 import logging
 import threading
+import importlib.util
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+
+from core.media.safe_imports import cv2_main_process_blocked
 
 logger = logging.getLogger("Perception.Sensory")
 _SENSORY_IMPORT_ERRORS = (ImportError, ModuleNotFoundError)
@@ -70,15 +73,14 @@ class CameraProvider:
         self._cascade = None
 
     def available(self) -> bool:
-        try:
-            import cv2  # noqa: F401
-            return True
-        except _SENSORY_IMPORT_ERRORS:
-            return False
+        return importlib.util.find_spec("cv2") is not None
 
     def _load(self) -> bool:
         if self._cv2 is not None:
             return True
+        if cv2_main_process_blocked():
+            logger.debug("cv2 camera provider deferred to sidecar after PyAV load")
+            return False
         try:
             import cv2
             self._cv2 = cv2

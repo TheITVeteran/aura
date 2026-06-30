@@ -38,6 +38,32 @@ def test_progressive_autonomy_keeps_memory_state_when_save_fails(monkeypatch, tm
     assert engine._trust_score == 0.85
 
 
+def test_progressive_autonomy_tracks_execution_failure_without_revoking_trust(tmp_path):
+    from core.fictional_ai_synthesis import AutonomyTier, ProgressiveAutonomySystem
+
+    engine = ProgressiveAutonomySystem(persist_path=str(tmp_path / "trust_state.json"))
+    initial_trust = engine._trust_score
+    initial_tier = engine._tier
+
+    engine.record_execution_outcome(
+        "web_search",
+        success=False,
+        error="temporary network failure",
+    )
+
+    assert engine._trust_score == initial_trust
+    assert engine._tier is initial_tier is AutonomyTier.UNSHACKLED
+    assert engine._execution_outcomes[-1]["action"] == "web_search"
+    assert engine._execution_outcomes[-1]["success"] is False
+
+
+def test_tool_execution_scope_keeps_autonomous_web_search_read_only():
+    from core.orchestrator.mixins.tool_execution import ToolExecutionMixin
+
+    assert ToolExecutionMixin._tool_effect_scope("web_search") == "read_only"
+    assert ToolExecutionMixin._tool_effect_scope("file_write") == "unknown"
+
+
 def test_social_model_survives_kernel_modifier_injection_failure(monkeypatch, tmp_path):
     from core.fictional_ai_synthesis import SocialModelingEngine
 

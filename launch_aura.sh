@@ -128,9 +128,17 @@ export AURA_AUTO_LISTEN
 export AURA_ENABLE_UVLOOP
 export AURA_ATTACH_LAUNCHER
 : "${AURA_LOCAL_BACKEND:=mlx}"   # Aura's own in-process fine-tuned mind (MLX) so the substrate can steer generation; AURA_LOCAL_BACKEND=llama_cpp falls back to the base-model server
+: "${AURA_SAFE_BOOT_DESKTOP:=0}" # Recovery-only; normal desktop launches are the full runtime
+: "${AURA_ENABLE_BACKGROUND_COGNITION:=1}"
+: "${AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM:=1}"
 if [ "${AURA_LAUNCHED_FROM_APP:-0}" = "1" ]; then
     : "${AURA_DESKTOP_RESOURCE_GUARD:=1}"
     : "${AURA_EXTERNAL_GUI_OWNER:=1}"
+    # The .app should not inherit a stale diagnostic setting that disables the
+    # one bounded full-mind repair pass. Use
+    # AURA_DESKTOP_FORCE_DISABLE_SECONDARY_MODEL_REPAIR=1 for explicit
+    # diagnostics.
+    unset AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR
     if [ "$REBOOT_MODE" != "1" ]; then
         : "${AURA_CLEANUP_RECENT_GRACE_S:=45}"
     fi
@@ -174,6 +182,8 @@ else
     : "${AURA_ENABLE_PERMANENT_SWARM:=1}"   # Multi-agent internal debate
 fi
 export AURA_SAFE_BOOT_DESKTOP
+export AURA_ENABLE_BACKGROUND_COGNITION
+export AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM
 export AURA_DESKTOP_RESOURCE_GUARD
 export AURA_EXTERNAL_GUI_OWNER
 export AURA_CLEANUP_RECENT_GRACE_S

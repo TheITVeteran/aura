@@ -2,6 +2,7 @@ from core.runtime.errors import record_degradation
 import asyncio
 import logging
 import multiprocessing as mp
+import os
 import sys
 import threading
 from typing import Any, Dict, Optional
@@ -47,7 +48,15 @@ class SensoryLocalClient:
                 name="AuraSensoryWorker",
                 daemon=True
             )
-            self._process.start()
+            previous_sidecar_flag = os.environ.get("AURA_MEDIA_SIDECAR_PROCESS")
+            os.environ["AURA_MEDIA_SIDECAR_PROCESS"] = "1"
+            try:
+                self._process.start()
+            finally:
+                if previous_sidecar_flag is None:
+                    os.environ.pop("AURA_MEDIA_SIDECAR_PROCESS", None)
+                else:
+                    os.environ["AURA_MEDIA_SIDECAR_PROCESS"] = previous_sidecar_flag
             self._running = True
             logger.info("👀 Sensory Client: Worker started via %s (PID: %d)", ctx_name, self._process.pid)
 

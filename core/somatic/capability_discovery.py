@@ -302,7 +302,7 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
     def _scan_sensors(self, body: Any) -> tuple:
         """Check whether sensor libraries are importable."""
         from core.somatic.body_schema import Limb, LimbType
-        import importlib
+        import importlib.util
 
         discoveries: List[str] = []
         losses: List[str] = []
@@ -318,11 +318,7 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
         }
 
         for lib_name, description in self.TRACKED_SENSORS.items():
-            try:
-                importlib.import_module(lib_name)
-                importable = True
-            except ImportError:
-                importable = False
+            importable = importlib.util.find_spec(lib_name) is not None
 
             limb_name = lib_to_limb.get(lib_name, lib_name)
 

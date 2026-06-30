@@ -221,6 +221,71 @@ async def test_executive_closure_demotes_intrinsic_maintenance_objective(service
     )
 
 
+@pytest.mark.asyncio
+async def test_executive_closure_quarantines_evaluation_objectives_from_all_inputs(
+    service_container,
+):
+    fixture = (
+        "A long-running microservice periodically crashes with OSError; "
+        "code review reveals a resource leak."
+    )
+    state = AuraState()
+    state.loop_cycle = 24
+    state.cognition.current_objective = fixture
+    state.cognition.current_origin = "user"
+    state.cognition.attention_focus = fixture
+    state.cognition.active_goals = [{"description": fixture}]
+
+    service_container.register_instance(
+        "global_workspace",
+        SimpleNamespace(
+            get_snapshot=lambda: {
+                "last_winner": "proof_fixture",
+                "last_content": fixture,
+                "last_priority": 0.99,
+            }
+        ),
+    )
+    service_container.register_instance(
+        "goal_hierarchy",
+        SimpleNamespace(get_next_goal=lambda: SimpleNamespace(description=fixture)),
+    )
+    service_container.register_instance(
+        "volition_engine",
+        SimpleNamespace(_last_goal={"objective": fixture}, tick=AsyncCallRecorder()),
+    )
+
+    result = await ExecutiveClosureEngine().integrate(state)
+
+    closure = result.response_modifiers["executive_closure"]
+    assert fixture not in closure["selected_objective"]
+    assert fixture not in closure["attention_focus"]
+    assert result.cognition.current_objective is None
+    assert not result.cognition.active_goals
+
+
+@pytest.mark.asyncio
+async def test_executive_closure_keeps_background_control_prompt_out_of_foreground(
+    service_container,
+):
+    control_prompt = (
+        "[SYSTEM ROLE: THE ANTAGONIST] Your sole purpose is to find logical flaws. "
+        "PROPOSED BELIEF (THESIS): cognition should remain coherent."
+    )
+    state = AuraState()
+    state.loop_cycle = 24
+    state.cognition.current_objective = control_prompt
+    state.cognition.current_origin = "dream_processor"
+
+    result = await ExecutiveClosureEngine().integrate(state)
+
+    closure = result.response_modifiers["executive_closure"]
+    assert result.cognition.current_objective is None
+    assert closure["selected_objective"] == ""
+    assert closure["committed_objective"] == ""
+    assert "executive_background_commitment" not in result.cognition.modifiers
+
+
 def test_notify_closed_loop_output_routes_only_to_running_loop(service_container):
     loop = SimpleNamespace(is_running=True, on_inference_output=CallRecorder())
     service_container.register_instance("closed_causal_loop", loop)

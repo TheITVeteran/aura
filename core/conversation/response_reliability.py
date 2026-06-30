@@ -804,6 +804,17 @@ _SELF_REFLECTION_SUBSTANCE_MARKERS = (
     "focus",
     "state",
     "inside",
+    "uncertain",
+    "uncertainty",
+    "decision",
+    "choose",
+    "before i act",
+    "ask more questions",
+    "curiosity",
+    "curious",
+    "question",
+    "wonder",
+    "matters",
 )
 _SELF_PROCESS_COVERAGE_REQUIREMENTS = (
     (
@@ -817,12 +828,17 @@ _SELF_PROCESS_COVERAGE_REQUIREMENTS = (
             "double check",
             "slow down",
             "recheck",
+            "ask more question",
+            "before i act",
+            "before acting",
+            "hold back",
+            "hesitat",
         ),
     ),
     (
         "planning",
         ("plan", "planning", "planner", "decide", "decision", "route", "routing"),
-        ("plan", "planning", "decide", "decision", "route", "routing", "choose"),
+        ("plan", "planning", "decide", "decision", "route", "routing", "choose", "act"),
     ),
     (
         "memory",
@@ -2655,6 +2671,17 @@ def _has_self_reflection_substance(reply_text: Any) -> bool:
             "listening",
             "thread",
             "conversation",
+            "uncertain",
+            "uncertainty",
+            "decision",
+            "choose",
+            "before i act",
+            "ask more questions",
+            "curiosity",
+            "curious",
+            "question",
+            "wonder",
+            "matters",
         )
     )
     return concrete_attention and any(marker in reply for marker in _SELF_REFLECTION_SUBSTANCE_MARKERS)
@@ -2675,11 +2702,35 @@ def _missing_requested_self_process_coverage(prompt: Any, reply_text: Any) -> tu
         return ()
     missing: list[str] = []
     for name, prompt_markers, reply_markers in _SELF_PROCESS_COVERAGE_REQUIREMENTS:
+        if name == "memory" and not _explicitly_requests_memory_process(prompt_norm):
+            continue
         if any(marker in prompt_norm for marker in prompt_markers) and not any(
             marker in reply_norm for marker in reply_markers
         ):
             missing.append(name)
     return tuple(missing)
+
+
+def _explicitly_requests_memory_process(prompt_norm: str) -> bool:
+    """Distinguish memory questions from conversational recall anchors.
+
+    "Remember the uncertainty you just named" asks Aura to retain the local
+    referent; it does not ask for an explanation of her memory machinery.
+    "How do you remember across sessions" does.
+    """
+
+    return bool(
+        re.search(
+            r"\b(?:"
+            r"how (?:do|does|can|would) (?:you|your) (?:remember|recall|memory)|"
+            r"how (?:is|does) (?:your )?memory|"
+            r"what (?:do|does|can) you (?:remember|recall)|"
+            r"(?:your|the) memory (?:system|process|use|works?|changes?|affects?)|"
+            r"memory use|across sessions|long[- ]term memory|episodic memory"
+            r")\b",
+            prompt_norm,
+        )
+    )
 
 
 def _has_question_back_non_answer(prompt: Any, reply_text: Any) -> bool:

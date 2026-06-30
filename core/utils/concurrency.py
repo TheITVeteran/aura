@@ -492,6 +492,38 @@ class EventLoopMonitor:
             self.interval,
         )
 
+    def _task_running(self) -> bool:
+        return bool(
+            self._task is not None
+            and not self._task.done()
+            and not self._stop_event.is_set()
+        )
+
+    def ensure_running(self) -> bool:
+        """Restart the monitor task if supervision finds it stopped.
+
+        Health checks must not turn a dead monitor into a healthy signal, but
+        the runtime should also not remain degraded forever after a monitor task
+        exits during model warmup or shutdown/restart races. This returns the
+        post-restart task state; hard-lag recovery is still judged by
+        ``is_alive`` after healthy samples accrue.
+        """
+        if self._task_running():
+            return True
+        try:
+            self.start()
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "event_loop_monitor",
+                exc,
+                severity="degraded",
+                action="event-loop monitor restart failed; runtime remains unhealthy",
+                enforce_failure_policy=False,
+            )
+            logger.warning("EventLoopMonitor restart failed: %s", exc)
+            return False
+        return self._task_running()
+
     async def stop(self):
         """Stops the monitor gracefully."""
         self._stop_event.set()
@@ -505,7 +537,8 @@ class EventLoopMonitor:
 
     def is_alive(self) -> bool:
         """Return True when the monitor task is running and accepting ticks."""
-        if self._task is None or self._task.done() or self._stop_event.is_set():
+        if not self._task_running():
+            self.ensure_running()
             return False
         if self._last_failure_at:
             stable_for = time.time() - self._last_failure_at

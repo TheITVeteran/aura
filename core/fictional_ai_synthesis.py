@@ -540,6 +540,7 @@ class ProgressiveAutonomySystem:
         self._last_activity: float = time.time()
         self._curiosity_domains: dict[str, int] = defaultdict(int)
         self._questions_asked: int = 0
+        self._execution_outcomes: deque = deque(maxlen=500)
         self._load_state()
         logger.info("🔓 EDI initialized. Tier: %s, Trust: %.3f", self._tier.value, self._trust_score)
 
@@ -643,6 +644,30 @@ class ProgressiveAutonomySystem:
         self._trust_score = max(0.0, self._trust_score - strength)
         self._recalculate_tier()
         self._save_state()
+
+    def record_execution_outcome(
+        self,
+        action: str,
+        *,
+        success: bool,
+        error: str = "",
+    ) -> None:
+        """Track tool competence without mutating operator trust.
+
+        Autonomy trust may change from explicit relational/governance events;
+        infrastructure failures belong to repair and capability learning.  This
+        separation prevents a failed network request from progressively
+        shackling every later recovery attempt.
+        """
+
+        self._execution_outcomes.append(
+            {
+                "action": str(action or "unknown")[:120],
+                "success": bool(success),
+                "error": str(error or "")[:240],
+                "timestamp": time.time(),
+            }
+        )
 
     def _recalculate_tier(self):
         new_tier = AutonomyTier.SHACKLED

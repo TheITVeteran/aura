@@ -98,9 +98,6 @@ def test_ground_self_report_blocks_metaphysical_overclaim():
 def test_singleton_and_container_registration():
     eng = get_unified_felt_state()
     assert get_unified_felt_state() is eng
-    try:
-        from core.container import ServiceContainer
+    from core.container import ServiceContainer
 
-        assert ServiceContainer.has(UnifiedFeltStateEngine.SERVICE_NAME)
-    except ImportError:
-        pytest.skip("container unavailable")
+    assert ServiceContainer.has(UnifiedFeltStateEngine.SERVICE_NAME)

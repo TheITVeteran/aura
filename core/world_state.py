@@ -133,6 +133,7 @@ class WorldState:
         self.ambient_audio_level: float = 0.0      # 0-1 mic RMS energy
         self.voice_activity_detected: bool = False  # VAD flag
         self.last_voice_transcript: str = ""       # most recent speech snippet
+        self.last_voice_transcript_at: float = 0.0  # wall-clock timestamp for recency checks
         self.last_audio_source_assessment: dict[str, Any] = {}
         self.installed_apps: list[str] = []        # discovered installed applications
         self.automation_permissions: dict[str, bool] = {

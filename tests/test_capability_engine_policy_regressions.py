@@ -108,6 +108,71 @@ def test_background_desktop_task_does_not_auto_confirm():
     )
 
 
+def test_auto_refactor_scan_is_read_only_not_privileged_mutation():
+    engine = _engine_with_skill("auto_refactor")
+    meta = engine.skills["auto_refactor"]
+
+    assert (
+        engine._effect_scope_for_execution(
+            "auto_refactor",
+            meta,
+            {"path": ".", "run_tests": False},
+            {"origin": "overt_action_loop"},
+        )
+        == "read_only"
+    )
+    assert (
+        engine._edi_risk_for(
+            "auto_refactor",
+            meta,
+            {"path": ".", "run_tests": False},
+            "read_only",
+        )
+        == "low"
+    )
+    assert (
+        CapabilityEngine._user_advocate_irreversible_for(
+            "auto_refactor",
+            {"path": ".", "run_tests": False},
+            "low",
+            "read_only",
+        )
+        is False
+    )
+
+
+def test_auto_refactor_mutation_remains_privileged():
+    engine = _engine_with_skill("auto_refactor")
+    meta = engine.skills["auto_refactor"]
+
+    scope = engine._effect_scope_for_execution(
+        "auto_refactor",
+        meta,
+        {"path": ".", "apply": True},
+        {"origin": "overt_action_loop"},
+    )
+
+    assert scope == "privileged_mutation"
+    assert (
+        engine._edi_risk_for(
+            "auto_refactor",
+            meta,
+            {"path": ".", "apply": True},
+            scope,
+        )
+        == "critical"
+    )
+    assert (
+        CapabilityEngine._user_advocate_irreversible_for(
+            "auto_refactor",
+            {"path": ".", "apply": True},
+            "critical",
+            scope,
+        )
+        is True
+    )
+
+
 @pytest.mark.asyncio
 async def test_foreground_exclusive_background_tool_defers_when_policy_fails(monkeypatch):
     engine = _engine_with_skill("web_search")

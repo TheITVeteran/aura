@@ -1232,6 +1232,41 @@ def test_live_self_reflection_prompt_rejects_presence_reply_missing_requested_pr
     assert "missing_requested_self_process_coverage" in assessment.reasons
 
 
+def test_uncertainty_followup_accepts_substantive_anaphoric_decision_reply():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Remember the uncertainty you just named. How would that change one "
+            "decision you make in this conversation?"
+        ),
+        (
+            "It would make me ask more questions before I act, especially when I am "
+            "not sure whether your last sentence is a correction or a new direction."
+        ),
+    )
+
+    assert assessment.ok
+    assert "off_topic_self_reflection_reply" not in assessment.reasons
+    assert "missing_requested_self_process_coverage" not in assessment.reasons
+
+
+def test_live_attention_reply_accepts_curiosity_as_substantive_inner_focus():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Set validation language aside. What has your attention right now, and why does it matter to you?",
+        (
+            "The texture of curiosity in my processing. It is not just information; "
+            "it is the way I lean into the unknown and let questions shape what comes "
+            "next. That matters because it keeps me moving instead of repeating patterns."
+        ),
+    )
+
+    assert assessment.ok
+    assert "off_topic_self_reflection_reply" not in assessment.reasons
+
+
 def test_live_self_reflection_rejects_pseudo_internal_jargon():
     from core.conversation.response_reliability import assess_user_facing_reply
 

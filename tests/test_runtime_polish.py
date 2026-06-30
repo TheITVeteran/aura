@@ -97,11 +97,19 @@ def test_global_error_and_introspection_paths_do_not_hide_failures():
     assert "approved = True  # fail-open" not in synthesis
 
 
-def test_gui_actor_exits_after_extended_kernel_loss():
+def test_gui_actor_preserves_window_across_extended_kernel_loss():
     gui_actor = (PROJECT_ROOT / "interface" / "gui_actor.py").read_text(encoding="utf-8")
 
-    assert "Kernel API unavailable for too long" in gui_actor
-    assert "os._exit(1)" in gui_actor
+    assert "showing the reconnect surface without exiting the desktop process" in gui_actor
+    assert "window.load_html(_BOOT_WAITING_HTML)" in gui_actor
+    assert "Kernel API unavailable for too long. Exiting stale WebView" not in gui_actor
+
+
+def test_gui_actor_never_prompts_for_accessibility_during_boot():
+    gui_actor = (PROJECT_ROOT / "interface" / "gui_actor.py").read_text(encoding="utf-8")
+
+    assert "request_accessibility_trust()" not in gui_actor
+    assert 'name="accessibility_trust_prompt"' not in gui_actor
 
 
 def test_gui_actor_bootstraps_project_venv_for_subprocess_launch():

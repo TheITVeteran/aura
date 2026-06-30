@@ -193,6 +193,19 @@ class RecoveryEngine:
         else:
             logger.info("Recovery FAILED for '%s': %s", node.task_id, result_msg[:80])
 
+        # Cross-episode learning ("learn from death"): record whether this recovery
+        # strategy worked for this kind of step, so future planning can stop choosing
+        # strategies that keep failing. LLM-free, automatic, best-effort.
+        try:
+            from core.planning.plan_failure_memory import get_plan_failure_memory
+
+            goal = str(getattr(node, "description", "") or getattr(node, "task_id", "") or "")
+            get_plan_failure_memory().record_outcome(
+                goal, strategy, success=success, failure_mode="" if success else error,
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
         return success
 
     def _classify_error(self, error: str) -> str:

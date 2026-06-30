@@ -89,6 +89,41 @@ async def test_response_generation_downshifts_on_thermal_pressure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_response_generation_honors_live_caller_token_cap_after_biases(monkeypatch):
+    state = AuraState()
+    state.cognition.current_objective = "How would that uncertainty change your next decision?"
+    state.cognition.current_origin = "user"
+    state.cognition.current_mode = CognitiveMode.DELIBERATE
+    state.response_modifiers["sampling_bias"] = {"max_tokens_factor": 1.25}
+    state.response_modifiers["imagination_sampling_bias"] = {"max_tokens_factor": 1.25}
+    state.response_modifiers["bicameral_sampling_bias"] = {"max_tokens_factor": 1.25}
+
+    router = _Router()
+    phase = ResponseGenerationPhase(_Container({"llm_router": router}))
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [{"role": "system", "content": "context"}],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+
+    await phase.execute(
+        state,
+        context={
+            "desktop_cognitive_engine_required": True,
+            "cognitive_engine_required": True,
+            "visible_user_message": state.cognition.current_objective,
+            "max_tokens": 512,
+        },
+    )
+
+    assert router.calls
+    assert router.calls[0]["max_tokens"] == 512
+
+
+@pytest.mark.asyncio
 async def test_response_generation_suppresses_background_identity_refresh_when_runtime_is_not_idle(monkeypatch):
     state = AuraState()
     state.cognition.current_objective = "[IDENTITY REFRESH: REMEMBER WHO YOU ARE]\nSummarize recent continuity."

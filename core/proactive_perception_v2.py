@@ -9,6 +9,7 @@ import psutil
 from pydantic import BaseModel, ConfigDict
 
 from core.container import ServiceContainer
+from core.media.safe_imports import cv2_main_process_blocked
 from core.runtime.boot_safety import main_process_camera_policy
 from core.runtime.errors import record_degradation
 from core.runtime.permission_gates import camera_allowed
@@ -22,6 +23,8 @@ _sd = None
 def _get_cv2():
     global _cv2
     if _cv2 is None:
+        if cv2_main_process_blocked():
+            raise RuntimeError("cv2_blocked_in_main_process_after_pyav_load")
         import cv2 as cv2_mod
         _cv2 = cv2_mod
     return _cv2

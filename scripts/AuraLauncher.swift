@@ -1,6 +1,228 @@
 import AppKit
+import CoreGraphics
 import Darwin
 import Foundation
+
+private let nativeBridgeFlag = "--native-desktop-bridge"
+
+private func bridgeJSON(_ payload: [String: Any], status: Int32 = 0) -> Never {
+    let data = (try? JSONSerialization.data(withJSONObject: payload, options: [])) ?? Data("{\"ok\":false,\"error\":\"json_encoding_failed\"}".utf8)
+    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write(Data("\n".utf8))
+    Darwin.exit(status)
+}
+
+private func bridgeNumber(_ payload: [String: Any], _ key: String, default fallback: Double = 0) -> Double {
+    if let value = payload[key] as? NSNumber { return value.doubleValue }
+    if let value = payload[key] as? Double { return value }
+    if let value = payload[key] as? Int { return Double(value) }
+    return fallback
+}
+
+private func bridgeKeyCode(_ key: String) -> CGKeyCode? {
+    let mapping: [String: CGKeyCode] = [
+        "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7,
+        "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15,
+        "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22,
+        "5": 23, "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29,
+        "]": 30, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35, "return": 36,
+        "enter": 36, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42,
+        ",": 43, "/": 44, "n": 45, "m": 46, ".": 47, "tab": 48, "space": 49,
+        "`": 50, "backspace": 51, "delete": 51, "escape": 53, "esc": 53,
+        "left": 123, "right": 124, "down": 125, "up": 126,
+    ]
+    return mapping[key.lowercased()]
+}
+
+private func bridgeModifierFlags(_ keys: [String]) -> CGEventFlags {
+    var flags: CGEventFlags = []
+    for key in keys.map({ $0.lowercased() }) {
+        switch key {
+        case "command", "cmd": flags.insert(.maskCommand)
+        case "control", "ctrl": flags.insert(.maskControl)
+        case "option", "alt": flags.insert(.maskAlternate)
+        case "shift": flags.insert(.maskShift)
+        default: break
+        }
+    }
+    return flags
+}
+
+private func bridgePostKey(_ key: String, flags: CGEventFlags = []) -> Bool {
+    guard let keyCode = bridgeKeyCode(key),
+          let down = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
+          let up = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) else {
+        return false
+    }
+    down.flags = flags
+    up.flags = flags
+    down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
+    return true
+}
+
+private func bridgeTypeText(_ text: String, interval: TimeInterval) -> Bool {
+    for scalar in text.unicodeScalars {
+        var unit = UniChar(scalar.value)
+        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
+              let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else {
+            return false
+        }
+        down.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+        up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        if interval > 0 { Thread.sleep(forTimeInterval: interval) }
+    }
+    return true
+}
+
+private func bridgeMouseButton(_ name: String) -> (CGMouseButton, CGEventType, CGEventType) {
+    switch name.lowercased() {
+    case "right": return (.right, .rightMouseDown, .rightMouseUp)
+    case "middle": return (.center, .otherMouseDown, .otherMouseUp)
+    default: return (.left, .leftMouseDown, .leftMouseUp)
+    }
+}
+
+private func nativeDesktopBridgeResult(payload: [String: Any]) -> ([String: Any], Int32) {
+    let command = String(describing: payload["command"] ?? "probe").lowercased()
+    let displayID = CGMainDisplayID()
+    let width = Int(CGDisplayPixelsWide(displayID))
+    let height = Int(CGDisplayPixelsHigh(displayID))
+
+    switch command {
+    case "probe":
+        return ([
+            "ok": true,
+            "screen_recording": CGPreflightScreenCaptureAccess(),
+            "accessibility": AXIsProcessTrusted(),
+            "bundle_identifier": Bundle.main.bundleIdentifier ?? "",
+            "width": width,
+            "height": height,
+        ], 0)
+    case "request_screen":
+        let granted = CGRequestScreenCaptureAccess()
+        return ([
+            "ok": granted,
+            "screen_recording": granted,
+            "bundle_identifier": Bundle.main.bundleIdentifier ?? "",
+            "width": width,
+            "height": height,
+        ], granted ? 0 : 2)
+    case "request_accessibility":
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        let granted = AXIsProcessTrustedWithOptions(options)
+        return ([
+            "ok": granted,
+            "accessibility": granted,
+            "bundle_identifier": Bundle.main.bundleIdentifier ?? "",
+            "width": width,
+            "height": height,
+        ], granted ? 0 : 2)
+    case "size":
+        return (["ok": true, "width": width, "height": height], 0)
+    case "position":
+        let location = CGEvent(source: nil)?.location ?? .zero
+        return (["ok": true, "x": location.x, "y": location.y], 0)
+    case "screenshot":
+        guard let path = payload["path"] as? String, !path.isEmpty else {
+            return (["ok": false, "error": "screen_capture_unavailable"], 2)
+        }
+        let target = URL(fileURLWithPath: path)
+        try? FileManager.default.createDirectory(
+            at: target.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let capture = Process()
+        capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        capture.arguments = ["-x", "-t", "png", path]
+        capture.standardOutput = FileHandle.nullDevice
+        capture.standardError = FileHandle.nullDevice
+        do {
+            try capture.run()
+            capture.waitUntilExit()
+        } catch {
+            return (["ok": false, "error": "screen_capture_launch_failed"], 2)
+        }
+        guard capture.terminationStatus == 0, FileManager.default.fileExists(atPath: path) else {
+            return (["ok": false, "error": "screen_capture_write_failed"], 2)
+        }
+        return (["ok": true, "path": path, "width": width, "height": height], 0)
+    case "move":
+        let point = CGPoint(x: bridgeNumber(payload, "x"), y: bridgeNumber(payload, "y"))
+        guard let event = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left) else {
+            return (["ok": false, "error": "mouse_event_unavailable"], 2)
+        }
+        event.post(tap: .cghidEventTap)
+        return (["ok": true, "x": point.x, "y": point.y], 0)
+    case "click":
+        let current = CGEvent(source: nil)?.location ?? .zero
+        let point = CGPoint(
+            x: bridgeNumber(payload, "x", default: current.x),
+            y: bridgeNumber(payload, "y", default: current.y)
+        )
+        let buttonName = String(describing: payload["button"] ?? "left")
+        let (button, downType, upType) = bridgeMouseButton(buttonName)
+        let clicks = max(1, Int(bridgeNumber(payload, "clicks", default: 1)))
+        let interval = max(0, bridgeNumber(payload, "interval"))
+        for clickIndex in 1...clicks {
+            guard let down = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: point, mouseButton: button),
+                  let up = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: point, mouseButton: button) else {
+                return (["ok": false, "error": "mouse_event_unavailable"], 2)
+            }
+            down.setIntegerValueField(.mouseEventClickState, value: Int64(clickIndex))
+            up.setIntegerValueField(.mouseEventClickState, value: Int64(clickIndex))
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+            if interval > 0 { Thread.sleep(forTimeInterval: interval) }
+        }
+        return (["ok": true, "x": point.x, "y": point.y, "clicks": clicks], 0)
+    case "write":
+        let text = String(describing: payload["text"] ?? "")
+        let ok = bridgeTypeText(text, interval: max(0, bridgeNumber(payload, "interval")))
+        return (["ok": ok, "characters": text.count], ok ? 0 : 2)
+    case "press":
+        let key = String(describing: payload["key"] ?? "")
+        let presses = max(1, Int(bridgeNumber(payload, "presses", default: 1)))
+        let interval = max(0, bridgeNumber(payload, "interval"))
+        for _ in 0..<presses {
+            guard bridgePostKey(key) else {
+                return (["ok": false, "error": "unsupported_key", "key": key], 2)
+            }
+            if interval > 0 { Thread.sleep(forTimeInterval: interval) }
+        }
+        return (["ok": true, "key": key, "presses": presses], 0)
+    case "hotkey":
+        let keys = (payload["keys"] as? [String]) ?? []
+        guard let finalKey = keys.last else {
+            return (["ok": false, "error": "hotkey_requires_key"], 2)
+        }
+        let ok = bridgePostKey(finalKey, flags: bridgeModifierFlags(Array(keys.dropLast())))
+        return (["ok": ok, "keys": keys], ok ? 0 : 2)
+    case "scroll":
+        let amount = Int32(bridgeNumber(payload, "amount"))
+        guard let event = CGEvent(
+            scrollWheelEvent2Source: nil,
+            units: .line,
+            wheelCount: 1,
+            wheel1: amount,
+            wheel2: 0,
+            wheel3: 0
+        ) else {
+            return (["ok": false, "error": "scroll_event_unavailable"], 2)
+        }
+        event.post(tap: .cghidEventTap)
+        return (["ok": true, "amount": amount], 0)
+    default:
+        return (["ok": false, "error": "unsupported_command", "command": command], 2)
+    }
+}
+
+private func runNativeDesktopBridge(payload: [String: Any]) -> Never {
+    let (result, status) = nativeDesktopBridgeResult(payload: payload)
+    bridgeJSON(result, status: status)
+}
 
 private let pollInterval: TimeInterval = 0.8
 private let bootMarkerTTL: TimeInterval = 180.0
@@ -110,6 +332,16 @@ private struct BootSnapshot {
         let normalizedServed = semver.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "-", maxSplits: 1).first.map(String.init) ?? semver
         if !normalizedExpected.isEmpty, !normalizedServed.isEmpty, normalizedServed != normalizedExpected {
             return "Existing runtime is serving build \(semver), but launcher expects \(trimmedExpected)."
+        }
+
+        // Once the kernel has completed handoff, the launcher is an observer.
+        // A foreground conversation can transiently return 5xx while Cortex
+        // resets or a quality gate retries; converting that into --reboot
+        // destroys the user's session and the model's warm state. Runtime
+        // recovery owns post-handoff failures. Forced replacement remains
+        // available through the explicit UI action.
+        if launcherReady || systemReady {
+            return nil
         }
 
         let normalized = bootPhase.lowercased()
@@ -620,9 +852,13 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     private var bootMarkerFile: URL!
     private var terminalHandoffMarkerFile: URL!
     private var spawnLockFile: URL!
+    private var nativeBridgeRequestDirectory: URL!
+    private var nativeBridgeResponseDirectory: URL!
 
     private var pollTimer: Timer?
+    private var nativeBridgeTimer: Timer?
     private var isPolling = false
+    private var nativeBridgeProcessing = false
     private var launchInFlight = false
     private var closeScheduled = false
     private var lastSnapshot: BootSnapshot?
@@ -666,6 +902,9 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             self?.pollNow()
         }
+        nativeBridgeTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            self?.processNativeBridgeRequests()
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -681,7 +920,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        false
     }
 
     private func configurePaths() throws {
@@ -734,12 +973,84 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         bootMarkerFile = lockDirectory.appendingPathComponent("desktop-app-launch.marker")
         terminalHandoffMarkerFile = lockDirectory.appendingPathComponent("desktop-terminal-launch.marker")
         spawnLockFile = lockDirectory.appendingPathComponent("desktop-app-launch.lock")
+        let nativeBridgeDirectory = auraHome.appendingPathComponent("native_bridge", isDirectory: true)
+        nativeBridgeRequestDirectory = nativeBridgeDirectory.appendingPathComponent("requests", isDirectory: true)
+        nativeBridgeResponseDirectory = nativeBridgeDirectory.appendingPathComponent("responses", isDirectory: true)
 
         try fileManager.createDirectory(at: logDirectory, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: lockDirectory, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: nativeBridgeRequestDirectory, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: nativeBridgeResponseDirectory, withIntermediateDirectories: true)
         if !fileManager.fileExists(atPath: logFile.path) {
             fileManager.createFile(atPath: logFile.path, contents: Data())
         }
+    }
+
+    private func processNativeBridgeRequests() {
+        if nativeBridgeProcessing {
+            return
+        }
+        nativeBridgeProcessing = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            defer {
+                DispatchQueue.main.async {
+                    self?.nativeBridgeProcessing = false
+                }
+            }
+            guard let self,
+                  let requestDirectory = self.nativeBridgeRequestDirectory,
+                  let responseDirectory = self.nativeBridgeResponseDirectory else {
+                return
+            }
+            guard let files = try? self.fileManager.contentsOfDirectory(
+                at: requestDirectory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ) else {
+                return
+            }
+            for requestURL in files where requestURL.pathExtension == "json" {
+                self.handleNativeBridgeRequest(
+                    requestURL: requestURL,
+                    responseDirectory: responseDirectory
+                )
+            }
+        }
+    }
+
+    private func handleNativeBridgeRequest(requestURL: URL, responseDirectory: URL) {
+        let requestID = requestURL.deletingPathExtension().lastPathComponent
+        guard !requestID.isEmpty else {
+            try? fileManager.removeItem(at: requestURL)
+            return
+        }
+        var response: [String: Any]
+        var status: Int32 = 0
+        if let data = try? Data(contentsOf: requestURL),
+           let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let result = nativeDesktopBridgeResult(payload: payload)
+            response = result.0
+            status = result.1
+        } else {
+            response = ["ok": false, "error": "invalid_bridge_payload"]
+            status = 2
+        }
+        response["handled_by"] = "resident_aura_launcher"
+        response["returncode"] = Int(status)
+        let responseURL = responseDirectory.appendingPathComponent("\(requestID).json")
+        let tmpURL = responseDirectory.appendingPathComponent(".\(requestID).json.tmp")
+        if let data = try? JSONSerialization.data(withJSONObject: response, options: []) {
+            do {
+                try data.write(to: tmpURL, options: .atomic)
+                if fileManager.fileExists(atPath: responseURL.path) {
+                    try? fileManager.removeItem(at: responseURL)
+                }
+                try fileManager.moveItem(at: tmpURL, to: responseURL)
+            } catch {
+                try? fileManager.removeItem(at: tmpURL)
+            }
+        }
+        try? fileManager.removeItem(at: requestURL)
     }
 
     private func buildWindow() {
@@ -1100,9 +1411,19 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             env["PATH"] = fallbackPath
         }
         env["AURA_ATTACH_LAUNCHER"] = "0"
+        // A normal app launch is always the full runtime.  Do not inherit a
+        // stale recovery-only flag from launchd, Terminal, or a previous
+        // diagnostic session.
+        env.removeValue(forKey: "AURA_SAFE_BOOT_DESKTOP")
+        // Same rule for diagnostic reply-repair switches. A normal user launch
+        // should recover through one RAM-gated same-worker Cortex retry instead
+        // of inheriting a stale "disable repair" flag and failing closed.
+        env.removeValue(forKey: "AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR")
         env["AURA_LOCAL_BACKEND"] = "mlx"
         env["AURA_LAUNCHED_FROM_APP"] = "1"
         env["AURA_DESKTOP_RESOURCE_GUARD"] = "1"
+        env["AURA_ENABLE_BACKGROUND_COGNITION"] = "1"
+        env["AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM"] = "1"
         env["AURA_EAGER_LOCAL_SENSORY_BOOT"] = "1"
         env["AURA_AUTO_LISTEN"] = "1"
         env["AURA_EAGER_CORTEX_WARMUP"] = "0"
@@ -1181,6 +1502,9 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         export AURA_LOCAL_BACKEND=mlx
         export AURA_LAUNCHED_FROM_APP=1
         export AURA_DESKTOP_RESOURCE_GUARD=1
+        export AURA_SAFE_BOOT_DESKTOP=0
+        export AURA_ENABLE_BACKGROUND_COGNITION=1
+        export AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM=1
         export AURA_EAGER_LOCAL_SENSORY_BOOT=1
         export AURA_AUTO_LISTEN=1
         export AURA_EXTERNAL_GUI_OWNER=1
@@ -1513,8 +1837,12 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         guard !closeScheduled else { return }
         closeScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + readyCloseDelay) { [weak self] in
-            NSApp.terminate(self)
+            self?.hideLauncherWindow()
         }
+    }
+
+    private func hideLauncherWindow() {
+        window?.orderOut(nil)
     }
 
     private func bootMarkerAge() -> TimeInterval? {
@@ -1630,6 +1958,13 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         }
 
         return withSpawnLock {
+            // Health polling can time out while the Python event loop is busy
+            // generating a long reply. The orchestrator PID lock is the
+            // authoritative process-liveness signal; never spawn a second
+            // kernel merely because one HTTP poll missed its one-second SLA.
+            if !forceRelaunch && self.runtimeLockIndicatesLiveProcess() {
+                return .observingExistingBoot
+            }
             if !forceRelaunch && self.bootMarkerIsStaleWithoutRuntime() {
                 self.clearBootMarker()
             }
@@ -1699,7 +2034,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         if alert.runModal() == .alertFirstButtonReturn {
             openLogs()
         }
-        NSApp.terminate(nil)
+        hideLauncherWindow()
     }
 
 
@@ -1817,7 +2152,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func closeLauncher() {
-        NSApp.terminate(nil)
+        hideLauncherWindow()
     }
 
     private func spawnAuxiliaryAura(arguments: [String]) throws {
@@ -1870,8 +2205,18 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-let app = NSApplication.shared
-let delegate = AuraLauncherDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.regular)
-app.run()
+if let bridgeIndex = CommandLine.arguments.firstIndex(of: nativeBridgeFlag) {
+    let payloadIndex = CommandLine.arguments.index(after: bridgeIndex)
+    guard payloadIndex < CommandLine.arguments.endIndex,
+          let data = CommandLine.arguments[payloadIndex].data(using: .utf8),
+          let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        bridgeJSON(["ok": false, "error": "invalid_bridge_payload"], status: 2)
+    }
+    runNativeDesktopBridge(payload: payload)
+} else {
+    let app = NSApplication.shared
+    let delegate = AuraLauncherDelegate()
+    app.delegate = delegate
+    app.setActivationPolicy(.regular)
+    app.run()
+}

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 import time
 from pathlib import Path
@@ -536,6 +537,40 @@ def test_task_commitment_verifier_persistence_marks_running_tasks_interrupted(tm
     assert status is not None
     assert status["status"] == "interrupted"
     assert "interrupted" in status["summary"].lower()
+
+
+def test_task_commitment_verifier_quarantines_evaluation_fixture_from_lived_state(tmp_path):
+    path = tmp_path / "task_commitment_state.json"
+    path.write_text(
+        json.dumps(
+            {
+                "updated_at": 10.0,
+                "active_tasks": [
+                    {
+                        "task_id": "proof-task",
+                        "objective": (
+                            "A long-running microservice periodically crashes with OSError; "
+                            "code review reveals a resource leak."
+                        ),
+                        "status": "running_async",
+                    },
+                    {
+                        "task_id": "user-task",
+                        "objective": "Organize Bryan's project notes",
+                        "status": "running_async",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    verifier = TaskCommitmentVerifier(kernel=None, persist_path=path)
+
+    assert verifier.get_task_status("proof-task") is None
+    assert verifier.get_task_status("user-task")["status"] == "interrupted"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert [entry["task_id"] for entry in persisted["active_tasks"]] == ["user-task"]
 
 
 def test_task_commitment_verifier_builds_grounded_status_reply(tmp_path):

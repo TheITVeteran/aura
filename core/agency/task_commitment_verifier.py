@@ -52,6 +52,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from core.config import config
+from core.continuity import is_evaluation_contamination
 from core.runtime.skill_task_bridge import looks_like_multi_step_skill_request
 from core.runtime.structured_input import looks_like_learning_resource_bundle
 from core.utils.file_utils import atomic_write_json
@@ -374,7 +375,23 @@ class TaskCommitmentVerifier:
                 dict(t)
                 for t in self._active_tasks.values()
                 if str(t.get("status", "") or "") not in _TERMINAL_TASK_STATUSES
+                and not self._is_evaluation_task(t)
             ]
+
+    @staticmethod
+    def _is_evaluation_task(entry: Dict[str, Any]) -> bool:
+        """Return true when an entry contains sealed evaluation input.
+
+        Evaluation work still executes through the canonical task engine, but
+        it must not become autobiographical context or a cross-session goal.
+        """
+
+        return is_evaluation_contamination(
+            " ".join(
+                str(entry.get(field, "") or "")
+                for field in ("objective", "requested_objective", "summary")
+            )
+        )
 
     @classmethod
     def is_continuation_request(cls, objective: str) -> bool:
@@ -1100,8 +1117,7 @@ class TaskCommitmentVerifier:
             objective = str(item.get("goal", "") or "").strip()
             if not plan_id or not objective:
                 continue
-            entries.append(
-                {
+            entry = {
                     "task_id": str(item.get("task_id", "") or plan_id),
                     "plan_id": plan_id,
                     "objective": objective,
@@ -1111,7 +1127,8 @@ class TaskCommitmentVerifier:
                     "steps_total": int(item.get("steps_total", 0) or 0),
                     "updated_at": time.time(),
                 }
-            )
+            if not self._is_evaluation_task(entry):
+                entries.append(entry)
         return entries
 
     @staticmethod
@@ -1125,7 +1142,11 @@ class TaskCommitmentVerifier:
 
     def _relevant_entries(self, objective: str, *, limit: int) -> List[Dict]:
         with self._lock:
-            records = [dict(item) for item in self._active_tasks.values()]
+            records = [
+                dict(item)
+                for item in self._active_tasks.values()
+                if not self._is_evaluation_task(item)
+            ]
         if not records:
             records = []
         external_records = self._task_engine_entries()
@@ -1320,7 +1341,11 @@ class TaskCommitmentVerifier:
     def _save_locked(self) -> None:
         payload = {
             "updated_at": self._updated_at or time.time(),
-            "active_tasks": list(self._active_tasks.values()),
+            "active_tasks": [
+                entry
+                for entry in self._active_tasks.values()
+                if not self._is_evaluation_task(entry)
+            ],
         }
         atomic_write_json(str(self.persist_path), payload)
 
@@ -1344,6 +1369,9 @@ class TaskCommitmentVerifier:
             if not task_id:
                 continue
             entry = dict(item)
+            if self._is_evaluation_task(entry):
+                needs_save = True
+                continue
             status = str(entry.get("status", "") or "")
             if status in _RUNNING_TASK_STATUSES:
                 entry["status"] = "interrupted"

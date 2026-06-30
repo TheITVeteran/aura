@@ -863,6 +863,65 @@ def test_dnu_task_isolation_scrubs_state_and_kernel_residue():
     assert set(state.response_modifiers) == {"proof_task_id", "proof_task_prompt_hash"}
 
 
+def test_continuity_sanitizer_rejects_evaluation_input_not_answers():
+    from core.continuity import sanitize_continuity_summary
+
+    fixture = (
+        "Mode=reactive | Commitments=A long-running microservice periodically crashes "
+        "with OSError: too many open files. A code review reveals a resource leak"
+    )
+    ordinary = (
+        "Mode=reflective | Objective=understand Bryan's concern | "
+        "Commitments=follow up on desktop reliability"
+    )
+
+    assert sanitize_continuity_summary(fixture) == ""
+    assert sanitize_continuity_summary(ordinary) == ordinary
+
+
+def test_commitment_engine_quarantines_proof_fixture_on_load(tmp_path, monkeypatch):
+    import json
+    import time
+    from core.agency import commitment_engine as commitment_module
+
+    path = tmp_path / "commitments.json"
+    path.write_text(
+        json.dumps(
+            {
+                "fulfilled_count": 0,
+                "broken_count": 0,
+                "commitments": {
+                    "proof": {
+                        "id": "proof",
+                        "commitment_type": "autonomous",
+                        "description": (
+                            "A long-running microservice periodically crashes with OSError. "
+                            "A code review reveals a resource leak"
+                        ),
+                        "outcome": "Output your final answer inside <answer> tags",
+                        "deadline": time.time() + 3600,
+                        "status": "active",
+                    },
+                    "lived": {
+                        "id": "lived",
+                        "commitment_type": "user_facing",
+                        "description": "Follow up with Bryan about desktop reliability",
+                        "outcome": "A verified live conversation",
+                        "deadline": time.time() + 3600,
+                        "status": "active",
+                    },
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(commitment_module, "PERSIST_PATH", path)
+
+    engine = commitment_module.CommitmentEngine()
+
+    assert engine._commitments["proof"].status == commitment_module.CommitmentStatus.BROKEN
+    assert [item.id for item in engine.get_active_commitments()] == ["lived"]
+
+
 def test_state_repository_rebases_proof_isolation_commits(tmp_path: Path):
     from core.state.aura_state import AuraState
     from core.state.state_repository import StateRepository
@@ -1753,7 +1812,7 @@ def test_strict_answer_contract_is_deterministic_and_cache_isolated():
     assert "_STRICT_VALUE_UNUSABLE_RE" in worker_source
     assert "print(" not in worker_source
     assert "pass  # no-op" not in worker_source
-    assert "Rendering native strict-value chat template" in worker_source
+    assert "Rendering exact strict-value prompt" in worker_source
     assert "Strict contract non-empty start guard ACTIVE" in worker_source
     assert 'response_text = _normalize_strict_answer_response(' in worker_source
     assert 'envelope_prefixed=strict_envelope_prefixed' in worker_source
@@ -2044,6 +2103,22 @@ def test_generation_gate_force_release_is_lease_scoped(monkeypatch):
         router_module._release_generation_gate_after_call(stale_lease)
     finally:
         get_degradation_tracker().reset()
+
+
+def test_generation_gate_snapshot_is_read_only(monkeypatch):
+    from core.brain import llm_health_router as router_module
+
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_ACTIVE_LEASES", {})
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_FORCED_LEASES", set())
+    monkeypatch.setattr(router_module, "_GENERATION_GATE_NEXT_LEASE_ID", 0)
+
+    lease = router_module._mark_generation_gate_acquired("stream_narrative:background")
+    snapshot = router_module.generation_gate_snapshot()
+
+    assert snapshot["active_count"] == 1
+    assert snapshot["active"][lease]["owner"] == "stream_narrative:background"
+    assert snapshot["oldest"]["lease_id"] == lease
+    assert lease in router_module._GENERATION_GATE_ACTIVE_LEASES
 
 
 def test_generation_gate_saturation_aborts_stale_lease_and_retries(monkeypatch):

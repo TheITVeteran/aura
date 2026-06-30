@@ -796,6 +796,20 @@ class ResponseGenerationPhase(BasePhase):
                     state.response_modifiers.get("cognitive_situation_sampling_bias"),
                 ],
             )
+            # The caller owns the user-facing latency envelope.  Sampling and
+            # cognitive biases may spend less of that budget, but they must not
+            # multiply past it.  This keeps the full phase stack available on
+            # live desktop turns without turning an ordinary follow-up into a
+            # multi-minute local generation.
+            requested_token_cap = runtime_context.get("max_tokens")
+            if requested_token_cap is not None:
+                try:
+                    token_budget = min(token_budget, max(64, int(requested_token_cap)))
+                except (TypeError, ValueError, OverflowError):
+                    logger.warning(
+                        "ResponseGeneration ignored invalid caller token cap %r.",
+                        requested_token_cap,
+                    )
             if live_mind_controls_bound:
                 generation_temperature = max(
                     0.10,

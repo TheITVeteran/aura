@@ -269,7 +269,10 @@ def test_background_policy_defers_work_during_boot_grace(monkeypatch):
     monkeypatch.setattr(background_policy, "_PROCESS_STARTED_AT", time.time() - 300)
     orch = SimpleNamespace(status=SimpleNamespace(start_time=time.time() - 42))
 
-    assert background_policy.background_activity_reason(orch) == "boot_grace_42s"
+    assert background_policy.background_activity_reason(
+        orch,
+        allow_no_user_anchor=True,
+    ) == "boot_grace_42s"
 
 
 def test_research_background_policy_requires_long_desktop_quiet_window(monkeypatch):
@@ -1245,6 +1248,33 @@ def test_event_loop_monitor_recovers_only_after_healthy_samples_and_stability_wi
 
     monitor._last_failure_at = time.time() - 61.0
 
+    assert monitor.is_alive() is True
+
+
+def test_event_loop_monitor_restarts_dead_task_without_claiming_immediate_health():
+    from core.utils.concurrency import EventLoopMonitor
+
+    class _DoneTask:
+        def done(self):
+            return True
+
+    class _RunningTask:
+        def done(self):
+            return False
+
+    monitor = EventLoopMonitor(threshold=0.5)
+    monitor._task = _DoneTask()
+    restart_calls = []
+
+    def restart():
+        restart_calls.append(True)
+        monitor._stop_event.clear()
+        monitor._task = _RunningTask()
+
+    monitor.start = restart
+
+    assert monitor.is_alive() is False
+    assert restart_calls == [True]
     assert monitor.is_alive() is True
 
 

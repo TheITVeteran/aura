@@ -411,6 +411,58 @@ class SelfModel:
             goal_data.get("text", ""),
         )
 
+    def record_runtime_lesson(
+        self,
+        *,
+        source: str,
+        lesson: str,
+        confidence: float = 0.7,
+        evidence: Optional[Dict[str, Any]] = None,
+    ) -> SelfSnapshot:
+        """Synchronously record a bounded runtime lesson.
+
+        Background/autonomy loops often run in failure-handling paths where
+        awaiting a governed belief update would be unsafe or unavailable. This
+        method keeps those lessons durable without pretending they are settled
+        identity beliefs: they are stored under ``runtime_lessons`` and can be
+        promoted later by the normal reflection/learning stack.
+        """
+
+        source_text = _short_source(source)
+        lesson_text = " ".join(str(lesson or "").strip().split())[:1000]
+        if not lesson_text:
+            lesson_text = "Runtime event occurred without a usable lesson body."
+
+        confidence_value = max(0.0, min(1.0, float(confidence or 0.0)))
+        record = {
+            "ts": time.time(),
+            "source": source_text,
+            "lesson": lesson_text,
+            "confidence": confidence_value,
+            "evidence": _compact_runtime_evidence(evidence or {}),
+        }
+
+        lessons = list(self.beliefs.get("runtime_lessons") or [])
+        lessons.append(record)
+        self.beliefs["runtime_lessons"] = lessons[-200:]
+        snap = SelfSnapshot(
+            id=str(uuid4()),
+            ts=record["ts"],
+            summary=f"runtime lesson from {source_text}",
+            beliefs={"runtime_lessons": [record]},
+            confidence=confidence_value,
+            revision_note=lesson_text,
+        )
+        self.snapshots[snap.id] = snap
+        try:
+            asyncio.get_running_loop().create_task(self.persist())
+        except RuntimeError:
+            try:
+                asyncio.run(self.persist())
+            except RuntimeError:
+                logger.debug("SelfModel runtime lesson persisted later: event loop unavailable")
+        return snap
+
 
     def get_introspection(self) -> Dict[str, Any]:
         """Programmatic access to internal stats."""
@@ -438,3 +490,21 @@ class SelfModel:
             except (TypeError, ValueError):
                 pass  # no-op: intentional
         return status
+
+
+def _short_source(source: str) -> str:
+    return "".join(ch for ch in str(source or "unknown") if ch.isalnum() or ch in "._:-")[:120] or "unknown"
+
+
+def _compact_runtime_evidence(evidence: Dict[str, Any]) -> Dict[str, Any]:
+    compact: Dict[str, Any] = {}
+    for key, value in list((evidence or {}).items())[:12]:
+        text_key = str(key)[:80]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            compact[text_key] = value if not isinstance(value, str) else value[:1000]
+        else:
+            try:
+                compact[text_key] = json.loads(json.dumps(value, default=str)[:2000])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                compact[text_key] = str(value)[:1000]
+    return compact

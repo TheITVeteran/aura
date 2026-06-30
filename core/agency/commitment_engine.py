@@ -121,6 +121,16 @@ class CommitmentEngine:
             outcome=outcome,
             deadline=time.time() + deadline_hours * 3600.0,
         )
+        if self._must_isolate_from_lived_commitments(description, outcome):
+            commitment.status = CommitmentStatus.BROKEN
+            commitment.notes.append(
+                "[Isolated] Proof/evaluation input is not a lived commitment."
+            )
+            logger.info(
+                "CommitmentEngine isolated non-lived proof/evaluation commitment '%s'.",
+                description[:60],
+            )
+            return commitment
         self._commitments[c_id] = commitment
         self._save()
         logger.info("CommitmentEngine: committed '%s' (due in %.1fh)",
@@ -209,8 +219,38 @@ class CommitmentEngine:
         self._save()
 
     def get_active_commitments(self) -> List[Commitment]:
-        return [c for c in self._commitments.values()
-                if c.status == CommitmentStatus.ACTIVE]
+        return [
+            c
+            for c in self._commitments.values()
+            if c.status == CommitmentStatus.ACTIVE
+            and not c.is_overdue()
+            and not self._must_isolate_from_lived_commitments(c.description, c.outcome)
+        ]
+
+    @staticmethod
+    def _must_isolate_from_lived_commitments(
+        description: str,
+        outcome: str = "",
+        *,
+        include_proof_context: bool = True,
+    ) -> bool:
+        if include_proof_context:
+            try:
+                from core.runtime.proof_policy import proof_run_active
+
+                if proof_run_active(origin="commitment_engine"):
+                    return True
+            except (ImportError, RuntimeError, AttributeError):
+                pass
+        try:
+            from core.continuity import sanitize_continuity_summary
+
+            combined = " ".join(
+                part for part in (str(description or "").strip(), str(outcome or "").strip()) if part
+            )
+            return bool(combined and not sanitize_continuity_summary(combined))
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            return False
 
     def get_context_block(self) -> str:
         active = self.get_active_commitments()
@@ -317,8 +357,9 @@ class CommitmentEngine:
                 data = json.loads(PERSIST_PATH.read_text())
                 self._fulfilled_count = data.get("fulfilled_count", 0)
                 self._broken_count = data.get("broken_count", 0)
+                changed = False
                 for c_id, d in data.get("commitments", {}).items():
-                    self._commitments[c_id] = Commitment(
+                    commitment = Commitment(
                         id=d["id"],
                         commitment_type=CommitmentType(d["commitment_type"]),
                         description=d["description"],
@@ -331,6 +372,23 @@ class CommitmentEngine:
                         checkin_count=d.get("checkin_count", 0),
                         notes=d.get("notes", []),
                     )
+                    if commitment.status == CommitmentStatus.ACTIVE and (
+                        commitment.is_overdue()
+                        or self._must_isolate_from_lived_commitments(
+                        commitment.description,
+                        commitment.outcome,
+                        include_proof_context=False,
+                    )
+                    ):
+                        commitment.status = CommitmentStatus.BROKEN
+                        commitment.notes.append(
+                            "[Isolated] Expired or proof-derived commitment removed from live cognition."
+                        )
+                        self._broken_count += 1
+                        changed = True
+                    self._commitments[c_id] = commitment
+                if changed:
+                    self._save()
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation('commitment_engine', e)
             logger.debug("CommitmentEngine load failed: %s", e)

@@ -356,47 +356,39 @@ def gui_actor_entry(port: int, token: str = None):
                         logger.warning("GUI watchdog boot reload failed: %s", _exc)
                     _boot_completed = True
 
-                if consecutive_failures >= 2:
-                    logger.warning("🚨 [GUI WATCHDOG] Kernel API unreachable. Attempting reload.")
-                    try:
-                        window.load_url(app_url)
-                    except _GUI_RECOVERABLE_ERRORS as _exc:
-                        record_degradation('gui_actor', _exc)
-                        logger.warning("GUI watchdog reload failed: %s", _exc)
+                if consecutive_failures == 3:
+                    logger.warning(
+                        "[GUI WATCHDOG] Kernel heartbeat missed three times; preserving the "
+                        "current window while the runtime recovers."
+                    )
 
-                if consecutive_failures >= 6:
-                    logger.critical("🛑 [GUI WATCHDOG] Kernel API unavailable for too long. Exiting stale WebView.")
-                    _flush_logs_before_forced_exit()
-                    os._exit(1)
+                # A foreground MLX generation can hold native resources long
+                # enough for several heartbeat probes to time out even though
+                # the kernel process is alive.  Reloading every two misses used
+                # to destroy in-flight UI state, and exiting after six misses
+                # made Aura appear to quit during a long chat turn.  Keep the
+                # window alive and move to a reconnect surface only after a
+                # sustained outage; normal websocket/bootstrap polling will
+                # restore the live UI when the server returns.
+                if consecutive_failures == 6:
+                    logger.warning(
+                        "[GUI WATCHDOG] Kernel heartbeat unavailable for a sustained interval; "
+                        "showing the reconnect surface without exiting the desktop process."
+                    )
+                    try:
+                        window.load_html(_BOOT_WAITING_HTML)
+                    except _GUI_RECOVERABLE_ERRORS as _exc:
+                        record_degradation("gui_actor", _exc)
+                        logger.warning("GUI watchdog reconnect surface failed: %s", _exc)
 
         watchdog_thread = threading.Thread(target=_watchdog, daemon=True)
         watchdog_thread.start()
 
-        # Acquire Accessibility trust for THIS python identity from the foreground
-        # GUI process. The kernel that performs desktop automation is the SAME
-        # python binary, but it runs dockless so its trust prompt cannot surface a
-        # dialog. This GUI process owns the visible window, so prompting here lets
-        # the system Accessibility dialog appear; granting it trusts the shared
-        # python identity — and therefore the worker kernel — durably, by path.
-        def _request_accessibility_trust():
-            try:
-                time.sleep(2.5)  # let the window become the foreground application
-                from core.security.permission_guard import get_permission_guard
-
-                trusted = bool(get_permission_guard().request_accessibility_trust())
-                logger.info(
-                    "🖐️ Accessibility trust %s for desktop control.",
-                    "confirmed" if trusted else "requested (awaiting grant in System Settings)",
-                )
-            except _GUI_RECOVERABLE_ERRORS as _exc:
-                record_degradation('gui_actor', _exc)
-
-        if sys.platform == "darwin":
-            threading.Thread(
-                target=_request_accessibility_trust,
-                name="accessibility_trust_prompt",
-                daemon=True,
-            ).start()
+        # Permission checks during boot must be passive.  Prompting on every
+        # window launch caused a duplicate Accessibility dialog even when the
+        # user had already granted Aura.app access, because this process is a
+        # Python helper with a different TCC identity.  Explicit settings-page
+        # actions own all permission requests.
 
         # In Zenith, we use the functional start to load the URL after initialization
         webview.start(func=_on_shown, debug=False)

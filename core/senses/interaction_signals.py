@@ -8,6 +8,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from core.media.safe_imports import cv2_main_process_blocked
 from core.runtime.errors import record_degradation
 from core.utils.queues import BackpressuredQueue
 from core.utils.task_tracker import get_task_tracker
@@ -452,6 +453,11 @@ class InteractionSignalsEngine:
             self._vision_backend_ready = True
             return True
 
+        if cv2_main_process_blocked():
+            self._vision_backend_ready = False
+            self._vision_backend_reason = "cv2_blocked_in_main_process_after_pyav_load"
+            return False
+
         try:
             import cv2
 
@@ -478,9 +484,21 @@ class InteractionSignalsEngine:
         if not jpeg_bytes:
             return {"updated_at": time.time()}
         if not self._ensure_vision_backend():
-            return {"updated_at": time.time()}
+            return {
+                "updated_at": time.time(),
+                "method": "vision_backend_deferred",
+                "reliability": "unavailable",
+                "reason": self._vision_backend_reason,
+            }
 
         try:
+            if cv2_main_process_blocked():
+                return {
+                    "updated_at": time.time(),
+                    "method": "vision_backend_deferred",
+                    "reliability": "unavailable",
+                    "reason": "cv2_blocked_in_main_process_after_pyav_load",
+                }
             import cv2
             import numpy as np
 

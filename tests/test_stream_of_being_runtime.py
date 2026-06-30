@@ -198,6 +198,41 @@ def test_stream_start_fails_closed_when_task_tracker_cannot_supervise(
         get_degradation_tracker().reset()
 
 
+def test_stream_deep_narrative_defers_when_generation_gate_is_active(
+    tmp_path,
+    monkeypatch,
+    service_container,
+):
+    import time
+
+    import core.brain.llm_health_router as router_module
+    import core.consciousness.stream_of_being as stream_module
+
+    class Gate:
+        @staticmethod
+        def get_conversation_status():
+            return {
+                "conversation_ready": True,
+                "state": "ready",
+                "foreground_owned": False,
+                "active_generations": 0,
+                "warmup_in_flight": False,
+            }
+
+    service_container.register_instance("inference_gate", Gate(), required=False)
+    monkeypatch.setattr(
+        router_module,
+        "generation_gate_snapshot",
+        lambda: {"active_count": 1, "oldest": {"owner": "desktop:user", "age_s": 2.0}},
+    )
+
+    stream = stream_module.StreamOfBeing(save_dir=tmp_path)
+    stream._boot_started_at = time.time() - 1000.0
+    stream._last_user_interaction = time.time() - 1000.0
+
+    assert stream._background_llm_allowed() is False
+
+
 def test_boot_stream_wires_orchestrator_only_once(tmp_path, monkeypatch, service_container):
     import core.consciousness.stream_of_being as stream_module
 

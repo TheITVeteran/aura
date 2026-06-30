@@ -31,6 +31,7 @@ def sensory_worker_loop(request_queue, response_queue):
     Isolated process for Vision and Audio capturing.
     Prevents cv2/sounddevice memory corruption from taking down the brain.
     """
+    os.environ["AURA_MEDIA_SIDECAR_PROCESS"] = "1"
     logger.info("[SENSORY] Isolated Worker started (PID: %d)", os.getpid())
     
     mss = None

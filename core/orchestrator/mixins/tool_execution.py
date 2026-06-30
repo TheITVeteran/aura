@@ -102,6 +102,27 @@ class ToolExecutionMixin:
                 return resolved
         return "unknown"
 
+    @staticmethod
+    def _tool_effect_scope(tool_name: Any) -> str:
+        """Return the conservative effect scope used by the autonomy gate."""
+
+        normalized = str(tool_name or "").strip().lower()
+        if normalized in {
+            "clock",
+            "free_search",
+            "get_time",
+            "grep_search",
+            "grounded_search",
+            "list_dir",
+            "read_file",
+            "search_web",
+            "status",
+            "view_file",
+            "web_search",
+        }:
+            return "read_only"
+        return "unknown"
+
     async def run_browser_task(self, url: str, task: str) -> Any:
         """Formalized browser task execution via skill router.
         Browser work goes through the same governed tool path as every other skill.
@@ -187,7 +208,15 @@ class ToolExecutionMixin:
         # ── EDI PROGRESSIVE AUTONOMY GATE ────────────────────────────────
         edi = ServiceContainer.get("edi", default=None)
         if edi:
-            allowed, reason = edi.can_do(tool_name, risk_level)
+            effect_scope = self._tool_effect_scope(tool_name)
+            user_authorized = self._coerce_tool_origin(_origin) in _USER_FACING_TOOL_ORIGINS
+            allowed, reason = edi.can_do(
+                tool_name,
+                risk_level,
+                effect_scope=effect_scope,
+                governed=_constitutional_runtime_live,
+                user_authorized=user_authorized,
+            )
             if not allowed:
                 logger.warning("🔓 EDI blocked tool '%s' (risk: %s): %s", tool_name, risk_level, reason)
                 result = {"ok": False, "error": f"EDI blocked: {reason}"}
@@ -654,22 +683,30 @@ class ToolExecutionMixin:
                     name="orchestrator.affect_engine.apply_stimulus",
                 )
 
-            # Record EDI trust signal feedback
-            if edi:
-                if success:
-                    edi.record_positive_signal(f"Success: {tool_name}")
-                else:
-                    edi.record_negative_signal(f"Failure: {tool_name} - {result.get('error', 'unknown')}")
+            # Operational success is competence feedback, not evidence that the
+            # user revoked Aura's autonomy.  Conflating the two created a
+            # cascading failure: transient tool errors lowered EDI to Advisory,
+            # which then blocked harmless read-only recovery/search actions.
+            if edi and hasattr(edi, "record_execution_outcome"):
+                edi.record_execution_outcome(
+                    tool_name,
+                    success=success,
+                    error=str(result.get("error", "") or ""),
+                )
 
             await _finish_constitutional_tool_execution(result, success=success)
             _record_coding_tool_event(result, success=success, error=str(result.get("error", "")))
             return result
 
         except _TOOL_EXECUTION_RECOVERABLE_ERRORS as e:
-            # Record EDI failure signal on crash
+            # A tool crash is operational evidence, not a trust revocation.
             edi = ServiceContainer.get("edi", default=None)
-            if edi:
-                edi.record_negative_signal(f"Crash: {tool_name} - {type(e).__name__}")
+            if edi and hasattr(edi, "record_execution_outcome"):
+                edi.record_execution_outcome(
+                    tool_name,
+                    success=False,
+                    error=f"{type(e).__name__}: {e}",
+                )
 
             _record_tool_degradation(
                 e,

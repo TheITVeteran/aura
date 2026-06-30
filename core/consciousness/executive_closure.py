@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from core.container import ServiceContainer
+from core.continuity import is_evaluation_contamination
 from core.goals.goal_text import is_actionable_goal_text, is_intrinsic_goal_text
 from core.predictive.predictive_self_model import PredictiveSelfModel
 from core.runtime.errors import record_degradation
@@ -138,11 +139,10 @@ class ExecutiveClosureEngine:
 
         current_objective = str(getattr(state.cognition, "current_objective", "") or "").strip()
         current_origin = str(getattr(state.cognition, "current_origin", "") or "")
-        if (
-            current_objective
-            and is_intrinsic_goal_text(current_objective)
-            and not _origin_is_user_anchored(current_origin)
-        ):
+        if is_evaluation_contamination(current_objective):
+            state.cognition.current_objective = None
+            current_objective = ""
+        if current_objective and not _origin_is_user_anchored(current_origin):
             background_commitment = current_objective
             state.cognition.current_objective = None
 
@@ -245,8 +245,15 @@ class ExecutiveClosureEngine:
         # Never promote internal housekeeping (baseline ticks, drive alerts)
         # into attention_focus — it leaks into user-facing fallback responses.
         _internal_sources = {"baseline_continuity", "drive_growth", "drive_social"}
-        if _ws_content and _ws_source not in _internal_sources and "baseline tick" not in _ws_content.lower():
+        if (
+            _ws_content
+            and not is_evaluation_contamination(_ws_content)
+            and _ws_source not in _internal_sources
+            and "baseline tick" not in _ws_content.lower()
+        ):
             state.cognition.attention_focus = _ws_content
+        elif is_evaluation_contamination(state.cognition.attention_focus):
+            state.cognition.attention_focus = ""
 
         if is_actionable_goal_text(selected_objective):
             state.cognition.modifiers["executive_objective"] = selected_objective
@@ -516,7 +523,11 @@ class ExecutiveClosureEngine:
         workspace_snapshot: dict[str, Any],
     ) -> str:
         current_objective = str(getattr(state.cognition, "current_objective", "") or "")
-        if current_objective and not is_intrinsic_goal_text(current_objective):
+        if (
+            current_objective
+            and not is_evaluation_contamination(current_objective)
+            and not is_intrinsic_goal_text(current_objective)
+        ):
             return current_objective
 
         goal_hierarchy = ServiceContainer.get("goal_hierarchy", default=None)
@@ -526,6 +537,7 @@ class ExecutiveClosureEngine:
                 if (
                     next_goal
                     and getattr(next_goal, "description", None)
+                    and not is_evaluation_contamination(next_goal.description)
                     and is_actionable_goal_text(next_goal.description)
                 ):
                     return str(next_goal.description)
@@ -537,7 +549,12 @@ class ExecutiveClosureEngine:
         if volition:
             try:
                 result = getattr(volition, "_last_goal", None)
-                if result and result.get("objective") and is_actionable_goal_text(result["objective"]):
+                if (
+                    result
+                    and result.get("objective")
+                    and not is_evaluation_contamination(result["objective"])
+                    and is_actionable_goal_text(result["objective"])
+                ):
                     return str(result["objective"])
             except (OSError, ConnectionError, TimeoutError) as _exc:
                 record_degradation('executive_closure', _exc)
@@ -562,6 +579,7 @@ class ExecutiveClosureEngine:
         workspace_focus = str(workspace_snapshot.get("last_content") or "").strip()
         if (
             workspace_focus
+            and not is_evaluation_contamination(workspace_focus)
             and float(workspace_snapshot.get("last_priority") or 0.0) >= 0.55
             and is_actionable_goal_text(workspace_focus)
         ):
@@ -574,6 +592,8 @@ class ExecutiveClosureEngine:
             proposal = await volition.tick(current_objective)
             if not proposal or not proposal.get("objective"):
                 return
+            if is_evaluation_contamination(proposal["objective"]):
+                return
             volition._last_goal = proposal
         except (OSError, ConnectionError, TimeoutError) as exc:
             record_degradation('executive_closure', exc)
@@ -584,8 +604,14 @@ class ExecutiveClosureEngine:
             goal
             for goal in list(getattr(state.cognition, "active_goals", []) or [])
             if not is_intrinsic_goal_text(goal)
+            and not is_evaluation_contamination(
+                goal.get("description", "") if isinstance(goal, dict) else goal
+            )
         ]
-        if is_actionable_goal_text(selected_objective):
+        if (
+            not is_evaluation_contamination(selected_objective)
+            and is_actionable_goal_text(selected_objective)
+        ):
             record = {
                 "description": selected_objective,
                 "priority": 1.0,
@@ -795,12 +821,13 @@ class ExecutiveClosureEngine:
         """Return True if the objective is user-anchored foreground work."""
         if not objective:
             return False
+        if is_evaluation_contamination(objective):
+            return False
         if is_intrinsic_goal_text(objective):
             return False
         if _origin_is_user_anchored(origin):
             return True
-        # Fallback: actionable non-intrinsic work gets a short lease.
-        return is_actionable_goal_text(objective)
+        return False
 
     def _refresh_commitment(self, state: Any, now: float) -> None:
         """Create or refresh the current foreground task commitment."""

@@ -489,12 +489,60 @@ class OvertActionLoop:
             self._consecutive_failures = 0
         else:
             self._consecutive_failures += 1
+            self._annotate_failure_learning(result, raw_result)
 
         self._emit_receipts(result, raw_result)
         self._record_life_trace(result, raw_result)
         self._update_goal(result)
         self._emit_visible_trace(result)
         return result
+
+    @staticmethod
+    def _failure_status(raw_result: Any) -> str:
+        if isinstance(raw_result, dict):
+            return str(raw_result.get("status") or raw_result.get("reason") or raw_result.get("error") or "").lower()
+        return str(raw_result or "").lower()
+
+    def _annotate_failure_learning(self, result: OvertActionResult, raw_result: Any) -> None:
+        """Convert failed autonomous action into actionable self-learning.
+
+        This does not retry blindly. It records the safer retry shape so the
+        next initiative cycle can choose scan/propose/defer instead of repeating
+        the same blocked act.
+        """
+
+        status = self._failure_status(raw_result)
+        if "blocked_by_user_advocate" in status or "user advocate" in status:
+            result.next_step_hint = (
+                "retry_with_explicit_user_benefit_and_non_mutating_scope"
+            )
+        elif "deferred" in status or "background_policy" in status:
+            result.next_step_hint = "retry_after_idle_and_resource_window"
+        elif "self_preservation" in status or "memory" in status:
+            result.next_step_hint = "retry_lower_cost_or_after_memory_pressure_drops"
+        elif "verification" in status or "execution_not_completed" in status:
+            result.next_step_hint = "retry_with_effect_verification_and_narrower_scope"
+        elif not result.next_step_hint:
+            result.next_step_hint = "classify_failure_before_retry"
+
+        try:
+            self_model = ServiceContainer.get("self_model", default=None)
+            if self_model is None:
+                orchestrator = self._orchestrator()
+                self_model = getattr(orchestrator, "self_model", None) if orchestrator is not None else None
+            update = getattr(self_model, "record_runtime_lesson", None)
+            if callable(update):
+                update(
+                    source="overt_action_loop",
+                    lesson=(
+                        f"Autonomous {result.skill} failed with {status or 'unknown'}; "
+                        f"next step: {result.next_step_hint}."
+                    ),
+                    confidence=0.74,
+                    evidence={"action_id": result.action_id, "raw_result": raw_result},
+                )
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("overt_action_loop", exc)
 
     def _emit_receipts(self, result: OvertActionResult, raw_result: Any) -> None:
         try:

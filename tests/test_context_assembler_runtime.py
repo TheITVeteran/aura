@@ -85,6 +85,34 @@ def test_deep_conversation_keeps_compact_continuity():
     assert "Harden live context assembly" in prompt
 
 
+def test_context_assembler_excludes_proof_fixture_from_lived_continuity():
+    state = AuraState.default()
+    state.cognition.rolling_summary = (
+        "Mode=reactive | Commitments=A long-running microservice periodically "
+        "crashes with OSError: too many open files. A code review reveals a resource leak"
+    )
+
+    prompt = ContextAssembler.build_system_prompt(state)
+
+    assert "long-running microservice" not in prompt
+    assert "code review reveals" not in prompt
+    assert "## CONTINUITY SUMMARY" not in prompt
+
+
+def test_context_assembler_does_not_promote_evaluation_objective_to_attention():
+    state = AuraState.default()
+    state.cognition.attention_focus = "Bryan's current conversation"
+    fixture = (
+        "A long-running microservice periodically crashes with OSError; "
+        "code review reveals a resource leak."
+    )
+
+    messages = ContextAssembler.build_messages(state, fixture, max_tokens=2048)
+
+    assert state.cognition.attention_focus == "Bryan's current conversation"
+    assert messages[-1]["content"] == fixture
+
+
 def test_build_messages_preserves_current_input_under_tight_budget(monkeypatch):
     state = AuraState.default()
     state.response_modifiers["black_box_steering"] = True

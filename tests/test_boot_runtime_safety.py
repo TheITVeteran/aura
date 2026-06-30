@@ -1,5 +1,7 @@
 import asyncio
+import builtins
 import json
+import time
 import sys
 import tempfile
 from pathlib import Path
@@ -59,6 +61,76 @@ def test_main_process_camera_policy_blocks_darwin_without_override(monkeypatch):
     assert "cv2/PyAV" in reason
 
 
+def test_aura_main_does_not_eager_import_cv2_in_primary_process():
+    source = (config.paths.project_root / "aura_main.py").read_text(encoding="utf-8")
+
+    assert "import cv2 as _cv2" not in source
+    assert "import cv2  # noqa" not in source
+    assert "install_main_process_cv2_guard()" in source
+
+
+def test_media_safe_imports_blocks_cv2_in_primary_darwin(monkeypatch):
+    import core.media.safe_imports as safe_imports
+
+    monkeypatch.setattr(safe_imports.sys, "platform", "darwin")
+    monkeypatch.delenv("AURA_MEDIA_SIDECAR_PROCESS", raising=False)
+    monkeypatch.delenv("AURA_ALLOW_INPROCESS_CV2_WITH_STT", raising=False)
+
+    assert safe_imports.cv2_main_process_blocked() is True
+
+
+def test_media_safe_imports_allows_cv2_in_sidecar_darwin(monkeypatch):
+    import core.media.safe_imports as safe_imports
+
+    monkeypatch.setattr(safe_imports.sys, "platform", "darwin")
+    monkeypatch.setenv("AURA_MEDIA_SIDECAR_PROCESS", "1")
+    monkeypatch.delenv("AURA_ALLOW_INPROCESS_CV2_WITH_STT", raising=False)
+
+    assert safe_imports.cv2_main_process_blocked() is False
+
+
+def test_sensory_sidecar_marks_media_process_boundary():
+    client_source = (config.paths.project_root / "core/senses/sensory_client.py").read_text(
+        encoding="utf-8"
+    )
+    worker_source = (config.paths.project_root / "core/senses/sensory_worker.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'os.environ["AURA_MEDIA_SIDECAR_PROCESS"] = "1"' in client_source
+    assert 'os.environ["AURA_MEDIA_SIDECAR_PROCESS"] = "1"' in worker_source
+
+
+@pytest.mark.asyncio
+async def test_voice_engine_mic_stream_start_is_timeout_bounded(monkeypatch, tmp_path):
+    from core.senses import voice_engine
+    from core.senses.voice_engine import SovereignVoiceEngine
+
+    class BlockingSoundDevice:
+        class InputStream:
+            def __init__(self, *args, **kwargs):
+                time.sleep(0.3)
+
+            def start(self):
+                return None
+
+    monkeypatch.setenv("AURA_MIC_START_TIMEOUT_S", "0.05")
+    monkeypatch.setattr(voice_engine, "sd", BlockingSoundDevice)
+
+    engine = SovereignVoiceEngine(data_dir=str(tmp_path))
+    engine.microphone_enabled = True
+    engine._stt_initialized = True
+    engine.stt_model = object()
+    engine._pulse_hypha = lambda *args, **kwargs: None
+    engine._signal_mycelium = lambda *args, **kwargs: None
+
+    started = await engine.start_listening()
+
+    assert started is False
+    assert engine._mic_listening is False
+    assert engine._is_feeding is False
+
+
 def test_continuous_vision_blocks_forced_camera_on_darwin(monkeypatch):
     monkeypatch.setenv("AURA_FORCE_CAMERA", "1")
     monkeypatch.delenv("AURA_ALLOW_UNSAFE_MAIN_PROCESS_CAMERA", raising=False)
@@ -77,6 +149,44 @@ def test_sensory_motor_cortex_blocks_forced_camera_on_darwin(monkeypatch):
     cortex = SensoryMotorCortex()
 
     assert cortex.camera_enabled is False
+
+
+def test_body_schema_camera_discovery_does_not_import_cv2(monkeypatch):
+    from core.somatic.body_schema import BodySchema
+
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "cv2":
+            raise AssertionError("BodySchema must not import cv2 during discovery")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    body = BodySchema()
+
+    assert body.get_limb("camera") is not None
+
+
+def test_capability_discovery_sensor_scan_does_not_import_cv2(monkeypatch):
+    from core.somatic.body_schema import BodySchema
+    from core.somatic.capability_discovery import CapabilityDiscoveryDaemon
+
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "cv2":
+            raise AssertionError("CapabilityDiscovery must not import cv2 during sensor scan")
+        return real_import(name, *args, **kwargs)
+
+    body = BodySchema()
+    daemon = CapabilityDiscoveryDaemon(interval=999.0)
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    discoveries, losses = daemon._scan_sensors(body)
+
+    assert isinstance(discoveries, list)
+    assert isinstance(losses, list)
 
 
 def test_sensory_motor_cortex_syncs_user_activity_before_idle_trigger():
