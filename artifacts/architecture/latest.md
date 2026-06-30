@@ -8,7 +8,7 @@ Generated: `0.0`
 
 - Subsystems: 146
 - Python files: 2050
-- Python lines: 576319
+- Python lines: 576326
 - Dependency edges: 869
 - ServiceContainer `.get()` calls: 1666
 - ServiceContainer registrations: 409
@@ -46,7 +46,7 @@ graph TD
     skills["skills<br/>82 files, 23481 lines"]
     being["being<br/>25 files, 5782 lines"]
     learning["learning<br/>28 files, 7592 lines"]
-    phases["phases<br/>29 files, 19420 lines"]
+    phases["phases<br/>29 files, 19427 lines"]
     reasoning["reasoning<br/>11 files, 4979 lines"]
     social["social<br/>19 files, 5145 lines"]
     tasks["tasks<br/>3 files, 451 lines"]
@@ -1046,7 +1046,7 @@ graph TD
 | skills | 82 | 23481 | 976209 | 32 | 8 |
 | memory | 93 | 21990 | 893773 | 21 | 35 |
 | orchestrator | 43 | 19557 | 865244 | 132 | 9 |
-| phases | 29 | 19420 | 881563 | 35 | 7 |
+| phases | 29 | 19427 | 881961 | 35 | 7 |
 | agency | 43 | 16301 | 663081 | 33 | 19 |
 | adaptation | 27 | 12670 | 506593 | 22 | 14 |
 | resilience | 54 | 12606 | 509722 | 17 | 27 |
