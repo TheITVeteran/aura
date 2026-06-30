@@ -1045,3 +1045,54 @@ Honest boundary and estimate:
 - Overall closeout: 99.68%.
 - Remaining consolidated checkpoints: 1.
 - Remaining smaller sub-checkpoints: 1.
+
+## Checkpoint 2026-06-30-01: Live Desktop Memory-Confirmation Repair
+
+Status: source repair committed and pushed; clean-tree live rerun still required.
+
+Observed live-path failure:
+
+- A real desktop 32B proof run passed boot and most chat turns, but the runtime
+  stream failed because an explicit memory-pin confirmation
+  (`Codeword confirmed and pinned: ...`) was rejected as too thin.
+- That false rejection triggered a heavyweight repair retry, CognitiveEngine
+  timeout incident, runtime pressure degradation, and neural-stream failure
+  markers even though the underlying memory operation was valid.
+
+Root fix:
+
+- User-facing reliability now recognizes concise explicit memory-pin receipts
+  only when the user actually asked to remember/pin/store something, the reply
+  contains a storage-confirmation verb, and the reply echoes the specific pinned
+  payload.
+- Generic acknowledgements such as `Okay, I will remember it` still fail the
+  reliability gate, so this does not weaken the conversation standard.
+
+Evidence:
+
+- `python -m pytest tests/test_chat_reliability_proof.py
+  tests/test_server_conversation_lane.py::test_api_chat_desktop_required_blocks_unfounded_voice_intrusion
+  tests/test_server_conversation_lane.py::test_api_chat_desktop_required_fails_closed_on_final_degraded_reply
+  -q`: 104 passed.
+- `python -m ruff check core/conversation/response_reliability.py
+  tests/test_chat_reliability_proof.py`: passed.
+- Live desktop proof before commit:
+  `tools/live_boot_proof.py --mode desktop --conversation-soak-turns 8
+  --skip-desktop-action --out-dir
+  artifacts/live_proof/live_desktop_chat_current_20260630_072857`: passed,
+  8/8 CognitiveEngine desktop turns, codeword recall passed, semantic,
+  imagination, timescale, ambient, and autonomic organs participated, clean
+  runtime stream scan, clean shutdown, no orphan processes, peak RSS about
+  20.1 GB.
+- Checkpoint commit: `d773c16b fix: stabilize live desktop memory
+  confirmations`, pushed to `origin/main`.
+
+Honest boundary and estimate:
+
+- The successful proof was run from a dirty tree before commit `d773c16b`; it is
+  strong evidence for the fix but not the final clean-tree closeout stamp.
+- Overall closeout: 99.72%.
+- Remaining consolidated checkpoints: 1.
+- Remaining smaller sub-checkpoints: 1.
+- Remaining work: rerun the live desktop proof from committed source, then rerun
+  final-claim validation or the full final-proof gate as needed.
