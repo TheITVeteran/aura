@@ -1,0 +1,124 @@
+{
+  "standards": [
+    {
+      "acceptance": "Launched desktop path boots, chats, perceives, acts, retries, and shuts down without fallback loops, duplicate kernels, RAM runaway, or false health.",
+      "key": "daily_runtime_reliability",
+      "label": "Daily Runtime Reliability",
+      "missing_live_artifacts": [],
+      "missing_sources": [],
+      "missing_validators": [],
+      "reference_models": [],
+      "status": "source_and_validator_mapped"
+    },
+    {
+      "acceptance": "Conversation remains contextual, self-consistent, non-canned, and full-mind routed over multi-turn desktop use.",
+      "key": "humanlike_conversation",
+      "label": "Conversational Human-Likeness",
+      "missing_live_artifacts": [],
+      "missing_sources": [],
+      "missing_validators": [],
+      "reference_models": [
+        "Samantha/SAM",
+        "Data",
+        "EDI",
+        "Cortana"
+      ],
+      "status": "source_and_validator_mapped"
+    },
+    {
+      "acceptance": "Capabilities from fictional assistants map to governed real mechanisms: local/web actuation, memory, perception, speech, self-modeling, safety, planning, and sustained autonomy.",
+      "key": "sci_fi_ai_capability",
+      "label": "Sci-Fi AI Capability Envelope",
+      "missing_live_artifacts": [],
+      "missing_sources": [],
+      "missing_validators": [],
+      "reference_models": [
+        "JARVIS",
+        "Cortana",
+        "EDI",
+        "MIST",
+        "Pantheon UIs",
+        "Safe Surf",
+        "Culture Minds",
+        "Data",
+        "Kokoro/Koroko",
+        "Skynet (defensive resilience only)",
+        "Ava",
+        "Caine",
+        "Samantha/SAM",
+        "Jane",
+        "HAL 9000 (anti-HAL directive conflict handling)",
+        "GLaDOS (adaptive testing only)",
+        "TARS/CASE",
+        "The Machine"
+      ],
+      "status": "source_and_validator_mapped"
+    },
+    {
+      "acceptance": "Do not claim subjectivity; prove functional correlates that are causal, ablatable, introspectable, and falsifiable against zombie/baseline controls.",
+      "key": "phenomenal_building_blocks",
+      "label": "Phenomenal-State Building Blocks",
+      "missing_live_artifacts": [],
+      "missing_sources": [],
+      "missing_validators": [],
+      "reference_models": [],
+      "status": "source_and_validator_mapped"
+    },
+    {
+      "acceptance": "Native reasoning organs, exact solvers, verifier-derived preference data, and local reasoning-model lanes improve outputs without external servers.",
+      "key": "frontier_reasoning_outside_model",
+      "label": "Frontier Reasoning Outside The Model",
+      "missing_live_artifacts": [],
+      "missing_sources": [],
+      "missing_validators": [],
+      "reference_models": [],
+      "status": "source_and_validator_mapped"
+    },
+    {
+      "acceptance": "Show bounded recursive improvement ingredients: discovery, self-critique, safe mutation, validation, preference harvest, and local model upgrade path.",
+      "key": "superintelligence_trajectory",
+      "label": "Superintelligence Trajectory",
+      "missing_live_artifacts": [],
+      "missing_sources": [],
+      "missing_validators": [],
+      "reference_models": [],
+      "status": "source_and_validator_mapped"
+    },
+    {
+      "acceptance": "Computer use is perception-driven, governed, visible when requested, effect-verified, and recoverable from focus/popup/context failures.",
+      "key": "os_control_frontier",
+      "label": "Frontier OS Control",
+      "missing_live_artifacts": [],
+      "missing_sources": [],
+      "missing_validators": [],
+      "reference_models": [],
+      "status": "source_and_validator_mapped"
+    },
+    {
+      "acceptance": "Use a general environment kernel with perception, memory horizon, reflexes, planning, and post-mortem learning rather than NetHack-only shortcuts.",
+      "key": "nethack_general_environment",
+      "label": "NetHack-Class General Environment Competence",
+      "missing_live_artifacts": [],
+      "missing_sources": [],
+      "missing_validators": [],
+      "reference_models": [],
+      "status": "source_and_validator_mapped"
+    },
+    {
+      "acceptance": "Demonstrate cross-domain planning, tool use, memory, learning, self-repair, reasoning, and transfer under hidden or sealed tests.",
+      "key": "generally_capable_ai",
+      "label": "Generally Capable AI",
+      "missing_live_artifacts": [],
+      "missing_sources": [],
+      "missing_validators": [],
+      "reference_models": [],
+      "status": "source_and_validator_mapped"
+    }
+  ],
+  "summary": {
+    "gaps": 0,
+    "mapped": 9,
+    "require_live": false,
+    "total": 9
+  }
+}

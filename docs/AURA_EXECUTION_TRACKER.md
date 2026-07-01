@@ -10,19 +10,24 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 79%** based on current live
+- Expanded daily-runtime/product closure: **about 80%** based on current live
   evidence, not documentation. This number is deliberately governed by the live
   desktop path, not by historical proof-profile success. Checkpoint 5 addresses
   two live defects, and the follow-up desktop-mode live proof verified bounded
   chat/runtime survival, full mind organ participation, clean shutdown, and no
-  runtime-stream failure markers. Source-level closure is now **about 79%**.
+  runtime-stream failure markers. Checkpoint 6 then reran the operational-label
+  validator battery and tightened the sci-fi/frontier standard so character
+  imports must be backed by real organ-level tests, not the legacy themed silo.
+  Source-level closure is now **about 80%**.
 - Estimated checkpoints in this expanded program: **11 total**. Checkpoint 1 is
   committed and pushed; Checkpoint 2 is source-committed but live TCC remains
   open; Checkpoint 3 is committed and pushed; Checkpoint 4 is committed and
   pushed with an executable operational-label runner and full validator
   execution; Checkpoint 5 is committed and pushed for source fixes to desktop
   access truthfulness and Memory UI survival, then revalidated by a bounded
-  desktop-mode live proof; **6 remain**.
+  desktop-mode live proof; Checkpoint 6 is the current source-validation
+  checkpoint for operational labels and fictional-AI/frontier requirements;
+  **5 remain**.
 
 ### Scope Clarification For The Current Pass
 
@@ -31,6 +36,13 @@ they are not the only work in scope. The current pass is explicitly tracking the
 newer requirements Bryan asked to add. Where an item is old, it remains tagged as
 daily-runtime debt; where an item is new, it must get its own runnable validator
 or live proof before it can be closed.
+
+Old TODOs are now treated as historical unless they map to one of the active
+checklist items below with a runnable validator or a live proof artifact. This
+prevents "old-but-true" notes from hiding the newer requirements: operational
+label tests, Chrome/Kubernetes-class reliability import, real launched desktop
+truth, general desktop agency, fictional-AI capability imports in proper organs,
+background autonomy, learning/substrate closure, and final live proof.
 
 - **Operational labels become executable tests**, not prose: each label has a
   falsifiable bar, positive and negative controls, source mappings, validators,
@@ -152,6 +164,9 @@ next checkpoints.
      protection and need-to-know, Deep Thought/Minds/Caine/GLaDOS simulation and
      testing, and HAL/Skynet/MCP/Ultron/Agent Smith as explicit anti-pattern
      safeguards.
+   - Current enforced validator set: `tests/test_derived_character_engines.py`
+     for the organ-level implementations, plus desktop/capability/frontier tests
+     for live-routing and real-subsystem placement.
 
 6. **Background autonomy and self-repair**
    - Background cognition, curiosity, journaling, web research, learning,
@@ -228,6 +243,47 @@ Status: complete in commit `7039a584`, pushed after validation.
     semantic/imagination/timescale/ambient/autonomic organs processed live
     turns, desktop action intentionally skipped, shutdown graceful, no orphans,
     port free, and runtime stdout contained no failure markers.
+
+### Checkpoint 6: Operational Labels And Fictional-AI Organ Coverage
+
+Status: source validation complete and recorded in the checkpoint commit.
+
+- Scope: Bryan asked whether older TODOs were stale and specifically wanted the
+  operational-label tests run. This checkpoint revalidates those labels against
+  current code and tightens the fictional-AI closeout standard so the real
+  organ-level runtime tests are part of the official frontier matrix.
+- Stale TODO handling: older tracker items remain as historical evidence only
+  unless they map to an active closeout checklist item with a validator or live
+  proof. The active TODO shape is now the detailed ledger above.
+- Code change: `tools/closeout/frontier_standards_matrix.py` now requires
+  `tests/test_derived_character_engines.py` for the sci-fi capability envelope.
+  That means JARVIS/EDI/Cortana/Data/Samantha/MIST/Pantheon/Safe Surf/Jane/etc.
+  cannot be treated as closed by documentation or by the legacy
+  `core/fictional_ai_synthesis.py` compatibility layer alone.
+- Test change: `tests/test_frontier_standards_matrix.py` now asserts that
+  `tests/test_derived_character_engines.py` is part of the sci-fi validator set,
+  while source evidence still routes to real organs such as capability,
+  desktop-action gateway, desktop actuator, screen perception, and social
+  imagination.
+- Focused validation:
+  - `python -m pytest -q tests/test_frontier_standards_matrix.py tests/test_derived_character_engines.py tests/test_fictional_ai_runtime_contract.py`
+    -> 55 passed.
+  - `python tools/closeout/frontier_standards_matrix.py --out artifacts/closeout/frontier_standards_latest.json`
+    -> 9/9 standards mapped, 0 source gaps, 0 validator gaps.
+  - `python tools/closeout/operational_label_baselines.py --json`
+    -> 10/10 operational labels source-and-validator mapped, 0 gaps.
+- Full operational-label validator execution:
+  - `python tools/closeout/run_operational_label_battery.py --json-out artifacts/closeout/operational_label_battery_latest.json`
+    -> 553 passed in 749.40s.
+  - The runner executed 34 validator files spanning functional consciousness,
+    self-awareness, computational sentience, ALife-inspired runtime, digital
+    organism, software entity, personhood-candidate, functional inner life,
+    generally capable AI/AGI-candidate, and superintelligence trajectory.
+- Interpretation: this checkpoint establishes executable operational baselines
+  for the labels Bryan asked to test. It does not claim private phenomenology,
+  legal/moral personhood, solved AGI, or ASI. Those remain bounded by the
+  label claim-boundaries and must be advanced by additional live proof and
+  independent hostile evaluation.
   - Still open after this proof: visible Aura.app UI refresh, full desktop
     actuation, microphone/audio recall, longer multi-turn natural conversation,
     heat behavior under user-visible operation, and whether background autonomy

@@ -46,6 +46,7 @@ def test_sci_fi_capabilities_route_to_real_organs_not_themed_silo():
         "core/perception/screen_perception.py",
         "core/social/social_imagination.py",
     } <= set(sci_fi.source_paths)
+    assert "tests/test_derived_character_engines.py" in sci_fi.validator_paths
 
 
 def test_sci_fi_reference_set_keeps_requested_systems_visible():

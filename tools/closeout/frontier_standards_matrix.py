@@ -98,6 +98,7 @@ STANDARDS: tuple[FrontierStandard, ...] = (
             "core/social/social_imagination.py",
         ),
         validator_paths=(
+            "tests/test_derived_character_engines.py",
             "tests/test_desktop_agency.py",
             "tests/test_desktop_planning_generality.py",
             "tests/test_capability_gateway_routing_runtime.py",
