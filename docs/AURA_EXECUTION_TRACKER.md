@@ -10,7 +10,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 82%** based on current live
+- Expanded daily-runtime/product closure: **about 83%** based on current live
   evidence, not documentation. This number is deliberately governed by the live
   desktop path, not by historical proof-profile success. Checkpoint 5 addresses
   two live defects, and the follow-up desktop-mode live proof verified bounded
@@ -38,9 +38,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   Checkpoint 8 is the source-validation checkpoint for desktop-access
   TCC cache and UI-probe decoupling; Checkpoint 9 is the detailed
   remaining-contract checkpoint that prevents the final checkpoints from
-  collapsing into generic wording; Checkpoint 10A is now in progress on the
-  real launched Aura.app lane and has isolated a remaining macOS TCC
-  Accessibility denial for the exact launched identity.
+  collapsing into generic wording; Checkpoint 10A is committed and pushed as
+  the desktop-permission truth reconciliation checkpoint. The real launched
+  Aura.app lane still shows a macOS TCC Accessibility denial for the exact
+  launched identity, so Checkpoint 10 remains open until the visible app proves
+  desktop control, screen text, and general agency are live.
 
 ### Scope Clarification For The Current Pass
 
@@ -484,8 +486,9 @@ Status: complete in commit `7abe1800`, pushed to `origin/main`.
 
 ### Checkpoint 10A: Aura.app Desktop Permission Truth Reconciliation
 
-Status: source fix validated; live Aura.app proof shows one remaining OS-level
-Accessibility approval requirement for the exact launched identity.
+Status: complete in commit `eb8537d6`, pushed to `origin/main`. Live Aura.app
+proof shows one remaining OS-level Accessibility approval requirement for the
+exact launched identity.
 
 - Scope: Bryan's live UI showed Screen Recording, Accessibility, and Automation
   as enabled in System Settings while Aura's desktop-access panel still reported
