@@ -183,7 +183,13 @@ def test_bundle_manifest_has_required_keys():
 def test_entitlements_include_apple_events_and_jit():
     assert HARDENED_RUNTIME_ENTITLEMENTS["com.apple.security.automation.apple-events"] is True
     assert HARDENED_RUNTIME_ENTITLEMENTS["com.apple.security.device.audio-input"] is True
+    assert HARDENED_RUNTIME_ENTITLEMENTS["com.apple.security.device.screen-capture"] is True
+    assert HARDENED_RUNTIME_ENTITLEMENTS["com.apple.security.network.client"] is True
+    assert HARDENED_RUNTIME_ENTITLEMENTS["com.apple.security.network.server"] is True
     assert HARDENED_RUNTIME_ENTITLEMENTS["com.apple.security.cs.allow-jit"] is True
+    assert HARDENED_RUNTIME_ENTITLEMENTS[
+        "com.apple.security.cs.disable-library-validation"
+    ] is True
 
 
 def test_write_entitlements_plist_is_valid(tmp_path):

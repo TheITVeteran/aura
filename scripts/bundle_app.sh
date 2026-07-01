@@ -18,7 +18,15 @@ if [ "${AURA_AUTO_USE_LOCAL_CODESIGN:-0}" = "1" ] && command -v security >/dev/n
             | head -n 1
     )"
     if [ -n "${LOCAL_AURA_IDENTITY}" ]; then
-        DEFAULT_CODESIGN_IDENTITY="${LOCAL_AURA_IDENTITY}"
+        SIGN_PROBE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aura-codesign-probe.XXXXXX")"
+        trap 'rm -rf "${SIGN_PROBE_DIR}"' EXIT
+        printf '#!/bin/sh\nexit 0\n' > "${SIGN_PROBE_DIR}/probe"
+        chmod +x "${SIGN_PROBE_DIR}/probe"
+        if codesign --force --sign "${LOCAL_AURA_IDENTITY}" "${SIGN_PROBE_DIR}/probe" >/dev/null 2>&1; then
+            DEFAULT_CODESIGN_IDENTITY="${LOCAL_AURA_IDENTITY}"
+        else
+            echo "⚠️ Local Aura code-signing identity exists but cannot sign from this shell; using ad-hoc signing." >&2
+        fi
     fi
 fi
 CODESIGN_IDENTITY="${AURA_CODESIGN_IDENTITY:-${DEFAULT_CODESIGN_IDENTITY}}"
@@ -33,6 +41,7 @@ ROOT_PATH_FALLBACK="${RESOURCES_DIR}/aura-root-path"
 VERSION_FILE="${RESOURCES_DIR}/aura-version"
 VERSION_FULL_FILE="${RESOURCES_DIR}/aura-version-full"
 INFO_PLIST="${CONTENTS_DIR}/Info.plist"
+ENTITLEMENTS_PLIST="${DIST_DIR}/aura.entitlements"
 LAUNCHER_SOURCE="${ROOT_DIR}/scripts/AuraLauncher.swift"
 
 cd "${ROOT_DIR}"
@@ -70,22 +79,24 @@ PYTHON_FOR_VERSION="${ROOT_DIR}/.venv/bin/python3"
 if [ ! -x "${PYTHON_FOR_VERSION}" ]; then
     PYTHON_FOR_VERSION="$(command -v python3 || true)"
 fi
+if [ -z "${PYTHON_FOR_VERSION}" ]; then
+    echo "❌ python3 is required to write Aura.app metadata."
+    exit 1
+fi
 
 APP_SEMVER="2026.3.31"
 APP_FULL_VERSION="Aura Luna v${APP_SEMVER}"
-if [ -n "${PYTHON_FOR_VERSION}" ]; then
-    APP_SEMVER="$("${PYTHON_FOR_VERSION}" - <<'PY'
+APP_SEMVER="$("${PYTHON_FOR_VERSION}" - <<'PY'
 from core.version import VERSION
 semver = VERSION.split("-", 1)[0]
 print(semver)
 PY
 )"
-    APP_FULL_VERSION="$("${PYTHON_FOR_VERSION}" - <<'PY'
+APP_FULL_VERSION="$("${PYTHON_FOR_VERSION}" - <<'PY'
 from core.version import version_string
 print(version_string("full"))
 PY
 )"
-fi
 
 printf '%s\n' "${APP_SEMVER}" > "${VERSION_FILE}"
 printf '%s\n' "${APP_FULL_VERSION}" > "${VERSION_FULL_FILE}"
@@ -104,47 +115,45 @@ if [ -f "${ICON_SOURCE}" ]; then
     cp "${ICON_SOURCE}" "${RESOURCES_DIR}/Aura.icns"
 fi
 
-cat > "${INFO_PLIST}" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleDisplayName</key>
-    <string>Aura</string>
-    <key>CFBundleExecutable</key>
-    <string>aura-launcher</string>
-    <key>CFBundleIconFile</key>
-    <string>Aura.icns</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.aura.desktop</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>Aura</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${APP_SEMVER}</string>
-    <key>CFBundleVersion</key>
-    <string>${APP_SEMVER}</string>
-    <key>NSCameraUsageDescription</key>
-    <string>Aura can use the camera when you explicitly enable vision features.</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Aura can listen when you explicitly enable voice input.</string>
-</dict>
-</plist>
-EOF
+PYTHONPATH="${ROOT_DIR}:${PYTHONPATH:-}" "${PYTHON_FOR_VERSION}" - "${INFO_PLIST}" "${ENTITLEMENTS_PLIST}" "${APP_SEMVER}" <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+
+from core.security.macos_bundle_manifest import (
+    info_plist_overrides,
+    write_entitlements_plist,
+)
+
+info_path = Path(sys.argv[1])
+entitlements_path = Path(sys.argv[2])
+app_semver = sys.argv[3]
+
+payload = {
+    "CFBundleDevelopmentRegion": "en",
+    "CFBundleDisplayName": "Aura",
+    "CFBundleExecutable": "aura-launcher",
+    "CFBundleIconFile": "Aura.icns",
+    "CFBundleIdentifier": "com.aura.desktop",
+    "CFBundleInfoDictionaryVersion": "6.0",
+    "CFBundleName": "Aura",
+    "CFBundlePackageType": "APPL",
+    "CFBundleShortVersionString": app_semver,
+    "CFBundleVersion": app_semver,
+    "NSHighResolutionCapable": True,
+}
+payload.update(info_plist_overrides())
+with info_path.open("wb") as handle:
+    plistlib.dump(payload, handle, sort_keys=True)
+write_entitlements_plist(entitlements_path)
+PY
 
 echo "✅ Built ${APP_DIR}"
 echo "🧠 Live source link: ${ROOT_DIR}"
 echo "✍️ Edit the repo normally — this launcher always runs the current workspace code."
 
 if command -v codesign >/dev/null 2>&1; then
-    CODESIGN_ARGS=(--force --sign "${CODESIGN_IDENTITY}")
+    CODESIGN_ARGS=(--force --sign "${CODESIGN_IDENTITY}" --entitlements "${ENTITLEMENTS_PLIST}")
     if [ "${CODESIGN_IDENTITY}" != "-" ]; then
         CODESIGN_ARGS+=(--options runtime --timestamp)
     fi

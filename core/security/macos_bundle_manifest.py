@@ -63,6 +63,9 @@ HARDENED_RUNTIME_ENTITLEMENTS: dict[str, bool] = {
     "com.apple.security.automation.apple-events": True,
     "com.apple.security.device.audio-input": True,
     "com.apple.security.device.camera": True,
+    "com.apple.security.device.screen-capture": True,
+    "com.apple.security.network.client": True,
+    "com.apple.security.network.server": True,
     # Python ships unsigned .so/.dylib files and JITs Metal kernels; without
     # these a hardened-runtime bundle crashes on import.
     "com.apple.security.cs.allow-jit": True,

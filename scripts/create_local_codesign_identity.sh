@@ -16,9 +16,40 @@ P12_PASSWORD="${AURA_LOCAL_CODESIGN_P12_PASSWORD:-aura-local-code-signing}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aura-codesign.XXXXXX")"
 trap 'rm -rf "${WORK_DIR}"' EXIT
 
+trust_identity_for_codesign() {
+    if security find-certificate -c "${IDENTITY_NAME}" -p "${KEYCHAIN}" > "${WORK_DIR}/codesign.crt" 2>/dev/null; then
+        security add-trusted-cert \
+            -d \
+            -r trustRoot \
+            -p codeSign \
+            -k "${KEYCHAIN}" \
+            "${WORK_DIR}/codesign.crt" \
+            >/dev/null 2>&1 || true
+    fi
+    security set-key-partition-list \
+        -S apple-tool:,apple:,codesign: \
+        -s \
+        -k "${AURA_LOCAL_CODESIGN_KEYCHAIN_PASSWORD:-}" \
+        "${KEYCHAIN}" \
+        >/dev/null 2>&1 || true
+}
+
+verify_identity_can_sign() {
+    local probe="${WORK_DIR}/codesign-probe"
+    printf '#!/bin/sh\nexit 0\n' > "${probe}"
+    chmod +x "${probe}"
+    codesign --force --sign "${IDENTITY_NAME}" "${probe}" >/dev/null 2>&1
+}
+
 if security find-identity -v -p codesigning "${KEYCHAIN}" 2>/dev/null | grep -Fq "\"${IDENTITY_NAME}\""; then
-    echo "✅ Existing code-signing identity found: ${IDENTITY_NAME}"
-    exit 0
+    trust_identity_for_codesign
+    if verify_identity_can_sign; then
+        echo "✅ Existing code-signing identity found and verified: ${IDENTITY_NAME}"
+        exit 0
+    fi
+    echo "❌ Existing identity cannot sign from this shell: ${IDENTITY_NAME}" >&2
+    echo "   Remove it from Keychain Access and rerun this helper, or unlock/trust the key manually." >&2
+    exit 1
 fi
 
 cat > "${WORK_DIR}/codesign.cnf" <<EOF
@@ -68,15 +99,15 @@ security import "${WORK_DIR}/codesign.p12" \
     -T /usr/bin/codesign \
     >/dev/null
 
-security set-key-partition-list \
-    -S apple-tool:,apple:,codesign: \
-    -s \
-    -k "${AURA_LOCAL_CODESIGN_KEYCHAIN_PASSWORD:-}" \
-    "${KEYCHAIN}" \
-    >/dev/null 2>&1 || true
+trust_identity_for_codesign
 
 if security find-identity -v -p codesigning "${KEYCHAIN}" 2>/dev/null | grep -Fq "\"${IDENTITY_NAME}\""; then
-    echo "✅ Created code-signing identity: ${IDENTITY_NAME}"
+    if verify_identity_can_sign; then
+        echo "✅ Created and verified code-signing identity: ${IDENTITY_NAME}"
+    else
+        echo "❌ Created identity, but codesign cannot use it from this shell." >&2
+        exit 1
+    fi
 else
     echo "❌ Identity import finished, but codesign cannot see ${IDENTITY_NAME}" >&2
     exit 1

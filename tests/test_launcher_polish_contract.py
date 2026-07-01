@@ -165,17 +165,17 @@ def test_cleanup_treats_missing_lock_pid_as_stale(monkeypatch):
     class FakePsutil:
         STATUS_ZOMBIE = "zombie"
 
-        class NoSuchProcess(Exception):
+        class NoSuchProcess(Exception):  # noqa: N818 - mirrors psutil
             pass
 
-        class AccessDenied(Exception):
+        class AccessDenied(Exception):  # noqa: N818 - mirrors psutil
             pass
 
-        class ZombieProcess(Exception):
+        class ZombieProcess(Exception):  # noqa: N818 - mirrors psutil
             pass
 
         @staticmethod
-        def Process(_pid):
+        def Process(_pid):  # noqa: N802 - mirrors psutil
             if _pid:
                 raise FakePsutil.NoSuchProcess("missing")
             return None
@@ -384,16 +384,38 @@ def test_bundle_script_builds_regular_dock_app_and_embeds_version_metadata():
     assert 'ROOT_DIR="$(cd -P "$(dirname "$0")/.." && pwd -P)"' in bundle_script
     assert 'VERSION_FULL_FILE="${RESOURCES_DIR}/aura-version-full"' in bundle_script
     assert 'INSTALL_PATH="${AURA_INSTALL_PATH:-}"' in bundle_script
+    assert 'ENTITLEMENTS_PLIST="${DIST_DIR}/aura.entitlements"' in bundle_script
     assert 'DEFAULT_CODESIGN_IDENTITY="-"' in bundle_script
     assert "Aura Local Code Signing" in bundle_script
     assert 'AURA_AUTO_USE_LOCAL_CODESIGN:-0' in bundle_script
+    assert "aura-codesign-probe" in bundle_script
+    assert 'codesign --force --sign "${LOCAL_AURA_IDENTITY}" "${SIGN_PROBE_DIR}/probe"' in bundle_script
+    assert "using ad-hoc signing" in bundle_script
     assert 'CODESIGN_IDENTITY="${AURA_CODESIGN_IDENTITY:-${DEFAULT_CODESIGN_IDENTITY}}"' in bundle_script
+    assert "info_plist_overrides" in bundle_script
+    assert "write_entitlements_plist" in bundle_script
+    assert '"NSHighResolutionCapable": True' in bundle_script
+    assert 'payload.update(info_plist_overrides())' in bundle_script
     assert 'cp -R "${APP_DIR}" "${INSTALL_PATH}"' in bundle_script
-    assert 'CODESIGN_ARGS=(--force --sign "${CODESIGN_IDENTITY}")' in bundle_script
+    assert 'CODESIGN_ARGS=(--force --sign "${CODESIGN_IDENTITY}" --entitlements "${ENTITLEMENTS_PLIST}")' in bundle_script
     assert 'codesign "${CODESIGN_ARGS[@]}" "${APP_DIR}"' in bundle_script
     assert 'codesign "${CODESIGN_ARGS[@]}" "${INSTALL_PATH}"' in bundle_script
     assert "CFBundleShortVersionString" in bundle_script
+    assert "NSAppleEventsUsageDescription" not in bundle_script
     assert "LSUIElement" not in bundle_script
+
+
+def test_legacy_installer_uses_stable_bundle_manifest():
+    installer = (PROJECT_ROOT / "scripts" / "install_to_applications.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'sys.path.insert(0, str(PROJECT_ROOT))' in installer
+    assert "info_plist_overrides" in installer
+    assert "write_entitlements_plist" in installer
+    assert '"CFBundleIdentifier": "com.aura.desktop"' in installer
+    assert "com.aura.sovereign" not in installer
+    assert "payload.update(info_plist_overrides())" in installer
 
 
 def test_local_codesign_identity_helper_exists_for_stable_tcc_identity():
@@ -405,6 +427,12 @@ def test_local_codesign_identity_helper_exists_for_stable_tcc_identity():
     assert "Aura Local Code Signing" in source
     assert "PBE-SHA1-3DES" in source
     assert "security import" in source
+    assert "trust_identity_for_codesign" in source
+    assert "security add-trusted-cert" in source
+    assert "-p codeSign" in source
+    assert "verify_identity_can_sign" in source
+    assert 'codesign --force --sign "${IDENTITY_NAME}" "${probe}"' in source
+    assert "Existing identity cannot sign" in source
 
 
 def test_live_shell_assets_are_unversioned_and_service_worker_skips_shell_cache():
