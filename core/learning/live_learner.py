@@ -13,9 +13,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.memory.retention_policy import training_buffer_retention_policy
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
-from core.memory.retention_policy import training_buffer_retention_policy
 from core.tasks.managed_command import run_project_command
 
 logger = logging.getLogger("Aura.LiveLearner")
@@ -30,6 +30,36 @@ _LIVE_LEARNER_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
 )
+_TRAINING_CONTAMINATION_PATTERNS = {
+    "[silent auto-fix]": "silent_autofix_prompt",
+    "handle this silently": "silent_repair_prompt",
+    "traceback (most recent call last)": "traceback_telemetry",
+    "task exception was never retrieved": "asyncio_exception_telemetry",
+    "kernelinterface chat timed out": "chat_timeout_telemetry",
+    "response generation failed": "response_generation_failure",
+    "languagecenter expression failed": "language_center_failure",
+    "unmapped critical traceback": "unmapped_traceback_prompt",
+    "fix a data access error": "repair_prompt",
+    "investigate a timeout": "repair_prompt",
+    "diagnose unmapped critical traceback": "repair_prompt",
+    "fix a missing module/import issue": "repair_prompt",
+    "as an ai language model": "assistant_identity_regression",
+    "aura language model": "assistant_identity_regression",
+    "how can i assist": "assistant_canned_reply",
+    "great question": "assistant_canned_reply",
+    "certainly!": "assistant_canned_reply",
+    "both have their merits": "assistant_canned_reply",
+    "i encountered a cognitive error during response generation": "canned_failure_reply",
+    "i'm having trouble formulating a response": "canned_failure_reply",
+    "my thinking engine just hiccupped": "canned_failure_reply",
+    "i'm still initializing": "canned_failure_reply",
+    "i'm processing that, but i haven't reached a verbal conclusion yet": "canned_failure_reply",
+    "i'm turning that over. give me a moment": "canned_failure_reply",
+    "i'm reaching for an answer that feels honest": "canned_failure_reply",
+    "eli pariser coined the phrase": "web_leakage",
+    "learn why people trust wikihow": "web_leakage",
+    "download article": "web_leakage",
+}
 
 
 def _record_live_learning_degradation(
@@ -163,6 +193,17 @@ def score_interaction(
         reasons_negative=neg,
         worth_training=final_score >= 0.55,
     )
+
+
+def training_contamination_reasons(*texts: str) -> list[str]:
+    """Return deterministic reasons a row must not become weight-training data."""
+    joined = "\n".join(str(text or "") for text in texts).lower()
+    reasons = [
+        reason
+        for pattern, reason in _TRAINING_CONTAMINATION_PATTERNS.items()
+        if pattern in joined
+    ]
+    return sorted(set(reasons))
 
 
 # ── Adapter version registry ─────────────────────────────────────────────────
@@ -464,6 +505,15 @@ class LiveLearner:
 
         if score.raw_score is not None:
             self._session_scores.append(score.raw_score)
+
+        contamination = training_contamination_reasons(user_input, response)
+        if contamination:
+            score.worth_training = False
+            score.reasons_negative.extend(f"training_contamination:{reason}" for reason in contamination)
+            logger.info(
+                "LiveLearner: refused contaminated training row (%s)",
+                ",".join(contamination),
+            )
 
         if score.worth_training:
             # Format as MLX-LM training example
@@ -777,11 +827,25 @@ class LiveLearner:
     @staticmethod
     def _clean_training_example(example: dict[str, Any]) -> dict[str, Any] | None:
         clean = {k: v for k, v in example.items() if not str(k).startswith("_")}
+        if LiveLearner._example_contamination_reasons(clean):
+            return None
         if clean.get("messages"):
             return {"messages": clean["messages"]}
         if clean.get("text"):
             return {"text": clean["text"]}
         return None
+
+    @staticmethod
+    def _example_contamination_reasons(example: dict[str, Any]) -> list[str]:
+        texts: list[str] = []
+        if isinstance(example.get("text"), str):
+            texts.append(str(example.get("text") or ""))
+        messages = example.get("messages")
+        if isinstance(messages, list):
+            for message in messages:
+                if isinstance(message, dict):
+                    texts.append(str(message.get("content") or ""))
+        return training_contamination_reasons(*texts)
 
     def _write_training_dataset(
         self,
@@ -1207,10 +1271,15 @@ class LiveLearner:
         count = 0
         try:
             malformed = 0
+            contaminated = 0
             with open(self._buffer_path, encoding="utf-8") as f:
                 for line_number, line in enumerate(f, start=1):
                     try:
-                        self._buffer.append(json.loads(line))
+                        row = json.loads(line)
+                        if isinstance(row, dict) and self._example_contamination_reasons(row):
+                            contaminated += 1
+                            continue
+                        self._buffer.append(row)
                         count += 1
                     except json.JSONDecodeError as exc:
                         malformed += 1
@@ -1223,6 +1292,8 @@ class LiveLearner:
                             )
             if malformed:
                 logger.warning("LiveLearner: skipped %d malformed buffer rows", malformed)
+            if contaminated:
+                logger.warning("LiveLearner: skipped %d contaminated buffer rows", contaminated)
             logger.debug("LiveLearner: loaded %d buffered examples from disk.", count)
         except _LIVE_LEARNER_RECOVERABLE_ERRORS as exc:
             _record_live_learning_degradation(

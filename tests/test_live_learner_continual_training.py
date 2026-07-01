@@ -213,3 +213,55 @@ def test_record_tick_accepts_affect_payload_without_state_affect_object(tmp_path
     assert score is not None
     assert score.worth_training is True
     assert len(learner._buffer) == 1
+
+
+def test_record_tick_refuses_silent_repair_prompts_as_training_data(tmp_path):
+    learner = _bare_learner(tmp_path)
+    state = SimpleNamespace(identity=SimpleNamespace(current_narrative="steady"), phi=0.7)
+
+    score = learner.record_tick(
+        state,
+        user_input="[SILENT AUTO-FIX] Investigate a timeout. Error: KernelInterface chat timed out. Handle this silently.",
+        response="I'm processing that, but I haven't reached a verbal conclusion yet.",
+        affect={"valence": 0.6, "curiosity": 0.9},
+    )
+
+    assert score is not None
+    assert score.worth_training is False
+    assert any("training_contamination" in reason for reason in score.reasons_negative)
+    assert len(learner._buffer) == 0
+
+
+def test_clean_training_example_rejects_traceback_and_assistant_regression(tmp_path):
+    learner = _bare_learner(tmp_path)
+    contaminated = {
+        "messages": [
+            {"role": "system", "content": "You are Aura."},
+            {"role": "user", "content": "Traceback (most recent call last): ValueError"},
+            {"role": "assistant", "content": "As an AI language model, I cannot answer."},
+        ],
+        "_quality": 0.9,
+    }
+
+    assert learner._clean_training_example(contaminated) is None
+
+
+def test_live_learner_load_buffer_skips_contaminated_rows(tmp_path):
+    learner = _bare_learner(tmp_path)
+    good = _example(1)
+    bad = {
+        "messages": [
+            {"role": "user", "content": "[SILENT AUTO-FIX] Fix a data access error. Handle this silently."},
+            {"role": "assistant", "content": "I'm having trouble formulating a response."},
+        ],
+        "_quality": 0.9,
+    }
+    learner._buffer_path.write_text(
+        json.dumps(good) + "\n" + json.dumps(bad) + "\n",
+        encoding="utf-8",
+    )
+
+    learner._load_buffer()
+
+    assert len(learner._buffer) == 1
+    assert learner._buffer[0]["messages"][1]["content"] == "question 1"

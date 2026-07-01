@@ -133,6 +133,14 @@ and Accessibility ready through `/api/system/desktop-access`.
   the perceptual pump preserves transcript timestamps/source metadata, and
   protected foreground chat explicitly carries "voice activity but no
   transcript" instead of hallucinating or ignoring audio perception.
+- LiveLearner contamination fix: repair prompts, tracebacks, chat timeouts,
+  canned failure replies, assistant identity regressions, and web-leakage rows
+  are now refused at capture time, skipped on startup reload, and filtered out
+  before dataset writing. The live learning store was rewritten with
+  `scripts/audit_learning_contamination.py --rewrite`; 2,279 contaminated rows
+  were quarantined under
+  `/Users/bryan/.aura/data/learning/quarantine/20260630-175817`, and the active
+  store now audits clean across 79 JSONL files.
 - Model lifecycle now knows local open-weight reasoning solver repos:
   `QwQ-32B-4bit`, `DeepSeek-R1-Distill-Qwen-32B-4bit`, and
   `DeepSeek-R1-Distill-Qwen-32B-8bit`.
