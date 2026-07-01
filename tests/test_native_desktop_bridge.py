@@ -41,6 +41,56 @@ def test_native_bridge_probe_uses_read_only_canonical_subprocess(monkeypatch, tm
     assert calls[0][1]["source"] == "native_desktop_bridge.probe"
 
 
+def test_native_bridge_does_not_hold_negative_probe_cache_for_ready_ttl(monkeypatch, tmp_path):
+    from core.security import native_desktop_bridge as bridge
+
+    monkeypatch.setenv("AURA_NATIVE_BRIDGE_DIR", str(tmp_path / "no-resident-bridge"))
+    monkeypatch.setattr(bridge, "_PROBE_READY_TTL_S", 60.0)
+    monkeypatch.setattr(bridge, "_PROBE_DEGRADED_TTL_S", 0.001)
+    executable = tmp_path / "aura-launcher"
+    executable.write_text("bridge", encoding="utf-8")
+    executable.chmod(0o755)
+    results = [
+        {"ok": False, "error": "launch_race"},
+        {
+            "ok": True,
+            "screen_recording": True,
+            "accessibility": True,
+            "automation": True,
+            "bundle_identifier": "com.aura.desktop",
+        },
+    ]
+
+    class _Gateway:
+        def run(self, _argv, **_kwargs):
+            if _argv and str(_argv[0]).endswith("codesign"):
+                return SimpleNamespace(
+                    stdout="",
+                    stderr=(
+                        "Identifier=com.aura.desktop\n"
+                        "Authority=Aura Local Code Signing\n"
+                        "TeamIdentifier=not set\n"
+                    ),
+                    returncode=0,
+                )
+            return SimpleNamespace(stdout=json.dumps(results.pop(0)), stderr="", returncode=0)
+
+    monkeypatch.setattr(bridge, "bridge_executable", lambda: executable)
+    monkeypatch.setattr(bridge, "get_subprocess_gateway", lambda: _Gateway())
+    bridge._PROBE_CACHE = (0.0, {})
+
+    first = bridge.probe_native_desktop_bridge(force=False)
+    import time
+
+    time.sleep(0.01)
+    second = bridge.probe_native_desktop_bridge(force=False)
+
+    assert first["ok"] is False
+    assert second["ok"] is True
+    assert second["accessibility"] is True
+    assert results == []
+
+
 def test_local_certificate_is_a_stable_tcc_identity_without_team_id(monkeypatch, tmp_path):
     from core.security import native_desktop_bridge as bridge
 

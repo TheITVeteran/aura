@@ -848,6 +848,15 @@ def test_desktop_access_panel_bounds_raw_permission_status_labels():
     assert "overflow-wrap: anywhere;" in aura_css
 
 
+def test_desktop_access_panel_uses_dedicated_probe_endpoint():
+    aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+
+    assert "async function pollDesktopAccess()" in aura_js
+    assert "fetch('/api/system/desktop-access'" in aura_js
+    assert "setInterval(pollDesktopAccess, 15000)" in aura_js
+    assert "pollDesktopAccess();" in aura_js
+
+
 def test_native_shell_waits_for_readiness_heartbeat():
     native_shell = (PROJECT_ROOT / "native" / "aura-shell" / "src" / "main.rs").read_text(encoding="utf-8")
 

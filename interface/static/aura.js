@@ -40,6 +40,7 @@ const state = {
     commitments: null,
     voiceSummary: null,
     desktopAccess: null,
+    desktopAccessPollInFlight: false,
     bootstrapLoaded: false,
     bootstrapTimer: null,
     lastNeuralPulseAt: 0,
@@ -1296,6 +1297,40 @@ function applyDesktopAccessSummary(summary) {
     const diagnosis = Array.isArray(access.desktop_access_diagnosis) ? access.desktop_access_diagnosis : [];
     diagnosis.slice(0, 3).forEach(line => helperLines.push(String(line || '')));
     help.textContent = helperLines.join(' ');
+}
+
+async function pollDesktopAccess() {
+    if (state.desktopAccessPollInFlight) return;
+    state.desktopAccessPollInFlight = true;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 9000);
+    try {
+        const res = await fetch('/api/system/desktop-access', {
+            cache: 'no-store',
+            signal: controller.signal
+        });
+        if (!res.ok) throw new Error(`desktop_access_http_${res.status}`);
+        const payload = await res.json();
+        applyDesktopAccessSummary(payload || {});
+    } catch (err) {
+        if (!err || err.name !== 'AbortError') {
+            console.warn('[DesktopAccess] permission refresh failed:', err);
+        }
+        const existing = state.desktopAccess || {};
+        if (existing.overall_status) {
+            applyDesktopAccessSummary({
+                ...existing,
+                cache_stale: true,
+                desktop_access_diagnosis: [
+                    ...(Array.isArray(existing.desktop_access_diagnosis) ? existing.desktop_access_diagnosis : []),
+                    'Desktop permission refresh did not complete; keeping the last known probe while Aura retries.'
+                ].slice(-4)
+            });
+        }
+    } finally {
+        clearTimeout(timeoutId);
+        state.desktopAccessPollInFlight = false;
+    }
 }
 
 function applyStateSummary(summary, commitments) {
@@ -4890,6 +4925,7 @@ if (DOM.neuralReadableToggle) {
 }
 connect();
 pollHealth();
+pollDesktopAccess();
 
 // Safety net: if WS connection fails repeatedly, keep polling health
 // so the splash can still be dismissed when the server comes up.
@@ -4901,6 +4937,7 @@ setInterval(() => {
 voicePlayer.init();
 vadStream = new VADStream('neural-vad-canvas');
 setInterval(pollHealth, 10000); // 10s — enterprise-grade, not chatbot-grade
+setInterval(pollDesktopAccess, 15000);
 state.bootstrapTimer = setInterval(() => hydrateBootstrap({ quiet: true }), 30000);
 loadSkills();
 

@@ -280,6 +280,10 @@ logger = logging.getLogger("Aura.Server.System")
 router = APIRouter()
 
 _DESKTOP_ACCESS_CACHE_TTL_S = _env_positive_float("AURA_DESKTOP_ACCESS_CACHE_TTL_S", 30.0)
+_DESKTOP_ACCESS_DEGRADED_CACHE_TTL_S = _env_positive_float(
+    "AURA_DESKTOP_ACCESS_DEGRADED_CACHE_TTL_S",
+    2.0,
+)
 _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S = _env_positive_float(
     "AURA_DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S",
     8.0,
@@ -309,6 +313,73 @@ _desktop_access_cache: dict[str, Any] = {
     "payload": None,
 }
 _desktop_access_request_state: dict[str, Any] = {}
+
+
+def _desktop_access_empty_payload() -> dict[str, Any]:
+    return {
+        "screen_recording": {"granted": False, "status": "unknown", "guidance": ""},
+        "accessibility": {"granted": False, "status": "unknown", "guidance": ""},
+        "automation": {"granted": False, "status": "unknown", "guidance": ""},
+        "direct_screen_recording": {"granted": False, "status": "unknown", "guidance": ""},
+        "direct_accessibility": {"granted": False, "status": "unknown", "guidance": ""},
+        "direct_automation": {"granted": False, "status": "unknown", "guidance": ""},
+        "screen_capture_ready": False,
+        "desktop_control_ready": False,
+        "screen_text_ready": False,
+        "direct_screen_capture_ready": False,
+        "direct_desktop_control_ready": False,
+        "direct_screen_text_ready": False,
+        "menu_clock_ready": False,
+        "menu_clock_text": "",
+        "menu_clock_error": "",
+        "frontmost_app": "",
+        "pyautogui_ready": False,
+        "pyautogui_error": "",
+        "permission_confidence": "unknown",
+        "permission_assumptions": [],
+        "process_identity": {},
+        "effective_app_identity": {},
+        "desktop_access_diagnosis": [],
+        "tcc_repair_plan": {},
+        "tcc_request_state": dict(_desktop_access_request_state),
+        "native_bridge_probe": {},
+        "overall_status": "pending",
+        "blocking_permissions": [],
+        "reported_blocking_permissions": [],
+        "direct_blocking_permissions": [],
+        "direct_probe_available": False,
+        "cache_age_s": 0.0,
+        "cache_stale": False,
+        "probe_mode": "empty",
+    }
+
+
+def _desktop_access_cache_ttl(payload: Any) -> float:
+    if not isinstance(payload, dict):
+        return 0.0
+    if (
+        payload.get("overall_status") == "ready"
+        and payload.get("permission_confidence") == "direct"
+        and not payload.get("blocking_permissions")
+    ):
+        return max(1.0, _DESKTOP_ACCESS_CACHE_TTL_S)
+    return max(0.25, min(_DESKTOP_ACCESS_CACHE_TTL_S, _DESKTOP_ACCESS_DEGRADED_CACHE_TTL_S))
+
+
+def _desktop_access_cached_copy(
+    payload: dict[str, Any],
+    *,
+    captured_at: float,
+    stale: bool = False,
+    probe_mode: str = "cached",
+) -> dict[str, Any]:
+    copied = dict(payload)
+    age = max(0.0, time.monotonic() - float(captured_at or 0.0))
+    copied["cache_age_s"] = round(age, 3)
+    copied["cache_stale"] = bool(stale)
+    copied["probe_mode"] = probe_mode
+    copied["cache_ttl_s"] = _desktop_access_cache_ttl(payload)
+    return copied
 
 
 # ── Collector Helpers ─────────────────────────────────────────
@@ -1069,43 +1140,33 @@ def _collect_voice_summary() -> dict[str, Any]:
     return summary
 
 
-async def _collect_desktop_access_summary() -> dict[str, Any]:
+async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[str, Any]:
     cached_payload = _desktop_access_cache.get("payload")
     cached_at = float(_desktop_access_cache.get("captured_at", 0.0) or 0.0)
     if (
         isinstance(cached_payload, dict)
-        and (time.monotonic() - cached_at) < max(1.0, _DESKTOP_ACCESS_CACHE_TTL_S)
+        and (time.monotonic() - cached_at) < _desktop_access_cache_ttl(cached_payload)
     ):
-        return cached_payload
+        return _desktop_access_cached_copy(cached_payload, captured_at=cached_at)
+    if not allow_probe:
+        if isinstance(cached_payload, dict):
+            return _desktop_access_cached_copy(
+                cached_payload,
+                captured_at=cached_at,
+                stale=True,
+                probe_mode="stale_cached",
+            )
+        payload = _desktop_access_empty_payload()
+        payload["probe_mode"] = "fast_pending"
+        payload["overall_status"] = "pending"
+        payload["permission_confidence"] = "pending"
+        payload["desktop_access_diagnosis"] = [
+            "Desktop permission probing is handled by /api/system/desktop-access so health checks stay fast."
+        ]
+        return payload
 
-    payload: dict[str, Any] = {
-        "screen_recording": {"granted": False, "status": "unknown", "guidance": ""},
-        "accessibility": {"granted": False, "status": "unknown", "guidance": ""},
-        "automation": {"granted": False, "status": "unknown", "guidance": ""},
-        "direct_screen_recording": {"granted": False, "status": "unknown", "guidance": ""},
-        "direct_accessibility": {"granted": False, "status": "unknown", "guidance": ""},
-        "direct_automation": {"granted": False, "status": "unknown", "guidance": ""},
-        "screen_capture_ready": False,
-        "desktop_control_ready": False,
-        "screen_text_ready": False,
-        "direct_screen_capture_ready": False,
-        "direct_desktop_control_ready": False,
-        "direct_screen_text_ready": False,
-        "menu_clock_ready": False,
-        "menu_clock_text": "",
-        "menu_clock_error": "",
-        "frontmost_app": "",
-        "pyautogui_ready": False,
-        "pyautogui_error": "",
-        "permission_confidence": "unknown",
-        "permission_assumptions": [],
-        "process_identity": {},
-        "effective_app_identity": {},
-        "desktop_access_diagnosis": [],
-        "tcc_repair_plan": {},
-        "tcc_request_state": dict(_desktop_access_request_state),
-        "native_bridge_probe": {},
-    }
+    payload: dict[str, Any] = _desktop_access_empty_payload()
+    payload["probe_mode"] = "full"
     try:
         from core.security.permission_guard import PermissionType, get_permission_guard
         from core.skills._pyautogui_runtime import get_pyautogui
@@ -1411,6 +1472,8 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
     except _SYSTEM_RECOVERABLE_ERRORS as exc:
         record_degradation('system', exc)
         logger.debug("Desktop access summary collection failed: %s", exc)
+    payload["captured_at_unix"] = time.time()
+    payload["cache_ttl_s"] = _desktop_access_cache_ttl(payload)
     _desktop_access_cache["captured_at"] = time.monotonic()
     _desktop_access_cache["payload"] = payload
     return payload
@@ -2510,7 +2573,7 @@ async def api_health(request: Request):
         record_degradation('system', e)
         logger.debug("Terminal fallback status collection failed: %s", e)
 
-    desktop_access_data = await _collect_desktop_access_summary()
+    desktop_access_data = await _collect_desktop_access_summary(allow_probe=False)
     imagination_data = _collect_imagination_status()
 
     # ── Final Response Assembly ──
@@ -2803,7 +2866,7 @@ async def api_ui_bootstrap(request: Request = None):
         "commitments": _collect_commitment_summary(),
         "tools": tool_catalog,
         "capabilities": _collect_runtime_capabilities(conversation_lane),
-        "desktop_access": await _collect_desktop_access_summary(),
+        "desktop_access": await _collect_desktop_access_summary(allow_probe=False),
         "conversation": {
             "recent": recent_conversation,
             "count": len(recent_conversation),

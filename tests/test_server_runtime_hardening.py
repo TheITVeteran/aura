@@ -618,6 +618,76 @@ def test_desktop_access_summary_reuses_cached_probe_result(monkeypatch):
     ]
 
 
+def test_desktop_access_fast_mode_does_not_run_native_or_tcc_probes(monkeypatch):
+    import core.security.permission_guard as permission_guard_module
+    from interface.routes import system as system_routes
+
+    def _forbidden_probe(*_args, **_kwargs):
+        raise AssertionError("desktop access fast mode must not run native bridge probes")
+
+    monkeypatch.setattr(permission_guard_module, "get_permission_guard", _forbidden_probe)
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
+    monkeypatch.setattr(
+        "core.security.native_desktop_bridge.probe_native_desktop_bridge",
+        _forbidden_probe,
+    )
+    original_cache = dict(system_routes._desktop_access_cache)
+    system_routes._desktop_access_cache["captured_at"] = 0.0
+    system_routes._desktop_access_cache["payload"] = None
+    try:
+        payload = asyncio.run(system_routes._collect_desktop_access_summary(allow_probe=False))
+    finally:
+        system_routes._desktop_access_cache.update(original_cache)
+
+    assert payload["overall_status"] == "pending"
+    assert payload["permission_confidence"] == "pending"
+    assert payload["probe_mode"] == "fast_pending"
+    assert payload["desktop_access_diagnosis"]
+
+
+def test_desktop_access_blocked_cache_expires_before_ready_cache(monkeypatch):
+    import core.security.permission_guard as permission_guard_module
+    from interface.routes import system as system_routes
+
+    calls = 0
+
+    class _Guard:
+        def current_process_identity(self):
+            return {"pid": 123, "executable": "/usr/bin/python3"}
+
+        async def check_permission(self, ptype, force=False):
+            return {"granted": False, "status": "denied", "guidance": ptype.name}
+
+    def _native_probe(force=False):
+        nonlocal calls
+        calls += 1
+        return {"ok": False, "error": f"miss-{calls}"}
+
+    monkeypatch.setattr(permission_guard_module, "get_permission_guard", lambda: _Guard())
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
+    monkeypatch.setattr(
+        "core.security.native_desktop_bridge.probe_native_desktop_bridge",
+        _native_probe,
+    )
+    monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (None, None))
+    monkeypatch.setattr(system_routes, "_DESKTOP_ACCESS_CACHE_TTL_S", 60.0)
+    monkeypatch.setattr(system_routes, "_DESKTOP_ACCESS_DEGRADED_CACHE_TTL_S", 0.001)
+
+    original_cache = dict(system_routes._desktop_access_cache)
+    system_routes._desktop_access_cache["captured_at"] = 0.0
+    system_routes._desktop_access_cache["payload"] = None
+    try:
+        first = asyncio.run(system_routes._collect_desktop_access_summary())
+        time.sleep(0.3)
+        second = asyncio.run(system_routes._collect_desktop_access_summary())
+    finally:
+        system_routes._desktop_access_cache.update(original_cache)
+
+    assert first["overall_status"] == "blocked"
+    assert second["overall_status"] == "blocked"
+    assert calls == 2
+
+
 def test_desktop_access_summary_labels_env_assumptions_separately(monkeypatch):
     import core.security.permission_guard as permission_guard_module
     from interface.routes import system as system_routes

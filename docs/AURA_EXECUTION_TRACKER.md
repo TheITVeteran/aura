@@ -10,7 +10,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 81%** based on current live
+- Expanded daily-runtime/product closure: **about 82%** based on current live
   evidence, not documentation. This number is deliberately governed by the live
   desktop path, not by historical proof-profile success. Checkpoint 5 addresses
   two live defects, and the follow-up desktop-mode live proof verified bounded
@@ -20,8 +20,12 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   imports must be backed by real organ-level tests, not the legacy themed silo.
   Checkpoint 7 tightens the full-desktop/background-autonomy contract so the
   `FrontierDiscoveryLoop` cannot disappear while health still claims full
-  initiative, and fixes a closure bug in autonomous mission pursuit. Source-level
-  closure is now **about 82%**.
+  initiative, and fixes a closure bug in autonomous mission pursuit. Checkpoint
+  8 decouples the desktop macOS permission/TCC probe from fast health and UI
+  startup, adds short-lived negative native-bridge caches, and verifies the
+  installed signed Aura.app bridge currently reports Screen Recording,
+  Accessibility, Automation, desktop control, screen text, and menu-clock access
+  ready through `com.aura.desktop`. Source-level closure is now **about 83%**.
 - Estimated checkpoints in this expanded program: **11 total**. Checkpoint 1 is
   committed and pushed; Checkpoint 2 is source-committed but live TCC remains
   open; Checkpoint 3 is committed and pushed; Checkpoint 4 is committed and
@@ -30,8 +34,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   access truthfulness and Memory UI survival, then revalidated by a bounded
   desktop-mode live proof; Checkpoint 6 is the current source-validation
   checkpoint for operational labels and fictional-AI/frontier requirements;
-  Checkpoint 7 is the current background-autonomy/full-runtime contract
-  checkpoint; **4 remain**.
+  Checkpoint 7 is the background-autonomy/full-runtime contract checkpoint;
+  Checkpoint 8 is the current source-validation checkpoint for desktop-access
+  TCC cache and UI-probe decoupling; **3 remain**.
 
 ### Scope Clarification For The Current Pass
 
@@ -323,6 +328,47 @@ save point.
   autonomy visibility. It proves the status and test harness can no longer omit
   the discovery organ, but it does not replace a longer launched Aura.app idle
   proof showing visible/causal autonomous behavior over time.
+
+### Checkpoint 8: Desktop Access Probe Decoupling And TCC Cache Discipline
+
+Status: source validation complete; ready for the Checkpoint 8 save point.
+
+- Scope: Bryan reported that System Settings showed Aura granted Accessibility,
+  but the live Desktop Access panel still showed denied/blocked and health
+  emitted native-bridge probe timeouts. This checkpoint fixes the software path
+  that let transient macOS bridge misses masquerade as durable denial.
+- Native bridge fix: failed or partial signed-bridge probes now use a short
+  degraded cache instead of the ready cache. Full positive bridge evidence still
+  caches normally. This prevents a launch race, stale IPC miss, or timeout from
+  making the desktop UI continue to claim Aura is blocked after the signed
+  `Aura.app` bridge is ready.
+- Server fix: `/api/health` and `/api/ui/bootstrap` no longer run the expensive
+  macOS desktop permission probe directly. They return cached/pending desktop
+  access data so health and startup stay fast. The full probe remains available
+  through `/api/system/desktop-access`.
+- UI fix: the Desktop Access panel now polls `/api/system/desktop-access`
+  directly with a permission-specific timeout and retry loop. Health polling no
+  longer owns that panel's truth.
+- Focused validation:
+  - `python -m pytest -q tests/test_native_desktop_bridge.py tests/test_permission_guard_cache.py tests/test_server_runtime_hardening.py::test_desktop_access_summary_reuses_cached_probe_result tests/test_server_runtime_hardening.py::test_desktop_access_fast_mode_does_not_run_native_or_tcc_probes tests/test_server_runtime_hardening.py::test_desktop_access_blocked_cache_expires_before_ready_cache tests/test_server_runtime_hardening.py::test_desktop_access_summary_labels_env_assumptions_separately tests/test_server_runtime_hardening.py::test_desktop_access_summary_preserves_native_bridge_success_when_automation_probe_stalls tests/test_server_runtime_hardening.py::test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_grants tests/test_server_runtime_hardening.py::test_desktop_access_summary_explains_denied_current_native_bridge tests/test_server_runtime_hardening.py::test_desktop_access_summary_reports_stale_tcc_repair_plan_for_stable_signed_denial tests/test_server_runtime_hardening.py::test_desktop_access_summary_includes_permission_request_state tests/test_server_runtime_hardening.py::test_desktop_access_endpoint_returns_json_summary tests/test_runtime_polish.py::test_desktop_access_panel_bounds_raw_permission_status_labels tests/test_runtime_polish.py::test_desktop_access_panel_uses_dedicated_probe_endpoint`
+    -> 28 passed.
+  - `python -m ruff check --select F,B core/security/native_desktop_bridge.py interface/routes/system.py tests/test_native_desktop_bridge.py tests/test_server_runtime_hardening.py tests/test_runtime_polish.py`
+    -> passed.
+  - `node --check interface/static/aura.js` -> passed.
+  - `python -m py_compile core/security/native_desktop_bridge.py interface/routes/system.py`
+    -> passed.
+  - `/Applications/Aura.app/Contents/MacOS/aura-launcher --native-desktop-bridge '{"command":"probe"}'`
+    -> `ok=true`, `screen_recording=true`, `accessibility=true`,
+    `automation=true`, `bundle_identifier=com.aura.desktop`.
+  - Local `_collect_desktop_access_summary()` sample -> `overall_status=ready`,
+    `permission_confidence=direct`, `screen_capture_ready=true`,
+    `desktop_control_ready=true`, `screen_text_ready=true`,
+    `menu_clock_ready=true`, `blocking_permissions=[]`,
+    `native_bridge_ok=true`.
+- Interpretation: this checkpoint closes the specific stale-blocked/permission
+  panel root cause at source level and confirms the installed signed bridge is
+  currently granted. It does not replace a fresh launched Aura.app UI proof
+  showing the panel refreshing to ready in the visible app.
 
 ### Checkpoint 1: Live Conversation Ownership And Launcher Survival
 

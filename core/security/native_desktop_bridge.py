@@ -27,7 +27,8 @@ from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 _BRIDGE_FLAG = "--native-desktop-bridge"
-_PROBE_TTL_S = 30.0
+_PROBE_READY_TTL_S = 30.0
+_PROBE_DEGRADED_TTL_S = 2.0
 _PROBE_LOCK = threading.Lock()
 _PROBE_CACHE: tuple[float, dict[str, Any]] = (0.0, {})
 _EFFECT_DOMAINS = (
@@ -152,6 +153,22 @@ def _candidate_executables() -> tuple[Path, ...]:
 def bridge_executable() -> Path | None:
     candidates = _candidate_executables()
     return candidates[0] if candidates else None
+
+
+def _probe_cache_ttl(result: dict[str, Any]) -> float:
+    """Cache good bridge evidence longer than denials or launch races.
+
+    The signed Aura.app bridge is the durable macOS TCC identity.  During app
+    launch, however, the bridge can temporarily miss, time out, or report a
+    partial grant while System Settings has already been toggled.  A long-lived
+    negative cache makes the desktop UI look blocked after the bridge is ready.
+    """
+    if not result or not result.get("ok"):
+        return _PROBE_DEGRADED_TTL_S
+    required = ("screen_recording", "accessibility", "automation")
+    if all(bool(result.get(key)) for key in required):
+        return _PROBE_READY_TTL_S
+    return _PROBE_DEGRADED_TTL_S
 
 
 def _bridge_ipc_dirs() -> tuple[Path, Path]:
@@ -317,8 +334,11 @@ def probe_native_desktop_bridge(*, force: bool = False) -> dict[str, Any]:
     now = time.monotonic()
     with _PROBE_LOCK:
         captured_at, cached = _PROBE_CACHE
-        if not force and cached and (now - captured_at) < _PROBE_TTL_S:
-            return dict(cached)
+        if not force and cached and (now - captured_at) < _probe_cache_ttl(cached):
+            cached_result = dict(cached)
+            cached_result["cache_hit"] = True
+            cached_result["cache_age_s"] = round(max(0.0, now - captured_at), 3)
+            return cached_result
         try:
             result = invoke_native_desktop_bridge("probe", read_only=True, timeout=5.0)
         except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
@@ -328,6 +348,9 @@ def probe_native_desktop_bridge(*, force: bool = False) -> dict[str, Any]:
             }
         result["bridge_executable"] = str(bridge_executable() or "")
         result["code_signature"] = _code_signature_summary(bridge_executable())
+        result["cache_hit"] = False
+        result["captured_at_unix"] = time.time()
+        result["cache_ttl_s"] = _probe_cache_ttl(result)
         _PROBE_CACHE = (now, dict(result))
         return result
 
