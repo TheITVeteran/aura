@@ -6333,6 +6333,21 @@ def test_desktop_cognitive_repair_budget_can_complete_a_primary_model_generation
     assert repair_inner < repair_outer
 
 
+def test_protected_foreground_cognitive_budget_preserves_outer_deadline():
+    from interface.routes import chat as chat_routes
+
+    outer = 55.0
+    normal_inner = chat_routes._inner_cognitive_cycle_timeout(outer)
+    protected_inner = chat_routes._inner_cognitive_cycle_timeout(
+        outer,
+        protected_foreground=True,
+    )
+
+    assert normal_inner == pytest.approx(38.5)
+    assert protected_inner == pytest.approx(53.0)
+    assert protected_inner < outer
+
+
 @pytest.mark.asyncio
 async def test_desktop_capability_grounding_reaches_cognitive_engine_without_midword_clipping(
     monkeypatch,

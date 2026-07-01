@@ -322,6 +322,45 @@ async def test_memory_retrieval_uses_remaining_sources_when_facade_fails():
 
 
 @pytest.mark.asyncio
+async def test_memory_retrieval_treats_source_timeout_as_optional_context_miss():
+    tracker = get_degradation_tracker()
+    tracker.reset()
+
+    async def timeout_search(_query, limit=5):
+        timeout_search.calls += 1
+        raise TimeoutError("memory facade was slow")
+
+    timeout_search.calls = 0
+    memory_facade = SimpleNamespace(search=timeout_search)
+    knowledge_graph = SimpleNamespace(
+        search_knowledge=lambda _query, limit=5: [
+            {"type": "fact", "content": "Knowledge graph memory still arrived."}
+        ]
+    )
+    container = SimpleNamespace(
+        get=lambda name, default=None: (
+            memory_facade
+            if name == "memory_facade"
+            else knowledge_graph
+            if name == "knowledge_graph"
+            else default
+        )
+    )
+    phase = MemoryRetrievalPhase(container)
+    state = AuraState.default()
+    state.cognition.working_memory.append(
+        {"role": "user", "content": "Find the resilient memory path."}
+    )
+
+    new_state = await phase.execute(state)
+
+    assert timeout_search.calls == 1
+    assert any("Knowledge graph memory" in item for item in new_state.cognition.long_term_memory)
+    assert tracker.recent(subsystem="memory_retrieval") == []
+    tracker.reset()
+
+
+@pytest.mark.asyncio
 async def test_memory_retrieval_keeps_memories_when_affect_scheduling_fails(monkeypatch):
     tracker = get_degradation_tracker()
     tracker.reset()

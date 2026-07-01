@@ -261,13 +261,45 @@ async def _hydrate_runtime_memory(payload_state: Any, objective: str) -> None:
     for item in list(getattr(payload_state.cognition, "long_term_memory", []) or []):
         _push(item)
 
+    async def _optional_memory_call(stage: str, method: Any, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return await _call_memory_method(method, *args, **kwargs)
+        except TimeoutError as exc:
+            logger.debug(
+                "Runtime memory hydration source timed out; continuing with available state memory "
+                "(stage=%s, objective=%r): %s",
+                stage,
+                objective[:120],
+                exc,
+            )
+            return None
+        except _SOFT_RUNTIME_FAILURES as exc:
+            if os.environ.get("AURA_STRICT_RUNTIME_MEMORY_HYDRATION", "").strip() == "1":
+                _record_runtime_wiring_degradation(
+                    exc,
+                    stage=f"runtime_memory_hydration.{stage}",
+                    action="continued payload assembly after optional memory hydration source failed",
+                    severity="warning",
+                    extra={"objective_preview": objective[:160]},
+                )
+            else:
+                logger.debug(
+                    "Runtime memory hydration source failed; continuing with available state memory "
+                    "(stage=%s, objective=%r): %s",
+                    stage,
+                    objective[:120],
+                    exc,
+                )
+            return None
+
     try:
         memory = service_access.resolve_memory_facade(default=None)
         if memory is not None:
             search_method = getattr(memory, "search", None)
             if search_method is not None:
                 for item in list(
-                    await _call_memory_method(
+                    await _optional_memory_call(
+                        "memory_facade.search",
                         search_method,
                         objective,
                         limit=5,
@@ -278,7 +310,8 @@ async def _hydrate_runtime_memory(payload_state: Any, objective: str) -> None:
 
             hot_method = getattr(memory, "get_hot_memory", None)
             if hot_method is not None:
-                hot = await _call_memory_method(
+                hot = await _optional_memory_call(
+                    "memory_facade.hot",
                     hot_method,
                     limit=3,
                     timeout_s=min(timeout_s, 0.75),
@@ -294,7 +327,8 @@ async def _hydrate_runtime_memory(payload_state: Any, objective: str) -> None:
             )
             if search_knowledge is not None:
                 for item in list(
-                    await _call_memory_method(
+                    await _optional_memory_call(
+                        "knowledge_graph.search",
                         search_knowledge,
                         objective,
                         limit=3,

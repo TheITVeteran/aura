@@ -3126,10 +3126,16 @@ def _is_compact_desktop_chat_contract(
     return True
 
 
-def _inner_cognitive_cycle_timeout(outer_timeout_s: float) -> float:
+def _inner_cognitive_cycle_timeout(
+    outer_timeout_s: float,
+    *,
+    protected_foreground: bool = False,
+) -> float:
     outer = max(2.0, float(outer_timeout_s or 0.0))
     if outer <= 12.0:
         return outer
+    if protected_foreground:
+        return max(8.0, outer - 2.0)
     recovery_reserve = min(24.0, max(10.0, outer * 0.30))
     return max(8.0, outer - recovery_reserve)
 
@@ -4806,7 +4812,10 @@ async def _run_cognitive_engine_chat_turn(
                 + "\n[END LIVE DESKTOP FULL-MIND CONTRACT]"
             )
     timeout_s = max(2.0, float(timeout_s if timeout_s is not None else 120.0))
-    engine_cycle_timeout_s = _inner_cognitive_cycle_timeout(timeout_s)
+    engine_cycle_timeout_s = _inner_cognitive_cycle_timeout(
+        timeout_s,
+        protected_foreground=bool(require_engine),
+    )
     no_reply_action = (
         "required caller must fail closed"
         if require_engine
@@ -4947,7 +4956,10 @@ async def _run_cognitive_engine_chat_turn(
         )
 
         async def repair_engine_think_operation():
-            repair_cycle_timeout_s = _inner_cognitive_cycle_timeout(repair_timeout)
+            repair_cycle_timeout_s = _inner_cognitive_cycle_timeout(
+                repair_timeout,
+                protected_foreground=bool(require_engine),
+            )
             return await engine.think(
                 engine_user_message,
                 context=retry_context,

@@ -2945,3 +2945,45 @@ Estimate update:
 - Remaining smaller sub-checkpoints: 1.
 - Remaining work: clean-tree full final-proof rerun through final claims,
   artifact normalization, and clean-worktree closure.
+
+## Checkpoint 2026-06-30-20: Final-Proof Runtime Stream Hardening
+
+Status: targeted regressions, strict flagship readiness, enterprise gate, and
+production gate passed; ready for clean-tree final-proof rerun.
+
+What changed:
+
+- Resident native bridge IPC now fast-fails when only stale request/response
+  folders exist and no signed Aura launcher bridge process is alive. Direct
+  Python live proof no longer burns the full readiness timeout waiting for a
+  non-existent resident bridge before falling back to the one-shot signed probe.
+- Memory retrieval treats source timeouts as bounded optional context misses.
+  Other retrieval sources can still contribute evidence, while timeout noise no
+  longer emits `[DEGRADATION]` into an otherwise successful live desktop turn.
+- Runtime payload memory hydration now handles optional source timeouts
+  per-source, preserves existing state memory, and only emits source-level
+  diagnostics under explicit strict hydration mode.
+- Protected foreground desktop chat now gives the CognitiveEngine almost the
+  full outer request budget. The outer operation deadline remains the safety
+  boundary, but the inner watchdog no longer cancels a valid 32B turn early and
+  forces recovery markers into the proof stream.
+- Regenerated the tracked architecture map from the current source line counts.
+
+Evidence:
+
+- Focused native bridge, memory retrieval, runtime wiring, and protected
+  foreground budget regressions: `29 passed`.
+- `python -m py_compile` on touched runtime and test files: passed.
+- `git diff --check`: passed.
+- Strict flagship readiness: passed.
+- Production-surface lint: command passed.
+- Enterprise gate: passed.
+- Production gate: passed.
+
+Estimate update:
+
+- Overall closeout: 99.8%.
+- Remaining consolidated checkpoints: 1.
+- Remaining smaller sub-checkpoints: 1.
+- Remaining work: clean-tree full final-proof rerun, final claims validation,
+  artifact normalization, and clean-worktree closure.

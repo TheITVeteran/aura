@@ -159,6 +159,49 @@ def _bridge_ipc_dirs() -> tuple[Path, Path]:
     return base / "requests", base / "responses"
 
 
+def _resident_bridge_process_running(executable: Path | None = None) -> bool:
+    """Return True only when the signed Aura launcher bridge is actually alive.
+
+    The IPC directories are persistent by design.  Treating their presence as a
+    live resident bridge makes direct-python launches wait on stale request
+    folders until the proof/readiness probe times out.  If the resident process
+    is not observable, the caller should use the one-shot signed bridge path.
+    """
+    executable = executable or bridge_executable()
+    if executable is None:
+        return False
+    try:
+        executable_resolved = executable.resolve()
+    except OSError:
+        executable_resolved = executable
+    try:
+        import psutil  # type: ignore
+
+        for proc in psutil.process_iter(["exe", "cmdline", "name"]):
+            try:
+                proc_exe = proc.info.get("exe")
+                if proc_exe:
+                    try:
+                        if Path(proc_exe).resolve() == executable_resolved:
+                            return True
+                    except OSError:
+                        if Path(proc_exe) == executable:
+                            return True
+                cmdline = proc.info.get("cmdline") or []
+                if cmdline:
+                    try:
+                        if Path(str(cmdline[0])).resolve() == executable_resolved:
+                            return True
+                    except OSError:
+                        if Path(str(cmdline[0])) == executable:
+                            return True
+            except (psutil.Error, OSError, TypeError, ValueError):
+                continue
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return False
+    return False
+
+
 def _require_effect_governance(command: str) -> None:
     should_fail_closed = _governance_context.governance_runtime_active()
     token = _governance_context.require_governance(
@@ -182,6 +225,8 @@ def _invoke_resident_bridge(
 ) -> dict[str, Any] | None:
     request_dir, response_dir = _bridge_ipc_dirs()
     if not request_dir.is_dir() or not response_dir.is_dir():
+        return None
+    if not _resident_bridge_process_running():
         return None
 
     request_id = uuid.uuid4().hex

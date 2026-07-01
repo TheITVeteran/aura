@@ -64,6 +64,7 @@ async def test_prepare_runtime_payload_preserves_prompt_when_contract_state_is_i
 @pytest.mark.asyncio
 async def test_prepare_runtime_payload_records_memory_hydration_failure(monkeypatch):
     state = AuraState.default()
+    monkeypatch.setenv("AURA_STRICT_RUNTIME_MEMORY_HYDRATION", "1")
 
     class _BrokenMemoryFacade:
         async def search(self, _query, limit=5):
@@ -92,7 +93,7 @@ async def test_prepare_runtime_payload_records_memory_hydration_failure(monkeypa
     last = get_degradation_tracker().recent(subsystem="runtime_wiring")[-1]
     assert (
         last.action
-        == "continued payload assembly with existing state memory after retrieval hydration failed"
+        == "continued payload assembly after optional memory hydration source failed"
     )
 
 
@@ -125,11 +126,7 @@ async def test_prepare_runtime_payload_bounds_slow_memory_hydration(monkeypatch)
     assert prompt == "User: What do you remember about our plan?"
     assert messages is not None
     assert contract is not None
-    last = get_degradation_tracker().recent(subsystem="runtime_wiring")[-1]
-    assert (
-        last.action
-        == "continued payload assembly with existing state memory after retrieval hydration failed"
-    )
+    assert get_degradation_tracker().recent(subsystem="runtime_wiring") == []
 
 
 @pytest.mark.asyncio

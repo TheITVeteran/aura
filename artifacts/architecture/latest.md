@@ -8,7 +8,7 @@ Generated: `0.0`
 
 - Subsystems: 146
 - Python files: 2058
-- Python lines: 578739
+- Python lines: 578750
 - Dependency edges: 884
 - ServiceContainer `.get()` calls: 1670
 - ServiceContainer registrations: 409
@@ -44,7 +44,7 @@ graph TD
     world_model["world_model<br/>11 files, 3278 lines"]
     cognition["cognition<br/>16 files, 5391 lines"]
     conversation["conversation<br/>10 files, 7412 lines"]
-    learning["learning<br/>31 files, 8633 lines"]
+    learning["learning<br/>31 files, 8644 lines"]
     skills["skills<br/>82 files, 23491 lines"]
     being["being<br/>26 files, 6193 lines"]
     phases["phases<br/>29 files, 19509 lines"]
@@ -1067,7 +1067,7 @@ graph TD
 | resilience | 54 | 12572 | 507930 | 17 | 27 |
 | self_modification | 32 | 12043 | 476186 | 13 | 14 |
 | cognitive | 12 | 9212 | 373941 | 9 | 4 |
-| learning | 31 | 8633 | 344661 | 16 | 8 |
+| learning | 31 | 8644 | 344807 | 16 | 8 |
 | environment | 82 | 8528 | 332940 | 11 | 2 |
 | autonomy | 23 | 8183 | 335291 | 18 | 6 |
 | security | 34 | 7934 | 318891 | 15 | 13 |

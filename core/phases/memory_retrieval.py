@@ -273,6 +273,12 @@ class MemoryRetrievalPhase(BasePhase):
                 if mm and hasattr(mm, "dual_memory"):
                     async with asyncio.timeout(15.0):
                         return await mm.dual_memory.retrieve_context(query)
+            except TimeoutError as exc:
+                logger.debug(
+                    "MemoryRetrieval: optional DualMemory RAG timed out; continuing without it: %s",
+                    exc,
+                )
+                return None
             except _MEMORY_RECOVERABLE_ERRORS as exc:
                 _record_memory_degradation(
                     exc,
@@ -288,10 +294,17 @@ class MemoryRetrievalPhase(BasePhase):
                 kg = self.container.get("knowledge_graph", default=None)
                 if kg:
                     method = kg.search_knowledge
-                    if inspect.iscoroutinefunction(method):
-                        return await method(query, limit=retrieval_limit)
-                    else:
-                        return await asyncio.to_thread(method, query, limit=retrieval_limit)
+                    async with asyncio.timeout(15.0):
+                        if inspect.iscoroutinefunction(method):
+                            return await method(query, limit=retrieval_limit)
+                        else:
+                            return await asyncio.to_thread(method, query, limit=retrieval_limit)
+            except TimeoutError as exc:
+                logger.debug(
+                    "MemoryRetrieval: optional KnowledgeGraph retrieval timed out; continuing without it: %s",
+                    exc,
+                )
+                return None
             except _MEMORY_RECOVERABLE_ERRORS as exc:
                 _record_memory_degradation(
                     exc,
@@ -359,6 +372,12 @@ class MemoryRetrievalPhase(BasePhase):
                             )
 
                 return recalled or None
+            except TimeoutError as exc:
+                logger.debug(
+                    "MemoryRetrieval: optional MemoryFacade retrieval timed out; continuing without it: %s",
+                    exc,
+                )
+                return None
             except _MEMORY_RECOVERABLE_ERRORS as exc:
                 _record_memory_degradation(
                     exc,
@@ -380,6 +399,12 @@ class MemoryRetrievalPhase(BasePhase):
                         return await ep.recall_similar_async(query, limit=retrieval_limit)
                 elif ep and hasattr(ep, "recall_similar"):
                     return await asyncio.to_thread(ep.recall_similar, query, retrieval_limit)
+            except TimeoutError as exc:
+                logger.debug(
+                    "MemoryRetrieval: optional EpisodicMemory recall timed out; continuing without it: %s",
+                    exc,
+                )
+                return None
             except _MEMORY_RECOVERABLE_ERRORS as exc:
                 _record_memory_degradation(
                     exc,

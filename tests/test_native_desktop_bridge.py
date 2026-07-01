@@ -104,6 +104,25 @@ def test_native_bridge_probe_keeps_short_resident_timeout(monkeypatch):
     assert observed == [("probe", 3.0)]
 
 
+def test_resident_bridge_skips_stale_ipc_dirs_when_launcher_is_not_alive(monkeypatch, tmp_path):
+    from core.security import native_desktop_bridge as bridge
+
+    bridge_root = tmp_path / "native_bridge"
+    request_dir = bridge_root / "requests"
+    response_dir = bridge_root / "responses"
+    request_dir.mkdir(parents=True)
+    response_dir.mkdir(parents=True)
+
+    monkeypatch.setenv("AURA_NATIVE_BRIDGE_DIR", str(bridge_root))
+    monkeypatch.setattr(bridge, "_resident_bridge_process_running", lambda *_args, **_kwargs: False)
+
+    result = bridge._invoke_resident_bridge("probe", timeout=0.05)
+
+    assert result is None
+    assert list(request_dir.iterdir()) == []
+    assert list(response_dir.iterdir()) == []
+
+
 def test_native_pyautogui_translates_general_input_primitives(monkeypatch):
     from core.security import native_desktop_bridge as bridge
 
