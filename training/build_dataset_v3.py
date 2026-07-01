@@ -72,6 +72,18 @@ _CRSM_BANNED_MARKERS = (
 
 def _jsonl_file_stats(path: Path) -> dict[str, Any]:
     """Return line-count and content hash evidence for generated JSONL files."""
+    lines, size, mtime, digest = _jsonl_source_stats(path)
+    return {
+        "path": str(path),
+        "lines": lines,
+        "size": size,
+        "mtime": mtime,
+        "sha256": digest,
+    }
+
+
+def _jsonl_source_stats(path: Path) -> tuple[int, int, float, str]:
+    """Return stable stats for a JSONL input or generated corpus file."""
     digest = hashlib.sha256()
     lines = 0
     with path.open("rb") as fh:
@@ -79,13 +91,7 @@ def _jsonl_file_stats(path: Path) -> dict[str, Any]:
             lines += 1
             digest.update(raw)
     stat = path.stat()
-    return {
-        "path": str(path),
-        "lines": lines,
-        "size": stat.st_size,
-        "mtime": stat.st_mtime,
-        "sha256": digest.hexdigest(),
-    }
+    return lines, stat.st_size, stat.st_mtime, digest.hexdigest()
 
 # ── System prompt variants (expanded from 6 → 12) ─────────────────────────
 SYSTEM_VARIANTS = [
@@ -274,9 +280,11 @@ def build_crsm_experience_examples(
         return [], manifest
 
     try:
-        stat = dataset_path.stat()
-        manifest["source_size"] = stat.st_size
-        manifest["source_mtime"] = stat.st_mtime
+        source_lines, source_size, source_mtime, source_sha256 = _jsonl_source_stats(dataset_path)
+        manifest["source_lines"] = source_lines
+        manifest["source_size"] = source_size
+        manifest["source_mtime"] = source_mtime
+        manifest["source_sha256"] = source_sha256
     except OSError:
         return [], manifest
 
@@ -287,7 +295,6 @@ def build_crsm_experience_examples(
     try:
         with dataset_path.open("r", encoding="utf-8") as fh:
             for line in fh:
-                manifest["source_lines"] += 1
                 try:
                     payload = json.loads(line)
                 except json.JSONDecodeError:

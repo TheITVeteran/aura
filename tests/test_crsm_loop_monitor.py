@@ -48,10 +48,13 @@ def _write_manifest_with_corpus(m, *, source_lines, accepted):
     train.parent.mkdir(parents=True, exist_ok=True)
     _write_lines(train, 3)
     _write_lines(valid, 2)
+    source_stats = _jsonl_stats(m.dataset_path)
     m.integration_manifest_path.write_text(
         json.dumps(
             {
                 "source_lines": source_lines,
+                "source_size": source_stats["size"],
+                "source_sha256": source_stats["sha256"],
                 "source_mtime": m.dataset_path.stat().st_mtime,
                 "accepted": accepted,
                 "deduplicated": 10,
@@ -133,6 +136,8 @@ def test_marker_round_trip(tmp_path):
     assert data["lines_consumed"] == 30 and data["model_path"] == str(model)
     assert data["accepted_lines"] == 25
     assert data["rejected_lines"] == 5
+    assert data["dataset_size"] == m.dataset_path.stat().st_size
+    assert data["dataset_sha256"] == _jsonl_stats(m.dataset_path)["sha256"]
     assert data["manifest_path"] == str(manifest)
     assert data["source"] == "unit"
 
@@ -170,6 +175,61 @@ def test_restored_training_corpus_invalidates_current_manifest(tmp_path):
     assert state["integration_manifest"]["current_for_dataset"] is False
     assert state["integration_manifest"]["output_integrity"]["corpus_current"] is False
     assert state["next_action"]["phase"] == "prepare_dataset"
+
+
+def test_identical_capture_rewrite_does_not_stale_current_manifest(tmp_path):
+    m = _monitor(tmp_path)
+    _write_lines(m.dataset_path, 100)
+    _write_manifest_with_corpus(m, source_lines=100, accepted=80)
+    first = m.loop_state()
+    assert first["integration_manifest"]["current_for_dataset"] is True
+
+    original = m.dataset_path.read_text(encoding="utf-8")
+    time.sleep(0.01)
+    m.dataset_path.write_text(original, encoding="utf-8")
+
+    state = m.loop_state()
+
+    assert state["integration_manifest"]["current_for_dataset"] is True
+    assert state["next_action"]["phase"] == "crsm_delta_train_fuse_publish"
+
+
+def test_consumed_marker_with_content_hash_survives_identical_rewrite(tmp_path):
+    m = _monitor(tmp_path)
+    _write_lines(m.dataset_path, 30)
+    m.mark_dataset_consumed(
+        model_path="model-a",
+        lines_consumed=30,
+        accepted_lines=25,
+        rejected_lines=5,
+        source="unit",
+    )
+    original = m.dataset_path.read_text(encoding="utf-8")
+    time.sleep(0.01)
+    m.dataset_path.write_text(original, encoding="utf-8")
+
+    state = m.loop_state()
+
+    assert state["state"] == "closed"
+    assert "25 eligible captures trained" in state["reason"]
+
+
+def test_legacy_consumed_marker_reports_hashless_pending_after_rewrite(tmp_path):
+    m = _monitor(tmp_path)
+    _write_lines(m.dataset_path, 30)
+    _write_manifest_with_corpus(m, source_lines=30, accepted=25)
+    m.marker_path.write_text(
+        json.dumps({"lines_consumed": 30, "accepted_lines": 25, "rejected_lines": 5}),
+        encoding="utf-8",
+    )
+    time.sleep(0.01)
+    m.dataset_path.write_text(m.dataset_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    state = m.loop_state()
+
+    assert state["state"] == "pending"
+    assert "current corpus needs train/fuse confirmation" in state["reason"]
+    assert state["next_action"]["phase"] == "crsm_delta_train_fuse_publish"
 
 
 def test_stale_manifest_reports_prepare_dataset_next_action(tmp_path):

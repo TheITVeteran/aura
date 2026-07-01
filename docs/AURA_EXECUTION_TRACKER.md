@@ -10,11 +10,12 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 66%** based on current live
+- Expanded daily-runtime/product closure: **about 70%** based on current live
   evidence, not documentation.
 - Estimated checkpoints in this expanded program: **9 total**. Checkpoint 1 is
-  committed and pushed; Checkpoint 2 is in progress; **7 remain after Checkpoint
-  2 lands**.
+  committed and pushed; Checkpoint 2 is still in progress because the live
+  macOS TCC grant remains denied for Screen Recording and Accessibility; **7
+  remain after Checkpoint 2 lands**.
 
 ### Checkpoint 1: Live Conversation Ownership And Launcher Survival
 
@@ -161,6 +162,18 @@ and Accessibility ready through `/api/system/desktop-access`.
   command. The bridge refuses to run when the store has fewer than the required
   real pairs, so the current `0`-row store remains visibly blocked instead of
   being reported as learning.
+- CRSM integration freshness is now content-addressed instead of timestamp-only.
+  `training/build_dataset_v3.py` writes `source_sha256` for the capture corpus,
+  and `core/consciousness/crsm_loop_monitor.py` compares source line count,
+  byte size, and SHA-256 before declaring a manifest stale. This prevents safe
+  rewrites/quarantine cleanup from falsely reopening the CRSM loop.
+- CRSM consumed markers now include dataset size, mtime, and SHA-256. Legacy
+  markers without hashes are reported as pending train/fuse confirmation instead
+  of producing contradictory `unconsumed=0` plus stale-manifest guidance.
+- Current source validation for the CRSM/learning checkpoint:
+  `43 passed` across CRSM monitor, integrity audit, CRSM dataset gate,
+  LiveLearner contamination, preference trainer, and verifier preference harness;
+  Ruff passed on the touched CRSM/training files.
 - New validator: `tools/closeout/frontier_standards_matrix.py` maps the
   requested frontier/fiction/phenomenal/general-AI standards to source paths,
   validator paths, and live artifact requirements.

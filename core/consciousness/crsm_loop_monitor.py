@@ -61,16 +61,24 @@ class CRSMLoopMonitor:
     def dataset_state(self) -> dict[str, Any]:
         try:
             if not self.dataset_path.exists():
-                return {"exists": False, "lines": 0, "mtime": 0.0, "size": 0}
+                return {"exists": False, "lines": 0, "mtime": 0.0, "size": 0, "sha256": ""}
             lines = 0
-            with open(self.dataset_path, encoding="utf-8") as fh:
-                for _ in fh:
+            digest = hashlib.sha256()
+            with open(self.dataset_path, "rb") as fh:
+                for raw in fh:
                     lines += 1
+                    digest.update(raw)
             st = self.dataset_path.stat()
-            return {"exists": True, "lines": lines, "mtime": st.st_mtime, "size": st.st_size}
+            return {
+                "exists": True,
+                "lines": lines,
+                "mtime": st.st_mtime,
+                "size": st.st_size,
+                "sha256": digest.hexdigest(),
+            }
         except OSError as exc:
             record_degradation("crsm_loop_monitor", exc)
-            return {"exists": False, "lines": 0, "mtime": 0.0, "size": 0}
+            return {"exists": False, "lines": 0, "mtime": 0.0, "size": 0, "sha256": ""}
 
     def latest_training_artifact(self) -> dict[str, Any]:
         """Newest fused-model directory + the active-model pointer's fuse time."""
@@ -151,6 +159,8 @@ class CRSMLoopMonitor:
             manifest = json.loads(self.integration_manifest_path.read_text(encoding="utf-8"))
             ds = self.dataset_state()
             source_lines = int(manifest.get("source_lines", 0) or 0)
+            source_size = int(manifest.get("source_size", -1) or -1)
+            source_sha256 = str(manifest.get("source_sha256") or "")
             source_mtime = float(manifest.get("source_mtime", 0.0) or 0.0)
             dataset_mtime = float(ds.get("mtime", 0.0) or 0.0)
             output = dict(manifest.get("output") or {})
@@ -162,10 +172,21 @@ class CRSMLoopMonitor:
             valid_state = self._jsonl_file_state(valid_path, valid_expected)
             expected_total = int(output.get("total_examples", 0) or 0)
             actual_total = int(train_state.get("lines", 0) or 0) + int(valid_state.get("lines", 0) or 0)
-            source_current = (
-                source_lines == int(ds.get("lines", 0) or 0)
-                and source_mtime + 1.0 >= dataset_mtime
-            )
+            if source_sha256:
+                source_current = (
+                    source_lines == int(ds.get("lines", 0) or 0)
+                    and source_size == int(ds.get("size", 0) or 0)
+                    and source_sha256 == str(ds.get("sha256") or "")
+                )
+            else:
+                # Backward compatibility for manifests written before the
+                # source hash was recorded. New manifests use content identity
+                # because safe rewrites can change mtime without changing the
+                # capture corpus.
+                source_current = (
+                    source_lines == int(ds.get("lines", 0) or 0)
+                    and source_mtime + 1.0 >= dataset_mtime
+                )
             corpus_current = bool(
                 output
                 and train_state.get("matches_expected")
@@ -176,6 +197,8 @@ class CRSMLoopMonitor:
                 "exists": True,
                 "path": str(self.integration_manifest_path),
                 "source_lines": source_lines,
+                "source_size": source_size if source_size >= 0 else int(manifest.get("source_size", 0) or 0),
+                "source_sha256": source_sha256,
                 "accepted": int(manifest.get("accepted", 0) or 0),
                 "deduplicated": int(manifest.get("deduplicated", 0) or 0),
                 "rejected_by_reason": dict(manifest.get("rejected_by_reason") or {}),
@@ -230,14 +253,18 @@ class CRSMLoopMonitor:
         Writes how many dataset lines were consumed and which model resulted, so loop
         closure is a verified fact rather than an inference.
         """
+        dataset = self.dataset_state()
         if lines_consumed is None:
-            lines_consumed = int(self.dataset_state().get("lines", 0))
+            lines_consumed = int(dataset.get("lines", 0))
         accepted = int(accepted_lines if accepted_lines is not None else lines_consumed)
         rejected = int(rejected_lines if rejected_lines is not None else max(0, lines_consumed - accepted))
         payload = {
             "lines_consumed": int(lines_consumed),
             "accepted_lines": max(0, accepted),
             "rejected_lines": max(0, rejected),
+            "dataset_size": int(dataset.get("size", 0) or 0),
+            "dataset_mtime": float(dataset.get("mtime", 0.0) or 0.0),
+            "dataset_sha256": str(dataset.get("sha256") or ""),
             "consumed_at": time.time(),
             "model_path": model_path,
             "manifest_path": manifest_path,
@@ -263,6 +290,14 @@ class CRSMLoopMonitor:
         lines = int(ds.get("lines", 0))
         consumed = int(marker.get("lines_consumed", 0))
         unconsumed = max(0, lines - consumed)
+        marker_hash = str(marker.get("dataset_sha256") or "")
+        marker_size = int(marker.get("dataset_size", -1) or -1)
+        marker_matches_dataset = bool(
+            marker_hash
+            and marker_hash == str(ds.get("sha256") or "")
+            and marker_size == int(ds.get("size", 0) or 0)
+            and consumed >= lines
+        )
         last_train = max(float(art.get("newest_mtime", 0.0)), float(art.get("active_fused_at", 0.0)))
         ds_mtime = float(ds.get("mtime", 0.0))
 
@@ -271,7 +306,7 @@ class CRSMLoopMonitor:
 
         if lines == 0:
             state, reason = "idle", "no captured moments yet"
-        elif consumed >= lines and last_train >= ds_mtime:
+        elif (consumed >= lines and last_train >= ds_mtime) or marker_matches_dataset:
             if rejected > 0:
                 state, reason = (
                     "closed",
@@ -281,6 +316,11 @@ class CRSMLoopMonitor:
                 state, reason = "closed", "dataset trained in and weights persisted"
         elif last_train >= ds_mtime and unconsumed <= _UNCONSUMED_WARN:
             state, reason = "closed", "latest model is newer than the captured data"
+        elif unconsumed == 0 and consumed >= lines:
+            state, reason = (
+                "pending",
+                "capture corpus changed after the last consumed marker; current corpus needs train/fuse confirmation",
+            )
         elif unconsumed > _UNCONSUMED_WARN or (ds_mtime - last_train) > _STALE_AFTER_S:
             state = "open"
             if manifest.get("current_for_dataset"):
