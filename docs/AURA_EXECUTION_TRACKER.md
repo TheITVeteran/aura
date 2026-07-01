@@ -119,6 +119,10 @@ and Accessibility ready through `/api/system/desktop-access`.
   (`request_screen`, `request_accessibility`) now stay on the resident Aura.app
   bridge for the full prompt timeout instead of falling back after the short
   probe timeout. Quick probes remain capped at 3 seconds.
+- Follow-up runtime-contract fix: protected desktop boot is now reported as
+  `protected_full_desktop` and still expects the full background runtime under
+  the resource guard. Safe/protected launch is a memory/process protection
+  posture, not a lesser foreground-only Aura.
 - Model lifecycle now knows local open-weight reasoning solver repos:
   `QwQ-32B-4bit`, `DeepSeek-R1-Distill-Qwen-32B-4bit`, and
   `DeepSeek-R1-Distill-Qwen-32B-8bit`.

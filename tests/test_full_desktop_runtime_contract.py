@@ -124,6 +124,27 @@ def test_full_desktop_runtime_reports_every_canonical_background_organ(monkeypat
     assert status["components"]["autonomic_reflection_loop"]["running"] is True
 
 
+def test_protected_desktop_boot_still_expects_full_background_runtime(monkeypatch):
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    monkeypatch.setenv("AURA_DESKTOP_RESOURCE_GUARD", "1")
+    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_BACKGROUND_COGNITION", raising=False)
+    _install_services(monkeypatch, _full_services())
+
+    status = _collect_full_runtime_status(
+        {"online": True, "tick_count": 4},
+        {"online": True, "tick_count": 2},
+    )
+
+    assert status["profile"] == "protected_full_desktop"
+    assert status["resource_guard_enabled"] is True
+    assert status["full_runtime_expected"] is True
+    assert status["ready"] is True
+    assert status["blockers"] == []
+    assert status["components"]["autonomic_reflection_loop"]["running"] is True
+
+
 def test_full_desktop_runtime_fails_readiness_when_background_organ_is_missing(monkeypatch):
     monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
     monkeypatch.setenv("AURA_DESKTOP_RESOURCE_GUARD", "1")

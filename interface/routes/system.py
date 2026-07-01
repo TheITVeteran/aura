@@ -225,7 +225,6 @@ def _collect_full_runtime_status(
     expected = (
         resource_guard
         and not foreground_only_runtime()
-        and not desktop_safe_boot_enabled()
         and not background_cognition_disabled_reason()
     )
     required = (
@@ -255,10 +254,12 @@ def _collect_full_runtime_status(
         "profile": (
             "foreground_only"
             if foreground_only_runtime()
-            else "recovery_safe_boot"
-            if desktop_safe_boot_enabled()
+            else "protected_full_desktop"
+            if desktop_safe_boot_enabled() and resource_guard
             else "full_desktop"
             if resource_guard
+            else "recovery_safe_boot"
+            if desktop_safe_boot_enabled()
             else "server_or_test"
         ),
         "full_runtime_expected": expected,
