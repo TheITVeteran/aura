@@ -447,6 +447,11 @@ def test_memory_ui_uses_packaged_fallback_and_visible_error_panel():
     assert root_handler.index("memory_panel.html") < root_handler.index("AURA_MEMORY_DEV_UI")
     assert "source Vite entry is not a valid packaged desktop fallback" in root_handler
     assert "function renderMemoryLoadError(error)" in panel
+    assert "const AURA_API_BASE = 'http://127.0.0.1:8000'" in panel
+    assert "function apiUrl(path)" in panel
+    assert "window.location.protocol === 'file:'" in panel
+    assert "fetch(apiUrl('/api/memory/semantic?limit=100'))" in panel
+    assert "window.addEventListener('unhandledrejection'" in panel
     assert "semantic memory request failed" in panel
     assert "escapeHtml(text)" in panel
     assert "addActionButton(actions, 'Edit'" in panel

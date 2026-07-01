@@ -280,6 +280,10 @@ logger = logging.getLogger("Aura.Server.System")
 router = APIRouter()
 
 _DESKTOP_ACCESS_CACHE_TTL_S = _env_positive_float("AURA_DESKTOP_ACCESS_CACHE_TTL_S", 30.0)
+_DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S = _env_positive_float(
+    "AURA_DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S",
+    8.0,
+)
 _SSE_IDLE_HEARTBEAT_S = _env_positive_float("AURA_SSE_IDLE_HEARTBEAT_S", 15.0)
 _SSE_QUEUE_BACKLOG_LIMIT = max(1, _safe_int(os.getenv("AURA_SSE_QUEUE_BACKLOG_LIMIT", ""), 100))
 _HEALTH_PROBE_TIMEOUT_S = _env_positive_float("AURA_HEALTH_PROBE_TIMEOUT_S", 2.5)
@@ -1111,8 +1115,8 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
                 from core.security.native_desktop_bridge import probe_native_desktop_bridge
 
                 native_probe = await asyncio.wait_for(
-                    asyncio.to_thread(probe_native_desktop_bridge, force=True),
-                    timeout=3.0,
+                    asyncio.to_thread(probe_native_desktop_bridge, force=False),
+                    timeout=max(1.0, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S),
                 )
                 payload["native_bridge_probe"] = (
                     native_probe if isinstance(native_probe, dict)

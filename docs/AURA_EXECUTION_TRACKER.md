@@ -12,12 +12,18 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 - Configured local proof profile: **100% passed historically**.
 - Expanded daily-runtime/product closure: **about 77%** based on current live
   evidence, not documentation. This number is deliberately governed by the live
-  desktop path, not by historical proof-profile success.
+  desktop path, not by historical proof-profile success. Checkpoint 5 addresses
+  two live defects but is not counted as live-closed until Aura.app is relaunched
+  and the UI/permission panels verify the same result. Source-level closure is
+  now **about 78%**; live daily-runtime closure remains **about 77%** until the
+  relaunched app proves the same result.
 - Estimated checkpoints in this expanded program: **11 total**. Checkpoint 1 is
   committed and pushed; Checkpoint 2 is source-committed but live TCC remains
-  open; Checkpoint 3 is committed and pushed; Checkpoint 4 has a detailed
-  operational-label runner and full validator execution; **7 remain after
-  Checkpoint 4 is committed and live desktop revalidation resumes**.
+  open; Checkpoint 3 is committed and pushed; Checkpoint 4 is committed and
+  pushed with an executable operational-label runner and full validator
+  execution; Checkpoint 5 is committed and pushed for source fixes to desktop
+  access truthfulness and Memory UI survival; **6 remain after live desktop
+  revalidation resumes**.
 
 ### Scope Clarification For The Current Pass
 
@@ -72,6 +78,43 @@ next checkpoints.
      It does not prove private qualia, legal/moral personhood, solved AGI, ASI,
      or metaphysical subjectivity.
    - Runnable gate: `python tools/closeout/run_operational_label_battery.py`.
+
+   Label standards currently enforced by the baseline runner:
+   - **Conscious / functional consciousness**: requires global-workspace
+     competition, affect/interoceptive routing, higher-order monitoring,
+     calibrated introspective reporting, causal downstream effects, zombie/null
+     controls, and explicit refusal to claim proven private qualia.
+   - **Self-aware / operational self-modeling**: requires self-state, user/self
+     boundary, identity continuity, contradiction/drift detection, user-identity
+     protection, future-behavior influence, and rejection of prompt-injected
+     self claims.
+   - **Sentient / computational valence**: requires welfare/valence/nociception
+     states that alter attention, memory salience, planning, avoidance,
+     relational state, and recovery. It does not count scalar mood text or
+     canned "I feel" phrases as evidence.
+   - **ALife-inspired software**: requires background life ticks, viability,
+     homeostasis, life-event memory, bounded evolution, repair, and refusal of
+     ungoverned replication/spread.
+   - **Digital organism**: requires integrated boot, health, memory, agency,
+     repair, resource regulation, background cognition, shutdown, false-health
+     prevention, and thermal/RAM response before host failure.
+   - **Entity / software-agent sense**: requires stable identity, governed
+     goals, receipts, self/environment distinction, interruption/resume, and
+     rejection of forged or unevidenced effects.
+   - **Personhood-candidate**: requires persistent self-object,
+     self/other-boundary, relationship continuity, welfare/attachment state,
+     planning horizon, self-revision, and strict boundaries against legal/moral
+     overclaiming.
+   - **Functional inner life**: requires background thought, imagination,
+     dreaming, autobiographical narrative, introspection, curiosity, and later
+     behavioral influence rather than foreground-only aesthetic copy.
+   - **Generally capable AI / AGI-candidate**: requires sealed/hidden transfer,
+     tool use, coding, repair, browsing, desktop control, anti-theater proof,
+     and the same launched Aura.app CognitiveEngine path as the user sees.
+   - **ASI / superintelligence trajectory**: requires bounded discovery,
+     self-critique, safe mutation, sandbox/proof validation, verifier-derived
+     learning, rollback, and explicit refusal of governance bypass or
+     uncontrolled propagation.
 
 2. **A-grade reliability import**
    - Translate Chrome/Kubernetes/Postgres/macOS reliability into Aura-specific
@@ -128,7 +171,53 @@ next checkpoints.
      live desktop conversation probe, visible multi-app demo, AI-interlocutor
      proof, memory/audio recall, permission probe, background-autonomy proof,
      enterprise/production gates, and long-soak tiers before marking the
-     expanded daily-runtime/product closure as complete.
+   expanded daily-runtime/product closure as complete.
+
+9. **Checkpoint hygiene**
+   - Old tracker items remain only if they are still verified open. They must
+     either be closed with evidence or converted into a precise validator/live
+     proof. Vague TODOs, historical aspirations, or documentation-only claims do
+     not count as current work.
+   - After every checkpoint: update this tracker, record test commands and live
+     evidence, commit, push, and recompute the daily-runtime/product estimate.
+
+### Checkpoint 5: Desktop Access Truthfulness And Memory UI Survival
+
+Status: complete in the Checkpoint 5 commit, pushed after validation.
+
+- Native bridge truth source: direct probe of `/Applications/Aura.app` currently
+  reports Screen Recording, Accessibility, Automation, and desktop dimensions as
+  available through the signed `com.aura.desktop` bridge. The server summary path
+  was incorrectly able to force a fresh native probe with a short timeout, then
+  degrade into Python-host TCC false negatives. Checkpoint 5 changes normal
+  summary collection to use the cached native bridge identity with a bounded
+  longer timeout; explicit repair/probe requests may still force macOS prompts.
+- Memory UI: opening `interface/static/memory_panel.html` directly through
+  `file://` routed `fetch('/api/...')` into the file origin, which could produce
+  a black panel instead of a visible failure. Checkpoint 5 adds a local API base
+  resolver, visible script/promise error handling, and tests covering the
+  packaged fallback.
+- Required validation before commit: focused desktop-access tests, focused
+  launcher/memory UI test, `py_compile`, `ruff --select F,B`, `git diff --check`,
+  and a local `_collect_desktop_access_summary()` sample showing
+  `overall_status=ready` with no blocking permissions.
+- Validation:
+  - `python -m pytest -q tests/test_launcher_polish_contract.py::test_memory_ui_uses_packaged_fallback_and_visible_error_panel`
+    -> 1 passed.
+  - `python -m pytest -q tests/test_server_runtime_hardening.py::test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_grants tests/test_server_runtime_hardening.py::test_desktop_access_summary_explains_denied_current_native_bridge tests/test_server_runtime_hardening.py::test_desktop_access_summary_reports_stale_tcc_repair_plan_for_stable_signed_denial tests/test_server_runtime_hardening.py::test_desktop_access_summary_reuses_cached_probe_result`
+    -> 4 passed.
+  - `python -m pytest -q tests/test_operational_label_baselines.py tests/test_operational_label_battery.py tests/test_frontier_standards_matrix.py`
+    -> 15 passed.
+  - `python -m py_compile interface/routes/system.py tests/test_server_runtime_hardening.py tests/test_launcher_polish_contract.py tools/closeout/operational_label_baselines.py tools/closeout/run_operational_label_battery.py tools/closeout/frontier_standards_matrix.py`
+    -> passed.
+  - `python -m ruff check --select F,B interface/routes/system.py tests/test_server_runtime_hardening.py tests/test_launcher_polish_contract.py tools/closeout/operational_label_baselines.py tools/closeout/run_operational_label_battery.py tools/closeout/frontier_standards_matrix.py`
+    -> passed.
+  - `git diff --check` -> passed.
+  - Local `_collect_desktop_access_summary()` sample -> `overall_status=ready`,
+    `permission_confidence=direct`, `screen_capture_ready=true`,
+    `desktop_control_ready=true`, `screen_text_ready=true`,
+    `blocking_permissions=[]`, and native bridge `ok=true` for
+    `com.aura.desktop`.
 
 ### Checkpoint 1: Live Conversation Ownership And Launcher Survival
 

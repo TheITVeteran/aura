@@ -743,6 +743,7 @@ def test_desktop_access_summary_preserves_native_bridge_success_when_automation_
 def test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_grants(monkeypatch):
     import core.security.permission_guard as permission_guard_module
     from interface.routes import system as system_routes
+    force_values = []
 
     class _Guard:
         def current_process_identity(self):
@@ -761,9 +762,9 @@ def test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_
     monkeypatch.setattr(permission_guard_module, "get_permission_guard", lambda: _Guard())
     monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
     monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (object(), None))
-    monkeypatch.setattr(
-        "core.security.native_desktop_bridge.probe_native_desktop_bridge",
-        lambda force=False: {
+    def _native_probe(force=False):
+        force_values.append(force)
+        return {
             "ok": True,
             "screen_recording": True,
             "accessibility": True,
@@ -778,7 +779,11 @@ def test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_
                 "team_identifier": "not set",
                 "stable_tcc_identity": True,
             },
-        },
+        }
+
+    monkeypatch.setattr(
+        "core.security.native_desktop_bridge.probe_native_desktop_bridge",
+        _native_probe,
     )
 
     original_cache = dict(system_routes._desktop_access_cache)
@@ -799,6 +804,7 @@ def test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_
     assert payload["direct_blocking_permissions"] == []
     assert payload["effective_app_identity"]["code_signature"]["stable_tcc_identity"] is True
     assert not payload["desktop_access_diagnosis"]
+    assert force_values == [False]
 
 
 def test_desktop_access_summary_explains_denied_current_native_bridge(monkeypatch):
