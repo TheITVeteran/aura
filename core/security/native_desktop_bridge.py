@@ -228,7 +228,12 @@ def invoke_native_desktop_bridge(
     if not read_only:
         _require_effect_governance(command)
 
-    resident_timeout = min(max(0.25, float(timeout)), 3.0)
+    command_name = str(command or "probe").lower()
+    resident_timeout = (
+        max(0.25, float(timeout))
+        if command_name.startswith("request_")
+        else min(max(0.25, float(timeout)), 3.0)
+    )
     resident = _invoke_resident_bridge(command, timeout=resident_timeout, **payload)
     if resident is not None:
         resident.setdefault("bridge_transport", "resident_ipc")

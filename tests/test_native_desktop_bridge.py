@@ -70,6 +70,40 @@ def test_local_certificate_is_a_stable_tcc_identity_without_team_id(monkeypatch,
     assert "tcc_repair_hint" not in summary
 
 
+def test_native_bridge_permission_requests_do_not_use_short_probe_timeout(monkeypatch):
+    from core.security import native_desktop_bridge as bridge
+
+    observed: list[tuple[str, float]] = []
+
+    def _resident(command, *, timeout, **_payload):
+        observed.append((command, timeout))
+        return {"ok": True, "screen_recording": True}
+
+    monkeypatch.setattr(bridge, "_invoke_resident_bridge", _resident)
+
+    result = bridge.invoke_native_desktop_bridge("request_screen", read_only=True, timeout=45.0)
+
+    assert result["ok"] is True
+    assert observed == [("request_screen", 45.0)]
+
+
+def test_native_bridge_probe_keeps_short_resident_timeout(monkeypatch):
+    from core.security import native_desktop_bridge as bridge
+
+    observed: list[tuple[str, float]] = []
+
+    def _resident(command, *, timeout, **_payload):
+        observed.append((command, timeout))
+        return {"ok": True}
+
+    monkeypatch.setattr(bridge, "_invoke_resident_bridge", _resident)
+
+    result = bridge.invoke_native_desktop_bridge("probe", read_only=True, timeout=45.0)
+
+    assert result["ok"] is True
+    assert observed == [("probe", 3.0)]
+
+
 def test_native_pyautogui_translates_general_input_primitives(monkeypatch):
     from core.security import native_desktop_bridge as bridge
 
