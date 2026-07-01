@@ -289,6 +289,7 @@ class AutonomousInitiativeLoop:
             "self_development": self._task_alive(self._self_dev_task),
             "social": self._task_alive(self._social_task),
             "mission": self._task_alive(self._mission_task),
+            "frontier_discovery": self._task_alive(self._discovery_task),
         }
 
     def get_status(self) -> dict[str, Any]:
@@ -296,9 +297,9 @@ class AutonomousInitiativeLoop:
 
         Aura should not report full autonomy merely because the object exists.
         The normal live desktop profile needs the world, knowledge-gap,
-        self-development, social, and mission watchers alive so initiative is a
-        real background organ rather than a dormant class registered in the
-        container.
+        self-development, social, mission, and frontier-discovery watchers alive
+        so initiative is a real background organ rather than a dormant class
+        registered in the container.
         """
 
         core_tasks = self._task_status()
@@ -399,9 +400,9 @@ class AutonomousInitiativeLoop:
                 pa = get_proactive_agency()
                 node_goal = (node.action or node.description or "") if pa.enabled else ""
                 if node_goal:
-                    async def _pursue_bg(goal: str = node_goal) -> None:
+                    async def _pursue_bg(goal: str = node_goal, agency=pa) -> None:
                         try:
-                            await asyncio.wait_for(pa.pursue_goal(goal), timeout=90.0)
+                            await asyncio.wait_for(agency.pursue_goal(goal), timeout=90.0)
                         except (asyncio.TimeoutError, *_INITIATIVE_RECOVERABLE_ERRORS) as bg_exc:
                             _record_initiative_degradation(
                                 bg_exc, action="bounded background proactive pursuit ended"

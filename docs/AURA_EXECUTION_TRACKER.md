@@ -10,7 +10,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 80%** based on current live
+- Expanded daily-runtime/product closure: **about 81%** based on current live
   evidence, not documentation. This number is deliberately governed by the live
   desktop path, not by historical proof-profile success. Checkpoint 5 addresses
   two live defects, and the follow-up desktop-mode live proof verified bounded
@@ -18,7 +18,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   runtime-stream failure markers. Checkpoint 6 then reran the operational-label
   validator battery and tightened the sci-fi/frontier standard so character
   imports must be backed by real organ-level tests, not the legacy themed silo.
-  Source-level closure is now **about 80%**.
+  Checkpoint 7 tightens the full-desktop/background-autonomy contract so the
+  `FrontierDiscoveryLoop` cannot disappear while health still claims full
+  initiative, and fixes a closure bug in autonomous mission pursuit. Source-level
+  closure is now **about 82%**.
 - Estimated checkpoints in this expanded program: **11 total**. Checkpoint 1 is
   committed and pushed; Checkpoint 2 is source-committed but live TCC remains
   open; Checkpoint 3 is committed and pushed; Checkpoint 4 is committed and
@@ -27,7 +30,8 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   access truthfulness and Memory UI survival, then revalidated by a bounded
   desktop-mode live proof; Checkpoint 6 is the current source-validation
   checkpoint for operational labels and fictional-AI/frontier requirements;
-  **5 remain**.
+  Checkpoint 7 is the current background-autonomy/full-runtime contract
+  checkpoint; **4 remain**.
 
 ### Scope Clarification For The Current Pass
 
@@ -288,6 +292,37 @@ Status: source validation complete and recorded in the checkpoint commit.
     actuation, microphone/audio recall, longer multi-turn natural conversation,
     heat behavior under user-visible operation, and whether background autonomy
     remains visible/causal during longer idle periods.
+
+### Checkpoint 7: Background Autonomy Full-Runtime Contract
+
+Status: source validation complete; committed and pushed as the Checkpoint 7
+save point.
+
+- Scope: Bryan asked whether background actions/thoughts are really active in
+  normal launched Aura, not just represented in prose. This checkpoint closes a
+  concrete status/readiness gap in the full-desktop autonomy contract.
+- Runtime fix: `AutonomousInitiativeLoop.get_status()` now reports
+  `frontier_discovery` as a core background task. The loop already started
+  `FrontierDiscoveryLoop`, but the readiness/status surface did not expose it,
+  so full-desktop health could overstate background initiative if discovery died.
+- Reliability fix: background mission pursuit now binds the selected
+  `ProactiveAgency` instance into its fire-and-forget coroutine. This removes a
+  late-binding closure hazard in autonomous action scheduling.
+- Test fix: autonomy visibility tests now simulate an explicit idle,
+  no-pressure runtime instead of inheriting host boot-grace or foreground
+  generation state. That keeps the production safety gates intact while making
+  the contract tests deterministic.
+- Focused validation:
+  - `python -m pytest -q tests/test_autonomous_initiative_loop_hardening.py tests/test_full_desktop_runtime_contract.py tests/test_autonomy_visibility.py tests/test_boot_autonomy_hardening.py tests/test_autonomy_conductor_runtime.py tests/test_runtime_polish.py::test_background_loop_runs_during_desktop_safe_boot tests/test_runtime_polish.py::test_background_loop_start_allows_explicit_desktop_background_cognition tests/test_runtime_polish.py::test_orchestrator_background_runs_under_safe_boot_but_honors_explicit_disable tests/test_boot_runtime_safety.py::test_live_boot_proof_uses_readiness_heartbeat_contract tests/test_boot_runtime_safety.py::test_live_boot_proof_requires_cognitive_organ_participation tests/test_reasoning_precompute.py::test_register_reasoning_jobs_idempotent`
+    -> 53 passed.
+  - `python -m ruff check --select F,B core/autonomous_initiative_loop.py tests/test_autonomous_initiative_loop_hardening.py tests/test_full_desktop_runtime_contract.py tests/test_autonomy_visibility.py`
+    -> passed.
+  - `python -m py_compile core/autonomous_initiative_loop.py tests/test_autonomous_initiative_loop_hardening.py tests/test_full_desktop_runtime_contract.py tests/test_autonomy_visibility.py`
+    -> passed.
+- Interpretation: this is a source/runtime-contract checkpoint for background
+  autonomy visibility. It proves the status and test harness can no longer omit
+  the discovery organ, but it does not replace a longer launched Aura.app idle
+  proof showing visible/causal autonomous behavior over time.
 
 ### Checkpoint 1: Live Conversation Ownership And Launcher Survival
 

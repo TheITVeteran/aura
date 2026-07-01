@@ -25,6 +25,7 @@ def _install_held_loops(loop: AutonomousInitiativeLoop, marker: list[str]) -> No
     loop._self_development_loop = lambda: _hold_until_cancelled(marker, "self_development")
     loop._social_interaction_loop = lambda: _hold_until_cancelled(marker, "social")
     loop._mission_watcher_loop = lambda: _hold_until_cancelled(marker, "mission")
+    loop._discovery_loop = lambda: _hold_until_cancelled(marker, "frontier_discovery")
 
 
 @pytest.mark.asyncio
@@ -56,13 +57,21 @@ async def test_start_keeps_core_loops_when_event_subscription_fails(monkeypatch)
             "self_development": True,
             "social": True,
             "mission": True,
+            "frontier_discovery": True,
         },
         "event_subscription": False,
     }
     assert all(getattr(task, "_aura_supervised", False) for task in loop._core_tasks())
 
     await loop.stop()
-    assert set(marker) == {"world", "knowledge", "self_development", "social", "mission"}
+    assert set(marker) == {
+        "world",
+        "knowledge",
+        "self_development",
+        "social",
+        "mission",
+        "frontier_discovery",
+    }
 
 
 @pytest.mark.asyncio
@@ -85,7 +94,14 @@ async def test_start_is_idempotent_while_core_tasks_are_alive(monkeypatch):
     assert loop._world_task is first_world_task
 
     await loop.stop()
-    assert set(marker) == {"world", "knowledge", "self_development", "social", "mission"}
+    assert set(marker) == {
+        "world",
+        "knowledge",
+        "self_development",
+        "social",
+        "mission",
+        "frontier_discovery",
+    }
 
 
 @pytest.mark.asyncio
@@ -104,7 +120,14 @@ async def test_stop_awaits_background_task_cancellation(monkeypatch):
 
     assert loop.running is False
     assert all(task.done() for task in loop._core_tasks())
-    assert set(marker) == {"world", "knowledge", "self_development", "social", "mission"}
+    assert set(marker) == {
+        "world",
+        "knowledge",
+        "self_development",
+        "social",
+        "mission",
+        "frontier_discovery",
+    }
 
 
 @pytest.mark.asyncio

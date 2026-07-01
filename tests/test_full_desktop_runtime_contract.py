@@ -28,6 +28,7 @@ def _full_services():
                 "self_development": True,
                 "social": True,
                 "mission": True,
+                "frontier_discovery": True,
             },
         ),
         "research_cycle": _status_service(running=True),
@@ -113,6 +114,7 @@ def test_full_desktop_runtime_reports_every_canonical_background_organ(monkeypat
     assert status["blockers"] == []
     assert status["components"]["self_modification"]["mode"] == "validation_quarantine"
     assert status["components"]["autonomous_initiative"]["core_tasks"]["social"] is True
+    assert status["components"]["autonomous_initiative"]["core_tasks"]["frontier_discovery"] is True
     assert status["components"]["overt_action"]["scheduled"] is True
     assert status["components"]["deliberation"]["scheduled"] is True
     assert status["components"]["screen_perception"]["running"] is True
@@ -305,6 +307,7 @@ def test_full_desktop_runtime_fails_readiness_when_initiative_task_is_dead(monke
             "self_development": False,
             "social": True,
             "mission": True,
+            "frontier_discovery": True,
         },
     )
     _install_services(monkeypatch, services)
@@ -313,4 +316,32 @@ def test_full_desktop_runtime_fails_readiness_when_initiative_task_is_dead(monke
 
     assert status["ready"] is False
     assert status["components"]["autonomous_initiative"]["core_tasks"]["self_development"] is False
+    assert "autonomous_initiative" in status["blockers"]
+
+
+def test_full_desktop_runtime_fails_readiness_when_discovery_task_is_dead(monkeypatch):
+    monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
+    monkeypatch.setenv("AURA_DESKTOP_RESOURCE_GUARD", "1")
+    monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_BACKGROUND_COGNITION", raising=False)
+    services = _full_services()
+    services["autonomous_initiative_loop"] = _status_service(
+        running=False,
+        enabled=True,
+        core_tasks={
+            "world": True,
+            "knowledge": True,
+            "self_development": True,
+            "social": True,
+            "mission": True,
+            "frontier_discovery": False,
+        },
+    )
+    _install_services(monkeypatch, services)
+
+    status = _collect_full_runtime_status({"online": True}, {"online": True})
+
+    assert status["ready"] is False
+    assert status["components"]["autonomous_initiative"]["core_tasks"]["frontier_discovery"] is False
     assert "autonomous_initiative" in status["blockers"]

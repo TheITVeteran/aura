@@ -90,6 +90,42 @@ class CallRecorder:
         assert not self.calls
 
 
+def _simulate_idle_background_runtime(monkeypatch) -> None:
+    """Make background-admission tests independent of host boot/foreground state."""
+    import core.runtime.background_policy as background_policy
+
+    monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "0")
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_BACKGROUND_COGNITION", raising=False)
+    monkeypatch.setattr(
+        "core.runtime.proof_policy.proof_run_active",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(
+        "core.runtime.foreground_guard.foreground_activity_reason",
+        lambda: "",
+    )
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        lambda _name, default=None: default,
+    )
+    monkeypatch.setattr(background_policy, "_read_compute_pressure_reason", lambda: "")
+    monkeypatch.setattr(
+        background_policy,
+        "_read_memory_pressure_snapshot",
+        lambda: background_policy._MemoryPressureSnapshot(
+            pressure_pct=35.0,
+            reason="memory_pressure_35.0",
+            refuse_heavy_local_generation=False,
+        ),
+    )
+    monkeypatch.setattr(
+        background_policy,
+        "get_unified_failure_state",
+        lambda: {"pressure": 0.0},
+    )
+
+
 def test_emit_thought_stream_falls_back_to_thought_emitter(monkeypatch):
     emitter = SimpleNamespace(emit=CallRecorder())
     monkeypatch.setattr("core.thought_stream.get_emitter", lambda: emitter)
@@ -106,26 +142,9 @@ def test_emit_thought_stream_falls_back_to_thought_emitter(monkeypatch):
 
 
 def test_background_initiative_gate_does_not_depend_on_chat_lane_readiness(monkeypatch):
-    import core.runtime.background_policy as background_policy
     from core.autonomous_initiative_loop import _background_initiative_allowed
 
-    monkeypatch.setattr(
-        "core.runtime.background_policy.psutil.virtual_memory",
-        lambda: SimpleNamespace(percent=35.0),
-    )
-    monkeypatch.setattr(
-        "core.runtime.background_policy.get_unified_failure_state",
-        lambda: {"pressure": 0.0},
-    )
-    monkeypatch.setattr(
-        background_policy,
-        "_read_memory_pressure_snapshot",
-        lambda: background_policy._MemoryPressureSnapshot(
-            pressure_pct=35.0,
-            reason="memory_pressure_35.0",
-            refuse_heavy_local_generation=False,
-        ),
-    )
+    _simulate_idle_background_runtime(monkeypatch)
 
     orchestrator = SimpleNamespace(
         _last_user_interaction_time=time.time() - 3600.0,
@@ -399,6 +418,7 @@ async def test_self_development_cycle_can_opt_in_visible_updates(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_proactive_presence_prefers_visible_primary(monkeypatch):
+    _simulate_idle_background_runtime(monkeypatch)
     orchestrator = SimpleNamespace(
         emit_spontaneous_message=AsyncCallRecorder(
             {
@@ -430,6 +450,7 @@ async def test_proactive_presence_prefers_visible_primary(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_proactive_presence_requeues_visible_update_when_primary_is_temporarily_held(monkeypatch):
+    _simulate_idle_background_runtime(monkeypatch)
     orchestrator = SimpleNamespace(
         emit_spontaneous_message=AsyncCallRecorder(
             {
@@ -465,7 +486,8 @@ async def test_proactive_presence_requeues_visible_update_when_primary_is_tempor
     assert queued["retries"] == 1
 
 
-def test_proactive_presence_allows_queued_visible_updates_during_away_mode():
+def test_proactive_presence_allows_queued_visible_updates_during_away_mode(monkeypatch):
+    _simulate_idle_background_runtime(monkeypatch)
     orchestrator = SimpleNamespace(
         _last_user_interaction_time=0.0,
         _last_thought_time=0.0,
