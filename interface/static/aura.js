@@ -1258,6 +1258,8 @@ function applyDesktopAccessSummary(summary) {
     }
     if (signing && signing.stable_tcc_identity === false) {
         helperLines.push('This Aura.app build is ad-hoc signed; if permissions still show denied, remove Aura from Screen Recording and Accessibility, add /Applications/Aura.app again, then approve the current build.');
+    } else if (signing && signing.stable_tcc_identity === true && blockers.length) {
+        helperLines.push('Aura.app now has a stable signing identity; if these permissions still show denied, toggle Aura off/on or remove and re-add /Applications/Aura.app once so macOS attaches the grants to this exact signed app.');
     }
     helperLines.push(pyautoguiDetail);
     if (blockers.length) {

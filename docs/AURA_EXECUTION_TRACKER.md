@@ -10,15 +10,15 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 63%** based on current live
+- Expanded daily-runtime/product closure: **about 66%** based on current live
   evidence, not documentation.
 - Estimated checkpoints in this expanded program: **9 total**. Checkpoint 1 is
-  in flight and will count only after commit/push; **8 remain after it**.
+  committed and pushed; Checkpoint 2 is in progress; **7 remain after Checkpoint
+  2 lands**.
 
 ### Checkpoint 1: Live Conversation Ownership And Launcher Survival
 
-Status: implementation and live verification complete; broad gate, commit, and
-push pending.
+Status: complete in commit `0f01ba75`, pushed to `origin/main`.
 
 - Sealed DNU/proof tasks no longer persist as continuity, commitments, task
   commitments, active goals, attention, or executive hysteresis.
@@ -39,6 +39,8 @@ push pending.
   HTTP 200 with `full_mind_path=true`, required subsystems true, recurrent depth
   active, and coherent context retention. Latencies were 15s, 11s, and 52s; the
   third turn recovered successfully but remains above the product latency goal.
+- Verification: 398 focused runtime tests, 811 server/enterprise tests, and 56
+  additional planning/mind tests passed; enterprise and production gates passed.
 
 ### Today’s Tracked Work
 
@@ -85,6 +87,47 @@ push pending.
 17. Run clean-machine install/update/rollback/security checks, enterprise and
     production gates, live desktop soaks, 24h/72h longevity tiers, final proof,
     claims validation, clean worktree, commit, and push.
+18. Hold Aura against the explicit frontier standards matrix: sci-fi AI
+    capability and humanlike mimicry, phenomenal-state building blocks,
+    superintelligence trajectory, generally capable AI, daily runtime
+    reliability, frontier reasoning outside the model, OS control at frontier
+    agent level, NetHack-class general environment competence, and
+    conversation indistinguishable from a human. Each standard must map to
+    source, validators, and live artifacts before it can be treated as closed.
+
+### Checkpoint 2 In Progress: Stable Permissions And Local Frontier Reasoning
+
+Status: implementation and focused validation in progress; not yet committed.
+
+- The installed app now has a stable local signing identity:
+  `Authority=Aura Local Code Signing`, `bundle_identifier=com.aura.desktop`.
+- The native resident bridge can report Screen Recording, Accessibility,
+  Automation, frontmost app, and display geometry from the app-side identity
+  instead of guessing from Python subprocess permissions.
+- Direct bridge proof after reinstall:
+  `/Applications/Aura.app/Contents/MacOS/aura-launcher --native-desktop-bridge
+  '{"command":"probe"}'` returned `screen_recording=true`,
+  `accessibility=true`, `automation=true`, and `frontmost_app=Claude`.
+- Current live resident `/api/system/desktop-access` still reports Screen
+  Recording/Accessibility blocked. This means the code path is repaired, but
+  macOS has not yet attached grants to the newly stable resident app identity.
+  This remains open until the launched Aura app reports ready through the live
+  API, not just the one-shot bridge.
+- Model lifecycle now knows local open-weight reasoning solver repos:
+  `QwQ-32B-4bit`, `DeepSeek-R1-Distill-Qwen-32B-4bit`, and
+  `DeepSeek-R1-Distill-Qwen-32B-8bit`.
+- `scripts/fetch_models.py --reasoning-solver ...` can now inventory/fetch a
+  fully local frontier-reasoning solver lane and print the exact
+  `AURA_DEEP_MODEL` / `AURA_LLM__MLX_DEEP_MODEL_PATH` environment exports.
+- Streaming model transplant tooling can dry-run Aura personality transfer
+  onto a reasoning-compatible base shard topology without loading all tensors
+  into RAM.
+- Verifiable preference export exists, but the current live preference store
+  has `0` exportable rows. That is a real open learning-data gap, not a closed
+  RLVR/DPO training loop.
+- New validator: `tools/closeout/frontier_standards_matrix.py` maps the
+  requested frontier/fiction/phenomenal/general-AI standards to source paths,
+  validator paths, and live artifact requirements.
 
 ### Remaining Checkpoint Map
 

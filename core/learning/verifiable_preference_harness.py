@@ -38,7 +38,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -220,7 +220,7 @@ class VerifiablePreferenceHarness:
             }
 
 
-_engine: Optional[VerifiablePreferenceHarness] = None
+_engine: VerifiablePreferenceHarness | None = None
 _engine_lock = threading.Lock()
 
 

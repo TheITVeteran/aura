@@ -21,6 +21,27 @@ from core.brain.llm.model_lifecycle import ModelLifecycleManager  # noqa: E402
 
 _GB = float(1024**3)
 
+REASONING_SOLVER_ALIASES = {
+    "qwq32b": "QwQ-32B-4bit",
+    "qwq-32b": "QwQ-32B-4bit",
+    "r1-qwen32b": "DeepSeek-R1-Distill-Qwen-32B-4bit",
+    "deepseek-r1-qwen32b": "DeepSeek-R1-Distill-Qwen-32B-4bit",
+    "r1-qwen32b-8bit": "DeepSeek-R1-Distill-Qwen-32B-8bit",
+}
+
+
+def _plan_with_reasoning_solver(alias: str | None) -> dict[str, str] | None:
+    if not alias:
+        return None
+    normalized = alias.strip().lower()
+    model_name = REASONING_SOLVER_ALIASES.get(normalized)
+    if model_name is None:
+        choices = ", ".join(sorted(REASONING_SOLVER_ALIASES))
+        raise SystemExit(f"Unknown reasoning solver '{alias}'. Choices: {choices}")
+    plan = ModelLifecycleManager._default_plan()
+    plan["solver"] = model_name
+    return plan
+
 
 def _print_inventory(manager: ModelLifecycleManager) -> None:
     print("🧠 Aura model inventory")
@@ -55,14 +76,40 @@ def _progress(event: dict) -> None:
         print("  ✅ All models already present.")
 
 
+def _print_env(manager: ModelLifecycleManager) -> None:
+    plan = dict(getattr(manager, "_plan", {}))
+    solver = plan.get("solver", "")
+    if not solver:
+        return
+    status = manager.status_for("solver", solver)
+    print("\nRuntime environment for this solver lane:")
+    print(f"  export AURA_DEEP_MODEL={solver}")
+    print(f"  export AURA_LLM__MLX_DEEP_MODEL_PATH={status.location}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--status", action="store_true", help="print inventory and exit")
     parser.add_argument("--no-disk-check", action="store_true", help="skip the disk preflight")
+    parser.add_argument(
+        "--reasoning-solver",
+        metavar="ALIAS",
+        help=(
+            "replace the solver lane in this fetch plan with a local reasoning model "
+            f"({', '.join(sorted(REASONING_SOLVER_ALIASES))})"
+        ),
+    )
+    parser.add_argument(
+        "--print-env",
+        action="store_true",
+        help="print AURA_DEEP_MODEL/AURA_LLM__MLX_DEEP_MODEL_PATH exports for the plan",
+    )
     args = parser.parse_args(argv)
 
-    manager = ModelLifecycleManager()
+    manager = ModelLifecycleManager(plan=_plan_with_reasoning_solver(args.reasoning_solver))
     _print_inventory(manager)
+    if args.print_env:
+        _print_env(manager)
 
     if args.status:
         return 0

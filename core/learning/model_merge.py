@@ -31,14 +31,18 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger("Aura.ModelMerge")
 
 StateDict = dict[str, np.ndarray]
+_WEIGHT_SUFFIXES = {".safetensors"}
+_ARTIFACT_SUFFIXES = {".json", ".model", ".txt", ".jinja"}
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +57,7 @@ def task_vector(base: StateDict, finetuned: StateDict) -> StateDict:
     }
 
 
-def _weights_for(deltas: Sequence[StateDict], weights: Optional[Sequence[float]]) -> list[float]:
+def _weights_for(deltas: Sequence[StateDict], weights: Sequence[float] | None) -> list[float]:
     if weights is None:
         return [1.0] * len(deltas)
     if len(weights) != len(deltas):
@@ -62,14 +66,14 @@ def _weights_for(deltas: Sequence[StateDict], weights: Optional[Sequence[float]]
 
 
 def linear_merge(
-    base: StateDict, deltas: Sequence[StateDict], *, weights: Optional[Sequence[float]] = None
+    base: StateDict, deltas: Sequence[StateDict], *, weights: Sequence[float] | None = None
 ) -> StateDict:
     """Plain task arithmetic: ``base + Σ wᵢ·δᵢ``."""
     ws = _weights_for(deltas, weights)
     out: StateDict = {}
     for k, b in base.items():
         acc = b.astype(np.float32).copy()
-        for w, d in zip(ws, deltas):
+        for w, d in zip(ws, deltas, strict=True):
             if k in d:
                 acc += w * d[k]
         out[k] = acc.astype(b.dtype)
@@ -81,7 +85,7 @@ def ties_merge(
     deltas: Sequence[StateDict],
     *,
     density: float = 0.2,
-    weights: Optional[Sequence[float]] = None,
+    weights: Sequence[float] | None = None,
 ) -> StateDict:
     """TIES-merge: trim → elect sign → disjoint-average. ``density`` ∈ (0,1] kept per delta."""
     if not 0.0 < density <= 1.0:
@@ -90,7 +94,7 @@ def ties_merge(
     out: StateDict = {}
     for k, b in base.items():
         b32 = b.astype(np.float32)
-        present = [(w, d[k].astype(np.float32)) for w, d in zip(ws, deltas) if k in d]
+        present = [(w, d[k].astype(np.float32)) for w, d in zip(ws, deltas, strict=True) if k in d]
         if not present:
             out[k] = b
             continue
@@ -120,7 +124,7 @@ def dare_merge(
     deltas: Sequence[StateDict],
     *,
     drop: float = 0.9,
-    weights: Optional[Sequence[float]] = None,
+    weights: Sequence[float] | None = None,
     seed: int = 0,
 ) -> StateDict:
     """DARE-merge: Bernoulli-drop ``drop`` of each delta, rescale survivors by 1/(1−drop)."""
@@ -132,7 +136,7 @@ def dare_merge(
     out: StateDict = {}
     for k, b in base.items():
         acc = b.astype(np.float32).copy()
-        for w, d in zip(ws, deltas):
+        for w, d in zip(ws, deltas, strict=True):
             if k not in d:
                 continue
             delta = d[k].astype(np.float32)
@@ -147,7 +151,7 @@ def merge_state_dicts(
     finetunes: dict[str, StateDict],
     *,
     method: str = "ties",
-    weights: Optional[Sequence[float]] = None,
+    weights: Sequence[float] | None = None,
     density: float = 0.2,
     drop: float = 0.9,
     seed: int = 0,
@@ -198,13 +202,206 @@ def save_state_dict(state: StateDict, path: str | Path) -> None:
     save_file(state, str(path))
 
 
+def _copy_model_artifacts(source_dir: Path, out_dir: Path) -> list[str]:
+    copied: list[str] = []
+    if not source_dir.is_dir():
+        return copied
+    for artifact in source_dir.iterdir():
+        if artifact.is_dir():
+            continue
+        if artifact.suffix in _WEIGHT_SUFFIXES:
+            continue
+        if artifact.name == "model.safetensors.index.json":
+            continue
+        if artifact.suffix in _ARTIFACT_SUFFIXES or artifact.name.startswith("tokenizer"):
+            target = out_dir / artifact.name
+            shutil.copy2(artifact, target)
+            copied.append(artifact.name)
+    return copied
+
+
+def _weight_map(model_dir: Path) -> dict[str, str]:
+    """Return tensor name -> safetensors shard filename for an MLX/HF model dir."""
+    index_path = model_dir / "model.safetensors.index.json"
+    if index_path.exists():
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+        weight_map = data.get("weight_map") if isinstance(data, dict) else None
+        if isinstance(weight_map, dict):
+            return {str(k): str(v) for k, v in weight_map.items()}
+    files = sorted(model_dir.glob("*.safetensors"))
+    if not files:
+        raise FileNotFoundError(f"no .safetensors found in {model_dir}")
+    from safetensors import safe_open
+
+    result: dict[str, str] = {}
+    for file in files:
+        with safe_open(file, framework="np") as handle:
+            for key in handle.keys():
+                result[str(key)] = file.name
+    return result
+
+
+def _group_by_shard(weight_map: dict[str, str]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for tensor, shard in weight_map.items():
+        grouped.setdefault(shard, []).append(tensor)
+    return {shard: sorted(tensors) for shard, tensors in sorted(grouped.items())}
+
+
+def _read_tensor(model_dir: Path, weight_map: dict[str, str], tensor: str) -> np.ndarray | None:
+    shard = weight_map.get(tensor)
+    if not shard:
+        return None
+    from safetensors import safe_open
+
+    with safe_open(model_dir / shard, framework="np") as handle:
+        if tensor not in handle.keys():
+            return None
+        return handle.get_tensor(tensor)
+
+
+def _index_metadata(out_map: dict[str, str], total_size: int = 0) -> dict[str, Any]:
+    return {
+        "metadata": {"total_size": str(int(total_size))},
+        "weight_map": out_map,
+    }
+
+
+def transplant_model_dirs_streaming(
+    common_base_dir: str | Path,
+    finetuned_dir: str | Path,
+    onto_dir: str | Path,
+    out_dir: str | Path,
+    *,
+    scale: float = 1.0,
+    dry_run: bool = False,
+    dtype: str = "preserve",
+) -> dict[str, Any]:
+    """Stream Aura's fine-tune delta onto a reasoning base without loading all weights.
+
+    This is the production path for:
+
+        output = reasoning_base + scale * (aura_finetune - qwen_common_base)
+
+    It processes one output shard at a time using the ``onto`` model's shard
+    layout. Missing or shape-incompatible tensors are copied from ``onto`` and
+    recorded in the manifest, because silently corrupting tensor topology would
+    be worse than failing to transplant a small subset.
+    """
+    common_base = Path(common_base_dir).expanduser().resolve()
+    finetuned = Path(finetuned_dir).expanduser().resolve()
+    onto = Path(onto_dir).expanduser().resolve()
+    out = Path(out_dir).expanduser().resolve()
+    for label, path in {
+        "common_base": common_base,
+        "finetuned": finetuned,
+        "onto": onto,
+    }.items():
+        if not path.is_dir():
+            raise FileNotFoundError(f"{label} model dir not found: {path}")
+
+    base_map = _weight_map(common_base)
+    finetuned_map = _weight_map(finetuned)
+    onto_map = _weight_map(onto)
+    grouped = _group_by_shard(onto_map)
+    all_onto = set(onto_map)
+    compatible = all_onto & set(base_map) & set(finetuned_map)
+    missing = sorted(all_onto - compatible)
+
+    shape_mismatches: list[str] = []
+    if dry_run:
+        return {
+            "mode": "transplant_streaming",
+            "dry_run": True,
+            "common_base": str(common_base),
+            "finetuned": str(finetuned),
+            "onto": str(onto),
+            "out": str(out),
+            "scale": float(scale),
+            "onto_tensors": len(all_onto),
+            "compatible_tensors": len(compatible),
+            "missing_tensors": len(missing),
+            "shards": len(grouped),
+            "note": "Dry run only; no model files were written.",
+        }
+
+    out.mkdir(parents=True, exist_ok=True)
+    copied_artifacts = _copy_model_artifacts(onto, out)
+    from safetensors.numpy import save_file
+
+    written_map: dict[str, str] = {}
+    written_tensors = 0
+    copied_tensors = 0
+    for shard, tensors in grouped.items():
+        shard_state: StateDict = {}
+        for tensor in tensors:
+            onto_tensor = _read_tensor(onto, onto_map, tensor)
+            if onto_tensor is None:
+                missing.append(tensor)
+                continue
+            base_tensor = _read_tensor(common_base, base_map, tensor)
+            finetuned_tensor = _read_tensor(finetuned, finetuned_map, tensor)
+            if (
+                base_tensor is not None
+                and finetuned_tensor is not None
+                and base_tensor.shape == finetuned_tensor.shape == onto_tensor.shape
+            ):
+                merged = onto_tensor.astype(np.float32) + float(scale) * (
+                    finetuned_tensor.astype(np.float32) - base_tensor.astype(np.float32)
+                )
+                if dtype == "float32":
+                    shard_state[tensor] = merged.astype(np.float32)
+                else:
+                    shard_state[tensor] = merged.astype(onto_tensor.dtype)
+                written_tensors += 1
+            else:
+                if tensor in compatible:
+                    shape_mismatches.append(tensor)
+                shard_state[tensor] = onto_tensor
+                copied_tensors += 1
+            written_map[tensor] = shard
+        save_file(shard_state, str(out / shard))
+    index = _index_metadata(written_map)
+    (out / "model.safetensors.index.json").write_text(
+        json.dumps(index, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    manifest = {
+        "schema_version": 1,
+        "mode": "transplant_streaming",
+        "common_base": str(common_base),
+        "finetuned": str(finetuned),
+        "onto": str(onto),
+        "out": str(out),
+        "scale": float(scale),
+        "dtype": dtype,
+        "shards": len(grouped),
+        "written_tensors": written_tensors,
+        "copied_tensors": copied_tensors,
+        "missing_tensors": missing[:200],
+        "missing_tensor_count": len(missing),
+        "shape_mismatches": shape_mismatches[:200],
+        "shape_mismatch_count": len(shape_mismatches),
+        "copied_artifacts": copied_artifacts,
+        "note": "EVAL-GATE through the RSI gauntlet before promoting to the serving model.",
+    }
+    (out / "merge_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    logger.info(
+        "🧬 Streaming transplant wrote %d tensors across %d shards → %s",
+        written_tensors,
+        len(grouped),
+        out,
+    )
+    return manifest
+
+
 def merge_model_dirs(
     base_dir: str | Path,
     finetune_dirs: dict[str, str | Path],
     out_dir: str | Path,
     *,
     method: str = "ties",
-    weights: Optional[Sequence[float]] = None,
+    weights: Sequence[float] | None = None,
     density: float = 0.2,
     drop: float = 0.9,
 ) -> dict[str, Any]:
@@ -223,14 +420,8 @@ def merge_model_dirs(
         base, finetunes, method=method, weights=weights, density=density, drop=drop
     )
     save_state_dict(merged, out / "model.safetensors")
-    # Copy non-weight artifacts (tokenizer, config) from the base so the model loads.
-    copied = []
     base_path = Path(base_dir)
-    if base_path.is_dir():
-        for art in base_path.iterdir():
-            if art.suffix in {".json", ".model"} or art.name.startswith("tokenizer"):
-                (out / art.name).write_bytes(art.read_bytes())
-                copied.append(art.name)
+    copied = _copy_model_artifacts(base_path, out)
     manifest = {
         "method": method,
         "base": str(base_dir),
@@ -243,3 +434,41 @@ def merge_model_dirs(
     (out / "merge_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     logger.info("🧬 Merged %d tensors via %s → %s", len(merged), method, out)
     return manifest
+
+
+def _main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Merge or transplant local MLX safetensors models.")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    transplant = sub.add_parser(
+        "transplant",
+        help="stream finetuned-common_base delta onto a reasoning base",
+    )
+    transplant.add_argument("--common-base", required=True)
+    transplant.add_argument("--finetuned", required=True)
+    transplant.add_argument("--onto", required=True)
+    transplant.add_argument("--out", required=True)
+    transplant.add_argument("--scale", type=float, default=1.0)
+    transplant.add_argument("--dtype", choices=("preserve", "float32"), default="preserve")
+    transplant.add_argument("--dry-run", action="store_true")
+
+    args = parser.parse_args(argv)
+    if args.cmd == "transplant":
+        manifest = transplant_model_dirs_streaming(
+            args.common_base,
+            args.finetuned,
+            args.onto,
+            args.out,
+            scale=args.scale,
+            dtype=args.dtype,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps(manifest, indent=2))
+        return 0
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

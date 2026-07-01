@@ -51,6 +51,9 @@ DEFAULT_REPO_MAP: dict[str, str] = {
     "Qwen2.5-32B-Instruct-8bit": "mlx-community/Qwen2.5-32B-Instruct-8bit",
     "Qwen2.5-72B-Instruct-4bit": "mlx-community/Qwen2.5-72B-Instruct-4bit",
     "Qwen2.5-72B-Instruct-Q4": "mlx-community/Qwen2.5-72B-Instruct-4bit",
+    "QwQ-32B-4bit": "mlx-community/QwQ-32B-4bit",
+    "DeepSeek-R1-Distill-Qwen-32B-4bit": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit",
+    "DeepSeek-R1-Distill-Qwen-32B-8bit": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-MLX-8Bit",
 }
 
 # Rough on-disk sizes (bytes) for disk preflight. Clearly an ESTIMATE — the real
@@ -64,6 +67,9 @@ _APPROX_SIZE_GB: dict[str, float] = {
     "Qwen2.5-32B-Instruct-8bit": 35.0,
     "Qwen2.5-72B-Instruct-4bit": 41.0,
     "Qwen2.5-72B-Instruct-Q4": 41.0,
+    "QwQ-32B-4bit": 18.0,
+    "DeepSeek-R1-Distill-Qwen-32B-4bit": 18.0,
+    "DeepSeek-R1-Distill-Qwen-32B-8bit": 35.0,
 }
 
 _GB = float(1024**3)

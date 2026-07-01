@@ -86,7 +86,10 @@ class PermissionGuard(AuraBaseModule):
 
         self.logger.debug("Checking %s permission...", ptype.name)
 
-        if ptype == PermissionType.SCREEN:
+        native_result = await self._native_bridge_permission_result(ptype)
+        if native_result is not None:
+            result = native_result
+        elif ptype == PermissionType.SCREEN:
             result = await self._check_screen_permission()
         elif ptype == PermissionType.MIC:
             result = await self._check_mic_permission()
@@ -168,6 +171,7 @@ class PermissionGuard(AuraBaseModule):
         native_key = {
             PermissionType.SCREEN: "screen_recording",
             PermissionType.ACCESSIBILITY: "accessibility",
+            PermissionType.AUTOMATION: "automation",
         }.get(ptype, "")
         if sys.platform != "darwin" or not native_key:
             return None

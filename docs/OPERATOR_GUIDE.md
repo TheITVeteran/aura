@@ -134,6 +134,34 @@ malformed mutation cannot crash the parent process.
 - Cloud fallback: Settings → Models → Cloud Fallback (off by default).
 - Failure policy: [`docs/MODEL_PROVIDER_FAILURE_POLICY.md`](MODEL_PROVIDER_FAILURE_POLICY.md).
 
+### Fully local frontier-reasoning solver lane
+
+Aura can fetch an optional local reasoning solver without using an external
+inference server. This does not replace the Aura Cortex/personality lane; it
+adds a governed solver model for hard reasoning/tool-validation calls.
+
+```bash
+python scripts/fetch_models.py --reasoning-solver r1-qwen32b --status --print-env
+python scripts/fetch_models.py --reasoning-solver r1-qwen32b
+```
+
+Supported aliases:
+
+- `r1-qwen32b` → `DeepSeek-R1-Distill-Qwen-32B-4bit`
+- `r1-qwen32b-8bit` → `DeepSeek-R1-Distill-Qwen-32B-8bit`
+- `qwq32b` → `QwQ-32B-4bit`
+
+After download, use the exports printed by `--print-env`, for example:
+
+```bash
+export AURA_DEEP_MODEL=DeepSeek-R1-Distill-Qwen-32B-4bit
+export AURA_LLM__MLX_DEEP_MODEL_PATH=/Users/bryan/Desktop/aura/models/DeepSeek-R1-Distill-Qwen-32B-4bit
+```
+
+Keep this separate from the primary 32B desktop Cortex unless a live proof run
+shows the alternate lane preserves Aura's conversation identity, RAM envelope,
+and full-mind route.
+
 ## Performance tuning
 - Settings → Performance: cap on warm models (1, 2, or 3 concurrent
   heavy lanes), tick interval, dashboard refresh rate.

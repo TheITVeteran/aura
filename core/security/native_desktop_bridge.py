@@ -76,6 +76,7 @@ def _code_signature_summary(executable: Path | None) -> dict[str, Any]:
         "adhoc": "Signature=adhoc" in text,
         "signature": "",
         "team_identifier": "",
+        "authorities": [],
         "identifier": "",
         "cdhash": "",
         "stable_tcc_identity": True,
@@ -94,22 +95,36 @@ def _code_signature_summary(executable: Path | None) -> dict[str, Any]:
             summary["identifier"] = value
         elif key == "CDHash":
             summary["cdhash"] = value
+        elif key == "Authority":
+            summary["authorities"].append(value)
     team = str(summary.get("team_identifier") or "").strip().lower()
     signature = str(summary.get("signature") or "").strip().lower()
+    authorities = [
+        str(value or "").strip()
+        for value in summary.get("authorities", [])
+        if str(value or "").strip()
+    ]
     summary["stable_tcc_identity"] = bool(
         completed.returncode == 0
-        and signature
-        and signature != "adhoc"
-        and team
-        and team not in {"not set", "none"}
+        and not summary["adhoc"]
+        and (
+            authorities
+            or (signature and signature != "adhoc")
+            or (team and team not in {"not set", "none"})
+        )
     )
     if not summary["stable_tcc_identity"]:
-        summary["tcc_repair_hint"] = (
-            "This Aura.app build is ad-hoc signed. macOS may show a stale "
-            "permission row after rebuilds; remove Aura from Screen Recording "
-            "and Accessibility, add /Applications/Aura.app again, then avoid "
-            "rebundling until a stable local signing identity is configured."
-        )
+        if summary["adhoc"]:
+            summary["tcc_repair_hint"] = (
+                "This Aura.app build is ad-hoc signed. macOS may show a stale "
+                "permission row after rebuilds; install a stable signing identity "
+                "before granting Screen Recording and Accessibility again."
+            )
+        else:
+            summary["tcc_repair_hint"] = (
+                "Aura.app does not expose a stable signing authority. Rebuild and "
+                "install it with a persistent local or Developer ID certificate."
+            )
     cert_name = os.getenv("AURA_CODESIGN_IDENTITY", "").strip()
     if cert_name:
         summary["configured_codesign_identity"] = cert_name

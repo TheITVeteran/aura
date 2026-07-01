@@ -32,6 +32,7 @@ def _manager(tmp_path: Path, *, present: set[str] = frozenset()) -> ModelLifecyc
         "Qwen2.5-1.5B-Instruct-4bit": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
         "Qwen2.5-32B-Instruct-8bit": "mlx-community/Qwen2.5-32B-Instruct-8bit",
         "Qwen2.5-72B-Instruct-Q4": "mlx-community/Qwen2.5-72B-Instruct-4bit",
+        "DeepSeek-R1-Distill-Qwen-32B-4bit": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit",
     }
     models_dir = tmp_path / "models"
     for name in present:
@@ -174,3 +175,22 @@ def test_status_dataclasses_serialize(tmp_path):
     assert isinstance(status, ModelStatus)
     d = status.as_dict()
     assert d["present"] is True and d["role"] == "fallback"
+
+
+def test_frontier_reasoning_model_repos_are_registered(tmp_path):
+    plan = {
+        "cortex": "Qwen2.5-32B-Instruct-8bit",
+        "solver": "DeepSeek-R1-Distill-Qwen-32B-4bit",
+    }
+    repo_map = {
+        "Qwen2.5-32B-Instruct-8bit": "mlx-community/Qwen2.5-32B-Instruct-8bit",
+        "DeepSeek-R1-Distill-Qwen-32B-4bit": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit",
+    }
+
+    def resolver(name: str) -> str:
+        return repo_map.get(name, str(tmp_path / "models" / name))
+
+    mgr = ModelLifecycleManager(plan=plan, resolver=resolver, repo_map=repo_map, base_dir=tmp_path)
+    solver = mgr.status_for("solver", "DeepSeek-R1-Distill-Qwen-32B-4bit")
+    assert solver.source_repo == "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit"
+    assert solver.approx_download_gb >= 18.0

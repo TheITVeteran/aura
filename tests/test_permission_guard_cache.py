@@ -132,6 +132,27 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "active_native_bridge")
         self.assertTrue(result["native_bridge"])
 
+    async def test_effective_check_accepts_trusted_native_app_automation_bridge(self):
+        guard = PermissionGuard()
+
+        with patch(
+            "core.security.native_desktop_bridge.probe_native_desktop_bridge",
+            return_value={
+                "ok": True,
+                "screen_recording": True,
+                "accessibility": True,
+                "automation": True,
+                "frontmost_app": "Aura",
+                "bundle_identifier": "com.aura.desktop",
+                "bridge_executable": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
+            },
+        ):
+            result = await guard.check_permission(PermissionType.AUTOMATION)
+
+        self.assertTrue(result["granted"])
+        self.assertEqual(result["status"], "active_native_bridge")
+        self.assertTrue(result["native_bridge"])
+
     async def test_effective_check_reports_denied_native_app_bridge_without_python_fallback(self):
         guard = PermissionGuard()
         guard._screen_preflight_probe = lambda: {

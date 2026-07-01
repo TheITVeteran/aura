@@ -41,6 +41,35 @@ def test_native_bridge_probe_uses_read_only_canonical_subprocess(monkeypatch, tm
     assert calls[0][1]["source"] == "native_desktop_bridge.probe"
 
 
+def test_local_certificate_is_a_stable_tcc_identity_without_team_id(monkeypatch, tmp_path):
+    from core.security import native_desktop_bridge as bridge
+
+    executable = tmp_path / "aura-launcher"
+    executable.write_text("bridge", encoding="utf-8")
+
+    class _Gateway:
+        def run(self, _argv, **_kwargs):
+            return SimpleNamespace(
+                stdout="",
+                stderr=(
+                    "Identifier=com.aura.desktop\n"
+                    "Authority=Aura Local Code Signing\n"
+                    "TeamIdentifier=not set\n"
+                    "CDHash=1234abcd\n"
+                ),
+                returncode=0,
+            )
+
+    monkeypatch.setattr(bridge, "get_subprocess_gateway", lambda: _Gateway())
+
+    summary = bridge._code_signature_summary(executable)
+
+    assert summary["adhoc"] is False
+    assert summary["authorities"] == ["Aura Local Code Signing"]
+    assert summary["stable_tcc_identity"] is True
+    assert "tcc_repair_hint" not in summary
+
+
 def test_native_pyautogui_translates_general_input_primitives(monkeypatch):
     from core.security import native_desktop_bridge as bridge
 

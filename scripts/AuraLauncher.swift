@@ -61,6 +61,32 @@ private func bridgePostKey(_ key: String, flags: CGEventFlags = []) -> Bool {
     return true
 }
 
+private func bridgeAutomationProbe() -> [String: Any] {
+    let source = """
+    tell application "System Events"
+        set frontName to name of first application process whose frontmost is true
+        return frontName
+    end tell
+    """
+    var errorInfo: NSDictionary?
+    guard let script = NSAppleScript(source: source) else {
+        return ["automation": false, "frontmost_app": "", "automation_error": "script_compile_failed"]
+    }
+    let descriptor = script.executeAndReturnError(&errorInfo)
+    if let errorInfo {
+        let message = String(describing: errorInfo)
+        return [
+            "automation": false,
+            "frontmost_app": "",
+            "automation_error": message.prefix(240),
+        ]
+    }
+    return [
+        "automation": true,
+        "frontmost_app": descriptor.stringValue ?? "",
+    ]
+}
+
 private func bridgeTypeText(_ text: String, interval: TimeInterval) -> Bool {
     for scalar in text.unicodeScalars {
         var unit = UniChar(scalar.value)
@@ -93,14 +119,18 @@ private func nativeDesktopBridgeResult(payload: [String: Any]) -> ([String: Any]
 
     switch command {
     case "probe":
-        return ([
+        var response: [String: Any] = [
             "ok": true,
             "screen_recording": CGPreflightScreenCaptureAccess(),
             "accessibility": AXIsProcessTrusted(),
             "bundle_identifier": Bundle.main.bundleIdentifier ?? "",
             "width": width,
             "height": height,
-        ], 0)
+        ]
+        for (key, value) in bridgeAutomationProbe() {
+            response[key] = value
+        }
+        return (response, 0)
     case "request_screen":
         let granted = CGRequestScreenCaptureAccess()
         return ([

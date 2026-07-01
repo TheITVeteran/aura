@@ -1216,6 +1216,14 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
                 accessibility_result = {"granted": True, **native_common}
                 payload["accessibility"] = accessibility_result
                 payload["direct_accessibility"] = accessibility_result
+            if native_bridge.get("automation"):
+                automation_result = {
+                    "granted": True,
+                    **native_common,
+                    "frontmost_app": str(native_bridge.get("frontmost_app", "") or ""),
+                }
+                payload["automation"] = automation_result
+                payload["direct_automation"] = automation_result
 
         pyautogui, pyautogui_error = get_pyautogui()
         payload["pyautogui_ready"] = pyautogui is not None
@@ -1348,9 +1356,14 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
         if isinstance(payload.get("effective_app_identity"), dict):
             signature = payload["effective_app_identity"].get("code_signature") or {}
         if isinstance(signature, dict) and signature.get("stable_tcc_identity") is False:
-            diagnosis.append(
-                "Aura.app is ad-hoc signed, so macOS permissions can attach to a stale rebuild instead of the currently running app."
-            )
+            if signature.get("adhoc") or str(signature.get("signature") or "").strip().lower() == "adhoc":
+                diagnosis.append(
+                    "Aura.app is ad-hoc signed, so macOS permissions can attach to a stale rebuild instead of the currently running app."
+                )
+            else:
+                diagnosis.append(
+                    "Aura.app does not expose a stable signing authority, so macOS may not retain permissions reliably across rebuilds."
+                )
             hint = str(signature.get("tcc_repair_hint") or "").strip()
             if hint:
                 diagnosis.append(hint)
@@ -1358,7 +1371,10 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
             diagnosis.append(
                 "The resident Aura.app bridge is reachable, but macOS denies the requested TCC grants for this exact app identity."
             )
-        if payload.get("process_identity", {}).get("bundle_identifier") == "org.python.python":
+        if (
+            payload.get("process_identity", {}).get("bundle_identifier") == "org.python.python"
+            and payload.get("overall_status") != "ready"
+        ):
             diagnosis.append(
                 "The cognitive runtime is a Python child; durable desktop control should route through the resident Aura.app bridge, not Python's own TCC row."
             )

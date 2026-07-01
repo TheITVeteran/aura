@@ -146,6 +146,9 @@ MODEL_PATHS = {
     "Qwen2.5-32B-Instruct-8bit":  _CORTEX_PATH,
     "Qwen2.5-32B-Instruct-4bit":  BASE_DIR / "models" / "Qwen2.5-32B-Instruct-4bit",  # legacy
     "Qwen2.5-72B-Instruct-4bit":  _SOLVER_PATH,
+    "QwQ-32B-4bit":               BASE_DIR / "models" / "QwQ-32B-4bit",
+    "DeepSeek-R1-Distill-Qwen-32B-4bit": BASE_DIR / "models" / "DeepSeek-R1-Distill-Qwen-32B-4bit",
+    "DeepSeek-R1-Distill-Qwen-32B-8bit": BASE_DIR / "models" / "DeepSeek-R1-Distill-Qwen-32B-8bit",
     "Qwen3-72B-Instruct":         BASE_DIR / "models" / "Qwen3-72B-Instruct",
     "Qwen2.5-72B-Instruct-Q4":    BASE_DIR / "models" / "Qwen2.5-72B-Instruct-Q4",
 }
@@ -299,6 +302,9 @@ def get_model_path(model_name: str | None = None) -> str:
         "Qwen2.5-32B-Instruct-4bit":  "mlx-community/Qwen2.5-32B-Instruct-4bit",
         "Qwen2.5-72B-Instruct-4bit":  "mlx-community/Qwen2.5-72B-Instruct-4bit",
         "Qwen2.5-72B-Instruct-Q4":    "mlx-community/Qwen2.5-72B-Instruct-4bit",
+        "QwQ-32B-4bit":               "mlx-community/QwQ-32B-4bit",
+        "DeepSeek-R1-Distill-Qwen-32B-4bit": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit",
+        "DeepSeek-R1-Distill-Qwen-32B-8bit": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-MLX-8Bit",
     }
 
     local_path = MODEL_PATHS.get(name, BASE_DIR / "models" / name)
