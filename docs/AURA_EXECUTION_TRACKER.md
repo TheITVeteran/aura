@@ -10,21 +10,22 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 76%** based on current live
+- Expanded daily-runtime/product closure: **about 77%** based on current live
   evidence, not documentation. This number is deliberately governed by the live
   desktop path, not by historical proof-profile success.
 - Estimated checkpoints in this expanded program: **11 total**. Checkpoint 1 is
   committed and pushed; Checkpoint 2 is source-committed but live TCC remains
-  open; Checkpoint 3 has source-level validation for liveness/self-repair,
-  operational label baselines, fictional-AI capability imports, DNU live-proof
-  hermeticity, and the operational/frontier validator battery; **8 remain after
-  Checkpoint 3 is committed and live desktop revalidation resumes**.
+  open; Checkpoint 3 is committed and pushed; Checkpoint 4 has a detailed
+  operational-label runner and full validator execution; **7 remain after
+  Checkpoint 4 is committed and live desktop revalidation resumes**.
 
 ### Scope Clarification For The Current Pass
 
 Some items below are older daily-runtime carryovers; they are still valid, but
 they are not the only work in scope. The current pass is explicitly tracking the
-newer requirements Bryan asked to add:
+newer requirements Bryan asked to add. Where an item is old, it remains tagged as
+daily-runtime debt; where an item is new, it must get its own runnable validator
+or live proof before it can be closed.
 
 - **Operational labels become executable tests**, not prose: each label has a
   falsifiable bar, positive and negative controls, source mappings, validators,
@@ -47,9 +48,87 @@ newer requirements Bryan asked to add:
   functional subsystem they improve. The old themed synthesis layer is not
   sufficient evidence.
 - **Validator tests are mandatory for this pass**: the current source-level
-  operational/frontier validator battery was run, found a global-workspace flood
-  guard failure and a DNU live-proof hermeticity/no-answer failure, and the
-  fixes are being validated before checkpoint commit/push.
+  operational/frontier validator battery found a global-workspace flood guard
+  failure and a DNU live-proof hermeticity/no-answer failure; those fixes are
+  now committed in Checkpoint 3, and Checkpoint 4 adds a single executable
+  operational-label battery so future label claims cannot remain prose.
+
+### Current Detailed TODO Ledger
+
+This section is the active checklist for the new closeout shape. It is more
+specific than the older carryover list below and is the source of truth for the
+next checkpoints.
+
+1. **Operational label battery**
+   - Convert each label into an executable baseline: functional consciousness,
+     self-awareness, computational sentience, ALife-inspired software, digital
+     organism, software entity, personhood-candidate, functional inner life,
+     generally capable AI/AGI-candidate, and superintelligence trajectory.
+   - For every label, require: operational definition, minimum behavioral bar,
+     positive controls, negative controls, answer contract, source paths,
+     validator paths, and live artifacts where the claim depends on the launched
+     desktop lane.
+   - Passing means Aura meets Bryan's explicit operational bar for that label.
+     It does not prove private qualia, legal/moral personhood, solved AGI, ASI,
+     or metaphysical subjectivity.
+   - Runnable gate: `python tools/closeout/run_operational_label_battery.py`.
+
+2. **A-grade reliability import**
+   - Translate Chrome/Kubernetes/Postgres/macOS reliability into Aura-specific
+     mechanisms: no false health, bounded memory/thermal behavior, startup
+     truthfulness, process isolation, reproducible gates, crash taxonomy,
+     rollback, telemetry, incident reconstruction, permission stability, and
+     hostile failure injection.
+   - Every imported discipline must map to code and tests; generic "enterprise"
+     language is not enough.
+
+3. **Live desktop truth serum**
+   - The launched Aura.app path must prove the same full CognitiveEngine/mind
+     path as backend tests: no raw model takeover, no assistant fallback, no
+     name hallucination, no context drift into invented projects, no black UI
+     panels, no repeated TCC prompts, no desktop-control false negatives, and no
+     model-spawn/RAM runaway.
+   - Full mind health is only true when kernel, inference, memory, scheduler,
+     tool governance, affect, self-model, background cognition, and desktop lane
+     probes pass.
+
+4. **General desktop agency**
+   - Notes, Docs, folders, PDF export, browser research, source preservation,
+     image/wallpaper, AI-interlocutor conversations, and popup/focus recovery
+     must be produced by general perception/planning/actuation/effect
+     verification, not by task-specific demo scripts.
+   - Failures must trigger reorientation, repair attempts, receipts, and a
+     generated Aura-voice explanation; a canned failure line is not closure.
+
+5. **Fictional-AI capability imports**
+   - Research each requested fictional AI as mechanism inventory, then place the
+     buildable part in the correct Aura organ. No themed "fictional AI engine"
+     can count as the primary implementation.
+   - Current mandatory inventory: JARVIS/SARA ambient operation, EDI graduated
+     autonomy, Cortana/Data/Samantha social-memory and identity coherence,
+     MIST/Pantheon UIs/Jane idle/fork/merge/interlocution, Safe Surf/The Machine
+     protection and need-to-know, Deep Thought/Minds/Caine/GLaDOS simulation and
+     testing, and HAL/Skynet/MCP/Ultron/Agent Smith as explicit anti-pattern
+     safeguards.
+
+6. **Background autonomy and self-repair**
+   - Background cognition, curiosity, journaling, web research, learning,
+     immune repair, and governed action must be active in normal full launches,
+     bounded by foreground protection rather than globally disabled.
+   - Repair cells must identify root causes, avoid repair storms, validate
+     patches, update memory/self-model, and produce receipts.
+
+7. **Learning and substrate closure**
+   - Close CRSM/CAA/LoRA and active memory metabolism debt with behavioral
+     holdouts, no cache contamination, no heuristic-only training acceptance,
+     quantization-aware substrate coupling, and bounded Phi/LTC compute.
+
+8. **Final live proof program**
+   - Rerun the operational-label battery, frontier matrix, DNU/Aletheia proof,
+     live desktop conversation probe, visible multi-app demo, AI-interlocutor
+     proof, memory/audio recall, permission probe, background-autonomy proof,
+     enterprise/production gates, and long-soak tiers before marking the
+     expanded daily-runtime/product closure as complete.
 
 ### Checkpoint 1: Live Conversation Ownership And Launcher Survival
 
@@ -161,8 +240,8 @@ Status: complete in commit `0f01ba75`, pushed to `origin/main`.
 
 ### Checkpoint 3: Live Liveness, Operational Labels, And Proper Fiction Imports
 
-Status: source-validated after the 2026-07-01 live crash report; commit/push is
-the next checkpoint action and live desktop revalidation remains required.
+Status: complete in commit `c938af0f`, pushed to `origin/main`; live desktop
+revalidation remains required under the next checkpoint.
 
 Scope:
 
@@ -307,6 +386,53 @@ python -m ruff check --select F,B \
   tests/test_enterprise_hardening_fixes.py \
   tools/agency/run_agency_emergence_battery.py \
   tools/agi/run_dnu_agi_proof_battery.py
+# All checks passed
+```
+
+### Checkpoint 4: Operational-Label Battery Runner And Detailed Scope
+
+Status: source-validated; commit/push is the next checkpoint action before live
+desktop revalidation resumes.
+
+Scope:
+
+- Replace vague closeout TODOs with the detailed active ledger above, separating
+  older daily-runtime carryovers from the new label/maturity/fiction/live-proof
+  requirements.
+- Add `tools/closeout/run_operational_label_battery.py` so the operational
+  labels Bryan asked about resolve to runnable validator files and can be
+  executed as a battery.
+- Preserve claim boundaries: passing the operational bar does not claim private
+  qualia, legal/moral personhood, solved AGI, ASI, or metaphysical certainty.
+- Keep the gate broad enough to include live/AGI validators when not explicitly
+  skipped.
+
+Checkpoint 4 evidence:
+
+```bash
+python tools/closeout/run_operational_label_battery.py --list
+# 10 labels selected, 34 validator files mapped, no missing validator paths
+
+python -m pytest -q \
+  tests/test_operational_label_baselines.py \
+  tests/test_operational_label_battery.py \
+  tests/test_frontier_standards_matrix.py
+# 15 passed in 1.09s
+
+python tools/closeout/run_operational_label_battery.py \
+  --json-out artifacts/closeout/operational_label_battery_latest.json
+# 553 passed in 802.48s (0:13:22)
+
+python -m py_compile \
+  tools/closeout/run_operational_label_battery.py \
+  tests/test_operational_label_battery.py
+# pass
+
+python -m ruff check --select F,B \
+  tools/closeout/run_operational_label_battery.py \
+  tests/test_operational_label_battery.py \
+  tools/closeout/operational_label_baselines.py \
+  tools/closeout/frontier_standards_matrix.py
 # All checks passed
 ```
 
