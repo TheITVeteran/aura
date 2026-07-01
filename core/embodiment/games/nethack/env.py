@@ -30,7 +30,6 @@ class NetHackEnv:
             self.child.close(force=True)
             
         # Run nethack in a pseudo-terminal with a stable TERM and preserved PATH
-        import os
         merged_env = os.environ.copy()
         merged_env["TERM"] = "vt100"
         self.child = pexpect.spawn("/opt/homebrew/bin/nethack", encoding='utf-8', dimensions=(24, 80), env=merged_env)

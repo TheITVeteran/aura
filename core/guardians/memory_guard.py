@@ -41,7 +41,6 @@ class MemoryGuard:
     async def _watch_loop(self):
         import gc
         import time
-        from core.container import ServiceContainer
         
         base_threshold = self.threshold_percent
         adaptive_threshold = base_threshold

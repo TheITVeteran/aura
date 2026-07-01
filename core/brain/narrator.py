@@ -149,7 +149,7 @@ RESPONSE:
 # Service Registration
 def register_narrator_service():
     """Register the narrator service in the global container."""
-    from core.container import ServiceContainer, ServiceLifetime
+    from core.container import ServiceLifetime
     ServiceContainer.register(
         "narrator",
         factory=lambda: NarratorService(),

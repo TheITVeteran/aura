@@ -93,5 +93,4 @@ def get_lifespan_manager() -> LifespanManager:
     return _lifespan
 
 # Registration
-from core.container import ServiceContainer, ServiceLifetime
 ServiceContainer.register("lifespan_manager", get_lifespan_manager, ServiceLifetime.SINGLETON)

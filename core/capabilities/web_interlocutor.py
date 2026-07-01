@@ -329,27 +329,11 @@ class ChromeCDPDialogueBrowser:
             raise RuntimeError(f"Chrome CDP expression did not return JSON: {value[:200]}") from exc
 
     def _cdp_call(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        try:
-            import websocket
-        except ImportError as exc:
-            raise RuntimeError("websocket-client is required for Chrome CDP control") from exc
-        ws = websocket.create_connection(self._target_ws_url, timeout=self.timeout)
-        try:
-            message_id = 1
-            ws.send(json.dumps({"id": message_id, "method": method, "params": params}))
-            deadline = time.time() + self.timeout
-            while time.time() < deadline:
-                raw = ws.recv()
-                if not raw:
-                    continue
-                data = json.loads(raw)
-                if data.get("id") == message_id:
-                    if "error" in data:
-                        raise RuntimeError(str(data["error"]))
-                    return {"result": data}
-            raise TimeoutError(f"Timed out waiting for Chrome CDP method {method}")
-        finally:
-            ws.close()
+        # Raw websocket transport lives in the approved adapter layer so this
+        # capability never holds a raw environment sink directly.
+        from core.adapters.chrome_cdp_transport import cdp_call
+
+        return cdp_call(self._target_ws_url, method, params, timeout=self.timeout)
 
 
 class ChromeVisibleDialogueBrowser:

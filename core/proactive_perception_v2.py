@@ -146,7 +146,7 @@ class ProactivePerceptionV2:
                 fs = 16000
                 duration = 1.0
 
-                def _record_sync() -> np.ndarray:
+                def _record_sync(sd=sd, fs=fs, duration=duration) -> np.ndarray:
                     recording = sd.rec(
                         int(duration * fs), samplerate=fs, channels=1, dtype="int16"
                     )

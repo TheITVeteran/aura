@@ -296,7 +296,3 @@ class WelfareTransaction:
             return 0.0
         violations = sum(1 for r in recent if not r.truth_preserved)
         return violations / len(recent)
-
-    @classmethod
-    def reset(cls) -> None:
-        cls._all_records = []

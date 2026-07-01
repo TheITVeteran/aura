@@ -271,7 +271,6 @@ class PulseManager:
 
     async def trigger_immediate_vision_pulse(self, context: str):
         """Phase 18.1: Force an immediate sensory check due to peer attention spike."""
-        from core.container import ServiceContainer
         vision = ServiceContainer.get("vision_engine", default=None)
         if vision:
             logger.info("👁️ Pulse: Triggering Immediate Vision due to Resonance: %s", context)

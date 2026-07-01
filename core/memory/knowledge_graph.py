@@ -656,10 +656,11 @@ class PersistentKnowledgeGraph:
             if len(path) >= max_depth:
                 continue
                 
-            # Fetch neighbors in a thread-safe way
-            def _get_neighbors_sync():
+            # Fetch neighbors in a thread-safe way (bind current_id so the
+            # closure stays correct even if the call outlives this iteration)
+            def _get_neighbors_sync(node_id=current_id):
                 with self.safe_lock.acquire():
-                    return self.get_relationships(current_id, direction="outgoing")
+                    return self.get_relationships(node_id, direction="outgoing")
             
             rels = await asyncio.to_thread(_get_neighbors_sync)
 

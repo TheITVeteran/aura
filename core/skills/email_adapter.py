@@ -38,6 +38,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from core.being.body_state_service import BodyStateService
+from core.being.welfare_state import WelfareState
+from core.being.welfare_transaction import WelfareTransaction
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.skills.base_skill import BaseSkill
 
@@ -214,6 +217,59 @@ class EmailAdapterSkill(BaseSkill):
         return address
 
     @staticmethod
+    def _begin_welfare_transaction(params: EmailInput, auth: Any) -> WelfareTransaction | None:
+        try:
+            return WelfareTransaction.begin(
+                domain="tool_execution",
+                action=f"email_adapter.{params.mode}",
+                welfare_before=WelfareState.get().last_outputs,
+                body_before=BodyStateService.get().snapshot(),
+                predicted_welfare_delta={
+                    "distress": 0.03 if params.mode in {"send", "reply"} else 0.01
+                },
+                will_receipt_id=str(getattr(auth, "will_receipt_id", "") or ""),
+            )
+        except _EMAIL_RECOVERABLE_ERRORS as exc:
+            _record_email_degradation(
+                exc,
+                action="continued email operation without welfare transaction begin",
+                stage="welfare.begin",
+                severity="degraded",
+                extra={"mode": params.mode},
+            )
+            return None
+
+    @staticmethod
+    def _complete_welfare_transaction(
+        tx: WelfareTransaction | None,
+        result: dict[str, Any],
+        *,
+        mode: str,
+    ) -> None:
+        if tx is None:
+            return
+        try:
+            record = tx.complete(
+                outcome="success" if result.get("ok") else "failure",
+                welfare_after=WelfareState.get().last_outputs,
+                body_after=BodyStateService.get().snapshot(),
+                recovery_required=0.0 if result.get("ok") else 0.25,
+                error=str(result.get("error", ""))[:500],
+                integrity_preserved=True,
+                truth_preserved=True,
+                memory_safe=True,
+            )
+            result["welfare_transaction_id"] = record.tx_id
+        except _EMAIL_RECOVERABLE_ERRORS as exc:
+            _record_email_degradation(
+                exc,
+                action="continued email operation after welfare transaction completion failed",
+                stage="welfare.complete",
+                severity="degraded",
+                extra={"mode": mode, "ok": bool(result.get("ok"))},
+            )
+
+    @staticmethod
     def _finalize_authority(gateway: Any, auth: Any, *, success: bool, mode: str) -> dict[str, Any]:
         if gateway is None or auth is None:
             return {"authority_finalized": False, "authority_finalization_status": "not_started"}
@@ -275,6 +331,7 @@ class EmailAdapterSkill(BaseSkill):
             if not gateway.verify_tool_access("email_adapter", auth.capability_token_id):
                 return {"ok": False, "error": "Email authority token verification failed"}
 
+            welfare_tx = self._begin_welfare_transaction(params, auth)
             if params.mode == "send":
                 result = await self._handle_send(params)
             elif params.mode == "check":
@@ -287,6 +344,7 @@ class EmailAdapterSkill(BaseSkill):
                 result = await self._handle_search(params)
             else:
                 result = {"ok": False, "error": f"Unsupported email mode: {params.mode}"}
+            self._complete_welfare_transaction(welfare_tx, result, mode=params.mode)
             result.update(
                 self._finalize_authority(
                     gateway,
