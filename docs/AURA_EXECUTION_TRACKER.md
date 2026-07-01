@@ -95,9 +95,11 @@ Status: complete in commit `0f01ba75`, pushed to `origin/main`.
     conversation indistinguishable from a human. Each standard must map to
     source, validators, and live artifacts before it can be treated as closed.
 
-### Checkpoint 2 In Progress: Stable Permissions And Local Frontier Reasoning
+### Checkpoint 2: Stable Permissions And Local Frontier Reasoning
 
-Status: implementation and focused validation in progress; not yet committed.
+Status: source checkpoint committed and pushed in `5ac797c6`. The live macOS
+TCC grant remains open until the launched resident app reports Screen Recording
+and Accessibility ready through `/api/system/desktop-access`.
 
 - The installed app now has a stable local signing identity:
   `Authority=Aura Local Code Signing`, `bundle_identifier=com.aura.desktop`.
