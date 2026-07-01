@@ -8,7 +8,7 @@ Generated: `0.0`
 
 - Subsystems: 146
 - Python files: 2058
-- Python lines: 578750
+- Python lines: 578854
 - Dependency edges: 884
 - ServiceContainer `.get()` calls: 1670
 - ServiceContainer registrations: 409
@@ -20,7 +20,7 @@ Generated: `0.0`
 graph TD
     runtime["runtime<br/>113 files, 27399 lines"]
     utils["utils<br/>44 files, 6026 lines"]
-    brain["brain<br/>152 files, 57272 lines"]
+    brain["brain<br/>152 files, 57306 lines"]
     memory["memory<br/>93 files, 21990 lines"]
     consciousness["consciousness<br/>140 files, 65670 lines"]
     resilience["resilience<br/>54 files, 12572 lines"]
@@ -34,7 +34,7 @@ graph TD
     constitution["constitution<br/>1 files, 25 lines"]
     self_modification["self_modification<br/>32 files, 12043 lines"]
     senses["senses<br/>25 files, 5801 lines"]
-    security["security<br/>34 files, 7934 lines"]
+    security["security<br/>34 files, 7979 lines"]
     state["state<br/>6 files, 3716 lines"]
     executive["executive<br/>11 files, 3046 lines"]
     perception["perception<br/>23 files, 6729 lines"]
@@ -47,7 +47,7 @@ graph TD
     learning["learning<br/>31 files, 8644 lines"]
     skills["skills<br/>82 files, 23491 lines"]
     being["being<br/>26 files, 6193 lines"]
-    phases["phases<br/>29 files, 19509 lines"]
+    phases["phases<br/>29 files, 19534 lines"]
     reasoning["reasoning<br/>11 files, 4979 lines"]
     social["social<br/>19 files, 5145 lines"]
     tasks["tasks<br/>3 files, 451 lines"]
@@ -1055,13 +1055,13 @@ graph TD
 | Subsystem | Files | Lines | Bytes | Deps Out | Deps In |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | consciousness | 140 | 65670 | 2779959 | 43 | 31 |
-| brain | 152 | 57272 | 2463309 | 45 | 48 |
+| brain | 152 | 57306 | 2464796 | 45 | 48 |
 | core_root | 177 | 56831 | 2321274 | 101 | 0 |
 | runtime | 113 | 27399 | 982516 | 46 | 127 |
 | skills | 82 | 23491 | 976765 | 32 | 8 |
 | memory | 93 | 21990 | 893773 | 21 | 35 |
 | orchestrator | 43 | 19594 | 866611 | 132 | 9 |
-| phases | 29 | 19509 | 885897 | 35 | 7 |
+| phases | 29 | 19534 | 886960 | 35 | 7 |
 | agency | 45 | 16932 | 689891 | 33 | 20 |
 | adaptation | 27 | 12670 | 506593 | 22 | 14 |
 | resilience | 54 | 12572 | 507930 | 17 | 27 |
@@ -1070,7 +1070,7 @@ graph TD
 | learning | 31 | 8644 | 344807 | 16 | 8 |
 | environment | 82 | 8528 | 332940 | 11 | 2 |
 | autonomy | 23 | 8183 | 335291 | 18 | 6 |
-| security | 34 | 7934 | 318891 | 15 | 13 |
+| security | 34 | 7979 | 320721 | 15 | 13 |
 | conversation | 10 | 7412 | 275178 | 12 | 8 |
 | perception | 23 | 6729 | 271252 | 13 | 11 |
 | capabilities | 14 | 6409 | 246987 | 11 | 5 |

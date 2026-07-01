@@ -2987,3 +2987,53 @@ Estimate update:
 - Remaining smaller sub-checkpoints: 1.
 - Remaining work: clean-tree full final-proof rerun, final claims validation,
   artifact normalization, and clean-worktree closure.
+
+## Checkpoint 2026-06-30-21: Clean Final-Proof Closure
+
+Status: clean final-proof run completed successfully from the MLX-only runtime
+path.
+
+What passed:
+
+- Guarded pytest collection and autoload-safe collection.
+- Strict flagship readiness.
+- Enterprise and production gates.
+- Live desktop runtime proof on the 32B MLX path, including boot, cognitive
+  chat, continuity, desktop action evidence, restart, post-restart recall, and
+  clean shutdown with no runtime-stream failure markers.
+- DNU AGI proof battery: `100/100` tasks passed; run status complete.
+- DNU bundle validation.
+- Agency emergence boxed-entity battery.
+- Continual learning battery.
+- External live validation: `20/20` tasks passed.
+- Unified Aura scenario.
+- Novel-environment adaptation battery: `8/8` tasks passed.
+- Longevity proof-profile soak validation.
+- Receipt coverage validator: `433/433` receipts, zero broken chains, all
+  negative receipt/security tests passed.
+- Aletheia Tier 5 validation: `500` worlds, `30` domain families,
+  `tier5_operational_threshold_met`, zero forbidden-access violations, zero
+  fabricated completion claims, zero critical source-data destruction events.
+- Artifact consistency validator.
+- Final claim validator: `22` claims analyzed, passed with no unsupported
+  critical claim language findings.
+
+Evidence:
+
+- `make final-proof` returned `0`.
+- DNU scorecard: `total_pass=100`, `total_fail=0`, `overall_pass_rate=1.0`.
+- External validation scorecard: `passed_count=20`, `pass_rate=1.0`.
+- Aletheia validation: `passed=true`, `tier5_met=true`.
+- Longevity validator: `PASS`.
+- Receipt coverage: `passed=true`, `broken_chains=0`,
+  `negative_tests_passed=true`.
+- Artifact consistency: `passed=true`.
+- Final claims: `passed=true`.
+
+Estimate update:
+
+- Current closeout gate: 100%.
+- Remaining consolidated checkpoints for this closeout gate: 0.
+- Remaining smaller sub-checkpoints for this closeout gate: 0.
+- Remaining work: keep the worktree clean, commit, push, and only reopen a new
+  checkpoint if a new live-runtime defect or new scope is introduced.
