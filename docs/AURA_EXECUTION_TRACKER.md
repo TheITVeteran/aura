@@ -2920,3 +2920,28 @@ Estimate update:
 - Remaining smaller sub-checkpoints: 1.
 - Remaining work: clean-tree full final-proof rerun, final claims validation,
   artifact normalization, and clean-worktree closure.
+
+## Checkpoint 2026-06-30-19: Production-Surface Metadata Durability
+
+Status: production-surface lint passed with zero findings.
+
+What changed:
+
+- Routed all model-merge index and manifest writes through Aura's atomic writer.
+- Regenerated the tracked architecture map from the current MLX-only source.
+
+Evidence:
+
+- Model-merge suite: `9 passed`.
+- Production-surface lint: `passed=true`, `0` findings, `0` high/critical.
+- The clean-tree authority run passed collection, flagship, enterprise, and
+  production readiness before stopping at these metadata writes; the lint rule
+  was retained unchanged and now passes.
+
+Estimate update:
+
+- Overall closeout: 99.75%.
+- Remaining consolidated checkpoints: 1.
+- Remaining smaller sub-checkpoints: 1.
+- Remaining work: clean-tree full final-proof rerun through final claims,
+  artifact normalization, and clean-worktree closure.

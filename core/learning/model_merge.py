@@ -38,6 +38,8 @@ from typing import Any
 
 import numpy as np
 
+from core.runtime.atomic_writer import atomic_write_text
+
 logger = logging.getLogger("Aura.ModelMerge")
 
 StateDict = dict[str, np.ndarray]
@@ -362,7 +364,8 @@ def transplant_model_dirs_streaming(
             written_map[tensor] = shard
         save_file(shard_state, str(out / shard))
     index = _index_metadata(written_map)
-    (out / "model.safetensors.index.json").write_text(
+    atomic_write_text(
+        out / "model.safetensors.index.json",
         json.dumps(index, indent=2, sort_keys=True),
         encoding="utf-8",
     )
@@ -385,7 +388,11 @@ def transplant_model_dirs_streaming(
         "copied_artifacts": copied_artifacts,
         "note": "EVAL-GATE through the RSI gauntlet before promoting to the serving model.",
     }
-    (out / "merge_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    atomic_write_text(
+        out / "merge_manifest.json",
+        json.dumps(manifest, indent=2),
+        encoding="utf-8",
+    )
     logger.info(
         "🧬 Streaming transplant wrote %d tensors across %d shards → %s",
         written_tensors,
@@ -431,7 +438,11 @@ def merge_model_dirs(
         "copied_artifacts": copied,
         "note": "EVAL-GATE through the RSI gauntlet before promoting to the serving model.",
     }
-    (out / "merge_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    atomic_write_text(
+        out / "merge_manifest.json",
+        json.dumps(manifest, indent=2),
+        encoding="utf-8",
+    )
     logger.info("🧬 Merged %d tensors via %s → %s", len(merged), method, out)
     return manifest
 
