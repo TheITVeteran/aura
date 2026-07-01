@@ -849,6 +849,77 @@ def test_desktop_access_summary_explains_denied_current_native_bridge(monkeypatc
     assert payload["effective_app_identity"]["code_signature"]["stable_tcc_identity"] is False
     assert "screen_recording" in payload["blocking_permissions"]
     assert any("ad-hoc signed" in line for line in payload["desktop_access_diagnosis"])
+    assert payload["tcc_repair_plan"]["reason"] == "resident_bridge_denied_current_tcc_grants"
+
+
+def test_desktop_access_summary_reports_stale_tcc_repair_plan_for_stable_signed_denial(monkeypatch):
+    import core.security.permission_guard as permission_guard_module
+    from interface.routes import system as system_routes
+
+    class _Guard:
+        def current_process_identity(self):
+            return {
+                "pid": 789,
+                "bundle_identifier": "org.python.python",
+                "executable": str(Path.home() / ".aura/live-source/.venv/bin/python3"),
+            }
+
+        async def check_permission(self, ptype, force=False):
+            if ptype.name == "AUTOMATION":
+                return {"granted": True, "status": "active", "guidance": ""}
+            return {
+                "granted": False,
+                "status": "denied_native_bridge",
+                "guidance": "macOS denied resident bridge",
+                "native_bridge": True,
+                "bundle_identifier": "com.aura.desktop",
+            }
+
+        async def check_permission_direct(self, ptype):
+            result = await self.check_permission(ptype)
+            return {**result, "direct_probe": True}
+
+    monkeypatch.setattr(permission_guard_module, "get_permission_guard", lambda: _Guard())
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
+    monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (object(), None))
+    monkeypatch.setattr(
+        "core.security.native_desktop_bridge.probe_native_desktop_bridge",
+        lambda force=False: {
+            "ok": True,
+            "screen_recording": False,
+            "accessibility": False,
+            "automation": True,
+            "frontmost_app": "Aura",
+            "bundle_identifier": "com.aura.desktop",
+            "bridge_executable": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
+            "bridge_transport": "resident_ipc",
+            "code_signature": {
+                "identifier": "com.aura.desktop",
+                "authorities": ["Aura Local Code Signing"],
+                "team_identifier": "not set",
+                "stable_tcc_identity": True,
+            },
+        },
+    )
+
+    original_cache = dict(system_routes._desktop_access_cache)
+    system_routes._desktop_access_cache["captured_at"] = 0.0
+    system_routes._desktop_access_cache["payload"] = None
+    try:
+        payload = asyncio.run(system_routes._collect_desktop_access_summary())
+    finally:
+        system_routes._desktop_access_cache.update(original_cache)
+
+    assert payload["overall_status"] == "partial"
+    assert payload["permission_confidence"] == "blocked"
+    assert payload["effective_app_identity"]["code_signature"]["stable_tcc_identity"] is True
+    assert payload["blocking_permissions"] == ["screen_recording", "accessibility"]
+    assert any("macOS denies" in line for line in payload["desktop_access_diagnosis"])
+    repair = payload["tcc_repair_plan"]
+    assert repair["reason"] == "resident_bridge_denied_current_tcc_grants"
+    assert repair["bundle_identifier"] == "com.aura.desktop"
+    assert "tccutil reset ScreenCapture com.aura.desktop" in repair["commands"]
+    assert "tccutil reset Accessibility com.aura.desktop" in repair["commands"]
 
 
 def test_desktop_access_endpoint_returns_json_summary(monkeypatch):

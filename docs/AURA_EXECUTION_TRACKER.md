@@ -123,6 +123,11 @@ and Accessibility ready through `/api/system/desktop-access`.
   `protected_full_desktop` and still expects the full background runtime under
   the resource guard. Safe/protected launch is a memory/process protection
   posture, not a lesser foreground-only Aura.
+- Follow-up TCC repair fix: when the resident Aura.app bridge is stable and
+  reachable but macOS still denies Screen Recording or Accessibility, the live
+  desktop-access API now emits a machine-readable repair plan with the current
+  bundle id, reset commands, manual re-add steps, and verification endpoint
+  instead of looping on generic blocked permission copy.
 - Model lifecycle now knows local open-weight reasoning solver repos:
   `QwQ-32B-4bit`, `DeepSeek-R1-Distill-Qwen-32B-4bit`, and
   `DeepSeek-R1-Distill-Qwen-32B-8bit`.

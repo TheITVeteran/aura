@@ -1097,6 +1097,7 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
         "process_identity": {},
         "effective_app_identity": {},
         "desktop_access_diagnosis": [],
+        "tcc_repair_plan": {},
         "native_bridge_probe": {},
     }
     try:
@@ -1372,6 +1373,26 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
             diagnosis.append(
                 "The resident Aura.app bridge is reachable, but macOS denies the requested TCC grants for this exact app identity."
             )
+            bundle_identifier = str(native_bridge.get("bundle_identifier") or "com.aura.desktop")
+            bridge_executable = str(native_bridge.get("bridge_executable") or "/Applications/Aura.app/Contents/MacOS/aura-launcher")
+            payload["tcc_repair_plan"] = {
+                "reason": "resident_bridge_denied_current_tcc_grants",
+                "bundle_identifier": bundle_identifier,
+                "bridge_executable": bridge_executable,
+                "blocking_permissions": list(payload["blocking_permissions"]),
+                "commands": [
+                    f"tccutil reset ScreenCapture {bundle_identifier}",
+                    f"tccutil reset Accessibility {bundle_identifier}",
+                ],
+                "manual_steps": [
+                    "Quit Aura completely.",
+                    "Run the reset commands for the current Aura.app bundle identifier.",
+                    "Open /Applications/Aura.app.",
+                    "Approve Screen Recording and Accessibility when macOS prompts.",
+                    "If System Settings still shows Aura as enabled but the bridge is denied, remove the Aura row with the minus button and add /Applications/Aura.app again.",
+                ],
+                "verification_endpoint": "/api/system/desktop-access",
+            }
         if (
             payload.get("process_identity", {}).get("bundle_identifier") == "org.python.python"
             and payload.get("overall_status") != "ready"
