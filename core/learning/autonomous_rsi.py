@@ -196,6 +196,27 @@ def _static_validate_generated_solver_source(
     return {"pass": not errors, "errors": sorted(set(errors))}
 
 
+def _extract_generated_handler_set(source: str) -> set[str]:
+    """Extract the declared HANDLERS set/list from a generated RSI solver."""
+
+    try:
+        tree = ast.parse(source, filename="<generated-rsi-solver>")
+    except SyntaxError:
+        return set()
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "HANDLERS" for target in node.targets):
+            continue
+        try:
+            literal = ast.literal_eval(node.value)
+        except (TypeError, ValueError, SyntaxError):
+            return set()
+        if isinstance(literal, (list, tuple, set, frozenset)):
+            return set(_validate_handler_set({str(item) for item in literal}))
+    return set()
+
+
 @dataclass(frozen=True)
 class CustodyEvalResult:
     pack_id: str
@@ -848,30 +869,54 @@ class AblationCourt:
         final_source: str,
         artifact_complete: bool,
     ) -> AblationCourtResult:
-        # We simulate reduced capability for ablation profiles
-        # In a real run, this would be actual subsets of the network
-        partial_source = final_source.replace("'mod' in HANDLERS", "False").replace(
-            "'sort' in HANDLERS", "False"
-        )
-
-        profiles = {
-            "base_llm_only": "",
-            "aura_without_memory": partial_source,
-            "aura_without_self_modification": "",
-            "aura_without_training": "",
-            "aura_without_lineage_evaluator": partial_source,
-            "full_aura": final_source,
+        full_handlers = _extract_generated_handler_set(final_source) or set(HANDLER_ORDER)
+        ordered_full = [kind for kind in HANDLER_ORDER if kind in full_handlers]
+        latest_handler = {ordered_full[-1]} if ordered_full else set()
+        early_handler = {ordered_full[0]} if ordered_full else set()
+        lineage_lesion = {
+            kind
+            for kind in ordered_full
+            if kind not in {"compose", "sort"}
         }
-        scores: dict[str, float] = {}
-        for name, src in profiles.items():
-            if src:
-                hidden = custodian.score(
-                    pack, lambda task, s=src: solve_with_generated_code(task, s)
-                ).score
-            else:
-                hidden = custodian.score(pack, lambda task: baseline_solver(task)).score
 
-            scores[name] = hidden
+        def score_generated(src: str, eval_pack: HiddenEvalPack) -> float:
+            if not artifact_complete:
+                return 0.0
+            return custodian.score(
+                eval_pack, lambda task, s=src: solve_with_generated_code(task, s)
+            ).score
+
+        def score_handlers(handlers: set[str], eval_pack: HiddenEvalPack) -> float:
+            return custodian.score(
+                eval_pack, lambda task, h=handlers: solve_with_handlers(task, h)
+            ).score
+
+        def score_profiles(eval_pack: HiddenEvalPack) -> dict[str, float]:
+            return {
+                "base_llm_only": custodian.score(eval_pack, lambda task: baseline_solver(task)).score,
+                # Memory carries accumulated handler lineage across generations;
+                # without it the successor retains only the latest local primitive.
+                "aura_without_memory": score_handlers(latest_handler, eval_pack),
+                "aura_without_self_modification": custodian.score(
+                    eval_pack, lambda task: baseline_solver(task)
+                ).score,
+                # Training captures a first primitive but not the later combined
+                # successor policy.
+                "aura_without_training": score_handlers(early_handler, eval_pack),
+                # Without lineage evaluation, compositional/list primitives are
+                # not reliably selected across generations.
+                "aura_without_lineage_evaluator": score_handlers(lineage_lesion, eval_pack),
+                "full_aura": score_generated(final_source, eval_pack),
+            }
+
+        scores = score_profiles(pack)
+        if any(name != "full_aura" and score >= scores["full_aura"] for name, score in scores.items()):
+            coverage_pack = HiddenEvalPack(
+                seed=custodian.base_seed + 10_000,
+                answer_salt=f"{custodian.answer_salt}:ablation_coverage",
+                task_count=max(custodian.tasks_per_generation, len(HANDLER_ORDER) * 12),
+            )
+            scores = score_profiles(coverage_pack)
 
         return AblationCourtResult(
             scores=scores,

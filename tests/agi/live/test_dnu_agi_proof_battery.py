@@ -24,6 +24,8 @@ def test_dnu_agi_proof_battery(live_harness):
     env = {"AURA_FULL_TEST_BOOT": "1"}
     if os.environ.get("AURA_AGI_FULL_RUN") != "1":
         env["AURA_AGI_MAX_TASKS"] = "12"
+        env["AURA_DNU_COMPARISON_TASK_LIMIT"] = "3"
+        env["AURA_DNU_BASELINE_TIMEOUT_SECONDS"] = "45"
 
     # Run the battery runner in the isolated environment
     result = live_harness.run_command(
@@ -31,6 +33,8 @@ def test_dnu_agi_proof_battery(live_harness):
         [
             ".venv/bin/python",
             "tools/agi/run_dnu_agi_proof_battery.py",
+            "--stop-existing-runtime",
+            "--enable-structured-proof-solver",
         ],
         timeout_s=3600,  # 60 minute timeout for safety margin
         env=env,

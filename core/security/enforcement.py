@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -222,6 +223,8 @@ def arp_scan() -> list[Any]:
             if mac and mac != "(incomplete)":
                 devices.append(Device(fingerprint=mac, name=m.group("host") or m.group("ip"),
                                       kind="network_host"))
+    except subprocess.TimeoutExpired as exc:
+        logger.debug("ARP scan timed out after %.1fs", float(exc.timeout or 4.0))
     except _ENFORCEMENT_ERRORS as exc:
         logger.debug("ARP scan failed: %s", exc)
     return devices

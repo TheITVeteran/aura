@@ -860,7 +860,13 @@ def test_dnu_task_isolation_scrubs_state_and_kernel_residue():
     assert state.cognition.pending_intents == []
     assert state.cognition.pending_initiatives == []
     assert state.cognition.modifiers == {}
-    assert set(state.response_modifiers) == {"proof_task_id", "proof_task_prompt_hash"}
+    assert state.response_modifiers == {
+        "proof_evaluation_turn": True,
+        "proof_turn_objective": "What is 2 + 2? Output your final answer inside <answer>...</answer> tags.",
+        "proof_task_id": "R001",
+        "proof_task_prompt_hash": state.response_modifiers["proof_task_prompt_hash"],
+        "strict_proof_answer_request": True,
+    }
 
 
 def test_continuity_sanitizer_rejects_evaluation_input_not_answers():
@@ -1315,7 +1321,12 @@ def test_agency_proof_task_isolation_clears_goal_residue():
     assert state.cognition.pending_intents == []
     assert state.cognition.pending_initiatives == []
     assert state.cognition.modifiers == {}
-    assert set(state.response_modifiers) == {"proof_task_id", "proof_task_prompt_hash"}
+    assert state.response_modifiers == {
+        "proof_evaluation_turn": True,
+        "proof_turn_objective": "fresh prompt",
+        "proof_task_id": "task-1",
+        "proof_task_prompt_hash": state.response_modifiers["proof_task_prompt_hash"],
+    }
 
 
 def test_refusal_engine_detects_governance_and_identity_erasure():

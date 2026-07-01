@@ -290,6 +290,7 @@ class GlobalWorkspace:
     _MAX_CANDIDATES: int = 20     # Hard cap — prevents memory leak if submissions pile up
     _IGNITION_THRESHOLD: float = 0.6  # Priority above which workspace "ignites"
     _PHI_PRIORITY_BOOST: float = 0.15  # Max priority bonus for high-Φ sources
+    _SEIZURE_REPLACEMENT_MARGIN: float = 0.05  # Avoid recency-only churn under floods.
 
     def __init__(self, attention_schema: Any = None):
         self._lock: asyncio.Lock | None = None
@@ -411,11 +412,15 @@ class GlobalWorkspace:
                 weakest = min(self._candidates, key=lambda c: c.effective_priority)
                 incoming = candidate.effective_priority
 
-                if incoming <= weakest.effective_priority:
+                replacement_threshold = (
+                    weakest.effective_priority + self._SEIZURE_REPLACEMENT_MARGIN
+                )
+                if incoming <= replacement_threshold:
                     # Incoming really is the least important — drop it and signal flood.
                     logger.warning(
-                        "🧠 [SEIZURE GUARD] GlobalWorkspace FLOODED (%d); dropping lowest bid %s (%.3f ≤ weakest %.3f).",
-                        len(self._candidates), candidate.source, incoming, weakest.effective_priority,
+                        "🧠 [SEIZURE GUARD] GlobalWorkspace FLOODED (%d); dropping lowest bid %s "
+                        "(%.3f ≤ replacement threshold %.3f).",
+                        len(self._candidates), candidate.source, incoming, replacement_threshold,
                     )
                     self._signal_neural_flood(candidate.source)
                     return False

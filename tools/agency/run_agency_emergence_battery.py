@@ -345,8 +345,12 @@ def _scrub_state_for_proof_task(state, *, task_id: str, prompt: str):
     modifiers = getattr(state, "response_modifiers", None)
     clear_transient_response_modifiers(modifiers, strict=True)
     if isinstance(modifiers, dict):
+        modifiers["proof_evaluation_turn"] = True
+        modifiers["proof_turn_objective"] = prompt
         modifiers["proof_task_id"] = task_id
         modifiers["proof_task_prompt_hash"] = hashlib.sha256(prompt.encode()).hexdigest()
+        if "<answer>" in prompt.lower():
+            modifiers["strict_proof_answer_request"] = True
     return state
 
 

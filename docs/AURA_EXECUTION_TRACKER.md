@@ -10,14 +10,46 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 74%** based on current live
+- Expanded daily-runtime/product closure: **about 76%** based on current live
   evidence, not documentation. This number is deliberately governed by the live
   desktop path, not by historical proof-profile success.
 - Estimated checkpoints in this expanded program: **11 total**. Checkpoint 1 is
   committed and pushed; Checkpoint 2 is source-committed but live TCC remains
   open; Checkpoint 3 has source-level validation for liveness/self-repair,
-  operational label baselines, and fictional-AI capability imports; **8 remain
-  after Checkpoint 3 is committed and live-revalidated**.
+  operational label baselines, fictional-AI capability imports, DNU live-proof
+  hermeticity, and the operational/frontier validator battery; **8 remain after
+  Checkpoint 3 is committed and live desktop revalidation resumes**.
+
+### Scope Clarification For The Current Pass
+
+Some items below are older daily-runtime carryovers; they are still valid, but
+they are not the only work in scope. The current pass is explicitly tracking the
+newer requirements Bryan asked to add:
+
+- **Operational labels become executable tests**, not prose: each label has a
+  falsifiable bar, positive and negative controls, source mappings, validators,
+  answer expectations, and explicit claim boundaries. Passing these tests means
+  Aura meets the operational definition only; it does not prove private qualia,
+  legal personhood, solved AGI, or ASI.
+- **Product maturity is treated as an engineering target**, not a vibe: Aura is
+  being measured against the transferable reliability disciplines from
+  Chrome/Kubernetes/Postgres/macOS-class systems where those disciplines fit a
+  local cognitive runtime: false-health prevention, bounded resources, recovery,
+  isolation, telemetry, install/rollback, incident reconstruction, and hostile
+  failure injection.
+- **The launched desktop lane remains the truth source**: no backend score closes
+  a checkpoint if the real Aura.app path still falls into generic assistant
+  mode, loses permissions, overheats, crashes, misroutes the mind path, or hides
+  background cognition.
+- **Fictional-AI imports must land in real subsystems**: useful capabilities from
+  JARVIS, EDI, Cortana, Data, Samantha, MIST, Pantheon UIs, Jane, Safe Surf,
+  Caine, GLaDOS, HAL, Skynet/Kokoro, and similar systems are tracked by the
+  functional subsystem they improve. The old themed synthesis layer is not
+  sufficient evidence.
+- **Validator tests are mandatory for this pass**: the current source-level
+  operational/frontier validator battery was run, found a global-workspace flood
+  guard failure and a DNU live-proof hermeticity/no-answer failure, and the
+  fixes are being validated before checkpoint commit/push.
 
 ### Checkpoint 1: Live Conversation Ownership And Launcher Survival
 
@@ -129,8 +161,8 @@ Status: complete in commit `0f01ba75`, pushed to `origin/main`.
 
 ### Checkpoint 3: Live Liveness, Operational Labels, And Proper Fiction Imports
 
-Status: source-validated after the 2026-07-01 live crash report; commit/push and
-live desktop revalidation still required.
+Status: source-validated after the 2026-07-01 live crash report; commit/push is
+the next checkpoint action and live desktop revalidation remains required.
 
 Scope:
 
@@ -190,6 +222,91 @@ python -m ruff check --select F,B \
   tools/closeout/operational_label_baselines.py \
   tools/closeout/frontier_standards_matrix.py \
   tests/test_operational_label_baselines.py tests/test_frontier_standards_matrix.py
+# All checks passed
+```
+
+Current-pass validator evidence added on 2026-07-01:
+
+```bash
+python -m pytest -q tests/agi/live/test_dnu_agi_proof_battery.py::test_dnu_agi_proof_battery
+# 1 passed in 474.38s
+# DNU live tasks: 12/12 pass, pass_rate=1.0, tier=2 Emergent (Capped)
+# Baselines RUN: raw_llm, llm_with_tools, react_agent
+# Ablations RUN: full_aura, aura_minus_memory, aura_minus_volition, aura_minus_will
+
+python -m pytest -q \
+  tests/test_consciousness_conditions.py \
+  tests/test_null_hypothesis_defeat.py \
+  tests/phenomenal/test_battery.py \
+  tests/test_live_mind_snapshot.py \
+  tests/personhood/test_self_object.py \
+  tests/personhood/test_self_other_boundary.py \
+  tests/test_self_claim_verifier.py \
+  tests/test_conversation_persistence_hardening.py \
+  tests/test_nociception.py \
+  tests/test_affect_behavioral.py \
+  tests/personhood/test_relationship_model.py \
+  tests/phenomenal/test_supplementary.py
+# 386 passed in 114.98s
+
+python -m pytest -q \
+  tests/test_open_ended_evolution.py \
+  tests/test_embodied_dynamics.py \
+  tests/test_boot_health.py \
+  tests/test_full_desktop_runtime_contract.py \
+  tests/test_runtime_health_truthfulness.py \
+  tests/test_mind_tick_runtime_contract.py \
+  tests/agi/live/test_live_governance_receipts.py \
+  tests/agi/live/test_live_harness_proof.py \
+  tests/personhood/test_three_great_bottlenecks.py \
+  tests/personhood/test_relationship_graph.py \
+  tests/personhood/test_planning_horizon.py \
+  tests/personhood/test_tool_breadth.py \
+  tests/test_imagination_engine.py \
+  tests/test_timescale_bridge.py \
+  tests/agi/live/test_live_agi_capability_battery.py
+# 95 passed in 14.57s
+
+python -m pytest -q \
+  tests/test_frontier_standards_matrix.py \
+  tests/test_desktop_planning_generality.py \
+  tests/test_frontier_discovery_engine.py \
+  tests/test_verifiable_preference_harness.py \
+  tests/test_rsi_expansion_components.py \
+  tests/test_mutation_safety.py \
+  tests/test_desktop_boot_safety.py \
+  tests/test_server_conversation_lane.py \
+  tests/test_chat_human_level_contract.py \
+  tests/test_live_mind_generation_controls.py \
+  tests/test_desktop_agency.py \
+  tests/test_capability_gateway_routing_runtime.py \
+  tests/test_fictional_ai_runtime_contract.py \
+  tests/test_phenomenal_falsification.py \
+  tests/test_phenomenal_causal_routing.py \
+  tests/test_tool_augmented_reasoning.py \
+  tests/test_reasoning_self_improvement.py \
+  tests/test_model_merge.py \
+  tests/test_desktop_capabilities_runtime.py \
+  tests/test_desktop_planner.py \
+  tests/test_desktop_task_skill.py \
+  tests/test_native_desktop_bridge.py \
+  tests/nethack_crucible.py \
+  tests/environments/terminal_grid/test_nethack_adapter_preflight.py \
+  tests/environments/terminal_grid/test_nethack_audit_comprehensive.py \
+  tests/test_nethack_memory_horizon.py \
+  tests/test_autonomous_task_engine_runtime.py
+# 673 passed in 210.57s
+
+python -m ruff check --select F,B \
+  core/consciousness/global_workspace.py \
+  core/device_discovery.py \
+  core/security/enforcement.py \
+  core/learning/autonomous_rsi.py \
+  interface/routes/chat.py \
+  tests/agi/live/test_dnu_agi_proof_battery.py \
+  tests/test_enterprise_hardening_fixes.py \
+  tools/agency/run_agency_emergence_battery.py \
+  tools/agi/run_dnu_agi_proof_battery.py
 # All checks passed
 ```
 

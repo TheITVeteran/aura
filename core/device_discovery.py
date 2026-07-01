@@ -17,6 +17,7 @@ import platform
 import posixpath
 import re
 import socket
+import subprocess
 import time
 from typing import Any
 
@@ -57,7 +58,14 @@ class EnhancedDeviceScanner:
         )
         try:
             receipt = asyncio.run(get_orchestrator().run(proposal))
-        except (OSError, RuntimeError, ValueError) as exc:
+        except subprocess.TimeoutExpired as exc:
+            logger.debug(
+                "%s timed out after %.1fs; treating local device scan as unavailable",
+                context,
+                float(exc.timeout or timeout),
+            )
+            return None
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
             record_degradation('device_discovery', exc)
             logger.warning("%s unavailable or denied: %s", context, exc)
             return None

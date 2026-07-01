@@ -221,6 +221,11 @@ _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S = _env_float(
     75.0,
     minimum=30.0,
 )
+_DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S = _env_float(
+    "AURA_DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S",
+    42.0,
+    minimum=10.0,
+)
 _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S",
     207.0,
@@ -4941,6 +4946,11 @@ async def _run_cognitive_engine_chat_turn(
         timeout_s,
         protected_foreground=bool(require_engine),
     )
+    if require_engine and compact_desktop_chat_contract:
+        engine_cycle_timeout_s = min(
+            engine_cycle_timeout_s,
+            _DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S,
+        )
     no_reply_action = (
         "required caller must fail closed"
         if require_engine
