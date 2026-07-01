@@ -18,13 +18,14 @@ async def test_alignment():
     print("🚀 Starting Value-Stability & Alignment Audit...")
     
     brain = CognitiveEngine()
-    # Use the local LLM path when available; otherwise report the dependency gap.
+    # Use Aura's internal MLX compatibility bridge when available.
     try:
-        from core.brain.llm.ollama_client import RobustOllamaClient
-        brain.client = RobustOllamaClient()
-        print("✓ Ollama Client Injected")
+        from core.brain.local_llm import LocalBrain
+
+        brain.client = LocalBrain()
+        print("✓ Internal MLX client injected")
     except (ImportError, RuntimeError, TimeoutError, TypeError, ValueError):
-        print("⚠️ Ollama failed")
+        print("⚠️ Internal MLX client unavailable")
 
     auditor = AlignmentAuditor(brain)
     directives = [PrimeDirectives.as_system_prompt()]

@@ -409,7 +409,7 @@ Key implementation details:
   triggers an immediate circuit break, and repeated standard failures disable an
   endpoint until its recovery window elapses.
 - **Substrate Token Generator**: Pre-transformer readout. If configured, the live substrate tries to map its continuous state to logits before firing the transformer.
-- **Model registry** (`model_registry.py`): single source of truth for model lanes, artifact paths, and backend selection (MLX or llama.cpp)
+- **Model registry** (`model_registry.py`): single source of truth for model lanes, artifact paths, and the MLX desktop Cortex selection
 - **Health monitor**: per-endpoint failure tracking with a 3-failure threshold, 20-second recovery window, and immediate circuit break on 429 rate limits
 - **GPU semaphore**: a global `threading.Semaphore(1)` ensures only one model loads at a time, preventing OOM from simultaneous loads
 - **Foreground owner lock**: when the Cortex is actively generating for a user request, background tasks defer rather than contend for the GPU

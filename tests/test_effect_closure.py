@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import numpy as np
@@ -243,3 +244,30 @@ async def test_self_model_deferred_update_persists_inside_governed_scope(service
     assert snapshot.summary == "deferred update executive_closure"
     assert model.pending_updates
     assert (tmp_path / "self_model.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_self_model_runtime_lesson_persists_inside_local_governance(
+    service_container, monkeypatch, tmp_path
+):
+    _live_runtime(service_container)
+    from core.self_model import SelfModel
+
+    target = tmp_path / "self_model.json"
+    monkeypatch.setattr("core.self_model.DATA_FILE", target)
+
+    model = SelfModel(id="self-runtime-lesson")
+    snap = model.record_runtime_lesson(
+        source="boot_probe",
+        lesson="boot probe observed a recoverable runtime event",
+        confidence=0.8,
+        evidence={"event": "probe"},
+    )
+
+    for _ in range(50):
+        if target.exists():
+            break
+        await asyncio.sleep(0.01)
+
+    assert snap.summary == "runtime lesson from boot_probe"
+    assert target.exists()

@@ -11,11 +11,11 @@ class ContextPruner:
         self.tiers = {
             "gemini": 1000000, # 1M context
             "mistral": 32768,
-            "llama3": 8192,
+            "compact": 8192,
             "reflex": 1024
         }
 
-    def prune_context(self, history: List[Dict[str, str]], tier: str = "llama3") -> List[Dict[str, str]]:
+    def prune_context(self, history: List[Dict[str, str]], tier: str = "compact") -> List[Dict[str, str]]:
         """Prunes historical context based on the current model tier, retaining a 'fading echo' via summarization."""
         history = list(history or [])
         limit = self.tiers.get(tier, 8192)
@@ -40,7 +40,7 @@ class ContextPruner:
         if tier == "reflex":
             keep_msgs = history[-2:]
             pruned_msgs = history[1:-2] if system_prompt else history[:-2]
-        elif tier == "llama3":
+        elif tier == "compact":
             keep_msgs = history[-10:]
             pruned_msgs = history[1:-10] if system_prompt else history[:-10]
         else:

@@ -24,7 +24,7 @@ def _default_store() -> Path:
         from core.config import config
 
         return Path(config.paths.data_dir) / "verifiable_preferences.jsonl"
-    except Exception:
+    except (ImportError, AttributeError, TypeError, OSError):
         return Path.home() / ".aura" / "data" / "verifiable_preferences.jsonl"
 
 
@@ -33,7 +33,7 @@ def _default_model() -> Path:
         from core.brain.llm.model_registry import get_model_path
 
         return Path(get_model_path())
-    except Exception:
+    except (ImportError, AttributeError, TypeError, OSError):
         return Path("models/Aura-32B")
 
 

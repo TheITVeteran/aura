@@ -78,7 +78,7 @@ boot picks it up automatically.
 | `AURA_DEEP_MODEL` | auto-detected (72B) | Solver model for deep reasoning |
 | `AURA_BRAINSTEM_MODEL` | `Qwen2.5-7B-Instruct-4bit` | Fast fallback |
 | `AURA_FALLBACK_MODEL` | `Qwen2.5-1.5B-Instruct-4bit` | CPU emergency fallback |
-| `AURA_LOCAL_BACKEND` | `llama_cpp` | `mlx` or `llama_cpp` |
+| `AURA_LOCAL_BACKEND` | `mlx` | Internal MLX runtime. Live Aura always uses this path. |
 | `AURA_SUBSTRATE_PRIMARY` | `1` | Try substrate token readout before transformer fallback |
 | `AURA_SUBSTRATE_DIM` | `64` | Continuous substrate dimension, clamped to 16-512 |
 | `AURA_ONLINE_LORA` | `1` | Enable governed reflection-to-LoRA update attempts |
@@ -106,10 +106,11 @@ checks hit `/api/health`.
   32B 8-bit needs ~20 GB of GPU RAM. On lower-memory machines set
   `AURA_MODEL=Qwen2.5-7B-Instruct-4bit`.
 - **Model won't load.** Make sure `mlx-lm` is installed
-  (`pip install mlx-lm`). On the llama.cpp backend, the GGUF files
-  should be in `models_gguf/`.
+  (`pip install mlx-lm`). Normal desktop/runtime operation uses the
+  internal MLX Cortex so Aura's substrate can steer the live model path.
 - **Port in use.** Kill stray Aura processes: `pkill -f aura_main`.
 - **Model load hangs.** Only one model loads at a time through the GPU
   semaphore. If it's stuck, check for zombie MLX worker processes.
-- **Backend choice.** `AURA_LOCAL_BACKEND=mlx` for MLX (recommended on
-  Apple Silicon), `llama_cpp` for GGUF.
+- **Backend choice.** Keep `AURA_LOCAL_BACKEND=mlx` for live Aura. The desktop
+  Cortex is the in-process MLX lane so Aura's substrate, memory, affect, and
+  response gates steer the same model path that speaks to the user.

@@ -1,6 +1,4 @@
-"""Local Agentic Client.
-Enables 'Tool Use' and 'Reasoning Loops' using purely local models.
-"""
+"""Local agentic client backed by Aura's internal MLX inference path."""
 
 from __future__ import annotations
 
@@ -11,9 +9,8 @@ import re
 from datetime import datetime
 from typing import Any
 
+from core.brain.local_llm import LocalBrain
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
-
-from .ollama_client import RobustOllamaClient
 
 logger = logging.getLogger("LLM.LocalAgent")
 
@@ -70,15 +67,13 @@ def _emit_agent_event(title: str, content: str, *, level: str = "info") -> bool:
         return False
 
 
-class LocalAgentClient(RobustOllamaClient):
-    """An advanced wrapper for Ollama that supports 'ReAct' (Reasoning + Acting).
-    It parses raw text to find tool commands.
-    """
+class LocalAgentClient(LocalBrain):
+    """ReAct-style tool loop on top of Aura's internal model lane."""
 
     def __init__(
-        self, model: str = "llama3.1", tools: dict[str, Any] | None = None, adapter=None, **kwargs
+        self, model: str = "aura-local-agent", tools: dict[str, Any] | None = None, adapter=None, **kwargs
     ):
-        super().__init__(model=model, **kwargs)
+        super().__init__(model_name=model, **kwargs)
         self.tools = tools or {}
         self.adapter = adapter
 
@@ -243,11 +238,17 @@ class LocalAgentClient(RobustOllamaClient):
                 "temperature": 0.7,
             }
             try:
-                response_text = await self.generate(
+                generated = await self.generate(
                     history,
                     system_prompt=reinforced_system,
                     options=options,
                 )
+                if isinstance(generated, dict):
+                    response_text = str(generated.get("response") or "").strip()
+                    if not response_text and generated.get("error"):
+                        raise RuntimeError(str(generated["error"]))
+                else:
+                    response_text = str(generated or "").strip()
             except asyncio.CancelledError:
                 raise
             except _LOCAL_AGENT_RECOVERABLE_ERRORS as exc:
@@ -263,8 +264,6 @@ class LocalAgentClient(RobustOllamaClient):
                     "reasoning": [f"Local model generation failed: {type(exc).__name__}"],
                     "error": str(exc),
                 }
-            response_text = str(response_text or "").strip()
-
             # --- 🛑 CIRCUIT BREAKER INJECTION ---
             try:
                 from core.resilience.circuit_breaker import loop_killer

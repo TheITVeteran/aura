@@ -1,7 +1,7 @@
 """core/brain/llm/provider_contract.py — Model Provider Contract.
 
 Exposes standard specifications, metadata, capabilities, resource costs,
-and health checks for all LLM backends (MLX, Ollama, llama.cpp, Gemini).
+and health checks for model providers used by Aura's routed inference lanes.
 """
 
 from __future__ import annotations

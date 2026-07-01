@@ -21,14 +21,7 @@ def test_optional_startup_validation_uses_spec_discovery_for_native_packages(mon
 
     monkeypatch.setattr(importlib, "import_module", guarded_import_module)
     monkeypatch.setattr(validator.importlib.util, "find_spec", fake_find_spec)
-    monkeypatch.setattr(
-        "core.brain.llm.model_registry.get_local_backend",
-        lambda: "llama_cpp",
-    )
-    monkeypatch.setattr(
-        "core.brain.llm.model_registry.find_llama_server_bin",
-        lambda: "/usr/local/bin/llama-server",
-    )
+    monkeypatch.setattr("core.brain.llm.model_registry.get_local_backend", lambda: "mlx")
 
     results = validator.check_optional_packages()
     by_name = {result.name: result for result in results}

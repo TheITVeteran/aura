@@ -165,3 +165,44 @@ def test_reddit_adapter_safe_close_records_browser_teardown_failure():
         tracker.reset()
 
     asyncio.run(scenario())
+
+
+def test_reddit_login_reads_credentials_off_event_loop(monkeypatch):
+    async def scenario():
+        from core.skills import reddit_adapter
+
+        skill = RedditAdapterSkill()
+        calls = []
+
+        class Page:
+            async def content(self):
+                return "<html><body>logged out</body></html>"
+
+        class Browser:
+            page = Page()
+
+            async def browse(self, url):
+                calls.append(("browse", url))
+
+        def get_creds():
+            calls.append(("creds", "called"))
+            raise RuntimeError("credentials missing")
+
+        async def fake_to_thread(fn, *args, **kwargs):
+            calls.append(("to_thread", getattr(fn, "__name__", "")))
+            return fn(*args, **kwargs)
+
+        async def fake_sleep(_seconds):
+            calls.append(("sleep", "skipped"))
+
+        monkeypatch.setattr(skill, "_get_creds", get_creds)
+        monkeypatch.setattr(reddit_adapter.asyncio, "to_thread", fake_to_thread)
+        monkeypatch.setattr(reddit_adapter.asyncio, "sleep", fake_sleep)
+
+        result = await skill._ensure_logged_in(Browser())
+
+        assert result is False
+        assert ("to_thread", "get_creds") in calls
+        assert ("creds", "called") in calls
+
+    asyncio.run(scenario())

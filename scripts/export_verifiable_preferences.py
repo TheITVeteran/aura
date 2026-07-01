@@ -25,7 +25,7 @@ def _default_store() -> Path:
         from core.config import config
 
         return Path(config.paths.data_dir) / "verifiable_preferences.jsonl"
-    except Exception:
+    except (ImportError, AttributeError, TypeError, OSError):
         return Path.home() / ".aura" / "data" / "verifiable_preferences.jsonl"
 
 

@@ -1,9 +1,9 @@
-"""Intelligent LLM Router - Multi-tier failover with local models
+"""Intelligent LLM Router - Multi-tier routing for Aura's internal model lanes.
 
 Routing Priority:
 1. Substrate readout for low-error stateful continuations.
 2. Local powerful model (Qwen/Cortex lane) for high-coherence language work.
-3. External/API solver lanes when explicitly configured or required.
+3. Direct client solver lanes when explicitly configured or required.
 4. Emergency rule-based fallback when model endpoints are unavailable.
 
 Never fails. Always has a working brain.
@@ -19,7 +19,6 @@ from collections import OrderedDict
 from enum import StrEnum
 from typing import Any
 
-import httpx
 from pydantic import BaseModel, ConfigDict
 
 from core.brain.llm.model_registry import (
@@ -33,10 +32,9 @@ from core.brain.llm.runtime_wiring import (
     prepare_runtime_payload,
     should_force_tool_handoff,
 )
+from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker
-from core.runtime.errors import FallbackClassification, Severity, record_degradation
-from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Brain.Router")
 
@@ -50,7 +48,6 @@ ROUTER_RECOVERABLE_ERRORS = (
     TimeoutError,
     TypeError,
     ValueError,
-    httpx.HTTPError,
 )
 
 FATAL_BACKEND_PATTERNS = (
@@ -205,7 +202,7 @@ class LLMHealthMonitor:
                 if is_shutdown_requested():
                     return
                 try:
-                    loop = asyncio.get_running_loop()
+                    asyncio.get_running_loop()
                 except RuntimeError:
                     logger.debug(
                         "LLMHealthMonitor: no running loop for endpoint health event %s/%s.",
@@ -284,224 +281,119 @@ class LLMHealthMonitor:
 
 
 class LocalLLMAdapter:
-    """Adapter for local LLM servers (vLLM, llama.cpp, etc.)"""
-    
+    """Adapter for Aura's internal MLX inference lane."""
+
     def __init__(self, endpoint: LLMEndpoint):
         self.endpoint = endpoint
-    
+
     async def _get_context_headers(self) -> str:
-        """Fetch mood, state, and memory context for prompt augmentation (Issue 74)."""
+        """Fetch mood, state, and memory context for prompt augmentation."""
         from core.container import get_container
-        context_parts = []
-        
+
+        context_parts: list[str] = []
         try:
             container = get_container()
-            # 1. Add State Context (Full AuraState summary)
             repo = container.get("state_repo", default=None)
             if repo:
                 state = await repo.get_current()
                 if state:
-                    context_parts.append(f"Cognitive Mode: {state.cognition.current_mode.name} (v{state.version})")
-            
-            # 2. Add Mood context
+                    context_parts.append(
+                        f"Cognitive Mode: {state.cognition.current_mode.name} (v{state.version})"
+                    )
             substrate = container.get("liquid_substrate", default=None)
             if substrate:
                 mood = substrate.get_summary()
                 if mood:
                     context_parts.append(f"Affective State: {mood}")
-            
-            # 3. Add Memory hooks
             vault = container.get("memory", default=None)
             if vault:
                 recent = vault.memories[-3:] if hasattr(vault, "memories") else []
                 if recent:
-                    snippet = " | ".join([str(m) for m in recent])
-                    context_parts.append(f"Recent Memories: {snippet}")
-        except ROUTER_RECOVERABLE_ERRORS as e:
+                    context_parts.append("Recent Memories: " + " | ".join(str(m) for m in recent))
+        except ROUTER_RECOVERABLE_ERRORS as exc:
             _record_router_degradation(
-                e,
-                action="continued local LLM call without optional substrate or memory context",
+                exc,
+                action="continued internal MLX router call without optional substrate or memory context",
                 severity="debug",
                 extra={"endpoint": self.endpoint.name},
             )
-            logger.debug("Context injection failed: %s", e)
-            
+            logger.debug("Context injection failed: %s", exc)
+
         if not context_parts:
             return ""
-        
-        inner = "\n".join(context_parts)
-        return f"<system_state>\n{inner}\n</system_state>\n\n"
+        return "<system_state>\n" + "\n".join(context_parts) + "\n</system_state>\n\n"
 
     async def generate_thought(self, context: str, **kwargs) -> str:
-        """Issue 73: Explicit thought generation method for cognitive tracing."""
-        prompt = f"thought_context: {context}\n\nGenerate a structured cognitive reflection on the current internal state and proposed next steps."
+        prompt = (
+            f"thought_context: {context}\n\n"
+            "Generate a structured cognitive reflection on the current internal state and proposed next steps."
+        )
         _, text, _ = await self.think(prompt, **kwargs)
         return text
 
-    async def _post_json(self, url: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any], str]:
-        response = await asyncio.to_thread(
-            get_network_gateway().request,
-            "POST",
-            url,
-            headers={"Content-Type": "application/json"},
-            data=json.dumps(payload),
-            timeout=self.endpoint.timeout,
-            source=f"llm_provider:{self.endpoint.name}",
-            read_only=True,
-        )
-        content = response.get("content") or b""
-        text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
-        data: dict[str, Any] = {}
-        if text.strip():
-            try:
-                loaded = json.loads(text)
-                if isinstance(loaded, dict):
-                    data = loaded
-            except json.JSONDecodeError:
-                data = {}
-        return int(response.get("status_code") or 0), data, text
-
     async def think(self, prompt: str, **kwargs) -> tuple[bool, str, dict[str, Any]]:
-        """Asynchronous call to the local LLM endpoint with context injection."""
+        """Asynchronous call through the unified internal MLX inference bridge."""
         try:
-            # 0. Augmented Prompting (Issue 74)
+            from core.brain.unified_inference import UnifiedInferenceEngine
+
             context = await self._get_context_headers()
             system_prompt = str(kwargs.get("system_prompt", "") or "").strip()
-            # We don't want to blindly prepend to prompt anymore, it should be in system_prompt if possible
-            augmented_prompt = prompt
-            
-            if not self.endpoint.model_name:
-                return False, "", {"error": "Missing model_name"}
-
-            messages = kwargs.get("messages")
-            prefill = kwargs.get("prefill")
-
-            if messages:
-                normalized_messages = []
-                for message in list(messages or []):
-                    if isinstance(message, dict):
-                        normalized_messages.append(dict(message))
-
-                if system_prompt:
-                    if normalized_messages and normalized_messages[0].get("role") == "system":
-                        base = str(normalized_messages[0].get("content", "") or "").strip()
-                        normalized_messages[0]["content"] = f"{system_prompt}\n\n{base}" if base else system_prompt
-                    else:
-                        normalized_messages.insert(0, {"role": "system", "content": system_prompt})
-
-                if context:
-                    if normalized_messages and normalized_messages[0].get("role") == "system":
-                        base = str(normalized_messages[0].get("content", "") or "").strip()
-                        normalized_messages[0]["content"] = f"{context.strip()}\n\n{base}" if base else context.strip()
-                    else:
-                        normalized_messages.insert(0, {"role": "system", "content": context.strip()})
-
-                if prefill and normalized_messages and normalized_messages[-1]["role"] != "assistant":
-                    normalized_messages.append({"role": "assistant", "content": prefill})
-
-                status_code, data, _text = await self._post_json(
-                    f"{self.endpoint.endpoint_url}/v1/chat/completions",
-                    {
-                        "model": self.endpoint.model_name,
-                        "messages": normalized_messages,
-                        "max_tokens": kwargs.get("max_tokens", self.endpoint.max_tokens),
-                        "temperature": kwargs.get("temperature", self.endpoint.temperature),
-                        "top_p": kwargs.get("top_p", 0.9),
-                    },
-                )
-                if status_code == 200:
-                    text = data["choices"][0]["message"]["content"]
-                    metadata = {
-                        "model": self.endpoint.model_name,
-                        "endpoint": self.endpoint.name,
-                        "tokens_used": data.get("usage", {}).get("total_tokens", 0),
-                    }
-                    return True, text, metadata
-                logger.debug(
-                    "LocalLLMAdapter chat-completions path returned HTTP %s. Falling back to prompt path.",
-                    status_code,
-                )
-                augmented_prompt = "\n".join(
-                    f"{str(m.get('role', 'message')).capitalize()}: {str(m.get('content', '') or '').strip()}"
-                    for m in normalized_messages
-                    if str(m.get("content", "") or "").strip()
-                ) or augmented_prompt
-
-            try:
-                url = f"{self.endpoint.endpoint_url}/api/generate"
-                payload = {
-                    "model": self.endpoint.model_name,
-                    "prompt": augmented_prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": kwargs.get("temperature", self.endpoint.temperature),
-                        "top_p": kwargs.get("top_p", 0.9),
-                        "repeat_penalty": kwargs.get("repetition_penalty", 1.08),
-                        "num_predict": kwargs.get("max_tokens", self.endpoint.max_tokens),
-                    },
-                }
-                status_code, data, _text = await self._post_json(url, payload)
-                if status_code == 200:
-                    metadata = {
-                        "model": self.endpoint.model_name,
-                        "endpoint": self.endpoint.name,
-                        "tokens_used": data.get("usage", {}).get("total_tokens", 0),
-                    }
-                    return True, data.get("response", ""), metadata
-            except ROUTER_RECOVERABLE_ERRORS as e:
-                _record_router_degradation(
-                    e,
-                    action="continued to OpenAI-compatible chat-completions after Ollama-native generate failed",
-                    severity="warning",
-                    extra={"endpoint": self.endpoint.name},
-                )
-                logger.debug("Ollama /api/generate failed, trying /v1/chat/completions: %s", e)
-
-            if not messages:
-                messages = [{"role": "user", "content": augmented_prompt}]
-                if system_prompt:
-                    messages.insert(0, {"role": "system", "content": system_prompt})
-
-            if prefill and messages and messages[-1]["role"] != "assistant":
-                messages.append({"role": "assistant", "content": prefill})
-
             if context:
-                has_system = any(m.get("role") == "system" for m in messages)
-                if not has_system:
-                    messages = [{"role": "system", "content": f"Aura System State: {context.strip()}"}] + messages
+                system_prompt = f"{context.strip()}\n\n{system_prompt}".strip()
 
-            chat_payload = {
-                "model": self.endpoint.model_name,
-                "messages": messages,
-                "max_tokens": kwargs.get("max_tokens", self.endpoint.max_tokens),
+            raw_messages = kwargs.get("messages")
+            messages: list[dict[str, str]] | None = None
+            if raw_messages:
+                messages = []
+                for message in list(raw_messages or []):
+                    if isinstance(message, dict):
+                        messages.append(
+                            {
+                                "role": str(message.get("role") or "user"),
+                                "content": str(message.get("content") or ""),
+                            }
+                        )
+                if system_prompt:
+                    if messages and messages[0].get("role") == "system":
+                        base = str(messages[0].get("content") or "").strip()
+                        messages[0]["content"] = f"{system_prompt}\n\n{base}" if base else system_prompt
+                    else:
+                        messages.insert(0, {"role": "system", "content": system_prompt})
+
+            options = {
                 "temperature": kwargs.get("temperature", self.endpoint.temperature),
                 "top_p": kwargs.get("top_p", 0.9),
+                "repetition_penalty": kwargs.get("repetition_penalty", 1.08),
+                "num_predict": kwargs.get("max_tokens", self.endpoint.max_tokens),
             }
-
-            status_code, data, text_body = await self._post_json(
-                f"{self.endpoint.endpoint_url}/v1/chat/completions",
-                chat_payload,
+            result = await UnifiedInferenceEngine().generate_unified(
+                prompt=prompt,
+                messages=messages,
+                system_prompt=system_prompt if not messages else None,
+                endpoint_name=self.endpoint.name,
+                options=options,
             )
-
-            if status_code == 200:
-                text = data["choices"][0]["message"]["content"]
-                metadata = {
+            text = str(result.get("response") or "").strip()
+            if not text:
+                return False, "", {
+                    "error": result.get("error") or "empty_internal_mlx_response",
                     "model": self.endpoint.model_name,
                     "endpoint": self.endpoint.name,
-                    "tokens_used": data.get("usage", {}).get("total_tokens", 0),
                 }
-                return True, text, metadata
-            error = f"HTTP {status_code}: {text_body[:500]}"
-            return False, "", {"error": error}
-                    
-        except ROUTER_RECOVERABLE_ERRORS as e:
+            return True, text, {
+                "model": self.endpoint.model_name,
+                "endpoint": self.endpoint.name,
+                "tokens_used": result.get("tokens_used", 0),
+                "thought": result.get("thought", ""),
+            }
+        except ROUTER_RECOVERABLE_ERRORS as exc:
             _record_router_degradation(
-                e,
-                action="returned failed local LLM call result so router can try the next endpoint",
+                exc,
+                action="returned failed internal MLX router call result so router can try the next endpoint",
                 severity="degraded",
                 extra={"endpoint": self.endpoint.name},
             )
-            return False, "", {"error": str(e)}
+            return False, "", {"error": str(exc)}
 
 
 class StaticReflexClient:
@@ -771,7 +663,7 @@ class IntelligentLLMRouter:
         
         if endpoint.client:
             self.adapters[endpoint.name] = endpoint.client
-        elif endpoint.endpoint_url:
+        else:
             self.adapters[endpoint.name] = LocalLLMAdapter(endpoint)
         
         self.stats["calls_by_endpoint"][endpoint.name] = 0

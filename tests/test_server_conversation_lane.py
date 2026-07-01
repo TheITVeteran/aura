@@ -808,7 +808,7 @@ def test_foreground_timeout_for_cold_or_recovering_lane():
 
     assert server_module._foreground_timeout_for_lane({"conversation_ready": False, "state": "cold"}) == 210.0
     assert server_module._foreground_timeout_for_lane({"conversation_ready": False, "state": "recovering"}) == 210.0
-    assert server_module._foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 108.0
+    assert server_module._foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 138.0
     assert server_module._desktop_required_cognitive_budget(foreground_timeout=66.0) == 63.0
     assert server_module._desktop_required_cognitive_budget(foreground_timeout=108.0) == 105.0
     assert server_module._desktop_required_cognitive_budget(
@@ -4729,7 +4729,7 @@ async def test_api_chat_desktop_explicit_file_objective_runs_after_cognitive_eng
     assert cognitive_calls[0][1]["source"] == "desktop_ui"
     assert cognitive_calls[0][1]["require_engine"] is True
     assert cognitive_calls[0][1]["timeout_s"] >= 100.0
-    assert cognitive_calls[0][1]["timeout_s"] <= 105.0
+    assert cognitive_calls[0][1]["timeout_s"] <= 140.0
     assert target.exists()
     html = target.read_text(encoding="utf-8")
     assert "<button" in html

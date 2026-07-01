@@ -958,3 +958,29 @@ async def test_email_adapter_rejects_invalid_recipient_before_credentials(monkey
     assert result["ok"] is False
     assert "to" in result["error"]
     assert credential_reads == []
+
+
+@pytest.mark.asyncio
+async def test_email_adapter_reads_credentials_off_event_loop(monkeypatch):
+    from core.skills import email_adapter
+    from core.skills.email_adapter import EmailAdapterSkill, EmailInput
+
+    skill = EmailAdapterSkill()
+    calls = []
+
+    def get_creds():
+        calls.append(("creds", "called"))
+        raise RuntimeError("credentials missing")
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        calls.append(("to_thread", getattr(fn, "__name__", "")))
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(skill, "_get_creds", get_creds)
+    monkeypatch.setattr(email_adapter.asyncio, "to_thread", fake_to_thread)
+
+    with pytest.raises(RuntimeError, match="credentials missing"):
+        await skill._handle_check(EmailInput(mode="check"))
+
+    assert ("to_thread", "get_creds") in calls
+    assert ("creds", "called") in calls

@@ -41,9 +41,6 @@ from pydantic import BaseModel, Field
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.skills.base_skill import BaseSkill
 
-from core.runtime.action_executor import ActionExecutor
-from core.governance.will import ActionDomain
-
 logger = logging.getLogger("Skills.Email")
 
 _EMAIL_RECOVERABLE_ERRORS = (
@@ -362,7 +359,7 @@ class EmailAdapterSkill(BaseSkill):
                         "error": "Content blocked: email to external recipient contains prohibited phrase.",
                     }
 
-        addr, pwd = self._get_creds()
+        addr, pwd = await asyncio.to_thread(self._get_creds)
 
         # Build MIME message
         msg = email.mime.multipart.MIMEMultipart()
@@ -402,7 +399,7 @@ class EmailAdapterSkill(BaseSkill):
 
     async def _handle_check(self, params: EmailInput) -> dict[str, Any]:
         """Check inbox for unread messages."""
-        addr, pwd = self._get_creds()
+        addr, pwd = await asyncio.to_thread(self._get_creds)
         limit = self._bounded_limit(params.limit)
 
         def _imap_check():
@@ -446,7 +443,7 @@ class EmailAdapterSkill(BaseSkill):
         if not params.uid:
             return {"ok": False, "error": "Read mode requires a 'uid'."}
 
-        addr, pwd = self._get_creds()
+        addr, pwd = await asyncio.to_thread(self._get_creds)
 
         def _imap_read():
             with imaplib.IMAP4_SSL(self.IMAP_HOST, self.IMAP_PORT) as mail:
@@ -692,7 +689,7 @@ class EmailAdapterSkill(BaseSkill):
     async def _handle_search(self, params: EmailInput) -> dict[str, Any]:
         """Search inbox by IMAP query."""
         query = params.query or "ALL"
-        addr, pwd = self._get_creds()
+        addr, pwd = await asyncio.to_thread(self._get_creds)
         limit = self._bounded_limit(params.limit)
 
         def _imap_search():

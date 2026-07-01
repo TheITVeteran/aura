@@ -1,8 +1,8 @@
-"""InferenceGate: Unified managed-local-runtime + cloud inference gateway.
+"""InferenceGate: Unified MLX-managed runtime + cloud inference gateway.
 
 Provides a single interface for all LLM inference needs.
 Strategy:
-  1. Try Aura's managed local runtime (32B Cortex primary lane)
+  1. Try Aura's managed MLX runtime (32B Cortex primary lane)
   2. If local runtime fails, fall back to HealthRouter (Gemini cloud endpoints)
   3. If cloud fails, return a graceful error string (NEVER None)
 
@@ -841,12 +841,6 @@ class InferenceGate:
     @staticmethod
     def _iter_local_clients() -> dict[str, Any]:
         clients: dict[str, Any] = {}
-        try:
-            from core.brain.llm.local_server_client import _SERVER_CLIENTS
-
-            clients.update(dict(_SERVER_CLIENTS))
-        except _INFERENCE_RECOVERABLE_ERRORS as exc:
-            logger.debug("Local server client registry unavailable: %s", exc)
         try:
             from core.brain.llm.mlx_client import _CLIENTS
 
@@ -2136,12 +2130,18 @@ class InferenceGate:
                         statuses["brainstem"] = "alive"
                     elif lane_state in ("spawning", "handshaking", "warming", "recovering"):
                         statuses["brainstem"] = "recovering"
+                    elif not warm_local_tiers:
+                        # Brainstem is a demand-loaded background lane. A cold
+                        # worker is healthy standby unless policy explicitly
+                        # requires it to remain warm; calling it dead creates a
+                        # false incident while the required Cortex lane is live.
+                        statuses["brainstem"] = "standby"
                     else:
                         statuses["brainstem"] = "dead"
                         # Tier health sweeps are observability by default. They
                         # must not spawn a background 7B worker while a foreground
                         # Cortex turn or proof run owns the local runtime.
-                        if warm_local_tiers and hasattr(brainstem, "warmup"):
+                        if hasattr(brainstem, "warmup"):
                             get_task_tracker().create_task(brainstem.warmup())
                             statuses["brainstem"] = "recovering"
                 else:
@@ -2355,16 +2355,6 @@ class InferenceGate:
         self._last_background_memory_shed_at = now
 
         client_registry = {}
-        try:
-            from core.brain.llm.local_server_client import _SERVER_CLIENTS
-
-            client_registry.update(dict(_SERVER_CLIENTS))
-        except _INFERENCE_RECOVERABLE_ERRORS as exc:
-            _record_inference_degradation(
-                exc,
-                action="continued memory-pressure shedding with remaining available workers",
-            )
-            logger.debug("Local-runtime background memory shed unavailable: %s", exc)
         try:
             from core.brain.llm.mlx_client import _CLIENTS
 

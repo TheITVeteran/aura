@@ -168,7 +168,7 @@ def build_safe_boot_env(
 
     env = dict(os.environ if base_env is None else base_env)
     mode = str(mode or "headless").strip().lower()
-    env.setdefault("AURA_LOCAL_BACKEND", "mlx")
+    env["AURA_LOCAL_BACKEND"] = "mlx"
     env.setdefault("AURA_LOCAL_RUNTIME_SINGLETON", "1")
     env.setdefault("AURA_LOCAL_PARALLEL_SLOTS", "1")
     if mode == "desktop":
@@ -1264,7 +1264,7 @@ class LiveProof:
             for p in psutil.process_iter(["cmdline"])
             if any(
                 marker in " ".join(p.info.get("cmdline") or [])
-                for marker in ("aura_main.py", "mlx_worker.py", "llama-server")
+                for marker in ("aura_main.py", "mlx_worker.py")
             )
         ]
         for pid in orphans:

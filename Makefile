@@ -9,7 +9,7 @@ RUFF_TARGETS ?= core/apply_response_patches.py core/brain/llm/context_assembler.
 MYPY_TARGETS ?= core/apply_response_patches.py core/brain/llm/context_limit.py core/safe_mode.py core/runtime/atomic_writer.py core/consciousness/continuous_experience.py core/environment/experience_replay.py core/memory/procedural/store.py core/unity/runtime.py tools/aura_production_readiness_gate.py tools/build_provenance.py
 MYPY_FLAGS ?= --follow-imports=skip --explicit-package-bases
 PYTEST_TARGETS ?= tests -q -m "not live and not network and not external"
-SMOKE_TEST_TARGETS ?= tests/test_response_contract.py tests/test_chat_format.py tests/test_effect_closure.py tests/test_local_server_client.py tests/test_cognitive_pipeline_2026.py tests/test_safe_mode_runtime.py tests/test_response_patch_retirement.py tests/test_context_assembler_runtime.py tests/test_context_limit_runtime.py tests/test_consciousness_patch_retirement.py -q
+SMOKE_TEST_TARGETS ?= tests/test_response_contract.py tests/test_chat_format.py tests/test_effect_closure.py tests/test_retired_external_runtime.py tests/test_cognitive_pipeline_2026.py tests/test_safe_mode_runtime.py tests/test_response_patch_retirement.py tests/test_context_assembler_runtime.py tests/test_context_limit_runtime.py tests/test_consciousness_patch_retirement.py -q
 ENTERPRISE_BASELINE ?= config/aura_enterprise_gate_baseline.json
 TEST_CHUNKS ?= 6
 

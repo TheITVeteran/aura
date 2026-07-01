@@ -214,7 +214,7 @@ async def test_ui_bootstrap_returns_state_and_tool_catalog(service_container, mo
     assert payload["state"]["thermal_guard"] is True
     assert "thermal_guard" in payload["state"]["health_flags"]
     assert payload["ui"]["status_flags"]
-    assert payload["capabilities"]["local_backend"] in {"llama_cpp", "mlx", "unknown"}
+    assert payload["capabilities"]["local_backend"] in {"mlx", "unknown"}
     assert payload["capabilities"]["conversation_model"] == "Cortex (32B)"
     assert payload["tools"][0]["name"] == "web_search"
     assert "conversation" in payload

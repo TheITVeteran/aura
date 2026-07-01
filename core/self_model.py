@@ -6,10 +6,8 @@ from core.runtime.atomic_writer import atomic_write_text
 import asyncio
 import json
 import logging
-import os
 import time
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -454,11 +452,23 @@ class SelfModel:
             revision_note=lesson_text,
         )
         self.snapshots[snap.id] = snap
+        from core.governance_context import local_internal_decision
+
+        decision = local_internal_decision(
+            "self_model.record_runtime_lesson",
+            domain="memory_write",
+            receipt_prefix="self-model-runtime-lesson",
+            constraints={"lesson_source": source_text},
+        )
+
+        async def persist_runtime_lesson() -> None:
+            await self._persist_with_decision(decision)
+
         try:
-            asyncio.get_running_loop().create_task(self.persist())
+            asyncio.get_running_loop().create_task(persist_runtime_lesson())
         except RuntimeError:
             try:
-                asyncio.run(self.persist())
+                asyncio.run(persist_runtime_lesson())
             except RuntimeError:
                 logger.debug("SelfModel runtime lesson persisted later: event loop unavailable")
         return snap

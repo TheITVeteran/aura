@@ -399,7 +399,7 @@ class RedditAdapterSkill(BaseSkill):
             # Need to login
             logger.info("🔐 Logging into Reddit...")
             try:
-                username, password = self._get_creds()
+                username, password = await asyncio.to_thread(self._get_creds)
             except RuntimeError:
                 logger.info("RedditAdapter idle: credentials are not configured.")
                 return False

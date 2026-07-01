@@ -131,26 +131,15 @@ def test_gui_actor_watchdog_uses_readiness_heartbeat():
     assert "REQUIRED_HEALTH_PROBE_GROUPS" in gui_actor
 
 
-def test_local_server_health_poll_does_not_poison_runtime_health():
-    local_server = (PROJECT_ROOT / "core" / "brain" / "llm" / "local_server_client.py").read_text(
-        encoding="utf-8"
-    )
-    local_llm_setup = (PROJECT_ROOT / "core" / "brain" / "llm" / "local_llm_setup.py").read_text(
+def test_retired_local_server_path_has_no_health_poll_runtime():
+    retired_runtime = (PROJECT_ROOT / "core" / "brain" / "llm" / "retired_external_runtime.py").read_text(
         encoding="utf-8"
     )
 
-    health_slice = local_server.split("def _http_health_check_sync_impl", 1)[1].split(
-        "def _http_health_check_sync", 1
-    )[0]
-    server_healthy_slice = local_server.split("async def _server_healthy", 1)[1].split(
-        "async def ", 1
-    )[0]
-
-    assert 'source="maintenance_tooling:local_server_health"' in health_slice
-    assert "suppress_degradation=True" in health_slice
-    assert "suppress_degradation=True" in server_healthy_slice
-    assert 'source="maintenance_tooling:local_llm_health"' in local_llm_setup
-    assert "suppress_degradation=True" in local_llm_setup
+    assert "external_local_runtime_retired" in retired_runtime
+    assert "_http_health_check" not in retired_runtime
+    assert "get_network_gateway" not in retired_runtime
+    assert "subprocess" not in retired_runtime
 
 
 def test_desktop_api_wait_accounts_for_32b_warmup():

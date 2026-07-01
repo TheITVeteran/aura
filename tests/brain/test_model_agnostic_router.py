@@ -23,8 +23,8 @@ from core.brain.llm.provider_contract import (
 class MockReflexProvider(ContractedLLMProvider):
     def get_contract(self) -> ProviderContract:
         return ProviderContract(
-            provider_name="ollama",
-            model_name="llama3-reflex-8b",
+            provider_name="mlx_reflex",
+            model_name="aura-reflex-8b",
             context_limit=8192,
             latency_estimate_ms=120.0,
             memory_cost_gb=6.0,
@@ -134,7 +134,7 @@ def test_model_router_dispatches_correctly():
 
     # 1. Reflex (cheap/fast)
     reflex_routed = router.route_task("reflex")
-    assert reflex_routed.get_contract().model_name == "llama3-reflex-8b"
+    assert reflex_routed.get_contract().model_name == "aura-reflex-8b"
     assert reflex_routed.get_contract().latency_estimate_ms < 200.0
 
     # 2. Reasoning (deep/large context)
@@ -150,7 +150,7 @@ def test_model_router_dispatches_correctly():
 def test_model_upgrade_regression_policy():
     """Regression test ensuring a model upgrade doesn't violate minimum contract requirements."""
     baseline_contract = ProviderContract(
-        provider_name="ollama",
+        provider_name="mlx_reflex",
         model_name="baseline-8b",
         context_limit=8192,
         latency_estimate_ms=150.0,
@@ -164,7 +164,7 @@ def test_model_upgrade_regression_policy():
 
     # Upgrade proposal: e.g. upgrading to a new model
     upgrade_contract = ProviderContract(
-        provider_name="ollama",
+        provider_name="mlx_reflex",
         model_name="upgrade-next-8b",
         context_limit=16384,                # improved (16k > 8k)
         latency_estimate_ms=130.0,          # improved (faster)

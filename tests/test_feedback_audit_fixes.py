@@ -813,9 +813,9 @@ def test_aura_main_prefers_stable_homebrew_python_launcher_when_invoked_via_venv
     assert "return candidate" in source
     assert "/opt/homebrew/Cellar/python@3.12" not in source
     # The live mind defaults to the in-process MLX substrate (see project
-    # memory: "Aura real mind = MLX, not llama_cpp"); the launcher sets that
-    # default rather than the old external llama_cpp backend.
-    assert 'os.environ.setdefault("AURA_LOCAL_BACKEND", "mlx")' in source
+    # memory: "Aura real mind = MLX"; the launcher forces that default rather
+    # than allowing a retired external backend.
+    assert 'os.environ["AURA_LOCAL_BACKEND"] = "mlx"' in source
 
 
 def test_self_mod_engine_on_error_runs_without_event_loop(monkeypatch):

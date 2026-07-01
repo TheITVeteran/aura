@@ -529,7 +529,7 @@ class EndpointHealth:
             self.state = CircuitState.OPEN
 
     def trip_temporarily(self, reason: str):
-        """Open the circuit on a transient local-runtime failure without poisoning health counters."""
+        """Open the circuit on a transient MLX-runtime failure without poisoning health counters."""
         self.total_requests += 1
         self.last_failure = time.time()
         if self.state != CircuitState.OPEN:
@@ -3015,7 +3015,7 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
     router = HealthAwareLLMRouter()
     primary_proof_lane = _proof_primary_lane_active(origin="llm_health_router_build")
 
-    # [PIPELINE HARDENING] Lazy local-runtime client wrapper.
+    # [PIPELINE HARDENING] Lazy MLX runtime client wrapper.
     # Prevents all managed lanes from spawning and loading into RAM at boot.
     class LazyLocalClient:
         def __init__(self, target_path: str, **kwargs):

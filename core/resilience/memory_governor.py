@@ -143,7 +143,7 @@ class MemoryGovernor:
         )
 
     def _iter_managed_runtime_processes(self):
-        """Yield heavyweight local-runtime processes owned by Aura.
+        """Yield heavyweight MLX runtime processes owned by Aura.
 
         Iterates the child tree directly instead of scanning the global
         process table — the full-table scan ran on the event loop and was
@@ -164,7 +164,7 @@ class MemoryGovernor:
             try:
                 info = proc.as_dict(attrs=['pid', 'name', 'cmdline', 'memory_info'])
                 cmd_str = " ".join(info.get('cmdline') or [])
-                if "llama-server" in cmd_str or "mlx_worker.py" in cmd_str or "MTLCompilerService" in cmd_str:
+                if "mlx_worker.py" in cmd_str or "MTLCompilerService" in cmd_str:
                     proc.info = info  # match the process_iter contract callers rely on
                     yield proc
             except _PROCESS_INSPECTION_ERRORS:
@@ -299,7 +299,7 @@ class MemoryGovernor:
             # even while this process tree balloons toward host freeze.
             logger.critical(
                 "🚨 CRITICAL MEMORY: system %.1f%%, managed RSS %.0fMB "
-                "(threshold %.0fMB). Checking for idle local-runtime workers.",
+                "(threshold %.0fMB). Checking for idle MLX runtime workers.",
                 sys_percent,
                 managed_rss_mb,
                 float(self.threshold_critical),
@@ -446,7 +446,7 @@ class MemoryGovernor:
         result = {
             "router_unloaded": 0,
             "background_workers_shed": 0,
-            "local_runtime_lanes_rebooted": 0,
+            "mlx_runtime_lanes_rebooted": 0,
             "mlx_cache_cleared": 0,
             "cognitive_nucleus_unloaded": 0,
         }
@@ -478,40 +478,6 @@ class MemoryGovernor:
                 action="continued model unload sweep without inference-gate background shedding",
             )
             logger.debug("InferenceGate background shed skipped: %s", e)
-
-        try:
-            from core.brain.llm.local_server_client import _SERVER_CLIENTS
-            from core.brain.llm.model_registry import PRIMARY_ENDPOINT
-
-            for client in list(_SERVER_CLIENTS.values()):
-                if client is None:
-                    continue
-                try:
-                    if getattr(client, "_lane_name", "") == PRIMARY_ENDPOINT:
-                        continue
-                    if hasattr(client, "_is_runtime_resident") and not client._is_runtime_resident():
-                        continue
-                    if hasattr(client, "reboot_worker"):
-                        await client.reboot_worker(
-                            reason="memory_governor_unload",
-                            mark_failed=False,
-                        )
-                        result["local_runtime_lanes_rebooted"] += 1
-                except _MODEL_UNLOAD_ERRORS as e:
-                    self._record_degradation(
-                        e,
-                        action="continued unloading remaining local runtime lanes after client reboot failed",
-                    )
-                    logger.debug("Local runtime client unload failed: %s", e)
-            if result["local_runtime_lanes_rebooted"]:
-                logger.info("✅ Local runtime lanes unloaded: %d", result["local_runtime_lanes_rebooted"])
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
-            self._record_degradation(
-                e,
-                severity="warning",
-                action="continued model unload sweep without local runtime registry access",
-            )
-            logger.debug("Local runtime unload skipped: %s", e)
 
         try:
             import mlx.core as mx
@@ -613,7 +579,7 @@ class MemoryGovernor:
 
     async def _critical_cleanup(self):
         """Maximum effort cleanup."""
-        logger.critical("🚨 NEURAL PURGE: Killing heavy local-runtime workers to recover system RAM.")
+        logger.critical("🚨 NEURAL PURGE: Killing heavy MLX runtime workers to recover system RAM.")
         
         unload_result = await self._unload_models()
 
@@ -624,7 +590,7 @@ class MemoryGovernor:
                 try:
                     cmdline = proc.info.get('cmdline') or []
                     cmd_str = " ".join(cmdline)
-                    if "llama-server" in cmd_str or "mlx_worker.py" in cmd_str or "MTLCompilerService" in cmd_str:
+                    if "mlx_worker.py" in cmd_str or "MTLCompilerService" in cmd_str:
                         logger.warning(
                             "🚨 NEURAL PURGE: Forcible termination of heavy MLX/Metal process "
                             "(PID: %d, Name: %s)",

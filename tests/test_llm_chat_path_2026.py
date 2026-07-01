@@ -1,9 +1,9 @@
 ################################################################################
 
-"""Phase VI: LLM Backend & Conversation Loop — 2026 Verification Suite
+"""Phase VI: internal MLX conversation-loop verification suite.
 
 Verifies the critical fixes from Phase VI:
-1. LocalLLMAdapter.call URL construction (was NameError)
+1. LocalLLMAdapter delegates to unified internal MLX inference
 2. LLMEndpoint is Pydantic BaseModel
 3. No print() in state_machine.py
 4. AgencyCore resolved from ServiceContainer
@@ -12,6 +12,7 @@ Verifies the critical fixes from Phase VI:
 import ast
 import os
 import sys
+
 import pytest
 
 # Ensure project root is in path
@@ -27,8 +28,9 @@ class TestLLMRouterFixes:
 
     def test_llm_endpoint_is_pydantic(self):
         """LLMEndpoint must be a Pydantic BaseModel."""
-        from core.brain.llm.llm_router import LLMEndpoint
         from pydantic import BaseModel
+
+        from core.brain.llm.llm_router import LLMEndpoint
         assert issubclass(LLMEndpoint, BaseModel), \
             "LLMEndpoint is not a Pydantic BaseModel"
 
@@ -38,8 +40,8 @@ class TestLLMRouterFixes:
         ep = LLMEndpoint(
             name="test-endpoint",
             tier=LLMTier.PRIMARY,
-            endpoint_url="http://localhost:11434",
-            model_name="llama3.2"
+            endpoint_url="internal://mlx",
+            model_name="aura-mlx-primary"
         )
         assert ep.name == "test-endpoint"
         d = ep.to_dict()
@@ -61,12 +63,13 @@ class TestLLMRouterFixes:
         assert "import requests" not in source, \
             "Sync 'import requests' still present in llm_router.py"
 
-    def test_local_adapter_url_defined(self):
-        """LocalLLMAdapter.call must construct URL from endpoint_url, not use undefined 'url'."""
+    def test_local_adapter_is_internal_mlx_only(self):
+        """LocalLLMAdapter must not retain a local model-server transport."""
         source = open(os.path.join(SRC_ROOT, "core", "brain", "llm", "llm_router.py")).read()
-        # The fix adds: url = f"{self.endpoint.endpoint_url}/api/generate"
-        assert "self.endpoint.endpoint_url" in source and "/api/generate" in source, \
-            "LocalLLMAdapter.call doesn't construct URL from endpoint_url"
+        assert "UnifiedInferenceEngine" in source
+        assert "/api/generate" not in source
+        assert "/v1/chat/completions" not in source
+        assert "http://localhost:11434" not in source
 
 
 # ── Fix 2: StateMachine Cleanup ───────────────────────────────

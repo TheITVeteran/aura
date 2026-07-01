@@ -3632,3 +3632,31 @@ def test_background_local_deferral_honors_ready_cortex_foreground_quiet_window(m
     )
 
     assert gate._background_local_deferral_reason(origin="affect_engine") == "foreground_quiet_window"
+
+
+@pytest.mark.asyncio
+async def test_tier_health_reports_demand_loaded_brainstem_as_standby(monkeypatch):
+    class _Lane:
+        _lane_state = "cold"
+
+        @staticmethod
+        def is_alive():
+            return False
+
+    gate = InferenceGate()
+    gate._mlx_client = SimpleNamespace(is_alive=lambda: True, _lane_state="ready")
+    gate._cortex_recovery_in_progress = False
+    monkeypatch.delenv("AURA_HEALTH_WARM_LOCAL_TIERS", raising=False)
+    monkeypatch.setattr(gate, "_background_local_deferral_reason", lambda origin: None)
+
+    import core.brain.llm.mlx_client as mlx_client
+    import core.brain.llm.model_registry as model_registry
+
+    monkeypatch.setattr(mlx_client, "get_mlx_client", lambda **_kwargs: _Lane())
+    monkeypatch.setattr(model_registry, "get_brainstem_path", lambda: "/models/brainstem")
+    monkeypatch.setattr(model_registry, "get_fallback_path", lambda: None)
+
+    statuses = await gate.ensure_all_tiers_healthy()
+
+    assert statuses["cortex"] == "alive"
+    assert statuses["brainstem"] == "standby"

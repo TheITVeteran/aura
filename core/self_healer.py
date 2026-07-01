@@ -62,7 +62,7 @@ class SelfHealer:
             engine = self.container.get("resilience_engine")
             if engine:
                 # We identify which service tripped (this is heuristic)
-                if "ollama" in str(exc).lower() or "local" in str(exc).lower():
+                if "mlx" in str(exc).lower() or "local" in str(exc).lower():
                     engine.get_breaker("local_llm").record_failure()
                     # Trip it immediately 
                     engine.get_breaker("local_llm").state = "OPEN"

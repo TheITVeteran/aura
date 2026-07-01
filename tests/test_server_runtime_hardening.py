@@ -2965,7 +2965,7 @@ def test_memory_governor_only_counts_descendant_runtime_workers(monkeypatch):
             }
 
     children = [
-        _Child(111, ["llama-server", "--model", "demo.gguf"]),
+        _Child(111, ["python", "mlx_worker.py", "--model", "demo-mlx"]),
         _Child(333, ["python", "worker.py"]),
     ]
     monkeypatch.setattr(
@@ -3060,8 +3060,6 @@ async def test_memory_governor_unload_lanes_continue_after_router_failure(monkey
         "core.container.ServiceContainer.get",
         lambda name, default=None: gate if name == "inference_gate" else default,
     )
-    monkeypatch.setattr("core.brain.llm.local_server_client._SERVER_CLIENTS", {}, raising=False)
-
     result = await governor._unload_models()
 
     assert result["router_unloaded"] == 0

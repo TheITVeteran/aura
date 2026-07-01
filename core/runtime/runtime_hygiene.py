@@ -871,7 +871,6 @@ class RuntimeHygieneManager:
         now = time.time()
         registries = (
             ("core.brain.llm.mlx_client", "_CLIENTS"),
-            ("core.brain.llm.local_server_client", "_SERVER_CLIENTS"),
         )
         for module_name, registry_attr in registries:
             try:

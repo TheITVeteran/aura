@@ -11,10 +11,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from subprocess import STDOUT
 from typing import Any
-
-import httpx
 
 os.environ["AURA_EAGER_CORTEX_WARMUP"] = "1"
 os.environ["AURA_METABOLISM_RATE"] = "0"
@@ -31,54 +28,6 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 RUNTIME_LOG = ROOT / "artifacts" / "rsi_frozen_generations" / "cortex_32b_runtime.log"
 LOCK_PATH = ROOT / "artifacts" / "rsi_frozen_generations" / ".generate_undeniable_rsi.lock"
 
-_RUNTIME_DISCOVERY_RECOVERABLE_ERRORS = (
-    httpx.HTTPError,
-    json.JSONDecodeError,
-    OSError,
-    RuntimeError,
-    TypeError,
-    ValueError,
-)
-
-
-class LiveRuntimeRouter:
-    """Minimal OpenAI-compatible router for the live 32B local runtime."""
-
-    def __init__(self, *, runtime_url: str, model: str, timeout_s: float):
-        self.runtime_url = runtime_url.rstrip("/")
-        self.model = model
-        self.timeout_s = float(timeout_s)
-
-    async def think(self, prompt: str, **kwargs: Any) -> tuple[bool, str, dict[str, Any]]:
-        messages: list[dict[str, str]] = []
-        system_prompt = str(kwargs.get("system_prompt") or "").strip()
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": int(kwargs.get("max_tokens") or 4096),
-            "temperature": float(kwargs.get("temperature") or 0.0),
-            "top_p": 0.9,
-        }
-        timeout = httpx.Timeout(self.timeout_s, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(f"{self.runtime_url}/v1/chat/completions", json=payload)
-            response.raise_for_status()
-        data = response.json()
-        choices = data.get("choices") or []
-        text = ""
-        if choices:
-            message = choices[0].get("message") or {}
-            text = str(message.get("content") or choices[0].get("text") or "")
-        return True, text, {
-            "model": self.model,
-            "endpoint": self.runtime_url,
-            "tokens_used": data.get("usage", {}).get("total_tokens", 0),
-        }
-
 
 @contextlib.contextmanager
 def proof_run_lock():
@@ -89,118 +38,6 @@ def proof_run_lock():
         except BlockingIOError as exc:
             raise RuntimeError(f"another undeniable RSI generation is already running: {LOCK_PATH}") from exc
         yield
-
-
-async def discover_runtime_model(runtime_url: str) -> str:
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=2.0)) as client:
-            response = await client.get(f"{runtime_url.rstrip('/')}/v1/models")
-        if response.status_code != 200:
-            return ""
-        data = response.json()
-        models = data.get("data") or data.get("models") or []
-        if not models:
-            return ""
-        first = models[0]
-        if isinstance(first, dict):
-            return str(first.get("id") or first.get("model") or first.get("name") or "").strip()
-        return str(first).strip()
-    except _RUNTIME_DISCOVERY_RECOVERABLE_ERRORS as exc:
-        print(f"runtime model discovery failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return ""
-
-
-def start_cortex_runtime(*, runtime_url: str, model_path: str) -> dict[str, Any]:
-    from urllib.parse import urlparse
-
-    from core.brain.llm.model_registry import find_llama_server_bin
-
-    parsed = urlparse(runtime_url)
-    host = parsed.hostname or "127.0.0.1"
-    port = int(parsed.port or 11435)
-    llama_server = find_llama_server_bin()
-    if not llama_server:
-        raise RuntimeError("llama-server binary was not found")
-    path = Path(model_path).expanduser()
-    if not path.exists():
-        raise RuntimeError(f"32B runtime model path does not exist: {path}")
-
-    RUNTIME_LOG.parent.mkdir(parents=True, exist_ok=True)
-    log_handle = open(RUNTIME_LOG, "ab", buffering=0)
-    cmd = [
-        llama_server,
-        "-m",
-        str(path),
-        "--host",
-        host,
-        "--port",
-        str(port),
-        "--ctx-size",
-        "8192",
-        "--jinja",
-        "-ngl",
-        "99",
-        "--flash-attn",
-        "on",
-        "--cache-type-k",
-        "q8_0",
-        "--cache-type-v",
-        "q8_0",
-        "-b",
-        "2048",
-        "-ub",
-        "512",
-        "--parallel",
-        "1",
-        "--cache-ram",
-        "256",
-        "--no-cache-prompt",
-    ]
-    proc = get_subprocess_gateway().spawn(
-        cmd,
-        stdout=log_handle,
-        stderr=STDOUT,
-        text=False,
-        start_new_session=True,
-        offline_tooling=True,
-        source="proof_tooling:rsi_cortex_runtime",
-    )
-    return {"started_pid": proc.pid, "command": cmd, "log": str(RUNTIME_LOG)}
-
-
-async def prepare_live_router(args: argparse.Namespace) -> dict[str, Any]:
-    from core.brain.llm.model_registry import get_lane_runtime_model_path
-    from core.container import ServiceContainer
-
-    runtime_url = args.runtime_url.rstrip("/")
-    model = args.runtime_model.strip() or await discover_runtime_model(runtime_url)
-    runtime_info: dict[str, Any] = {
-        "runtime_url": runtime_url,
-        "model": model,
-        "started_runtime": False,
-    }
-    if not model and args.start_runtime:
-        model_path = args.runtime_model_path or get_lane_runtime_model_path("Cortex")
-        runtime_info.update(start_cortex_runtime(runtime_url=runtime_url, model_path=model_path))
-        runtime_info["started_runtime"] = True
-        deadline = time.monotonic() + float(args.ready_timeout_s)
-        while time.monotonic() < deadline:
-            model = await discover_runtime_model(runtime_url)
-            if model:
-                runtime_info["model"] = model
-                break
-            await asyncio.sleep(2.0)
-
-    if not model:
-        raise RuntimeError(
-            f"live 32B runtime is not ready at {runtime_url}; "
-            "start it or pass --start-runtime with a valid --runtime-model-path"
-        )
-
-    router = LiveRuntimeRouter(runtime_url=runtime_url, model=model, timeout_s=args.generation_timeout_s)
-    ServiceContainer.register_instance("llm_router", router, required=False)
-    runtime_info["router_registered"] = True
-    return runtime_info
 
 
 def _sandbox_pass(metadata: dict[str, Any]) -> bool:
@@ -292,11 +129,10 @@ async def prepare_mlx_runtime(args: argparse.Namespace) -> dict[str, Any]:
     final-proof cert certifies green — and expose its real llm_router /
     cognitive_engine to the RSI engine via the ServiceContainer.
 
-    This is the modern alternative to spawning an external llama-server against a
-    GGUF model (which the MLX-based system no longer ships). The RSI engine's
-    LLMCodeGenerator resolves ("inference_gate", "llm_router", "cognitive_engine")
-    from the container, so a canonical boot is all that's needed — no custom
-    router. Mirrors tools/agi/run_dnu_agi_proof_battery.py's boot.
+    The RSI engine's LLMCodeGenerator resolves ("inference_gate",
+    "llm_router", "cognitive_engine") from the container, so a canonical boot is
+    all that's needed — no custom router. Mirrors
+    tools/agi/run_dnu_agi_proof_battery.py's boot.
     """
     os.environ.setdefault("AURA_LOCAL_BACKEND", "mlx")
     os.environ["AURA_PROOF_MODEL_TIER"] = "primary"
@@ -340,12 +176,8 @@ async def _shutdown_mlx_runtime() -> None:
 
 
 async def run_generation(args: argparse.Namespace) -> tuple[Any, dict[str, Any]]:
-    if getattr(args, "backend", "mlx") == "mlx":
-        runtime_info = await prepare_mlx_runtime(args)
-        print(f"In-process MLX cortex ready: {runtime_info['model']}")
-    else:
-        runtime_info = await prepare_live_router(args)
-        print(f"Live 32B router ready: {runtime_info['model']} at {runtime_info['runtime_url']}")
+    runtime_info = await prepare_mlx_runtime(args)
+    print(f"In-process MLX cortex ready: {runtime_info['model']}")
     print(f"Starting Autonomous RSI Generation ({args.generations} generations)...")
 
     artifact_dir = Path("artifacts/rsi_frozen_generations")
@@ -367,13 +199,7 @@ def main():
     parser.add_argument("--generation-timeout-s", type=float, default=600.0)
     parser.add_argument("--ready-timeout-s", type=float, default=180.0)
     parser.add_argument("--start-runtime", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument(
-        "--backend",
-        choices=("mlx", "llama_cpp"),
-        default=os.getenv("AURA_RSI_BACKEND", "mlx"),
-        help="mlx (default): boot the canonical in-process MLX cortex (the cert's proven mind). "
-        "llama_cpp: spawn an external llama-server against a GGUF model (legacy).",
-    )
+    parser.set_defaults(backend="mlx")
     args = parser.parse_args()
 
     with proof_run_lock():

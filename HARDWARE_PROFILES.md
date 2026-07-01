@@ -22,7 +22,7 @@ This document defines the supported hardware and model execution profiles for th
 
 ## 2. CI / Proof-Short Profile
 * **Target Hardware**: Virtualized CI Runner (e.g. GitHub Actions standard runner), 2-4 vCPUs, 7-14GB RAM.
-* **Required Models**: Light local GGUF models (e.g. Qwen-0.5B / Llama-3-8B-Instruct via Ollama/llama.cpp).
+* **Required Models**: Light local MLX-compatible models for bounded proof runs.
 * **Memory/Compute**: Bounded.
 * **Allowed Claims**:
   - `governed runtime` (receipt verification on light runs)
@@ -40,7 +40,7 @@ This document defines the supported hardware and model execution profiles for th
 
 ## 3. Local Apple Silicon Profile
 * **Target Hardware**: Mac Studio / MacBook Pro (M2/M3/M4 Max), 64GB - 128GB Unified Memory.
-* **Required Models**: Llama-3-8B-Instruct (8-bit quantized), Qwen-2.5-Coder-7B-Instruct (local).
+* **Required Models**: Aura MLX 7B/32B lane artifacts, Qwen-2.5-Coder-7B-Instruct (local).
 * **Memory/Compute**: High-throughput CPU/GPU memory bandwidth.
 * **Allowed Claims**:
   - `governed runtime`, `persistent memory`, `causal internal state`, `affect steering`, `System 2 planning/search`, `self-repair`
@@ -57,7 +57,7 @@ This document defines the supported hardware and model execution profiles for th
 
 ## 4. Local High-Memory Profile
 * **Target Hardware**: Dedicated Workstation / Server, 128GB+ System RAM, 2x NVIDIA RTX 4090 or A6000 GPUs.
-* **Required Models**: Llama-3-70B-Instruct, DeepSeek-Coder-33B (local quantized).
+* **Required Models**: Aura MLX 32B/72B lane artifacts, DeepSeek-Coder-33B (local quantized).
 * **Memory/Compute**: Massive local GPU memory allocation.
 * **Allowed Claims**: Same as Local Apple Silicon, plus:
   - `emergent intelligence` (locally evaluated on larger distributions)

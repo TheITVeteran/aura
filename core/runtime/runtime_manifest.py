@@ -209,7 +209,6 @@ def build_runtime_manifest(
         "models": {
             "AURA_LOCAL_BACKEND": os.environ.get("AURA_LOCAL_BACKEND", ""),
             "AURA_MODEL": os.environ.get("AURA_MODEL", ""),
-            "AURA_SOLVER_GGUF": os.environ.get("AURA_SOLVER_GGUF", ""),
         },
         "services": services,
         "service_roles": roles,

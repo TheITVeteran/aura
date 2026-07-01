@@ -149,7 +149,7 @@ def check_required_packages() -> list[ValidationResult]:
 
 @validator.check
 def check_optional_packages() -> list[ValidationResult]:
-    from core.brain.llm.model_registry import find_llama_server_bin, get_local_backend
+    from core.brain.llm.model_registry import get_local_backend
 
     def _module_available(module_name: str) -> bool:
         """Check optional package presence without executing native imports."""
@@ -181,20 +181,6 @@ def check_optional_packages() -> list[ValidationResult]:
                 severity="warn",
                 fix_hint=fix,
             ))
-    if backend == "llama_cpp":
-        binary = find_llama_server_bin()
-        if binary:
-            results.append(ValidationResult(name="Optional: llama-server", passed=True, message=""))
-        else:
-            results.append(
-                ValidationResult(
-                    name="Optional: llama-server",
-                    passed=False,
-                    message="Managed local runtime unavailable",
-                    severity="warn",
-                    fix_hint="Install llama.cpp and ensure llama-server is on PATH",
-                )
-            )
     return results
 
 

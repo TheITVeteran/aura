@@ -11,7 +11,7 @@ def test_default_deep_model_prefers_mlx_artifact_for_mlx_backend():
     ("backend", "expected"),
     [
         ("mlx", "Qwen2.5-72B-Instruct-4bit"),
-        ("llama_cpp", "Qwen2.5-72B-Instruct-Q4"),
+        ("retired", "Qwen2.5-72B-Instruct-4bit"),
     ],
 )
 def test_normalize_runtime_model_name_respects_backend(backend, expected):
@@ -24,9 +24,27 @@ def test_normalize_runtime_model_name_respects_backend(backend, expected):
     )
 
 
+def test_external_backend_env_is_ignored(monkeypatch):
+    monkeypatch.setenv("AURA_LOCAL_BACKEND", "retired")
+
+    assert model_registry.get_local_backend() == "mlx"
+    assert model_registry.local_backend_is_mlx() is True
+
+
+def test_mlx_client_refuses_retired_external_artifact(monkeypatch, tmp_path):
+    from core.brain.llm.mlx_client import get_mlx_client
+
+    monkeypatch.setenv("AURA_LOCAL_BACKEND", "mlx")
+
+    gguf_path = tmp_path / "qwen2.5-32b-instruct-q5_k_m.gguf"
+
+    with pytest.raises(RuntimeError, match="external_cortex_disabled"):
+        get_mlx_client(model_path=str(gguf_path))
+
+
 def test_get_model_path_maps_q4_alias_to_existing_mlx_model_dir(monkeypatch, tmp_path):
     model_dir = tmp_path / "models" / "Qwen2.5-72B-Instruct-4bit"
-    get_task_tracker().create_task(get_storage_gateway().create_dir(model_dir, cause='test_get_model_path_maps_q4_alias_to_existing_mlx_model_dir'))
+    model_dir.mkdir(parents=True)
 
     monkeypatch.setattr(model_registry, "BASE_DIR", tmp_path)
     monkeypatch.setattr(model_registry, "LOCAL_BACKEND", "mlx")
@@ -62,9 +80,9 @@ def test_audit_lane_assignments_caches_filesystem_work(monkeypatch):
     calls = {"n": 0}
     real_realpath = model_registry.os.path.realpath
 
-    def _counting_realpath(path):
+    def _counting_realpath(path, *args, **kwargs):
         calls["n"] += 1
-        return real_realpath(path)
+        return real_realpath(path, *args, **kwargs)
 
     monkeypatch.setattr(model_registry.os.path, "realpath", _counting_realpath)
     try:

@@ -2637,8 +2637,8 @@ class RobustOrchestrator(
     async def generate_voice_response(self, user_text: str) -> str:
         """Voice now goes through the FULL cognitive pipeline.
 
-        Previously this was a separate Ollama llama3.2:3b call with a bare
-        system prompt — no personality, memory, qualia, consciousness, or
+        Previously this was a separate lightweight model call with a bare
+        system prompt: no personality, memory, qualia, consciousness, or
         homeostatic modifiers. Now it routes through process_user_input()
         which goes through the state machine, cognitive engine, and all
         enrichment layers identically to text.

@@ -149,7 +149,7 @@ class CodeGraph:
             conn.executescript("DELETE FROM symbols; DELETE FROM relationships; DELETE FROM file_index;")
 
         py_files = list(self.root.rglob("*.py"))
-        # Skip generated, archived, cache, and local-runtime directories. The
+        # Skip generated, archived, cache, and local model artifact directories. The
         # graph is for active architecture, not historical repair debris.
         py_files = [
             f for f in py_files

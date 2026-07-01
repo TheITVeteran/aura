@@ -150,8 +150,8 @@ def test_notify_disabled_suppresses_send(tmp_path, monkeypatch):
 def test_model_local_path_override_used_when_present(tmp_path):
     from core.brain.llm import model_registry as mr
 
-    real_model = tmp_path / "mymodel.gguf"
-    real_model.write_text("x", encoding="utf-8")
+    real_model = tmp_path / "mlx-model"
+    real_model.mkdir()
     _write_settings(tmp_path, {"model.local_path": str(real_model)})
 
     assert mr._user_model_path_override(mr.ACTIVE_MODEL) == str(real_model)
@@ -161,15 +161,25 @@ def test_model_local_path_override_used_when_present(tmp_path):
 def test_model_path_override_ignored_when_file_missing(tmp_path):
     from core.brain.llm import model_registry as mr
 
-    _write_settings(tmp_path, {"model.local_path": str(tmp_path / "nope.gguf")})
+    _write_settings(tmp_path, {"model.local_path": str(tmp_path / "nope")})
+    assert mr._user_model_path_override(mr.ACTIVE_MODEL) is None
+
+
+def test_model_path_override_ignores_retired_external_artifacts(tmp_path):
+    from core.brain.llm import model_registry as mr
+
+    retired_model = tmp_path / "old-model.gguf"
+    retired_model.write_text("x", encoding="utf-8")
+    _write_settings(tmp_path, {"model.local_path": str(retired_model)})
+
     assert mr._user_model_path_override(mr.ACTIVE_MODEL) is None
 
 
 def test_model_path_override_none_for_unrelated_lane(tmp_path):
     from core.brain.llm import model_registry as mr
 
-    real_model = tmp_path / "mymodel.gguf"
-    real_model.write_text("x", encoding="utf-8")
+    real_model = tmp_path / "mlx-model"
+    real_model.mkdir()
     _write_settings(tmp_path, {"model.local_path": str(real_model)})
     # A lane that is neither the primary nor deep model gets no override.
     assert mr._user_model_path_override("some-other-lane-model") is None

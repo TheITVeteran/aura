@@ -638,11 +638,9 @@ def _maybe_relaunch_with_preferred_python():
     env = os.environ.copy()
     env["AURA_SKIP_PREFERRED_PYTHON_RELAUNCH"] = "1"
     env["AURA_PREFERRED_PYTHON"] = str(preferred)
-    # Preserve a deliberate backend choice (e.g. AURA_LOCAL_BACKEND=mlx to run
-    # Aura's own in-process fine-tuned mind, which the substrate can steer) across
-    # the interpreter relaunch. Previously this unconditionally forced llama_cpp,
-    # which silently overrode any attempt to use the MLX/native model lane.
-    env.setdefault("AURA_LOCAL_BACKEND", "mlx")
+    # Preserve the production invariant across interpreter relaunches: the live
+    # desktop Cortex is Aura's in-process MLX lane.
+    env["AURA_LOCAL_BACKEND"] = "mlx"
     os.execve(str(preferred), [str(preferred), *sys.argv], env)
 
 # ---------------------------------------------------------------------------
@@ -3038,17 +3036,12 @@ def main():
     # protection is independent from the reduced recovery-only safe-boot mode.
     if (args.desktop or args.headless) and "AURA_DESKTOP_RESOURCE_GUARD" not in os.environ:
         os.environ["AURA_DESKTOP_RESOURCE_GUARD"] = "1"
-        # Run Aura's OWN in-process fine-tuned mind (MLX) as the desktop Cortex,
-        # not the base Qwen GGUF behind an external llama-server. This matters for
-        # identity, not just weights: an external server is a black box (text in,
-        # text out), so the substrate — affect, neurochemistry, the latent_bridge
-        # activation steering, unified_inference logit modulation — physically
-        # cannot reach inside it. The in-process MLX lane loads the active fused
-        # model (training/fused-model/active.json) and lets the substrate steer
-        # generation. MLX Metal is available for the LLM (the resource-guard Metal
-        # disable only affects the NeuralMesh). Set AURA_LOCAL_BACKEND=llama_cpp
-        # to fall back to the base-model server if the native lane misbehaves.
-        os.environ.setdefault("AURA_LOCAL_BACKEND", "mlx")
+        # Run Aura's OWN in-process fine-tuned mind (MLX) as the desktop Cortex.
+        # This matters for identity, not just weights: an external server is a
+        # black box (text in, text out), so the substrate, affect, neurochemistry,
+        # latent_bridge activation steering, and logit modulation cannot act on
+        # the same live model path. The desktop runtime always chooses MLX.
+        os.environ["AURA_LOCAL_BACKEND"] = "mlx"
         # A normal desktop session is the complete Aura runtime.  Background
         # cognition stays admitted through the same RAM/foreground gates as
         # every other local generation; only an explicit recovery profile may
@@ -3072,11 +3065,9 @@ def main():
         # remains gated, so genuine pressure (<27GB free) still defers.
         os.environ.setdefault("AURA_CORTEX_BACKGROUND_WARMUP_MIN_AVAILABLE_GB", "27")
 
-        # The in-process MLX lane holds the ~20GB 32B in the KERNEL's OWN RSS;
-        # the llama_cpp design kept the model in a separate server process. The
-        # old RSS caps (36GB) and MLX ceiling (28GB) were sized for that
-        # split design. Give the in-process model enough room for the 32B lane,
-        # but keep the process tree well below host-collapse territory.
+        # The in-process MLX lane holds the ~20GB 32B in the KERNEL's OWN RSS.
+        # Give the resident model enough room for the 32B lane, but keep the
+        # process tree well below host-collapse territory.
         if os.environ.get("AURA_LOCAL_BACKEND", "").strip().lower() == "mlx":
             os.environ.setdefault("AURA_PROCESS_RSS_LIMIT_GB", "40")
             os.environ.setdefault("AURA_DESKTOP_PROCESS_RSS_CAP_GB", "40")

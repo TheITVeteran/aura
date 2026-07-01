@@ -3,11 +3,11 @@
 Live code reload engine for Aura's cognitive pipeline.
 
 Reloads Python modules in topological (leaf → root) order so that
-code changes take effect without restarting the kernel, LLM servers,
+code changes take effect without restarting the kernel, MLX workers,
 or dropping active state. Preserves:
   • Running event loop & asyncio tasks
   • ServiceContainer registrations (instances stay alive)
-  • Active LLM server processes (llama-server / MLX worker)
+  • Active MLX worker processes
   • Loaded model weights in GPU/unified memory
   • Conversation history & episodic memory
 
@@ -57,7 +57,6 @@ RELOAD_SCOPES: Dict[str, List[str]] = {
     "llm": [
         "core.brain.llm.context_assembler",
         "core.brain.llm.inference_gate",
-        "core.brain.llm.local_server_client",
         "core.brain.llm.model_registry",
     ],
     "affect": [

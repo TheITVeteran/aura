@@ -122,8 +122,7 @@ ALLOW_SUBPROCESS = {
     # Legitimate production modules requiring OS/subprocess interface
     "core/architect/safety_gate.py",
     "core/architect/shadow_workspace.py",
-    "core/brain/llm/local_llm_setup.py",
-    "core/brain/llm/local_server_client.py",
+    "core/brain/llm/retired_external_runtime.py",
     "core/brain/llm/mlx_worker.py",
     "core/learning/autonomous_rsi.py",
     "core/learning/live_learner.py",

@@ -105,7 +105,7 @@ def test_launch_script_supports_gui_window_mode():
     assert 'cd -P "$(dirname "$0")"' in shell
     assert "AURA_EAGER_CORTEX_WARMUP" in shell
     assert "AURA_DEFERRED_CORTEX_PREWARM" in shell
-    assert "AURA_LOCAL_BACKEND:=mlx" in shell
+    assert "export AURA_LOCAL_BACKEND=mlx" in shell
     assert "AURA_ENABLE_PERMANENT_SWARM:=0" in shell
     assert "AURA_EXTERNAL_GUI_OWNER:=1" in shell
     assert "AURA_DESKTOP_METAL_CACHE_RATIO:=0.16" in shell

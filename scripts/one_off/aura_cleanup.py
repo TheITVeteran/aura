@@ -23,7 +23,6 @@ _AURA_PROCESS_PATTERNS = (
     "aura_main.py",
     "mlx_worker.py",
     "gui_actor.py",
-    "/opt/homebrew/bin/llama-server",
     "simulate_200.py",
 )
 

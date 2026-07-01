@@ -12,7 +12,7 @@ fi
 
 # Install dependencies
 echo "📦 Installing system dependencies..."
-brew install python@3.12 prometheus redis llama.cpp
+brew install python@3.12 prometheus redis
 
 # Setup Virtualenv
 python3.12 -m venv venv
@@ -26,6 +26,6 @@ echo "📚 Installing Python requirements..."
 pip install -r requirements_hardened.txt
 
 echo "🧠 Fetching Aura runtime models..."
-AURA_LOCAL_BACKEND=llama_cpp python scripts/fetch_models.py
+AURA_LOCAL_BACKEND=mlx python scripts/fetch_models.py
 
 echo "✅ Setup complete. Use 'source venv/bin/activate' to enter environment."

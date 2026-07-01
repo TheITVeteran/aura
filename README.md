@@ -312,10 +312,9 @@ per tick.
 5. **Cloud** — Gemini Flash/Pro, PII-scrubbed and rate-limited. Off by default.
 6. **Last resort** — rule-based static responses that can't fail.
 
-Both MLX (Apple Silicon native) and llama.cpp (GGUF) are supported and
-auto-detected at startup. Circuit breakers, a GPU semaphore, a proactive cortex
-watchdog, and 429 handling keep the pipeline from cascading into total failure
-when something misbehaves.
+The live desktop Cortex uses Aura's Apple Silicon MLX runtime. Circuit breakers,
+a GPU semaphore, a proactive cortex watchdog, and 429 handling keep the pipeline
+from cascading into total failure when something misbehaves.
 
 ### Affect (`core/affect/`)
 A Plutchik 8-emotion model plus the somatic dimensions (energy, tension, valence,
@@ -732,9 +731,8 @@ governor blocks itself when another LoRA process is running.
 
 - **State** — SQLite, event-sourced through `StateRepository`, with a
   write-ahead log in `core/resilience/cognitive_wal.py`.
-- **Models** — MLX or llama.cpp, auto-detected. The personality LoRA loads
-  at runtime rather than being fused, so you can swap it without retraining
-  the base.
+- **Models** — MLX runtime lanes. The personality LoRA loads at runtime rather
+  than being fused, so you can swap it without retraining the base.
 - **Memory** — episodic memory in SQLite, working memory in-process,
   semantic memory via the vector engine (`core/memory/vector_memory_engine.py`),
   local SQLite/BLOB vector fallback (`core/memory/sqlite_vector_store.py`), a

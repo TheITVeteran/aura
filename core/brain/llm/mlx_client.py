@@ -4478,12 +4478,11 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
         logger.debug("Suppressed %s in core.brain.llm.mlx_client: %s", type(_exc).__name__, _exc)
 
     backend = get_local_backend()
-    # [STABILITY v53] Force llama_cpp for .gguf artifacts, even if the
-    # global default is MLX. This ensures the 1.5B Reflex model works.
     if backend != "mlx" or str(runtime_path).lower().endswith(".gguf"):
-        from .local_server_client import get_local_server_client
-
-        return get_local_server_client(model_path=runtime_path)
+        raise RuntimeError(
+            "external_cortex_disabled:"
+            " live Aura uses the in-process MLX model lane; external Cortex artifacts are retired"
+        )
 
     if client_key not in _CLIENTS:
         _CLIENTS[client_key] = MLXLocalClient(model_path=runtime_path, **kwargs)

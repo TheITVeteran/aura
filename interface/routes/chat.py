@@ -213,7 +213,7 @@ def _env_float(name: str, default: float, *, minimum: float) -> float:
 
 _DESKTOP_COGNITIVE_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_TURN_TIMEOUT_S",
-    60.0,
+    90.0,
     minimum=10.0,
 )
 _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S = _env_float(

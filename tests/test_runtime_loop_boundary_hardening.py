@@ -110,7 +110,6 @@ def test_runtime_loop_sources_have_explicit_boundaries() -> None:
         "core/senses/sensory_worker.py": ["while True", "except Exception"],
         "core/brain/llm/mlx_worker.py": ["while True"],
         "core/brain/llm/mlx_vision_worker.py": ["while True"],
-        "core/brain/llm/local_server_client.py": ["while True"],
         "core/brain/llm/nucleus_manager.py": ["while True"],
         "core/consciousness/aura_protocol.py": ["while True"],
         "core/consciousness/unified_audit.py": ["while True"],

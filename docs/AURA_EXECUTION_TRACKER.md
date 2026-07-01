@@ -2826,3 +2826,69 @@ Estimate update:
 - Remaining work: final proof/replay artifact normalization, claims matrix
   calibration, final `make final-proof` or configured equivalent, and clean
   worktree closure.
+
+## Checkpoint 2026-06-30-17: MLX-Only Cortex Runtime
+
+Status: passed on the installed live desktop application path.
+
+What changed:
+
+- Removed the retired external local-model runtime implementation, setup
+  manager, Ollama client, GGUF download script, and their obsolete tests.
+- Locked launch, model selection, health routing, compatibility clients, agent
+  loops, and proof tooling to Aura's internal MLX runtime. GGUF paths are now
+  rejected rather than discovered or adopted.
+- Replaced legacy local HTTP generation in `LocalBrain`, `LocalAgentClient`,
+  `LocalLLMAdapter`, and `UnifiedInferenceEngine` with one internal MLX bridge.
+  A failed bridge call returns a structured failure and degradation receipt;
+  it cannot fall through to a raw generic model server.
+- Added an explicit non-spawning retirement sentinel. Any attempted call is
+  blocked and receipted, with no HTTP, subprocess, or process-adoption path.
+- Increased the bounded desktop CognitiveEngine budget to accommodate real 32B
+  foreground generation without opening a secondary generation cascade.
+- Moved Reddit and email keychain reads off the event loop and put synchronous
+  self-model lesson persistence inside the canonical governance scope.
+- Corrected tier-health semantics: a demand-loaded cold Brainstem is `standby`,
+  not `dead`, unless policy explicitly requires that lane to stay warm. This
+  prevents false neural-stream incidents while Cortex is healthy.
+
+Evidence:
+
+- Active-source search found no Ollama, llama-server, local model HTTP API, or
+  deleted-client imports. Remaining `.gguf` references are rejection guards or
+  source-export exclusions.
+- Focused MLX/retirement/runtime suite: `196 passed`.
+- Live runtime, conversation, tool-surface, startup, and launcher suite:
+  `999 passed`.
+- Brainstem standby/inference/chat regression slice: `106 passed`.
+- Enterprise gate: compile passed and `0` high/critical findings after the
+  retirement sentinel was made observable rather than raise-only.
+- Installed `/Applications/Aura.app` reached `ready` with required kernel,
+  inference, memory, scheduler, and tool-governance probes passed.
+- Two real desktop `/api/chat` turns used `status=cognitive_engine`, model path
+  `Aura-32B-crsm-closeout-20260628-181638`, `full_mind_path=true`, recurrent
+  depth active, worker controls applied, quality gate passed, and
+  `legacy_fallback_used=false`. The second turn recalled the exact phrase
+  `blue orchard` and the continuity objective.
+- No listener existed on ports 11434 or 11435, no retired runtime log was
+  created, and no Ollama or llama-server process appeared before or after the
+  live turns.
+- Post-fix observation crossed multiple health sweeps with no dead-Brainstem
+  incident; boot remained ready and conversation-ready.
+
+Honest boundary:
+
+- This proves the current installed desktop profile is internally MLX-only and
+  that the canonical 32B full-mind lane works across two continuity turns. It
+  does not prove every future model artifact or hardware profile without rerun.
+- A transient hypervisor-lag pressure signal (5.46 seconds) appeared during the
+  observation window and cleared on the following pulse without failing any
+  required probe. It remains operational telemetry, not a hidden pass.
+
+Estimate update:
+
+- Overall closeout: 99.6%.
+- Remaining consolidated checkpoints: 1.
+- Remaining smaller sub-checkpoints: 1.
+- Remaining work: final proof/replay normalization, claims calibration, final
+  configured proof gate, and clean-worktree closure.

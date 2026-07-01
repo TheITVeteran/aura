@@ -127,7 +127,7 @@ export AURA_FORCE_CAMERA
 export AURA_AUTO_LISTEN
 export AURA_ENABLE_UVLOOP
 export AURA_ATTACH_LAUNCHER
-: "${AURA_LOCAL_BACKEND:=mlx}"   # Aura's own in-process fine-tuned mind (MLX) so the substrate can steer generation; AURA_LOCAL_BACKEND=llama_cpp falls back to the base-model server
+export AURA_LOCAL_BACKEND=mlx        # Aura's in-process fine-tuned MLX mind.
 : "${AURA_SAFE_BOOT_DESKTOP:=0}" # Recovery-only; normal desktop launches are the full runtime
 : "${AURA_ENABLE_BACKGROUND_COGNITION:=1}"
 : "${AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM:=1}"

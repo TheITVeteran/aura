@@ -375,29 +375,20 @@ class TestMLXClientStability:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# SECTION 5: Local Server Client — Lock Timeouts & Compute Error
+# SECTION 5: Retired External Server Client
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
 class TestLocalServerClientStability:
-    """Test local server client deadline and error handling."""
+    """Test the retired external local-server boundary."""
 
-    def test_lock_timeout_respects_expired_deadline(self):
-        """v53 fix: lock timeout must not exceed a nearly-expired deadline."""
-        from core.brain.llm.local_server_client import LocalServerClient
-        from core.utils.deadlines import Deadline
-        client = LocalServerClient.__new__(LocalServerClient)
-        # Deadline with 0.3s remaining
-        deadline = Deadline(timeout=0.3, start_time=time.monotonic())
-        time.sleep(0.05)  # Let 50ms pass
-        timeout = client._lock_timeout(deadline=deadline, default=20.0, minimum=5.0)
-        assert timeout < 1.0, f"Lock timeout {timeout} should respect near-expired deadline"
+    def test_external_server_client_is_retired(self):
+        from core.brain.llm.retired_external_runtime import RetiredExternalRuntimeClient
 
-    def test_lock_timeout_without_deadline_uses_default(self):
-        from core.brain.llm.local_server_client import LocalServerClient
-        client = LocalServerClient.__new__(LocalServerClient)
-        timeout = client._lock_timeout(deadline=None, default=20.0, minimum=5.0)
-        assert timeout == 20.0
+        status = RetiredExternalRuntimeClient("/models/old-runtime").get_lane_status()
+
+        assert status["state"] == "retired"
+        assert status["conversation_ready"] is False
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

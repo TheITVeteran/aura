@@ -4,7 +4,6 @@ import os
 import sys
 from collections.abc import Awaitable, Callable
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
@@ -197,13 +196,7 @@ class ResilientBoot:
 
         # Maps import_name to user-friendly name
         from core.brain.llm.model_registry import (
-            ACTIVE_MODEL,
-            BRAINSTEM_MODEL,
-            DEEP_MODEL,
-            FALLBACK_MODEL,
-            find_llama_server_bin,
             get_local_backend,
-            get_runtime_model_path,
         )
 
         critical_manifest = {
@@ -241,26 +234,6 @@ class ResilientBoot:
         set_capabilities(flags)
         logger.info("📍 [BOOT] Capability Mapping: Hearing=%s, Speech=%s, Vision=%s", 
                     flags.hearing_enabled, flags.speech_enabled, flags.vision_enabled)
-
-        backend = get_local_backend()
-        if backend == "llama_cpp":
-            runtime_bin = find_llama_server_bin()
-            if runtime_bin:
-                logger.info("   ✅ llama-server: %s", runtime_bin)
-            else:
-                logger.warning("   ⚠️ llama-server: MISSING")
-
-            for label, model_name in (
-                ("Cortex", ACTIVE_MODEL),
-                ("Solver", DEEP_MODEL),
-                ("Brainstem", BRAINSTEM_MODEL),
-                ("Reflex", FALLBACK_MODEL),
-            ):
-                model_path = Path(get_runtime_model_path(model_name))
-                if await asyncio.to_thread(model_path.exists):
-                    logger.info("   ✅ %s artifact: %s", label, model_path)
-                else:
-                    logger.warning("   ⚠️ %s artifact missing: %s", label, model_path)
 
     async def _stage_state(self):
         """Initialize State Repository (Aura's heart) via Supervision Tree."""
@@ -359,19 +332,12 @@ class ResilientBoot:
         from core.brain.llm.mlx_client import get_mlx_client
         from core.brain.llm.model_registry import (
             ACTIVE_MODEL,
-            find_llama_server_bin,
             get_local_backend,
             get_runtime_model_path,
         )
 
         backend = get_local_backend()
-        if backend == "llama_cpp" and find_llama_server_bin() is None:
-            raise RuntimeError("llama_server_missing")
-
         model_path = str(get_runtime_model_path(ACTIVE_MODEL))
-        model_exists = await asyncio.to_thread(Path(model_path).exists)
-        if backend == "llama_cpp" and not model_exists:
-            raise RuntimeError(f"llama_model_missing:{model_path}")
         get_mlx_client(model_path=model_path)
         logger.info("🧠 [BOOT] Primary %s client prepared. Cortex warmup deferred to InferenceGate.", backend)
 

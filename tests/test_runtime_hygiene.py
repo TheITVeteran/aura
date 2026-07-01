@@ -228,9 +228,7 @@ def test_runtime_hygiene_treats_recent_model_warmup_as_transient(monkeypatch):
         }
     )
     fake_mlx_module = SimpleNamespace(_CLIENTS={str(TMP_ROOT / "cortex"): fake_client})
-    fake_server_module = SimpleNamespace(_SERVER_CLIENTS={})
     monkeypatch.setitem(sys.modules, "core.brain.llm.mlx_client", fake_mlx_module)
-    monkeypatch.setitem(sys.modules, "core.brain.llm.local_server_client", fake_server_module)
 
     assert hygiene._active_local_model_activity() == ["cortex:recent"]
 
@@ -262,9 +260,7 @@ def test_runtime_hygiene_tolerates_model_registry_churn(monkeypatch):
             return super().items()
 
     fake_mlx_module = SimpleNamespace(_CLIENTS=FlakyRegistry())
-    fake_server_module = SimpleNamespace(_SERVER_CLIENTS={})
     monkeypatch.setitem(sys.modules, "core.brain.llm.mlx_client", fake_mlx_module)
-    monkeypatch.setitem(sys.modules, "core.brain.llm.local_server_client", fake_server_module)
 
     assert hygiene._active_local_model_activity() == ["cortex:recent"]
 

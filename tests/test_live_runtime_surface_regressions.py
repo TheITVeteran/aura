@@ -1664,11 +1664,11 @@ def test_primary_foreground_timeout_is_bounded_for_live_desktop_path():
     from interface.routes.chat import _foreground_timeout_for_lane
 
     # Ready lane: min(_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S=207,
-    # _DESKTOP_COGNITIVE_TURN_TIMEOUT_S=60 + 48s response reserve) = 108.
+    # _DESKTOP_COGNITIVE_TURN_TIMEOUT_S=90 + 48s response reserve) = 138.
     # Cold lanes retain a separate 210s outer bound for model startup.
-    assert _foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 108.0
+    assert _foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 138.0
     assert _foreground_timeout_for_lane({"conversation_ready": False, "state": "warming"}) == 210.0
-    assert _foreground_timeout_for_lane({"conversation_ready": False, "state": "unknown"}) == 108.0
+    assert _foreground_timeout_for_lane({"conversation_ready": False, "state": "unknown"}) == 138.0
 
 
 def test_continuity_generic_reentry_goal_is_not_restored_as_work(monkeypatch):

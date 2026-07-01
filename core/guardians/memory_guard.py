@@ -118,7 +118,7 @@ class MemoryGuard:
                         try:
                             gate = ServiceContainer.get("inference_gate", default=None)
                             if gate and hasattr(gate, "_shed_background_workers_for_memory_pressure"):
-                                logger.warning("MemoryGuard: Shedding background local-runtime workers to protect Cortex (%s%%)", pressure)
+                                logger.warning("MemoryGuard: Shedding background MLX workers to protect Cortex (%s%%)", pressure)
                                 await gate._shed_background_workers_for_memory_pressure()
                         except (ImportError, AttributeError, RuntimeError) as e:
                             record_degradation('memory_guard', e)

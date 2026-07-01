@@ -15,7 +15,7 @@ def test_foreground_budgets_are_bounded_for_live_desktop_lane():
     ready_route_timeout = chat_routes._foreground_timeout_for_lane(
         {"conversation_ready": True, "state": "ready"}
     )
-    assert ready_route_timeout == 108.0
+    assert ready_route_timeout == 138.0
     assert ready_route_timeout < chat_routes._foreground_timeout_for_lane(
         {"conversation_ready": False, "state": "warming"}
     )

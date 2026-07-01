@@ -63,7 +63,7 @@ MEMORY_ABORT_EXIT_CODE = 70
 # Child workers the hard tier is allowed to terminate out-of-band. These
 # are inference/runtime workers that the lane clients know how to respawn;
 # killing them loses no durable state.
-_HEAVY_WORKER_MARKERS = ("llama-server", "mlx_worker.py", "MTLCompilerService")
+_HEAVY_WORKER_MARKERS = ("mlx_worker.py", "MTLCompilerService")
 
 _TOMBSTONE_DIR = Path("data/error_logs/memory")
 _DARWIN_CHILD_LIBPROC: Any | None = None

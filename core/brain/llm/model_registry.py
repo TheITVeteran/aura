@@ -2,14 +2,13 @@
 
 This module is the single source of truth for:
   - the logical Aura model lanes (Cortex / Solver / Brainstem / Reflex)
-  - local artifact paths for both MLX and GGUF runtimes
-  - the active local backend selection
+  - local artifact paths for Aura's MLX runtime
+  - the active local backend selection, forced to MLX for live Aura
 """
 import copy
 import json
 import os
 import re
-import shutil
 import threading
 import time
 from functools import lru_cache
@@ -47,8 +46,28 @@ LEGACY_ENDPOINT_ALIASES = {
 }
 
 
+def external_llama_cortex_allowed() -> bool:
+    """External server Cortex is retired for live Aura.
+
+    Normal Aura desktop/runtime operation uses the in-process MLX lane so the
+    substrate, affect, steering, memory, and response gates can act on the same
+    live model path.  Keep the public function for compatibility, but make the
+    answer permanently false.
+    """
+
+    return False
+
+
+def _effective_local_backend() -> str:
+    raw = str(os.getenv("AURA_LOCAL_BACKEND") or LOCAL_BACKEND or "mlx").strip().lower()
+    return "mlx" if raw != "mlx" else "mlx"
+
+
 def _normalize_backend_name(value: str | None) -> str:
-    return str(value or LOCAL_BACKEND or "mlx").strip().lower()
+    if value is None:
+        return _effective_local_backend()
+    normalized = str(value or "mlx").strip().lower()
+    return "mlx" if normalized != "mlx" else "mlx"
 
 
 def normalize_runtime_model_name(model_name: str | None, *, backend: str | None = None) -> str:
@@ -60,27 +79,15 @@ def normalize_runtime_model_name(model_name: str | None, *, backend: str | None 
     normalized_backend = _normalize_backend_name(backend)
     if normalized_backend == "mlx":
         return {
-            # GGUF quant alias; the MLX runtime uses the 4-bit artifact/layout.
+            # Retired Q4 alias; the MLX runtime uses the 4-bit artifact/layout.
             "Qwen2.5-72B-Instruct-Q4": "Qwen2.5-72B-Instruct-4bit",
         }.get(name, name)
     return name
 
-# ── Change these lines to upgrade Aura's brain ──
-# Auto-detect: Use 72B Q4 if downloaded, otherwise fall back to stable 32B Q5
-def _detect_72b_q4() -> bool:
-    shard1 = BASE_DIR / "models_gguf" / "qwen2.5-72b-instruct-q4_k_m-00001-of-00012.gguf"
-    try:
-        return shard1.exists() and shard1.stat().st_size > 3_500_000_000
-    except OSError:
-        return False
-_72B_READY = _detect_72b_q4()
-
 
 def _default_deep_model_name(*, backend: str | None = None) -> str:
-    normalized_backend = _normalize_backend_name(backend)
-    if normalized_backend == "mlx":
-        return "Qwen2.5-72B-Instruct-4bit"
-    return "Qwen2.5-72B-Instruct-Q4" if _72B_READY else "Qwen2.5-72B-Instruct-4bit"
+    _normalize_backend_name(backend)
+    return "Qwen2.5-72B-Instruct-4bit"
 
 
 # 32B Q5 as Cortex (fast, stable ~20s responses); 72B Q4 as Solver (deep reasoning, hot-swap)
@@ -95,8 +102,6 @@ DEEP_MODEL = normalize_runtime_model_name(
 )
 BRAINSTEM_MODEL = os.getenv("AURA_BRAINSTEM_MODEL", "Qwen2.5-7B-Instruct-4bit")
 FALLBACK_MODEL = os.getenv("AURA_FALLBACK_MODEL", "Qwen2.5-1.5B-Instruct-4bit")
-
-GGUF_DIR = BASE_DIR / "models_gguf"
 
 # Env-override for the primary (Cortex), solver, and brainstem model paths so
 # a .env swap actually takes effect.  This is how we point Aura at the fused
@@ -153,82 +158,6 @@ MODEL_PATHS = {
     "Qwen2.5-72B-Instruct-Q4":    BASE_DIR / "models" / "Qwen2.5-72B-Instruct-Q4",
 }
 
-GGUF_MODEL_PATHS = {
-    "Qwen2.5-1.5B-Instruct-4bit": Path(
-        os.getenv(
-            "AURA_FALLBACK_GGUF",
-            str(GGUF_DIR / "qwen2.5-1.5b-instruct-q4_k_m.gguf"),
-        )
-    ),
-    "Qwen2.5-7B-Instruct-4bit": Path(
-        os.getenv(
-            "AURA_BRAINSTEM_GGUF",
-            str(GGUF_DIR / "qwen2.5-7b-instruct-q4_k_m.gguf"),
-        )
-    ),
-    "Qwen2.5-32B-Instruct-8bit": Path(
-        os.getenv(
-            "AURA_CORTEX_GGUF",
-            str(GGUF_DIR / "qwen2.5-32b-instruct-q5_k_m.gguf"),
-        )
-    ),
-    "Qwen2.5-32B-Instruct-4bit": Path(
-        os.getenv(
-            "AURA_CORTEX_GGUF",
-            str(GGUF_DIR / "qwen2.5-32b-instruct-q5_k_m.gguf"),
-        )
-    ),
-    "Qwen2.5-72B-Instruct-4bit": Path(
-        os.getenv(
-            "AURA_SOLVER_GGUF",
-            str(GGUF_DIR / "qwen2.5-72b-instruct-q3_k_m.gguf"),
-        )
-    ),
-    "Qwen3-72B-Instruct": Path(
-        os.getenv(
-            "AURA_SOLVER_GGUF",
-            str(GGUF_DIR / "Qwen3-72B-Instruct.Q4_K_M.gguf"),
-        )
-    ),
-    "Qwen2.5-72B-Instruct-Q4": Path(
-        os.getenv(
-            "AURA_SOLVER_GGUF",
-            str(GGUF_DIR / "qwen2.5-72b-instruct-q4_k_m.gguf"),
-        )
-    ),
-}
-
-GGUF_DOWNLOAD_TARGETS = {
-    "Qwen2.5-1.5B-Instruct-4bit": {
-        "repo": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-        "pattern": "qwen2.5-1.5b-instruct-q4_k_m*.gguf",
-    },
-    "Qwen2.5-7B-Instruct-4bit": {
-        "repo": "Qwen/Qwen2.5-7B-Instruct-GGUF",
-        "pattern": "qwen2.5-7b-instruct-q4_k_m*.gguf",
-    },
-    "Qwen2.5-32B-Instruct-8bit": {
-        "repo": "Qwen/Qwen2.5-32B-Instruct-GGUF",
-        "pattern": "qwen2.5-32b-instruct-q5_k_m*.gguf",
-    },
-    "Qwen2.5-32B-Instruct-4bit": {
-        "repo": "Qwen/Qwen2.5-32B-Instruct-GGUF",
-        "pattern": "qwen2.5-32b-instruct-q5_k_m*.gguf",
-    },
-    "Qwen2.5-72B-Instruct-4bit": {
-        "repo": "Qwen/Qwen2.5-72B-Instruct-GGUF",
-        "pattern": "qwen2.5-72b-instruct-q3_k_m*.gguf",
-    },
-    "Qwen3-72B-Instruct": {
-        "repo": "mradermacher/Qwen3-72B-Instruct-GGUF",
-        "pattern": "Qwen3-72B-Instruct.Q4_K_M.gguf",
-    },
-    "Qwen2.5-72B-Instruct-Q4": {
-        "repo": "Qwen/Qwen2.5-72B-Instruct-GGUF",
-        "pattern": "qwen2.5-72b-instruct-q4_k_m*.gguf",
-    },
-}
-
 ADAPTER_PATH = BASE_DIR / "data" / "adapters"
 
 
@@ -250,7 +179,7 @@ def _model_identity_variants(value: str | None) -> set[str]:
         variants.add(size_tag)
 
     # Drop common quantization / backend suffixes so the same base family can
-    # match across MLX and GGUF artifacts when explicitly intended.
+    # match across MLX and retired external artifacts when explicitly intended.
     family = re.sub(r"-(?:q\d.*|[248]bit.*)$", "", normalized)
     if family:
         variants.add(family)
@@ -320,25 +249,20 @@ def get_model_path(model_name: str | None = None) -> str:
     return str(local_path)
 
 
-def local_backend_is_mlx() -> bool:
-    return LOCAL_BACKEND == "mlx"
-
-
 def get_local_backend() -> str:
-    return LOCAL_BACKEND
+    """Return Aura's effective local backend.
+
+    This is intentionally dynamic.  Older builds captured ``AURA_LOCAL_BACKEND``
+    at module import time, so stale launch environments could route live
+    conversation into a generic external server. Treat every non-MLX value as
+    MLX.
+    """
+
+    return _effective_local_backend()
 
 
-def find_llama_server_bin() -> str | None:
-    explicit = os.getenv("AURA_LLAMA_SERVER_BIN")
-    if explicit:
-        return explicit
-    discovered = shutil.which("llama-server")
-    if discovered:
-        return discovered
-    for candidate in ("/opt/homebrew/bin/llama-server", "/usr/local/bin/llama-server"):
-        if Path(candidate).exists():
-            return candidate
-    return None
+def local_backend_is_mlx() -> bool:
+    return get_local_backend() == "mlx"
 
 
 def normalize_endpoint_name(endpoint_name: str | None) -> str | None:
@@ -468,7 +392,7 @@ def get_endpoint_name_for_model(model_name: str | None) -> str:
     brainstem_size = _extract_size_tag(BRAINSTEM_MODEL)
     fallback_size = _extract_size_tag(FALLBACK_MODEL)
 
-    # Match by model size (most reliable for GGUF filenames)
+    # Match by model size across configured model identifiers.
     if model_size and model_size == active_size:
         return PRIMARY_ENDPOINT
     if model_size and model_size == deep_size:
@@ -506,37 +430,25 @@ def _user_model_path_override(name: str) -> str | None:
     else:
         return None
     value = str(get_runtime_setting(key, "") or "").strip()
+    if value.lower().endswith(".gguf"):
+        return None
     if value and Path(value).exists():
         return value
     return None
 
 
 def get_runtime_model_path(model_name: str | None = None) -> str:
-    """Resolve the active local-runtime artifact for a lane."""
+    """Resolve the active MLX runtime artifact for a lane."""
     name = model_name or ACTIVE_MODEL
     override = _user_model_path_override(name)
     if override:
         return override
-    if local_backend_is_mlx():
-        return get_model_path(name)
-    path = GGUF_MODEL_PATHS.get(name, GGUF_DIR / name)
-    shard_prefix = f"{path.stem}-00001-of-*.gguf"
-    shard_matches = sorted(path.parent.glob(shard_prefix))
-    if shard_matches:
-        return str(shard_matches[0])
-
-    if path.exists():
-        return str(path)
-
-    wildcard_matches = sorted(path.parent.glob(f"{path.stem}*.gguf"))
-    if wildcard_matches:
-        return str(wildcard_matches[0])
-    return str(path)
+    return get_model_path(name)
 
 
 def get_runtime_download_target(model_name: str | None = None) -> dict[str, str]:
-    name = model_name or ACTIVE_MODEL
-    return dict(GGUF_DOWNLOAD_TARGETS.get(name, {}))
+    _ = model_name
+    return {}
 
 
 def get_brainstem_path() -> str:
@@ -689,12 +601,12 @@ def _env_truthy(name: str) -> bool:
 
 
 def _personality_lora_disabled(backend: str) -> bool:
-    backend_key = "AURA_DISABLE_GGUF_LORA" if backend == "gguf" else "AURA_DISABLE_MLX_LORA"
+    backend_key = "AURA_DISABLE_MLX_LORA"
     return _env_truthy("AURA_DISABLE_PERSONALITY_LORA") or _env_truthy(backend_key)
 
 
 def _default_personality_lora_enabled(backend: str) -> bool:
-    backend_key = "AURA_ENABLE_GGUF_LORA" if backend == "gguf" else "AURA_ENABLE_MLX_LORA"
+    backend_key = "AURA_ENABLE_MLX_LORA"
     return _env_truthy("AURA_ENABLE_PERSONALITY_LORA") or _env_truthy(backend_key)
 
 
@@ -705,10 +617,8 @@ def resolve_personality_adapter(
 ) -> str | None:
     """Return a compatible Aura personality adapter for the requested model.
 
-    Backend-specific overrides are supported so MLX and GGUF can be pinned
-    differently when needed:
+    MLX overrides are supported:
       - `AURA_LORA_PATH`, `AURA_LORA_TARGET_MODEL`
-      - `AURA_GGUF_LORA_PATH`, `AURA_GGUF_LORA_TARGET_MODEL`
 
     The bundled personality adapter is opt-in. It has historically been useful
     for experiments, but live Cortex already runs against Aura-tuned/fused
@@ -717,32 +627,12 @@ def resolve_personality_adapter(
     flag is set.
     """
     normalized_backend = str(backend or "mlx").strip().lower()
+    if normalized_backend != "mlx":
+        return None
     target_model = str(target_model or "").strip()
 
     if _personality_lora_disabled(normalized_backend):
         return None
-
-    if normalized_backend == "gguf":
-        adapter_path = os.getenv("AURA_GGUF_LORA_PATH", "").strip()
-        if not adapter_path:
-            if not _default_personality_lora_enabled(normalized_backend):
-                return None
-            default_path = (
-                BASE_DIR / "training" / "adapters" / "aura-personality" / "aura-personality-lora.gguf"
-            )
-            if default_path.exists():
-                adapter_path = str(default_path)
-        if not adapter_path or not Path(adapter_path).is_file():
-            return None
-
-        configured_target = (
-            os.getenv("AURA_GGUF_LORA_TARGET_MODEL", "").strip()
-            or os.getenv("AURA_LORA_TARGET_MODEL", "").strip()
-            or ACTIVE_MODEL
-        )
-        if target_model and configured_target and not model_identities_compatible(configured_target, target_model):
-            return None
-        return adapter_path
 
     adapter_dir = os.getenv("AURA_LORA_PATH", "").strip()
     if not adapter_dir:
