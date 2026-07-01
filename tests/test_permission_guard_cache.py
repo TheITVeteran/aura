@@ -161,12 +161,48 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "active_native_bridge")
         self.assertTrue(result["native_bridge"])
 
-    async def test_effective_check_reports_denied_native_app_bridge_without_python_fallback(self):
+    async def test_effective_check_forces_one_shot_native_app_permission_truth(self):
+        guard = PermissionGuard()
+        calls = []
+
+        def _probe(*, force=False, prefer_one_shot=False):
+            calls.append((force, prefer_one_shot))
+            if prefer_one_shot:
+                return {
+                    "ok": True,
+                    "screen_recording": True,
+                    "accessibility": True,
+                    "automation": True,
+                    "bundle_identifier": "com.aura.desktop",
+                    "bridge_executable": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
+                    "bridge_transport": "one_shot_subprocess",
+                }
+            return {
+                "ok": True,
+                "screen_recording": True,
+                "accessibility": False,
+                "automation": True,
+                "bundle_identifier": "com.aura.desktop",
+                "bridge_executable": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
+                "bridge_transport": "resident_ipc",
+            }
+
+        with patch(
+            "core.security.native_desktop_bridge.probe_native_desktop_bridge",
+            side_effect=_probe,
+        ):
+            result = await guard.check_permission(PermissionType.ACCESSIBILITY)
+
+        self.assertTrue(result["granted"])
+        self.assertEqual(result["status"], "active_native_bridge")
+        self.assertEqual(calls, [(True, True)])
+
+    async def test_effective_check_falls_back_to_current_process_when_native_bridge_denies(self):
         guard = PermissionGuard()
         guard._screen_preflight_probe = lambda: {
             "granted": True,
             "status": "active",
-            "guidance": "python child should not win",
+            "guidance": "",
         }
 
         with patch(
@@ -185,10 +221,9 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
         ):
             result = await guard.check_permission(PermissionType.SCREEN)
 
-        self.assertFalse(result["granted"])
-        self.assertEqual(result["status"], "denied_native_bridge")
-        self.assertTrue(result["native_bridge"])
-        self.assertIn("remove and re-add Aura.app", result["guidance"])
+        self.assertTrue(result["granted"])
+        self.assertEqual(result["status"], "active")
+        self.assertNotIn("native_bridge", result)
 
     def test_shared_permission_guard_accessor_reuses_singleton(self):
         original = permission_guard_module._SHARED_PERMISSION_GUARD

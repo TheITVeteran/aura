@@ -594,7 +594,7 @@ def test_desktop_access_summary_reuses_cached_probe_result(monkeypatch):
     monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
     monkeypatch.setattr(
         "core.security.native_desktop_bridge.probe_native_desktop_bridge",
-        lambda force=False: {"ok": False, "error": "not_available"},
+        lambda force=False, prefer_one_shot=False: {"ok": False, "error": "not_available"},
     )
     monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (None, None))
     monkeypatch.setattr(system_routes, "_DESKTOP_ACCESS_CACHE_TTL_S", 60.0)
@@ -658,7 +658,7 @@ def test_desktop_access_blocked_cache_expires_before_ready_cache(monkeypatch):
         async def check_permission(self, ptype, force=False):
             return {"granted": False, "status": "denied", "guidance": ptype.name}
 
-    def _native_probe(force=False):
+    def _native_probe(force=False, prefer_one_shot=False):
         nonlocal calls
         calls += 1
         return {"ok": False, "error": f"miss-{calls}"}
@@ -711,7 +711,7 @@ def test_desktop_access_summary_labels_env_assumptions_separately(monkeypatch):
     monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
     monkeypatch.setattr(
         "core.security.native_desktop_bridge.probe_native_desktop_bridge",
-        lambda force=False: {"ok": False, "error": "not_available"},
+        lambda force=False, prefer_one_shot=False: {"ok": False, "error": "not_available"},
     )
     monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (object(), None))
 
@@ -789,7 +789,7 @@ def test_desktop_access_summary_preserves_native_bridge_success_when_automation_
     monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (object(), None))
     monkeypatch.setattr(
         "core.security.native_desktop_bridge.probe_native_desktop_bridge",
-        lambda force=False: {"ok": False, "error": "native_bridge_unavailable"},
+        lambda force=False, prefer_one_shot=False: {"ok": False, "error": "native_bridge_unavailable"},
     )
 
     original_cache = dict(system_routes._desktop_access_cache)
@@ -832,7 +832,7 @@ def test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_
     monkeypatch.setattr(permission_guard_module, "get_permission_guard", lambda: _Guard())
     monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
     monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (object(), None))
-    def _native_probe(force=False):
+    def _native_probe(force=False, prefer_one_shot=False):
         force_values.append(force)
         return {
             "ok": True,
@@ -877,6 +877,90 @@ def test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_
     assert force_values == [False]
 
 
+def test_desktop_access_summary_reconciles_partial_resident_probe_with_one_shot(monkeypatch):
+    import core.security.permission_guard as permission_guard_module
+    from interface.routes import system as system_routes
+
+    probe_calls = []
+
+    class _Guard:
+        def current_process_identity(self):
+            return {
+                "pid": 789,
+                "bundle_identifier": "org.python.python",
+                "executable": str(Path.home() / ".aura/live-source/.venv/bin/python3"),
+            }
+
+        async def check_permission(self, ptype, force=False):
+            return {"granted": False, "status": "denied", "guidance": f"python denied {ptype.name}"}
+
+        async def check_permission_direct(self, ptype):
+            return {
+                "granted": False,
+                "status": "denied",
+                "guidance": f"direct denied {ptype.name}",
+                "direct_probe": True,
+            }
+
+    def _native_probe(force=False, prefer_one_shot=False):
+        probe_calls.append((force, prefer_one_shot))
+        if prefer_one_shot:
+            return {
+                "ok": True,
+                "screen_recording": True,
+                "accessibility": True,
+                "automation": True,
+                "frontmost_app": "Aura",
+                "bundle_identifier": "com.aura.desktop",
+                "bridge_executable": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
+                "bridge_transport": "one_shot_subprocess",
+                "code_signature": {
+                    "identifier": "com.aura.desktop",
+                    "authorities": ["Aura Local Code Signing"],
+                    "team_identifier": "not set",
+                    "stable_tcc_identity": True,
+                },
+            }
+        return {
+            "ok": True,
+            "screen_recording": True,
+            "accessibility": False,
+            "automation": True,
+            "frontmost_app": "Aura",
+            "bundle_identifier": "com.aura.desktop",
+            "bridge_executable": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
+            "bridge_transport": "resident_ipc",
+            "code_signature": {
+                "identifier": "com.aura.desktop",
+                "authorities": ["Aura Local Code Signing"],
+                "team_identifier": "not set",
+                "stable_tcc_identity": True,
+            },
+        }
+
+    monkeypatch.setattr(permission_guard_module, "get_permission_guard", lambda: _Guard())
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
+    monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (object(), None))
+    monkeypatch.setattr("core.security.native_desktop_bridge.probe_native_desktop_bridge", _native_probe)
+
+    original_cache = dict(system_routes._desktop_access_cache)
+    system_routes._desktop_access_cache["captured_at"] = 0.0
+    system_routes._desktop_access_cache["payload"] = None
+    try:
+        payload = asyncio.run(system_routes._collect_desktop_access_summary())
+    finally:
+        system_routes._desktop_access_cache.update(original_cache)
+
+    assert payload["overall_status"] == "ready"
+    assert payload["permission_confidence"] == "direct"
+    assert payload["desktop_control_ready"] is True
+    assert payload["screen_text_ready"] is True
+    assert payload["blocking_permissions"] == []
+    assert payload["native_bridge_probe"]["resident_reconciled"] is True
+    assert payload["native_bridge_probe"]["resident_bridge_probe"]["accessibility"] is False
+    assert probe_calls == [(False, False), (True, True)]
+
+
 def test_desktop_access_summary_explains_denied_current_native_bridge(monkeypatch):
     import core.security.permission_guard as permission_guard_module
     from interface.routes import system as system_routes
@@ -912,7 +996,7 @@ def test_desktop_access_summary_explains_denied_current_native_bridge(monkeypatc
     monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (object(), None))
     monkeypatch.setattr(
         "core.security.native_desktop_bridge.probe_native_desktop_bridge",
-        lambda force=False: {
+        lambda force=False, prefer_one_shot=False: {
             "ok": True,
             "screen_recording": False,
             "accessibility": False,
@@ -976,7 +1060,7 @@ def test_desktop_access_summary_reports_stale_tcc_repair_plan_for_stable_signed_
     monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (object(), None))
     monkeypatch.setattr(
         "core.security.native_desktop_bridge.probe_native_desktop_bridge",
-        lambda force=False: {
+        lambda force=False, prefer_one_shot=False: {
             "ok": True,
             "screen_recording": False,
             "accessibility": False,
@@ -1036,7 +1120,7 @@ def test_desktop_access_summary_includes_permission_request_state(monkeypatch):
     monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (object(), None))
     monkeypatch.setattr(
         "core.security.native_desktop_bridge.probe_native_desktop_bridge",
-        lambda force=False: {
+        lambda force=False, prefer_one_shot=False: {
             "ok": True,
             "screen_recording": False,
             "accessibility": False,
@@ -1068,6 +1152,70 @@ def test_desktop_access_summary_includes_permission_request_state(monkeypatch):
 
     assert payload["tcc_request_state"]["screen_recording"]["status"] == "approval_required"
     assert payload["tcc_repair_plan"]["request_state"]["screen_recording"]["target"] == "Aura.app"
+
+
+def test_desktop_access_screen_request_uses_one_shot_signed_bridge(monkeypatch):
+    from interface.routes import system as system_routes
+
+    calls = []
+
+    def _invoke(command, **kwargs):
+        calls.append((command, kwargs))
+        return {
+            "ok": True,
+            "screen_recording": True,
+            "bundle_identifier": "com.aura.desktop",
+            "bridge_transport": "one_shot_subprocess",
+        }
+
+    monkeypatch.setattr("core.security.native_desktop_bridge.invoke_native_desktop_bridge", _invoke)
+    original_request_state = dict(system_routes._desktop_access_request_state)
+    try:
+        result = asyncio.run(system_routes.request_screen_access())
+    finally:
+        system_routes._desktop_access_request_state.clear()
+        system_routes._desktop_access_request_state.update(original_request_state)
+
+    assert result["granted"] is True
+    assert result["native_bridge"]["bridge_transport"] == "one_shot_subprocess"
+    assert calls == [
+        (
+            "request_screen",
+            {"read_only": True, "timeout": 45.0, "prefer_one_shot": True},
+        )
+    ]
+
+
+def test_desktop_access_accessibility_request_uses_one_shot_signed_bridge(monkeypatch):
+    from interface.routes import system as system_routes
+
+    calls = []
+
+    def _invoke(command, **kwargs):
+        calls.append((command, kwargs))
+        return {
+            "ok": True,
+            "accessibility": True,
+            "bundle_identifier": "com.aura.desktop",
+            "bridge_transport": "one_shot_subprocess",
+        }
+
+    monkeypatch.setattr("core.security.native_desktop_bridge.invoke_native_desktop_bridge", _invoke)
+    original_request_state = dict(system_routes._desktop_access_request_state)
+    try:
+        result = asyncio.run(system_routes.request_accessibility_access())
+    finally:
+        system_routes._desktop_access_request_state.clear()
+        system_routes._desktop_access_request_state.update(original_request_state)
+
+    assert result["granted"] is True
+    assert result["native_bridge"]["bridge_transport"] == "one_shot_subprocess"
+    assert calls == [
+        (
+            "request_accessibility",
+            {"read_only": True, "timeout": 45.0, "prefer_one_shot": True},
+        )
+    ]
 
 
 def test_desktop_access_endpoint_returns_json_summary(monkeypatch):

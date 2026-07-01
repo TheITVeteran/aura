@@ -178,31 +178,18 @@ class PermissionGuard(AuraBaseModule):
         try:
             from core.security.native_desktop_bridge import probe_native_desktop_bridge
 
-            native_probe = await asyncio.to_thread(probe_native_desktop_bridge)
+            native_probe = await asyncio.to_thread(
+                probe_native_desktop_bridge,
+                force=True,
+                prefer_one_shot=True,
+            )
         except _PERMISSION_RECOVERABLE_ERRORS as exc:
             self.logger.debug("Native Aura.app permission probe unavailable: %s", exc)
             return None
         if not native_probe.get("ok"):
             return None
         if not native_probe.get(native_key):
-            signature = (
-                native_probe.get("code_signature")
-                if isinstance(native_probe.get("code_signature"), dict)
-                else {}
-            )
-            hint = str(signature.get("tcc_repair_hint") or "").strip()
-            guidance = self.get_guidance(ptype)
-            if hint:
-                guidance = f"{guidance}\n\n{hint}"
-            return {
-                "granted": False,
-                "status": "denied_native_bridge",
-                "guidance": guidance,
-                "native_bridge": True,
-                "bridge_executable": str(native_probe.get("bridge_executable", "") or ""),
-                "bundle_identifier": str(native_probe.get("bundle_identifier", "") or ""),
-                "code_signature": signature,
-            }
+            return None
         return {
             "granted": True,
             "status": "active_native_bridge",

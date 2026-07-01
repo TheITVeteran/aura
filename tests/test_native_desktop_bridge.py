@@ -144,13 +144,67 @@ def test_native_bridge_probe_keeps_short_resident_timeout(monkeypatch):
 
     def _resident(command, *, timeout, **_payload):
         observed.append((command, timeout))
-        return {"ok": True}
+        return {
+            "ok": True,
+            "screen_recording": True,
+            "accessibility": True,
+            "automation": True,
+        }
 
     monkeypatch.setattr(bridge, "_invoke_resident_bridge", _resident)
 
     result = bridge.invoke_native_desktop_bridge("probe", read_only=True, timeout=45.0)
 
     assert result["ok"] is True
+    assert observed == [("probe", 3.0)]
+
+
+def test_native_bridge_reconciles_stale_resident_probe_with_one_shot(monkeypatch, tmp_path):
+    from core.security import native_desktop_bridge as bridge
+
+    monkeypatch.setenv("AURA_NATIVE_BRIDGE_DIR", str(tmp_path / "resident"))
+    observed: list[tuple[str, float]] = []
+    executable = tmp_path / "aura-launcher"
+    executable.write_text("bridge", encoding="utf-8")
+    executable.chmod(0o755)
+
+    def _resident(command, *, timeout, **_payload):
+        observed.append((command, timeout))
+        return {
+            "ok": True,
+            "screen_recording": True,
+            "accessibility": False,
+            "automation": True,
+            "bridge_transport": "resident_ipc",
+        }
+
+    class _Gateway:
+        def run(self, _argv, **_kwargs):
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "screen_recording": True,
+                        "accessibility": True,
+                        "automation": True,
+                        "bundle_identifier": "com.aura.desktop",
+                    }
+                ),
+                stderr="",
+                returncode=0,
+            )
+
+    monkeypatch.setattr(bridge, "bridge_executable", lambda: executable)
+    monkeypatch.setattr(bridge, "_invoke_resident_bridge", _resident)
+    monkeypatch.setattr(bridge, "get_subprocess_gateway", lambda: _Gateway())
+
+    result = bridge.invoke_native_desktop_bridge("probe", read_only=True, timeout=5.0)
+
+    assert result["ok"] is True
+    assert result["accessibility"] is True
+    assert result["bridge_transport"] == "one_shot_subprocess"
+    assert result["resident_reconciled"] is True
+    assert result["resident_bridge_probe"]["accessibility"] is False
     assert observed == [("probe", 3.0)]
 
 
@@ -208,7 +262,7 @@ async def test_permission_guard_accepts_granted_native_app_identity(monkeypatch)
     monkeypatch.setattr(
         bridge,
         "probe_native_desktop_bridge",
-        lambda: {
+        lambda force=False, prefer_one_shot=False: {
             "ok": True,
             "screen_recording": True,
             "accessibility": True,

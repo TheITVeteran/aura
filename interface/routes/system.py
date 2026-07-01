@@ -1179,6 +1179,39 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                     asyncio.to_thread(probe_native_desktop_bridge, force=False),
                     timeout=max(1.0, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S),
                 )
+                if (
+                    isinstance(native_probe, dict)
+                    and native_probe.get("ok")
+                    and not all(
+                        bool(native_probe.get(key))
+                        for key in ("screen_recording", "accessibility", "automation")
+                    )
+                ):
+                    one_shot_probe = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            probe_native_desktop_bridge,
+                            force=True,
+                            prefer_one_shot=True,
+                        ),
+                        timeout=max(1.0, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S),
+                    )
+                    if (
+                        isinstance(one_shot_probe, dict)
+                        and one_shot_probe.get("ok")
+                        and sum(
+                            1
+                            for key in ("screen_recording", "accessibility", "automation")
+                            if bool(one_shot_probe.get(key))
+                        )
+                        > sum(
+                            1
+                            for key in ("screen_recording", "accessibility", "automation")
+                            if bool(native_probe.get(key))
+                        )
+                    ):
+                        one_shot_probe["resident_bridge_probe"] = native_probe
+                        one_shot_probe["resident_reconciled"] = True
+                        native_probe = one_shot_probe
                 payload["native_bridge_probe"] = (
                     native_probe if isinstance(native_probe, dict)
                     else {"ok": False, "error": f"invalid:{type(native_probe).__name__}"}
@@ -1495,6 +1528,7 @@ async def request_screen_access() -> dict[str, Any]:
                 "request_screen",
                 read_only=True,
                 timeout=45.0,
+                prefer_one_shot=True,
             )
         except _SYSTEM_RECOVERABLE_ERRORS as exc:
             record_degradation(
@@ -1516,7 +1550,7 @@ async def request_screen_access() -> dict[str, Any]:
                 "detail": (
                     "macOS still requires user approval in Screen Recording for /Applications/Aura.app"
                     if not granted else
-                    "Screen Recording is granted for the resident Aura.app bridge"
+                    "Screen Recording is granted for the signed Aura.app bridge"
                 ),
             }
             _desktop_access_cache["captured_at"] = 0.0
@@ -1569,6 +1603,7 @@ async def request_accessibility_access() -> dict[str, Any]:
                 "request_accessibility",
                 read_only=True,
                 timeout=45.0,
+                prefer_one_shot=True,
             )
         except _SYSTEM_RECOVERABLE_ERRORS as exc:
             record_degradation(
@@ -1590,7 +1625,7 @@ async def request_accessibility_access() -> dict[str, Any]:
                 "detail": (
                     "macOS still requires user approval in Accessibility for /Applications/Aura.app"
                     if not granted else
-                    "Accessibility is granted for the resident Aura.app bridge"
+                    "Accessibility is granted for the signed Aura.app bridge"
                 ),
             }
             _desktop_access_cache["captured_at"] = 0.0

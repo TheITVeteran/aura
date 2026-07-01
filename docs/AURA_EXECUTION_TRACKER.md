@@ -38,8 +38,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   Checkpoint 8 is the source-validation checkpoint for desktop-access
   TCC cache and UI-probe decoupling; Checkpoint 9 is the detailed
   remaining-contract checkpoint that prevents the final checkpoints from
-  collapsing into generic wording; **2 major checkpoints remain after the
-  Checkpoint 9 save point**.
+  collapsing into generic wording; Checkpoint 10A is now in progress on the
+  real launched Aura.app lane and has isolated a remaining macOS TCC
+  Accessibility denial for the exact launched identity.
 
 ### Scope Clarification For The Current Pass
 
@@ -434,7 +435,7 @@ Status: complete in commit `ef26caf2`, pushed to `origin/main`.
 
 ### Checkpoint 9: Remaining Closeout Contract Normalization
 
-Status: complete in the Checkpoint 9 save point; push pending.
+Status: complete in commit `7abe1800`, pushed to `origin/main`.
 
 - Scope: Bryan asked for a deeper checkpoint/TODO shape that directly matches
   the latest ask: operational label tests, product-maturity imports,
@@ -480,6 +481,59 @@ Status: complete in the Checkpoint 9 save point; push pending.
   reliability/learning/final proof), likely **4-6 smaller sub-checkpoints**
   depending on live permissions, heat/RAM behavior, audio/screen proof, and
   learning/LoRA validation.
+
+### Checkpoint 10A: Aura.app Desktop Permission Truth Reconciliation
+
+Status: source fix validated; live Aura.app proof shows one remaining OS-level
+Accessibility approval requirement for the exact launched identity.
+
+- Scope: Bryan's live UI showed Screen Recording, Accessibility, and Automation
+  as enabled in System Settings while Aura's desktop-access panel still reported
+  blocked. The checkpoint target is not cosmetic: the launched Aura.app lane
+  must distinguish false/stale bridge evidence from a real macOS TCC denial and
+  route repair prompts through the correct signed app identity.
+- Source fix: `core/security/native_desktop_bridge.py` now reconciles a partial
+  resident IPC probe against a one-shot signed Aura.app probe. Partial resident
+  probe results do not receive the ready-cache TTL. The one-shot result records
+  `resident_bridge_probe` and `resident_reconciled` when it supersedes stale
+  resident data.
+- Source fix: `core/security/permission_guard.py` no longer lets a denied
+  native bridge result suppress a real current-process permission probe. Native
+  bridge truth remains visible in `native_bridge_probe`, but desktop control can
+  use any verified live grant instead of failing because one bridge layer is
+  stale.
+- Source fix: `interface/routes/system.py` uses the one-shot signed bridge for
+  Screen Recording and Accessibility request endpoints. Resident IPC no longer
+  owns macOS consent prompts.
+- Focused validation:
+  - `python -m pytest -q tests/test_permission_guard_cache.py tests/test_native_desktop_bridge.py tests/test_server_runtime_hardening.py::test_desktop_access_summary_reuses_cached_probe_result tests/test_server_runtime_hardening.py::test_desktop_access_fast_mode_does_not_run_native_or_tcc_probes tests/test_server_runtime_hardening.py::test_desktop_access_blocked_cache_expires_before_ready_cache tests/test_server_runtime_hardening.py::test_desktop_access_summary_preserves_native_bridge_success_when_automation_probe_stalls tests/test_server_runtime_hardening.py::test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_grants tests/test_server_runtime_hardening.py::test_desktop_access_summary_reconciles_partial_resident_probe_with_one_shot tests/test_server_runtime_hardening.py::test_desktop_access_summary_explains_denied_current_native_bridge tests/test_server_runtime_hardening.py::test_desktop_access_summary_reports_stale_tcc_repair_plan_for_stable_signed_denial tests/test_server_runtime_hardening.py::test_desktop_access_summary_includes_permission_request_state tests/test_server_runtime_hardening.py::test_desktop_access_screen_request_uses_one_shot_signed_bridge tests/test_server_runtime_hardening.py::test_desktop_access_accessibility_request_uses_one_shot_signed_bridge tests/test_server_runtime_hardening.py::test_desktop_access_endpoint_returns_json_summary`
+    -> 30 passed.
+  - `python -m ruff check --select F,B core/security/native_desktop_bridge.py core/security/permission_guard.py interface/routes/system.py tests/test_permission_guard_cache.py tests/test_native_desktop_bridge.py tests/test_server_runtime_hardening.py`
+    -> passed.
+  - `python -m py_compile core/security/native_desktop_bridge.py core/security/permission_guard.py interface/routes/system.py tests/test_permission_guard_cache.py tests/test_native_desktop_bridge.py tests/test_server_runtime_hardening.py`
+    -> passed.
+  - `git diff --check` -> passed.
+- Live Aura.app evidence after full restart:
+  - `/api/health` returned `status=ok`, `healthy=true`,
+    `conversation_ready=true`, `conversation_lane.state=ready`, `blockers=[]`.
+  - `/api/system/desktop-access/request-accessibility` now routes through
+    `bridge_transport=one_shot_subprocess`, but macOS still returns
+    `granted=false`, `status=approval_required` for
+    `bundle_identifier=com.aura.desktop`.
+  - `/api/system/desktop-access` still reports
+    `overall_status=partial`, `permission_confidence=partial_direct`,
+    `screen_capture_ready=true`, `desktop_control_ready=false`,
+    `screen_text_ready=false`, `blocking_permissions=["accessibility"]`.
+- Interpretation: false resident-vs-one-shot reporting and request routing are
+  fixed at source level. The remaining blocker is a real OS approval/TCC row
+  mismatch for Accessibility on the launched Aura.app identity. This cannot be
+  marked closed until a fresh live proof shows
+  `desktop_control_ready=true`, `screen_text_ready=true`, and no blocking
+  permissions from the visible launched app.
+- Estimate after this subcheckpoint: expanded daily-runtime/product closure
+  remains about **83%** because the visible desktop lane is still TCC-blocked;
+  source-level permission truth/reconciliation improves to about **90%** for
+  this specific defect.
 
 ### Checkpoint 1: Live Conversation Ownership And Launcher Survival
 
@@ -914,10 +968,10 @@ This compact map now mirrors the executable contract in
 
 ## Current Phase
 
-Checkpoint 9 scope normalization. The current work locks Bryan's latest ask into
-a runnable remaining-checkpoint contract and regression tests so later passes do
-not collapse operational labels, product reliability, live desktop truth,
-general agency, or fictional-AI capability imports into generic TODOs.
+Checkpoint 10 live Aura.app reliability. Current focus is resolving the real
+desktop-access/Accessibility blocker on the launched app path, then using that
+same visible lane for full-mind conversation, background autonomy, screen/audio,
+and general desktop agency proof.
 
 ## Current Milestone
 

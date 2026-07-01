@@ -284,6 +284,7 @@ def invoke_native_desktop_bridge(
     *,
     read_only: bool = False,
     timeout: float = 12.0,
+    prefer_one_shot: bool = False,
     **payload: Any,
 ) -> dict[str, Any]:
     if not read_only:
@@ -295,11 +296,38 @@ def invoke_native_desktop_bridge(
         if command_name.startswith("request_")
         else min(max(0.25, float(timeout)), 3.0)
     )
-    resident = _invoke_resident_bridge(command, timeout=resident_timeout, **payload)
+    resident = None if prefer_one_shot else _invoke_resident_bridge(command, timeout=resident_timeout, **payload)
     if resident is not None:
+        if command_name == "probe" and _probe_cache_ttl(resident) < _PROBE_READY_TTL_S:
+            reconciled = _invoke_one_shot_bridge(
+                command,
+                read_only=read_only,
+                timeout=timeout,
+                **payload,
+            )
+            if _probe_cache_ttl(reconciled) > _probe_cache_ttl(resident):
+                reconciled.setdefault("bridge_transport", "one_shot_subprocess")
+                reconciled["resident_bridge_probe"] = resident
+                reconciled["resident_reconciled"] = True
+                return reconciled
         resident.setdefault("bridge_transport", "resident_ipc")
         return resident
 
+    return _invoke_one_shot_bridge(
+        command,
+        read_only=read_only,
+        timeout=timeout,
+        **payload,
+    )
+
+
+def _invoke_one_shot_bridge(
+    command: str,
+    *,
+    read_only: bool,
+    timeout: float,
+    **payload: Any,
+) -> dict[str, Any]:
     executable = bridge_executable()
     if executable is None:
         return {"ok": False, "error": "native_desktop_bridge_unavailable"}
@@ -325,22 +353,28 @@ def invoke_native_desktop_bridge(
     if not isinstance(result, dict):
         return {"ok": False, "error": "native_desktop_bridge_non_object_response"}
     result.setdefault("returncode", completed.returncode)
+    result.setdefault("bridge_transport", "one_shot_subprocess")
     return result
 
 
-def probe_native_desktop_bridge(*, force: bool = False) -> dict[str, Any]:
+def probe_native_desktop_bridge(*, force: bool = False, prefer_one_shot: bool = False) -> dict[str, Any]:
     global _PROBE_CACHE
 
     now = time.monotonic()
     with _PROBE_LOCK:
         captured_at, cached = _PROBE_CACHE
-        if not force and cached and (now - captured_at) < _probe_cache_ttl(cached):
+        if not force and not prefer_one_shot and cached and (now - captured_at) < _probe_cache_ttl(cached):
             cached_result = dict(cached)
             cached_result["cache_hit"] = True
             cached_result["cache_age_s"] = round(max(0.0, now - captured_at), 3)
             return cached_result
         try:
-            result = invoke_native_desktop_bridge("probe", read_only=True, timeout=5.0)
+            result = invoke_native_desktop_bridge(
+                "probe",
+                read_only=True,
+                timeout=5.0,
+                prefer_one_shot=prefer_one_shot,
+            )
         except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
             result = {
                 "ok": False,
