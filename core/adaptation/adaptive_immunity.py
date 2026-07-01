@@ -1485,7 +1485,16 @@ class AdaptiveImmuneSystem:
 
     def _log_dream_deferred(self, defer_reason: str) -> None:
         now = time.monotonic()
-        reason_key = "boot_grace" if defer_reason.startswith("boot_grace_") else defer_reason
+        if defer_reason.startswith("boot_grace_"):
+            reason_key = "boot_grace"
+        elif defer_reason.startswith("recent_user_"):
+            reason_key = "recent_user"
+        elif defer_reason.startswith("failure_lockdown_"):
+            reason_key = "failure_lockdown"
+        elif defer_reason.startswith("memory_pressure_"):
+            reason_key = "memory_pressure"
+        else:
+            reason_key = defer_reason
         if (
             reason_key == self._last_dream_defer_reason
             and now - self._last_dream_defer_log_at < 30.0

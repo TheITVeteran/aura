@@ -30,3 +30,43 @@ def test_frontier_standards_keep_live_artifacts_separate_by_default():
     assert "artifacts/current/live_desktop_runtime" in by_key[
         "daily_runtime_reliability"
     ]["missing_live_artifacts"] or by_key["daily_runtime_reliability"]["status"] != "gap"
+
+
+def test_sci_fi_capabilities_route_to_real_organs_not_themed_silo():
+    sci_fi = next(standard for standard in STANDARDS if standard.key == "sci_fi_ai_capability")
+
+    assert "docs/FICTIONAL_AI_CAPABILITY_MAP.md" in sci_fi.source_paths
+    assert all(
+        not path.startswith("core/fictional_ai") for path in sci_fi.source_paths
+    ), sci_fi.source_paths
+    assert {
+        "core/capability_engine.py",
+        "core/runtime/desktop_action_gateway.py",
+        "core/actuation/desktop_actuator.py",
+        "core/perception/screen_perception.py",
+        "core/social/social_imagination.py",
+    } <= set(sci_fi.source_paths)
+
+
+def test_sci_fi_reference_set_keeps_requested_systems_visible():
+    sci_fi = next(standard for standard in STANDARDS if standard.key == "sci_fi_ai_capability")
+    references = set(sci_fi.reference_models)
+
+    assert {
+        "JARVIS",
+        "Cortana",
+        "EDI",
+        "MIST",
+        "Pantheon UIs",
+        "Safe Surf",
+        "Data",
+        "Kokoro/Koroko",
+        "Skynet (defensive resilience only)",
+        "Caine",
+        "Samantha/SAM",
+        "Jane",
+        "HAL 9000 (anti-HAL directive conflict handling)",
+        "GLaDOS (adaptive testing only)",
+        "TARS/CASE",
+        "The Machine",
+    } <= references

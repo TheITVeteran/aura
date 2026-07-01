@@ -211,7 +211,7 @@ IDENTITY_SENSITIVE_TOOLS = {
 RECOVERY_AND_EVOLUTION_TOOLS = {
     "web_search", "sovereign_browser", "self_repair", "auto_refactor",
     "self_evolution", "train_self", "memory_ops", "query_beliefs",
-    "system_proprioception",
+    "system_proprioception", "process_supervisor",
 }
 
 
@@ -398,6 +398,8 @@ class ExecutiveCore:
         if intent.action_type != ActionType.TOOL_CALL:
             return False
         tool_name = str(intent.payload.get("tool_name", "") or "").strip()
+        if tool_name == "process_supervisor":
+            return True
         if tool_name in TEMPORAL_SAFE_AUTONOMOUS_TOOLS:
             args = intent.payload.get("args", {}) or {}
             mode = str(args.get("mode") or "").strip().lower()

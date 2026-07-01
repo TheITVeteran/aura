@@ -289,6 +289,25 @@ def test_auto_dream_deferral_log_is_rate_limited(tmp_path, monkeypatch, caplog):
     assert len(messages) == 1
 
 
+def test_auto_dream_deferral_log_coalesces_dynamic_recent_user_reasons(
+    tmp_path,
+    caplog,
+):
+    immune = AdaptiveImmuneSystem(state_dir=tmp_path, rng_seed=13)
+
+    with caplog.at_level(logging.INFO, logger="Aura.AdaptiveImmunity"):
+        immune._log_dream_deferred("recent_user_255")
+        immune._log_dream_deferred("recent_user_256")
+        immune._log_dream_deferred("recent_user_257")
+
+    messages = [
+        record.message
+        for record in caplog.records
+        if "dream consolidation deferred" in record.message
+    ]
+    assert len(messages) == 1
+
+
 def test_species_assignment_preserves_multiple_niches(tmp_path):
     cfg = AdaptiveImmuneConfig(population_size=6, max_population=12)
     immune = AdaptiveImmuneSystem(config=cfg, state_dir=tmp_path, rng_seed=3)

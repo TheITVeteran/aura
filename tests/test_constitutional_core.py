@@ -725,6 +725,35 @@ async def test_executive_keeps_api_requested_tools_user_facing_under_failure_loc
     assert record.outcome == executive_core_module.DecisionOutcome.APPROVED
 
 
+@pytest.mark.asyncio
+async def test_executive_allows_process_supervisor_recovery_under_failure_lockdown(service_container):
+    reset_constitutional_singletons()
+    clear_degraded_events()
+    ServiceContainer.register_instance("self_model", object(), required=False)
+    ServiceContainer.lock_registration()
+
+    record_degraded_event("router", "down", severity="critical", classification="foreground_blocking")
+    record_degraded_event("memory", "corrupt", severity="critical", classification="background_degraded")
+    record_degraded_event("scheduler", "stall", severity="critical", classification="background_degraded")
+
+    executive = executive_core_module.get_executive_core()
+    record = await executive.request_approval(
+        executive_core_module.Intent(
+            source=executive_core_module.IntentSource.BACKGROUND,
+            goal="recover stalled local process supervisor",
+            action_type=executive_core_module.ActionType.TOOL_CALL,
+            priority=0.7,
+            payload={"tool_name": "process_supervisor"},
+        )
+    )
+
+    assert record.outcome in {
+        executive_core_module.DecisionOutcome.APPROVED,
+        executive_core_module.DecisionOutcome.DEGRADED,
+    }
+    assert not record.reason.startswith("unified_failure_lockdown_")
+
+
 def test_unified_failure_pressure_decays_stale_events(service_container):
     reset_constitutional_singletons()
     clear_degraded_events()

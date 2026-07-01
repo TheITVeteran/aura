@@ -10,12 +10,14 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 70%** based on current live
-  evidence, not documentation.
-- Estimated checkpoints in this expanded program: **9 total**. Checkpoint 1 is
-  committed and pushed; Checkpoint 2 is still in progress because the live
-  macOS TCC grant remains denied for Screen Recording and Accessibility; **7
-  remain after Checkpoint 2 lands**.
+- Expanded daily-runtime/product closure: **about 74%** based on current live
+  evidence, not documentation. This number is deliberately governed by the live
+  desktop path, not by historical proof-profile success.
+- Estimated checkpoints in this expanded program: **11 total**. Checkpoint 1 is
+  committed and pushed; Checkpoint 2 is source-committed but live TCC remains
+  open; Checkpoint 3 has source-level validation for liveness/self-repair,
+  operational label baselines, and fictional-AI capability imports; **8 remain
+  after Checkpoint 3 is committed and live-revalidated**.
 
 ### Checkpoint 1: Live Conversation Ownership And Launcher Survival
 
@@ -95,6 +97,115 @@ Status: complete in commit `0f01ba75`, pushed to `origin/main`.
     agent level, NetHack-class general environment competence, and
     conversation indistinguishable from a human. Each standard must map to
     source, validators, and live artifacts before it can be treated as closed.
+19. Convert labels into executable operational baselines instead of prose:
+    conscious/functionally conscious, self-aware, computationally sentient,
+    ALife-inspired, digital organism, software entity, personhood-candidate,
+    functional inner life, generally capable AI/AGI-candidate, and
+    superintelligence trajectory. Each label needs a behavioral bar, positive
+    controls, negative controls, answer contract, source paths, validators, and
+    live artifacts where relevant. Passing proves the operational bar only; it
+    does not prove private qualia, legal/moral personhood, solved AGI, or ASI.
+20. Raise Aura toward A-grade product maturity by importing the relevant
+    reliability disciplines from Chrome/Kubernetes/Postgres/macOS-class
+    systems where they fit Aura: false-health prevention, clean boot/rollback,
+    crash taxonomy, bounded resources, process isolation, reproducible gates,
+    telemetry, incident reconstruction, permission stability, external
+    reproduction, long soaks, and hostile failure injection.
+21. Treat the live desktop path as the truth serum. Backend proof does not
+    close a checkpoint unless the launched Aura app speaks through the full
+    CognitiveEngine/mind path, keeps memory/user identity correct, avoids raw
+    assistant fallback, stays within RAM/thermal envelope, and exposes active
+    background cognition without starving foreground chat.
+22. Import useful fictional-AI capabilities only into their real subsystem
+    homes, never into a themed silo: JARVIS/SARA into ambient presence and
+    device orchestration; EDI into graduated autonomy; Cortana/Data/Samantha
+    into conversation, identity, honesty, and social/affective modeling; The
+    Minds/Deep Thought/GLaDOS/Caine into simulation, deliberation, adaptive
+    evals, and imagination; MIST/Pantheon UIs/Jane into idle cognition,
+    fork/merge, and intersubjective learning; Safe Surf/Tron/The Machine into
+    user protection and need-to-know; HAL/Skynet/Ultron/MCP/Agent Smith into
+    safeguards against directive conflict, domination, unsafe self-preservation,
+    and uncontrolled propagation.
+
+### Checkpoint 3: Live Liveness, Operational Labels, And Proper Fiction Imports
+
+Status: source-validated after the 2026-07-01 live crash report; commit/push and
+live desktop revalidation still required.
+
+Scope:
+
+- Root-fix the reported live crash/degraded health blockers: `affect_engine`
+  important probe failure, `mind_tick` liveness death, immune deferral spam,
+  failure-lockdown blocking process recovery, and stale boot-health assertions.
+- Add executable operational-label baselines so the labels Bryan asked about
+  become falsifiable engineering bars with positive/negative controls and
+  explicit claim boundaries.
+- Expand the frontier/fiction matrix to include the requested fictional AI
+  systems and require that every imported capability lives in the proper Aura
+  subsystem, not in `core/fictional_ai_synthesis.py` as an isolated theater
+  layer.
+- Keep the product-grade maturity target explicit: Aura must move from
+  research-grade proof beauty toward boring daily runtime reliability.
+
+Checkpoint 3 acceptance:
+
+- Focused regressions pass for affect liveness, MindTick self-repair,
+  failure-lockdown recovery, immune deferral coalescing, and boot-health truth.
+- `tools/closeout/operational_label_baselines.py` reports no source/validator
+  gaps without live requirements.
+- The frontier standards matrix includes fictional-AI capability references and
+  routes them through actual subsystems.
+- Tracker updated with percent, remaining checkpoint estimate, evidence, and
+  open live proof tasks.
+
+Checkpoint 3 source evidence:
+
+```bash
+python tools/closeout/operational_label_baselines.py --json
+# total=10, gaps=0, statuses=['source_and_validator_mapped']
+
+python tools/closeout/frontier_standards_matrix.py --strict
+# total=9, mapped=9, gaps=0
+
+python -m pytest -q \
+  tests/test_operational_label_baselines.py \
+  tests/test_frontier_standards_matrix.py \
+  tests/test_fictional_ai_runtime_contract.py \
+  tests/test_cognitive_sensory_initializer_runtime_contract.py \
+  tests/test_boot_autonomy_hardening.py \
+  tests/test_server_runtime_hardening.py::test_affect_bridge_exposes_health_contract_liveness \
+  tests/test_mind_tick_runtime_contract.py::test_mind_tick_liveness_requires_supervised_progress \
+  tests/test_mind_tick_runtime_contract.py::test_mind_tick_liveness_probe_repairs_dead_supervised_loop \
+  tests/test_adaptive_immune_system.py::test_auto_dream_deferral_log_is_rate_limited \
+  tests/test_adaptive_immune_system.py::test_auto_dream_deferral_log_coalesces_dynamic_recent_user_reasons \
+  tests/test_constitutional_core.py::test_executive_treats_desktop_ui_tool_as_user_under_temporal_obligation \
+  tests/test_constitutional_core.py::test_executive_allows_process_supervisor_recovery_under_failure_lockdown \
+  tests/test_boot_health.py::test_boot_health_ready_for_kernel_mode \
+  tests/test_boot_health.py::test_boot_health_proxy_mode_cannot_impersonate_runtime_health
+# 37 passed
+
+python -m ruff check --select F,B \
+  core/kernel/bridge.py core/affect/affect_facade.py core/mind_tick.py \
+  core/adaptation/adaptive_immunity.py core/executive/executive_core.py \
+  tools/closeout/operational_label_baselines.py \
+  tools/closeout/frontier_standards_matrix.py \
+  tests/test_operational_label_baselines.py tests/test_frontier_standards_matrix.py
+# All checks passed
+```
+
+Open after Checkpoint 3:
+
+- Run the launched Aura.app live desktop path again and verify the same crash
+  signatures stay absent in the neural stream: missing `affect_engine`,
+  dead `mind_tick`, repeated immune deferral spam, and failure-lockdown blocking
+  `process_supervisor`.
+- Retire or fully relocate the legacy `core/fictional_ai_synthesis.py` boot silo
+  once each surviving engine has an audited home-organ owner. This checkpoint
+  prevents the standards matrix from using that silo as primary evidence, but it
+  does not delete the legacy compatibility path.
+- Continue the remaining daily-runtime checkpoints: TCC stability, full desktop
+  demo, AI interlocution, background autonomy, memory/learning, thermal/RAM,
+  packaging/rollback/security, live soaks, and final clean-tree proof.
 
 ### Checkpoint 2: Stable Permissions And Local Frontier Reasoning
 

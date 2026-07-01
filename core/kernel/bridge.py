@@ -211,6 +211,39 @@ class AffectBridge:
         """Store a reference to the kernel for live state access."""
         self.kernel = kernel
 
+    def is_ready(self) -> bool:
+        """Health-contract probe for the kernel-backed affect bridge.
+
+        The bridge is registered under the legacy ``affect_engine`` key in the
+        kernel path, so it must prove that the live AuraState affect vector is
+        present and numerically sane. A heartbeat alone is not enough here:
+        if affect is absent or malformed, desktop chat is no longer speaking
+        from the integrated body/mind path.
+        """
+        state = getattr(self.kernel, "state", None)
+        affect = getattr(state, "affect", None)
+        if affect is None:
+            return False
+        try:
+            dominant = str(getattr(affect, "dominant_emotion", "") or "").strip()
+            emotions = getattr(affect, "emotions", None)
+            physiology = getattr(affect, "physiology", None) or {}
+            valence = float(affect.valence)
+            arousal = float(affect.arousal)
+            curiosity = float(getattr(affect, "curiosity", 0.0))
+            heart_rate = float(physiology.get("heart_rate", 72.0))
+        except (AttributeError, TypeError, ValueError):
+            return False
+
+        return (
+            bool(dominant)
+            and isinstance(emotions, dict)
+            and -1.0 <= valence <= 1.0
+            and 0.0 <= arousal <= 1.0
+            and 0.0 <= curiosity <= 1.0
+            and 20.0 <= heart_rate <= 220.0
+        )
+
     def get_status(self) -> dict:
         """Proxies to kernel state affect."""
         state = self.kernel.state  # Use live kernel state

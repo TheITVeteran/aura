@@ -202,6 +202,22 @@ def test_affect_bridge_receive_qualia_echo_updates_kernel_state():
     assert state.affect.physiology["heart_rate"] > initial_heart_rate
 
 
+def test_affect_bridge_exposes_health_contract_liveness():
+    state = AuraState()
+    state.affect.dominant_emotion = "curiosity"
+    state.affect.valence = 0.2
+    state.affect.arousal = 0.4
+    state.affect.curiosity = 0.7
+    state.affect.physiology["heart_rate"] = 76.0
+
+    bridge = AffectBridge(SimpleNamespace(state=state))
+
+    assert bridge.is_ready() is True
+
+    state.affect.arousal = 99.0
+    assert bridge.is_ready() is False
+
+
 def test_stability_guardian_treats_stale_tick_history_as_idle_not_degraded():
     guardian = StabilityGuardian(SimpleNamespace(start_time=time.time()))
     guardian._tick_times.append((time.time() - 600.0, 120000.0))

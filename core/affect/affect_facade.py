@@ -36,6 +36,26 @@ class AffectFacade:
             return self.engine.get_status()
         return {"mood": "Initializing", "energy": 0, "curiosity": 50, "frustration": 0, "stability": 100, "valence": 0.0, "arousal": 0.0}
 
+    def is_ready(self) -> bool:
+        """Health-contract probe for facade-backed affect registrations."""
+        engine = self.engine
+        if engine is None or engine is self:
+            return False
+        ready = getattr(engine, "is_ready", None)
+        if callable(ready):
+            return bool(ready())
+        status_fn = getattr(engine, "get_status", None)
+        if not callable(status_fn):
+            return False
+        try:
+            status = status_fn()
+            mood = str(status.get("mood", "") or "").strip()
+            valence = float(status.get("valence", 0.0))
+            arousal = float(status.get("arousal", 0.0))
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return bool(mood) and -1.0 <= valence <= 1.0 and 0.0 <= arousal <= 1.0
+
     async def get(self):
         """Async affect state (delegates to engine.get)."""
         if self.engine and hasattr(self.engine, "get"):

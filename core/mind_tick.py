@@ -190,6 +190,8 @@ class MindTick:
         self._last_successful_tick_at = 0.0
         self._consecutive_loop_failures = 0
         self._last_deferred_cortex_health_log_at = 0.0
+        self._last_liveness_repair_at = 0.0
+        self._liveness_repair_count = 0
         
         # Cognitive Deepening Components
         self.predictive_engine = PredictiveEngine()
@@ -345,10 +347,73 @@ class MindTick:
         """Return true only while the supervised loop is running and progressing."""
         task_alive = bool(self._task and not self._task.done())
         if not self._running or not task_alive or self._consecutive_loop_failures >= 3:
-            return False
+            if not self._attempt_liveness_repair():
+                return False
+            task_alive = bool(self._task and not self._task.done())
         if self._last_successful_tick_at <= 0.0:
             return bool(self._started_at and (time.time() - self._started_at) <= 180.0)
         return (time.time() - self._last_successful_tick_at) <= 300.0
+
+    def _attempt_liveness_repair(self) -> bool:
+        """Restart the supervised cognitive loop when a live runtime loses it.
+
+        This is deliberately narrow: it only repairs a runtime that already
+        marked MindTick running or has a finished task, it rate-limits repair
+        attempts, and it never runs during coordinated shutdown. The goal is to
+        turn the health-contract failure into an internal recovery attempt
+        instead of leaving the desktop path degraded until the next user prompt.
+        """
+        if is_shutdown_requested():
+            return False
+        if not self._running and self._task is None:
+            return False
+        if not callable(getattr(self, "_run_loop", None)):
+            return False
+        now = time.monotonic()
+        if now - float(getattr(self, "_last_liveness_repair_at", 0.0) or 0.0) < 10.0:
+            return False
+        self._last_liveness_repair_at = now
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+
+        finished_error = None
+        if self._task and self._task.done():
+            try:
+                finished_error = self._task.exception()
+            except (asyncio.CancelledError, RuntimeError, AttributeError) as exc:
+                finished_error = exc
+
+        self._consecutive_loop_failures = 0
+        self._running = True
+        self._started_at = self._started_at or time.time()
+        self._task = _schedule_mind_task(
+            self._run_loop(),
+            name=f"mind_tick.run_loop.recovered.{int(getattr(self, '_liveness_repair_count', 0) or 0) + 1}",
+        )
+        if self._task is None:
+            self._running = False
+            return False
+
+        self._liveness_repair_count = int(getattr(self, "_liveness_repair_count", 0) or 0) + 1
+        detail = (
+            f"{type(finished_error).__name__}: {finished_error}"
+            if finished_error is not None
+            else "liveness probe found MindTick loop missing or stopped"
+        )
+        logger.warning("💓 MindTick: Repaired stalled cognitive rhythm (%s).", detail)
+        record_degraded_event(
+            "mind_tick",
+            "liveness_repair",
+            detail=detail,
+            severity="warning",
+            classification="runtime_recovered",
+            context={"repair_count": self._liveness_repair_count},
+            exc=finished_error if isinstance(finished_error, BaseException) else None,
+        )
+        return True
 
     def get_health_status(self) -> dict[str, Any]:
         """Expose causal loop progress without treating heartbeat transport as health."""
@@ -356,9 +421,10 @@ class MindTick:
             "healthy": self.is_alive(),
             "running": self._running,
             "task_alive": bool(self._task and not self._task.done()),
-            "tick_count": self._tick_count,
-            "consecutive_failures": self._consecutive_loop_failures,
-            "last_successful_tick_at": self._last_successful_tick_at,
+            "tick_count": int(getattr(self, "_tick_count", 0) or 0),
+            "consecutive_failures": int(getattr(self, "_consecutive_loop_failures", 0) or 0),
+            "last_successful_tick_at": float(getattr(self, "_last_successful_tick_at", 0.0) or 0.0),
+            "liveness_repair_count": int(getattr(self, "_liveness_repair_count", 0) or 0),
         }
 
     async def stop(self):

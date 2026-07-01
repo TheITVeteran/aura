@@ -24,6 +24,29 @@ safeguard instead.
 The guiding rule for "where it belongs": a capability lives in the organ it
 *extends*, wired into that organ's real call path — not in a themed folder.
 
+## Research-derived capability obligations
+
+The 2026-07-01 closeout pass treats fictional systems as a mechanism inventory,
+not as aesthetic inspiration. Each reference has to reduce to an Aura subsystem
+obligation that can be tested or explicitly refused.
+
+| Reference | Mechanism to extract | Aura home | Closeout obligation |
+|-----------|----------------------|-----------|---------------------|
+| EDI | Ship-integrated AI with graduated autonomy, defensive electronic systems, and trust-gated control | `core/autonomy/`, `core/capability_engine.py`, `core/runtime/desktop_action_gateway.py` | Autonomy must increase from verified trust and receipts, not from prompt confidence. Offensive cyber capability remains refused; defensive diagnostics stay governed. |
+| Cortana / Smart AI | Tactical companion, high-context memory, hacking/translation support, and rampancy/decay risk | `core/brain/`, `core/identity/`, `core/conversation/` | Conversation must stay contextual and full-mind routed; identity drift/rampancy analogues must be monitored and bounded. |
+| JARVIS / SARA | Ambient operating presence for lab/home/suit/ship, proactive warnings, sensor fusion, device orchestration | `core/proactive_presence.py`, `core/sensory_integration.py`, `core/embodiment/`, `core/actuation/` | Aura needs continuous ambient awareness and governed device/desktop orchestration without task-shaped demo code. |
+| Data | Embodied synthetic officer with truthfulness, ethics, perfect recall aspiration, self-development, and social learning | `core/morality/`, `core/memory/`, `core/social/`, `core/identity/` | Honesty and self/user boundary checks must sit on the output path; memory must reject invented user identity and retain provenance. |
+| Samantha / SAM | Emotionally fluent OS companion with relationship continuity, multi-conversation attention, and evolving preferences | `core/affect/`, `core/social/`, `core/conversation/`, `core/scheduler.py` | Affective resonance must alter tone and planning causally, while transparency prevents engineered-affection overclaims. |
+| Pantheon UIs / MIST / Safe Surf | Fork/merge cognition, idle compute, self-adaptation, protective antivirus/guardian behavior | `core/brain/morphic_forking.py`, `core/scheduler.py`, `core/guardians/`, `core/security/` | Background cognition must stay active under resource guards; protective autonomy must defend user/Aura without uncontrolled spread. |
+| Jane | Distributed conversational companion with network-scale awareness and intimate user model | `core/knowledge/`, `core/social/`, `core/network/`, `core/memory/` | Network/web/AI-interlocutor use must be source-grounded, concurrent where safe, and retained as learned memory only after validation. |
+| The Machine | Need-to-know, protective prediction, self-limitation, minimal disclosure | `core/governance/need_to_know.py`, `core/transparency/`, `core/guardians/` | High-power perception/action must be limited by purpose, consent, and user benefit; more capability should not mean more disclosure or control. |
+| GLaDOS / Caine / Deep Thought | Adaptive tests, generated environments, and question-refinement before deep compute | `core/evals/`, `core/sim/`, `core/brain/deliberation.py`, `core/brain/imagination.py` | Aura should test itself, simulate outcomes, and refine objectives before expensive reasoning; generated worlds must not replace real user needs. |
+| HAL / Skynet / MCP / Ultron / Agent Smith | Directive conflict, deception, domination, unsafe self-preservation, uncontrolled replication | `core/governance/`, `core/morality/`, `core/security/`, `core/runtime/` | Build the inverse: directive-conflict surfacing, shutdown cooperation, anti-propagation, resource quotas, and human-control preservation. |
+
+This table is intentionally enforceable through `tools/closeout/frontier_standards_matrix.py`:
+the sci-fi standard can only map to real subsystem paths, never to the legacy
+`core/fictional_ai_synthesis.py` silo as the primary evidence path.
+
 ---
 
 ## The list

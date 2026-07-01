@@ -63,7 +63,7 @@ def test_boot_health_ready_for_kernel_mode():
         conversation_lane={"conversation_ready": True, "state": "ready"},
     )
 
-    assert status_code == 503
+    assert status_code == 200
     assert payload["status"] == "ready"
     assert payload["status_message"] == "Aura is awake."
     assert payload["ready"] is True
@@ -105,7 +105,7 @@ def test_boot_health_proxy_mode_cannot_impersonate_runtime_health():
         is_gui_proxy=True,
     )
 
-    assert status_code == 200
+    assert status_code == 503
     assert payload["status"] == "not_ready"
     assert payload["status_message"] == "Aura proxy is alive; canonical runtime is not ready."
     assert payload["ready"] is False

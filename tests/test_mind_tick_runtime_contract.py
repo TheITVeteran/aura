@@ -65,6 +65,38 @@ def test_mind_tick_liveness_requires_supervised_progress():
 
 
 @pytest.mark.asyncio
+async def test_mind_tick_liveness_probe_repairs_dead_supervised_loop():
+    tick = MindTick.__new__(MindTick)
+    tick._running = True
+    tick._started_at = time.time()
+    tick._last_successful_tick_at = 0.0
+    tick._consecutive_loop_failures = 3
+    tick._last_liveness_repair_at = 0.0
+    tick._liveness_repair_count = 0
+
+    async def failed_loop():
+        raise RuntimeError("background loop died")
+
+    tick._task = asyncio.create_task(failed_loop())
+    await asyncio.sleep(0)
+
+    release = asyncio.Event()
+
+    async def recovered_loop():
+        await release.wait()
+
+    tick._run_loop = recovered_loop
+
+    assert tick.is_alive() is True
+    assert tick._task is not None
+    assert not tick._task.done()
+    assert tick.get_health_status()["liveness_repair_count"] == 1
+
+    release.set()
+    await tick._task
+
+
+@pytest.mark.asyncio
 async def test_mind_tick_start_rolls_back_when_loop_cannot_be_scheduled(monkeypatch):
     monkeypatch.setattr(mind_module, "get_task_tracker", lambda: FailingTracker())
     monkeypatch.setattr("infrastructure.watchdog.get_watchdog", lambda: Watchdog())
