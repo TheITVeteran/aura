@@ -16,12 +16,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 MONOLOGUE_PATH = ROOT / "data" / "internal_monologue.jsonl"
 COMM_LOGS_PATH = ROOT / "data" / "comm_logs.jsonl"
+# Committed fallback corpus so the replay machinery is exercised in fresh
+# clones/worktrees where live runtime data does not exist yet. Live records
+# always win when present; the seed is synthetic and safe to publish.
+SEED_PATH = ROOT / "tests" / "fixtures" / "canary_replay_seed.jsonl"
 
 
 def _load_interaction_records(limit=32):
     """Load real interaction records, preferring monologue for density."""
     records = []
-    for path in [MONOLOGUE_PATH, COMM_LOGS_PATH]:
+    for path in [MONOLOGUE_PATH, COMM_LOGS_PATH, SEED_PATH]:
         if not path.exists():
             continue
         for line in path.open(encoding="utf-8"):
@@ -66,7 +70,7 @@ def _require_interaction_records(limit: int) -> list[dict[str, Any]]:
     records = _load_interaction_records(limit=limit)
     assert records, (
         "no interaction records found; real canary replay requires "
-        f"{MONOLOGUE_PATH} or {COMM_LOGS_PATH}"
+        f"{MONOLOGUE_PATH}, {COMM_LOGS_PATH}, or the committed seed {SEED_PATH}"
     )
     return records
 

@@ -162,10 +162,23 @@ class PreemptibleChatLock:
         self._owner_token: object | None = None
 
     async def acquire(self):
-        await self._lock.acquire()
-        self._acquired_at = time.time()
-        self._owner_token = object()
-        return self._owner_token
+        while True:
+            lock = self._lock
+            await lock.acquire()
+            if lock is self._lock:
+                # Monotonic so a mid-turn system sleep cannot inflate
+                # held_duration into a false 45s preemption on wake.
+                self._acquired_at = time.monotonic()
+                self._owner_token = object()
+                return self._owner_token
+            # force_release() swapped the lock object while we were waiting;
+            # what we just acquired is the dead pre-preemption lock. Holding
+            # it would let two turns run concurrently, so drop it and wait on
+            # the live lock instead.
+            try:
+                lock.release()
+            except RuntimeError as exc:
+                logger.debug("Dead pre-preemption lock release skipped: %s", exc)
 
     def locked(self):
         return self._lock.locked()
@@ -188,13 +201,23 @@ class PreemptibleChatLock:
     def held_duration(self) -> float:
         if not self._lock.locked() or self._acquired_at == 0.0:
             return 0.0
-        return time.time() - self._acquired_at
+        return time.monotonic() - self._acquired_at
 
     def force_release(self):
         logger.warning("🚨 Preempting stuck foreground chat lock!")
+        dead_lock = self._lock
         self._lock = asyncio.Lock()
         self._acquired_at = 0.0
         self._owner_token = None
+        # Wake anyone still parked on the dead lock: the first drained waiter
+        # acquires it, sees the swap in acquire(), releases it again (draining
+        # the next), and re-queues on the live lock. Without this the parked
+        # waiters would hang until their own wait_for deadlines.
+        try:
+            if dead_lock.locked():
+                dead_lock.release()
+        except RuntimeError as exc:
+            logger.debug("Dead pre-preemption lock drain skipped: %s", exc)
 
 def _get_fg_lock(): return _locks.setdefault("fg", PreemptibleChatLock())
 _foreground_chat_lock = _get_fg_lock()

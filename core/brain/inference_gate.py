@@ -266,6 +266,13 @@ async def _thread_lock_context(
 class InferenceGate:
     """Isolated inference gateway for Aura's managed local runtime + cloud fallback."""
 
+    # Class-level defaults for observation-path cooldowns so partially
+    # constructed instances (test doubles via __new__, hot-reload edges) can
+    # never crash the status/recovery path with AttributeError.
+    _last_status_recovery_schedule_at: float = 0.0
+    _last_cortex_policy_deferred_log_at: float = 0.0
+    _last_stale_reset_log_at: float = 0.0
+
     def __init__(self, orch=None):
         self.orch = orch
         self._created_at = time.monotonic()

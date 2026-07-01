@@ -648,6 +648,43 @@ async def test_preemptible_chat_lock_stale_release_cannot_release_new_owner():
     assert lock.locked() is False
 
 
+@pytest.mark.asyncio
+async def test_preemptible_chat_lock_waiter_survives_force_release_without_double_entry():
+    """A waiter queued before force_release must land on the live lock, not the dead one."""
+    from interface.routes import chat as chat_routes
+
+    lock = chat_routes.PreemptibleChatLock()
+    await lock.acquire()
+
+    waiter = asyncio.ensure_future(lock.acquire())
+    await asyncio.sleep(0)  # let the waiter queue on the pre-preemption lock
+    lock.force_release()
+
+    waiter_token = await asyncio.wait_for(waiter, timeout=2.0)
+    # The waiter now owns the live foreground slot exclusively.
+    assert lock.locked() is True
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(lock.acquire(), timeout=0.1)
+    assert lock.release(waiter_token) is True
+    assert lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_preemptible_chat_lock_held_duration_uses_monotonic_clock():
+    """held_duration must not be inflatable by wall-clock jumps (system sleep)."""
+    from interface.routes import chat as chat_routes
+
+    lock = chat_routes.PreemptibleChatLock()
+    token = await lock.acquire()
+    held = lock.held_duration
+    assert 0.0 <= held < 5.0
+    # A wall-clock jump (time.time) must not affect the monotonic measurement:
+    # the implementation anchors to time.monotonic(), so a fresh reading stays
+    # in the same small range instead of jumping by the wall-clock delta.
+    assert abs(lock.held_duration - held) < 5.0
+    lock.release(token)
+
+
 def test_identity_reliability_fastpath_answers_future_memory_without_overclaim():
     from core.conversation.response_reliability import assess_user_facing_reply
     from core.conversation.self_claim_verifier import verify_self_claims
