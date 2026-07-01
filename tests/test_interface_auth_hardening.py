@@ -41,3 +41,51 @@ def test_cheat_code_activation_reports_recoverable_runtime_failure(monkeypatch):
         "message": "Cheat code activation failed.",
     }
     assert _raise_runtime_error.called is True
+
+
+def _rate_limit_request(peer: str, headers: dict[str, str] | None = None):
+    return SimpleNamespace(
+        client=SimpleNamespace(host=peer),
+        headers=headers or {},
+        url=SimpleNamespace(path="/api/chat"),
+    )
+
+
+def test_rate_limit_bypass_cannot_be_spoofed_by_forwarded_header(monkeypatch):
+    """A remote peer forging X-Forwarded-For: 127.0.0.1 must not bypass limits."""
+    checked: list[str] = []
+
+    def _record(ip: str) -> bool:
+        checked.append(ip)
+        return True
+
+    monkeypatch.setattr(auth._rate_limiter, "check", _record)
+
+    request = _rate_limit_request("203.0.113.9", {"X-Forwarded-For": "127.0.0.1"})
+    auth._check_rate_limit(request)
+
+    # The limiter is keyed on the real socket peer, not the forged header.
+    assert checked == ["203.0.113.9"]
+
+
+def test_rate_limit_direct_local_traffic_is_bypassed(monkeypatch):
+    def _fail(_ip: str) -> bool:  # pragma: no cover - must not be called
+        raise AssertionError("local traffic should bypass the limiter")
+
+    monkeypatch.setattr(auth._rate_limiter, "check", _fail)
+
+    auth._check_rate_limit(_rate_limit_request("127.0.0.1"))
+
+
+def test_rate_limit_local_proxy_buckets_by_forwarded_client(monkeypatch):
+    """A loopback reverse proxy gets per-real-client bucketing, no bypass."""
+    checked: list[str] = []
+
+    monkeypatch.setattr(
+        auth._rate_limiter, "check", lambda ip: (checked.append(ip) or True)
+    )
+
+    request = _rate_limit_request("127.0.0.1", {"X-Forwarded-For": "198.51.100.7, 127.0.0.1"})
+    auth._check_rate_limit(request)
+
+    assert checked == ["198.51.100.7"]

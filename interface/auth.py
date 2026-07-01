@@ -301,21 +301,36 @@ _rate_limiter = _RateLimiter(max_requests=30, window_seconds=60.0)
 
 
 def _check_rate_limit(request: Request) -> None:
-    """H-02: Rate limit check with Trusted IP bypass."""
-    # Prioritize real client IP over the proxy's IP to prevent distributed DOS
-    forwarded = request.headers.get("X-Forwarded-For")
-    real_ip = request.headers.get("X-Real-IP")
+    """H-02: Rate limit check with Trusted IP bypass.
 
-    if forwarded:
-        client_ip = forwarded.split(',')[0].strip()
-    elif real_ip:
-        client_ip = real_ip
+    Security: ``X-Forwarded-For``/``X-Real-IP`` are attacker-controlled on a
+    direct connection, so the trusted-IP bypass and the rate-limit bucket key
+    are both anchored to the real socket peer. Forwarded headers are only
+    honored when the direct peer is loopback — i.e. a genuine local reverse
+    proxy fronting Aura — so that per-real-IP limiting still works behind a
+    trusted proxy without letting a remote client spoof ``127.0.0.1`` to
+    bypass the limiter or rotate a forged header to evade per-IP buckets.
+    """
+    peer_ip = request.client.host if request.client else "unknown"
+    peer_is_local_proxy = peer_ip in TRUSTED_IPS
+
+    if peer_is_local_proxy:
+        forwarded = request.headers.get("X-Forwarded-For")
+        real_ip = request.headers.get("X-Real-IP")
+        if forwarded:
+            # A local proxy forwarding a real external client: rate-limit by
+            # that client, do not grant the local-trust bypass.
+            client_ip = forwarded.split(",")[0].strip() or peer_ip
+        elif real_ip:
+            client_ip = real_ip.strip() or peer_ip
+        else:
+            # Genuine local traffic (the desktop UI / same-host probes).
+            return
+        if client_ip in TRUSTED_IPS:
+            return
     else:
-        client_ip = request.client.host if request.client else "unknown"
-
-    # Perplexity Audit Fix: Bypass rate limit for local/trusted telemetry
-    if client_ip in TRUSTED_IPS:
-        return
+        # Direct remote connection: ignore attacker-controlled headers entirely.
+        client_ip = peer_ip
 
     if not _rate_limiter.check(client_ip):
         try:
