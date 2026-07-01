@@ -115,6 +115,10 @@ and Accessibility ready through `/api/system/desktop-access`.
   macOS has not yet attached grants to the newly stable resident app identity.
   This remains open until the launched Aura app reports ready through the live
   API, not just the one-shot bridge.
+- Follow-up root fix committed in `d37de688`: explicit permission requests
+  (`request_screen`, `request_accessibility`) now stay on the resident Aura.app
+  bridge for the full prompt timeout instead of falling back after the short
+  probe timeout. Quick probes remain capped at 3 seconds.
 - Model lifecycle now knows local open-weight reasoning solver repos:
   `QwQ-32B-4bit`, `DeepSeek-R1-Distill-Qwen-32B-4bit`, and
   `DeepSeek-R1-Distill-Qwen-32B-8bit`.
