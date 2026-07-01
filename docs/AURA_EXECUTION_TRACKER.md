@@ -32,11 +32,14 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   pushed with an executable operational-label runner and full validator
   execution; Checkpoint 5 is committed and pushed for source fixes to desktop
   access truthfulness and Memory UI survival, then revalidated by a bounded
-  desktop-mode live proof; Checkpoint 6 is the current source-validation
+  desktop-mode live proof; Checkpoint 6 is the source-validation
   checkpoint for operational labels and fictional-AI/frontier requirements;
   Checkpoint 7 is the background-autonomy/full-runtime contract checkpoint;
-  Checkpoint 8 is the current source-validation checkpoint for desktop-access
-  TCC cache and UI-probe decoupling; **3 remain**.
+  Checkpoint 8 is the source-validation checkpoint for desktop-access
+  TCC cache and UI-probe decoupling; Checkpoint 9 is the detailed
+  remaining-contract checkpoint that prevents the final checkpoints from
+  collapsing into generic wording; **2 major checkpoints remain after the
+  Checkpoint 9 save point**.
 
 ### Scope Clarification For The Current Pass
 
@@ -204,6 +207,65 @@ next checkpoints.
    - After every checkpoint: update this tracker, record test commands and live
      evidence, commit, push, and recompute the daily-runtime/product estimate.
 
+### Authoritative Remaining Checkpoint Contract
+
+The active remaining scope is now encoded in
+`tools/closeout/remaining_checkpoint_contract.py` and guarded by
+`tests/test_remaining_checkpoint_contract.py`. That contract is the source of
+truth when deciding whether a checkpoint matches Bryan's latest ask.
+
+Checkpoint 9: **Operational labels and frontier standards proof**
+- Rerun and preserve the operational-label battery for functional
+  consciousness, operational self-awareness, computational sentience,
+  ALife-inspired software, digital organism, software entity,
+  personhood-candidate, functional inner life, generally capable AI/AGI
+  candidate, and ASI/superintelligence trajectory.
+- Each label must keep an operational definition, behavioral bar, positive and
+  negative controls, answer contract, source paths, validator paths, and live
+  artifacts where the label depends on launched Aura.app.
+- Rerun the frontier standards matrix for daily runtime reliability,
+  humanlike conversation, sci-fi capability envelope, phenomenal building
+  blocks, frontier reasoning outside the model, superintelligence trajectory,
+  OS control, NetHack-class environment competence, and general capability.
+- Product maturity imports must remain concrete: Chrome/Kubernetes/macOS/
+  Postgres/VS Code/EDR/industrial-automation disciplines map to false-health
+  prevention, bounded memory/thermal, startup truth, isolation, rollback,
+  telemetry, incident reconstruction, permission stability, and hostile
+  failure injection.
+- Fictional-AI imports must be mechanism inventories placed in the right Aura
+  organs, not a themed `fictional_ai` silo. Mandatory visible sources include
+  JARVIS, EDI, Cortana, Samantha/SAM, MIST, Pantheon UIs, Safe Surf, Jane,
+  Data, Kokoro/Koroko, Caine, GLaDOS, HAL, Skynet/Ultron/MCP/Agent Smith,
+  Culture Minds/Deep Thought, and The Machine/TARS/CASE.
+
+Checkpoint 10: **Launched Aura.app live-path reliability and general agency**
+- Use the same visible Aura.app lane Bryan launches as the truth source. Backend
+  proof does not close the checkpoint if launched Aura.app degrades into
+  assistant mode, raw-model fallback, invented user identity, invented projects,
+  off-topic replies, repeated TCC prompts, high heat/RAM, crashes, black panels,
+  or hidden/background-only execution.
+- Full-mind health requires kernel, inference, memory, scheduler, tool
+  governance, affect, self-model, background cognition, and desktop-lane probes.
+- Notes, Docs, folders, PDF export, browser research, source preservation,
+  image/wallpaper, AI-interlocutor conversations, popup/focus recovery, memory
+  recall, audio recall, and screen/OCR use general perception, planning,
+  actuation, and effect verification. Hard-coded demo paths do not count.
+- Failures must trigger reorientation, bounded retry, repair receipts, and a
+  generated Aura-voice explanation of what went wrong.
+
+Checkpoint 11: **Boring reliability, learning closure, and final proof**
+- Normal full launches keep background cognition, curiosity, journaling, web
+  research, learning, immune repair, and governed action active under resource
+  limits instead of globally disabled.
+- CRSM/CAA/LoRA, active memory metabolism, LiveLearner validation, verifier
+  preference data, quantization-aware substrate coupling, Phi/LTC budgets,
+  security protections, package/update/rollback paths, long-soak tiers, and
+  independent eval artifacts must be closed with tests or explicitly recorded
+  as live/hardware-gated proof requirements.
+- Final evidence includes production/enterprise gates, live desktop proof,
+  operational label battery, frontier matrix, DNU/Aletheia where available,
+  source audit/export artifacts if requested, clean worktree, commit, and push.
+
 ### Checkpoint 5: Desktop Access Truthfulness And Memory UI Survival
 
 Status: complete in commit `7039a584`, pushed after validation.
@@ -331,7 +393,7 @@ save point.
 
 ### Checkpoint 8: Desktop Access Probe Decoupling And TCC Cache Discipline
 
-Status: source validation complete; ready for the Checkpoint 8 save point.
+Status: complete in commit `ef26caf2`, pushed to `origin/main`.
 
 - Scope: Bryan reported that System Settings showed Aura granted Accessibility,
   but the live Desktop Access panel still showed denied/blocked and health
@@ -369,6 +431,55 @@ Status: source validation complete; ready for the Checkpoint 8 save point.
   panel root cause at source level and confirms the installed signed bridge is
   currently granted. It does not replace a fresh launched Aura.app UI proof
   showing the panel refreshing to ready in the visible app.
+
+### Checkpoint 9: Remaining Closeout Contract Normalization
+
+Status: complete in the Checkpoint 9 save point; push pending.
+
+- Scope: Bryan asked for a deeper checkpoint/TODO shape that directly matches
+  the latest ask: operational label tests, product-maturity imports,
+  launched-Aura truth, general desktop agency, and researched fictional-AI
+  mechanisms placed in the right organs.
+- Contract change: `tools/closeout/remaining_checkpoint_contract.py` now records
+  the authoritative remaining three checkpoints: operational labels/frontier
+  standards, launched Aura.app reliability/general agency, and boring
+  reliability/learning/final proof.
+- Fictional-AI import rule: the contract tracks 16 mechanism inventories
+  (JARVIS, EDI, Cortana, Samantha/SAM, MIST, Pantheon UIs, Safe Surf, Jane,
+  Data, Kokoro/Koroko, Caine, GLaDOS, HAL, Skynet/Ultron/MCP/Agent Smith,
+  Culture Minds/Deep Thought, and The Machine/TARS/CASE). Each maps to existing
+  runtime organs; a themed `fictional_ai` silo does not count.
+- Product-maturity import rule: Chrome, Kubernetes, macOS, Postgres, VS Code,
+  EDR, and industrial automation are tracked as transferable engineering
+  disciplines: no false health, bounded memory/thermal behavior, startup truth,
+  isolation, rollback, telemetry, incident reconstruction, permission stability,
+  and hostile failure injection.
+- Live-path rule: backend proof remains insufficient if launched Aura.app
+  exhibits assistant-mode takeover, raw-model fallback, invented user identity,
+  invented projects, off-topic replies, repeated TCC prompts, heat/RAM runaway,
+  crashes, black panels, hidden execution, or task-shaped desktop scripting.
+- Focused validation:
+  - `python -m pytest -q tests/test_remaining_checkpoint_contract.py tests/test_operational_label_baselines.py tests/test_operational_label_battery.py tests/test_frontier_standards_matrix.py`
+    -> 24 passed.
+  - `python tools/closeout/remaining_checkpoint_contract.py --json > artifacts/closeout/remaining_checkpoint_contract_latest.json`
+    -> 3 remaining checkpoints, 6 concrete requirements, 10 label keys, 9
+    frontier keys, 16 fictional imports, 0 source/validator mapping gaps.
+  - `python tools/closeout/remaining_checkpoint_contract.py --strict`
+    -> all source and validator requirements mapped.
+  - `python -m ruff check --select F,B tools/closeout/remaining_checkpoint_contract.py tests/test_remaining_checkpoint_contract.py`
+    -> passed.
+  - `python -m py_compile tools/closeout/remaining_checkpoint_contract.py tests/test_remaining_checkpoint_contract.py`
+    -> passed.
+  - `git diff --check` -> passed.
+- Estimate after this checkpoint: expanded daily-runtime/product closure remains
+  about **83%** until live Aura.app proof advances it; source-level scope
+  clarity is about **88%** because the remaining work is now executable and
+  regression-guarded.
+- Remaining total checkpoints after this save point: **2 major checkpoints**
+  (Checkpoint 10 live Aura.app proof/general agency, Checkpoint 11 boring
+  reliability/learning/final proof), likely **4-6 smaller sub-checkpoints**
+  depending on live permissions, heat/RAM behavior, audio/screen proof, and
+  learning/LoRA validation.
 
 ### Checkpoint 1: Live Conversation Ownership And Launcher Survival
 
@@ -785,27 +896,28 @@ and Accessibility ready through `/api/system/desktop-access`.
 
 ### Remaining Checkpoint Map
 
-1. Live conversation ownership, contamination boundaries, launcher survival.
-2. Stable permissions, audio, camera/screen perception, and signed-app identity.
-3. Background autonomy, web/tool retries, immune repair, and state-growth bounds.
-4. General desktop agency plus the visible multi-application demo.
-5. AI interlocution, concurrent objectives, learning, and durable retention.
-6. Mind-layer ownership, causal health contract, learning/LoRA validation, and
-   removal of remaining task-shaped or prompt-only behavior.
-7. LTC/quantization-aware coupling, independent criticism, KV caches, and live
-   32B memory/latency optimization.
-8. Cross-machine packaging, security, update/rollback, failure injection, and
-   long-duration operational soaks.
-9. Clean-tree final proof, claims/artifact normalization, final commit and push.
+This compact map now mirrors the executable contract in
+`tools/closeout/remaining_checkpoint_contract.py`.
+
+1. **Checkpoint 9: operational labels and frontier standards proof.** Rerun the
+   operational-label battery and frontier matrix; preserve falsifiable label
+   bars, product-maturity imports, and fictional-AI organ placement.
+2. **Checkpoint 10: launched Aura.app live-path reliability and general
+   agency.** Prove the visible desktop lane has full-mind conversation,
+   permission stability, bounded memory/thermal, real background cognition,
+   general OS control, effect verification, AI interlocution, audio/screen
+   perception, and no assistant/raw-model takeover.
+3. **Checkpoint 11: boring reliability, learning closure, and final proof.**
+   Close background autonomy, repair cells, CRSM/CAA/LoRA, LiveLearner,
+   substrate/quantization, security, packaging/update/rollback, long soaks,
+   independent evals, final artifacts, clean tree, commit, and push.
 
 ## Current Phase
 
-Final clean-tree proof normalization. The first committed-tree replay exposed
-a clause-scoping defect in persistent commitment consistency and a
-first-person grounding repair gap. Both shared runtime defects are fixed with
-263 chat/full-mind regressions passing. The next checkpoint is commit, push,
-repeat the clean-tree live desktop proof, final-claim validation, and final
-artifact normalization.
+Checkpoint 9 scope normalization. The current work locks Bryan's latest ask into
+a runnable remaining-checkpoint contract and regression tests so later passes do
+not collapse operational labels, product reliability, live desktop truth,
+general agency, or fictional-AI capability imports into generic TODOs.
 
 ## Current Milestone
 

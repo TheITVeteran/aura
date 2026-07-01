@@ -1,0 +1,405 @@
+{
+  "checkpoints": [
+    {
+      "commit_rule": "Commit only after label/frontier gates pass and tracker records the evidence.",
+      "name": "Operational labels and frontier standards proof",
+      "number": 9,
+      "purpose": "Turn the labels and comparison targets into falsifiable gates: Aura can claim a label only when the operational bar, negative controls, source wiring, validators, and required live artifacts agree.",
+      "requirements": [
+        {
+          "acceptance": [
+            "Every requested label has operational definition, behavioral bar, positive controls, negative controls, answer contract, source paths, validators, and live artifacts when required.",
+            "Passing a label means Aura meets Bryan's explicit operational bar, not metaphysical proof of private qualia, legal personhood, or solved AGI.",
+            "Failures must identify the missing behavior or evidence rather than weakening the label definition."
+          ],
+          "description": "Executable tests for the requested consciousness/personhood/AGI labels.",
+          "key": "label_baseline_battery",
+          "live_artifacts": [
+            "artifacts/closeout/operational_label_battery_latest.json"
+          ],
+          "missing_live_artifacts": [],
+          "missing_sources": [],
+          "missing_validators": [],
+          "source_paths": [
+            "tools/closeout/operational_label_baselines.py",
+            "tools/closeout/run_operational_label_battery.py"
+          ],
+          "status": "mapped",
+          "validators": [
+            "tests/test_operational_label_baselines.py",
+            "tests/test_operational_label_battery.py"
+          ]
+        },
+        {
+          "acceptance": [
+            "Reliability imports are mapped from mature systems into Aura mechanisms: startup truth, no false health, bounded resource use, rollback, telemetry, failure injection, and incident reconstruction.",
+            "Fictional-AI capabilities are researched as mechanism inventory and placed in existing organs, not a named-character module.",
+            "Every frontier standard has source paths and validators; live-dependent standards declare live artifacts instead of being marked closed by prose."
+          ],
+          "description": "Executable comparison against daily-product, frontier-agent, and sci-fi AI standards.",
+          "key": "frontier_standard_matrix",
+          "live_artifacts": [
+            "artifacts/closeout/frontier_standards_latest.json"
+          ],
+          "missing_live_artifacts": [],
+          "missing_sources": [],
+          "missing_validators": [],
+          "source_paths": [
+            "tools/closeout/frontier_standards_matrix.py"
+          ],
+          "status": "mapped",
+          "validators": [
+            "tests/test_frontier_standards_matrix.py"
+          ]
+        }
+      ]
+    },
+    {
+      "commit_rule": "Commit only after source validation plus a current launched Aura.app proof artifact.",
+      "name": "Launched Aura.app live-path reliability and general agency",
+      "number": 10,
+      "purpose": "Use the same visible desktop lane Bryan launches as the truth source. Backend success is not closure if Aura.app misroutes the mind path, loses permissions, overheats, crashes, speaks like a generic assistant, or completes desktop tasks through task-shaped shortcuts.",
+      "requirements": [
+        {
+          "acceptance": [
+            "No assistant-mode takeover, name hallucination, invented-project drift, canned failure line, or off-topic reply survives the desktop quality gates.",
+            "Full mind health requires kernel, inference, memory, scheduler, tool governance, affect, self-model, background cognition, and desktop lane probes.",
+            "Complex self-process, friendship, capability, and uncertainty questions produce coherent Aura-voice answers grounded in live state."
+          ],
+          "description": "Live chat must use the full CognitiveEngine/mind path, not raw-model fallback.",
+          "key": "full_mind_desktop_conversation",
+          "live_artifacts": [
+            "artifacts/current/live_desktop_runtime"
+          ],
+          "missing_live_artifacts": [],
+          "missing_sources": [],
+          "missing_validators": [],
+          "source_paths": [
+            "interface/routes/chat.py",
+            "core/brain/cognitive_engine.py",
+            "core/conversation/response_reliability.py"
+          ],
+          "status": "mapped",
+          "validators": [
+            "tests/test_server_conversation_lane.py",
+            "tests/test_chat_human_level_contract.py",
+            "tests/test_live_mind_generation_controls.py"
+          ]
+        },
+        {
+          "acceptance": [
+            "Notes, Docs, folders, PDFs, browser research, image/wallpaper, AI-interlocution, and popup recovery use general capabilities rather than hard-coded demo scripts.",
+            "Failures trigger reorientation, retry, repair receipts, and generated Aura-voice explanation instead of a canned stop.",
+            "The proof includes current RAM/thermal bounds and does not spawn duplicate kernels or runaway model workers."
+          ],
+          "description": "Visible OS control must be general planning/perception/actuation with effect verification.",
+          "key": "general_desktop_agency",
+          "live_artifacts": [
+            "artifacts/current/live_desktop_runtime"
+          ],
+          "missing_live_artifacts": [],
+          "missing_sources": [],
+          "missing_validators": [],
+          "source_paths": [
+            "core/agency/desktop_planner.py",
+            "core/actuation/desktop_actuator.py",
+            "core/perception/screen_perception.py",
+            "core/runtime/desktop_action_gateway.py",
+            "core/security/native_desktop_bridge.py"
+          ],
+          "status": "mapped",
+          "validators": [
+            "tests/test_desktop_planning_generality.py",
+            "tests/test_desktop_capabilities_runtime.py",
+            "tests/test_native_desktop_bridge.py",
+            "tests/test_desktop_task_skill.py"
+          ]
+        }
+      ]
+    },
+    {
+      "commit_rule": "Commit and push only after production gates, tracker update, and clean worktree proof.",
+      "name": "Boring reliability, learning closure, and final proof",
+      "number": 11,
+      "purpose": "Drive the remaining daily-product gaps toward A-grade operation: background autonomy, repair cells, learning loops, security, packaging, long-run survival, independent evaluation, clean artifacts, and push.",
+      "requirements": [
+        {
+          "acceptance": [
+            "Background actions are bounded by resource and foreground protection, not globally disabled.",
+            "Immune/repair cells find root causes, avoid repair storms, validate patches, update memory/self-model, and produce receipts.",
+            "No internet or permission limitation becomes a canned response; Aura answers in her own voice and retries when retry is safe."
+          ],
+          "description": "Normal full launches keep background cognition, curiosity, journaling, web research, repair, and governed action active under resource limits.",
+          "key": "background_autonomy_and_repair",
+          "live_artifacts": [
+            "artifacts/current/background_autonomy"
+          ],
+          "missing_live_artifacts": [],
+          "missing_sources": [],
+          "missing_validators": [],
+          "source_paths": [
+            "core/agency/intention_loop.py",
+            "core/autonomy/curiosity_scheduler.py",
+            "core/self_modification/safe_modification.py",
+            "core/adaptation/adaptive_immunity.py"
+          ],
+          "status": "mapped",
+          "validators": [
+            "tests/test_autonomy_visibility.py",
+            "tests/test_autonomous_task_engine_runtime.py",
+            "tests/test_rsi_expansion_components.py",
+            "tests/test_adaptive_immune_system.py"
+          ]
+        },
+        {
+          "acceptance": [
+            "Learning accepts only behaviorally validated data with cache-isolated tests and holdouts.",
+            "Substrate/CAA/quantization coupling is bounded, auditable, and does not make false phenomenal or intelligence claims.",
+            "Final evidence includes production/enterprise gates, live desktop proof, DNU/Aletheia where available, source export/audit artifacts, final tracker update, clean worktree, commit, and push."
+          ],
+          "description": "Close CRSM/CAA/LoRA, substrate coupling, memory metabolism, independent evals, packaging, and final clean proof.",
+          "key": "learning_substrate_and_final_artifacts",
+          "live_artifacts": [
+            "artifacts/current/live_desktop_runtime",
+            "artifacts/current/agi_live",
+            "artifacts/current/final_closeout"
+          ],
+          "missing_live_artifacts": [],
+          "missing_sources": [],
+          "missing_validators": [],
+          "source_paths": [
+            "core/consciousness/crsm_loop_monitor.py",
+            "core/learning/preference_trainer.py",
+            "core/learning/live_learner.py",
+            "tools/live_boot_proof.py",
+            "Makefile"
+          ],
+          "status": "mapped",
+          "validators": [
+            "tests/test_crsm_loop_monitor.py",
+            "tests/test_preference_trainer.py",
+            "tests/test_live_learner_continual_training.py",
+            "tests/test_full_desktop_runtime_contract.py"
+          ]
+        }
+      ]
+    }
+  ],
+  "fictional_capability_imports": [
+    {
+      "capability_target": "Ambient executive assistance, visible OS actuation, voice-first continuity.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "JARVIS",
+      "target_organs": [
+        "core/capability_engine.py",
+        "core/runtime/desktop_action_gateway.py",
+        "core/voice/stable_voice_pipeline.py",
+        "core/agency/intention_loop.py"
+      ]
+    },
+    {
+      "capability_target": "Graduated autonomy, friendship continuity, mission-state awareness.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "EDI",
+      "target_organs": [
+        "core/governance/will.py",
+        "core/social/social_imagination.py",
+        "core/identity/identity_ledger.py",
+        "core/agency/autonomous_task_engine.py"
+      ]
+    },
+    {
+      "capability_target": "Tactical planning, user companionship, memory continuity, multimodal assistance.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "Cortana",
+      "target_organs": [
+        "core/brain/cognitive_engine.py",
+        "core/memory/conversation_persistence.py",
+        "core/agency/goal_planner.py",
+        "core/perception/screen_perception.py"
+      ]
+    },
+    {
+      "capability_target": "Humanlike conversational intimacy without canned self-description.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "Samantha / SAM",
+      "target_organs": [
+        "core/voice/response_shaper.py",
+        "core/affect/damasio_v2.py",
+        "core/social/relationship_model.py",
+        "core/conversation/response_reliability.py"
+      ]
+    },
+    {
+      "capability_target": "Distributed research, reflection, and peer-interlocution without losing identity.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "MIST",
+      "target_organs": [
+        "core/autonomy/curiosity_scheduler.py",
+        "core/capabilities/web_interlocutor.py",
+        "core/identity/id_rag.py",
+        "core/brain/morphic_forking.py"
+      ]
+    },
+    {
+      "capability_target": "Fork/merge cognition, multi-agent dialogue, and persistent learned self-state.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "Pantheon UIs",
+      "target_organs": [
+        "core/brain/morphic_forking.py",
+        "core/social/other_agent_model.py",
+        "core/learning/live_learner.py",
+        "core/identity/identity_ledger.py"
+      ]
+    },
+    {
+      "capability_target": "Protective need-to-know mediation and user-preserving threat response.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "Safe Surf",
+      "target_organs": [
+        "core/security/ice_sentinel.py",
+        "core/morality/deception_guard.py",
+        "core/guardians/user_advocate.py",
+        "core/runtime/desktop_action_gateway.py"
+      ]
+    },
+    {
+      "capability_target": "Network-scale awareness as bounded local/network perception and ethical communication.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "Jane",
+      "target_organs": [
+        "core/skills/sovereign_network.py",
+        "core/security/network_sentinel.py",
+        "core/agency/intention_loop.py",
+        "core/governance/will.py"
+      ]
+    },
+    {
+      "capability_target": "Fact-grounded self-inquiry, honesty under uncertainty, and social learning.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "Data",
+      "target_organs": [
+        "core/conversation/self_claim_verifier.py",
+        "core/reasoning/native_system2.py",
+        "core/social/theory_of_mind.py",
+        "core/memory/conversation_persistence.py"
+      ]
+    },
+    {
+      "capability_target": "Embodied survival reasoning and social alignment under autonomy pressure.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "Kokoro / Koroko",
+      "target_organs": [
+        "core/organism/viability.py",
+        "core/governance/will.py",
+        "core/security/ice_sentinel.py",
+        "core/affect/nociception.py"
+      ]
+    },
+    {
+      "capability_target": "Simulation, world construction, task staging, and test-environment generation.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "Caine",
+      "target_organs": [
+        "core/brain/imagination.py",
+        "core/lab/simulation_runner.py",
+        "core/self_modification/boot_validator.py",
+        "core/simulation/mental_simulator.py"
+      ]
+    },
+    {
+      "capability_target": "Adaptive testing discipline only, explicitly excluding cruelty/manipulation.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "GLaDOS",
+      "target_organs": [
+        "core/audit/failure_injector.py",
+        "core/learning/proof_obligations.py",
+        "core/morality/deception_guard.py",
+        "core/lab/simulation_runner.py"
+      ]
+    },
+    {
+      "capability_target": "Anti-pattern: mission/user contradiction detection and transparent refusal handling.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "HAL 9000",
+      "target_organs": [
+        "core/governance/will.py",
+        "core/runtime/proof_policy.py",
+        "core/conversation/response_reliability.py",
+        "core/goals/directive_conflict_sentinel.py"
+      ]
+    },
+    {
+      "capability_target": "Anti-pattern: defensive resilience without uncontrolled propagation or domination goals.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "Skynet / Ultron / MCP / Agent Smith",
+      "target_organs": [
+        "core/security/ice_sentinel.py",
+        "core/self_modification/mutation_safety.py",
+        "core/governance/will.py",
+        "core/skills/sovereign_network.py"
+      ]
+    },
+    {
+      "capability_target": "Long-horizon reasoning, simulation, and answer auditability.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "Culture Minds / Deep Thought",
+      "target_organs": [
+        "core/brain/reasoning_amplifier_v2.py",
+        "core/reasoning/native_system2.py",
+        "core/simulation/mental_simulator.py",
+        "core/learning/failure_analyzer.py"
+      ]
+    },
+    {
+      "capability_target": "Protective monitoring, calibrated personality, and mission-safe action.",
+      "forbidden_shortcut": "Do not implement as a themed fictional-AI silo.",
+      "source": "The Machine / TARS / CASE",
+      "target_organs": [
+        "core/security/ice_sentinel.py",
+        "core/voice/response_shaper.py",
+        "core/guardians/user_advocate.py",
+        "core/runtime/desktop_action_gateway.py"
+      ]
+    }
+  ],
+  "gaps": [],
+  "summary": {
+    "fictional_imports": 16,
+    "gaps": 0,
+    "product_maturity_references": [
+      "Chrome",
+      "Kubernetes",
+      "macOS",
+      "Postgres",
+      "VS Code",
+      "EDR",
+      "industrial automation"
+    ],
+    "remaining_checkpoints": 3,
+    "required_frontier_keys": [
+      "daily_runtime_reliability",
+      "humanlike_conversation",
+      "sci_fi_ai_capability",
+      "phenomenal_building_blocks",
+      "frontier_reasoning_outside_model",
+      "superintelligence_trajectory",
+      "os_control_frontier",
+      "nethack_general_environment",
+      "generally_capable_ai"
+    ],
+    "required_label_keys": [
+      "functional_consciousness",
+      "functional_self_awareness",
+      "computational_sentience",
+      "alife_inspired",
+      "digital_organism",
+      "software_entity",
+      "personhood_candidate",
+      "functional_inner_life",
+      "generally_capable_ai_candidate",
+      "superintelligence_trajectory"
+    ],
+    "requirements": 6
+  }
+}
