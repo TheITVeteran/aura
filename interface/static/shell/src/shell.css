@@ -384,10 +384,13 @@ button, textarea {
 
 .message {
   max-width: 78%;
+  min-width: 0;
+  height: auto;
   padding: 14px 16px;
   border-radius: 18px;
   border: 1px solid rgba(255,255,255,0.06);
   background: rgba(255,255,255,0.03);
+  overflow: visible;
 }
 
 .message.user {
@@ -419,6 +422,10 @@ button, textarea {
   white-space: pre-wrap;
   line-height: 1.55;
   color: rgba(245,247,251,0.96);
+  max-width: 100%;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-meta {
@@ -536,9 +543,9 @@ button, textarea {
 .feed-content {
   line-height: 1.5;
   font-size: 0.92rem;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   word-break: break-word;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .metric-bar {

@@ -214,6 +214,78 @@ def test_constitutive_compute_budget_throttles_on_process_tree_rss_pressure(monk
     assert budget.reason.startswith("process_tree_rss:20.0GB/18.0GB")
 
 
+def test_background_policy_defers_optional_work_under_cpu_pressure(monkeypatch):
+    import core.runtime.background_policy as background_policy
+
+    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
+    monkeypatch.delenv("AURA_TESTING", raising=False)
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_BACKGROUND_COGNITION", raising=False)
+    monkeypatch.setenv("AURA_BACKGROUND_HEAT_GUARD", "1")
+    monkeypatch.setenv("AURA_BACKGROUND_MAX_CPU_PERCENT", "75")
+    monkeypatch.setattr(background_policy, "_foreground_activity_reason", lambda: "")
+    monkeypatch.setattr(
+        background_policy,
+        "_read_memory_pressure_snapshot",
+        lambda: background_policy._MemoryPressureSnapshot(
+            pressure_pct=20.0,
+            reason="memory_pressure_20.0",
+        ),
+    )
+    monkeypatch.setattr(
+        background_policy,
+        "get_unified_failure_state",
+        lambda: {"pressure": 0.0},
+    )
+    monkeypatch.setattr(background_policy.psutil, "cpu_percent", lambda interval=None: 93.4)
+    monkeypatch.setattr(background_policy.psutil, "cpu_count", lambda: 18)
+    monkeypatch.setattr(background_policy.psutil, "sensors_temperatures", lambda: {}, raising=False)
+
+    reason = background_policy.background_activity_reason(allow_no_user_anchor=True)
+
+    assert reason == "cpu_pressure_93.4"
+
+
+def test_constitutive_compute_budget_throttles_under_cpu_pressure(monkeypatch):
+    import core.runtime.background_policy as background_policy
+
+    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
+    monkeypatch.delenv("AURA_TESTING", raising=False)
+    monkeypatch.delenv("AURA_FOREGROUND_ONLY", raising=False)
+    monkeypatch.delenv("AURA_ENABLE_BACKGROUND_COGNITION", raising=False)
+    monkeypatch.setenv("AURA_BACKGROUND_HEAT_GUARD", "1")
+    monkeypatch.setenv("AURA_BACKGROUND_MAX_CPU_PERCENT", "75")
+    monkeypatch.setattr(background_policy, "_foreground_activity_reason", lambda: "")
+    monkeypatch.setattr(
+        background_policy,
+        "_read_memory_pressure_snapshot",
+        lambda: background_policy._MemoryPressureSnapshot(
+            pressure_pct=20.0,
+            reason="memory_pressure_20.0",
+        ),
+    )
+    monkeypatch.setattr(
+        background_policy,
+        "get_unified_failure_state",
+        lambda: {"pressure": 0.0},
+    )
+    monkeypatch.setattr(background_policy.psutil, "cpu_percent", lambda interval=None: 91.2)
+    monkeypatch.setattr(background_policy.psutil, "cpu_count", lambda: 18)
+    monkeypatch.setattr(background_policy.psutil, "sensors_temperatures", lambda: {}, raising=False)
+
+    budget = background_policy.constitutive_compute_budget(
+        "liquid_substrate",
+        60.0,
+        min_hz=0.5,
+        compute_pressure_hz=1.0,
+    )
+
+    assert budget.effective_hz == pytest.approx(1.0)
+    assert budget.reason == "cpu_pressure_91.2"
+
+
 @pytest.mark.asyncio
 async def test_mlx_client_refuses_heavy_generation_under_emergency_memory(monkeypatch):
     import core.utils.memory_monitor as memory_monitor

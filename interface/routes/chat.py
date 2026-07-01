@@ -715,6 +715,45 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
     return None
 
 
+def _is_anaphoric_session_memory_pin_request(user_message: str) -> bool:
+    """True when the user asks Aura to hold the current thread without restating it."""
+
+    text = normalize_memory_intent_text(_normalize_user_message(user_message)).rstrip(" .!?")
+    if not text:
+        return False
+    if _extract_session_memory_pin_request(user_message):
+        return False
+    markers = (
+        "hold this thought",
+        "hold that thought",
+        "keep this thought",
+        "keep that thought",
+        "pin this thought",
+        "pin that thought",
+        "save this thought",
+        "save that thought",
+        "remember it",
+        "remember this",
+        "remember that",
+        "dont forget it",
+        "don't forget it",
+        "dont forget this",
+        "don't forget this",
+        "dont forget that",
+        "don't forget that",
+    )
+    if not any(marker in text for marker in markers):
+        return False
+    # A follow-up question is a discourse anchor, not a memory-write command.
+    if re.search(
+        r"[.!?]\s+(?:how|what|why|where|when|who|would|could|can|does|do|is|are)\b",
+        str(user_message or ""),
+        flags=re.IGNORECASE,
+    ):
+        return False
+    return True
+
+
 def _is_session_memory_recall_request(user_message: str) -> bool:
     text = normalize_memory_intent_text(_normalize_user_message(user_message))
     if not text:
@@ -1111,6 +1150,23 @@ async def _build_memory_state_fastpath_reply(
 ) -> tuple[str, str] | None:
     """Return deterministic memory/continuity replies from canonical runtime state."""
     session_pin = _extract_session_memory_pin_request(user_message)
+    if not session_pin and _is_anaphoric_session_memory_pin_request(user_message):
+        exchanges = await _recent_completed_conversation_exchanges(
+            current_user_message=user_message,
+            session_id=session_id,
+            limit=2,
+        )
+        if exchanges:
+            last = exchanges[-1]
+            prior_aura = _clip_conversation_text(last.get("aura"), limit=180)
+            prior_user = _clip_conversation_text(last.get("user"), limit=120)
+            if prior_aura:
+                if prior_user:
+                    session_pin = f"Current thread: {prior_user} / Aura's thought: {prior_aura}"
+                else:
+                    session_pin = f"Aura's current thought: {prior_aura}"
+            elif prior_user:
+                session_pin = f"Current thread: {prior_user}"
     if session_pin:
         durable_ok = await _store_session_memory_pin(
             session_pin,
@@ -1490,6 +1546,75 @@ def _build_owner_name_recall_reply(
         f"Yes. You're {name}. I know that from the verified owner session and my identity "
         "contract, not from guessing at the last message."
     )
+
+
+_OWNER_DIRECT_ADDRESS_RE = re.compile(
+    r"\b(?:hi|hey|hello|thanks|thank you|okay|ok|yes|no|sure|listen|look|"
+    r"absolutely|definitely|right|agreed|got it|i'm here|i am here)\s*,?\s+"
+    r"([A-Z][a-z]{2,24})\b",
+    re.IGNORECASE,
+)
+_OWNER_IDENTITY_ASSERTION_RE = re.compile(
+    r"\byou(?:'re| are)\s+([A-Z][a-z]{2,24})\b",
+    re.IGNORECASE,
+)
+_OWNER_NAME_DRIFT_EXCLUSIONS = {
+    "Aura",
+    "User",
+    "You",
+    "Human",
+    "Computer",
+    "Mac",
+    "Google",
+    "Chrome",
+    "ChatGPT",
+    "Gemini",
+}
+
+
+def _owner_name_drift_candidates(reply_text: str) -> list[str]:
+    candidates: list[str] = []
+    for pattern in (_OWNER_DIRECT_ADDRESS_RE, _OWNER_IDENTITY_ASSERTION_RE):
+        for match in pattern.finditer(str(reply_text or "")):
+            name = str(match.group(1) or "").strip()
+            if not name or name in _OWNER_NAME_DRIFT_EXCLUSIONS:
+                continue
+            if name not in candidates:
+                candidates.append(name)
+    return candidates
+
+
+def _reply_has_owner_name_drift(
+    user_message: str,
+    reply_text: str,
+    *,
+    owner_session_restored: bool = False,
+) -> bool:
+    if not _owner_session_is_verified(owner_session_restored=owner_session_restored):
+        return False
+    owner_name = _resolve_primary_operator_name().strip()
+    if not owner_name or owner_name == "the verified owner":
+        return False
+    user = str(user_message or "")
+    for candidate in _owner_name_drift_candidates(reply_text):
+        if candidate.lower() == owner_name.lower():
+            continue
+        if re.search(rf"\b{re.escape(candidate)}\b", user):
+            continue
+        return True
+    return False
+
+
+def _repair_owner_name_drift_reply(reply_text: str) -> str:
+    owner_name = _resolve_primary_operator_name().strip()
+    if not owner_name or owner_name == "the verified owner":
+        return str(reply_text or "")
+    repaired = str(reply_text or "")
+    for candidate in _owner_name_drift_candidates(repaired):
+        if candidate.lower() == owner_name.lower():
+            continue
+        repaired = re.sub(rf"\b{re.escape(candidate)}\b", owner_name, repaired)
+    return repaired
 
 
 def _extract_repo_probe_request(user_message: str) -> dict[str, str] | None:
@@ -10444,6 +10569,15 @@ async def _repair_final_degraded_reply(
         or off_topic
         or _reply_assessment_requires_repair(assessment)
     )
+    if _reply_has_owner_name_drift(user_message, reply_text):
+        return (
+            _repair_owner_name_drift_reply(reply_text),
+            False,
+            False,
+            False,
+            "",
+            True,
+        )
     owner_name_reply = _build_owner_name_recall_reply(user_message)
     if owner_name_reply and not desktop_cognitive_engine_required:
         normalized_reply = _normalize_user_message(reply_text)

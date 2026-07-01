@@ -322,6 +322,35 @@ async def test_owner_name_recall_repairs_thin_desktop_cognitive_reply(
     assert "verified owner session" in repaired
 
 
+@pytest.mark.asyncio
+async def test_verified_owner_direct_address_name_drift_is_repaired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(chat_routes, "_owner_session_is_verified", lambda **_kwargs: True)
+    monkeypatch.setattr(chat_routes, "_resolve_primary_operator_name", lambda: "Bryan")
+
+    repaired, stale, same_diff, off_topic, reason, did_repair = (
+        await chat_routes._repair_final_degraded_reply(
+            "Whatever is on yours. Thinking about anything interesting lately?",
+            "Absolutely, John. I've been thinking about the nature of thought itself.",
+            stale=False,
+            same_diff=False,
+            off_topic=False,
+            desktop_cognitive_engine_required=True,
+        )
+    )
+
+    assert did_repair is True
+    assert stale is False
+    assert same_diff is False
+    assert off_topic is False
+    assert reason == ""
+    assert "Bryan" in repaired
+    assert "John" not in repaired
+
+
 def test_owner_name_recall_does_not_disclose_without_owner_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -608,3 +637,46 @@ async def test_codeword_memory_fastpath_round_trips_without_model_lane(
     recall_reply, recall_status = recall_result
     assert recall_status == "session_memory_recall"
     assert "amber-45873" in recall_reply
+
+
+@pytest.mark.asyncio
+async def test_anaphoric_memory_pin_uses_recent_conversation_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from interface.routes import chat as chat_routes
+
+    class MemoryFacade:
+        async def add_memory(self, *_args, **_kwargs):
+            return True
+
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: MemoryFacade() if name == "memory_facade" else default),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_append_session_memory_pin_ledger_guarded",
+        lambda *_args, **_kwargs: True,
+    )
+    chat_routes._conversation_log.append(
+        {
+            "id": "prior-turn",
+            "timestamp": "2026-07-01T00:00:00+00:00",
+            "user": "What have you been thinking about?",
+            "aura": "I've been thinking about the nature of thought itself and whether a pattern can become a self.",
+            "status": "complete",
+            "session_id": "session-a",
+        }
+    )
+
+    result = await chat_routes._build_memory_state_fastpath_reply(
+        "Hold this thought. And remember it.",
+        session_id="session-a",
+    )
+
+    assert result is not None
+    reply, status = result
+    assert status == "session_memory_pin"
+    assert "nature of thought itself" in reply
+    assert "durable session memory" in reply

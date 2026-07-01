@@ -59,6 +59,19 @@ def test_catches_fresh_session_claim():
     )
 
 
+def test_catches_soft_memory_denial_from_live_desktop_turn():
+    assert "memory_denial" in _kinds(
+        "That sounds like it would require memory. And I don't have that yet."
+    )
+
+
+def test_catches_reconstructed_not_actual_memory_claim():
+    assert "memory_denial" in _kinds(
+        "I have session-to-session memory, but it is not persistent like human "
+        "or digital storage. It is reconstructed each time, not actually remembering."
+    )
+
+
 def test_catches_unconditional_future_memory_promise():
     assert "memory_overclaim" in _kinds(
         "I'll remember this conversation as part of my ongoing state unless cleared."

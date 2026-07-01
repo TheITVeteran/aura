@@ -355,6 +355,10 @@ def test_desktop_shell_is_render_fault_tolerant_and_bootstrap_normalized():
     assert "window.location.reload()" in shell_main
     assert 'window.open("/api/health/boot", "_blank")' in shell_main
     assert ".shell-crash" in shell_css
+    assert ".message-content" in shell_css
+    assert "overflow-wrap: anywhere" in shell_css
+    assert ".feed-content" in shell_css
+    assert "overflow: visible" in shell_css
     assert '@router.post("/ui/shell-error")' in system_routes
     assert "Desktop shell render fault recovered" in system_routes
     assert 'ready_label="Desktop"' in main_py
@@ -426,3 +430,23 @@ def test_live_shell_assets_are_unversioned_and_service_worker_skips_shell_cache(
     assert "initializeMetricGuide()" in ui_js
     assert ".metric-guide-panel" in ui_css
     assert ".metric-guide-live" in ui_css
+
+
+def test_memory_ui_uses_packaged_fallback_and_visible_error_panel():
+    memory_ui = (PROJECT_ROOT / "interface" / "memory_ui.py").read_text(encoding="utf-8")
+    panel = (PROJECT_ROOT / "interface" / "static" / "memory_panel.html").read_text(
+        encoding="utf-8"
+    )
+
+    root_handler = memory_ui.split("async def serve_memory_root():", 1)[1].split(
+        "async def serve_memory_ui():",
+        1,
+    )[0]
+    assert 'interface" / "static" / "memory_panel.html"' in root_handler
+    assert "AURA_MEMORY_DEV_UI" in root_handler
+    assert root_handler.index("memory_panel.html") < root_handler.index("AURA_MEMORY_DEV_UI")
+    assert "source Vite entry is not a valid packaged desktop fallback" in root_handler
+    assert "function renderMemoryLoadError(error)" in panel
+    assert "semantic memory request failed" in panel
+    assert "escapeHtml(text)" in panel
+    assert "addActionButton(actions, 'Edit'" in panel

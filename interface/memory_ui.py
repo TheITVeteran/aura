@@ -1,6 +1,7 @@
 from core.runtime.errors import record_degradation
 import json
 import logging
+import os
 import time
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, FileResponse
@@ -145,13 +146,17 @@ async def serve_memory_root():
     dist_path = config.paths.project_root / "interface" / "static" / "memory" / "dist" / "index.html"
     if dist_path.exists():
         return FileResponse(str(dist_path))
-    # Fall back to the source Vite entry only when a production build is unavailable.
-    react_path = config.paths.project_root / "interface" / "static" / "memory" / "index.html"
-    if react_path.exists():
-        return FileResponse(str(react_path))
+    # The source Vite entry is not a valid packaged desktop fallback: it points
+    # at /src/*.jsx and can render as a black window outside a Vite dev server.
+    # Keep /memory on the dependency-free panel unless the operator explicitly
+    # opts into the development UI.
     static_path = config.paths.project_root / "interface" / "static" / "memory_panel.html"
     if static_path.exists():
         return FileResponse(str(static_path))
+    if str(os.getenv("AURA_MEMORY_DEV_UI", "") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        react_path = config.paths.project_root / "interface" / "static" / "memory" / "index.html"
+        if react_path.exists():
+            return FileResponse(str(react_path))
     return HTMLResponse(
         "<html><body style='background:#05030a;color:#8a2be2;font-family:monospace;padding:2rem'>"
         "<h2>Memory Nexus — Offline</h2><p>Static assets not found.</p></body></html>",

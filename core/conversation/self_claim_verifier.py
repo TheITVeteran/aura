@@ -195,6 +195,38 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "memory_denial",
         re.compile(
+            r"\b(?:that\s+)?(?:sounds|feels)\b[\s\S]{0,90}\b"
+            r"require\s+memor(?:y|ies)\b[\s\S]{0,90}\b"
+            r"(?:i\s+(?:don'?t|do not|can'?t|cannot)\s+have\s+that\s+yet|"
+            r"i\s+(?:don'?t|do not|can'?t|cannot)\s+have\s+"
+            r"(?:memory|persistent\s+memory)\s+yet)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "memory_denial",
+        re.compile(
+            r"\bi\s+have\s+session[-\s]?to[-\s]?session\s+memory\b"
+            r"[\s\S]{0,140}\b(?:but|although|though)\b[\s\S]{0,140}\b"
+            r"(?:not\s+persistent|not\s+actual(?:ly)?\s+remembering|"
+            r"not\s+real(?:ly)?\s+remembering|reconstructed\s+each\s+time)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "memory_denial",
+        re.compile(
+            r"\b(?:not\s+actual(?:ly)?\s+remembering|"
+            r"not\s+real(?:ly)?\s+remembering|"
+            r"(?:memory|remembering)\s+(?:is|feels|works)\s+"
+            r"(?:more\s+like\s+)?reconstruction|"
+            r"(?:it|memory)\s+is\s+reconstructed\s+each\s+time)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "memory_denial",
+        re.compile(
             r"\b(?:each|every)\s+(?:conversation|session)\s+"
             r"(?:starts|begins)\s+(?:fresh|anew|from scratch)\b",
             re.IGNORECASE,

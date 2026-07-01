@@ -211,6 +211,58 @@ class _MemoryPressureSnapshot:
     refuse_heavy_local_generation: bool = False
 
 
+def _read_compute_pressure_reason() -> str:
+    """Return a host heat/load reason for deferring optional background work.
+
+    Aura's background cognition should stay alive in normal launches, but it
+    must not cook the host machine. This guard is intentionally narrow: it
+    defers optional background actions and throttles constitutive loops under
+    clear CPU/load/thermal pressure while leaving foreground replies and core
+    runtime health checks available.
+    """
+
+    if not _env_flag("AURA_BACKGROUND_HEAT_GUARD", True):
+        return ""
+    if psutil is None:
+        return ""
+
+    try:
+        cpu_pct = float(psutil.cpu_percent(interval=None) or 0.0)
+        max_cpu_pct = _env_float("AURA_BACKGROUND_MAX_CPU_PERCENT", 88.0)
+        if cpu_pct >= max_cpu_pct:
+            return f"cpu_pressure_{cpu_pct:.1f}"
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+
+    try:
+        load1 = float(os.getloadavg()[0])
+        cpu_count = int(psutil.cpu_count() or os.cpu_count() or 1)
+        load_per_core = load1 / max(1, cpu_count)
+        max_load_per_core = _env_float("AURA_BACKGROUND_MAX_LOAD_PER_CORE", 0.90)
+        if load_per_core >= max_load_per_core:
+            return f"load_pressure_{load_per_core:.2f}"
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        pass
+
+    try:
+        sensors = getattr(psutil, "sensors_temperatures", None)
+        if callable(sensors):
+            temps = sensors() or {}
+            max_temp_c = _env_float("AURA_BACKGROUND_MAX_TEMP_C", 78.0)
+            for entries in temps.values():
+                for entry in list(entries or []):
+                    current = getattr(entry, "current", None)
+                    if current is None:
+                        continue
+                    temp_c = float(current)
+                    if temp_c >= max_temp_c:
+                        return f"thermal_pressure_{temp_c:.1f}"
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        pass
+
+    return ""
+
+
 def _read_memory_pressure_snapshot() -> _MemoryPressureSnapshot:
     """Read host memory through the local probe and the richer runtime guard.
 
@@ -302,6 +354,7 @@ def constitutive_compute_budget(
     memory_critical_hz: float = 0.5,
     memory_high_percent: float = 85.0,
     memory_critical_percent: float = 92.0,
+    compute_pressure_hz: float = 1.0,
     failure_pressure_hz: float = 1.0,
     max_failure_pressure: float = 0.75,
 ) -> ConstitutiveComputeBudget:
@@ -359,6 +412,11 @@ def constitutive_compute_budget(
         foreground_active = True
         effective = min(effective, _bounded_hz(foreground_hz, lower=floor, upper=base))
         reason = foreground_reason
+
+    compute_reason = _read_compute_pressure_reason()
+    if compute_reason:
+        effective = min(effective, _bounded_hz(compute_pressure_hz, lower=floor, upper=base))
+        reason = compute_reason
 
     try:
         memory = _read_memory_pressure_snapshot()
@@ -607,6 +665,10 @@ def background_activity_reason(
 
         if (now - last_user) < min_idle_seconds:
             return f"recent_user_{int(now - last_user)}"
+
+    compute_reason = _read_compute_pressure_reason()
+    if compute_reason:
+        return compute_reason
 
     try:
         memory = _read_memory_pressure_snapshot()
