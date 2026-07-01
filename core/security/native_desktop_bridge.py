@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from core import governance_context as _governance_context
+from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 _BRIDGE_FLAG = "--native-desktop-bridge"
@@ -185,17 +186,16 @@ def _invoke_resident_bridge(
 
     request_id = uuid.uuid4().hex
     request_path = request_dir / f"{request_id}.json"
-    request_tmp = request_dir / f".{request_id}.json.tmp"
     response_path = response_dir / f"{request_id}.json"
     request = {"command": str(command or "probe"), **payload}
     try:
-        request_tmp.write_text(
+        atomic_write_text(
+            request_path,
             json.dumps(request, separators=(",", ":")),
             encoding="utf-8",
         )
-        request_tmp.replace(request_path)
     except OSError:
-        request_tmp.unlink(missing_ok=True)
+        request_path.unlink(missing_ok=True)
         return None
 
     deadline = time.monotonic() + max(0.05, float(timeout))
@@ -213,7 +213,6 @@ def _invoke_resident_bridge(
         return {"ok": False, "error": f"resident_bridge_error:{type(exc).__name__}: {exc}"}
     finally:
         request_path.unlink(missing_ok=True)
-        request_tmp.unlink(missing_ok=True)
         response_path.unlink(missing_ok=True)
     return None
 

@@ -2892,3 +2892,31 @@ Estimate update:
 - Remaining smaller sub-checkpoints: 1.
 - Remaining work: final proof/replay normalization, claims calibration, final
   configured proof gate, and clean-worktree closure.
+
+## Checkpoint 2026-06-30-18: Final-Proof Durability Preflight
+
+Status: strict flagship readiness passed; ready for clean-tree authority rerun.
+
+What changed:
+
+- Replaced direct native-bridge IPC and learned decision-preference state
+  writes with `atomic_write_text`. Resident bridge requests are now published
+  atomically at their final path, so the signed app cannot observe partial JSON.
+- Isolated permission-cache tests from the real signed Aura bridge, removing a
+  machine-state dependency while preserving production bridge precedence.
+
+Evidence:
+
+- Focused native bridge, decision-preference, and permission suite:
+  `21 passed`.
+- Strict flagship readiness: passed with zero findings.
+- The first clean-tree `make final-proof` attempt correctly failed at these two
+  direct writes; the validator was retained unchanged and now passes.
+
+Estimate update:
+
+- Overall closeout: 99.7%.
+- Remaining consolidated checkpoints: 1.
+- Remaining smaller sub-checkpoints: 1.
+- Remaining work: clean-tree full final-proof rerun, final claims validation,
+  artifact normalization, and clean-worktree closure.

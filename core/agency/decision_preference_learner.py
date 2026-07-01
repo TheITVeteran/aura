@@ -35,8 +35,9 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
+from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.DecisionPreferenceLearner")
@@ -72,7 +73,7 @@ class PendingChoice:
     pool_mean: dict[str, float]       # mean score per dimension across the option pool
     goal: str
     weights_used: dict[str, float]
-    receipt_id: Optional[str] = None
+    receipt_id: str | None = None
     created_at: float = field(default_factory=time.time)
 
 
@@ -123,7 +124,7 @@ class DecisionPreferenceLearner:
         chosen_scores: dict[str, float],
         pool_scores: list[dict[str, float]],
         goal: str = "",
-        weights_used: Optional[dict[str, float]] = None,
+        weights_used: dict[str, float] | None = None,
         expected_value: float = 0.5,
     ) -> str:
         """Register a made choice and open an outcome receipt for it.
@@ -155,7 +156,7 @@ class DecisionPreferenceLearner:
                     self._pending.pop(c.choice_id, None)
         return choice_id
 
-    def _open_receipt(self, pending: PendingChoice, expected_value: float) -> Optional[str]:
+    def _open_receipt(self, pending: PendingChoice, expected_value: float) -> str | None:
         try:
             from core.cognition.outcome_ledger import CreditSource, get_outcome_ledger
 
@@ -224,7 +225,11 @@ class DecisionPreferenceLearner:
                 "resolved_count": self._resolved_count,
                 "saved_at": time.time(),
             }
-            self._state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            atomic_write_text(
+                self._state_path,
+                json.dumps(payload, indent=2),
+                encoding="utf-8",
+            )
         except (OSError, TypeError, ValueError) as exc:
             record_degradation("decision_preference_learner", exc, severity="debug")
 
@@ -258,7 +263,7 @@ class DecisionPreferenceLearner:
             }
 
 
-_engine: Optional[DecisionPreferenceLearner] = None
+_engine: DecisionPreferenceLearner | None = None
 _engine_lock = threading.Lock()
 
 

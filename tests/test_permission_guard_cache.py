@@ -1,6 +1,6 @@
 import os
-import unittest
 import time
+import unittest
 from unittest.mock import patch
 
 import core.security.permission_guard as permission_guard_module
@@ -17,7 +17,7 @@ class ScreenProbeRecorder:
         return dict(self.result)
 
 
-class temporary_env:
+class TemporaryEnv:
     def __init__(self, updates):
         self.updates = updates
         self.previous = {}
@@ -42,9 +42,13 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
         screen_probe = ScreenProbeRecorder({"granted": True, "status": "active", "guidance": ""})
         guard._check_screen_permission = screen_probe
 
-        with temporary_env({"AURA_ASSUME_SCREEN_PERMISSION": "0"}):
-            first = await guard.check_permission(PermissionType.SCREEN, force=True)
-            second = await guard.check_permission(PermissionType.SCREEN, force=True)
+        with patch(
+            "core.security.native_desktop_bridge.probe_native_desktop_bridge",
+            return_value={"ok": False},
+        ):
+            with TemporaryEnv({"AURA_ASSUME_SCREEN_PERMISSION": "0"}):
+                first = await guard.check_permission(PermissionType.SCREEN, force=True)
+                second = await guard.check_permission(PermissionType.SCREEN, force=True)
 
         self.assertEqual(first, second)
         self.assertEqual(screen_probe.calls, 1)
@@ -61,8 +65,12 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
         screen_probe = ScreenProbeRecorder({"granted": True, "status": "active", "guidance": ""})
         guard._check_screen_permission = screen_probe
 
-        with temporary_env({"AURA_ASSUME_SCREEN_PERMISSION": "0"}):
-            refreshed = await guard.check_permission(PermissionType.SCREEN, force=False)
+        with patch(
+            "core.security.native_desktop_bridge.probe_native_desktop_bridge",
+            return_value={"ok": False},
+        ):
+            with TemporaryEnv({"AURA_ASSUME_SCREEN_PERMISSION": "0"}):
+                refreshed = await guard.check_permission(PermissionType.SCREEN, force=False)
 
         self.assertTrue(refreshed["granted"])
         self.assertEqual(screen_probe.calls, 1)
@@ -79,7 +87,7 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
             "core.security.native_desktop_bridge.probe_native_desktop_bridge",
             return_value={"ok": False},
         ):
-            with temporary_env({
+            with TemporaryEnv({
                 "AURA_ASSUME_SCREEN_PERMISSION": "1",
                 "AURA_PERMISSION_ASSERTIONS_ALLOWED": "1",
             }):
@@ -104,7 +112,7 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
             "core.security.native_desktop_bridge.probe_native_desktop_bridge",
             return_value={"ok": False},
         ):
-            with temporary_env({
+            with TemporaryEnv({
                 "AURA_ASSUME_SCREEN_PERMISSION": "1",
                 "AURA_PERMISSION_ASSERTIONS_ALLOWED": "0",
             }):
