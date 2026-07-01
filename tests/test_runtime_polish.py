@@ -833,6 +833,21 @@ def test_desktop_chat_composer_focus_is_not_stolen_by_page_selection():
     assert "#chat-input" in aura_css and "caret-color: var(--accent);" in aura_css
 
 
+def test_desktop_access_panel_bounds_raw_permission_status_labels():
+    aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+    aura_css = (PROJECT_ROOT / "interface" / "static" / "aura.css").read_text(encoding="utf-8")
+
+    assert "function desktopAccessStateLabel" in aura_js
+    assert "denied_native_bridge: 'Denied'" in aura_js
+    assert "probe_failed: 'Probe Fail'" in aura_js
+    assert "state: desktopAccessStateLabel(screenPermission)" in aura_js
+    assert "state: desktopAccessStateLabel(accessibilityPermission)" in aura_js
+    assert "state: desktopAccessStateLabel(automationPermission)" in aura_js
+    assert "max-width: 112px;" in aura_css
+    assert "text-overflow: ellipsis;" in aura_css
+    assert "overflow-wrap: anywhere;" in aura_css
+
+
 def test_native_shell_waits_for_readiness_heartbeat():
     native_shell = (PROJECT_ROOT / "native" / "aura-shell" / "src" / "main.rs").read_text(encoding="utf-8")
 

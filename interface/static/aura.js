@@ -1146,6 +1146,27 @@ function desktopAccessCapabilityTone(ready) {
     return ready ? 'ready' : 'blocked';
 }
 
+function desktopAccessStateLabel(permission, activeLabel = 'Active') {
+    if (permission && permission.granted) return activeLabel;
+    const raw = String(permission && permission.status || 'unknown').trim();
+    const normalized = raw.toLowerCase();
+    const labels = {
+        active_native_bridge: activeLabel,
+        denied_native_bridge: 'Denied',
+        asserted_env: 'Assumed',
+        approval_required: 'Approve',
+        probe_failed: 'Probe Fail',
+        unavailable: 'Unavailable',
+        deferred: 'Pending',
+        unknown: 'Unknown',
+        denied: 'Denied',
+        active: activeLabel,
+    };
+    if (labels[normalized]) return labels[normalized];
+    const compact = raw.replace(/[_-]+/g, ' ').trim();
+    return compact ? compact.slice(0, 16) : 'Unknown';
+}
+
 function applyDesktopAccessSummary(summary) {
     state.desktopAccess = summary || {};
     const banner = DOM.desktopAccessState || $('desktop-access-state');
@@ -1194,21 +1215,21 @@ function applyDesktopAccessSummary(summary) {
         {
             label: 'Screen Recording',
             tone: desktopAccessTone(screenPermission && screenPermission.granted, screenPermission && screenPermission.status),
-            state: screenPermission && screenPermission.granted ? 'Active' : escText(screenPermission && screenPermission.status, 'Unknown'),
+            state: desktopAccessStateLabel(screenPermission),
             meta: 'Needed for screen capture, OCR, and live visual awareness.',
             detail: compactGuidance(screenPermission && screenPermission.guidance),
         },
         {
             label: 'Accessibility',
             tone: desktopAccessTone(accessibilityPermission && accessibilityPermission.granted, accessibilityPermission && accessibilityPermission.status),
-            state: accessibilityPermission && accessibilityPermission.granted ? 'Active' : escText(accessibilityPermission && accessibilityPermission.status, 'Unknown'),
+            state: desktopAccessStateLabel(accessibilityPermission),
             meta: 'Needed for mouse, keyboard, and deeper UI inspection.',
             detail: compactGuidance(accessibilityPermission && accessibilityPermission.guidance),
         },
         {
             label: 'Automation',
             tone: desktopAccessTone(automationPermission && automationPermission.granted, automationPermission && automationPermission.status),
-            state: automationPermission && automationPermission.granted ? 'Active' : escText(automationPermission && automationPermission.status, 'Unknown'),
+            state: desktopAccessStateLabel(automationPermission),
             meta: 'Needed to query System Events and menu bar content.',
             detail: compactGuidance(automationPermission && automationPermission.guidance) || (frontmostApp ? `Frontmost app visible: ${frontmostApp}` : ''),
         },
