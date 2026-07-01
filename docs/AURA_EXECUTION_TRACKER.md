@@ -10,20 +10,19 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 77%** based on current live
+- Expanded daily-runtime/product closure: **about 79%** based on current live
   evidence, not documentation. This number is deliberately governed by the live
   desktop path, not by historical proof-profile success. Checkpoint 5 addresses
-  two live defects but is not counted as live-closed until Aura.app is relaunched
-  and the UI/permission panels verify the same result. Source-level closure is
-  now **about 78%**; live daily-runtime closure remains **about 77%** until the
-  relaunched app proves the same result.
+  two live defects, and the follow-up desktop-mode live proof verified bounded
+  chat/runtime survival, full mind organ participation, clean shutdown, and no
+  runtime-stream failure markers. Source-level closure is now **about 79%**.
 - Estimated checkpoints in this expanded program: **11 total**. Checkpoint 1 is
   committed and pushed; Checkpoint 2 is source-committed but live TCC remains
   open; Checkpoint 3 is committed and pushed; Checkpoint 4 is committed and
   pushed with an executable operational-label runner and full validator
   execution; Checkpoint 5 is committed and pushed for source fixes to desktop
-  access truthfulness and Memory UI survival; **6 remain after live desktop
-  revalidation resumes**.
+  access truthfulness and Memory UI survival, then revalidated by a bounded
+  desktop-mode live proof; **6 remain**.
 
 ### Scope Clarification For The Current Pass
 
@@ -183,7 +182,7 @@ next checkpoints.
 
 ### Checkpoint 5: Desktop Access Truthfulness And Memory UI Survival
 
-Status: complete in the Checkpoint 5 commit, pushed after validation.
+Status: complete in commit `7039a584`, pushed after validation.
 
 - Native bridge truth source: direct probe of `/Applications/Aura.app` currently
   reports Screen Recording, Accessibility, Automation, and desktop dimensions as
@@ -218,6 +217,21 @@ Status: complete in the Checkpoint 5 commit, pushed after validation.
     `desktop_control_ready=true`, `screen_text_ready=true`,
     `blocking_permissions=[]`, and native bridge `ok=true` for
     `com.aura.desktop`.
+- Post-commit live desktop revalidation:
+  - `python tools/live_boot_proof.py --mode desktop --boot-timeout 420 --conversation-soak-turns 3 --skip-desktop-action --out-dir artifacts/current/live_desktop_runtime`
+    -> passed in 181.6s.
+  - Evidence artifact:
+    `artifacts/current/live_desktop_runtime/live_proof_20260701_044926_verdict.json`.
+  - Observed: boot health healthy after 34s, peak RSS 20154.1MB, capability
+    inventory response through CognitiveEngine, identity turn completed,
+    continuity codeword recalled, 3/3 conversation-soak turns passed,
+    semantic/imagination/timescale/ambient/autonomic organs processed live
+    turns, desktop action intentionally skipped, shutdown graceful, no orphans,
+    port free, and runtime stdout contained no failure markers.
+  - Still open after this proof: visible Aura.app UI refresh, full desktop
+    actuation, microphone/audio recall, longer multi-turn natural conversation,
+    heat behavior under user-visible operation, and whether background autonomy
+    remains visible/causal during longer idle periods.
 
 ### Checkpoint 1: Live Conversation Ownership And Launcher Survival
 
