@@ -23,7 +23,7 @@ class NociceptionReadout:
 
 
 class AffectGroundingReadout:
-    def gather(self) -> "AffectGroundingReadout":
+    def gather(self) -> AffectGroundingReadout:
         return self
 
     def assess(self) -> list[GroundedAffectReadout]:
@@ -224,3 +224,37 @@ def test_live_desktop_context_payload_carries_recent_voice_perception(monkeypatc
     assert perception["authorized_command"] is False
     assert perception["requires_wake_word_session"] is True
     assert "blue glass" in perception["transcript"]
+
+
+def test_protected_foreground_prompt_reports_voice_activity_without_transcript(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class AcousticWorldState:
+        last_voice_transcript = ""
+        last_voice_transcript_at = 0.0
+        voice_activity_detected = True
+        last_voice_activity_at = 2000.0
+        last_audio_source_assessment = {
+            "source": "browser_voice_signal",
+            "response_authorized": False,
+            "attention_mode": "listen",
+            "transcript_available": False,
+        }
+
+    RuntimeServices.services["world_state"] = AcousticWorldState()
+    try:
+        monkeypatch.setattr(chat_routes, "ServiceContainer", RuntimeServices)
+        monkeypatch.setattr(chat_routes.time, "time", lambda: 2012.0)
+        monkeypatch.setattr(chat_routes, "_resolve_protected_foreground_snapshot", lambda: {})
+        monkeypatch.setattr(chat_routes, "_resolve_live_voice_state", lambda *args, **kwargs: {})
+
+        prompt = chat_routes._build_protected_foreground_system_prompt(
+            "What did I say out loud?",
+            lane={"state": "ready"},
+        )
+    finally:
+        RuntimeServices.services.pop("world_state", None)
+
+    assert "Recent heard speech" in prompt
+    assert "recent voice activity detected" in prompt
+    assert "no transcript available" in prompt

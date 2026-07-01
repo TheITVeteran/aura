@@ -147,6 +147,7 @@ class InteractionSignalsEngine:
     async def publish_voice(self, payload: dict[str, Any]) -> None:
         await self.ensure_started()
         await self._voice_queue.put(dict(payload), timeout=0.1)
+        self._publish_voice_activity_to_world_state(payload)
 
     async def publish_vision_frame(self, jpeg_bytes: bytes, metadata: dict[str, Any] | None = None) -> None:
         await self.ensure_started()
@@ -158,6 +159,39 @@ class InteractionSignalsEngine:
             },
             timeout=0.1,
         )
+
+    def _publish_voice_activity_to_world_state(self, payload: dict[str, Any]) -> None:
+        speech_ratio = _safe_float(payload.get("speech_ratio"), 0.0)
+        rms = _safe_float(payload.get("rms_avg", payload.get("rms")), 0.0)
+        if speech_ratio <= 0.02 and rms <= 0.08:
+            return
+        try:
+            from core.world_state import get_world_state
+
+            ws = get_world_state()
+            now = time.time()
+            if hasattr(ws, "voice_activity_detected"):
+                ws.voice_activity_detected = True
+            if hasattr(ws, "last_voice_activity_at"):
+                ws.last_voice_activity_at = now
+            if hasattr(ws, "ambient_audio_level"):
+                ws.ambient_audio_level = max(float(getattr(ws, "ambient_audio_level", 0.0) or 0.0), rms)
+            if hasattr(ws, "last_audio_source_assessment"):
+                ws.last_audio_source_assessment = {
+                    "source": "browser_voice_signal",
+                    "response_authorized": False,
+                    "attention_mode": "listen",
+                    "speech_ratio": round(speech_ratio, 4),
+                    "rms": round(rms, 4),
+                    "transcript_available": False,
+                }
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "interaction_signals.world_state_voice_activity",
+                exc,
+                severity="debug",
+                action="kept voice signal local after world-state voice activity update failed",
+            )
 
     def get_status(self) -> dict[str, Any]:
         fused = self._compute_fused_state()

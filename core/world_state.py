@@ -132,6 +132,7 @@ class WorldState:
         self.screen_content_hash: str = ""         # hash of OCR text (change detection)
         self.ambient_audio_level: float = 0.0      # 0-1 mic RMS energy
         self.voice_activity_detected: bool = False  # VAD flag
+        self.last_voice_activity_at: float = 0.0     # wall-clock timestamp for non-transcribed voice activity
         self.last_voice_transcript: str = ""       # most recent speech snippet
         self.last_voice_transcript_at: float = 0.0  # wall-clock timestamp for recency checks
         self.last_audio_source_assessment: dict[str, Any] = {}

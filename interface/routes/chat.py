@@ -3603,9 +3603,13 @@ def _collect_voice_perception_snapshot(*, max_age_s: float = 180.0) -> dict[str,
         age_s = max(0.0, time.time() - heard_at) if heard_at > 0 else None
         audio_source = dict(getattr(world_state, "last_audio_source_assessment", {}) or {})
         if not transcript:
+            activity_at = float(getattr(world_state, "last_voice_activity_at", 0.0) or 0.0)
+            activity_age_s = max(0.0, time.time() - activity_at) if activity_at > 0 else None
             return {
                 "heard": False,
                 "voice_activity_detected": bool(getattr(world_state, "voice_activity_detected", False)),
+                "voice_activity_recent": bool(activity_age_s is not None and activity_age_s <= max_age_s),
+                "voice_activity_age_s": round(activity_age_s, 1) if activity_age_s is not None else None,
                 "audio_source": audio_source,
             }
         recent = bool(age_s is not None and age_s <= max_age_s)
@@ -6815,6 +6819,13 @@ def _build_protected_foreground_system_prompt(
             f"{recency}, age={voice_perception.get('age_s')}s, "
             f"authorized_command={voice_perception.get('authorized_command')}, "
             f"transcript={voice_perception.get('transcript')}"
+        )
+    elif voice_perception.get("voice_activity_detected"):
+        recency = "recent" if voice_perception.get("voice_activity_recent") else "stale"
+        heard_text = (
+            f"{recency} voice activity detected, "
+            f"age={voice_perception.get('voice_activity_age_s')}s, "
+            "no transcript available"
         )
 
     snapshot_lines = [

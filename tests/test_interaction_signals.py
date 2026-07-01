@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from core.senses.interaction_signals import InteractionSignalsEngine, decode_data_url_image
-from interface.routes.interaction_signals import _camera_signal_allowed
 from interface.routes import privacy as privacy_routes
+from interface.routes.interaction_signals import _camera_signal_allowed
 
 
 def test_decode_data_url_image_round_trip():
@@ -76,6 +76,48 @@ def test_interaction_signals_voice_and_vision_raise_attention_and_engagement():
     assert fused.attention_available > 0.75
     assert "voice" in fused.active_modalities
     assert "vision" in fused.active_modalities
+
+
+@pytest.mark.asyncio
+async def test_interaction_voice_signal_updates_world_state_without_transcript():
+    from core.world_state import get_world_state
+
+    ws = get_world_state()
+    previous = {
+        "voice_activity_detected": ws.voice_activity_detected,
+        "last_voice_activity_at": getattr(ws, "last_voice_activity_at", 0.0),
+        "ambient_audio_level": ws.ambient_audio_level,
+        "last_audio_source_assessment": dict(ws.last_audio_source_assessment),
+    }
+    try:
+        ws.voice_activity_detected = False
+        ws.last_voice_activity_at = 0.0
+        ws.ambient_audio_level = 0.0
+        ws.last_audio_source_assessment = {}
+
+        engine = InteractionSignalsEngine()
+        await engine.publish_voice(
+            {
+                "timestamp": time.time(),
+                "speech_ratio": 0.84,
+                "rms_avg": 0.22,
+                "rms_std": 0.02,
+                "peak_avg": 0.38,
+                "zcr_avg": 0.12,
+            }
+        )
+
+        assert ws.voice_activity_detected is True
+        assert ws.last_voice_activity_at > 0.0
+        assert ws.ambient_audio_level >= 0.22
+        assert ws.last_audio_source_assessment["source"] == "browser_voice_signal"
+        assert ws.last_audio_source_assessment["transcript_available"] is False
+        await engine.stop()
+    finally:
+        ws.voice_activity_detected = previous["voice_activity_detected"]
+        ws.last_voice_activity_at = previous["last_voice_activity_at"]
+        ws.ambient_audio_level = previous["ambient_audio_level"]
+        ws.last_audio_source_assessment = previous["last_audio_source_assessment"]
 
 
 def test_interaction_signals_defers_inprocess_cv2_after_pyav_load(monkeypatch):

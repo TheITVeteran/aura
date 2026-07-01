@@ -128,6 +128,11 @@ and Accessibility ready through `/api/system/desktop-access`.
   desktop-access API now emits a machine-readable repair plan with the current
   bundle id, reset commands, manual re-add steps, and verification endpoint
   instead of looping on generic blocked permission copy.
+- Voice grounding fix: browser/acoustic voice signals now update WorldState as
+  non-transcribed voice activity, VoiceEngine stamps `last_voice_activity_at`,
+  the perceptual pump preserves transcript timestamps/source metadata, and
+  protected foreground chat explicitly carries "voice activity but no
+  transcript" instead of hallucinating or ignoring audio perception.
 - Model lifecycle now knows local open-weight reasoning solver repos:
   `QwQ-32B-4bit`, `DeepSeek-R1-Distill-Qwen-32B-4bit`, and
   `DeepSeek-R1-Distill-Qwen-32B-8bit`.

@@ -158,7 +158,11 @@ def test_perceptual_pump_updates_world_state_with_grounded_frame() -> None:
         assert world.screen_content_hash == "hash-1"
         assert world.ambient_audio_level == 0.31
         assert world.voice_activity_detected is True
+        assert world.last_voice_activity_at == frame.audio.timestamp
         assert world.last_voice_transcript == "Open a few articles"
+        assert world.last_voice_transcript_at == frame.audio.timestamp
+        assert world.last_audio_source_assessment["source"] == "perceptual_pump_audio"
+        assert world.last_audio_source_assessment["transcript_changed"] is True
         assert world.cpu_percent == 22.5
         assert world.memory_percent == 51.0
         assert world.thermal_pressure == 0.08

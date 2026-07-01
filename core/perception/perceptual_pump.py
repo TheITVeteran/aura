@@ -801,6 +801,8 @@ class PerceptualPump:
                 ws.ambient_audio_level = frame.audio.rms_energy
             if hasattr(ws, "voice_activity_detected"):
                 ws.voice_activity_detected = frame.audio.voice_activity
+            if frame.audio.voice_activity and hasattr(ws, "last_voice_activity_at"):
+                ws.last_voice_activity_at = frame.audio.timestamp or frame.timestamp
             if hasattr(ws, "last_voice_transcript") and frame.audio.transcript_snippet:
                 # Full fidelity here: the wake-word command lane reads this
                 # field, and the 200-char display snippet used to truncate
@@ -808,6 +810,15 @@ class PerceptualPump:
                 ws.last_voice_transcript = (
                     frame.audio.transcript_full or frame.audio.transcript_snippet
                 )
+                if hasattr(ws, "last_voice_transcript_at"):
+                    ws.last_voice_transcript_at = frame.audio.timestamp or frame.timestamp
+                if hasattr(ws, "last_audio_source_assessment"):
+                    ws.last_audio_source_assessment = {
+                        "source": "perceptual_pump_audio",
+                        "response_authorized": False,
+                        "attention_mode": "listen",
+                        "transcript_changed": bool(frame.audio.transcript_changed),
+                    }
 
             # System telemetry — keep WorldState's own fields in sync
             ws.cpu_percent = frame.system.cpu_percent

@@ -803,7 +803,7 @@ class SovereignVoiceEngine:
             )
             return success
 
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             record_degradation("voice_engine", e)
             logger.warning(
                 "Mic stream startup timed out; voice capture will retry on demand "
@@ -1142,6 +1142,8 @@ class SovereignVoiceEngine:
             ws.last_voice_transcript = text
             ws.last_voice_transcript_at = time.time()
             ws.voice_activity_detected = True
+            if hasattr(ws, "last_voice_activity_at"):
+                ws.last_voice_activity_at = ws.last_voice_transcript_at
             ws.last_audio_source_assessment = dict(audio_source)
             ws.record_event(
                 description=(
