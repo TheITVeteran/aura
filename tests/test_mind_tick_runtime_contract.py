@@ -75,6 +75,7 @@ async def test_mind_tick_liveness_probe_repairs_dead_supervised_loop():
     tick._liveness_repair_count = 0
 
     async def failed_loop():
+        await asyncio.sleep(0)  # yield once like a real loop, then die
         raise RuntimeError("background loop died")
 
     tick._task = asyncio.create_task(failed_loop())

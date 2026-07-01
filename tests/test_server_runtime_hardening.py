@@ -622,7 +622,10 @@ def test_desktop_access_fast_mode_does_not_run_native_or_tcc_probes(monkeypatch)
     import core.security.permission_guard as permission_guard_module
     from interface.routes import system as system_routes
 
+    forbidden_probe_calls: list[tuple] = []
+
     def _forbidden_probe(*_args, **_kwargs):
+        forbidden_probe_calls.append(_args)
         raise AssertionError("desktop access fast mode must not run native bridge probes")
 
     monkeypatch.setattr(permission_guard_module, "get_permission_guard", _forbidden_probe)
@@ -643,6 +646,7 @@ def test_desktop_access_fast_mode_does_not_run_native_or_tcc_probes(monkeypatch)
     assert payload["permission_confidence"] == "pending"
     assert payload["probe_mode"] == "fast_pending"
     assert payload["desktop_access_diagnosis"]
+    assert forbidden_probe_calls == []
 
 
 def test_desktop_access_blocked_cache_expires_before_ready_cache(monkeypatch):

@@ -69,12 +69,16 @@ def test_rate_limit_bypass_cannot_be_spoofed_by_forwarded_header(monkeypatch):
 
 
 def test_rate_limit_direct_local_traffic_is_bypassed(monkeypatch):
-    def _fail(_ip: str) -> bool:  # pragma: no cover - must not be called
-        raise AssertionError("local traffic should bypass the limiter")
+    checked: list[str] = []
 
-    monkeypatch.setattr(auth._rate_limiter, "check", _fail)
+    monkeypatch.setattr(
+        auth._rate_limiter, "check", lambda ip: (checked.append(ip) or True)
+    )
 
     auth._check_rate_limit(_rate_limit_request("127.0.0.1"))
+
+    # Local traffic must bypass the limiter entirely.
+    assert checked == []
 
 
 def test_rate_limit_local_proxy_buckets_by_forwarded_client(monkeypatch):

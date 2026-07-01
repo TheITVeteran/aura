@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
+import os
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -20,6 +20,10 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from tools.closeout.operational_label_baselines import BASELINES, ROOT, evaluate
+
+# Bounded wall-clock ceiling for the full validator pytest run. The battery is
+# a proof harness, never an unbounded background job.
+_BATTERY_TIMEOUT_S = float(os.environ.get("AURA_LABEL_BATTERY_TIMEOUT_S", "5400"))
 
 
 @dataclass(frozen=True)
@@ -178,12 +182,15 @@ def main(argv: list[str] | None = None) -> int:
         print(report["stderr_tail"], file=sys.stderr)
         return 2
 
-    completed = subprocess.run(
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+    completed = get_subprocess_gateway().run(
         command,
         cwd=ROOT,
-        text=True,
-        capture_output=True,
+        timeout=_BATTERY_TIMEOUT_S,
+        offline_tooling=True,
         check=False,
+        source="proof_tooling:run_operational_label_battery",
     )
     report = build_report(
         plans,

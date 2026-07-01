@@ -162,7 +162,9 @@ class PreemptibleChatLock:
         self._owner_token: object | None = None
 
     async def acquire(self):
-        while True:
+        # Bounded: each retry means force_release() swapped the lock object
+        # while we waited, which happens at most once per 45s preemption.
+        for _ in range(64):
             lock = self._lock
             await lock.acquire()
             if lock is self._lock:
@@ -179,6 +181,7 @@ class PreemptibleChatLock:
                 lock.release()
             except RuntimeError as exc:
                 logger.debug("Dead pre-preemption lock release skipped: %s", exc)
+        raise RuntimeError("foreground chat lock preempted repeatedly; giving up acquire")
 
     def locked(self):
         return self._lock.locked()
