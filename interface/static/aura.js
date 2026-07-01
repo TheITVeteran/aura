@@ -1261,6 +1261,13 @@ function applyDesktopAccessSummary(summary) {
     } else if (signing && signing.stable_tcc_identity === true && blockers.length) {
         helperLines.push('Aura.app now has a stable signing identity; if these permissions still show denied, toggle Aura off/on or remove and re-add /Applications/Aura.app once so macOS attaches the grants to this exact signed app.');
     }
+    const requestState = access.tcc_request_state || (access.tcc_repair_plan && access.tcc_repair_plan.request_state) || {};
+    ['screen_recording', 'accessibility'].forEach(key => {
+        const req = requestState[key] || {};
+        if (req.status === 'approval_required') {
+            helperLines.push(`${key.replace(/_/g, ' ')} request reached ${escText(req.target, 'Aura.app')}; macOS still needs approval in System Settings.`);
+        }
+    });
     helperLines.push(pyautoguiDetail);
     if (blockers.length) {
         helperLines.push(`Blocked permissions: ${blockers.map(name => name.replace(/_/g, ' ')).join(', ')}.`);

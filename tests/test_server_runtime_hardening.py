@@ -922,6 +922,62 @@ def test_desktop_access_summary_reports_stale_tcc_repair_plan_for_stable_signed_
     assert "tccutil reset Accessibility com.aura.desktop" in repair["commands"]
 
 
+def test_desktop_access_summary_includes_permission_request_state(monkeypatch):
+    import core.security.permission_guard as permission_guard_module
+    from interface.routes import system as system_routes
+
+    class _Guard:
+        def current_process_identity(self):
+            return {"pid": 789, "bundle_identifier": "org.python.python"}
+
+        async def check_permission(self, ptype, force=False):
+            if ptype.name == "AUTOMATION":
+                return {"granted": True, "status": "active", "guidance": ""}
+            return {"granted": False, "status": "denied_native_bridge", "guidance": ""}
+
+        async def check_permission_direct(self, ptype):
+            result = await self.check_permission(ptype)
+            return {**result, "direct_probe": True}
+
+    monkeypatch.setattr(permission_guard_module, "get_permission_guard", lambda: _Guard())
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
+    monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (object(), None))
+    monkeypatch.setattr(
+        "core.security.native_desktop_bridge.probe_native_desktop_bridge",
+        lambda force=False: {
+            "ok": True,
+            "screen_recording": False,
+            "accessibility": False,
+            "automation": True,
+            "bundle_identifier": "com.aura.desktop",
+            "bridge_executable": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
+            "bridge_transport": "resident_ipc",
+            "code_signature": {"stable_tcc_identity": True},
+        },
+    )
+
+    original_cache = dict(system_routes._desktop_access_cache)
+    original_request_state = dict(system_routes._desktop_access_request_state)
+    system_routes._desktop_access_cache["captured_at"] = 0.0
+    system_routes._desktop_access_cache["payload"] = None
+    system_routes._desktop_access_request_state.clear()
+    system_routes._desktop_access_request_state["screen_recording"] = {
+        "requested": True,
+        "granted": False,
+        "status": "approval_required",
+        "target": "Aura.app",
+    }
+    try:
+        payload = asyncio.run(system_routes._collect_desktop_access_summary())
+    finally:
+        system_routes._desktop_access_cache.update(original_cache)
+        system_routes._desktop_access_request_state.clear()
+        system_routes._desktop_access_request_state.update(original_request_state)
+
+    assert payload["tcc_request_state"]["screen_recording"]["status"] == "approval_required"
+    assert payload["tcc_repair_plan"]["request_state"]["screen_recording"]["target"] == "Aura.app"
+
+
 def test_desktop_access_endpoint_returns_json_summary(monkeypatch):
     from interface.routes import system as system_routes
 

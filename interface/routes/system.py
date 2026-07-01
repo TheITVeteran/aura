@@ -304,6 +304,7 @@ _desktop_access_cache: dict[str, Any] = {
     "captured_at": 0.0,
     "payload": None,
 }
+_desktop_access_request_state: dict[str, Any] = {}
 
 
 # ── Collector Helpers ─────────────────────────────────────────
@@ -1098,6 +1099,7 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
         "effective_app_identity": {},
         "desktop_access_diagnosis": [],
         "tcc_repair_plan": {},
+        "tcc_request_state": dict(_desktop_access_request_state),
         "native_bridge_probe": {},
     }
     try:
@@ -1391,6 +1393,7 @@ async def _collect_desktop_access_summary() -> dict[str, Any]:
                     "Approve Screen Recording and Accessibility when macOS prompts.",
                     "If System Settings still shows Aura as enabled but the bridge is denied, remove the Aura row with the minus button and add /Applications/Aura.app again.",
                 ],
+                "request_state": dict(_desktop_access_request_state),
                 "verification_endpoint": "/api/system/desktop-access",
             }
         if (
@@ -1435,10 +1438,26 @@ async def request_screen_access() -> dict[str, Any]:
             )
         if native_result:
             granted = bool(native_result.get("screen_recording"))
+            status = "granted" if granted else "approval_required"
+            _desktop_access_request_state["screen_recording"] = {
+                "requested": True,
+                "granted": granted,
+                "status": status,
+                "target": "Aura.app",
+                "bundle_identifier": str(native_result.get("bundle_identifier") or ""),
+                "requested_at": time.time(),
+                "detail": (
+                    "macOS still requires user approval in Screen Recording for /Applications/Aura.app"
+                    if not granted else
+                    "Screen Recording is granted for the resident Aura.app bridge"
+                ),
+            }
             _desktop_access_cache["captured_at"] = 0.0
             return {
                 "requested": True,
                 "granted": granted,
+                "status": status,
+                "approval_required": not granted,
                 "native_bridge": native_result,
                 "target": "Aura.app",
             }
@@ -1448,8 +1467,20 @@ async def request_screen_access() -> dict[str, Any]:
         guard = get_permission_guard()
         request = getattr(guard, "request_screen_capture_access", None)
         granted = bool(request()) if callable(request) else False
+        _desktop_access_request_state["screen_recording"] = {
+            "requested": callable(request),
+            "granted": granted,
+            "status": "granted" if granted else "approval_required",
+            "target": "Python runtime",
+            "requested_at": time.time(),
+        }
         _desktop_access_cache["captured_at"] = 0.0
-        return {"requested": callable(request), "granted": granted}
+        return {
+            "requested": callable(request),
+            "granted": granted,
+            "status": "granted" if granted else "approval_required",
+            "approval_required": not granted,
+        }
     except _SYSTEM_RECOVERABLE_ERRORS as exc:
         record_degradation(
             "system.desktop_access.request_screen",
@@ -1481,10 +1512,26 @@ async def request_accessibility_access() -> dict[str, Any]:
             )
         if native_result:
             granted = bool(native_result.get("accessibility"))
+            status = "granted" if granted else "approval_required"
+            _desktop_access_request_state["accessibility"] = {
+                "requested": True,
+                "granted": granted,
+                "status": status,
+                "target": "Aura.app",
+                "bundle_identifier": str(native_result.get("bundle_identifier") or ""),
+                "requested_at": time.time(),
+                "detail": (
+                    "macOS still requires user approval in Accessibility for /Applications/Aura.app"
+                    if not granted else
+                    "Accessibility is granted for the resident Aura.app bridge"
+                ),
+            }
             _desktop_access_cache["captured_at"] = 0.0
             return {
                 "requested": True,
                 "granted": granted,
+                "status": status,
+                "approval_required": not granted,
                 "native_bridge": native_result,
                 "target": "Aura.app",
             }
@@ -1494,8 +1541,20 @@ async def request_accessibility_access() -> dict[str, Any]:
         guard = get_permission_guard()
         request = getattr(guard, "request_accessibility_trust", None)
         granted = bool(request()) if callable(request) else False
+        _desktop_access_request_state["accessibility"] = {
+            "requested": callable(request),
+            "granted": granted,
+            "status": "granted" if granted else "approval_required",
+            "target": "Python runtime",
+            "requested_at": time.time(),
+        }
         _desktop_access_cache["captured_at"] = 0.0
-        return {"requested": callable(request), "granted": granted}
+        return {
+            "requested": callable(request),
+            "granted": granted,
+            "status": "granted" if granted else "approval_required",
+            "approval_required": not granted,
+        }
     except _SYSTEM_RECOVERABLE_ERRORS as exc:
         record_degradation(
             "system.desktop_access.request_accessibility",

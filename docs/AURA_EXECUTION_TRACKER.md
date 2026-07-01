@@ -174,6 +174,17 @@ and Accessibility ready through `/api/system/desktop-access`.
   `43 passed` across CRSM monitor, integrity audit, CRSM dataset gate,
   LiveLearner contamination, preference trainer, and verifier preference harness;
   Ruff passed on the touched CRSM/training files.
+- Live TCC reset/request attempt: `tccutil reset ScreenCapture com.aura.desktop`
+  and `tccutil reset Accessibility com.aura.desktop` succeeded, Aura relaunched
+  under `/Applications/Aura.app`, and health returned `status=ok`,
+  `conversation=ready`. The resident bridge request endpoints reached
+  `com.aura.desktop` but macOS still returned `granted=false`; this means a
+  human approval/re-add in System Settings is still required before live screen
+  capture and desktop control can be claimed.
+- Desktop-access request reporting now records `approval_required` request state
+  for Screen Recording and Accessibility, exposes it in the repair plan, and
+  surfaces it in the UI helper text. Current validation: 19 focused permission,
+  CRSM, and integrity tests passed; Ruff passed on `interface/routes/system.py`.
 - New validator: `tools/closeout/frontier_standards_matrix.py` maps the
   requested frontier/fiction/phenomenal/general-AI standards to source paths,
   validator paths, and live artifact requirements.
